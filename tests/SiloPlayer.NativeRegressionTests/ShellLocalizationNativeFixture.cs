@@ -223,6 +223,20 @@ internal static class ShellLocalizationNativeFixture
             await languageCoordinator.RefreshAsync();
             await Settle(root);
             Apply("en"); await Settle(root);
+            var nextOverlay = (FrameworkElement)root.FindName("PlayingNextOverlay");
+            var finishedCopy = (TextBlock)root.FindName("PlayingNextFinishedDescription");
+            var shuffleCopy = (TextBlock)root.FindName("PlayingNextShuffleScope");
+            nextOverlay.Visibility = Visibility.Visible;
+            shuffleCopy.Visibility = Visibility.Visible;
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                finishedCopy.Text = shuffleCopy.Text = "stale overlay copy";
+                Apply(language); await Settle(root);
+                Check(finishedCopy.Text == AppStrings.Get("web.player.upNext.noMoreEpisodes"), "Playing Next finished description did not refresh");
+                Check(shuffleCopy.Text == AppStrings.Get("upNext.shuffling", new Dictionary<string, object?> { ["scope"] = provider.GetRequiredService<PlayerService>().ShuffleScopeLabel ?? "" }), "Playing Next scope did not refresh");
+            }
+            nextOverlay.Visibility = Visibility.Collapsed;
+            Apply("en"); await Settle(root);
             var librariesLabel = All<TextBlock>(root).Single(text => Localized.GetText(text) == "web.shell.sidebar.libraries");
             Program.Log($"TRACE uppercase en: actual={librariesLabel.Text}; expected={AppStrings.Get("web.shell.sidebar.libraries").ToUpper(System.Globalization.CultureInfo.GetCultureInfo(AppStrings.Language))}; language={AppStrings.Language}; formats={AppStrings.FormatCulture.Name}; enabled={Localized.GetUppercase(librariesLabel)}; loaded={librariesLabel.IsLoaded}.");
             Check(librariesLabel.Text == "LIBRARIES" && AppStrings.Language == "en", "English sidebar header lost uppercase styling");

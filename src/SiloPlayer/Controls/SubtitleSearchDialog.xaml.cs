@@ -447,7 +447,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 SetStatus(() => "No results.");
                 SetEmptyState(() => _playerMode
                     ? "No subtitles found in this language."
-                    : "No subtitles found for this version and language.");
+                    : T("web.detail.subtitleSearch.noResults", "No subtitles found for this version and language."));
                 EmptyStateText.Visibility = Visibility.Visible;
                 ShowWarnings(result.Warnings);
                 return;

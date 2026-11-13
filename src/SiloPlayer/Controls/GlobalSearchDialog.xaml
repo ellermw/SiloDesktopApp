@@ -65,7 +65,7 @@
                 Background="Transparent"
                 FontSize="14" Height="48" MinHeight="0" Padding="0,14,0,14" VerticalContentAlignment="Center"
                 Template="{StaticResource QuickSearchInputTemplate}"
-                TextChanged="SearchBox_TextChanged"  loc:Localized.Placeholder="web.search.placeholderLibrary"/>
+                TextChanged="SearchBox_TextChanged" />
             <Border x:Name="EscapeHint" Grid.Column="2" CornerRadius="4"
                     BorderThickness="1" BorderBrush="{StaticResource BorderBrush}"
                     Background="{StaticResource SurfaceBrush}" Padding="6,2"

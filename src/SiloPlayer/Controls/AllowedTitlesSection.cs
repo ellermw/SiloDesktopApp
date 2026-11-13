@@ -1,3 +1,4 @@
+using SiloPlayer.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Api;
@@ -30,12 +31,16 @@ public sealed class AllowedTitlesSection : UserControl
     {
         _owner = owner; _profile = profileId;
         var panel = new StackPanel { Spacing = 10 };
-        panel.Children.Add(new TextBlock { Text = AppStrings.Get("web.profiles.allowedTitles.heading", fallback: "Allowed titles"), FontSize = 16 });
+        panel.Children.Add(MediaItemCardActions.Localize(new TextBlock { FontSize = 16 }, text: "web.profiles.allowedTitles.heading"));
         panel.Children.Add(new TextBlock { Text = "Movies and series this profile may watch above its limits. Changes save immediately, separately from Save profile. Library access still applies.", TextWrapping = TextWrapping.Wrap });
         foreach (var child in new UIElement[] { _search, _searchError, _searchRetry, _results, _titleError, _titleRetry, _titles, _more,
-            new TextBlock { Text = AppStrings.Get("web.profiles.allowedTitles.collectionsHeading", fallback: "Allowed collections"), FontSize = 15 }, _collectionError, _collectionRetry, _collections, _mutationError }) panel.Children.Add(child);
+            MediaItemCardActions.Localize(new TextBlock { FontSize = 15 }, text: "web.profiles.allowedTitles.collectionsHeading"), _collectionError, _collectionRetry, _collections, _mutationError }) panel.Children.Add(child);
         Content = panel;
-        _search.TextChanged += (_, _) => { ++_searchVersion; _debounce.Stop(); _results.Children.Clear(); _searchError.Text = ""; _searchRetry.Visibility = Visibility.Collapsed; if (!string.IsNullOrWhiteSpace(_search.Text)) _debounce.Start(); };
+        Localized.SetContent(_more, "web.profiles.allowedTitles.showMore");
+        Localized.SetContent(_searchRetry, "web.catalog.page.retrySearch");
+        Localized.SetPlaceholder(_search, "web.profiles.allowedTitles.searchPlaceholder");
+        Localized.SetHeader(_search, "web.profiles.allowedTitles.searchLabel");
+        _search.TextChanged += (_, _) => { ++_searchVersion; _debounce.Stop(); _results.Children.Clear(); Localized.SetText(_searchError, null); _searchError.Text = ""; _searchRetry.Visibility = Visibility.Collapsed; if (!string.IsNullOrWhiteSpace(_search.Text)) _debounce.Start(); };
         // Enter belongs to search, never the containing profile form's default Save command.
         _search.KeyDown += (_, args) => { if (args.Key == Windows.System.VirtualKey.Enter) args.Handled = true; };
         _debounce.Tick += async (_, _) => { _debounce.Stop(); await SearchAsync(); };
@@ -64,10 +69,10 @@ public sealed class AllowedTitlesSection : UserControl
             foreach (var title in page.Items) if (_loadedTitles.All(item => item.ContentId != title.ContentId)) _loadedTitles.Add(title);
             _cursor = page.Page is { HasMore: true } ? page.Page.NextCursor : null;
             _more.Visibility = !string.IsNullOrEmpty(_cursor) ? Visibility.Visible : Visibility.Collapsed;
-            _titleError.Text = ""; RenderTitles();
+            Localized.SetText(_titleError, null); _titleError.Text = ""; RenderTitles();
         }
         catch (OperationCanceledException) { }
-        catch { if (_owner.IsCurrent && ReferenceEquals(_titleRead, read)) { _titleError.Text = _loadedTitles.Count > 0 ? "Couldn’t refresh allowed titles. Showing the previous list." : AppStrings.Get("web.profiles.allowedTitles.titlesFailed", fallback: "Couldn’t load allowed titles."); _titleRetry.Visibility = Visibility.Visible; } }
+        catch { if (_owner.IsCurrent && ReferenceEquals(_titleRead, read)) { Localized.SetText(_titleError, _loadedTitles.Count > 0 ? "web.profiles.allowedTitles.titlesStale" : "web.profiles.allowedTitles.titlesFailed"); _titleRetry.Visibility = Visibility.Visible; } }
         finally { if (ReferenceEquals(_titleRead, read)) { _titleRead = null; _more.IsEnabled = true; } }
     }
     private void RenderTitles()
@@ -112,10 +117,16 @@ public sealed class AllowedTitlesSection : UserControl
                 var already = _loadedTitles.Any(title => title.ContentId == item.ContentId);
                 var row = Row($"{item.Title} · {item.Year} · {item.Type}", already ? AppStrings.Get("web.profiles.allowedTitles.allowed", fallback: "Allowed") : AppStrings.Get("web.profiles.allowedTitles.allow", fallback: "Allow"), item.ContentId,
                     () => version == _searchVersion ? MutateAsync((api, owner, ct) => api.SetTitleAsync(owner, _profile, item.ContentId, true, ct)) : Task.CompletedTask);
-                if (already) row.Children.OfType<Button>().Single().IsEnabled = false;
+                var command = row.Children.OfType<Button>().Single();
+                MediaItemCardActions.BindText(command, "Content", button =>
+                {
+                    button.Content = AppStrings.Get(already ? "web.profiles.allowedTitles.allowed" : "web.profiles.allowedTitles.allow");
+                    Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, button.Content + " " + ((TextBlock)row.Children[0]).Text);
+                });
+                if (already) command.IsEnabled = false;
                 _results.Children.Add(row);
             }
-            if (_results.Children.Count == 0) _searchError.Text = AppStrings.Get("web.profiles.allowedTitles.noMatch", fallback: "No matching movies or series.");
+            if (_results.Children.Count == 0) Localized.SetText(_searchError, "web.profiles.allowedTitles.noMatch");
         }
         catch (OperationCanceledException) { }
         catch { if (_owner.IsCurrent && version == _searchVersion) { _searchError.Text = "Couldn’t search titles. Previous results may be out of date."; _searchRetry.Visibility = Visibility.Visible; } }

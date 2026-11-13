@@ -78,6 +78,18 @@ internal static partial class MediaLocalizationNativeFixture
                 var language = new[] { "de", "ar", "ja" }[pass];
                 PosterCard.CurrentSortKey = "content_rating";
                 Apply(language); await Task.Delay(200);
+                var guide = Get<Grid>(requests, "StatusGuideGrid");
+                Require(guide.RowDefinitions.Count == 8 && guide.RowDefinitions.All(row => row.Height.IsAuto), "Request status guide entries lack separate Auto rows");
+                calendar.ViewModel.IsEmpty = true;
+                calendar.ViewModel.IsLoading = false;
+                calendar.ViewModel.ErrorMessage = null;
+                foreach (var filter in new[] { "following", "trending", "everything", "unknown" })
+                {
+                    calendar.ViewModel.Filter = filter;
+                    Invoke(calendar, "UpdateEmptyState");
+                    var suffix = filter switch { "following" => "Following", "trending" => "Trending", "everything" => "Everything", _ => "Fallback" };
+                    Require(Text(calendar, "EmptyStateText") == AppStrings.Get("web.calendar.empty" + suffix), "Calendar empty-state variant did not localize: " + filter);
+                }
                 foreach (var control in controls) { control.Measure(new Windows.Foundation.Size(1100, 760)); control.Arrange(new Windows.Foundation.Rect(0, 0, 1100, 760)); control.UpdateLayout(); }
                 Require(Text(episodeCarousel, "TitleText") == AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = 12 }), "Episode carousel number did not refresh");
                 Require(Text(episodeCarousel, "SubtitleText") == raw, "Episode carousel raw title changed");

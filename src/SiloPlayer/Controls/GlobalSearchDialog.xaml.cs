@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Messaging;
@@ -200,11 +201,11 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             _requestDiscoveryEnabled = status.RequestsEnabled && _auth.SelectedProfileId == _dialogContext.ProfileId;
         }
         catch { _requestDiscoveryEnabled = false; }
-        if (_apiClient.IsCurrentContext(_dialogContext))
-            SearchBox.PlaceholderText = _requestDiscoveryEnabled
-                ? "Search library or find titles to request..."
-                : "Search library...";
+        if (_apiClient.IsCurrentContext(_dialogContext)) RefreshSearchPlaceholder();
     }
+
+    private void RefreshSearchPlaceholder() => SearchBox.PlaceholderText = AppStrings.Get(
+        _requestDiscoveryEnabled ? "web.search.placeholderRequest" : "web.search.placeholderLibrary");
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -413,6 +414,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void Render()
     {
+        RefreshSearchPlaceholder();
         LoadingPanel.Visibility = (_catalogPending || _peoplePending || _boxSets.IsLoading) && !_searchFailed && _results.Count + _peopleResults.Count + _boxSets.Items.Count == 0
             ? Visibility.Visible : Visibility.Collapsed;
 

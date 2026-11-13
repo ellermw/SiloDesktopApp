@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using System.ComponentModel;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
@@ -869,10 +870,10 @@ public sealed partial class CalendarPage : Page
         {
             EmptyStateText.Text = ViewModel.Filter switch
             {
-                "following" => "Nothing upcoming from shows you follow this week.",
-                "everything" => "Nothing scheduled this week.",
-                "trending" => "Nothing trending this week.",
-                _ => "No events this week for this view."
+                "following" => AppStrings.Get("web.calendar.emptyFollowing"),
+                "everything" => AppStrings.Get("web.calendar.emptyEverything"),
+                "trending" => AppStrings.Get("web.calendar.emptyTrending"),
+                _ => AppStrings.Get("web.calendar.emptyFallback")
             };
             EmptyActionsPanel.Visibility = Visibility.Visible;
             EmptyFollowingButton.Visibility = ViewModel.Filter == "following" ? Visibility.Collapsed : Visibility.Visible;

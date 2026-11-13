@@ -35,6 +35,8 @@ public sealed partial class MainWindow
             PlayingNextFinishedHeading.Text = PlayingNextFinishedHeadingText(_playerService.WatchDetail?.SeriesTitle);
             PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextAutoplayToggleText.Text = PlayingNextAutoplayText(_playingNextAutoPlay);
+            PlayingNextFinishedDescription.Text = PlayingNextFinishedDescriptionText(_playerService.IsShufflePlayback);
+            PlayingNextShuffleScope.Text = PlayingNextShuffleScopeText(_playerService.ShuffleScopeLabel);
         }
     }
 }

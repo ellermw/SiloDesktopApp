@@ -13,7 +13,7 @@ namespace SiloPlayer.Views;
 public sealed partial class SettingsPage
 {
     private IDisposable? _localeRegistration;
-    private string? _settingsLocaleLanguage;
+    private long? _settingsLocaleGeneration;
     private readonly List<Action> _localeRefreshers = [];
 
     /// <summary>Catalog text for a fixed Settings label; <paramref name="english"/> is the fallback.</summary>
@@ -73,9 +73,9 @@ public sealed partial class SettingsPage
         // Text built in code already used the language of its first build; rebuild
         // only after the language actually changes (not on the first load, where an
         // in-flight load still owns the loading states).
-        var previous = _settingsLocaleLanguage;
-        _settingsLocaleLanguage = AppStrings.Language;
-        if (previous is null || previous == AppStrings.Language) return;
+        var previous = _settingsLocaleGeneration;
+        _settingsLocaleGeneration = AppStrings.Current.Generation;
+        if (previous is null || previous == AppStrings.Current.Generation) return;
 
         HomeLayoutMoreButton.Content = L("web.ui.pageMoreMenu.more", "More");
         // The directory, its cards and the shell's sidebar entries are rebuilt from keys.

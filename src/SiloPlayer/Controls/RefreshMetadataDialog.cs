@@ -29,7 +29,7 @@ public sealed class RefreshMetadataDialog : ContentDialog
         var title = new Grid { ColumnSpacing = 24 };
         title.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         title.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        title.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.dialog.refreshMetadataTitle", fallback: "Refresh Metadata"), FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold });
+        title.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.dialog.refreshMetadataTitle", fallback: "Refresh Metadata"), FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }.Keyed("web.item.dialog.refreshMetadataTitle"));
         var close = CornerCloseButton(); close.Content = WebUiIcon.Create("x", 16, Brush("PrimaryTextBrush"));
         close.Width = close.Height = 16; close.Margin = new Thickness(0, -8, -8, 0); close.VerticalAlignment = VerticalAlignment.Top;
         close.Click += (_, _) => Dismiss(); Grid.SetColumn(close, 1); title.Children.Add(close); Title = title;
@@ -39,11 +39,12 @@ public sealed class RefreshMetadataDialog : ContentDialog
         {
             Text = AppStrings.Get("web.item.refresh.description", fallback: "Choose whether to refresh the existing item or rebuild it from the files on disk."),
             FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap,
-        });
-        _quickButton = BuildChoice("refresh-cw", AppStrings.Get("web.item.refresh.quickTitle", fallback: "Quick Refresh"), AppStrings.Get("web.item.refresh.quickBody", fallback: "Keep the current item and refresh metadata using the existing scan scope."), "quick");
-        _completeButton = BuildChoice("rotate-ccw", AppStrings.Get("web.item.refresh.completeTitle", fallback: "Complete Refresh"), AppStrings.Get("web.item.refresh.completeBody", fallback: "Clear the current match, re-scan, and rebuild the item from disk context. This can recreate the item with a new ID or type."), "complete");
+        }.Keyed("web.item.refresh.description"));
+        _quickButton = BuildChoice("refresh-cw", "web.item.refresh.quickTitle", "web.item.refresh.quickBody", "quick");
+        _completeButton = BuildChoice("rotate-ccw", "web.item.refresh.completeTitle", "web.item.refresh.completeBody", "complete");
         _root.Children.Add(new StackPanel { Spacing = 12, Children = { _quickButton, _completeButton } });
         _cancelButton = new Button { Content = AppStrings.Get("common.cancel", fallback: "Cancel"), HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
+        Localized.SetContent(_cancelButton, "common.cancel");
         _cancelButton.Click += (_, _) => { if (!_pending) Dismiss(); };
         _root.Children.Add(_cancelButton);
         _scroller = new ScrollViewer { Content = _root, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -75,11 +76,11 @@ public sealed class RefreshMetadataDialog : ContentDialog
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(close, AppStrings.Get("web.ui.close", fallback: AppStrings.Get("web.ui.close", fallback: "Close"))); ToolTipService.SetToolTip(close, "Close"); return close;
     }
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
-    private Button BuildChoice(string glyph, string title, string description, string mode)
+    private Button BuildChoice(string glyph, string titleKey, string descriptionKey, string mode)
     {
         var icon = WebUiIcon.Create(glyph, 20, Brush("SecondaryTextBrush")); icon.Margin = new Thickness(0, 2, 0, 0); icon.VerticalAlignment = VerticalAlignment.Top;
         var spinner = new ProgressRing { Width = 20, Height = 20, IsActive = false, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 2, 0, 0), VerticalAlignment = VerticalAlignment.Top };
-        var copy = new StackPanel { Spacing = 4, Children = { new TextBlock { Text = title, FontSize = 14, Height = 20, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }, new TextBlock { Text = description, FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap } } };
+        var copy = new StackPanel { Spacing = 4, Children = { new TextBlock { FontSize = 14, Height = 20, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }.Keyed(titleKey), new TextBlock { FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }.Keyed(descriptionKey) } };
         var grid = new Grid { ColumnSpacing = 12 }; grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         grid.Children.Add(new Grid { Children = { icon, spinner } }); Grid.SetColumn(copy, 1); grid.Children.Add(copy);
         var button = new Button { Content = grid, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(16), Background = Brush("SurfaceBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12) };

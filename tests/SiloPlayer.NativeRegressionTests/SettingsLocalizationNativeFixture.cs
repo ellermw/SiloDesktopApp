@@ -24,7 +24,7 @@ using SiloPlayer.Views.Dialogs;
 /// retained tab refreshed while loaded; the real profile editor dialog in Arabic;
 /// Webhook Sync and the metadata editor's labels. Synthetic wire only.
 /// </summary>
-internal static class SettingsLocalizationNativeFixture
+internal static partial class SettingsLocalizationNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     private const string Host = "settings-localization.fixture.invalid";
@@ -43,7 +43,7 @@ internal static class SettingsLocalizationNativeFixture
         var prefs = local.Load(); prefs.SiloCastEnabled = false; local.Save(prefs);
         await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(http).AddSingleton(auth).AddSingleton(local)
-            .AddSingleton<CredentialStore>().AddSingleton<AuthApi>().AddSingleton<SettingsApi>().AddSingleton<CatalogApi>()
+            .AddSingleton<PeopleApi>().AddSingleton<CredentialStore>().AddSingleton<AuthApi>().AddSingleton<SettingsApi>().AddSingleton<CatalogApi>()
             .AddSingleton<WebhookSyncApi>().AddSingleton<MediaMaintenanceApi>().AddSingleton<RequestsApi>().AddSingleton<NotificationsApi>().AddSingleton<PlaybackApi>()
             .AddSingleton<HistoryImportApi>().AddSingleton<WatchProvidersApi>().AddSingleton<RecommendationsApi>().AddSingleton<CollectionsApi>()
             .AddSingleton<EventChannelClient>().AddSingleton<ThemeService>().AddSingleton<AccessibilityService>()
@@ -63,6 +63,7 @@ internal static class SettingsLocalizationNativeFixture
         {
             Apply("en");
             var only = Environment.GetEnvironmentVariable("SILO_SETTINGS_LOCALIZATION_CASE");
+            if (only is null or "review-followups") await ReviewFollowups(parent, client);
             if (only is null or "directory") await DirectoryCase(parent);
             if (only is null or "tabs") await Tabs(parent);
             if (only is null or "profile-editor") await ProfileEditor(parent, client);
@@ -439,6 +440,7 @@ internal static class SettingsLocalizationNativeFixture
             }
             return Json(path switch
             {
+                "/api/v2/subtitles/search" => new { results = Array.Empty<object>(), warnings = Array.Empty<object>() },
                 "/api/v2/profiles" => new { items = new[] { new { id = "primary", name = "Primary", is_primary = true } } },
                 "/api/v2/admin/catalog/capabilities" => new { item_metadata_reset = true },
                 _ => (object)new { items = Array.Empty<object>(), state = "unavailable", sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() },

@@ -282,7 +282,7 @@
                                 HorizontalAlignment="Center"
                                 TextAlignment="Center"
                                 TextWrapping="Wrap"
-                                MaxWidth="360"  loc:Localized.Text="web.calendar.emptyEverything"/>
+                                MaxWidth="360" />
                             <StackPanel x:Name="EmptyActionsPanel" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Visibility="Collapsed">
                                 <Button x:Name="EmptyFollowingButton" Content="Following" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="FilterFollowingBtn_Click"  loc:Localized.Content="web.calendar.presetFollowing"/>
                                 <Button x:Name="EmptyTrendingButton" Content="Trending" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="ShowTrending_Click"  loc:Localized.Content="web.calendar.presetTrending"/>

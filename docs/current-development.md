@@ -1,3 +1,39 @@
+# November 12 ? PR #145 retained locale review follow-ups
+
+Candidate based on pipeline head `787456b0822a697d86f226e392f663572661ded9`;
+this preserves pipeline attempts 3 and 4. Nine outstanding GitHub review findings
+are addressed together: region-only Settings changes refresh culture-sensitive
+text; non-player subtitle empty results resolve their catalog key; person-editor
+and Refresh Metadata labels refresh while open; Allowed Titles uses attached
+keys and retained result-button bindings; Requests restores eight Auto rows;
+Calendar resolves the active empty-state variant; global search retains its
+request-discovery hint; Playing Next refreshes its finished description and scope.
+No playback transition, query, draft, saved language tag or API identifier is
+rewritten by these text refreshes.
+
+Verification: Release publish and native host build succeeded. Three native
+groups passed on the new payload: settings-localization (including the full
+existing group), media-localization and shell-localization. Follow-up cases
+exercise de/ar/ja on actual open dialogs, an actual empty subtitle-search response,
+region-only de-DE to de-CH Settings refresh, Calendar variants, request-guide row
+structure, and visible Playing Next text. Person-editor drafts are preserved.
+The full unit suite passed 6,221/6,221, with zero failures or skips (2m23s).
+App DLL SHA-256: `7CE95E6D21AAADEA097617EE6528421A527B9CD40066CA11063E227C0055C3D3`.
+All 1,989 captured source/test inputs match. Native test setup corrections were
+required because German ?Name? equals English and the status guide is retained
+outside the page namescope; neither correction relaxed the product expectations.
+
+Evidence: `D:/SiloPlayer-build/review-ui-receipt.json`,
+`review-ui-source-inputs.json`, `review-ui-{publish,units,native-build}.log`
+and the three native results. Earlier receipts below retain their original
+source/payload scope and limitations. This remains a candidate awaiting pipeline
+review, QA, merge and Beta publication. Version stamps remain pipeline-owned;
+no installer was installed and the owner's running player remains open.
+The personal-lists/default-suite and live/visual limitations below remain.
+Generated output is reused in the existing directory. Cleanup is still blocked
+by the earlier automatic approval review rejection; no deletion was retried,
+and 0 GiB has been reclaimed on either drive during this follow-up.
+
 # November 12 — PR #145 regional picker and dialog follow-up
 
 Based on integrated review head `159f31654a7400f761e594b4d6efe25cf0fab2c6`.

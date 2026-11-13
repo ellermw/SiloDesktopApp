@@ -32,20 +32,20 @@ public sealed class EditPersonDialog : ContentDialog
         _form.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         _form.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         _heading.Keyed("web.item.editPerson.title");
-        Add("name", AppStrings.Get("web.item.editPerson.name"), person.Name, true);
-        Add("bio", AppStrings.Get("web.item.editPerson.bio", fallback: "Bio"), person.Bio, true);
-        Add("birth_date", AppStrings.Get("web.item.editPerson.birthDate", fallback: "Birth Date"), person.BirthDate); Add("death_date", AppStrings.Get("web.item.editPerson.deathDate", fallback: "Death Date"), person.DeathDate);
-        Add("birthplace", AppStrings.Get("web.item.editPerson.birthplace", fallback: "Birthplace"), person.Birthplace); Add("homepage", AppStrings.Get("web.item.editPerson.homepage", fallback: "Homepage"), person.Homepage);
-        Add("tmdb_id", AppStrings.Get("web.item.dialog.tmdbId", fallback: "TMDB ID"), person.TmdbId); Add("imdb_id", AppStrings.Get("web.item.dialog.imdbId", fallback: "IMDb ID"), person.ImdbId); Add("tvdb_id", AppStrings.Get("web.item.dialog.tvdbId", fallback: "TVDB ID"), person.TvdbId);
+        Add("name", "web.item.editPerson.name", person.Name, true);
+        Add("bio", "web.item.editPerson.bio", person.Bio, true);
+        Add("birth_date", "web.item.editPerson.birthDate", person.BirthDate); Add("death_date", "web.item.editPerson.deathDate", person.DeathDate);
+        Add("birthplace", "web.item.editPerson.birthplace", person.Birthplace); Add("homepage", "web.item.editPerson.homepage", person.Homepage);
+        Add("tmdb_id", "web.item.dialog.tmdbId", person.TmdbId); Add("imdb_id", "web.item.dialog.imdbId", person.ImdbId); Add("tvdb_id", "web.item.dialog.tvdbId", person.TvdbId);
         Content = new ScrollViewer { Content = _form, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Opened += (_, _) => Reflow(); SizeChanged += (_, _) => Reflow();
         PrimaryButtonClick += Save;
     }
-    private void Add(string key, string label, string? value, bool full = false)
+    private void Add(string key, string labelKey, string? value, bool full = false)
     {
         var group = new StackPanel { Spacing = 6, Tag = full }; _groups[key] = group;
-        group.Children.Add(new TextBlock { Text = label, FontSize = 14, Height = 14, LineHeight = 14,
-            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.Medium });
+        group.Children.Add(new TextBlock { FontSize = 14, Height = 14, LineHeight = 14,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.Medium }.Keyed(labelKey));
         var input = new TextBox { Text = value ?? "", FontSize = 14, Tag = full, Height = 36, MinHeight = 36,
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"], CornerRadius = new CornerRadius(10) };
         if (key == "bio") { input.AcceptsReturn = true; input.TextWrapping = TextWrapping.Wrap; input.MinHeight = input.Height = 128; }

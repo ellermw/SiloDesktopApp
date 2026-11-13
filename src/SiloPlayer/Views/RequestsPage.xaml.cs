@@ -72,6 +72,7 @@ public sealed partial class RequestsPage : Page
         for (var index = 0; index < descriptions.Length; index++)
         {
             var descriptor = descriptions[index];
+            StatusGuideGrid.RowDefinitions.Add(new() { Height = GridLength.Auto });
             var badge = SiloPlayer.Controls.ExternalTitleCard.StatusBadge(descriptor.Item2, display: () => SiloPlayer.Controls.MediaItemCardActions.RequestStatus(descriptor.Item1));
             badge.VerticalAlignment = VerticalAlignment.Top;
             var text = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "", FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") }, text: descriptor.Item1 == "failed" ? null : descriptor.Item3);
