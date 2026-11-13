@@ -161,6 +161,8 @@ internal static class EditorDialogPresentation
             }
             if (Localized.GetName(element) is { Length: > 0 } nameKey)
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(element, AppStrings.Get(nameKey));
+            if (Localized.GetToolTip(element) is { Length: > 0 } tooltipKey)
+                ToolTipService.SetToolTip(element, AppStrings.Get(tooltipKey));
         }
     }
 

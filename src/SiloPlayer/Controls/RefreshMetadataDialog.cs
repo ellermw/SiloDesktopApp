@@ -73,7 +73,7 @@ public sealed class RefreshMetadataDialog : ContentDialog
     internal static Button CornerCloseButton()
     {
         var close = new Button { Content = new FontIcon { Glyph = "\uE711", FontSize = 16 }, Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(0), MinWidth = 16, MinHeight = 16, Width = 20, Height = 20, Opacity = .7 };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(close, AppStrings.Get("web.ui.close", fallback: AppStrings.Get("web.ui.close", fallback: "Close"))); ToolTipService.SetToolTip(close, "Close"); return close;
+        Localized.SetName(close, "web.ui.close"); Localized.SetToolTip(close, "web.ui.close"); return close;
     }
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
     private Button BuildChoice(string glyph, string titleKey, string descriptionKey, string mode)

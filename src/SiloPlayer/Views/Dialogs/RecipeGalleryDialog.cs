@@ -256,8 +256,8 @@ public static partial class RecipeGalleryDialog
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featuredRow } } }, "web.home.addRow.more.title"));
 
         root.Width = double.NaN;
-        if (!await HomeRowDialog.ShowAsync(xamlRoot, section is null ? CollectionText.Get("web.home.addRow.addRow", "Add row") : CollectionText.Get("web.home.addRow.editRow", "Edit row"), root,
-            section is null ? CollectionText.Get("web.home.addRow.addRow", "Add row") : CollectionText.Get("web.home.addRow.save", "Save"), () =>
+        if (!await HomeRowDialog.ShowAsync(xamlRoot, () => section is null ? CollectionText.Get("web.home.addRow.addRow", "Add row") : CollectionText.Get("web.home.addRow.editRow", "Edit row"), root,
+            () => section is null ? CollectionText.Get("web.home.addRow.addRow", "Add row") : CollectionText.Get("web.home.addRow.save", "Save"), () =>
         {
             var definition = definitions.GetValueOrDefault(selectedType) ?? new RecipeDefinition { Type = selectedType };
             var message = Validate(definition, config);
@@ -552,7 +552,7 @@ public static partial class RecipeGalleryDialog
         root.Children.Add(CollectionText.KeyedHeader(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featured } } }, "web.home.addRow.more.title"));
 
-        var result = await HomeRowDialog.ShowAsync(xamlRoot, choice.Preset.DisplayNameText, root, CollectionText.Get("web.home.addRow.addRow", "Add row"), () =>
+        var result = await HomeRowDialog.ShowAsync(xamlRoot, () => choice.Preset.DisplayNameText, root, () => CollectionText.Get("web.home.addRow.addRow", "Add row"), () =>
         {
             var error = Validate(choice.Definition, config);
             error ??= SeasonalEditorProblem(paramHost);

@@ -72,6 +72,7 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
             if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
+            if (only is null or "review-thirteenth") await ReviewThirteenth(parent, wire);
             if (only is null or "review-twelfth") await ReviewTwelfth(parent);
             if (only is null or "review-eleventh") await ReviewEleventh(parent, wire, client);
             if (only is null or "review-tenth") await ReviewTenth(parent, wire, client);
@@ -486,6 +487,11 @@ internal static partial class SettingsLocalizationNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
+        public bool ReviewThirteenthCase { get; set; }
+        public string ImageCase { get; set; } = "cards";
+        public int ImageReads, ImageWrites, CollectionWrites, HistoryReads;
+        public bool HistoryFails;
+        public TaskCompletionSource<HttpResponseMessage>? ImageWrite, CollectionWrite, HistoryReply;
         public bool RequirePin { get; set; }
         public bool AllowedListsFail { get; set; }
         public int RequestCount { get; set; }
@@ -499,6 +505,28 @@ internal static partial class SettingsLocalizationNativeFixture
         {
             Check(request.RequestUri!.Host == Host, "External request blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (ReviewThirteenthCase)
+            {
+                if (path.EndsWith("/images/apply")) { ImageWrites++; return ImageWrite!.Task.WaitAsync(ct); }
+                if (path.EndsWith("/images"))
+                {
+                    ImageReads++;
+                    return ImageCase == "failed" ? Json(new { }, HttpStatusCode.ServiceUnavailable) : Json(new {
+                        items = ImageCase == "empty" ? Array.Empty<object>() : new object[] {
+                            new { type = "poster", original_url = "fixture-current", provider_id = "tmdb", url = "", language = "en" },
+                            new { type = "poster", original_url = "fixture-new", provider_id = "tmdb", url = "", language = "en" } },
+                        current = new { poster_url = "fixture-current" }, provider_errors = new { tmdb = "Raw provider error" }, page = new { has_more = false } });
+                }
+                if (path == "/api/v2/collections") return Json(new { items = new[] { new { id = "review-collection", name = "Raw collection 日本語", collection_type = "manual" } } });
+                if (path == "/api/v2/collections/review-collection/items") return Json(new { items = Array.Empty<object>(), page = new { has_more = false } });
+                if (path.EndsWith("/items/review-title") && request.Method == HttpMethod.Put) { CollectionWrites++; return CollectionWrite!.Task.WaitAsync(ct); }
+                if (path == "/api/v2/admin/playback-history")
+                {
+                    HistoryReads++;
+                    return HistoryReply != null ? HistoryReply.Task.WaitAsync(ct) : HistoryFails ? Json(new { }, HttpStatusCode.ServiceUnavailable)
+                        : Json(new { items = Array.Empty<object>(), page = new { has_more = true, next_cursor = "cursor-" + HistoryReads } });
+                }
+            }
             if (AllowanceMenuCase && path == "/api/v2/profiles") return Json(new { items = new[] { new { id = "primary", name = "Primary", is_primary = true, max_content_rating = "" }, new { id = "secondary", name = "Raw secondary", is_primary = false, max_content_rating = "PG" } } });
             if (path == "/api/v2/capabilities/title-allowances")
             {

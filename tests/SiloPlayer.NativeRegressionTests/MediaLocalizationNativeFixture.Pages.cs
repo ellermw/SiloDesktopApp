@@ -57,6 +57,9 @@ internal static partial class MediaLocalizationNativeFixture
             var browseState = Get<RequestBrowseSession>(browse, "_browse");
             await browseState.ResetAsync((_, _) => Task.FromResult((new DiscoverBrowseResponse { DisplayName = raw }, (int?)null)));
             await Task.Delay(180);
+            var failedHero = new HomeSectionWithItems { Id = "keyed-failure", Title = raw, TitleKey = "home.section.forYou", LoadFailed = true, LoadCompleted = true };
+            home.ViewModel.FeaturedSections.Add(failedHero); Invoke(home, "RefreshHero");
+            Require(Text(home, "HeroErrorTitle") == failedHero.DisplayTitle, "Initial Home hero failure title did not translate.");
             Invoke(detail, "BuildCast", new List<CastMember> { new() { Name = raw } });
             Invoke(detail, "UpdatePlayButtonFromItemData", new MediaItemDetail { ContentId = "detail-raw", Title = raw, Type = "episode" });
             Invoke(bookDetail, "UpdatePlayButtonFromItemData", new MediaItemDetail { ContentId = "book-raw", Title = raw, Type = "ebook" });
@@ -100,6 +103,8 @@ internal static partial class MediaLocalizationNativeFixture
                 CheckInlineChoiceLabels(search, "ResultTypeCombo", "ResultSortCombo", "ResultOrderCombo");
                 CheckInlineChoiceLabels(library, "OrderComboBox", "MediaTypeComboBox", "MatchStatusComboBox", "WatchStatusComboBox");
                 CheckInlineChoiceLabels(browse, "SortCombo");
+                Require(Text(home, "HeroErrorTitle") == failedHero.DisplayTitle && ((FrameworkElement)home.FindName("HeroErrorPanel")).Visibility == Visibility.Visible, "Retained Home hero failure title did not refresh.");
+                Require(failedHero.Title == raw && home.ViewModel.FeaturedSections.Contains(failedHero), "Home hero failure localization changed raw title or section identity.");
                 Require(Text(home, "TasteSeedTitle") == AppStrings.Get("web.home.tasteSeed.bannerTitle"), "Home retained title did not refresh");
                 var shuffle = (Button)library.FindName("LibraryShuffleButton");
                 Require(shuffle.Content is StackPanel && Descendants(shuffle).OfType<TextBlock>().Any(text => text.Text == AppStrings.Get("web.library.header.shuffle")), "Library retained templated shuffle action did not refresh");

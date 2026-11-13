@@ -131,6 +131,21 @@ internal static partial class MediaLocalizationNativeFixture
                 }
             }
             finally { dialog.Hide(); await pending; }
+            wire.FailCollections = false;
+            Apply("de"); frame.Navigate(typeof(RequestBrowsePage), new RequestBrowseNavigation("section", "localized-review"));
+            var requestPage = (RequestBrowsePage)frame.Content;
+            for (var attempt = 0; attempt < 200 && Text(requestPage, "TitleText") != AppStrings.Get("home.section.forYou"); attempt++) await Task.Delay(25);
+            foreach (var language in new[] { "de", "ar", "ja", "en" })
+            {
+                Apply(language); await Task.Delay(160);
+                var expected = language == "en" ? "Raw keyed Requests section" : AppStrings.Get("home.section.forYou");
+                Require(Text(requestPage, "TitleText") == expected && Text(requestPage, "HeaderTileText") == expected, "Keyed Requests browse headings did not refresh: " + language + "; title=" + Text(requestPage, "TitleText") + "; tile=" + Text(requestPage, "HeaderTileText") + "; expected=" + expected + "; error=" + Text(requestPage, "LoadingText"));
+                Require(window.AppWindow.Title == DocumentTitle.FromLabel(expected), "Requests window title did not follow translated section: " + window.AppWindow.Title);
+            }
+            frame.Navigate(typeof(Page)); window.AppWindow.Title = "Replacement page";
+            Apply("ar"); await Task.Delay(180);
+            Require(window.AppWindow.Title == "Replacement page", "Retired Requests browse page overwrote replacement window title.");
+            Program.Log("PASS Requests keyed section page/window titles translate en/de/ar/ja without retired-page title writes.");
             frame.Content = null;
             Program.Log("PASS: actual retained favorites/watchlist/history catalog title, subtitle and MainWindow title switch de/ar and Back; explicit mixed-direction custom headings remain raw.");
         }
@@ -232,6 +247,8 @@ internal static partial class MediaLocalizationNativeFixture
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.Host != "catalog-heading.invalid") throw new InvalidOperationException("External catalog fixture request refused");
+            if (request.RequestUri.AbsolutePath.Contains("/requests/discover/", StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"key\":\"localized-review\",\"title\":\"Raw keyed Requests section\",\"title_key\":\"home.section.forYou\",\"results\":[],\"total_pages\":1}") });
             if (FailCollections && request.RequestUri.AbsolutePath.Contains("/collections", StringComparison.Ordinal))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                 { Content = new StringContent("{\"message\":\"Fixture collection failure\"}") });

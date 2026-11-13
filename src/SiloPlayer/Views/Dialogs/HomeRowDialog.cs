@@ -7,19 +7,19 @@ namespace SiloPlayer.Views.Dialogs;
 /// <summary>Current Home rows form: centered at desktop widths and full height below 1024px.</summary>
 public static class HomeRowDialog
 {
-    public static async Task<bool> ShowAsync(XamlRoot root, string title, FrameworkElement content, string saveLabel, Func<string?> validate, CancellationToken cancellationToken = default)
+    public static async Task<bool> ShowAsync(XamlRoot root, Func<string> title, FrameworkElement content, Func<string> saveLabel, Func<string?> validate, CancellationToken cancellationToken = default)
     {
         var completion = new TaskCompletionSource<bool>();
         var popup = new Popup { XamlRoot = root, IsLightDismissEnabled = false };
         var overlay = new Grid { Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(150, 0, 0, 0)), Width = root.Size.Width, Height = root.Size.Height };
         var sheet = new Grid { Name = "HomeRowForm", Width = Math.Min(880, root.Size.Width), HorizontalAlignment = HorizontalAlignment.Center, Background = (Brush)Application.Current.Resources["AppBackgroundBrush"], Padding = new Thickness(24), RowSpacing = 18 };
         sheet.RowDefinitions.Add(new() { Height = GridLength.Auto }); sheet.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) }); sheet.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var header = new TextBlock { Text = title, FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        var header = new TextBlock { Text = title(), FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
         sheet.Children.Add(header);
         var scroller = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }; Grid.SetRow(scroller, 1); sheet.Children.Add(scroller);
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
-        var save = new Button { Content = saveLabel, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
-        // The caller words the title and save action; Cancel and the sheet's direction follow the interface language.
+        var save = new Button { Content = saveLabel(), Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        using var locale = SiloPlayer.Services.AppLocalization.Register(sheet, () => { header.Text = title(); save.Content = saveLabel(); });
         var cancel = SiloPlayer.Helpers.CollectionText.KeyedContent(new Button { Content = "Cancel", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] }, "common.cancel");
         var footer = new StackPanel { Spacing = 8, Children = { error, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, save } } } }; Grid.SetRow(footer, 2); sheet.Children.Add(footer);
         void Close(bool result) { popup.IsOpen = false; completion.TrySetResult(result); }

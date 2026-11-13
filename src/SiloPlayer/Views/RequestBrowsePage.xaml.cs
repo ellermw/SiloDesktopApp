@@ -87,11 +87,15 @@ public sealed partial class RequestBrowsePage : Page
     {
         if (_browse.FirstPage is { } first)
         {
-            SiloPlayer.Controls.MediaItemCardActions.BindText(TitleText, "Text", element => element.Text = _sectionTitle?.DisplayTitle ?? first.DisplayName);
+            SiloPlayer.Controls.MediaItemCardActions.BindText(TitleText, "Text", element =>
+            {
+                var title = _sectionTitle?.DisplayTitle ?? first.DisplayName;
+                element.Text = title;
+                if (_initialized && App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(title);
+            });
             SiloPlayer.Controls.MediaItemCardActions.BindText(HeaderTileText, "Text", element => element.Text = _sectionTitle?.DisplayTitle ?? first.DisplayName);
             HeaderTileText.Visibility = string.IsNullOrWhiteSpace(first.LogoUrl) ? Visibility.Visible : Visibility.Collapsed;
             HeaderLogo.Source = string.IsNullOrWhiteSpace(first.LogoUrl) ? null : (ImageSource)new UrlToImageSourceConverter().Convert(first.LogoUrl, typeof(ImageSource), null!, "");
-            if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(first.DisplayName);
         }
         SiloPlayer.Controls.MediaItemCardActions.BindText(PageText, "Text", element => element.Text = _browse.IsLoading ? SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.loading", fallback: "Loading...") : _navigation?.Kind switch { "studio" => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.studio", fallback: "Studio"), "network" => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.network", fallback: "Network"), "genre" => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.genre", fallback: "Genre"), _ => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.discoverSection.fallbackTitle", fallback: "Discover") });
         LoadingLayer.Visibility = _browse.IsLoading || _browse.Error != null ? Visibility.Visible : Visibility.Collapsed;

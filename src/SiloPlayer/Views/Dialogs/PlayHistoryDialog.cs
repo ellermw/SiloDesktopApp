@@ -20,11 +20,14 @@ public sealed class PlayHistoryDialog : ContentDialog
     private readonly ApiRequestContext _context;
     private string? _cursor;
     private readonly HashSet<string> _seen = [];
-    private bool _loading;
+    private bool _loading, _retry;
+    private void RefreshPagingLabel() => _more.Content = AppStrings.Get(_loading ? "web.common.ui.loadMore.loading"
+        : _retry ? "common.retry" : "web.common.ui.loadMore.button");
     public PlayHistoryDialog(string contentId)
     {
         _id = contentId; _client = App.Services.GetRequiredService<SiloApiClient>(); _context = _client.CaptureContext();
         Title = AppStrings.Get("web.item.menu.viewPlayHistory"); CloseButtonText = AppStrings.Get("web.ui.close"); this.KeyedDialog(title: "web.item.menu.viewPlayHistory", close: "web.ui.close");
+        SiloPlayer.Services.AppLocalization.Register(this, RefreshPagingLabel);
         var body = new StackPanel { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch }; body.Children.Add(_status); body.Children.Add(_rows); body.Children.Add(_more);
         var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -34,7 +37,7 @@ public sealed class PlayHistoryDialog : ContentDialog
     private async Task Load()
     {
         if (_loading || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
-        _loading = true; _more.IsEnabled = false; _status.Text = AppStrings.Get("web.item.menu.loading", fallback: "Loading…");
+        _loading = true; _retry = false; RefreshPagingLabel(); _more.IsEnabled = false; _status.Text = AppStrings.Get("web.item.menu.loading", fallback: "Loading…");
         try
         {
             if (!_client.IsCurrentContext(_context)) throw new OperationCanceledException();
@@ -59,7 +62,7 @@ public sealed class PlayHistoryDialog : ContentDialog
             _status.Text = _rows.Children.Count == 0 ? "No playback history." : "";
         }
         catch (OperationCanceledException) { _more.Visibility = Visibility.Collapsed; }
-        catch (Exception ex) { _status.Text = ex.DisplayMessage(); _more.Content = AppStrings.Get("common.retry"); _more.Visibility = Visibility.Visible; }
-        finally { _loading = false; _more.IsEnabled = true; }
+        catch (Exception ex) { _status.Text = ex.DisplayMessage(); _retry = true; _more.Visibility = Visibility.Visible; }
+        finally { _loading = false; _more.IsEnabled = true; RefreshPagingLabel(); }
     }
 }

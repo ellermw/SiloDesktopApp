@@ -1,3 +1,46 @@
+# November 13 - PR #145 section titles and retained dialog review fixes
+
+The seven findings on 6b02f142 are corrected on top of pipeline commit
+8868311cb2bd04939dc767835807be5e4bbe3f3d. Requests section/window titles
+share the translated heading and retired pages cannot overwrite a replacement
+window title. Failed Home heroes use DisplayTitle and refresh their failure
+heading without rebuilding the mounted carousel. Metadata close accessibility
+and tooltip keys refresh through the dialog lifetime. Image tabs, notices,
+current/empty/error labels, provider warnings and idle/pending Apply text refresh
+without refetching cards or losing selection/drafts. Collection saving status,
+history loading/retry/recovery and Home-row add/edit commands retain their
+localized state. Home-row callers supply title/action callbacks.
+
+Release publish and native host build passed. All 6,231 unit tests passed,
+zero failed/skipped (2.4310 minutes), including the pipeline Playback Info row-ID
+fix. Full settings-localization, media-localization and shell-localization
+native groups passed on the same published DLL. Tests cover en/de/ar/ja, actual
+Home-row forms, held writes, gallery selection/apply failure and history retry.
+All 1,995 recorded source/test inputs match. Product DLL SHA-256:
+62C26003B58414D7EF4014C6C91A20C7FD963F261236CDCCF8B87F0EC2BADD4A.
+Receipt: D:/SiloPlayer-build/review-thirteenth-receipt.json. Manifest:
+D:/SiloPlayer-build/review-thirteenth-source-inputs.json
+(EEF314294E8DA58AC14BBAF38995C0B474FAFF9C52EEC57D0FC12C9EC917D1E4).
+
+Native verification reproduced child refresh subscriptions lost during modal
+template relocation. Dialog-owned callbacks now retain image Apply/provider
+text, and keyed descendant refresh includes tooltips. Fixture corrections wait
+for actual popup fields and preserve the established English server-text
+fallback; assertions remain language/state specific. Original failure text is
+retained in the reused results directory. Product/unit-test inputs covered by
+the unit project did not change during the later native-only corrections.
+
+The independent contracts/hero PR #143 and HUD/autoplay PR #144 are merged.
+These changes are review corrections to the existing localization PR #145;
+new independent work belongs in a separate Beta PR. Pipeline owns versioning,
+QA, merge and release. Earlier VM subtitle-timeout and live/visual-parity limits
+remain unverified. Source stamps stay 1.2.1015-beta.1 / 1.2.1014.1.
+
+Task output is 1.247 GiB; measured free C: 189.46 GiB, D: 481.26 GiB.
+Installed player PID 38020 remains open. Owner AGENTS.md changes stay uncommitted.
+No cleanup deletion was retried after the earlier automatic approval rejection;
+recovered space is 0 GiB on C: and D:. Final delivery cleanup remains pending.
+
 # November 13 - PR #145 recency, Favorites, seek units and language badges
 
 The four findings on 64c7edba are addressed. Added/Released recency selectors

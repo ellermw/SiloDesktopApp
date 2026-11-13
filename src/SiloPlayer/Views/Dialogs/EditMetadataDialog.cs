@@ -471,7 +471,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
     private void BuildImages(StackPanel panel)
     {
         panel.Spacing = 12;
-        var notice = new TextBlock { Text = AppStrings.Get("web.item.images.immediateNotice"), FontSize = 11, TextWrapping = TextWrapping.Wrap };
+        var notice = new TextBlock { Text = AppStrings.Get("web.item.images.immediateNotice"), FontSize = 11, TextWrapping = TextWrapping.Wrap }.Keyed("web.item.images.immediateNotice");
         notice.Foreground = Brush("SecondaryTextBrush");
         panel.Children.Add(new Border { Child = notice, Padding = new Thickness(12, 8, 12, 8), Background = TranslucentBrush("MutedBrush", .5), CornerRadius = new CornerRadius(12) });
         if (_item.Type == "season")
@@ -481,7 +481,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
             hint.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             hint.Children.Add(WebUiIcon.Create("circle-alert", 14, Brush("WarningBrush")));
             var copy = new TextBlock { Text = AppStrings.Get("web.item.images.seasonNotice"),
-                FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = Brush("WarningBrush") };
+                FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = Brush("WarningBrush") }.Keyed("web.item.images.seasonNotice");
             Grid.SetColumn(copy, 1); hint.Children.Add(copy);
             panel.Children.Add(new Border { Child = hint, Padding = new Thickness(12, 6, 12, 6), CornerRadius = new CornerRadius(8),
                 BorderThickness = new Thickness(1), BorderBrush = TranslucentBrush("WarningBrush", .2), Background = TranslucentBrush("WarningBrush", .05) });
@@ -490,6 +490,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
         var textless = new ToggleButton { Content = AppStrings.Get("web.item.images.textless"), FontSize = 11, FontWeight = FontWeights.Medium, Height = 30, MinHeight = 0,
             Padding = new Thickness(10, 6, 10, 6), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Foreground = Brush("SecondaryTextBrush"), CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Right };
+        CollectionText.KeyedContent(textless, "web.item.images.textless");
         var tabRow = new Grid(); tabRow.Children.Add(tabs); tabRow.Children.Add(textless); panel.Children.Add(tabRow);
         var warnings = new TextBlock { Foreground = Brush("WarningBrush"), FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed }; panel.Children.Add(warnings);
         var grid = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8, Margin = new Thickness(0, 0, 12, 4) }; panel.Children.Add(grid);
@@ -536,6 +537,15 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 _ => "Apply " + char.ToUpperInvariant(type[0]) + type[1..],
             };
         }
+        MediaItemCardActions.BindText(this, "ImageSelection", _ => SelectionPresentation());
+        Dictionary<string, string> providerErrors = [];
+        void RefreshProviderErrors()
+        {
+            var providers = string.Join(", ", providerErrors.Keys.Select(key => key.ToUpperInvariant()));
+            warnings.Text = providerErrors.Count > 0 ? AppStrings.Get("web.item.images.providerErrors", new Dictionary<string, object?> { ["providers"] = providers }, "Could not load from " + providers) : "";
+            warnings.Visibility = providerErrors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        MediaItemCardActions.BindText(this, "ImageProviderErrors", _ => RefreshProviderErrors());
         void Render()
         {
             grid.Children.Clear(); cards.Clear(); selection = default; apply.IsEnabled = false;
@@ -543,7 +553,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 (!String(image, "original_url").StartsWith("upload://", StringComparison.Ordinal) || IsCurrentImage(String(image, "original_url"))) &&
                 (textless.IsChecked != true || type == "logo" || String(image, "language").Length == 0)).ToArray() ?? [];
             foreach (var tab in tabs.Children.OfType<Button>()) tab.Style = (Style)Application.Current.Resources[Equals(tab.Tag, type) ? "AccentButtonStyle" : "GhostButtonStyle"];
-            if (choices.Length == 0) grid.Children.Add(new TextBlock { Text = textless.IsChecked == true ? AppStrings.Get("web.item.images.noTextless") : AppStrings.Get("web.item.images.noImages"), FontSize = 14 });
+            if (choices.Length == 0) grid.Children.Add(new TextBlock { Text = textless.IsChecked == true ? AppStrings.Get("web.item.images.noTextless") : AppStrings.Get("web.item.images.noImages"), FontSize = 14 }.Keyed(textless.IsChecked == true ? "web.item.images.noTextless" : "web.item.images.noImages"));
             foreach (var image in choices)
             {
                 var picture = new Image { Stretch = Stretch.UniformToFill };
@@ -552,7 +562,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 var original = String(image, "original_url"); var isCurrent = IsCurrentImage(original);
                 if (isCurrent) body.Children.Add(new Border { Margin = new Thickness(4), Padding = new Thickness(6, 2, 6, 2), CornerRadius = new CornerRadius(4),
                     Background = TranslucentBrush("AccentBrush", .9), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
-                    Child = new TextBlock { Text = AppStrings.Get("web.item.images.current"), FontSize = 9, Foreground = Brush("AccentForegroundBrush"), FontWeight = FontWeights.SemiBold } });
+                    Child = new TextBlock { Text = AppStrings.Get("web.item.images.current"), FontSize = 9, Foreground = Brush("AccentForegroundBrush"), FontWeight = FontWeights.SemiBold }.Keyed("web.item.images.current") });
                 var selectionBadge = new Border { Tag = "selection", Width = 20, Height = 20, Margin = new Thickness(4), CornerRadius = new CornerRadius(10),
                     Background = Brush("AccentBrush"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Visibility = Visibility.Collapsed,
                     Child = WebUiIcon.Create("check", 12, Brush("AccentForegroundBrush")) };
@@ -572,6 +582,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
         {
             var button = new Button { Content = imageType switch { "poster" => AppStrings.Get("web.item.images.posters"), "backdrop" => AppStrings.Get("web.item.images.backdrops"), _ => AppStrings.Get("web.item.images.logos") }, Tag = imageType, FontSize = 12, FontWeight = FontWeights.Medium,
                 Height = 30, MinHeight = 0, Padding = new Thickness(12, 6, 12, 6), Style = (Style)Application.Current.Resources[imageType == "poster" ? "AccentButtonStyle" : "GhostButtonStyle"] };
+            CollectionText.KeyedContent(button, imageType switch { "poster" => "web.item.images.posters", "backdrop" => "web.item.images.backdrops", _ => "web.item.images.logos" });
             button.Click += (_, _) => { type = imageType; textless.IsChecked = false; textless.Visibility = type == "logo" ? Visibility.Collapsed : Visibility.Visible; Render(); }; tabs.Children.Add(button);
         }
         textless.Click += (_, _) => Render();
@@ -588,9 +599,9 @@ public sealed partial class EditMetadataDialog : ContentDialog
         Opened += async (_, _) =>
         {
             grid.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24 });
-            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); images = result.Items; current = result.Current; warnings.Text = result.Errors.Count > 0 ? AppStrings.Get("web.item.images.providerErrors", new Dictionary<string, object?> { ["providers"] = string.Join(", ", result.Errors.Keys.Select(key => key.ToUpperInvariant())) }, "Could not load from " + string.Join(", ", result.Errors.Keys.Select(key => key.ToUpperInvariant()))) : ""; warnings.Visibility = result.Errors.Count > 0 ? Visibility.Visible : Visibility.Collapsed; Render(); }
+            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); images = result.Items; current = result.Current; providerErrors = result.Errors; RefreshProviderErrors(); Render(); }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-            catch { grid.Children.Clear(); grid.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.images.loadFailed"), FontSize = 14 }); }
+            catch { grid.Children.Clear(); grid.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.images.loadFailed"), FontSize = 14 }.Keyed("web.item.images.loadFailed")); }
         };
     }
 }

@@ -153,7 +153,7 @@ public sealed partial class AddToCollectionDialog : ContentDialog
         var deferral = args.GetDeferral();
         args.Cancel = true;
         IsPrimaryButtonEnabled = false;
-        MediaItemCardActions.BindText(StatusText, "Text", element => element.Text = "Adding to collection…");
+        MediaItemCardActions.BindText(StatusText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.collections.manual.saving"));
         StatusText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
         StatusText.Visibility = Visibility.Visible;
         try
