@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Converters;
@@ -337,6 +338,7 @@ public sealed partial class RequestDetailPage : Page
                 if (_requestConfirmationOpen || _lifetime.IsCancellationRequested) return;
                 var owner = _api.CaptureIdentityContext();
                 var confirmation = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog { XamlRoot = XamlRoot, Title = "Cancel this request?", Content = $"Cancel your request for {item.Title}?", PrimaryButtonText = "Cancel request", CloseButtonText = "Keep request", DefaultButton = ContentDialogButton.Close }, title: "web.requests.cancel.title", primaryButton: "web.requests.cancel.action", closeButton: "web.requests.cancel.keep");
+                SiloPlayer.Controls.MediaItemCardActions.BindText(confirmation, "Content", dialog => dialog.Content = AppStrings.Get("web.requests.cancel.description", new Dictionary<string, object?> { ["title"] = item.Title }));
                 ContentDialogResult choice;
                 _requestConfirmationOpen = true;
                 try { choice = await confirmation.ShowAsync(); }

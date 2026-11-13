@@ -53,7 +53,7 @@ internal static partial class SettingsLocalizationNativeFixture
             .AddSingleton<EpisodeSpoilerPreferences>().AddSingleton<PlayerService>()
             .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "settings-localization-images")))
-            .AddSingleton<ItemDetailPrefetchCache>()
+            .AddSingleton<ItemDetailPrefetchCache>().AddSingleton<ItemDetailViewModel>()
             .AddSingleton(sp => new AppLanguagePreference(sp.GetRequiredService<SettingsApi>()))
             .AddSingleton(sp => new AppLocaleCoordinator(sp.GetRequiredService<AppLanguagePreference>(), LocaleService.Shared,
                 sp.GetRequiredService<SettingsService>(), () => ["en-US"], "en-US", AppLocalization.PostTo(parent.DispatcherQueue)))
@@ -72,6 +72,7 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
             if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
+            if (only is null or "review-eighth") { await LanguageInitialLoadRecovery(parent); await ReviewEighthDialogs(parent, wire, client); }
             if (only is null or "language-refresh") await LanguageRefreshRecovery(parent, reload: false);
             if (only is null or "language-reload") await LanguageRefreshRecovery(parent, reload: true);
         }
@@ -429,6 +430,7 @@ internal static partial class SettingsLocalizationNativeFixture
         public bool DeviceDeleteFails { get; set; }
         public bool PutFails { get; set; }
         public bool EffectiveFails { get; set; }
+        public string? PickerFailure { get; set; }
         private readonly List<string> _requests = [];
         public List<string> Writes { get { lock (_requests) return _requests.Where(request => !request.StartsWith("GET", StringComparison.Ordinal)).ToList(); } }
 
@@ -439,6 +441,9 @@ internal static partial class SettingsLocalizationNativeFixture
             var body = request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct);
             lock (_requests) _requests.Add($"{request.Method} {uri.PathAndQuery} {body}");
             string Value() => Stored == null ? "null" : "\"" + Stored + "\"";
+            if ((PickerFailure == "capabilities" && uri.AbsolutePath == "/api/v2/settings/contract/capabilities")
+                || (PickerFailure == "profile" && uri.AbsolutePath == "/api/v2/settings/values/ui.app_language" && request.Method == HttpMethod.Get))
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             if (uri.AbsolutePath == "/api/v2/settings/contract/capabilities")
                 return Raw("""{"api_version":1,"manifest_revision":28,"supports_batched_effective":true}""");
             if (uri.AbsolutePath == "/api/v2/settings/values/effective" && EffectiveFails) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
@@ -477,6 +482,7 @@ internal static partial class SettingsLocalizationNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
+        public bool RequirePin { get; set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Check(request.RequestUri!.Host == Host, "External request blocked.");
@@ -489,8 +495,10 @@ internal static partial class SettingsLocalizationNativeFixture
             }
             return Json(path switch
             {
+                "/api/v2/requests/fixture-cancel" => new { id = "fixture-cancel", outcome = "active", status = "pending" },
+                "/api/v2/watch-together/capabilities" => new { state = "available", allowed = true, staged_selection = true },
                 "/api/v2/subtitles/search" => new { results = Array.Empty<object>(), warnings = Array.Empty<object>() },
-                "/api/v2/profiles" => new { items = new[] { new { id = "primary", name = "Primary", is_primary = true } } },
+                "/api/v2/profiles" => new { items = new[] { new { id = "primary", name = "Primary", is_primary = true, has_pin = RequirePin } } },
                 "/api/v2/admin/catalog/capabilities" => new { item_metadata_reset = true },
                 _ => (object)new { items = Array.Empty<object>(), state = "unavailable", sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() },
             });

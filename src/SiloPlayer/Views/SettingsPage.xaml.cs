@@ -3463,6 +3463,17 @@ _webhookPlexAuthCts?.Cancel();
             DefaultButton = ContentDialogButton.Close,
         };
 
+        SiloPlayer.Controls.MediaItemCardActions.Localize(dialog, primaryButton: "web.home.rows.reset.confirm", closeButton: "common.cancel");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(dialog, "Reset", element =>
+        {
+            var arguments = Args(("page_kind", scope.StartsWith("library:", StringComparison.OrdinalIgnoreCase) ? "library" : "home"), ("page", CurrentHomePageLabel()));
+            element.Title = L("web.home.rows.profilePage.resetTitle", "Reset this page to the server's rows?", arguments);
+            element.Content = L("web.home.rows.profilePage.resetDescription", "This page goes back to the server's rows.", arguments)
+                + "\n\n" + L("web.home.rows.reset.hidden", "Rows you hid come back.")
+                + "\n" + L("web.home.rows.reset.changed", "Rows you changed go back to their original settings.")
+                + "\n" + L("web.home.rows.reset.added", "Rows you added are deleted.", Args(("rows", ViewModel.HomeSections.Count(row => row.IsCustom))))
+                + "\n\n" + L("web.home.rows.reset.otherPages", "Your other pages and profiles don't change.");
+        });
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary && _layoutTransferActive && api.IsCurrentContext(context) && scope == ViewModel.SelectedScope)
         {

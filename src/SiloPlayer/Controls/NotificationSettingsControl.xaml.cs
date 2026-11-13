@@ -181,6 +181,10 @@ public sealed partial class NotificationSettingsControl : UserControl
             CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel"),
             DefaultButton = ContentDialogButton.Close,
         };
+        MediaItemCardActions.Localize(dialog, content: "web.settings.notifications.discord.description",
+            primaryButton: "web.settings.notifications.discord.unlink", closeButton: "common.cancel");
+        MediaItemCardActions.BindText(dialog, "Title", element => element.Title = AppStrings.Get(
+            "web.settings.watchProviders.disconnectConfirm", new Dictionary<string, object?> { ["provider"] = "Discord" }));
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             await ViewModel.UnlinkDiscordAsync();
     }

@@ -3408,7 +3408,7 @@ public sealed partial class ItemDetailPage : Page
                 episodeMembership = seasonEpisodes.Select(episode => (episode.ContentId, episode.EpisodeNumber)).ToArray();
             var panel = new StackPanel { Spacing = 14, Width = Math.Min(400, Math.Max(240, XamlRoot.Size.Width - 100)) };
             panel.Children.Add(new TextBlock { Text = item.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-            var targetChoice = new ComboBox { Header = "Episode", HorizontalAlignment = HorizontalAlignment.Stretch };
+            var targetChoice = SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBox { Header = "Episode", HorizontalAlignment = HorizontalAlignment.Stretch }, header: "web.watchTogether.startSheet.episode");
             if (item.Type is "series" or "season")
             {
                 if (item.Type == "series")
@@ -3426,7 +3426,11 @@ public sealed partial class ItemDetailPage : Page
                 targetChoice.SelectedItem = targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(e => Equals(e.Tag, target)) ?? targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault();
                 panel.Children.Add(targetChoice);
             }
-            var mode = new ComboBox { Header = "How to pick", SelectedIndex = 0, Items = { "Host picks · Stage this for the room", "Everyone votes · Add this as a suggestion" }, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var mode = new ComboBox { Header = "How to pick", HorizontalAlignment = HorizontalAlignment.Stretch };
+            SiloPlayer.Controls.MediaItemCardActions.Localize(mode, header: "web.watchTogether.startSheet.howToPick");
+            mode.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = AppStrings.Get("web.watchTogether.common.hostPicks") }, content: "web.watchTogether.common.hostPicks"));
+            mode.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = AppStrings.Get("web.watchTogether.activity.modeVote") }, content: "web.watchTogether.activity.modeVote"));
+            mode.SelectedIndex = 0;
             const string policyKey = "watch_party.guest_control_policy";
             string? savedPolicy = null;
             try
@@ -3443,11 +3447,19 @@ public sealed partial class ItemDetailPage : Page
             bool? pauseChoice = null;
             var reflectingPolicy = false;
             var pause = new ToggleSwitch { Header = "Guests can pause", IsOn = savedPolicy == "guest_play_pause" };
+            SiloPlayer.Controls.MediaItemCardActions.Localize(pause, header: "web.watchTogether.startSheet.allowPause");
             pause.Toggled += (_, _) => { if (!reflectingPolicy) pauseChoice = pause.IsOn; };
             var policyNotice = new TextBlock { Text = savedPolicy == null ? "Saved guest controls could not be read. The room will use its saved policy unless you change this switch." : "", TextWrapping = TextWrapping.Wrap };
             var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], Visibility = Visibility.Collapsed };
             panel.Children.Add(mode); panel.Children.Add(pause); panel.Children.Add(policyNotice); panel.Children.Add(error);
-            var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog { XamlRoot = XamlRoot, Title = "Start a party with this", Content = panel, PrimaryButtonText = "Create room", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary }, title: "web.watchTogether.startSheet.title", closeButton: "common.cancel");
+            var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog { XamlRoot = XamlRoot, Title = "Start a party with this", Content = panel, PrimaryButtonText = "Create room", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary }, title: "web.watchTogether.startSheet.title", primaryButton: "web.watchTogether.hub.create", closeButton: "common.cancel");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(dialog, "Controls", _ =>
+            {
+                mode.Header = AppStrings.Get("web.watchTogether.startSheet.howToPick");
+                targetChoice.Header = AppStrings.Get("web.watchTogether.startSheet.episode");
+                pause.Header = AppStrings.Get("web.watchTogether.startSheet.allowPause");
+                Localized.RefreshItems(mode);
+            });
             dialog.PrimaryButtonClick += async (_, args) =>
             {
                 args.Cancel = true; var deferral = args.GetDeferral(); dialog.IsPrimaryButtonEnabled = false;
@@ -4253,6 +4265,7 @@ public sealed partial class ItemDetailPage : Page
             Title = $"Download: {title}",
             CloseButtonText = "Cancel",
         }, closeButton: "common.cancel");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(dialog, "Title", element => element.Title = AppStrings.Get("web.downloads.versionPicker.titleWithName", new Dictionary<string, object?> { ["title"] = title }));
         var content = new StackPanel { Width = 410, Spacing = 10 };
         content.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
         {

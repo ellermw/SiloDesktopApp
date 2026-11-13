@@ -1,3 +1,39 @@
+# November 13 - PR #145 picker recovery and retained confirmations
+
+Addresses the seven findings on 56965f64. Initial language capabilities or
+profile-value read failures keep the group visible with a translated error and
+read-only retry; the picker stays disabled until the read succeeds. Unsupported
+servers still hide the group. Request cancellation and download headings retain
+raw title arguments. The party chooser, guest-pause label and Create Watch Party
+action refresh without clearing selections; the create key accurately describes
+the native flow, which does not copy an invite. Discord unlink, Home/library row
+reset and Your Data PIN confirmations retain localized headings, bodies and
+actions. Discord uses the existing translated disconnect heading and account-wide
+DM explanation because the shipped catalog has no dedicated unlink description.
+PIN drafts, raw names, request identifiers and server mutations remain intact.
+
+Release publish and native host build passed. All 6,221 unit tests passed with
+zero failures/skips (2m23s). Full settings-localization, media-localization and
+shell-localization native groups passed. Added native checks open all six actual
+dialogs and change de/ar/ja in place, verify party choices before opening their
+dropdown and preserve PIN/party drafts and raw titles. Both initial language read
+failures recover with zero writes. The first native attempt exposed a stale PIN
+child description; owning child refresh from the dialog lifetime fixed it before
+the passing targeted and full runs. Original failing result text is retained.
+All 1,990 frozen source/test inputs match. App DLL SHA-256:
+D95DA89728E63BDFB4154FD3BE4BDB9982F59341C7A695745C934398A48F28EA.
+
+Evidence: D:/SiloPlayer-build/review-eighth-{receipt,source-inputs}.json,
+review-eighth-{publish,native-build,units}.log and native result text.
+The pipeline stopped its prior head after a native-subtitle-sidecar-ownership
+timeout; its fixer made no changes because the diagnostics did not identify
+the blocked operation. These verified review fixes are submitted on a new head.
+Pipeline QA, merge and Beta publication remain pending.
+Version stamps remain pipeline-owned. Installed player stays open. Shared output
+is 1.157 GiB; C: 190.10 GiB free, D: 481.36 GiB free. No cleanup was retried;
+zero GiB reclaimed on either drive. Prior cleanup approval rejection and all
+previous live-server, visual and broader suite limitations remain applicable.
+
 # November 13 - PR #145 retained rows, filters and password outcomes
 
 Integrated review fix 1e7ccbc3 with pipeline attempt 6, a4d67a8d, through

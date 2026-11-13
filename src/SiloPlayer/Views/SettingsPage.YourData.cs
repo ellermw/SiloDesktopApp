@@ -468,6 +468,15 @@ public sealed partial class SettingsPage
             XamlRoot = XamlRoot,
             DefaultButton = ContentDialogButton.Primary,
         };
+        SiloPlayer.Controls.MediaItemCardActions.Localize(pin, placeholder: "web.profiles.pin.placeholder");
+        SiloPlayer.Controls.MediaItemCardActions.Localize((TextBlock)((StackPanel)dialog.Content).Children[0], text: "web.settings.yourData.pinDescription");
+        SiloPlayer.Controls.MediaItemCardActions.Localize(dialog, primaryButton: "web.profiles.pin.confirm", closeButton: "common.cancel");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(dialog, "Prompt", element =>
+        {
+            element.Title = L("web.profiles.pin.title", $"Enter PIN for {profile.Name}", Args(("name", profile.Name)));
+            ((TextBlock)((StackPanel)element.Content).Children[0]).Text = L("web.settings.yourData.pinDescription", "Enter this profile's PIN to export or import its data.");
+            pin.PlaceholderText = L("web.profiles.pin.placeholder", "Enter 4-digit PIN");
+        });
         _yourDataPinDialog = dialog;
         dialog.PrimaryButtonClick += async (sender, args) =>
         {

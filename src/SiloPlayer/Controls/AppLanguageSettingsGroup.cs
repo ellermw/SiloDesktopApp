@@ -105,19 +105,25 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         }
         catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException)
         {
-            if (generation == _loadGeneration)
+            if (generation == _loadGeneration && _preference.IsCurrentContext(context))
             {
                 if (_deviceClearOwner == settingsOwner && _preference.IsCurrentContext(context))
                 {
                     _owner = context;
                     ShowStatus(_statusKind == StatusKind.SaveFailedDevicePending ? _statusKind : StatusKind.DeviceClear);
                 }
-                else Visibility = Visibility.Collapsed;
+                else
+                {
+                    Visibility = Visibility.Visible;
+                    Picker.IsEnabled = false;
+                    ShowStatus(StatusKind.LoadFailed);
+                }
             }
             return;
         }
         if (generation != _loadGeneration || !_preference.IsCurrentContext(context)) return;
         _owner = context;
+        Picker.IsEnabled = !_saving;
         Visibility = state.Supported ? Visibility.Visible : Visibility.Collapsed;
         _storedTag = state.ProfileTag;
         if (_deviceClearOwner == settingsOwner) ShowStatus(_statusKind == StatusKind.SaveFailedDevicePending ? _statusKind : StatusKind.DeviceClear);
@@ -237,6 +243,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
 
     private async Task RetryAsync()
     {
+        if (_statusKind == StatusKind.LoadFailed) { await EnsureLoadedAsync(); return; }
         if (_deviceClearOwner != null) { await SaveAsync(_storedTag, clearDeviceOnly: true); return; }
         if (_saving || _owner is not { } context) return;
         var settingsOwner = _preference.CaptureSettingsOwner();
@@ -250,7 +257,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         }
     }
 
-    private enum StatusKind { None, DeviceClear, SaveFailed, SaveFailedDevicePending, RefreshFailed }
+    private enum StatusKind { None, DeviceClear, SaveFailed, SaveFailedDevicePending, RefreshFailed, LoadFailed }
     private StatusKind _statusKind;
 
     private void ShowStatus(StatusKind kind)
@@ -258,14 +265,14 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         _statusKind = kind;
         _status.Text = kind switch
         {
-            StatusKind.RefreshFailed => AppStrings.Get("web.common.ui.carousel.loadFailed", new Dictionary<string, object?> { ["title_lower"] = AppStrings.Get("settings.control.appLanguage") }),
+            StatusKind.RefreshFailed or StatusKind.LoadFailed => AppStrings.Get("web.common.ui.carousel.loadFailed", new Dictionary<string, object?> { ["title_lower"] = AppStrings.Get("settings.control.appLanguage") }),
             StatusKind.DeviceClear => DeviceClearFailedEnglish,
             StatusKind.SaveFailedDevicePending => AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed") + ". " + EarlierSaveDeviceClearPendingEnglish,
             _ => AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed"),
         };
         _status.Visibility = Visibility.Visible;
         // Recovery retries only the pending device clear or effective read, never the profile write.
-        _retry.Visibility = kind is StatusKind.DeviceClear or StatusKind.SaveFailedDevicePending or StatusKind.RefreshFailed || _refreshOwner != null ? Visibility.Visible : Visibility.Collapsed;
+        _retry.Visibility = kind is StatusKind.DeviceClear or StatusKind.SaveFailedDevicePending or StatusKind.RefreshFailed or StatusKind.LoadFailed || _refreshOwner != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void HideStatus()
