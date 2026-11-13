@@ -61,7 +61,7 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
                 ExternalTitles.Add(title);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (_externalLoad == load) SetLocalizedMessage(nameof(ExternalTitlesError), () => $"Couldn't load titles outside your library: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ExternalTitlesError = value); }
+        catch (Exception ex) { if (_externalLoad == load) SetLocalizedMessage(nameof(ExternalTitlesError), () => $"{SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.loadFailed")} {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ExternalTitlesError = value); }
         finally { Interlocked.CompareExchange(ref _externalLoad, null, load); load.Dispose(); }
     }
 

@@ -184,11 +184,11 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     };
 
     private static string ColorKey(Panel host, string label, bool background) =>
-        (background ? "web.settings.subtitleOptions.backgroundColor." : "web.settings.subtitleOptions.fontColor.") + label switch
+        (background ? "web.settings.subtitleOptions.backgroundColor." : "web.settings.subtitleOptions.fontColor.") + (label switch
         {
             "Dark Gray" => "darkGray", "Dark Red" => "darkRed", "Dark Green" => "darkGreen",
             _ => label.ToLowerInvariant(),
-        };
+        });
 
     private void RefreshText()
     {

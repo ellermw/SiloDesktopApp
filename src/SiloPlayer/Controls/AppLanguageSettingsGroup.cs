@@ -34,6 +34,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
     private readonly Button _retry = new() { Visibility = Visibility.Collapsed };
     private ApiRequestContext? _owner;
     private SettingsIdentityContext? _deviceClearOwner;
+    private SettingsIdentityContext? _refreshOwner;
     private string? _storedTag;
     private bool _populating;
     private bool _saving;
@@ -48,7 +49,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         _coordinator = coordinator;
         Picker = new ComboBox { MinWidth = 256, HorizontalAlignment = HorizontalAlignment.Left };
         Picker.SelectionChanged += OnSelectionChanged;
-        _retry.Click += async (_, _) => await SaveAsync(_storedTag, clearDeviceOnly: true);
+        _retry.Click += async (_, _) => await RetryAsync();
         var secondary = Application.Current.Resources.TryGetValue("SecondaryTextBrush", out var brush) ? brush as Brush : null;
         _description.Foreground = secondary;
         _unavailable.Foreground = secondary;
@@ -58,7 +59,12 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         Visibility = Visibility.Collapsed;
         AppLocalization.Register(this, RefreshText);
         Loaded += (_, _) => { _coordinator.Loaded -= OnCoordinatorLoaded; _coordinator.Loaded += OnCoordinatorLoaded; };
-        Unloaded += (_, _) => _coordinator.Loaded -= OnCoordinatorLoaded;
+        Unloaded += (_, _) =>
+        {
+            _coordinator.Loaded -= OnCoordinatorLoaded;
+            _owner = null;
+            ++_loadGeneration;
+        };
     }
 
     public ComboBox Picker { get; }
@@ -87,6 +93,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         var generation = ++_loadGeneration;
         var settingsOwner = _preference.CaptureSettingsOwner();
         if (_deviceClearOwner != settingsOwner) _deviceClearOwner = null;
+        if (_refreshOwner != settingsOwner) _refreshOwner = null;
         _owner = null;
         if (context.ProfileId == null) { Visibility = Visibility.Collapsed; return; }
         (bool Supported, string? ProfileTag) state;
@@ -114,6 +121,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         Visibility = state.Supported ? Visibility.Visible : Visibility.Collapsed;
         _storedTag = state.ProfileTag;
         if (_deviceClearOwner == settingsOwner) ShowStatus(_statusKind == StatusKind.SaveFailedDevicePending ? _statusKind : StatusKind.DeviceClear);
+        else if (_refreshOwner == settingsOwner) ShowStatus(StatusKind.RefreshFailed);
         else HideStatus();
         Populate();
     }
@@ -121,7 +129,9 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
     private void OnCoordinatorLoaded(object? sender, AppLanguageRead read)
     {
         // Another device or a realtime change updated the setting: show the stored value again.
-        if (!_saving && _preference.IsCurrentContext(read.Context)) _ = LoadAsync(read.Context);
+        if (!_preference.IsCurrentContext(read.Context)) return;
+        _refreshOwner = null;
+        if (!_saving) _ = LoadAsync(read.Context);
     }
 
     private void Populate()
@@ -197,7 +207,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
             _storedTag = tag;
             Populate();
             if (!result.DeviceValueCleared) ShowStatus(StatusKind.DeviceClear);
-            await _coordinator.RefreshAsync();
+            await RefreshLocaleAsync(context, settingsOwner);
         }
         catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException or ArgumentException)
         {
@@ -215,7 +225,32 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         }
     }
 
-    private enum StatusKind { None, DeviceClear, SaveFailed, SaveFailedDevicePending }
+    private async Task RefreshLocaleAsync(ApiRequestContext context, SettingsIdentityContext settingsOwner)
+    {
+        var refreshed = await _coordinator.RefreshAsync();
+        if (!_preference.IsCurrentContext(context) || _preference.CaptureSettingsOwner() != settingsOwner) return;
+        _refreshOwner = refreshed ? null : settingsOwner;
+        if (_deviceClearOwner == settingsOwner) ShowStatus(StatusKind.DeviceClear);
+        else if (!refreshed) ShowStatus(StatusKind.RefreshFailed);
+        else HideStatus();
+    }
+
+    private async Task RetryAsync()
+    {
+        if (_deviceClearOwner != null) { await SaveAsync(_storedTag, clearDeviceOnly: true); return; }
+        if (_saving || _owner is not { } context) return;
+        var settingsOwner = _preference.CaptureSettingsOwner();
+        if (_refreshOwner != settingsOwner || !_preference.IsCurrentContext(context)) { await EnsureLoadedAsync(); return; }
+        _saving = true; Picker.IsEnabled = false; HideStatus();
+        try { await RefreshLocaleAsync(context, settingsOwner); }
+        finally
+        {
+            _saving = false; Picker.IsEnabled = true;
+            if (!_preference.IsCurrentContext(context)) _ = EnsureLoadedAsync();
+        }
+    }
+
+    private enum StatusKind { None, DeviceClear, SaveFailed, SaveFailedDevicePending, RefreshFailed }
     private StatusKind _statusKind;
 
     private void ShowStatus(StatusKind kind)
@@ -223,13 +258,14 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         _statusKind = kind;
         _status.Text = kind switch
         {
+            StatusKind.RefreshFailed => AppStrings.Get("web.common.ui.carousel.loadFailed", new Dictionary<string, object?> { ["title_lower"] = AppStrings.Get("settings.control.appLanguage") }),
             StatusKind.DeviceClear => DeviceClearFailedEnglish,
             StatusKind.SaveFailedDevicePending => AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed") + ". " + EarlierSaveDeviceClearPendingEnglish,
             _ => AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed"),
         };
         _status.Visibility = Visibility.Visible;
-        // Retry only finishes the earlier device clear; it never resends a profile value.
-        _retry.Visibility = kind is StatusKind.DeviceClear or StatusKind.SaveFailedDevicePending ? Visibility.Visible : Visibility.Collapsed;
+        // Recovery retries only the pending device clear or effective read, never the profile write.
+        _retry.Visibility = kind is StatusKind.DeviceClear or StatusKind.SaveFailedDevicePending or StatusKind.RefreshFailed || _refreshOwner != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void HideStatus()

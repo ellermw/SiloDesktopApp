@@ -117,20 +117,23 @@ internal static partial class SettingsLocalizationNativeFixture
                 }
             }
         });
-        var subtitles = new SubtitleSearchDialog(42, "en", playerMode: false) { XamlRoot = parent.XamlRoot };
-        await OpenReviewDialog(subtitles, async () =>
+        foreach (var playerMode in new[] { false, true })
         {
-            await Until(() => Field<bool>(subtitles, "_providerStatusLoaded"));
-            Invoke(subtitles, "SearchButton_Click", subtitles, new RoutedEventArgs());
-            var empty = (TextBlock)subtitles.FindName("EmptyStateText");
-            await Until(() => empty.Visibility == Visibility.Visible);
-            foreach (var language in new[] { "de", "ar", "ja" })
+            var subtitles = new SubtitleSearchDialog(42, "en", playerMode) { XamlRoot = parent.XamlRoot };
+            await OpenReviewDialog(subtitles, async () =>
             {
-                Apply(language); await Settle(subtitles);
-                Check(empty.Text == AppStrings.Get("web.detail.subtitleSearch.noResults"), "Subtitle empty results did not refresh.");
-            }
-        });
-        Apply("en");
+                await Until(() => Field<bool>(subtitles, "_providerStatusLoaded"));
+                Invoke(subtitles, "SearchButton_Click", subtitles, new RoutedEventArgs());
+                var empty = (TextBlock)subtitles.FindName("EmptyStateText");
+                await Until(() => empty.Visibility == Visibility.Visible);
+                foreach (var language in new[] { "de", "ar", "ja" })
+                {
+                    Apply(language); await Settle(subtitles);
+                    Check(empty.Text == AppStrings.Get(playerMode ? "web.detail.subtitles.noneAvailable" : "web.detail.subtitleSearch.noResults"), "Subtitle empty results did not refresh in playerMode=" + playerMode);
+                }
+            });
+        }
+        await ReviewSubtitleColorsAndWatchlistFailure(parent);
         Program.Log("PASS review followups: region-only Settings refresh, allowed titles, retained person/refresh dialogs, capability search hints and real empty subtitle search; drafts preserved.");
     }
 
@@ -187,6 +190,57 @@ internal static partial class SettingsLocalizationNativeFixture
         {
             yield return child;
             foreach (var descendant in LogicalToggleDescendants(child)) yield return descendant;
+        }
+    }
+
+    private static async Task ReviewSubtitleColorsAndWatchlistFailure(StackPanel parent)
+    {
+        var appearance = new SubtitleAppearanceDialog { XamlRoot = parent.XamlRoot, ApplyToLocalPlayer = false,
+            InitialValue = "{}", SaveOverrideAsync = _ => Task.CompletedTask };
+        await OpenReviewDialog(appearance, async () =>
+        {
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Settle(appearance);
+                foreach (var (hostName, prefix, keys) in new[] {
+                    ("FontColorSwatchHost", "web.settings.subtitleOptions.fontColor.", new[] { "white", "yellow", "green", "cyan", "magenta", "red", "blue", "gray", "black" }),
+                    ("BgColorSwatchHost", "web.settings.subtitleOptions.backgroundColor.", new[] { "black", "darkGray", "navy", "darkRed", "darkGreen" }) })
+                {
+                    var buttons = ((Panel)appearance.FindName(hostName)).Children.OfType<Button>().ToArray();
+                    Check(buttons.Length == keys.Length, "Subtitle palette coverage changed.");
+                    for (var index = 0; index < buttons.Length; index++)
+                    {
+                        var expected = AppStrings.Get(prefix + keys[index]);
+                        Check(Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(buttons[index]) == expected,
+                            "Subtitle swatch accessible name did not translate: " + keys[index]);
+                        Check(Equals(ToolTipService.GetToolTip(buttons[index]), expected), "Subtitle swatch tooltip did not translate: " + keys[index]);
+                    }
+                }
+            }
+        });
+        using var wire = new ReviewWatchlistFailureWire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://watchlist-failure.fixture.invalid");
+        var model = new SiloPlayer.ViewModels.WatchlistViewModel(new CatalogApi(client), new RequestsApi(client));
+        await model.LoadExternalTitlesAsync();
+        foreach (var language in new[] { "de", "ar", "ja" })
+        {
+            Apply(language); Invoke(model, "RefreshLocalization");
+            Check(model.ExternalTitlesError == AppStrings.Get("web.library.watchlist.loadFailed") + " " + AppStrings.Get("error.dependency_unavailable"),
+                "Retained external-watchlist error prefix/problem did not translate: " + model.ExternalTitlesError);
+        }
+        Check(wire.Reads == 1, "Watchlist error refresh reloaded the server.");
+        Program.Log("PASS subtitle palettes and retained watchlist failure prefix/problem through de/ar/ja.");
+    }
+
+    private sealed class ReviewWatchlistFailureWire : HttpMessageHandler
+    {
+        internal int Reads;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Check(request.RequestUri!.Host == "watchlist-failure.fixture.invalid", "External watchlist failure fixture request blocked.");
+            Reads++;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable)
+            { Content = new StringContent("""{"type":"https://silo.invalid/docs/api/v2/problems/dependency_unavailable","detail":"Raw service failure"}""", System.Text.Encoding.UTF8, "application/problem+json") });
         }
     }
 

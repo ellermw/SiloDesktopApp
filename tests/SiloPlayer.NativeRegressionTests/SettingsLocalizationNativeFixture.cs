@@ -72,6 +72,8 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
             if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
+            if (only is null or "language-refresh") await LanguageRefreshRecovery(parent, reload: false);
+            if (only is null or "language-reload") await LanguageRefreshRecovery(parent, reload: true);
         }
         finally
         {
@@ -339,6 +341,47 @@ internal static partial class SettingsLocalizationNativeFixture
         Program.Log("PASS language picker explains a failed save while an earlier device clear is pending, follows language and retries only the clear.");
     }
 
+    private static async Task LanguageRefreshRecovery(StackPanel parent, bool reload)
+    {
+        var wire = new LanguageWire { Stored = "en", DeviceStored = "en" };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://" + LanguageWire.Host); client.SetProfile("profile-a");
+        var preference = new AppLanguagePreference(new SettingsApi(client));
+        var coordinator = new AppLocaleCoordinator(preference, LocaleService.Shared,
+            new SettingsService(Path.Combine(Program.ResultDirectory, "language-refresh-recovery")),
+            () => ["en-US"], "en-US", AppLocalization.PostTo(parent.DispatcherQueue));
+        var group = new SiloPlayer.Controls.AppLanguageSettingsGroup(preference, coordinator); parent.Children.Add(group);
+        try
+        {
+            Apply("en"); await group.EnsureLoadedAsync(); await Settle(group);
+            if (reload)
+            {
+                parent.Children.Remove(group); await Task.Delay(80);
+                wire.Stored = "ja"; wire.DeviceStored = null;
+                Check(await coordinator.RefreshAsync(), "Detached language update did not apply.");
+                Check(AppStrings.Language == "ja", "Detached language update did not change the locale.");
+                parent.Children.Add(group); await Settle(group); await group.EnsureLoadedAsync();
+                Check(Equals((group.Picker.SelectedItem as ComboBoxItem)?.Tag, "ja"), "Cached picker retained its stale selection after an unloaded update.");
+            }
+            else
+            {
+                wire.EffectiveFails = true;
+                group.Picker.SelectedIndex = group.OfferedTags.ToList().IndexOf("de");
+                await Until(() => wire.Stored == "de" && group.Picker.IsEnabled);
+                Check(wire.DeviceStored == null && AppStrings.Language == "en", "Fixture did not isolate a post-save effective-read failure.");
+                var retry = ((StackPanel)group.Group.Child).Children.OfType<Button>().Single();
+                Check(group.StatusText.Visibility == Visibility.Visible && retry.Visibility == Visibility.Visible,
+                    "Successful save followed by failed locale refresh has no retry state.");
+                wire.EffectiveFails = false; var writes = wire.Writes.Count; Click(retry);
+                await Until(() => AppStrings.Language == "de" && group.Picker.IsEnabled);
+                Check(wire.Writes.Count == writes, "Refresh-only retry repeated a profile write or device deletion.");
+                Check(group.StatusText.Visibility == Visibility.Collapsed, "Refresh retry left stale failure text.");
+            }
+        }
+        finally { parent.Children.Remove(group); Apply("en"); await Task.Delay(80); }
+        Program.Log(reload ? "PASS cached language picker reloads after an unloaded same-owner update." : "PASS post-save language refresh has a read-only retry and applies the saved locale.");
+    }
+
     private static void Click(Button button)
         => ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(button)
             .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
@@ -385,6 +428,7 @@ internal static partial class SettingsLocalizationNativeFixture
         public string? DeviceStored { get; set; }
         public bool DeviceDeleteFails { get; set; }
         public bool PutFails { get; set; }
+        public bool EffectiveFails { get; set; }
         private readonly List<string> _requests = [];
         public List<string> Writes { get { lock (_requests) return _requests.Where(request => !request.StartsWith("GET", StringComparison.Ordinal)).ToList(); } }
 
@@ -397,6 +441,7 @@ internal static partial class SettingsLocalizationNativeFixture
             string Value() => Stored == null ? "null" : "\"" + Stored + "\"";
             if (uri.AbsolutePath == "/api/v2/settings/contract/capabilities")
                 return Raw("""{"api_version":1,"manifest_revision":28,"supports_batched_effective":true}""");
+            if (uri.AbsolutePath == "/api/v2/settings/values/effective" && EffectiveFails) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
             if (uri.AbsolutePath == "/api/v2/settings/values/effective")
                 return Raw($$"""{"items":[{"key":"ui.app_language","value":{{(DeviceStored == null ? Value() : "\"" + DeviceStored + "\"")}},"source":"profile"}],"revision":1}""");
             if (uri.AbsolutePath == "/api/v2/settings/values/ui.app_language")

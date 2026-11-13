@@ -1,3 +1,40 @@
+# November 13 - PR #145 language recovery and subtitle review fixes
+
+Follow-up to ae3a28c6 addresses all five new review findings. Player-mode
+subtitle search now uses the catalog empty-state message; external-watchlist
+load errors re-evaluate both the translated prefix and Problem Details text.
+Subtitle color keys append the parenthesized switch result, restoring translated
+tooltips and accessible names for all 14 font/background colors.
+
+After a successful language save, a failed effective-setting read now shows a
+translated load error with an owner-scoped refresh-only retry. Retry reads and
+applies the saved locale without repeating the profile write or device deletion.
+Pending device clears retain their existing recovery priority. Unloading the
+cached picker invalidates its owner/load generation so returning reloads the
+current profile value even after a same-profile update while detached.
+
+Verification: both picker failures reproduced on the prior published task
+payload before the product fix; red result text is preserved. Release publish,
+native host build and the full settings-localization native group passed on the
+new source. Checks include read-only refresh recovery, a detached same-owner
+update, both actual subtitle-search modes returning no results, every color
+swatch tooltip/accessibility name in the open dialog, and a retained external
+watchlist network error with localized Problem Details through de/ar/ja.
+All 1,989 frozen source/test inputs match. Product DLL SHA-256:
+E640E861FF211266B2A0F64EB8197842E92AF09FA6B073FF3A3C9FFE7993F38C.
+No unit-suite rerun for this UI-only follow-up; previous unit counts retain their
+source scope and retry qualification. Initial fixture compilation errors were
+corrected before the passing native build; they were not product regressions.
+
+Evidence: D:/SiloPlayer-build/review-sixth-receipt.json,
+review-sixth-source-inputs.json, review-sixth-publish.log,
+review-sixth-native-build-final.log and native results (red text archived).
+QA, merge and Beta delivery remain pending; version stamps remain pipeline-owned.
+The installed player remains open. Generated output is 1.127 GiB; C: has
+189.80 GiB free and D: 481.39 GiB. Prior automatic approval review denied cleanup;
+no deletion was retried and 0 GiB reclaimed on either drive. Earlier live-server,
+visual and broad personal-lists/default-suite limitations remain.
+
 # November 13 - PR #145 history, invitation and missing-state review fixes
 
 Follow-up to reviewed head d2047c1c. Webhook deletion uses the catalog title
