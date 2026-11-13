@@ -39,6 +39,7 @@ internal static partial class MediaLocalizationNativeFixture
             var calendar = new CalendarPage { Width = 1100, Height = 760 };
             var requests = new RequestsPage { Width = 1100, Height = 760 };
             var recommendations = new RecommendationsPage { Width = 1100, Height = 760 };
+            var episodeCarousel = new LandscapeCard { Width = 320, MediaItem = new MediaItem { ContentId = "locale-carousel", Title = raw, Type = "episode", ItemSource = "episode_carousel", EpisodeNumber = 12, Runtime = 44 } };
             var seriesFilters = new NotificationSeriesControl();
             var favorites = new FavoritesPage { Width = 1100, Height = 760 };
             var watchlist = new WatchlistPage { Width = 1100, Height = 760 };
@@ -46,7 +47,7 @@ internal static partial class MediaLocalizationNativeFixture
             var subtitleCard = new PosterCard { Width = 185, MediaItem = new MediaItem { ContentId = "subtitle-raw", Title = raw, Type = "series" } };
             var hero = new HeroCarousel { Width = 760, Height = 430, ItemsSource = new List<MediaItem>
             { new() { ContentId = "raw-title", Title = raw, Type = "audiobook", UserState = new() { Played = true } } } };
-            controls.AddRange([home, library, detail, bookDetail, requestDetail, search, calendar, requests, recommendations, browse, hero, subtitleCard, seriesFilters, favorites, watchlist]);
+            controls.AddRange([home, library, detail, bookDetail, requestDetail, search, calendar, requests, recommendations, browse, hero, subtitleCard, seriesFilters, favorites, watchlist, episodeCarousel]);
             foreach (var control in controls) stage.Children.Add(control);
             library.ViewModel.Library = new Library { Id = 7001, Name = raw, Type = "movie" };
             Invoke(library, "UpdateShuffleHeader");
@@ -78,6 +79,9 @@ internal static partial class MediaLocalizationNativeFixture
                 PosterCard.CurrentSortKey = "content_rating";
                 Apply(language); await Task.Delay(200);
                 foreach (var control in controls) { control.Measure(new Windows.Foundation.Size(1100, 760)); control.Arrange(new Windows.Foundation.Rect(0, 0, 1100, 760)); control.UpdateLayout(); }
+                Require(Text(episodeCarousel, "TitleText") == AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = 12 }), "Episode carousel number did not refresh");
+                Require(Text(episodeCarousel, "SubtitleText") == raw, "Episode carousel raw title changed");
+                Require(Text(episodeCarousel, "TimeLeftText") == AppStrings.Get("web.item.card.runtimeMinutes", new Dictionary<string, object?> { ["minutes"] = 44 }), "Episode carousel runtime did not refresh");
                 CheckInlineChoiceLabels(seriesFilters, "ReasonCombo", "SortCombo");
                 CheckInlineChoiceLabels(favorites, "SortComboBox");
                 CheckInlineChoiceLabels(watchlist, "WatchlistScope", "SortComboBox");

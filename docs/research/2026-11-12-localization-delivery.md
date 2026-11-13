@@ -136,3 +136,27 @@ No full personal-lists/default-suite, live-interoperability or exhaustive visual
 parity claim is made. Cleanup is still blocked by automatic approval, with
 0 GiB reclaimed on either drive and about 1.08 GiB reused generated output.
 The installed player remains open; PR #145 delivery is still pending.
+
+## Regional picker, activation title and webhook review follow-up
+
+Matched regional tags reuse shipped picker options without automatic writes;
+unsupported tags remain explicit. The activation document-title map now uses
+its catalog key. Webhook editor titles interpolate the original raw name and
+refresh across de/ar/ja without changing the draft. A native normal-entry test
+also reproduced missing SettingsGroupStyle when opening Settings →
+Notifications; the control now owns the same brush/style values rather than
+requiring its creator's resource scope. That test was red before the resource
+fix and green afterwards.
+
+The carousel's reported English metadata was overwritten immediately by its
+existing localized presentation method. Removed the redundant assignments;
+rendered numbered episode, runtime and raw title now have retained-language
+coverage. This cleanup does not claim a previously visible carousel text bug.
+
+Final follow-up checks: Release publish, 6,220 passing units (zero failed/skipped)
+and settings-localization, shell-localization, media-localization native groups.
+All 2,008 frozen inputs match. See `D:/SiloPlayer-build/review-third-receipt.json`.
+Earlier broad receipts remain source-specific baselines; this run does not
+re-certify the earlier seven/23 groups or the failing broad personal-lists
+fixture. Pipeline delivery, live/physical visual limits and the approval-blocked
+cleanup remain pending. The installed player was not restarted or installed.

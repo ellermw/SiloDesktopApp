@@ -7,6 +7,15 @@
     xmlns:converters="using:SiloPlayer.Converters"
     xmlns:models="using:SiloPlayer.Core.Models.Notifications">
     <UserControl.Resources>
+        <!-- This control is constructed in code, outside SettingsPage's resource scope. -->
+        <SolidColorBrush x:Key="SettingsBorderBrush" Color="{Binding Color, Source={StaticResource BorderBrush}}" Opacity="0.72" />
+        <Style x:Key="SettingsGroupStyle" TargetType="Border">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="Padding" Value="0,28" />
+            <Setter Property="BorderBrush" Value="{StaticResource SettingsBorderBrush}" />
+            <Setter Property="BorderThickness" Value="0,1,0,0" />
+        </Style>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />

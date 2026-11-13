@@ -238,11 +238,6 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             bool hasEpisodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue;
             if (item.ItemSource == "episode_carousel")
             {
-                TitleText.Text = item.Title;
-                var metadata = item.EpisodeNumber.HasValue ? $"Episode {item.EpisodeNumber}" : "Episode";
-                if (item.Runtime > 0) metadata += $" · {item.Runtime}m";
-                SubtitleText.Text = metadata;
-                SubtitleText.Visibility = Visibility.Visible;
                 ConfigureEpisodeCarouselText(item);
             }
             else if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))

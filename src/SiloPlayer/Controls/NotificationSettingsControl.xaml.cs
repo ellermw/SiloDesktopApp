@@ -231,13 +231,16 @@ public sealed partial class NotificationSettingsControl : UserControl
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = webhook is null ? AppStrings.Get("web.settings.notifications.webhooks.add", fallback: "Add webhook") : $"Edit \"{webhook.Name}\"",
+
             Content = content,
             PrimaryButtonText = webhook is null ? AppStrings.Get("web.settings.notifications.webhooks.create", fallback: "Create") : AppStrings.Get("common.save", fallback: "Save"),
             CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text),
         };
+        MediaItemCardActions.BindText(dialog, "Title", element => element.Title = webhook is null
+            ? AppStrings.Get("web.settings.notifications.webhooks.add", fallback: "Add webhook")
+            : AppStrings.Get("web.settings.notifications.webhooks.editTitle", new Dictionary<string, object?> { ["name"] = webhook.Name }));
         name.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text);
         dialog.PrimaryButtonClick += (_, args) =>
         {

@@ -1,3 +1,39 @@
+# November 12 — PR #145 regional picker and dialog follow-up
+
+Based on integrated review head `159f31654a7400f761e594b4d6efe25cf0fab2c6`.
+Supported regional profile tags now select their shipped language option without
+adding a duplicate or rewriting storage: de-DE→de, es-MX→es, pt-PT→pt-BR.
+Unsupported zh-TW retains its separate option and warning. Activate Device uses
+its bundled document-title key. The webhook editor resolves its title with the
+raw name argument and refreshes it while open without discarding drafts.
+
+Native testing also reproduced a real Settings → Notifications construction
+failure: NotificationSettingsControl required SettingsGroupStyle from the
+SettingsPage-only scope. The control now owns that style and border brush with
+the same five setter values as SettingsPage. The normal Settings entry point
+failed before the fix and passes after it; no test-only style is injected.
+The carousel review finding identified redundant English assignments that were
+immediately overwritten by ConfigureEpisodeCarouselText. Removed those dead
+assignments; the actual numbered episode and runtime path was already localized
+and is now covered through German, Arabic and Japanese refreshes with raw media
+titles preserved.
+
+Current verification: fresh Release publish, **6,220/6,220 units**, no failed or
+skipped tests, and **three passing native groups**: settings-localization,
+shell-localization and media-localization. All 2,008 frozen implementation/test
+inputs match. Final app SHA-256:
+`BC96921E802897F8A451B25BDB55A55CA6E6884347B0730FAC53B34A103B92CB`.
+Evidence: `D:/SiloPlayer-build/review-third-receipt.json`,
+`review-third-source-inputs.json`, `review-third-{publish,units,native-build}.log`
+and native result text. Earlier seven-/23-group receipts below retain their
+original source/payload scope, with superseded text results timestamp-archived.
+The broader personal-lists overlay limitation and live/visual verification
+limits below remain unchanged. This is still a candidate awaiting pipeline
+review, QA, merge and Beta delivery; inherited version stamps remain pipeline
+owned. The installed player stays open. Cleanup remains blocked by the earlier
+automatic approval rejection; no deletion was retried and recovered space is
+still 0 GiB on both C: and D:. Generated output is about 1.1 GiB.
+
 # November 12 — PR #145 integrated review corrections
 
 The candidate integrates pipeline `c8f5fb28b9652c220be521eba6031ccaa855c5e6`

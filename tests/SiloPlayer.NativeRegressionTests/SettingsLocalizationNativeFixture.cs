@@ -48,7 +48,7 @@ internal static class SettingsLocalizationNativeFixture
             .AddSingleton<HistoryImportApi>().AddSingleton<WatchProvidersApi>().AddSingleton<RecommendationsApi>().AddSingleton<CollectionsApi>()
             .AddSingleton<EventChannelClient>().AddSingleton<ThemeService>().AddSingleton<AccessibilityService>()
             .AddSingleton<NavigationService>().AddSingleton<MainViewModel>().AddSingleton<SettingsViewModel>().AddSingleton<ProfileSelectViewModel>()
-            .AddSingleton<CardOverlayService>().AddSingleton<UICustomizationService>().AddSingleton<ToastService>()
+            .AddSingleton<CardOverlayService>().AddSingleton<UICustomizationService>().AddSingleton<ToastService>().AddSingleton<NotificationSettingsViewModel>()
             .AddSingleton<EpisodeSpoilerPreferences>().AddSingleton<PlayerService>()
             .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "settings-localization-images")))
@@ -68,7 +68,7 @@ internal static class SettingsLocalizationNativeFixture
             if (only is null or "profile-editor") await ProfileEditor(parent, client);
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
-            if (only is null or "language-picker") await LanguagePicker(parent);
+            if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
         }
         finally
         {
@@ -128,6 +128,9 @@ internal static class SettingsLocalizationNativeFixture
         var page = new SettingsPage(); parent.Children.Add(page); await Task.Delay(100);
         try
         {
+            page.SelectSettingsSection("Notifications");
+            await Settle(page);
+            Check(((ContentControl)page.FindName("NotificationsSettingsHost")).Content is SiloPlayer.Controls.NotificationSettingsControl, "Actual Settings Notifications panel did not construct");
             Apply("de"); await Settle(page);
             MediaLocalizationNativeFixture.CheckInlineChoiceLabels(page, "InterfacePosterSizeCombo", "QualityComboBox", "MaxBitrateComboBox", "SubtitleModeComboBox", "NextUpModeComboBox");
             page.SelectSettingsSection("Playback"); await Settle(page);
@@ -255,6 +258,35 @@ internal static class SettingsLocalizationNativeFixture
     /// that fails. The picker must say this attempt failed, keep the device-clear
     /// recovery, follow a language change, and retry must only DELETE.
     /// </summary>
+    private static async Task RegionalLanguagePicker(StackPanel parent)
+    {
+        foreach (var stored in new[] { "de-DE", "es-MX", "pt-PT", "zh-TW" })
+        {
+            using var wire = new LanguageWire { Stored = stored };
+            using var http = new HttpClient(wire);
+            var client = new SiloApiClient(http); client.SetBaseUrl("https://" + LanguageWire.Host); client.SetProfile("regional-profile");
+            var preference = new AppLanguagePreference(new SettingsApi(client));
+            var local = new SettingsService(Path.Combine(Program.ResultDirectory, "regional-picker-" + stored));
+            var coordinator = new AppLocaleCoordinator(preference, LocaleService.Shared, local, () => ["en-US"], "en-US", AppLocalization.PostTo(parent.DispatcherQueue));
+            var group = new SiloPlayer.Controls.AppLanguageSettingsGroup(preference, coordinator);
+            parent.Children.Add(group);
+            try
+            {
+                await group.EnsureLoadedAsync(); await Settle(group);
+                foreach (var language in new[] { "de", "ar" })
+                {
+                    Apply(language); await Settle(group);
+                    var matched = AppLanguageMatcher.MatchShipped(stored);
+                    Check(group.OfferedTags.Count == MessageCatalog.ShippedLanguages.Count + (matched == null ? 2 : 1), "Regional picker duplicated a shipped option: " + stored);
+                    Check((group.Picker.SelectedItem as ComboBoxItem)?.Tag as string == (matched ?? stored), "Regional picker selected the wrong option: " + stored);
+                    Check(group.UnavailableNote.Visibility == (matched == null ? Visibility.Visible : Visibility.Collapsed), "Regional picker unsupported warning is wrong: " + stored);
+                    Check(wire.Stored == stored && wire.Writes.Count == 0, "Showing/relabeling the regional picker wrote the stored tag: " + stored);
+                }
+            }
+            finally { parent.Children.Remove(group); Apply("en"); await Task.Delay(40); }
+        }
+        Program.Log("PASS: regional picker maps de-DE/es-MX/pt-PT to shipped options, preserves unsupported zh-TW and writes no values while displaying/relabeling.");
+    }
     private static async Task LanguagePicker(StackPanel parent)
     {
         var locales = LocaleService.Shared;

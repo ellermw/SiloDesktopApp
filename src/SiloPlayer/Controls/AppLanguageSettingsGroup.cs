@@ -131,8 +131,8 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         {
             Picker.Items.Clear();
             Picker.Items.Add(new ComboBoxItem { Tag = null, Content = AppStrings.Get("settings.appLanguage.matchDevice") });
-            var offered = _storedTag != null && MessageCatalog.ShippedLanguages.Any(language => language.Tag == _storedTag);
-            if (_storedTag != null && !offered)
+            var shippedTag = AppLanguageMatcher.MatchShipped(_storedTag);
+            if (_storedTag != null && shippedTag == null)
                 Picker.Items.Add(new ComboBoxItem { Tag = _storedTag, Content = StoredLanguageName(_storedTag) });
             foreach (var language in MessageCatalog.ShippedLanguages)
                 Picker.Items.Add(new ComboBoxItem
@@ -146,8 +146,8 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
                         FlowDirection = language.IsRightToLeft ? FlowDirection.RightToLeft : FlowDirection.LeftToRight,
                     },
                 });
-            Picker.SelectedIndex = IndexOf(_storedTag);
-            _unavailable.Visibility = _storedTag != null && AppLanguageMatcher.MatchShipped(_storedTag) == null
+            Picker.SelectedIndex = IndexOf(shippedTag ?? _storedTag);
+            _unavailable.Visibility = _storedTag != null && shippedTag == null
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
@@ -172,7 +172,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
     {
         if (_populating || Picker.SelectedItem is not ComboBoxItem item) return;
         var tag = item.Tag as string;
-        if (tag == _storedTag && _deviceClearOwner == null) return;
+        if (tag == (AppLanguageMatcher.MatchShipped(_storedTag) ?? _storedTag) && _deviceClearOwner == null) return;
         await SaveAsync(tag);
     }
 

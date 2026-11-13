@@ -52,7 +52,7 @@ internal static class ShellLocalizationNativeFixture
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "shell-localization-images")))
             .AddSingleton<ItemDetailPrefetchCache>().AddSingleton<LoginViewModel>().AddSingleton<SignupViewModel>()
             .AddSingleton<ProfileSelectViewModel>().AddSingleton<ServerSelectViewModel>().AddSingleton<NotificationsViewModel>()
-            .AddSingleton<ActivateDeviceViewModel>().AddSingleton<InviteClaimViewModel>().BuildServiceProvider();
+            .AddSingleton<NotificationSettingsViewModel>().AddSingleton<ActivateDeviceViewModel>().AddSingleton<InviteClaimViewModel>().BuildServiceProvider();
         field.SetValue(null, provider);
         MainWindow? window = null;
         var host = new Grid { Width = 900, Height = 740 };
@@ -66,6 +66,7 @@ internal static class ShellLocalizationNativeFixture
             Check(read(page) == AppStrings.Get(key), page.GetType().Name + " German retained text: " + read(page));
             Apply("ar"); await Settle(page);
             Check(read(page) == AppStrings.Get(key), page.GetType().Name + " Arabic retained text: " + read(page));
+            if (page is ActivateDevicePage) Check(DocumentTitle.FromPageType(typeof(ActivateDevicePage)) == DocumentTitle.FromLabel(AppStrings.Get("web.auth.activate.documentTitle")), "Activation window title is not translated");
             Check(page.FlowDirection == FlowDirection.RightToLeft, page.GetType().Name + " RTL root missing");
             Program.Log("TRACE: switched actual " + page.GetType().Name + " controls through de/ar.");
         }
@@ -184,6 +185,34 @@ internal static class ShellLocalizationNativeFixture
                 Check(All<TextBlock>(tour).Any(text => text.Text == "Raw server title العربية"), "raw tour title translated");
             }
             finally { tour.Hide(); await shown; }
+            host.Children.Clear();
+            var webhookControl = new SiloPlayer.Controls.NotificationSettingsControl();
+            host.Children.Add(webhookControl); await Settle(webhookControl);
+            var rawWebhook = new NotificationWebhook { Name = "Raw webhook العربية" };
+            Apply("de");
+            var webhookPending = (Task)typeof(SiloPlayer.Controls.NotificationSettingsControl).GetMethod("OpenWebhookDialogAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(webhookControl, new object[] { rawWebhook })!;
+            ContentDialog? webhookDialog = null;
+            for (var attempt = 0; attempt < 200 && webhookDialog == null; attempt++)
+            {
+                if (webhookPending.IsFaulted) await webhookPending;
+                webhookDialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(parent.XamlRoot).Select(popup => popup.Child).OfType<ContentDialog>().FirstOrDefault();
+                if (webhookDialog == null) await Task.Delay(15);
+            }
+            if (webhookDialog == null) throw new InvalidOperationException("Webhook edit dialog did not open");
+            try
+            {
+                var draft = ((Panel)webhookDialog.Content).Children.OfType<TextBox>().First();
+                draft.Text = "Unsaved webhook draft";
+                foreach (var language in new[] { "de", "ar", "ja" })
+                {
+                    Apply(language); await Settle(webhookDialog);
+                    Check(Equals(webhookDialog.Title, AppStrings.Get("web.settings.notifications.webhooks.editTitle", new Dictionary<string, object?> { ["name"] = rawWebhook.Name })), "Open webhook edit title did not translate");
+                    Check(draft.Text == "Unsaved webhook draft" && rawWebhook.Name == "Raw webhook العربية", "Relabeling webhook title changed draft or saved name");
+                }
+            }
+            finally { webhookDialog.Hide(); await webhookPending; }
+            Program.Log("PASS: webhook edit title follows de/ar/ja while raw name and unsaved draft remain intact.");
             window = new MainWindow(); main.SetValue(null, window);
             var root = (FrameworkElement)window.Content;
             var nav = (NavigationView)root.FindName("NavView");
