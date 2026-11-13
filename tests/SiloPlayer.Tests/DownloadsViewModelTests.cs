@@ -7,10 +7,15 @@ namespace SiloPlayer.Tests;
 
 public sealed class DownloadsViewModelTests
 {
-    [Fact]
-    public async Task FailedDeleteKeepsRegistryEntryAndShowsRetryableError()
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.Conflict)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task FailedDeleteKeepsRegistryEntryAndShowsRetryableError(HttpStatusCode status)
     {
-        using var http = new HttpClient(new DeleteHandler(HttpStatusCode.InternalServerError));
+        using var http = new HttpClient(new DeleteHandler(status));
         var client = new SiloApiClient(http);
         client.SetBaseUrl("https://downloads.test");
         var viewModel = new DownloadsViewModel(new DownloadsApi(client));
@@ -40,10 +45,41 @@ public sealed class DownloadsViewModelTests
         Assert.Null(viewModel.ErrorMessage);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingOrHiddenDownloadIsRemovedFromCurrentList(bool keepOtherDownload)
+    {
+        var handler = new DeleteHandler(HttpStatusCode.NotFound);
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http);
+        client.SetBaseUrl("https://downloads.test");
+        var viewModel = new DownloadsViewModel(new DownloadsApi(client)) { ErrorMessage = "previous failure" };
+        var stale = new Download { Id = "download-1", Status = "ready" };
+        var other = new Download { Id = "download-2", Status = "preparing" };
+        viewModel.Downloads.Add(stale);
+        if (keepOtherDownload)
+            viewModel.Downloads.Add(other);
+
+        await viewModel.DeleteDownloadCommand.ExecuteAsync(stale.Id);
+
+        Assert.DoesNotContain(stale, viewModel.Downloads);
+        Assert.Equal(!keepOtherDownload, viewModel.IsEmpty);
+        Assert.Null(viewModel.ErrorMessage);
+        Assert.Equal(1, handler.RequestCount);
+        if (keepOtherDownload)
+            Assert.Same(other, Assert.Single(viewModel.Downloads));
+        else
+            Assert.Empty(viewModel.Downloads);
+    }
+
     private sealed class DeleteHandler(HttpStatusCode status) : HttpMessageHandler
     {
+        public int RequestCount { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestCount++;
             Assert.Equal(HttpMethod.Delete, request.Method);
             Assert.Equal("/api/v2/downloads/download-1", request.RequestUri!.AbsolutePath);
             return Task.FromResult(new HttpResponseMessage(status)

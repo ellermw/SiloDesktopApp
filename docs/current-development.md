@@ -1,3 +1,28 @@
+# November 13 - Unavailable download row reconciliation for Beta
+
+New independent branch codex/download-delete-404-nov13 starts from Beta
+02d007297c923f529f4ebf282429dd3a62301ec1. Delete 404 now retires the matching
+local Downloads row and updates the empty state without claiming server deletion.
+The new cases reproduced both last-row and multi-row failures before the fix;
+all 67 related download tests then passed, zero failed/skipped. Native/live
+verification was not run for this command-only change. See
+[the reconciliation](parity/2026-11-13-server-alignment-reconciliation.md) for
+exact upstream inputs, original finding dispositions and verification limits.
+
+Official upstream rechecked at 0387303d96618a9b8bda44333a6c2e60de37a6fb;
+the four commits since fb165fa9 need no further native-client implementation.
+PRs #143/#144 are merged; submitted localization PR #145 remains pipeline-owned.
+Six uncommitted localization review corrections and the owner's AGENTS.md edit
+remain preserved in the original task worktree, outside this independent branch.
+Version stays 1.2.1015-beta.1 / 1.2.1014.1; pipeline owns QA, fixes and packaging.
+
+Task output is 1.238 GiB; measured free C: 189.43 GiB, D: 481.11 GiB.
+Automatic approval review rejected removal of the disposable unit-test output
+with "blocked by policy". No deletion ran: cleanup recovered 0 GiB on both
+drives. Receipt: D:/SiloPlayer-build/download-delete-receipt.json.
+
+---
+
 # November 12 — Playback HUD final Beta stamp refresh
 
 Verified source commit: `88a9041bd2ec020b5f3fc1e5ea57c8f27049eec7` on `codex/player-hud-server-nov12`, merged with Beta `1a341042bb2e64ee37f6a065726776af08acf285` (including #143 and the pipeline stamp), after preserving #138 transport controls and #141 updater staging. Source **1.2.1007-beta.1**, numeric **1.2.1006.1**, inherited unchanged. Final documentation/PR head is bound in `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-1a341042/delivery-receipt.json`.
