@@ -1,4 +1,5 @@
 using SiloPlayer.Core.Localization;
+using SiloPlayer.Services.PlaybackMenus;
 
 namespace SiloPlayer.Tests;
 
@@ -88,6 +89,58 @@ public sealed partial class MpvOscRuntimeTests
         // The raw title is data: unchanged in state and drawn exactly (ASS-escaped).
         Assert.Equal(RawTitle, parts[2]);
         Assert.Contains("Shōgun – مرحبا بالعالم \\{Episode\\}", parts[1]);
+    }
+
+    [Theory]
+    [InlineData("en")]
+    [InlineData("de")]
+    [InlineData("ar")]
+    [InlineData("ja")]
+    public void LocalizedPlaybackInfoLiveCountersKeepTheirIdentityAndThrottle(string language)
+    {
+        var locale = PlaybackLocale(language);
+        var headers = new[] { "web.player.info.section.video", "web.player.info.section.stream" };
+        var payload = CatalogPayload(language, 7, [.. headers, "web.player.info.droppedFrames"])
+            .Concat(headers.SelectMany(key => new[] { "upper:" + key, locale.Get(key).ToUpper(locale.FormatCulture) }));
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: HudSetup + $$"""
+            handlers['osc-set-locale'](unpack({{LuaStrings(payload)}}))
+            handlers['osc-toggle-stats']()
+            mp.set_property('user-data/locale-stats', s.stats_rows_sent)
+            """, rawAss: true, resultProperty: "user-data/locale-stats", beforeScript: LocaleHarness);
+        var rows = PlaybackStatsSnapshot.Parse(output);
+        Assert.NotNull(rows);
+        Assert.Equal(locale.Get(headers[0]).ToUpper(locale.FormatCulture),
+            rows.Single(row => row.Id == "video.display-area").Section);
+        Assert.Equal(locale.Get("web.player.info.droppedFrames"),
+            rows.Single(row => row.Id == "video.droppedFrames").Label);
+        var liveIds = new[] { "video.display-area", "video.droppedFrames",
+            "stream.video-bitrate-measured", "stream.audio-bitrate-measured" };
+        Assert.Equal(liveIds.OrderBy(id => id), rows.Where(row => PlaybackStatsSnapshot.IsLiveCounter(row.Id)).Select(row => row.Id).OrderBy(id => id));
+        // Start with real counter values, then change all four on every refresh.
+        var initial = rows.Select(row => liveIds.Contains(row.Id) ? row with { Value = "1" } : row).ToArray();
+        var spoken = initial.ToDictionary(row => row.Id, row => row.Value, StringComparer.Ordinal);
+        long lastSpokenAt = 0;
+        for (var second = 1; second <= 30; second++)
+        {
+            var current = initial.Select(row => liveIds.Contains(row.Id) ? row with { Value = (second + 1).ToString() } : row).ToArray();
+            var now = second * 1000L;
+            var changed = PlaybackStatsSnapshot.ChangedRows(current, spoken, now - lastSpokenAt >= 15_000);
+            if (second % 15 != 0) Assert.Empty(changed);
+            else
+            {
+                Assert.Equal(4, changed.Count);
+                Assert.All(changed, row => Assert.Equal((second + 1).ToString(), row.Value));
+                lastSpokenAt = now;
+            }
+        }
+        // Ordinary metadata stays immediate, as do the first real value and a
+        // returning row. Unknown values are remembered without being spoken.
+        var metadata = initial.Single(row => row.Id == "stream.videoCodec") with { Value = "New codec" };
+        Assert.Equal(metadata, Assert.Single(PlaybackStatsSnapshot.ChangedRows([metadata], spoken, false)));
+        var live = initial.Single(row => row.Id == "video.droppedFrames");
+        Assert.Equal(live, Assert.Single(PlaybackStatsSnapshot.ChangedRows([live], spoken, false)));
+        Assert.Empty(PlaybackStatsSnapshot.ChangedRows([live with { Value = "—" }], spoken, false));
+        Assert.Equal(live, Assert.Single(PlaybackStatsSnapshot.ChangedRows([live], spoken, false)));
     }
 
     [Fact]

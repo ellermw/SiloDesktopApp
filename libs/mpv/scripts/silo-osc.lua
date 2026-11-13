@@ -2856,21 +2856,21 @@ local function render_stats()
     -- measured rates and their status words) have no catalog equivalent and
     -- remain English.
     local s1 = { header = i18n.upper("web.player.info.section.player"), rows = {} }
-    table.insert(s1.rows, { label = T("web.player.info.player"), value = "libmpv (GPU)" })
-    table.insert(s1.rows, { label = T("web.player.info.playMethod"), value = shown(state.play_method_str) })
-    table.insert(s1.rows, { label = T("web.player.info.protocol"), value = shown(state.protocol_str) })
-    table.insert(s1.rows, { label = T("web.player.info.streamType"), value = shown(state.stream_type_str) })
+    table.insert(s1.rows, { id = "player.player", label = T("web.player.info.player"), value = "libmpv (GPU)" })
+    table.insert(s1.rows, { id = "player.playMethod", label = T("web.player.info.playMethod"), value = shown(state.play_method_str) })
+    table.insert(s1.rows, { id = "player.protocol", label = T("web.player.info.protocol"), value = shown(state.protocol_str) })
+    table.insert(s1.rows, { id = "player.streamType", label = T("web.player.info.streamType"), value = shown(state.stream_type_str) })
     if state.media_info and state.media_info.requested_source and state.media_info.requested_source ~= "" then
-        table.insert(s1.rows, { label = T("web.player.info.autoSwitchedFrom"), value = state.media_info.requested_source })
+        table.insert(s1.rows, { id = "player.autoSwitchedFrom", label = T("web.player.info.autoSwitchedFrom"), value = state.media_info.requested_source })
     end
     if state.media_info and state.media_info.buffering_limit and state.media_info.buffering_limit ~= "" then
-        table.insert(s1.rows, { label = "Auto quality limit", value = state.media_info.buffering_limit })
+        table.insert(s1.rows, { id = "player.auto-quality-limit", label = "Auto quality limit", value = state.media_info.buffering_limit })
     end
     table.insert(sections, s1)
 
     -- Section 2: Video Info (live)
     local s2 = { header = i18n.upper("web.player.info.section.video"), rows = {} }
-    table.insert(s2.rows, { label = "Display area", value = string.format("%dx%d", W, H) })
+    table.insert(s2.rows, { id = "video.display-area", label = "Display area", value = string.format("%dx%d", W, H) })
     local vw = mp.get_property_number("video-params/w")
     local vh = mp.get_property_number("video-params/h")
     -- These are real frames after video filters, before the renderer fits
@@ -2883,9 +2883,9 @@ local function render_stats()
     if output_known and (ow == 3840 or ow == 4096) and oh == 2160 then
         processed = processed .. " (4K)"
     end
-    table.insert(s2.rows, { label = "Source video", value =
+    table.insert(s2.rows, { id = "video.source", label = "Source video", value =
         source_known and string.format("%dx%d", vw, vh) or fallback })
-    table.insert(s2.rows, { label = "Processed video", value = processed })
+    table.insert(s2.rows, { id = "video.processed", label = "Processed video", value = processed })
     local factor = fallback
     local pixel_factor = fallback
     local enlarged = source_known and output_known and ow > vw and oh > vh
@@ -2914,40 +2914,40 @@ local function render_stats()
             neural_requested = true
         end
     end
-    table.insert(s2.rows, { label = "Scale per dimension", value = factor })
-    table.insert(s2.rows, { label = "Pixel count", value = pixel_factor })
-    table.insert(s2.rows, { label = "Upscaler", value = driver_upscaler or (neural_requested and "FSRCNNX AI (requested)")
+    table.insert(s2.rows, { id = "video.scale", label = "Scale per dimension", value = factor })
+    table.insert(s2.rows, { id = "video.pixel-count", label = "Pixel count", value = pixel_factor })
+    table.insert(s2.rows, { id = "video.upscaler", label = "Upscaler", value = driver_upscaler or (neural_requested and "FSRCNNX AI (requested)")
         or (enlarged and "Other video filter" or "Normal renderer") })
     if neural_requested and source_known then
         -- GLSL hooks run after video-out-params. Their requested reconstruction
         -- must not be presented as a measured video-filter output resolution.
-        table.insert(s2.rows, { label = "AI luma reconstruction (requested)",
+        table.insert(s2.rows, { id = "video.ai-luma-reconstruction", label = "AI luma reconstruction (requested)",
             value = string.format("%dx%d (2x)", vw * 2, vh * 2) })
     end
     local enhancement_status = mp.get_property_native("user-data/silo-upscaling-status", "")
     if enhancement_status ~= "" then
-        table.insert(s2.rows, { label = "Enhancement status", value = enhancement_status })
+        table.insert(s2.rows, { id = "video.enhancement-status", label = "Enhancement status", value = enhancement_status })
     end
     local dropped = (mp.get_property_number("frame-drop-count") or 0)
                   + (mp.get_property_number("decoder-frame-drop-count") or 0)
-    table.insert(s2.rows, { label = T("web.player.info.droppedFrames"), value = tostring(dropped) })
-    table.insert(s2.rows, { label = T("web.player.info.corruptedFrames"), value = "0" })
+    table.insert(s2.rows, { id = "video.droppedFrames", label = T("web.player.info.droppedFrames"), value = tostring(dropped) })
+    table.insert(s2.rows, { id = "video.corruptedFrames", label = T("web.player.info.corruptedFrames"), value = "0" })
     table.insert(sections, s2)
 
     -- Section 3: Playback Stream Info
     local s3 = { header = i18n.upper("web.player.info.section.stream"), rows = {} }
-    table.insert(s3.rows, { label = T("web.player.info.videoCodec"), value = shown(state.stream_codec_video) })
-    table.insert(s3.rows, { label = T("web.player.info.audioCodec"), value = shown(state.stream_codec_audio) })
+    table.insert(s3.rows, { id = "stream.videoCodec", label = T("web.player.info.videoCodec"), value = shown(state.stream_codec_video) })
+    table.insert(s3.rows, { id = "stream.audioCodec", label = T("web.player.info.audioCodec"), value = shown(state.stream_codec_audio) })
     local target = state.stream_target_video_kbps or 0
-    table.insert(s3.rows, { label = "Target video bitrate", value = target > 0 and
+    table.insert(s3.rows, { id = "stream.target-video-bitrate", label = "Target video bitrate", value = target > 0 and
         format_mbps_from_kbps(target) or ((state.play_method_id or (state.play_method_str == "Transcode" and "transcode")) == "transcode" and "Unavailable" or "Not applicable") })
     -- mpv measures compressed packets in bits/second, before video processing.
     -- These are media rates, not download speed (which includes buffering).
     local video_bps = mp.get_property_number("video-bitrate") or 0
     local audio_bps = mp.get_property_number("audio-bitrate") or 0
-    table.insert(s3.rows, { label = "Video bitrate (measured)", value = video_bps > 0 and
+    table.insert(s3.rows, { id = "stream.video-bitrate-measured", label = "Video bitrate (measured)", value = video_bps > 0 and
         format_mbps_from_kbps(video_bps / 1000) or "Unavailable" })
-    table.insert(s3.rows, { label = "Audio bitrate (measured)", value = audio_bps > 0 and
+    table.insert(s3.rows, { id = "stream.audio-bitrate-measured", label = "Audio bitrate (measured)", value = audio_bps > 0 and
         format_kbps(audio_bps / 1000) or "Unavailable" })
     table.insert(sections, s3)
 
@@ -2955,37 +2955,37 @@ local function render_stats()
     local s4 = { header = i18n.upper("web.player.info.section.source"), rows = {} }
     local mi = state.media_info
     if mi then
-        table.insert(s4.rows, { label = T("web.player.info.container"), value = shown(mi.container) })
-        table.insert(s4.rows, { label = T("web.player.info.size"), value = mi.file_size and mi.file_size > 0 and
+        table.insert(s4.rows, { id = "source.container", label = T("web.player.info.container"), value = shown(mi.container) })
+        table.insert(s4.rows, { id = "source.size", label = T("web.player.info.size"), value = mi.file_size and mi.file_size > 0 and
             format_file_size(mi.file_size) or fallback })
-        table.insert(s4.rows, { label = T("web.player.info.bitrate"), value = mi.bitrate and mi.bitrate > 0 and
+        table.insert(s4.rows, { id = "source.bitrate", label = T("web.player.info.bitrate"), value = mi.bitrate and mi.bitrate > 0 and
             format_mbps_from_kbps(mi.bitrate) or fallback })
         local video_codec = mi.codec_video and string.upper(mi.codec_video) or ""
         if video_codec ~= "" and mi.video_profile and mi.video_profile ~= "" then
             video_codec = video_codec .. " " .. mi.video_profile
         end
-        table.insert(s4.rows, { label = T("web.player.info.videoCodec"), value = shown(video_codec) })
-        table.insert(s4.rows, { label = T("web.player.info.videoBitrate"), value = mi.video_bitrate and mi.video_bitrate > 0 and
+        table.insert(s4.rows, { id = "source.videoCodec", label = T("web.player.info.videoCodec"), value = shown(video_codec) })
+        table.insert(s4.rows, { id = "source.videoBitrate", label = T("web.player.info.videoBitrate"), value = mi.video_bitrate and mi.video_bitrate > 0 and
             format_mbps_from_kbps(mi.video_bitrate) or "Not supplied" })
-        table.insert(s4.rows, { label = T("web.player.info.videoRangeType"), value = shown(mi.video_range) })
-        table.insert(s4.rows, { label = T("web.player.info.colorRange"), value = shown(format_color_range(mi.color_range)) })
+        table.insert(s4.rows, { id = "source.videoRangeType", label = T("web.player.info.videoRangeType"), value = shown(mi.video_range) })
+        table.insert(s4.rows, { id = "source.colorRange", label = T("web.player.info.colorRange"), value = shown(format_color_range(mi.color_range)) })
         local audio_codec = mi.audio_title and mi.audio_title ~= "" and mi.audio_title or
             (mi.codec_audio and string.upper(mi.codec_audio) or "")
-        table.insert(s4.rows, { label = T("web.player.info.audioCodec"), value = shown(audio_codec) })
-        table.insert(s4.rows, { label = T("web.player.info.audioBitrate"), value = mi.audio_bitrate and mi.audio_bitrate > 0 and
+        table.insert(s4.rows, { id = "source.audioCodec", label = T("web.player.info.audioCodec"), value = shown(audio_codec) })
+        table.insert(s4.rows, { id = "source.audioBitrate", label = T("web.player.info.audioBitrate"), value = mi.audio_bitrate and mi.audio_bitrate > 0 and
             format_kbps(mi.audio_bitrate) or "Not supplied" })
-        table.insert(s4.rows, { label = T("web.player.info.audioChannels"), value = mi.audio_channels and mi.audio_channels > 0 and
+        table.insert(s4.rows, { id = "source.audioChannels", label = T("web.player.info.audioChannels"), value = mi.audio_channels and mi.audio_channels > 0 and
             tostring(mi.audio_channels) or fallback })
         local sample_rate = fallback
         if mi.audio_sample_rate and mi.audio_sample_rate > 0 then
             sample_rate = format_sample_rate(mi.audio_sample_rate)
         end
-        table.insert(s4.rows, { label = T("web.player.info.audioSampleRate"), value = sample_rate })
+        table.insert(s4.rows, { id = "source.audioSampleRate", label = T("web.player.info.audioSampleRate"), value = sample_rate })
     else
         for _, key in ipairs({ "container", "size", "bitrate", "videoCodec", "videoBitrate",
             "videoRangeType", "colorRange", "audioCodec", "audioBitrate",
             "audioChannels", "audioSampleRate" }) do
-            table.insert(s4.rows, { label = T("web.player.info." .. key), value = fallback })
+            table.insert(s4.rows, { id = "source." .. key, label = T("web.player.info." .. key), value = fallback })
         end
     end
     table.insert(sections, s4)
@@ -2994,7 +2994,8 @@ local function render_stats()
     -- sections when the panel opens and again whenever a displayed value
     -- changes, so the spoken text follows the live panel instead of freezing
     -- at its first paint. The host decides which changes are worth speaking.
-    -- Only these explicit displayed fields cross; no URL/header/property dump.
+    -- Stable row ids are independent of the translated headers and labels.
+    -- Only these explicit fields cross; no URL/header/property dump.
     local rows_json = require("mp.utils").format_json(sections)
     if rows_json and rows_json ~= state.stats_rows_sent then
         local reason = state.stats_rows_sent and "update" or "open"

@@ -60,7 +60,7 @@ public partial class PlayerService
         try
         {
             if (_hudEpisode != null) Subtitle = HudEpisodeLine();
-            // Playback Info rows are keyed by their (now translated) labels: speak the next update whole.
+            // Reannounce translated headings and labels once after a language change.
             _playbackInfoSpoken = null;
             var mpv = _mpv;
             if (mpv != null)
