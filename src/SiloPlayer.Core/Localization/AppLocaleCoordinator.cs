@@ -103,8 +103,6 @@ public sealed class AppLocaleCoordinator
                 try
                 {
                     if (!IsCurrent(context, generation, token)) { completion.TrySetResult(false); return; }
-                    LoadedOwner = context;
-                    ServerSupportsSetting = read.Supported;
                     var settings = _localSettings.Load();
                     // Without a cached language an older server changes nothing.
                     if (read.Supported || settings.LastAppLanguageOverride != null)
@@ -112,10 +110,18 @@ public sealed class AppLocaleCoordinator
                         if (settings.LastAppLanguageOverride != tag)
                         {
                             settings.LastAppLanguageOverride = tag;
-                            _localSettings.Save(settings);
+                            try { _localSettings.Save(settings); }
+                            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                            {
+                                // The server value is authoritative; a disposable launch cache
+                                // must not prevent the interface from adopting it.
+                                System.Diagnostics.Trace.TraceWarning("Interface language cache could not be persisted ({0}).", ex.GetType().Name);
+                            }
                         }
                         _locales.Apply(locale);
                     }
+                    LoadedOwner = context;
+                    ServerSupportsSetting = read.Supported;
                     Loaded?.Invoke(this, read);
                     completion.TrySetResult(true);
                 }

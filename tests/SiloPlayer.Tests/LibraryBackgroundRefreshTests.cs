@@ -88,6 +88,12 @@ public sealed class LibraryBackgroundRefreshTests
             // A scroll must refresh held rows before loading an uncached range.
             await model.LoadWindowAsync(700, 60);
             await wire.Idle();
+            // Handler completion does not mean the view model has applied the
+            // asynchronous rail response. Join the existing read, without asking
+            // for a second request or relying on a fixed post-network delay.
+            var completedLetterReads = wire.LetterReads;
+            await model.EnsureLetterIndexAsync();
+            Assert.Equal(completedLetterReads, wire.LetterReads);
             Assert.DoesNotContain(0, totals);
             Assert.Equal(1001, model.TotalCount);
             Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);

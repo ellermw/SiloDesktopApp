@@ -56,7 +56,7 @@
                 BorderThickness="0"
                 CornerRadius="6"
                 ToolTipService.ToolTip="Close"
-                AutomationProperties.Name="Close Watch Tonight" loc:Localized.ToolTip="web.ui.close">
+                loc:Localized.Name="web.ui.close" loc:Localized.ToolTip="web.ui.close">
                 <FontIcon
                     Glyph="&#xE711;"
                     FontSize="12"

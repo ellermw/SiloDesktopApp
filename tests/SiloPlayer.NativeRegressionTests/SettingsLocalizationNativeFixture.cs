@@ -72,6 +72,7 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
             if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
+            if (only is null or "review-eleventh") await ReviewEleventh(parent, wire, client);
             if (only is null or "review-tenth") await ReviewTenth(parent, wire, client);
             if (only is null or "review-ninth") await ReviewNinth(parent, wire, client);
             if (only is null or "review-eighth") { await LanguageInitialLoadRecovery(parent); await ReviewEighthDialogs(parent, wire, client); }
@@ -487,6 +488,9 @@ internal static partial class SettingsLocalizationNativeFixture
         public bool RequirePin { get; set; }
         public bool AllowedListsFail { get; set; }
         public int RequestCount { get; set; }
+        public bool AllowanceMenuCase { get; set; }
+        public bool AllowanceAvailabilityFails { get; set; }
+        public int AllowanceCapabilityReads { get; set; }
         public TaskCompletionSource<HttpResponseMessage>? PersonWrite { get; set; }
         public bool TranslationAvailable { get; set; }
         public bool TranslationComplete { get; set; }
@@ -494,6 +498,12 @@ internal static partial class SettingsLocalizationNativeFixture
         {
             Check(request.RequestUri!.Host == Host, "External request blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (AllowanceMenuCase && path == "/api/v2/profiles") return Json(new { items = new[] { new { id = "primary", name = "Primary", is_primary = true, max_content_rating = "" }, new { id = "secondary", name = "Raw secondary", is_primary = false, max_content_rating = "PG" } } });
+            if (path == "/api/v2/capabilities/title-allowances")
+            {
+                AllowanceCapabilityReads++;
+                return AllowanceAvailabilityFails ? Json(new { }, HttpStatusCode.ServiceUnavailable) : Json(new { state = "available" });
+            }
             if (path == "/api/v2/admin/people/fixture-person" && request.Method == HttpMethod.Patch && PersonWrite != null) return PersonWrite.Task.WaitAsync(ct);
             if (path == "/api/v2/capabilities/metadata-ai") return Json(new { state = TranslationAvailable ? "available" : "unavailable" });
             if (path.EndsWith("/metadata-translation/jobs")) return Json(new { jobs = new[] { new { id = "job", status = TranslationComplete ? "completed" : "running", fields_total = 1, fields_done = TranslationComplete ? 1 : 0 } } });

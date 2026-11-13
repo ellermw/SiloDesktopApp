@@ -548,6 +548,53 @@ public sealed class AppLanguagePreferenceTests
         Assert.True(locales.Current.Resolution.StoredTagUnsupported);
     }
 
+    [Theory]
+    [InlineData(false, "explicit")]
+    [InlineData(true, "explicit")]
+    [InlineData(false, "device")]
+    [InlineData(true, "device")]
+    [InlineData(false, "unsupported")]
+    [InlineData(true, "unsupported")]
+    public async Task AuthoritativeLocaleAppliesDespiteCacheWriteFailure(bool directoryBlocksWrite, string mode)
+    {
+        var wire = new SettingsWire { EffectiveValue = mode == "explicit" ? "\"de\"" : "null", Revision = mode == "unsupported" ? 27 : 28 };
+        var (preference, client) = Create(wire);
+        var locales = new LocaleService();
+        using var directory = new TemporaryDirectory();
+        var local = new SettingsService(directory.Path);
+        var settings = local.Load(); settings.LastAppLanguageOverride = "ar"; local.Save(settings);
+        var coordinator = new AppLocaleCoordinator(preference, locales, local, () => ["en-US"], "en-US", action => { action(); return true; });
+        Assert.Equal("ar", coordinator.ApplyBeforeSettings().Language);
+        var temporary = Path.Combine(directory.Path, "settings.json.tmp");
+        FileStream? blocker = null;
+        if (directoryBlocksWrite) Directory.CreateDirectory(temporary);
+        else blocker = new FileStream(temporary, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+        var loaded = 0; coordinator.Loaded += (_, _) => loaded++;
+        try
+        {
+            var failure = Record.Exception(() => local.Save(settings));
+            if (directoryBlocksWrite) Assert.IsType<UnauthorizedAccessException>(failure);
+            else Assert.IsType<IOException>(failure);
+            Assert.True(await coordinator.RefreshAsync());
+            Assert.Equal(mode == "explicit" ? "de" : "en", locales.Current.Language);
+            Assert.Equal(client.CaptureContext(), coordinator.LoadedOwner);
+            Assert.Equal(mode != "unsupported", coordinator.ServerSupportsSetting);
+            Assert.Equal(1, loaded);
+            Assert.Equal("ar", new SettingsService(directory.Path).Load().LastAppLanguageOverride);
+            Assert.Equal(mode == "explicit" ? "de" : null, local.Load().LastAppLanguageOverride);
+        }
+        finally
+        {
+            blocker?.Dispose();
+            if (directoryBlocksWrite) Directory.Delete(temporary);
+        }
+        wire.Revision = 28; wire.EffectiveValue = "\"ja\"";
+        Assert.True(await coordinator.RefreshAsync());
+        Assert.Equal("ja", locales.Current.Language);
+        Assert.Equal("ja", new SettingsService(directory.Path).Load().LastAppLanguageOverride);
+        Assert.Equal(2, loaded);
+    }
+
     [Fact]
     public async Task LateResultForARetiredProfileIsNeverApplied()
     {

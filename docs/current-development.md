@@ -1,3 +1,58 @@
+# November 13 - PR #145 collection allowances and cache failure resilience
+
+The four findings on 6f584a4a are addressed. Collection allowance headings use
+web.profiles.allow.title with the raw name and retain the Done command through
+open-dialog language changes. Collection menu retries resolve common.retry and
+retain state-aware text/accessibility through the menu-item lifetime. A successful
+retry restores the localized allowance action. Watch Tonight binds both close
+accessibility and tooltip to web.ui.close.
+
+The locale coordinator treats IOException/UnauthorizedAccessException from its
+launch-cache write as best-effort persistence. It still applies the authoritative
+server locale, updates the loaded owner/support state and emits Loaded. Other
+failures are not swallowed. Six unit cases use real locked/denied writes for an
+explicit language, Match device and an unsupported server, then verify restored
+persistence after the blocker is removed. Native checks open actual collection
+allowances and Watch Tonight, change en/de/ar/ja, fail/retry actual allowance
+availability and preserve raw collection names/identifiers.
+
+Release publish and native host build passed. All 6,227 unit tests passed with
+zero failures/skips (2m24s). Seven native groups passed on the same payload:
+settings-localization, media-localization, shell-localization, app-language,
+app-language-catch-up, profile-menu-navigation and subtitle-sidecar-ownership.
+All 1,993 frozen source/test inputs match. Product DLL SHA-256:
+38BDC71277B53EE5FE28DA79868EB4C5BC60B92C76B0624D37DA4BA7F5F3E7E1.
+Receipt: D:/SiloPlayer-build/review-eleventh-receipt.json. Source manifest:
+D:/SiloPlayer-build/review-eleventh-source-inputs.json (A5FD9DDC2894A0A130F8629A41BB85CF0DB15E2ED68DB762932925B0359B3A02).
+Task output: 1.224 GiB; measured free C: 190.48 GiB, D: 481.29 GiB.
+
+VM QA on earlier head 6f584a4a failed profile-menu with COMException 0x8000FFFF
+and no actionable stack, plus subtitle-sidecar timeout after 76 checks. The
+fixer made no changes. The local passes above use this new source/payload and
+do not establish the cause or certify the earlier VM runs.
+
+The existing Watch Tonight source contract now requires the retained localized
+close name/tooltip instead of a literal English accessibility string. Actual
+translated values are independently checked in the native dialog.
+
+A detailed unit run exposed the existing Library reconnect test asserting its
+rail position after HTTP idle but before the view model applied the response.
+It now joins the existing letter-index task and asserts no extra request, while
+retaining the original position/grid assertions. The earlier navigation/write
+ownership assertion passed isolated and in the detailed full run; its original
+intermittent cause remains unestablished. Failure logs are retained.
+
+The first full native attempt exposed a fixture lookup before the Watch Tonight
+visual template had materialized. The fixture now waits for the actual keyed
+close control before inspecting it; the original failing result text is retained.
+
+The installed player remained open and the owner's AGENTS.md edit stays outside
+the commit. The same build/publish/native payload directories are reused.
+Earlier automatic approval rejection still blocks delivery cleanup; no deletion
+was retried and recovered space is 0 GiB on C: and D:. Pipeline QA, merge and
+Beta publication remain pending. Earlier VM timeout, live interoperability and
+visual-parity limitations keep their original scope in the records below.
+
 # November 13 - PR #145 retained dialog metadata and command labels
 
 The five findings on 45f26756 are addressed. Match Item keeps dialog-owned

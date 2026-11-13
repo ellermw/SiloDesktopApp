@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Controls;
 
@@ -20,7 +21,12 @@ public sealed class AllowCollectionDialog : ContentDialog
     public AllowCollectionDialog(TitleAllowanceSession owner, Collection collection)
     {
         _owner = owner; _collection = collection;
-        Title = AppStrings.Get("web.collections.actions.allowFor", fallback: "Allow for…") + " " + collection.Name; CloseButtonText = AppStrings.Get("common.done", fallback: "Done");
+        void RefreshTitle()
+        {
+            Title = AppStrings.Get("web.profiles.allow.title", new Dictionary<string, object?> { ["name"] = collection.Name });
+            CloseButtonText = AppStrings.Get("common.done", fallback: "Done");
+        }
+        RefreshTitle(); AppLocalization.Register(this, RefreshTitle);
         var content = new StackPanel { Spacing = 12, MinWidth = 280, MaxWidth = 440 };
         content.Children.Add(new TextBlock { Text = collection.CollectionType == "manual"
             ? "Allow every movie and series in this collection, including titles added later. Library access still applies."

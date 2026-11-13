@@ -1,6 +1,8 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Controls;
 
@@ -14,6 +16,13 @@ internal static class CollectionAllowanceMenu
         if (!owner.IsPrimary || collection.CreatorProfileId != owner.Owner.ProfileId) return;
         var action = new MenuFlyoutItem { Text = AllowFor(), Visibility = Visibility.Collapsed };
         var retrying = false;
+        void RefreshLabel()
+        {
+            action.Text = retrying ? AppStrings.Get("common.retry", fallback: "Retry") : AllowFor();
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(action, action.Text);
+            AppLocalization.ApplyDirection(action);
+        }
+        MediaItemCardActions.BindText(action, "Text", _ => RefreshLabel());
         menu.Items.Add(action);
         var busy = false;
         async Task LoadAsync()
@@ -25,12 +34,11 @@ internal static class CollectionAllowanceMenu
                 var available = await owner.LoadAsync();
                 if (!owner.IsCurrent) return;
                 retrying = false;
-                action.Text = AllowFor();
-                SiloPlayer.Services.AppLocalization.ApplyDirection(action);
+                RefreshLabel();
                 action.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
             }
             catch (OperationCanceledException) { action.Visibility = Visibility.Collapsed; }
-            catch { if (owner.IsCurrent) { retrying = true; action.Text = "Retry title allowances"; action.Visibility = Visibility.Visible; } }
+            catch { if (owner.IsCurrent) { retrying = true; RefreshLabel(); action.Visibility = Visibility.Visible; } }
             finally { busy = false; }
         }
         menu.Opening += async (_, _) => { action.Visibility = Visibility.Collapsed; await LoadAsync(); };
