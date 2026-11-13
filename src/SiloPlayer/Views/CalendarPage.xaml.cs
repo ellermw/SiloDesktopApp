@@ -204,6 +204,9 @@ public sealed partial class CalendarPage : Page
                 "everything" => 2,
                 _ => 0,
             };
+            // The preset items stay in the closed dropdown, so their keys are applied from here.
+            // Restoring the selection for the new text is not a choice the person made.
+            SiloPlayer.Services.Localized.RefreshItems(CompactPresetComboBox);
         }
         finally { _suppressPresetEvent = false; }
     }
@@ -254,6 +257,8 @@ public sealed partial class CalendarPage : Page
             foreach (var lib in ViewModel.Libraries)
                 LibraryComboBox.Items.Add(new ComboBoxItem { Content = lib.Name, Tag = lib.Id });
 
+            // New items do not load while the dropdown is closed: apply their keys before selecting.
+            SiloPlayer.Services.Localized.RefreshItems(LibraryComboBox);
             LibraryComboBox.SelectedIndex = 0;
             if (ViewModel.LibraryId.HasValue)
             {
