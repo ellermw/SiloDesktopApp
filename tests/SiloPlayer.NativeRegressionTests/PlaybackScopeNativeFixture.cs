@@ -48,7 +48,7 @@ internal static class PlaybackScopeNativeFixture
         await player.GetOrFetchWatchDetailAsync("same-item", libraryId: 8, fileId: 42);
         await player.GetOrFetchWatchDetailAsync("same-item", libraryId: 7, fileId: 43);
         if (!ReferenceEquals(first, repeated) || handler.WatchQueries.Count != 4 || first.PreparedLibraryId != 7 || first.PreparedFileId != 42
-            || !handler.WatchQueries.SequenceEqual(new[] { "?library_id=7&file_id=42", "", "?library_id=8&file_id=42", "?library_id=7&file_id=43" }))
+            || !handler.WatchQueries.SequenceEqual(new[] { "?library_id=7&file_id=42&backdrop_width=1920", "?backdrop_width=1920", "?library_id=8&file_id=42&backdrop_width=1920", "?library_id=7&file_id=43&backdrop_width=1920" }))
             throw new InvalidOperationException("Actual PlayerService cache does not coalesce identical preparation or isolate library/file scopes.");
 
         handler.HoldWatch = true;

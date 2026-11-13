@@ -183,6 +183,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await VideoPlaybackRateNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-speed-presentation")
+            {
+                await PlaybackSpeedMenuNativeFixture.RunAsync(_window, presentationOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-speed-menu")
             {
                 await PlaybackSpeedMenuNativeFixture.RunAsync(_window);
@@ -405,6 +410,22 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 finally { Environment.SetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE", selectedAudioCase); }
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "hud-completion-scope")
+            {
+                await PlaybackScopeNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "hud-completion")
+            {
+                await PlaybackHudCompletionNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "hud-nov12")
+            {
+                await PlaybackHudNov12SettingsNativeFixture.RunAsync(parent);
+                await PlaybackHudNov12NativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "transport-reload-actual")
             {
                 await ActualTransportReloadNativeFixture.RunAsync(_window);
@@ -413,6 +434,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "transport-reload-controls")
             {
                 await TransportReloadControlsNativeFixture.RunAsync(_window);
+
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "osc-hud-states")

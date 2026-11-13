@@ -296,6 +296,18 @@ local state = {
     playback_buffering_timer = nil,
     playback_wait_overlay = nil,
     playback_spinner_frame = -1,
+
+    -- Still-watching gate (host-owned count, #3917): while set, the credits
+    -- region never starts an unattended countdown.
+    autoplay_gated = false,
+    -- "Ends 2:38 AM" (#3993): the host supplies the profile clock and the
+    -- label template; "{time}" is replaced with the live clock text.
+    end_time_clock = "12h",
+    end_time_template = "Ends {time}",
+    -- Owned, host-composed BGRA backdrop shown under the first-frame spinner.
+    loading_backdrop = nil,
+    loading_backdrop_shown = nil,
+    loading_backdrop_requested = nil,
 }
 
 local function native_dialog_active()
@@ -448,9 +460,15 @@ local function consume_video_click()
     state.ignore_video_click_until = mp.get_time() + 0.5
 end
 
-local function seek_and_resume(target, flags)
+-- `automatic` marks marker skips the viewer did not ask for: only a viewer's
+-- own seek is evidence that someone is still watching.
+local function seek_and_resume(target, flags, automatic)
     local was_paused = mp.get_property_bool("pause")
-    mp.commandv("script-message", "silo-seek-absolute", tostring(target), tostring(not was_paused))
+    if automatic then
+        mp.commandv("script-message", "silo-seek-absolute", tostring(target), tostring(not was_paused), "automatic")
+    else
+        mp.commandv("script-message", "silo-seek-absolute", tostring(target), tostring(not was_paused))
+    end
 end
 
 local function seek_relative_and_resume(delta)
@@ -498,6 +516,30 @@ local function format_time(seconds)
     else
         return string.format("%d:%02d", m, sec)
     end
+end
+
+-- "Ends 2:38 AM" (upstream usePlayerEndTime.ts): the wall-clock time playback
+-- finishes at the current speed, counted at 1x in a Watch Party. It keeps
+-- moving while paused (the clock advances) and is hidden while the length is
+-- unknown or nothing remains. The host supplies the profile clock/template.
+local function end_time_label(position)
+    local duration = tonumber(state.duration) or 0
+    local remaining = duration - (tonumber(position) or 0)
+    if duration <= 0 or not (remaining > 0) or remaining == math.huge then return nil end
+    local speed = 1
+    if not state.watch_party then speed = tonumber(mp.get_property_number("speed", 1)) or 1 end
+    if not (speed > 0) then speed = 1 end
+    local finish = os.date("*t", math.floor(os.time() + remaining / speed))
+    if type(finish) ~= "table" then return nil end
+    local text
+    if state.end_time_clock == "24h" then
+        text = string.format("%02d:%02d", finish.hour, finish.min)
+    else
+        local hour = finish.hour % 12
+        if hour == 0 then hour = 12 end
+        text = string.format("%d:%02d %s", hour, finish.min, finish.hour < 12 and "AM" or "PM")
+    end
+    return (state.end_time_template:gsub("{time}", function() return text end))
 end
 
 -- Clamp value between min and max
@@ -912,11 +954,12 @@ local function chapter_at_time(seconds)
     return last
 end
 
+-- Server #4033: locked Tailwind 4.2.1 300 palette, converted from OKLCH to sRGB/BGR.
 local marker_regions = {
-    { key = "intro", label = "Intro", color = "F8BD38" },
-    { key = "recap", label = "Recap", color = "FA8BA7" },
-    { key = "credits", label = "Credits / Outro", color = "24BFFB" },
-    { key = "preview", label = "Preview", color = "99D334" },
+    { key = "intro", label = "Intro", color = "FFD474" },
+    { key = "recap", label = "Recap", color = "FFB4C4" },
+    { key = "credits", label = "Credits / Outro", color = "ADA1FF" },
+    { key = "preview", label = "Preview", color = "B5E95E" },
 }
 
 local show_osc -- forward declaration; marker editor can open before input setup
@@ -1218,11 +1261,62 @@ local _layout_series = nil
 local _layout_audio_count = -1
 local _layout_chapter_count = -1
 local _layout_party = false
+local _layout_compact = nil
+local _layout_labels = nil
+
+-- #3993 rail values: "English 5.1" on audio, the subtitle language (or Off)
+-- and "Chapters" on wide full-width rails.
+local function channel_label(channels)
+    channels = tonumber(channels) or 0
+    if channels == 8 then return "7.1" end
+    if channels == 6 then return "5.1" end
+    if channels == 2 then return "Stereo" end
+    if channels == 1 then return "Mono" end
+    return channels > 0 and (tostring(channels) .. " ch") or ""
+end
+
+local function language_label(track)
+    local name = track and (track.language_name or track.language) or ""
+    name = tostring(name or "")
+    if name == "" or name == "und" then return "" end
+    return name
+end
+
+local function rail_labels()
+    local audio = ""
+    for i, track in ipairs(state.audio_tracks or {}) do
+        local index = tonumber(track.index) or (i - 1)
+        if index == state.active_audio then
+            local parts = {}
+            local language = language_label(track)
+            if language ~= "" then table.insert(parts, language) end
+            local channels = channel_label(track.channels)
+            if channels ~= "" then table.insert(parts, channels) end
+            audio = table.concat(parts, " ")
+            break
+        end
+    end
+    local subtitle = "Off"
+    if (tonumber(state.active_subtitle) or -1) >= 0 then
+        subtitle = "On"
+        for _, track in ipairs(state.subtitle_tracks or {}) do
+            if track.index == state.active_subtitle then
+                local language = language_label(track)
+                if language ~= "" then subtitle = language end
+                break
+            end
+        end
+    end
+    return { btn_audio = audio, btn_cc = subtitle, btn_chapters = "Chapters" }
+end
+
 local function compute_layout()
     update_osd_dimensions()
     local W = state.osd_width
     local H = state.osd_height
     local has_native_party = state.native_party_scope ~= nil and state.watch_party ~= nil and state.watch_party.visible == true
+    local labels = rail_labels()
+    local label_signature = labels.btn_audio .. "\0" .. labels.btn_cc
     -- Skip recomputation if dimensions unchanged
     if W == _layout_w and H == _layout_h and _layout_next_ep == state.next_ep_available
         and _layout_prev_ep == state.prev_ep_available
@@ -1231,6 +1325,7 @@ local function compute_layout()
         and _layout_chapter_count == #state.chapters
         and state.layout_quality_available == quality_choices_available()
         and _layout_party == has_native_party
+        and _layout_labels == label_signature
         and state.layout.bar then return end
     _layout_w, _layout_h = W, H
     _layout_next_ep = state.next_ep_available
@@ -1240,12 +1335,14 @@ local function compute_layout()
     _layout_chapter_count = #state.chapters
     state.layout_quality_available = quality_choices_available()
     _layout_party = has_native_party
+    _layout_labels = label_signature
     local L = state.layout
     local sc = ui_scale()
     local compact = W < math.floor(1024 * sc)
-    if not compact then
-        -- A sheet without its More anchor must not retain input or visibility.
-        if L.btn_more or state.compact_menu_visible then
+    if _layout_compact ~= nil and _layout_compact ~= compact then
+        -- The More sheet lists different rows per layout. A sheet opened for
+        -- the other layout must not retain input or visibility.
+        if state.compact_menu_visible then
             state.controller_focus_name = nil
             state.controller_focus_deadline = 0
         end
@@ -1255,6 +1352,8 @@ local function compute_layout()
             if name:sub(1, 9) == "overflow_" then L[name] = nil end
         end
     end
+    _layout_compact = compact
+    L.compact = compact
     local pad = math.floor((compact and 12 or config.bar_padding_x) * sc)
     local main_size = math.floor((compact and 40 or config.button_size) * sc)
     local small_size = math.floor((compact and 32 or config.small_button_size) * sc)
@@ -1318,8 +1417,10 @@ local function compute_layout()
             cx = W - top - width / 2, cy = top + height / 2 }
     else L.btn_party = nil end
 
-    -- Right utility rail, in the same order as the WebUI controls that the
-    -- native client currently exposes.
+    -- Right utility rail (#3993 full row): volume | audio, subtitles,
+    -- chapters | settings, More, fullscreen. Picture in picture, Fit and
+    -- Playback info live in More. Compact rails keep subtitles, settings,
+    -- More and fullscreen; the rest is in More.
     local utility_size = math.floor((compact and 32 or 40) * sc)
     local utility_gap = math.floor(2 * sc)
     local rx_cursor = W - pad
@@ -1331,40 +1432,89 @@ local function compute_layout()
         rx_cursor = rx_cursor - utility_gap
         return rect
     end
-    L.btn_fullscreen = place_utility()
-    L.btn_more = compact and place_utility() or nil
-    L.btn_fill = not compact and place_utility() or nil
-    L.btn_pip = not compact and place_utility() or nil
-    L.btn_stats = not compact and place_utility() or nil
-    local show_quality_label = not compact
-    L.btn_quality = quality_choices_available() and place_utility(show_quality_label and math.floor(140 * sc) or utility_size) or nil
-    if L.btn_quality then L.btn_quality.show_label = show_quality_label end
-    L.btn_cc = place_utility()
-    L.btn_chapters = not compact and #state.chapters > 0 and place_utility() or nil
-    L.btn_audio = not compact and #state.audio_tracks > 0 and place_utility() or nil
-
-    -- Tailwind's `hidden sm:block` removes the entire volume group below
-    -- 640 CSS pixels. Doing the same prevents windowed playback from
-    -- crowding the transport cluster or clipping the left metadata column.
-    local show_volume_group = not compact
-    if show_volume_group then
-        rx_cursor = rx_cursor - math.floor(6 * sc) - math.floor(config.volume_bar_width * sc)
-        L.volume_bar = {
-            x = rx_cursor, y = controls_y - math.floor(config.volume_bar_height * sc) / 2,
-            w = math.floor(config.volume_bar_width * sc), h = math.floor(config.volume_bar_height * sc), cy = controls_y
-        }
-        L.utility_divider_x = L.volume_bar.x + L.volume_bar.w + math.floor(3 * sc)
+    local function place_divider()
         rx_cursor = rx_cursor - math.floor(4 * sc)
-        L.btn_volume = place_utility()
-    else
-        L.volume_bar = nil
-        L.utility_divider_x = nil
-        L.btn_volume = nil
+        local x = rx_cursor
+        rx_cursor = rx_cursor - math.floor(6 * sc)
+        return x
+    end
+    -- Wide rails spell out each menu's value, laptop rails drop the settings
+    -- label and float the volume slider (upstream: labels from 96rem, slider
+    -- and settings label from 80rem). Native keeps the transport exactly on the
+    -- centreline, so the richest arrangement that clears it is chosen.
+    local label_font = math.floor(13 * sc)
+    local transport_right = L.btn_next_ep and (L.btn_next_ep.x + L.btn_next_ep.w)
+        or (L.btn_skip_fwd.x + L.btn_skip_fwd.w)
+    local tiers = compact and { { labels = false, quality_label = false, volume = false } } or {
+        { labels = W >= math.floor(1536 * sc), quality_label = true, volume = true },
+        { labels = false, quality_label = true, volume = true },
+        { labels = false, quality_label = false, volume = true },
+        { labels = false, quality_label = false, volume = false },
+    }
+    for tier_index, tier in ipairs(tiers) do
+        rx_cursor = W - pad
+        local function rail_width(name)
+            if not tier.labels then return utility_size end
+            local label = labels[name] or ""
+            if label == "" then return utility_size end
+            local text_w = math.min(math.floor(144 * sc), math.floor(#label * label_font * 0.58))
+            return utility_size + text_w + math.floor(10 * sc)
+        end
+        L.btn_fill, L.btn_pip, L.btn_stats = nil, nil, nil
+        L.btn_fullscreen = place_utility()
+        L.btn_more = place_utility()
+        local show_quality_label = not compact and tier.quality_label
+        L.btn_quality = quality_choices_available() and place_utility(show_quality_label and math.floor(140 * sc) or utility_size) or nil
+        if L.btn_quality then L.btn_quality.show_label = show_quality_label end
+        L.rail_dividers = nil
+        if not compact then
+            L.rail_dividers = { 0, place_divider() }
+            L.btn_chapters = #state.chapters > 0 and place_utility(rail_width("btn_chapters")) or nil
+            L.btn_cc = place_utility(rail_width("btn_cc"))
+            L.btn_audio = #state.audio_tracks > 0 and place_utility(rail_width("btn_audio")) or nil
+            for _, name in ipairs({ "btn_chapters", "btn_cc", "btn_audio" }) do
+                if L[name] then L[name].label = tier.labels and labels[name] ~= "" and labels[name] or nil end
+            end
+            L.rail_dividers[1] = place_divider()
+            -- Tailwind's `hidden sm:block` removes the volume group on compact
+            -- rails; laptop-wide rails keep only the mute button.
+            if tier.volume then
+                local volume_w = math.floor((W >= math.floor(1600 * sc) and config.volume_bar_width or 72) * sc)
+                rx_cursor = rx_cursor - volume_w
+                L.volume_bar = {
+                    x = rx_cursor, y = controls_y - math.floor(config.volume_bar_height * sc) / 2,
+                    w = volume_w, h = math.floor(config.volume_bar_height * sc), cy = controls_y
+                }
+                rx_cursor = rx_cursor - math.floor(4 * sc)
+            else
+                L.volume_bar = nil
+            end
+            L.btn_volume = place_utility()
+            L.utility_divider_x = L.rail_dividers[1]
+        else
+            L.btn_cc = place_utility()
+            L.btn_chapters, L.btn_audio = nil, nil
+            L.volume_bar = nil
+            L.utility_divider_x = nil
+            L.btn_volume = nil
+        end
+        if compact or rx_cursor >= transport_right + math.floor(16 * sc) then break end
     end
 
-    -- Seek rail spans the frame above all three HUD columns.
+    -- Full rails: the seek bar spans the whole row and the times sit with
+    -- the title. Compact rails flank the bar with elapsed and remaining.
     local seek_x1 = pad + math.floor(8 * sc)
     local seek_x2 = W - pad - math.floor(8 * sc)
+    if compact then
+        local time_w = math.floor(60 * sc)
+        local time_h = math.floor(20 * sc)
+        L.time_elapsed = { x = pad, y = seek_y - time_h / 2, w = time_w, h = time_h }
+        L.time_remaining = { x = W - pad - time_w, y = seek_y - time_h / 2, w = time_w, h = time_h }
+        seek_x1 = pad + time_w + math.floor(8 * sc)
+        seek_x2 = W - pad - time_w - math.floor(8 * sc)
+    else
+        L.time_elapsed, L.time_remaining = nil, nil
+    end
     L.seek_bar = {
         x = seek_x1, y = seek_y - math.floor(22 * sc),
         w = seek_x2 - seek_x1, h = math.floor(44 * sc),
@@ -1654,12 +1804,32 @@ local function render_osc()
     local current_seek_h = math.max(2, math.floor(
         (is_seek_hover and config.seek_hover_height or config.seek_height) * sc))
 
+    state.seek_segments = {}
+    local cuts = {sb.x1}
+    for _, chapter in ipairs(state.chapters or {}) do
+        local t = tonumber(chapter.start_seconds) or 0
+        if t > 0 and t < state.duration then table.insert(cuts, sb.x1 + (sb.x2 - sb.x1) * t / state.duration) end
+    end
+    table.sort(cuts)
+    table.insert(cuts, sb.x2)
+    local gap = math.max(2, math.floor(3 * sc))
+    for i = 1, #cuts - 1 do
+        local x1 = cuts[i] + (i > 1 and gap / 2 or 0)
+        local x2 = cuts[i + 1] - (i < #cuts - 1 and gap / 2 or 0)
+        if x2 > x1 then table.insert(state.seek_segments, {x1=x1, x2=x2}) end
+    end
+    local function draw_seek_fill(x1, x2, height, color, alpha)
+        for _, segment in ipairs(state.seek_segments) do
+            local left, right = math.max(x1, segment.x1), math.min(x2, segment.x2)
+            if right > left then
+                draw_rounded_rect(ass, left, seek_draw_y-height/2, right, seek_draw_y+height/2,
+                    math.min(height/2,(right-left)/2),color,alpha,ma)
+            end
+        end
+    end
+
     -- Seek track background
-    draw_rounded_rect(ass,
-        sb.x1, seek_draw_y - current_seek_h / 2,
-        sb.x2, seek_draw_y + current_seek_h / 2,
-        current_seek_h / 2,
-        config.seek_bg_color, "D9", ma)
+    draw_seek_fill(sb.x1, sb.x2, current_seek_h, config.seek_bg_color, "D9")
 
     -- Buffered range
     local cache_state = state.demuxer_cache
@@ -1672,11 +1842,7 @@ local function render_osc()
                 local bx1 = sb.x1 + (sb.x2 - sb.x1) * rs
                 local bx2 = sb.x1 + (sb.x2 - sb.x1) * re
                 if bx2 > bx1 + 1 then
-                    draw_rounded_rect(ass,
-                        bx1, seek_draw_y - current_seek_h / 2,
-                        bx2, seek_draw_y + current_seek_h / 2,
-                        current_seek_h / 2,
-                        config.seek_buffered_color, "B3", ma)
+                    draw_seek_fill(bx1, bx2, current_seek_h, config.seek_buffered_color, "B3")
                 end
             end
         end
@@ -1699,47 +1865,28 @@ local function render_osc()
         if rx2 > rx1 + 1 then
             local region_h = is_hovered and math.max(current_seek_h, math.floor(8 * sc)) or current_seek_h
             if is_hovered then
-                draw_rounded_rect(ass, rx1 - 1, seek_draw_y - region_h / 2 - 1,
-                    rx2 + 1, seek_draw_y + region_h / 2 + 1, region_h / 2 + 1,
-                    config.text_color, "70", ma)
+                draw_seek_fill(rx1 - 1, rx2 + 1, region_h + 2, config.text_color, "70")
             end
-            draw_rounded_rect(ass, rx1, seek_draw_y - region_h / 2,
-                rx2, seek_draw_y + region_h / 2, region_h / 2,
-                color, is_hovered and "48" or alpha, ma)
+            draw_seek_fill(rx1, rx2, region_h, color, is_hovered and "40" or alpha)
         end
     end
     each_marker_range(function(marker, marker_start, marker_end)
-        draw_marker_region(marker_start, marker_end, marker.color, "99",
+        draw_marker_region(marker_start, marker_end, marker.color, "8C",
             hover_marker and hover_marker.label == marker.label and hover_marker.start == marker_start)
     end)
 
-    -- Chapter boundaries are one-pixel, ten-pixel-high ticks in the WebUI.
-    if state.duration > 0 then
-        for _, chapter in ipairs(state.chapters or {}) do
-            local chapter_start = tonumber(chapter.start_seconds) or 0
-            if chapter_start > 0 and chapter_start < state.duration then
-                local chapter_x = sb.x1 + (sb.x2 - sb.x1) * (chapter_start / state.duration)
-                draw_rect(ass, chapter_x - 0.5, seek_draw_y - math.floor(5 * sc),
-                    chapter_x + 0.5, seek_draw_y + math.floor(5 * sc),
-                    config.text_color, "73", ma)
-            end
-        end
-    end
-
-    -- Seek progress fill
+    -- Lamp-lit played fill. Chapter gaps below cut every layer of the rail,
+    -- while sb remains one continuous seek/hover target (including the gaps).
     local progress_x = sb.x1 + (sb.x2 - sb.x1) * seek_ratio
     if progress_x > sb.x1 + 1 then
-        draw_rounded_rect(ass,
-            sb.x1, seek_draw_y - current_seek_h / 2,
-            progress_x, seek_draw_y + current_seek_h / 2,
-            current_seek_h / 2,
-            config.text_color, "00", ma)
+        draw_seek_fill(sb.x1, progress_x, current_seek_h * 2, config.accent_color, "DC")
+        draw_seek_fill(sb.x1, progress_x, current_seek_h, config.accent_color, "00")
     end
 
     -- The WebUI thumb stays hidden until hover/drag.
     if is_seek_hover or state.dragging_seek then
         draw_circle(ass, progress_x, seek_draw_y,
-            config.seek_thumb_radius * sc, config.text_color, "00", ma)
+            config.seek_thumb_radius * sc, config.accent_color, "00", ma)
     end
 
     -- Seek hover tooltip
@@ -1831,32 +1978,67 @@ local function render_osc()
             14, config.accent_color, "00", ma, 5)
     end
 
-    -- 4. Bottom-left title, episode label, and mono timecode.
+    -- 4. Title block (#3993 TitleBlock): the title, then "S1:E2 · chapter",
+    -- then on full rails "10:00 / 41:42 · Ends 2:38 AM". Compact rails flank
+    -- the bar with elapsed and remaining and add the end time to the meta.
     local md = L.metadata
     local text_sc = metadata_scale()
     local title_font_size = math.floor(config.font_size_title * text_sc)
-    if state.content_title ~= "" and md.max_w > math.floor(24 * sc) then
-        local title = truncate_display_text(state.content_title, md.max_w, title_font_size)
-        draw_text(ass, md.x, md.y - math.floor(9 * sc), ass_escape_text(title),
-            title_font_size, config.text_color, "00", ma, 4, nil, true)
+    local meta_font_size = math.floor(config.font_size_subtitle * text_sc)
+    local time_font_size = math.floor(config.font_size_time * text_sc)
+    -- The finish time follows the bar while it is dragged.
+    local clock_position = (state.dragging_seek and state.duration > 0)
+        and state.seek_drag_pos * state.duration or display_time_pos()
+    local ends = end_time_label(clock_position)
+    local meta_parts = {}
+    if state.content_subtitle ~= "" then table.insert(meta_parts, state.content_subtitle) end
+    if #(state.chapters or {}) > 1 then
+        local playing_chapter = chapter_at_time(display_time_pos())
+        local chapter_title = playing_chapter and tostring(playing_chapter.title or "") or ""
+        if chapter_title ~= "" then table.insert(meta_parts, chapter_title) end
     end
-    local meta_y = md.y + math.floor(14 * sc)
-    local time_x = md.x
-    if state.content_subtitle ~= "" then
-        time_x = md.x + math.min(md.max_w * 0.60, math.floor(240 * text_sc))
-        local subtitle_font_size = math.floor(config.font_size_subtitle * text_sc)
-        local subtitle_width = math.max(0, time_x - md.x - math.floor(12 * sc))
-        local subtitle = truncate_display_text(
-            state.content_subtitle, subtitle_width, subtitle_font_size)
-        if subtitle ~= "" then
-            draw_text(ass, md.x, meta_y, ass_escape_text(subtitle),
-                subtitle_font_size, config.dim_text_color, "30", ma, 4, nil, false)
+    if L.compact and ends then table.insert(meta_parts, ends) end
+    local meta_text = table.concat(meta_parts, " \xc2\xb7 ")
+    local block = {}
+    if state.content_title ~= "" then table.insert(block, "title") end
+    if meta_text ~= "" then table.insert(block, "meta") end
+    if not L.compact then table.insert(block, "times") end
+    local line_gap = math.floor(20 * text_sc)
+    local first_line_y = md.y - (#block - 1) * line_gap / 2
+    if md.max_w > math.floor(24 * sc) then
+        for index, kind in ipairs(block) do
+            local line_y = first_line_y + (index - 1) * line_gap
+            if kind == "title" then
+                draw_text(ass, md.x, line_y, ass_escape_text(truncate_display_text(state.content_title, md.max_w, title_font_size)),
+                    title_font_size, config.text_color, "00", ma, 4, nil, true)
+            elseif kind == "meta" then
+                draw_text(ass, md.x, line_y, ass_escape_text(truncate_display_text(meta_text, md.max_w, meta_font_size)),
+                    meta_font_size, config.dim_text_color, "30", ma, 4, nil, false)
+            else
+                -- Elapsed always; "/ length" once the length is known.
+                local times = format_time(display_time_pos())
+                if state.duration > 0 then times = times .. " / " .. format_time(state.duration) end
+                draw_text(ass, md.x, line_y, times, time_font_size, config.text_color, "28", ma, 4, "Consolas", false)
+                if ends then
+                    local times_w = math.floor(#times * time_font_size * 0.5)
+                    local ends_x = md.x + times_w + math.floor(6 * text_sc)
+                    local room = md.max_w - (ends_x - md.x)
+                    if room > math.floor(40 * text_sc) then
+                        draw_text(ass, ends_x, line_y, ass_escape_text(truncate_display_text("\xc2\xb7 " .. ends, room, meta_font_size)),
+                            meta_font_size, config.dim_text_color, "30", ma, 4, nil, false)
+                    end
+                end
+            end
         end
     end
-    local time_str = format_time(display_time_pos()) .. "  /  " .. format_time(state.duration)
-    if md.max_w > math.floor(72 * sc) then
-        draw_text(ass, time_x, meta_y, time_str,
-            math.floor(config.font_size_time * text_sc), config.text_color, "28", ma, 4, "Consolas", false)
+    if L.time_elapsed and L.time_remaining then
+        draw_text(ass, L.time_elapsed.x + L.time_elapsed.w, seek_draw_y, format_time(display_time_pos()),
+            time_font_size, config.text_color, "28", ma, 6, "Consolas", false)
+        if state.duration > 0 then
+            draw_text(ass, L.time_remaining.x, seek_draw_y,
+                "-" .. format_time(math.max(0, state.duration - display_time_pos())),
+                time_font_size, config.text_color, "28", ma, 4, "Consolas", false)
+        end
     end
 
     -- 5. Center transport cluster: glass secondaries around a glossy white disc.
@@ -1935,11 +2117,12 @@ local function render_osc()
 
     local bv = L.btn_volume
     local vb = L.volume_bar
-    if bv and vb then
+    if bv then
         draw_utility_state("btn_volume", bv, state.mute)
         draw_volume_icon(ass, bv.cx, bv.cy, bv.w * 0.72,
             config.text_color, "38", ma, state.mute and 0 or state.volume, state.mute)
-
+    end
+    if bv and vb then
         local vol_ratio = state.dragging_volume
             and clamp(state.volume_drag_val / 100, 0, 1)
             or clamp(state.volume / 100, 0, 1)
@@ -1961,39 +2144,50 @@ local function render_osc()
         end
     end
 
-    -- The WebUI separates the always-visible volume group from the rest of
-    -- the utility rail with a subtle vertical divider.
-    if L.utility_divider_x then
-        local divider_x = L.utility_divider_x
-        local divider_half_h = math.floor(16 * sc)
+    -- Hairline dividers between the volume, track and settings groups.
+    for _, divider_x in ipairs(L.rail_dividers or {}) do
+        local divider_half_h = math.floor(12 * sc)
         local divider_center_y = L.btn_play.cy
-        draw_gradient(ass, divider_x, divider_center_y - divider_half_h,
-            divider_x + math.max(1, math.floor(sc)), divider_center_y,
-            config.text_color, "FF", "DB", ma, 4)
-        draw_gradient(ass, divider_x, divider_center_y,
+        draw_rect(ass, divider_x, divider_center_y - divider_half_h,
             divider_x + math.max(1, math.floor(sc)), divider_center_y + divider_half_h,
-            config.text_color, "DB", "FF", ma, 4)
+            config.text_color, "D9", ma)
+    end
+
+    -- A labelled rail button keeps its icon at the start and its value after it.
+    local function rail_icon_x(rect)
+        return rect.label and (rect.x + math.floor(20 * sc)) or rect.cx
+    end
+    local function draw_rail_label(rect, active)
+        if not rect.label or rect.label == "" then return end
+        local text_x = rect.x + math.floor(38 * sc)
+        local room = rect.x + rect.w - text_x - math.floor(8 * sc)
+        draw_text(ass, text_x, rect.cy, ass_escape_text(truncate_display_text(rect.label, room, math.floor(13 * sc))),
+            math.floor(13 * sc), config.text_color, active and "00" or "20", ma, 4, nil, true)
     end
 
     local bcc = L.btn_cc
     local cc_active = state.active_subtitle >= 0
     draw_utility_state("btn_cc", bcc, cc_active or native_menu_active("subtitle"))
-    draw_captions_icon(ass, bcc.cx, bcc.cy, math.floor(20 * sc),
+    draw_captions_icon(ass, rail_icon_x(bcc), bcc.cy, math.floor(20 * sc),
         config.text_color, cc_active and "00" or "38", ma, cc_active)
+    draw_rail_label(bcc, cc_active)
 
     local bchap = L.btn_chapters
     if bchap then
         draw_utility_state("btn_chapters", bchap, state.chapter_menu_visible or native_menu_active("chapters"))
-        draw_chapters_icon(ass, bchap.cx, bchap.cy, math.floor(20 * sc),
+        draw_chapters_icon(ass, rail_icon_x(bchap), bchap.cy, math.floor(20 * sc),
             config.text_color, "38", ma)
+        draw_rail_label(bchap, false)
     end
 
     local baudio = L.btn_audio
     if baudio then
         draw_utility_state("btn_audio", baudio, state.audio_menu_visible or native_menu_active("audio"))
-        draw_audio_lines_icon(ass, baudio.cx, baudio.cy, math.floor(20 * sc),
+        draw_audio_lines_icon(ass, rail_icon_x(baudio), baudio.cy, math.floor(20 * sc),
             config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma)
+        draw_rail_label(baudio, false)
     end
+
 
     local bq = L.btn_quality
     if bq then
@@ -2213,13 +2407,19 @@ local function render_osc()
     state.compact_menu_items = {}
     if state.compact_menu_visible and L.btn_more then
         local entries = {}
-        if #state.audio_tracks > 1 then table.insert(entries, {name="btn_audio", label="Audio tracks"}) end
-        if #state.chapters > 0 then table.insert(entries, {name="btn_chapters", label="Chapters"}) end
+        -- Full rails keep audio and chapters on the rail, and the mute button
+        -- with or without its slider. Compact rails keep everything here.
+        if L.compact and #state.audio_tracks > 1 then table.insert(entries, {name="btn_audio", label="Audio tracks"}) end
+        if L.compact and #state.chapters > 0 then table.insert(entries, {name="btn_chapters", label="Chapters"}) end
         for _, entry in ipairs({
             {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
-            {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
-            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}) do
+            {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"}}) do
             table.insert(entries, entry)
+        end
+        if not L.volume_bar then
+            table.insert(entries, {name="btn_volume_down", label="Volume -"})
+            table.insert(entries, {name="btn_volume_up", label="Volume +"})
+            if L.compact then table.insert(entries, {name="btn_volume", label="Mute / unmute"}) end
         end
         local row_h = math.floor(40 * sc)
         local width = math.min(W - 24 * sc, math.floor(280 * sc))
@@ -2826,7 +3026,7 @@ local function tick()
 
 
     if state.playback_loading or state.playback_buffering or state.transport_reloading then
-        local frame = math.floor(now * 10) % 8
+        local frame = math.floor(now * 20) % 18
         if frame ~= state.playback_spinner_frame then
             state.playback_spinner_frame = frame
             render_playback_wait()
@@ -4216,7 +4416,7 @@ check_skip_markers = function()
             and pos >= state.intro_start and pos < state.intro_end then
             if not state.intro_pending then
                 state.intro_pending = { target = state.intro_end, origin = pos, intro_start = state.intro_start, requested = mp.get_time(), automatic = true }
-                seek_and_resume(state.intro_end, "absolute+keyframes")
+                seek_and_resume(state.intro_end, "absolute+keyframes", true)
             end
         end
         if state.auto_skip_recap and not state.recap_auto_skipped
@@ -4224,7 +4424,7 @@ check_skip_markers = function()
             and pos >= state.recap_start and pos < state.recap_end then
             state.recap_auto_skipped = true
             if state.auto_skipped_segments and state.recap_segment_key then state.auto_skipped_segments[state.recap_segment_key] = true end
-            seek_and_resume(state.recap_end, "absolute+keyframes")
+            seek_and_resume(state.recap_end, "absolute+keyframes", true)
             return
         end
         if state.auto_skip_credits and not state.credits_auto_skipped
@@ -4232,7 +4432,7 @@ check_skip_markers = function()
             and pos >= state.credits_start and pos < state.credits_end then
             state.credits_auto_skipped = true
             if state.auto_skipped_segments and state.credits_segment_key then state.auto_skipped_segments[state.credits_segment_key] = true end
-            seek_and_resume(state.credits_end, "absolute+keyframes")
+            seek_and_resume(state.credits_end, "absolute+keyframes", true)
             return
         end
     end
@@ -4340,6 +4540,16 @@ end
 -- credits region starts a ten-second countdown that remains visible even when
 -- the transport chrome fades. Cancel suppresses it for this episode; Play Now
 -- and expiry both advance through the same host-owned navigation path.
+local function request_next_episode(trigger)
+    local content = tostring(state.marker_content_id or "")
+    if content ~= "" then
+        mp.commandv("script-message", "silo-next-episode", trigger, content,
+            tostring(state.marker_load_generation or 0), tostring(state.marker_play_generation or 0))
+    else
+        mp.commandv("script-message", "silo-next-episode", trigger)
+    end
+end
+
 check_next_episode_countdown = function()
     if not state.next_ep_available or not state.next_ep_detail or
        state.post_roll_active or state.next_ep_countdown_cancelled or
@@ -4354,6 +4564,9 @@ check_next_episode_countdown = function()
     local started_now = false
     if not state.next_ep_countdown_active then
         if state.time_pos < state.credits_start then return end
+        -- Past the still-watching limit the credits wait for the viewer; the
+        -- transport's Next Episode button remains their way forward.
+        if state.autoplay_gated then return end
         state.next_ep_countdown_active = true
         state.next_ep_countdown_started_at = mp.get_time()
         state.next_ep_countdown_remaining = 10
@@ -4371,13 +4584,19 @@ check_next_episode_countdown = function()
         state.next_ep_visible = false
         render_next_episode_countdown()
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode")
+        request_next_episode("automatic")
         return
     end
 
     if started_now or remaining ~= previous_remaining then
         render_next_episode_countdown()
     end
+end
+
+local function remove_next_episode_still()
+    if state.next_ep_still_shown then pcall(mp.command_native, {name="overlay-remove", id=31}) end
+    state.next_ep_still_shown = nil
+    state.next_ep_still_rect = nil
 end
 
 render_next_episode_countdown = function()
@@ -4387,6 +4606,7 @@ render_next_episode_countdown = function()
             state.next_ep_countdown_overlay:update()
         end
         state.next_ep_countdown_actions = {}
+        remove_next_episode_still()
         return
     end
 
@@ -4394,46 +4614,90 @@ render_next_episode_countdown = function()
     local W = state.osd_width
     local H = state.osd_height
     local sc = ui_scale()
-    local card_w = math.floor(360 * sc)
-    local card_h = math.floor(126 * sc)
-    local card_x = W - math.floor(24 * sc) - card_w
-    -- Same anchor as the Next Episode pill: clear the whole seek pointer target.
-    local card_y = state.layout.seek_bar.y - math.floor(12 * sc) - card_h
+    -- #3993 NextEpisodeOverlay: a 24rem HUD card; "Up next in N" with the
+    -- count in the accent, the episode code, the title, then Play Now and
+    -- Cancel, and the countdown as an accent fill along the bottom edge.
+    local card_w = math.floor(math.min(384 * sc, W - 32 * sc))
     local pad = math.floor(16 * sc)
     local gap = math.floor(8 * sc)
-    local button_h = math.floor(32 * sc)
-    local cancel_w = math.floor(78 * sc)
+    local button_h = math.floor(36 * sc)
+    local bar_h = math.max(2, math.floor(4 * sc))
+    local text_h = math.floor(62 * sc)
+    local card_h = pad + text_h + math.floor(12 * sc) + button_h + pad + bar_h
+    local card_x = W - math.floor(32 * sc) - card_w
+    if card_x < math.floor(16 * sc) then card_x = math.floor(16 * sc) end
+    -- Same anchor as the Next Episode pill: clear the whole seek pointer target.
+    local card_y = state.layout.seek_bar.y - math.floor(12 * sc) - card_h
+    local cancel_w = math.floor(84 * sc)
     local play_x = card_x + pad
-    local buttons_y = card_y + card_h - pad - button_h
+    local buttons_y = card_y + pad + text_h + math.floor(12 * sc)
     local cancel_x = card_x + card_w - pad - cancel_w
     local play_w = cancel_x - gap - play_x
 
     local ass = assdraw.ass_new()
+    -- --hud-panel: rgb(16 16 19 / 0.93) with a hairline.
+    draw_rounded_rect(ass, card_x - 1, card_y - 1, card_x + card_w + 1, card_y + card_h + 1,
+        math.floor(12 * sc) + 1, "FFFFFF", "E0", 1.0)
     draw_rounded_rect(ass, card_x, card_y, card_x + card_w, card_y + card_h,
-        math.floor(8 * sc), "000000", "33", 1.0)
-
-    draw_text(ass, card_x + pad, card_y + math.floor(18 * sc),
-        "UP NEXT IN " .. tostring(state.next_ep_countdown_remaining) .. "s",
-        math.floor(11 * sc), config.text_color, "66", 1.0, 7, nil, false)
+        math.floor(12 * sc), "131010", "12", 1.0)
 
     local detail = state.next_ep_detail
-    local episode_label = "S" .. tostring(detail.season_number or "?") ..
-        ":E" .. tostring(detail.episode_number or "?")
-    local title = tostring(detail.title or "")
-    if title ~= "" then episode_label = episode_label .. " \xe2\x80\x94 " .. title end
-    draw_text(ass, card_x + pad, card_y + math.floor(47 * sc),
-        ass_escape_text(episode_label), math.floor(14 * sc),
-        config.text_color, "00", 1.0, 7, nil, true)
+    local text_x = card_x + pad
+    local text_w = card_w - 2 * pad
+    if detail.still_url and detail.still_key then
+        local image_w, image_h = math.floor(112 * sc), math.floor(63 * sc)
+        local image_x, image_y = card_x + pad, card_y + pad
+        text_x, text_w = image_x + image_w + pad, text_w - image_w - pad
+        draw_rounded_rect(ass, image_x, image_y, image_x + image_w, image_y + image_h, 8 * sc, "FFFFFF", "EF", 1.0)
+        if state.next_ep_still_requested ~= detail.still_key then
+            state.next_ep_still_requested = detail.still_key
+            mp.commandv("script-message", "silo-next-episode-still-request", detail.still_key)
+        end
+        local image = state.next_ep_still
+        if image and image.key == detail.still_key then
+            local signature = table.concat({image.file,image_x,image_y,image_w,image_h},"|")
+            if signature ~= state.next_ep_still_shown then
+                pcall(mp.command_native,{name="overlay-add",id=31,x=image_x,y=image_y,file=image.file,offset=0,fmt="bgra",w=image.w,h=image.h,stride=image.stride,dw=image_w,dh=image_h})
+                state.next_ep_still_shown = signature
+            end
+            state.next_ep_still_rect = {x=image_x,y=image_y,w=image_w,h=image_h}
+        end
+    else remove_next_episode_still() end
+    local remaining = tostring(state.next_ep_countdown_remaining)
+    local lead = "Up next in "
+    local label_size = math.floor(12 * sc)
+    draw_text(ass, text_x, card_y + pad + math.floor(8 * sc), lead,
+        label_size, "B3BABD", "00", 1.0, 4, nil, true)
+    draw_text(ass, text_x + math.floor(#lead * label_size * 0.44), card_y + pad + math.floor(8 * sc), remaining,
+        label_size, config.accent_color, "00", 1.0, 4, nil, true)
+
+    draw_text(ass, text_x, card_y + pad + math.floor(26 * sc),
+        "S" .. tostring(detail.season_number or "?") .. " E" .. tostring(detail.episode_number or "?"),
+        math.floor(12 * sc), "B3BABD", "00", 1.0, 4, nil, false)
+    local title = truncate_display_text(tostring(detail.title or ""), text_w, math.floor(16 * sc))
+    if title ~= "" then
+        draw_text(ass, text_x, card_y + pad + math.floor(48 * sc), ass_escape_text(title),
+            math.floor(16 * sc), "EFF3F5", "00", 1.0, 4, nil, true)
+    end
 
     draw_rounded_rect(ass, play_x, buttons_y, play_x + play_w, buttons_y + button_h,
-        math.floor(5 * sc), "FFFFFF", "00", 1.0)
-    draw_text(ass, play_x + play_w / 2, buttons_y + button_h / 2, "Play Now",
-        math.floor(13 * sc), "000000", "00", 1.0, 5, nil, true)
+        button_h / 2, "EFF3F5", "00", 1.0)
+    draw_play_icon(ass, play_x + play_w / 2 - math.floor(36 * sc), buttons_y + button_h / 2,
+        math.floor(14 * sc), "110E0E", "00", 1.0)
+    draw_text(ass, play_x + play_w / 2 + math.floor(8 * sc), buttons_y + button_h / 2, "Play Now",
+        math.floor(13 * sc), "110E0E", "00", 1.0, 5, nil, true)
 
     draw_rounded_rect(ass, cancel_x, buttons_y, cancel_x + cancel_w, buttons_y + button_h,
-        math.floor(5 * sc), "FFFFFF", "D0", 1.0)
+        button_h / 2, "FFFFFF", "E6", 1.0)
     draw_text(ass, cancel_x + cancel_w / 2, buttons_y + button_h / 2, "Cancel",
-        math.floor(13 * sc), config.text_color, "00", 1.0, 5, nil, false)
+        math.floor(13 * sc), "EFF3F5", "00", 1.0, 5, nil, true)
+
+    local bar_y = card_y + card_h - bar_h
+    draw_rect(ass, card_x, bar_y, card_x + card_w, card_y + card_h, "FFFFFF", "E6", 1.0)
+    local elapsed = clamp(1 - (tonumber(state.next_ep_countdown_remaining) or 10) / 10, 0, 1)
+    if elapsed > 0 then
+        draw_rect(ass, card_x, bar_y, card_x + card_w * elapsed, card_y + card_h, config.accent_color, "00", 1.0)
+    end
 
     state.next_ep_countdown_actions = {
         { action = "play", x = play_x, y = buttons_y, w = play_w, h = button_h },
@@ -4450,10 +4714,75 @@ render_next_episode_countdown = function()
     state.next_ep_countdown_overlay:update()
 end
 
--- Native equivalent of VideoPlayer.tsx's first-frame and buffering surfaces.
--- Loading owns a solid black frame; rebuffering leaves the picture visible.
+-- Native equivalent of PlayerLoadingCover.tsx and the floating rebuffer
+-- spinner (#3993). The plan read and first frame show the title's backdrop,
+-- dimmed under the spinner; rebuffering leaves the picture visible and puts
+-- the ring on a dark disc. The host composes the backdrop as an owned BGRA
+-- bitmap (dimmed, with a clear disc at the centre); libmpv draws such bitmaps
+-- above ASS, so the spinner sits on its own black disc inside that clearing.
+local loading_cover_overlay_id = 30
+-- Matches LoadingCoverBitmap.FeatherRadius: the disc fills the clearing.
+local loading_cover_disc_radius = 44
+
+local function remove_loading_cover()
+    if not state.loading_backdrop_shown then return end
+    pcall(mp.command_native, { name = "overlay-remove", id = loading_cover_overlay_id })
+    state.loading_backdrop_shown = nil
+end
+
+local function update_loading_cover(W, H)
+    local backdrop = state.loading_backdrop
+    if not backdrop or not state.playback_loading or state.osc_disabled then
+        remove_loading_cover()
+        return false
+    end
+    local signature = table.concat({ backdrop.file, tostring(backdrop.frame or 0), tostring(W), tostring(H) }, "|")
+    if state.loading_backdrop_shown ~= signature then
+        local ok = pcall(mp.command_native, {
+            name = "overlay-add", id = loading_cover_overlay_id, x = 0, y = 0,
+            file = backdrop.file, offset = 0, fmt = "bgra",
+            w = backdrop.w, h = backdrop.h, stride = backdrop.stride, dw = W, dh = H,
+        })
+        if not ok then
+            remove_loading_cover()
+            return false
+        end
+        state.loading_backdrop_shown = signature
+    end
+    -- A bitmap composed for another frame size is scaled meanwhile; ask once
+    -- for one that matches so the clearing stays centred under the spinner.
+    if backdrop.for_w ~= W or backdrop.for_h ~= H then
+        local request = backdrop.key .. "|" .. tostring(W) .. "|" .. tostring(H)
+        if state.loading_backdrop_requested ~= request then
+            state.loading_backdrop_requested = request
+            mp.commandv("script-message", "silo-loading-backdrop-request", backdrop.key, tostring(W), tostring(H))
+        end
+    end
+    return true
+end
+
+-- A ring arc as one filled polygon (outer edge forward, inner edge back).
+local function draw_ring_arc(ass, cx, cy, radius, thickness, start_angle, sweep, color, alpha)
+    local steps = math.max(4, math.ceil(math.abs(sweep) / (math.pi / 18)))
+    local outer, inner = radius, radius - thickness
+    local points = {}
+    for i = 0, steps do
+        local a = start_angle + sweep * i / steps
+        table.insert(points, string.format("%.1f %.1f", cx + math.cos(a) * outer, cy + math.sin(a) * outer))
+    end
+    for i = steps, 0, -1 do
+        local a = start_angle + sweep * i / steps
+        table.insert(points, string.format("%.1f %.1f", cx + math.cos(a) * inner, cy + math.sin(a) * inner))
+    end
+    ass:new_event()
+    ass:pos(0, 0)
+    ass:append(string.format("{\\an7\\bord0\\shad0%s%s\\p1}m %s l %s{\\p0}",
+        ass_color(color), ass_alpha(alpha), points[1], table.concat(points, " ", 2)))
+end
+
 render_playback_wait = function()
     if state.osc_disabled or (not state.playback_loading and not state.playback_buffering and not state.transport_reloading) then
+        remove_loading_cover()
         if state.playback_wait_overlay then
             state.playback_wait_overlay.data = ""
             state.playback_wait_overlay:update()
@@ -4466,21 +4795,39 @@ render_playback_wait = function()
     local H = state.osd_height
     local sc = ui_scale()
     local ass = assdraw.ass_new()
+    local covered = update_loading_cover(W, H)
     if state.playback_loading then
-        draw_rect(ass, 0, 0, W, H, "000000", "00", 1.0)
+        if covered then
+            draw_circle(ass, W / 2, H / 2, math.floor(loading_cover_disc_radius * sc), "000000", "00", 1.0)
+        else
+            draw_rect(ass, 0, 0, W, H, "000000", "00", 1.0)
+        end
+    else
+        -- Over playing video: a dark disc keeps the ring visible on a light frame.
+        draw_circle(ass, W / 2, H / 2, math.floor(26 * sc), "000000", "73", 1.0)
     end
 
-    local spinner_radius = math.floor((state.playback_loading and 13 or 17) * sc)
-    local dot_radius = math.max(1.5, math.floor(2.2 * sc))
+    -- .hud-spinner: a 2.25rem ring, 20% white track, paper-coloured arc, 0.9s turn.
+    local radius = 18 * sc
+    local thickness = math.max(2, 3 * sc)
     local frame = math.max(0, state.playback_spinner_frame)
-    local alphas = { "00", "28", "50", "78", "9C", "B8", "D0", "E4" }
-    for index = 0, 7 do
-        local angle = (index / 8) * math.pi * 2 - math.pi / 2
-        local x = W / 2 + math.cos(angle) * spinner_radius
-        local y = H / 2 + math.sin(angle) * spinner_radius
-        local distance = (index - frame) % 8
-        draw_circle(ass, x, y, dot_radius, config.text_color,
-            alphas[distance + 1], 1.0)
+    draw_ring_arc(ass, W / 2, H / 2, radius, thickness, 0, math.pi, config.text_color, "CC")
+    draw_ring_arc(ass, W / 2, H / 2, radius, thickness, math.pi, math.pi, config.text_color, "CC")
+    draw_ring_arc(ass, W / 2, H / 2, radius, thickness, -math.pi / 2 + frame * (math.pi * 2 / 18),
+        math.pi / 2, config.text_color, "00")
+
+    -- Explicit message templates; Task5 resolves these keys at the host seam.
+    -- Ordinary cache waits deliberately carry no reconnect/catch-up wording.
+    local party = state.watch_party
+    local wait_label = nil
+    if party and party.visible and party.catching_up then wait_label = state.catching_up_label or "Catching up"
+    elseif state.connection_outage or (party and party.visible and party.connection_state == "reconnecting") then
+        wait_label = state.reconnecting_label or "Reconnecting"
+    end
+    if wait_label then
+        draw_rounded_rect(ass, W / 2 - 90 * sc, H / 2 + 32 * sc, W / 2 + 90 * sc, H / 2 + 65 * sc,
+            16 * sc, "131010", "12", 1.0)
+        draw_text(ass, W / 2, H / 2 + 48 * sc, ass_escape_text(wait_label), 13 * sc, config.text_color, "00", 1.0, 5, nil, false)
     end
 
     if not state.playback_wait_overlay then
@@ -4899,9 +5246,17 @@ local function open_native_menu(kind, keyboard)
     -- Retain the opening gesture through its release, even if Escape closes
     -- the host first. Only a fresh pointer-down starts a new video gesture.
     if not keyboard then state.native_menu_pointer_block = request end
-    mp.commandv("script-message", "silo-native-" .. kind .. "-open", request.owner, tostring(request.sequence),
-        tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
-        tostring(state.osd_width), tostring(state.osd_height))
+    if kind == "more" then
+        -- More lists only what its rail does not already show.
+        local layout = state.layout.compact and "compact" or (state.layout.volume_bar and "full" or "full-novolume")
+        mp.commandv("script-message", "silo-native-more-open", request.owner, tostring(request.sequence),
+            tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
+            tostring(state.osd_width), tostring(state.osd_height), layout)
+    else
+        mp.commandv("script-message", "silo-native-" .. kind .. "-open", request.owner, tostring(request.sequence),
+            tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
+            tostring(state.osd_width), tostring(state.osd_height))
+    end
     request_tick()
     return true
 end
@@ -5006,12 +5361,9 @@ local function focusable_transport_controls()
     add("btn_next_ep")
     add("btn_volume")
     add("btn_audio")
-    add("btn_chapters")
     add("btn_cc")
+    add("btn_chapters")
     add("btn_quality")
-    add("btn_stats")
-    add("btn_pip")
-    add("btn_fill")
     add("btn_more")
     add("btn_fullscreen")
     add("btn_party")
@@ -5151,7 +5503,7 @@ local function activate_transport_control(name, keyboard)
         state.next_ep_visible = false
         state.next_ep_available = false
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode")
+        request_next_episode("viewer")
     elseif name == "btn_cc" then
         open_transport_menu_from_controller("subtitles", keyboard)
     elseif name == "btn_quality" then
@@ -5295,7 +5647,7 @@ local function handle_mouse_down()
             state.next_ep_available = false
             state.next_ep_visible = false
             render_next_episode_button()
-            mp.commandv("script-message", "silo-next-episode")
+            request_next_episode("viewer")
         end
         render_next_episode_countdown()
         return
@@ -5323,7 +5675,7 @@ local function handle_mouse_down()
         state.next_ep_visible = false
         state.next_ep_available = false
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode")
+        request_next_episode("viewer")
         return
     end
 
@@ -5561,7 +5913,7 @@ local function handle_mouse_down()
         state.next_ep_visible = false
         state.next_ep_available = false
         render_next_episode_button()
-        mp.commandv("script-message", "silo-next-episode")
+        request_next_episode("viewer")
         return
     end
 
@@ -5832,8 +6184,25 @@ local function observe_properties()
     mp.register_script_message("osc-set-theme", function(rgb)
         local value = tostring(rgb or ""):gsub("#", "")
         if value:match("^[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$") then
-            -- WinUI sends RRGGBB; ASS colors are BGR.
-            config.accent_color = value:sub(5, 6) .. value:sub(3, 4) .. value:sub(1, 2)
+            -- Exact accentColor.ts accentOnDark/labelOn algorithm at 0b579aa6.
+            local function luminance(r, g, b)
+                local function c(v) v=v/255; return v <= 0.04045 and v/12.92 or ((v+0.055)/1.055)^2.4 end
+                return 0.2126*c(r)+0.7152*c(g)+0.0722*c(b)
+            end
+            local function contrast(a,b) return (math.max(a,b)+0.05)/(math.min(a,b)+0.05) end
+            local r,g,b = tonumber(value:sub(1,2),16),tonumber(value:sub(3,4),16),tonumber(value:sub(5,6),16)
+            local panel,dark = luminance(16,16,19),luminance(20,20,23)
+            for step=0,20 do
+                local function mix(v) return math.floor(v+(255-v)*step/20+0.5) end
+                local rr,gg,bb=mix(r),mix(g),mix(b)
+                local light=luminance(rr,gg,bb)
+                local label=contrast(light,1)>contrast(light,dark) and 1 or dark
+                if contrast(light,panel)>=4.5 and contrast(light,label)>=4.5 then
+                    config.accent_color=string.format("%02X%02X%02X",bb,gg,rr)
+                    config.accent_foreground=label==1 and "FFFFFF" or "171414"
+                    break
+                end
+            end
             request_tick()
         end
     end)
@@ -5940,6 +6309,21 @@ local function observe_properties()
         request_tick()
     end)
 
+    mp.register_script_message("osc-set-autoplay-gate", function(value)
+        state.autoplay_gated = (value == "true" or value == "1")
+        if state.autoplay_gated and state.next_ep_countdown_active then
+            state.next_ep_countdown_active = false
+            render_next_episode_countdown()
+        end
+        request_tick()
+    end)
+
+    mp.register_script_message("osc-set-end-time-format", function(clock, template)
+        state.end_time_clock = clock == "24h" and "24h" or "12h"
+        if template and template:find("{time}", 1, true) then state.end_time_template = template end
+        request_tick()
+    end)
+
     mp.register_script_message("osc-set-title", function(title, subtitle)
         state.content_title = title or ""
         state.content_subtitle = subtitle or ""
@@ -5983,6 +6367,7 @@ local function observe_properties()
             state.marker_content_id = incoming_content_id
             state.marker_file_id = tonumber(data.file_id)
             state.marker_load_generation = tonumber(data.load_generation)
+            state.marker_play_generation = tonumber(data.play_generation)
             state.marker_segments = type(data.marker_segments) == "table" and data.marker_segments or nil
             state.intro_start = tonumber(data.intro_start) or 0
             state.intro_end = tonumber(data.intro_end) or 0
@@ -6162,6 +6547,34 @@ local function observe_properties()
         request_tick()
     end)
 
+    -- The host composes the title backdrop for the current frame size; a
+    -- clear names the key it retires so a late clear cannot drop a newer cover.
+    mp.register_script_message("osc-set-loading-backdrop", function(key, file, width, height, stride, for_width, for_height, frame)
+        local w, h, s = tonumber(width) or 0, tonumber(height) or 0, tonumber(stride) or 0
+        if not key or key == "" or not file or file == "" or w <= 0 or h <= 0 or s < w * 4 then return end
+        if not state.loading_backdrop or state.loading_backdrop.key ~= key then state.loading_backdrop_requested = nil end
+        state.loading_backdrop = { key = key, file = file, w = w, h = h, stride = s,
+            for_w = tonumber(for_width) or 0, for_h = tonumber(for_height) or 0, frame = tonumber(frame) or 0 }
+        if state.playback_loading then render_playback_wait() end
+    end)
+
+    mp.register_script_message("osc-clear-loading-backdrop", function(key)
+        if not state.loading_backdrop or state.loading_backdrop.key ~= key then return end
+        state.loading_backdrop = nil
+        state.loading_backdrop_requested = nil
+        render_playback_wait()
+    end)
+
+    mp.register_script_message("osc-set-connection-outage", function(value)
+        state.connection_outage = value == "true"
+        if state.playback_buffering or state.playback_loading then render_playback_wait() end
+    end)
+
+    mp.register_script_message("osc-set-hud-wait-labels", function(reconnecting, catching_up)
+        state.reconnecting_label, state.catching_up_label = reconnecting, catching_up
+        if state.playback_buffering or state.playback_loading then render_playback_wait() end
+    end)
+
     mp.register_script_message("osc-set-buffering", function(value)
         local requested = (value == "true" or value == "1")
         state.playback_buffering_requested = requested
@@ -6189,6 +6602,8 @@ local function observe_properties()
     end)
 
     mp.register_script_message("osc-set-next-episode-detail", function(json_str)
+        remove_next_episode_still()
+        state.next_ep_still, state.next_ep_still_requested = nil, nil
         state.next_ep_countdown_active = false
         state.next_ep_countdown_cancelled = false
         state.next_ep_countdown_started_at = 0
@@ -6200,6 +6615,23 @@ local function observe_properties()
             local ok, data = pcall(require("mp.utils").parse_json, json_str)
             state.next_ep_detail = ok and data or nil
         end
+        render_next_episode_countdown()
+    end)
+
+    mp.register_script_message("osc-set-next-episode-still", function(key,file,width,height,stride)
+        if not state.next_ep_detail or state.next_ep_detail.still_key ~= key then return end
+        remove_next_episode_still()
+        state.next_ep_still = file and file ~= "" and {key=key,file=file,w=tonumber(width),h=tonumber(height),stride=tonumber(stride)} or nil
+        if not state.next_ep_still then state.next_ep_still_requested = nil end
+        render_next_episode_countdown()
+    end)
+
+    mp.register_script_message("osc-update-next-episode-still-source", function(json_str)
+        local ok, data = pcall(require('mp.utils').parse_json, json_str)
+        if not ok or not data or not state.next_ep_detail then return end
+        remove_next_episode_still()
+        state.next_ep_still, state.next_ep_still_requested = nil, nil
+        state.next_ep_detail.still_key, state.next_ep_detail.still_url = data.still_key, data.still_url
         render_next_episode_countdown()
     end)
 
@@ -7059,6 +7491,8 @@ local function init()
         state.next_ep_available = false
         state.next_ep_visible = false
         state.next_ep_detail = nil
+        state.next_ep_still, state.next_ep_still_requested = nil, nil
+        state.connection_outage = false
         state.next_ep_countdown_active = false
         state.next_ep_countdown_cancelled = false
         state.next_ep_countdown_started_at = 0

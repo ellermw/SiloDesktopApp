@@ -48,8 +48,13 @@ public sealed partial class MpvOscRuntimeTests
             if route == 'key' then native_keys['silo-osc-toggle-stats']()
             elseif route == 'host' then native_handlers['osc-toggle-stats']()
             elseif route == 'pointer' then
-                local r = assert(s.layout.btn_stats, 'no Playback info button')
+                -- #3993: Playback info lives in More on every rail.
+                local r = assert(s.layout.btn_more, 'no More button')
                 native_handlers['osc-mouse-down'](tostring(r.cx), tostring(r.cy))
+                native_handlers['osc-mouse-up'](tostring(r.cx), tostring(r.cy))
+                local more = assert(native_requests[1], 'More did not open')
+                native_handlers['osc-native-menu-closed'](more[3], more[4], 'true')
+                native_handlers['osc-native-more-action'](more[3], more[4], 'stats')
             elseif route == 'controller' then
                 s.controller_focus_name = 'btn_stats'; osc_test_activate()
             else

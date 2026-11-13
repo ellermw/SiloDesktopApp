@@ -8,13 +8,14 @@ public partial class PlaybackApi(SiloApiClient client)
         => GetWatchDetailAsync(contentId, libraryId: null, fileId: null, ct);
 
     public async Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, int? libraryId, int? fileId = null, CancellationToken ct = default,
-        ApiRequestContext? expectedContext = null)
+        ApiRequestContext? expectedContext = null, int? backdropWidth = null)
     {
         var context = expectedContext ?? client.CaptureContext();
         var path = $"/api/v2/watch/{Uri.EscapeDataString(contentId)}";
         var query = new List<string>();
         if (libraryId.HasValue) query.Add("library_id=" + libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (fileId.HasValue) query.Add("file_id=" + fileId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (backdropWidth is > 0) query.Add("backdrop_width=" + Math.Clamp(backdropWidth.Value, 320, 7680).ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (query.Count > 0) path += "?" + string.Join('&', query);
         var detail = await client.SendRequestAsync<WatchDetailResponse>(context, HttpMethod.Get, path, null, ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Watch preparation authority changed.", ct);

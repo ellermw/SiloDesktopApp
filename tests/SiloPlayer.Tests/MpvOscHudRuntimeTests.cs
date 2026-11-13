@@ -253,9 +253,10 @@ public sealed partial class MpvOscRuntimeTests
             s.osc_disabled, s.pause = false, false
             s.visible, s.current_alpha, s.target_alpha = true, 1, 1
             osc_test_layout()
-            local r = assert(s.layout.btn_fill)
+            -- #3993 moved Fit into More; the mute button is the rail's utility control.
+            local r = assert(s.layout.btn_volume)
             handlers['osc-mouse-down'](tostring(r.cx), tostring(r.cy))
-            local held = s.pressed_control == 'btn_fill'
+            local held = s.pressed_control == 'btn_volume'
             handlers['osc-mouse-up'](tostring(r.cx), tostring(r.cy))
             mp.set_property('user-data/hud-result', tostring(held)..':'..tostring(s.pressed_control == nil))
             """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe);
@@ -302,12 +303,12 @@ public sealed partial class MpvOscRuntimeTests
             s.visible, s.current_alpha, s.target_alpha = {{(menu ? "true, 1, 1" : "false, 0, 0")}}
             s.subtitle_menu_visible = {{menu.ToString().ToLowerInvariant()}}
             osc_test_layout()
-            local r = assert(s.layout.btn_fill)
-            mp.set_property_number('panscan', 0)
+            local r = assert(s.layout.btn_volume)
+            mp.set_property_bool('mute', false)
             handlers['osc-mouse-down'](tostring(r.cx), tostring(r.cy))
-            mp.set_property('user-data/hud-result', tostring(mp.get_property_number('panscan'))..':'..tostring(s.pressed_control == nil))
+            mp.set_property('user-data/hud-result', tostring(mp.get_property_bool('mute'))..':'..tostring(s.pressed_control == nil))
             """, rawAss: true, resultProperty: "user-data/hud-result", beforeScript: HudProbe);
-        Assert.Equal("0:true", output);
+        Assert.Equal("false:true", output);
     }
 
     [Theory]

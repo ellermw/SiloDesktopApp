@@ -845,6 +845,21 @@
                         </Grid>
 
                         <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Client-local player.passout_threshold (Silo Server #3917): this device only. -->
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                                <TextBlock x:Name="StillWatchingPromptLabel" Text="Still watching prompt" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="How many episodes auto-play before Silo asks whether you are still watching. 0 never asks." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="StillWatchingPromptCombo" Grid.Column="1" MinWidth="180" VerticalAlignment="Center"
+                                      AutomationProperties.LabeledBy="{x:Bind StillWatchingPromptLabel}"
+                                      ItemsSource="{x:Bind ViewModel.StillWatchingChoices}"
+                                      SelectedIndex="{x:Bind ViewModel.StillWatchingPrompt, Mode=TwoWay}" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
 <!-- Next up episodes -->
 
 

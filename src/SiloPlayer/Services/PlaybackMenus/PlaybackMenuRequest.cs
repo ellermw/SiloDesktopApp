@@ -8,11 +8,17 @@ internal readonly record struct PlaybackMenuAnchor(double Left, double Top, doub
 internal sealed record PlaybackMenuRequest(string OwnerToken, long Sequence, PlaybackMenuAnchor Anchor)
 {
     internal string Kind { get; init; } = "audio";
+    /// <summary>More only: which rail opened it ("compact", "full" or "full-novolume").</summary>
+    internal string Layout { get; init; } = "compact";
 
     internal static bool TryParse(string[] message, [NotNullWhen(true)] out PlaybackMenuRequest? request)
     {
         request = null;
-        if (message.Length != 9 || message[0] is not ("silo-native-subtitle-open" or "silo-native-audio-open" or "silo-native-quality-open" or "silo-native-chapters-open" or "silo-native-speed-open" or "silo-native-more-open" or "silo-native-party-open")
+        var layout = "compact";
+        if (message.Length == 10 && message[0] == "silo-native-more-open" && message[9] is "compact" or "full" or "full-novolume")
+            layout = message[9];
+        else if (message.Length != 9) return false;
+        if (message[0] is not ("silo-native-subtitle-open" or "silo-native-audio-open" or "silo-native-quality-open" or "silo-native-chapters-open" or "silo-native-speed-open" or "silo-native-more-open" or "silo-native-party-open")
             || !Guid.TryParseExact(message[1], "N", out var scope) || scope == Guid.Empty
             || !long.TryParse(message[2], NumberStyles.None, CultureInfo.InvariantCulture, out var sequence)
             || sequence is <= 0 or > 9_007_199_254_740_991)
@@ -31,7 +37,7 @@ internal sealed record PlaybackMenuRequest(string OwnerToken, long Sequence, Pla
 
         request = new PlaybackMenuRequest(message[1], sequence,
             new PlaybackMenuAnchor(x / surfaceWidth, y / surfaceHeight,
-                (x + width) / surfaceWidth, (y + height) / surfaceHeight)) { Kind = message[0][12..^5] };
+                (x + width) / surfaceWidth, (y + height) / surfaceHeight)) { Kind = message[0][12..^5], Layout = layout };
         return true;
     }
 }

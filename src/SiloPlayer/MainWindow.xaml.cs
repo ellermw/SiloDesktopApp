@@ -193,6 +193,8 @@ public sealed partial class MainWindow : Window
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
         // Activate() is never called, so the subscription lives here now.
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
+        _playerService.StillWatchingChanged += OnStillWatchingChanged;
+        _playerService.LoadingBackdropChanged += OnLoadingBackdropChanged;
         _playerService.PositionChanged += OnPlaybackPositionForPlayingNext;
         _playerService.PostRollReturnRequested += OnPostRollReturnRequested;
         _playerService.ShuffleChanged += OnShuffleChanged;
@@ -219,9 +221,11 @@ public sealed partial class MainWindow : Window
     {
         _currentWindowWidth = e.Size.Width;
         ApplyResponsiveShellLayout();
-        _playerService.HandleWindowResize();
+        var livePostRoll = PlayingNextOverlay.Visibility == Visibility.Visible;
+        if (!livePostRoll) _playerService.HandleWindowResize();
         SynchronizeSettingsSidebar();
-        UpdatePlayingNextLayout(e.Size.Width, e.Size.Height);
+        if (livePostRoll) QueuePlayingNextResize();
+        else UpdatePlayingNextLayout(e.Size.Width, e.Size.Height);
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
@@ -514,6 +518,8 @@ public sealed partial class MainWindow : Window
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
+        _playerService.StillWatchingChanged -= OnStillWatchingChanged;
+        _playerService.LoadingBackdropChanged -= OnLoadingBackdropChanged;
         _playerService.PositionChanged -= OnPlaybackPositionForPlayingNext;
         _playerService.PostRollReturnRequested -= OnPostRollReturnRequested;
         _playerService.ShuffleChanged -= OnShuffleChanged;
@@ -547,6 +553,7 @@ public sealed partial class MainWindow : Window
     private bool _playingNextAutoPlay = true;
     private long _playingNextPresentationGeneration;
     private const int PlayingNextCountdownSeconds = 10;
+    private string? _playingNextTimerContentId;
     private bool _playingNextFinishedCountdown;
     // The viewer engaged with this presentation (even during early post-roll, before the countdown).
     private bool _playingNextEngaged;
@@ -576,7 +583,7 @@ public sealed partial class MainWindow : Window
                 _playerService.FinishPostRollPreview();
                 UpdatePlayingNextAutoPlayVisuals();
                 if (_playerService.HasNextEpisodeForCurrentPlayback &&
-                    _playingNextAutoPlay)
+                    PlayingNextCountdownAllowed)
                 {
                     StartPlayingNextCountdown();
                 }
@@ -636,13 +643,17 @@ public sealed partial class MainWindow : Window
                 _playerService.EnterPostRollPreview();
 
             PlayingNextOverlay.Visibility = Visibility.Visible;
+            _playingNextVideoBounds = null;
+            PlayingNextFinishingTitle.Text = _playerService.WatchDetail?.Title ?? "Finishing episode";
+            PlayingNextComposition.UpdateLayout();
+            PositionPlayingNextVideo();
             PlayingNextPlayNowButton.IsEnabled = true;
             UpdateShufflePostRoll();
             if (_playerService.IsShufflePlayback) _ = _playerService.RefreshShuffleNextAsync();
 
             // Match the current WebUI: entering post-roll early does not start
             // autoplay while the episode is still visibly playing.
-            if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)
+            if (playbackHasEnded && hasNextEpisode && PlayingNextCountdownAllowed)
                 StartPlayingNextCountdown();
             else if (playbackHasEnded && !hasNextEpisode)
                 StartFinishedAutoClose();
@@ -681,6 +692,7 @@ public sealed partial class MainWindow : Window
     {
         StopPlayingNextCountdown();
         _playingNextTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _playingNextTimerContentId = _playerService.ContentId;
         _playingNextTimer.Tick += PlayingNextTimer_Tick;
         _playingNextTimer.Start();
     }
@@ -727,6 +739,8 @@ public sealed partial class MainWindow : Window
 
     private async void PlayingNextTimer_Tick(object? sender, object e)
     {
+        if (sender == null || !ReferenceEquals(sender, _playingNextTimer) ||
+            _playingNextTimerContentId != _playerService.ContentId || PlayingNextOverlay.Visibility != Visibility.Visible) return;
         if (_playingNextFinishedCountdown)
         {
             _playingNextRemaining--;
@@ -738,10 +752,20 @@ public sealed partial class MainWindow : Window
         if (_playingNextRemaining <= 0)
         {
             StopPlayingNextCountdown();
+            // A gate or duplicate boundary that appeared since the countdown began
+            // leaves the card up, waiting for the viewer.
+            if (!_playerService.CanAdvanceAutomatically)
+            {
+                _playingNextRemaining = PlayingNextCountdownSeconds;
+                PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+                PlayingNextCountdownRing.Value = _playingNextRemaining;
+                UpdatePlayingNextAutoPlayVisuals();
+                return;
+            }
             PlayingNextOverlay.Visibility = Visibility.Collapsed;
             try
             {
-                await _playerService.ContinuePlayingNextAsync();
+                await _playerService.ContinuePlayingNextAsync(Core.Services.PlaybackStartTrigger.Automatic);
             }
             catch (Exception ex)
             {
@@ -790,7 +814,7 @@ public sealed partial class MainWindow : Window
         UpdatePlayingNextAutoPlayVisuals();
         if (_playerService.IsPostRollVideoEnded &&
             _playerService.HasNextEpisodeForCurrentPlayback &&
-            autoPlay &&
+            autoPlay && !_playerService.IsStillWatchingGated &&
             _playingNextTimer == null)
         {
             _playingNextRemaining = PlayingNextCountdownSeconds;
@@ -819,7 +843,7 @@ public sealed partial class MainWindow : Window
         PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
         PlayingNextCountdownRing.Value = _playingNextRemaining;
 
-        if (_playingNextAutoPlay &&
+        if (PlayingNextCountdownAllowed &&
             _playerService.IsPostRollVideoEnded &&
             PlayingNextOverlay.Visibility == Visibility.Visible)
             StartPlayingNextCountdown();
@@ -829,7 +853,7 @@ public sealed partial class MainWindow : Window
     {
         var hasNextEpisode = _playerService.HasNextEpisodeForCurrentPlayback;
         PlayingNextCountdownPanel.Visibility = hasNextEpisode &&
-            _playingNextAutoPlay &&
+            PlayingNextCountdownAllowed &&
             _playerService.IsPostRollVideoEnded
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -900,10 +924,70 @@ public sealed partial class MainWindow : Window
 
         // A fixed width as well as height: the centered panel otherwise sizes the
         // hero from its picture, so it would grow from a sliver when the art arrives.
-        var availableWidth = Math.Min(820, Math.Max(280, windowWidth - 48));
-        var aspectHeight = availableWidth * 9d / 16d;
+        var wide = windowWidth >= 1024;
+        var alignment = wide ? HorizontalAlignment.Left : HorizontalAlignment.Center;
+        if (Application.Current.Resources.TryGetValue("AccentBrush", out var accentResource) &&
+            accentResource is Microsoft.UI.Xaml.Media.SolidColorBrush accentBrush)
+        {
+            var color = accentBrush.Color;
+            var lamp = Convert.ToInt32(PlayerHudAccent.OnDark($"{color.R:X2}{color.G:X2}{color.B:X2}"), 16);
+            PlayingNextLabelText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                Windows.UI.Color.FromArgb(255, (byte)(lamp >> 16), (byte)(lamp >> 8), (byte)lamp));
+        }
+        PlayingNextLabelText.HorizontalAlignment = alignment;
+        PlayingNextMetadata.HorizontalAlignment = alignment;
+        PlayingNextColumn.HorizontalAlignment = alignment;
+        PlayingNextScroller.HorizontalContentAlignment = alignment;
+        PlayingNextPrimaryActions.HorizontalAlignment = alignment;
+        PlayingNextAutoplayToggle.HorizontalAlignment = alignment;
+        foreach (var text in new[] { PlayingNextSeriesText, PlayingNextTitleText, PlayingNextMetaText, PlayingNextOverviewText })
+        {
+            text.HorizontalAlignment = alignment; text.TextAlignment = wide ? TextAlignment.Left : TextAlignment.Center;
+        }
+        PlayingNextComposition.Margin = wide ? new Thickness(48, 72, 48, 24) : new Thickness(24, 64, 24, 16);
+        PlayingNextComposition.ColumnSpacing = wide ? 48 : 0;
+        PlayingNextComposition.ColumnDefinitions[0].Width = wide ? new GridLength(Math.Min(windowWidth * .44, 832)) : new GridLength(0);
+        // Keep the measured slots stable while changing the desktop breakpoint.
+        PlayingNextComposition.RowDefinitions[0].Height = wide ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        PlayingNextComposition.RowDefinitions[1].Height = wide ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        Grid.SetColumn(PlayingNextFinishingPanel, wide ? 0 : 1);
+        Grid.SetRow(PlayingNextScroller, wide ? 0 : 1);
+        PlayingNextFinishingPanel.Width = wide ? double.NaN : Math.Min(320, windowWidth - 48);
+        PlayingNextFinishingPanel.Margin = wide ? new Thickness(0) : new Thickness(0,0,0,24);
+        PlayingNextFinishingSlot.Height = (wide ? Math.Min(windowWidth * .44, 832) : Math.Min(320,windowWidth - 48)) * 9 / 16;
+        var availableWidth = Math.Min(544, Math.Max(240, wide ? windowWidth - Math.Min(windowWidth * .44,832) - 144 : windowWidth - 48));
         PlayingNextHero.Width = availableWidth;
-        PlayingNextHero.Height = Math.Max(180, Math.Min(400, Math.Min(windowHeight * 0.38, aspectHeight)));
+        PlayingNextHero.Height = Math.Min(availableWidth * 9 / 16, Math.Min(windowHeight * .3, 300));
+        PositionPlayingNextVideo();
+    }
+
+    private void PlayingNextFinishingSlot_SizeChanged(object sender, SizeChangedEventArgs e) => PositionPlayingNextVideo();
+    private void PlayingNextComposition_LayoutUpdated(object? sender, object e) => PositionPlayingNextVideo();
+    private Windows.Foundation.Rect? _playingNextVideoBounds;
+    private bool _playingNextResizeQueued;
+
+    private void QueuePlayingNextResize()
+    {
+        if (_playingNextResizeQueued) return;
+        _playingNextResizeQueued = true;
+        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            _playingNextResizeQueued = false;
+            if (Content?.XamlRoot is not { } root) return;
+            UpdatePlayingNextLayout(root.Size.Width, root.Size.Height);
+            PlayingNextComposition.UpdateLayout();
+            _playerService.HandleWindowResize();
+        })) _playingNextResizeQueued = false;
+    }
+
+    private void PositionPlayingNextVideo()
+    {
+        if (PlayingNextOverlay.Visibility != Visibility.Visible || Content is not FrameworkElement root || PlayingNextFinishingSlot.ActualWidth <= 0) return;
+        var point = PlayingNextFinishingSlot.TransformToVisual(root).TransformPoint(new(0,0));
+        var bounds = new Windows.Foundation.Rect(point.X, point.Y, PlayingNextFinishingSlot.ActualWidth, PlayingNextFinishingSlot.ActualHeight);
+        if (_playingNextVideoBounds == bounds) return;
+        _playingNextVideoBounds = bounds;
+        _playerService.PositionPostRollPreview(point.X, point.Y, PlayingNextFinishingSlot.ActualWidth, PlayingNextFinishingSlot.ActualHeight);
     }
 
     private async Task LoadPlayingNextOnDeckAsync()
@@ -2895,6 +2979,9 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Visible;
             ErrorState.Visibility = Visibility.Collapsed;
+            // The loading cover is black in every theme (upstream PlayerLoadingCover).
+            RetireLoadingBackdropUnlessOwnedBy(currentOwner);
+            LoadingOverlay.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black);
             LoadingOverlay.Visibility = Visibility.Visible;
         });
     }
@@ -2911,6 +2998,7 @@ public sealed partial class MainWindow : Window
             {
                 if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
                 LoadingOverlay.Visibility = Visibility.Collapsed;
+                ClearLoadingBackdrop();
             });
         });
     }
@@ -2927,6 +3015,8 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Collapsed;
             ErrorState.Visibility = Visibility.Visible;
+            ClearLoadingBackdrop();
+            LoadingOverlay.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"];
             ErrorTitle.Text = title;
             ErrorDetail.Text = detail;
             LoadingOverlay.Visibility = Visibility.Visible;
@@ -2937,6 +3027,7 @@ public sealed partial class MainWindow : Window
     {
         Interlocked.Exchange(ref _loadingOverlayOwner, null);
         LoadingOverlay.Visibility = Visibility.Collapsed;
+        ClearLoadingBackdrop();
     }
 
     private static void LogState(string msg)

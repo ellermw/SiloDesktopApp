@@ -79,12 +79,12 @@ public sealed partial class MpvOscRuntimeTests
                 osc_test_check_countdown()
                 local play, cancel, seek = state.next_ep_countdown_actions[1], state.next_ep_countdown_actions[2], state.layout.seek_bar
                 assert(state.next_ep_countdown_active and play and cancel
-                    and state.next_ep_countdown_overlay.data:find('UP NEXT IN', 1, true), 'Countdown card was not rendered')
-                -- The card is 126 scaled pixels high, with 16 of padding under its buttons.
+                    and state.next_ep_countdown_overlay.data:find('Up next in', 1, true), 'Countdown card was not rendered')
+                -- The #3993 card is 146 scaled pixels high: 16 of padding and a 4 pixel countdown bar under its buttons.
                 local sc = osc_test_scale()
                 local card_bottom = play.y + play.h + math.floor(16 * sc)
                 assert(card_bottom + 8 <= seek.y, 'Countdown card overlaps the timeline seek target')
-                assert(play.x >= 0 and card_bottom - math.floor(126 * sc) >= 0 and cancel.x + cancel.w <= dimensions.w, 'Countdown card left the viewport')
+                assert(play.x >= 0 and card_bottom + math.max(2, math.floor(4 * sc)) - math.floor(146 * sc) >= 0 and cancel.x + cancel.w <= dimensions.w, 'Countdown card left the viewport')
                 state.mouse_x, state.mouse_y = play.x + play.w / 2, seek.y + 1
                 osc_test_mouse_down()
                 assert(state.dragging_seek and next_intents == 0 and state.next_ep_countdown_active, 'Timeline click advanced or cancelled the episode instead of seeking')
@@ -1539,9 +1539,9 @@ public sealed partial class MpvOscRuntimeTests
             local wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
             local has_spinner = wait_data:find('draw_circle', 1, true) ~= nil or #wait_data > 10
             table.insert(results, 'spinner:' .. tostring(has_spinner))
-            -- Black rect uses draw_rect with full-screen 000000 fill; transport reloading should not have it
-            -- The rect is rendered as {\\p1\\bord0\\shad0\\1c&H000000& in ASS
-            local has_black_rect = wait_data:find('1c&H000000&', 1, true) ~= nil
+            -- A black spinner disc is allowed; only the full-frame startup rectangle is opaque.
+            local full_frame = string.format('m 0 0 l %d 0 %d %d 0 %d', state.osd_width, state.osd_width, state.osd_height, state.osd_height)
+            local has_black_rect = wait_data:find(full_frame, 1, true) ~= nil
             table.insert(results, 'black_rect:' .. tostring(has_black_rect))
 
             -- 2. Native menu should NOT be blocked during transport reload
@@ -1568,7 +1568,7 @@ public sealed partial class MpvOscRuntimeTests
             assert(state.playback_loading, 'playback_loading not set')
             assert(not state.transport_reloading, 'transport_reloading should be cleared by loading')
             wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
-            local loading_has_black = wait_data:find('1c&H000000&', 1, true) ~= nil
+            local loading_has_black = wait_data:find(full_frame, 1, true) ~= nil
             table.insert(results, 'loading_black:' .. tostring(loading_has_black))
             local menu_blocked_loading = state.playback_loading
             table.insert(results, 'menu_blocked_loading:' .. tostring(menu_blocked_loading))
@@ -1696,7 +1696,7 @@ public sealed partial class MpvOscRuntimeTests
             {{beforeScript}}
             local source = assert(io.open([[{{script}}]], 'r'))
             local code = source:read('*a'); source:close()
-            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_check_next = check_next_episode_button; osc_test_render_next = render_next_episode_button; osc_test_check_countdown = check_next_episode_countdown; osc_test_scale = ui_scale; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc'))()
+            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_check_next = check_next_episode_button; osc_test_render_next = render_next_episode_button; osc_test_check_countdown = check_next_episode_countdown; osc_test_scale = ui_scale; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc; osc_test_render_wait = render_playback_wait; osc_test_render_skip = render_skip_button; osc_test_transport = activate_transport_control'))()
             mp.add_timeout(0.05, function()
                 local ok, err = pcall(function()
                     {{setup}}

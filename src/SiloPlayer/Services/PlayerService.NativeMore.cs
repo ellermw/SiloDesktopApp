@@ -16,9 +16,12 @@ public partial class PlayerService
         var audioAvailable = (ActiveVersion?.AudioTracks?.Count ?? 0) > 1;
         var chaptersAvailable = (ActiveVersion?.Chapters?.Count ?? 0) > 0;
         var statsShown = IsPlaybackInfoShown;
-        // This is the existing compact overflow order. Subtitle, settings and
-        // fullscreen remain on the compact rail, so there are no duplicates.
-        PlaybackMenuChoice[] choices =
+        // More lists only what its rail does not show (#3993): a compact rail
+        // keeps subtitles, settings and fullscreen; a full rail also keeps audio,
+        // chapters and mute, plus the volume slider on wide rails.
+        var compact = request.Layout == "compact";
+        var volumeRows = request.Layout != "full";
+        PlaybackMenuChoice[] allChoices =
         [
             new("audio", "Audio tracks", "", [], IsEnabled: audioAvailable,
                 DisabledReason: audioAvailable ? "" : "No alternate audio tracks."),
@@ -36,6 +39,12 @@ public partial class PlayerService
                 DisabledReason: volume < 100 ? "" : "Maximum volume."),
             new("mute", "Mute / unmute", mute ? "Muted" : "Unmuted", [], IsCurrent: mute),
         ];
+        var choices = allChoices.Where(choice => choice.Id switch
+        {
+            "audio" or "chapters" or "mute" => compact,
+            "volume-down" or "volume-up" => volumeRows,
+            _ => true,
+        }).ToArray();
         return new PlaybackChoiceMenu(owner.Video, request.Anchor, "More player options", choices,
             () => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request),
             id =>

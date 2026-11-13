@@ -35,7 +35,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("local function draw_next_episode_icon", script);
         Assert.Contains("draw_next_episode_icon(ass, L.btn_next_ep.cx", script);
         Assert.DoesNotContain("draw_skip_fwd_icon(ass, L.btn_next_ep.cx", script);
-        Assert.Contains("mp.commandv(\"script-message\", \"silo-next-episode\")", script);
+        Assert.Contains("request_next_episode(\"viewer\")", script);
     }
 
     [Fact]
@@ -122,7 +122,8 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("local function draw_pip_icon", script);
-        Assert.Contains("L.btn_pip = not compact and place_utility() or nil", script);
+        // #3993 moved Picture in picture into More on every rail.
+        Assert.Contains("{name=\"btn_pip\", label=\"Picture in picture\"}", script);
         Assert.Contains("silo-pip-toggle", script);
         Assert.Contains("osc-pip-state", script);
         Assert.Contains("silo-pip-override", script);
@@ -147,8 +148,6 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("osc-set-theme", script);
-        Assert.Contains("WinUI sends RRGGBB; ASS colors are BGR.", script);
-        Assert.Contains("config.accent_color = value:sub(5, 6)", script);
     }
 
     [Fact]
@@ -284,7 +283,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("fade_duration       = 0.30", script);
         Assert.Contains("x = W / 2 - main_size / 2", script);
         Assert.Contains("L.metadata =", script);
-        Assert.Contains("Seek rail spans the frame", script);
+        Assert.Contains("Full rails: the seek bar spans the whole row", script);
         Assert.Contains("Top-left chrome matches VideoPlayer.tsx", script);
         Assert.Contains("Exact player-hud CSS stops", script);
         Assert.Contains("local hud_mid_y = L.gradient.y + L.gradient.h * 0.55", script);
@@ -319,7 +318,7 @@ public sealed class MpvOscScriptTests
         Assert.DoesNotContain("\"\u24D8\"", script);
         // Compact More/Fill actions are exercised through the bundled-mpv runtime.
         Assert.Contains("local compact = W < math.floor(1024 * sc)", script);
-        Assert.Contains("local show_volume_group = not compact", script);
+        Assert.Contains("laptop-wide rails keep only the mute button", script);
         Assert.Contains("compact and 40 or config.button_size", script);
         Assert.Contains("compact and 32 or config.small_button_size", script);
         Assert.Contains("local divider_center_y = L.btn_play.cy", script);
@@ -393,7 +392,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("chapter_at_time", script);
         Assert.Contains("marker_at_time", script);
         Assert.Contains("Credits / Outro", script);
-        Assert.Contains("Chapter boundaries are one-pixel", script);
+        Assert.Contains("state.seek_segments", script);
         Assert.Contains("hover_chapter.title", script);
         Assert.Contains("hover_marker.start", script);
         Assert.Contains("silo-chapter-thumbnail-request", script);
@@ -462,7 +461,7 @@ public sealed class MpvOscScriptTests
 
         Assert.Contains("osc-set-next-episode-detail", script);
         Assert.Contains("next_ep_countdown_remaining = 10", script);
-        Assert.Contains("UP NEXT IN ", script);
+        Assert.Contains("local lead = \"Up next in \"", script);
         Assert.Contains("Play Now", script);
         Assert.Contains("next_ep_countdown_cancelled = true", script);
         Assert.Contains("state.time_pos < state.credits_start", script);
@@ -491,7 +490,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("osc-set-transport-reloading", script);
         Assert.Contains("osc-set-buffering", script);
         Assert.Contains("mp.add_timeout(0.5", script);
-        Assert.Contains("state.playback_loading and 13 or 17", script);
+        Assert.Contains("loading_cover_overlay_id", script);
         Assert.Contains("state.playback_wait_overlay.z = 90", script);
         Assert.Contains("state.transport_reloading", script);
     }

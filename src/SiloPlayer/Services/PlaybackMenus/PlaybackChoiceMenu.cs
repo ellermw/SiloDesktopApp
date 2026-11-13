@@ -45,11 +45,13 @@ internal class PlaybackChoiceMenu
     private bool _shown;
     private bool _focusOnLoad;
     private bool _pointerSelection;
+    private readonly bool _segmented;
+    private readonly TextBlock? _headingValue;
 
     internal PlaybackChoiceMenu(MpvVideoWindow owner, PlaybackMenuAnchor anchor, string title,
         IReadOnlyList<PlaybackMenuChoice> choices, Func<bool> isCurrent,
         Action<string> selected, Action<PlaybackMenuCloseReason> closed, Action<DependencyObject>? applyTypography = null, FrameworkElement? footer = null,
-        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null, bool allowDisabledTraversal = false)
+        Func<PlaybackMenuChoice, FrameworkElement?>? leadingContent = null, bool allowDisabledTraversal = false, bool segmented = false)
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(choices);
@@ -58,6 +60,7 @@ internal class PlaybackChoiceMenu
         _isCurrent = isCurrent; _selected = selected; _closed = closed;
         _applyTypography = applyTypography; _footer = footer; _leadingContent = leadingContent;
         _allowDisabledTraversal = allowDisabledTraversal;
+        _segmented = segmented;
         _dismiss = () => Close(PlaybackMenuCloseReason.OutsidePointer);
         _list = new ListView
         {
@@ -66,9 +69,17 @@ internal class PlaybackChoiceMenu
             ItemContainerTransitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection(),
         };
         if (_allowDisabledTraversal) _list.IsTabStop = true;
+        if (_segmented)
+        {
+            _list.ItemsPanel = (ItemsPanelTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+                "<ItemsPanelTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'><ItemsWrapGrid Orientation='Horizontal' MaximumRowsOrColumns='10'/></ItemsPanelTemplate>");
+            _list.Padding = new Thickness(12, 0, 12, 10);
+            _list.Resources["ListViewItemSelectionIndicatorVisualEnabled"] = false;
+            ScrollViewer.SetHorizontalScrollBarVisibility(_list, ScrollBarVisibility.Auto);
+        }
         AutomationProperties.SetName(_list, title + " choices");
         BuildChoices();
-        var heading = new TextBlock { Text = title, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(12, 10, 12, 8) };
+        var heading = new TextBlock { Text = title, FontSize = _segmented ? 14 : 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(12, 10, 12, 8) };
         _root = new Grid
         {
             RequestedTheme = ElementTheme.Dark, Background = ThemeBrush("PopoverBrush", 0x18, 0x18, 0x1C),
@@ -77,7 +88,18 @@ internal class PlaybackChoiceMenu
         };
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        _root.Children.Add(heading); Grid.SetRow(_list, 1); _root.Children.Add(_list);
+        if (_segmented)
+        {
+            _root.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(245,16,16,19));
+            _root.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(36,255,255,255));
+            heading.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255,245,243,239));
+            var header = new Grid(); header.Children.Add(heading);
+            _headingValue = new TextBlock { Text = choices.FirstOrDefault(c => c.IsCurrent)?.Title ?? "", FontSize = 14,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(12,10,12,8), Foreground = heading.Foreground };
+            header.Children.Add(_headingValue); _root.Children.Add(header);
+        }
+        else _root.Children.Add(heading);
+        Grid.SetRow(_list, 1); _root.Children.Add(_list);
         if (_footer != null)
         {
             _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -156,6 +178,27 @@ internal class PlaybackChoiceMenu
 
     private ListViewItem BuildChoice(PlaybackMenuChoice choice)
     {
+            if (_segmented)
+            {
+                var segment = new ListViewItem { Tag = choice.Id, IsEnabled = choice.IsEnabled,
+                    MinWidth = 0, Width = 32, MinHeight = 44, Padding = new Thickness(2),
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    VerticalContentAlignment = VerticalAlignment.Stretch,
+                    Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0,0,0,0)),
+                    CornerRadius = new CornerRadius(6),
+                    // ListViewItemPresenter caches/overrides the container fill
+                    // in its selected states. Keep the live rate inside content
+                    // while the native container retains keyboard/focus ownership.
+                    Content = new Border { CornerRadius = new CornerRadius(4),
+                        Background = choice.IsCurrent ? HudAccentBrush(false) : new SolidColorBrush(Windows.UI.Color.FromArgb(18,255,255,255)),
+                        Child = new TextBlock { Text = choice.Title.TrimEnd('×'), FontSize = 11,
+                            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                            Foreground = choice.IsCurrent ? HudAccentBrush(true) : new SolidColorBrush(Windows.UI.Color.FromArgb(255,245,243,239)),
+                            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold } } };
+                AutomationProperties.SetName(segment, string.Join(", ",new[]{choice.Title,choice.Metadata,choice.IsCurrent?"Current selection":"",choice.IsPending?"Pending":"",choice.DisabledReason}.Where(s=>s.Length>0)));
+                ToolTipService.SetToolTip(segment,AutomationProperties.GetName(segment)); segment.Loaded+=OnRowLoaded;
+                return segment;
+            }
             var copy = BuildDefaultContent(choice);
             var row = new Grid { ColumnSpacing = 8, Opacity = choice.IsEnabled ? 1 : .55 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -192,12 +235,14 @@ internal class PlaybackChoiceMenu
         // resumes selection-following in Input.
         if (sameIds) _keepSelectionVisible = false;
         var previous = _choices; _choices = choices;
+        if (_headingValue != null) _headingValue.Text = choices.FirstOrDefault(c => c.IsCurrent)?.Title ?? "";
         void UpdateContainer(ListViewItem row, PlaybackMenuChoice choice)
         {
             var replacement = BuildChoice(choice);
             var content = replacement.Content; replacement.Content = null;
             replacement.Loaded -= OnRowLoaded;
             row.Content = content; row.IsEnabled = replacement.IsEnabled;
+            if (_segmented) { row.Background = replacement.Background; row.Foreground = replacement.Foreground; }
             AutomationProperties.SetName(row, AutomationProperties.GetName(replacement));
             ToolTipService.SetToolTip(row, AutomationProperties.GetName(replacement));
             if (_shown) _applyTypography?.Invoke(row);
@@ -515,6 +560,15 @@ internal class PlaybackChoiceMenu
     {
         _nativeClosed = true;
         Close(PlaybackMenuCloseReason.OwnerRetired);
+    }
+
+    private static Brush HudAccentBrush(bool foreground)
+    {
+        var color = (ThemeBrush("AccentBrush", 0xE8, 0xB8, 0x6E) as SolidColorBrush)!.Color;
+        var rgb = SiloPlayer.Core.Services.PlayerHudAccent.OnDark($"{color.R:X2}{color.G:X2}{color.B:X2}");
+        if (foreground) rgb = SiloPlayer.Core.Services.PlayerHudAccent.LabelOn(rgb);
+        var value = Convert.ToInt32(rgb, 16);
+        return new SolidColorBrush(Windows.UI.Color.FromArgb(255, (byte)(value >> 16), (byte)(value >> 8), (byte)value));
     }
 
     private static Brush ThemeBrush(string key, byte red, byte green, byte blue) =>

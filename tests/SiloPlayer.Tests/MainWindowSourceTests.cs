@@ -121,7 +121,8 @@ public sealed class MainWindowSourceTests
         Assert.True(
             enterPreview >= 0 && showOverlay > enterPreview,
             "The native mpv HWND must move before the WinUI Playing Next surface is exposed.");
-        Assert.Contains("if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)", code);
+        // #3917: the ended countdown also waits past the still-watching limit.
+        Assert.Contains("if (playbackHasEnded && hasNextEpisode && PlayingNextCountdownAllowed)", code);
         Assert.Contains("PlayingNextFinishedHeading.Text", code);
         Assert.Contains("PlayingNextOnDeckScroller.ChangeView", code);
         Assert.Contains("x:Name=\"PlayingNextHero\"", xaml);

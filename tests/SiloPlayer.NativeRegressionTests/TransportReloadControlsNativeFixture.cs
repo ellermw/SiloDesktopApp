@@ -41,7 +41,9 @@ internal static class TransportReloadControlsNativeFixture
             local function probe_state()
                 render_playback_wait()
                 local wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
-                local has_black = wait_data:find('1c&H000000&', 1, true) ~= nil
+                -- The HUD spinner disc may be black; only a full-frame cover is opaque.
+                local full_frame = string.format('m 0 0 l %d 0 %d %d 0 %d', state.osd_width, state.osd_width, state.osd_height, state.osd_height)
+                local has_black = wait_data:find(full_frame, 1, true) ~= nil
                 return {
                     playback_loading=state.playback_loading or false,
                     transport_reloading=state.transport_reloading or false,

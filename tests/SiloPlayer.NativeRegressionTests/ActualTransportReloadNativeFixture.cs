@@ -89,11 +89,12 @@ internal static class ActualTransportReloadNativeFixture
                 render_playback_wait()
                 local r = state.layout["btn_" .. (state.actual_reload_kind or "audio")] or {}
                 local wait = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
+                local full_frame = string.format('m 0 0 l %d 0 %d %d 0 %d', state.osd_width, state.osd_width, state.osd_height, state.osd_height)
                 local badge = state.pause_indicator_overlay and state.pause_indicator_overlay.data or ''
                 mp.commandv('script-message', 'silo-actual-reload-state', request, require('mp.utils').format_json({
                     loading=state.playback_loading or false, reloading=state.transport_reloading or false,
                     badge=#badge > 0, intent=tostring(state.transport_reload_paused),
-                    black=wait:find('1c&H000000&', 1, true) ~= nil, overlay=#wait > 10,
+                    black=wait:find(full_frame, 1, true) ~= nil, overlay=#wait > 10,
                     scope=state['native_' .. (state.actual_reload_kind or 'audio') .. '_scope'] or '', sequence=(state.native_menu_request or {}).sequence or 0,
                     x=r.cx or 0, y=r.cy or 0, width=r.w or 0}))
             end)
@@ -207,7 +208,8 @@ internal static class ActualTransportReloadNativeFixture
                 // The held load fails before FILE_LOADED. Its freeze keeps mpv paused while recovery replans,
                 // yet the transport shows, toggles and restores the playing state that load would have restored.
                 await Until(() => mpv.IsPaused, "Load freeze did not pause the native player.");
-                Call(service, "HandleMpvPlaybackError", "loading failed");
+                // Let libmpv observe one real failure; injecting the handler while HTTP stays live double-reports it.
+                media.Fail(outputId);
                 await wire.RecoveryStarted.Task.WaitAsync(TimeSpan.FromSeconds(8));
                 var recovering = await Query("held-recovery");
                 Require(recovering.GetProperty("reloading").GetBoolean() && !recovering.GetProperty("black").GetBoolean() && recovering.GetProperty("intent").GetString() == "false",
@@ -219,8 +221,9 @@ internal static class ActualTransportReloadNativeFixture
                 }
                 wire.ReleaseRecovery.TrySetResult(); outputId = 2;
                 await media.Started(outputId).WaitAsync(TimeSpan.FromSeconds(8));
-                Require(Get(service, "_restorePausedAfterLoad") is bool recovers && recovers == (scenario == "failed-load-toggle"),
-                    "Recovery load does not restore the pause state its replan presented.");
+                var restoredPause = Get(service, "_restorePausedAfterLoad");
+                Require(restoredPause is bool recovers && recovers == (scenario == "failed-load-toggle"),
+                    $"Recovery load does not restore the pause state its replan presented (restored={restoredPause ?? "unset"}).");
             }
             if (scenario == "menus-output") await OpenAudio("held-output");
             if (scenario.EndsWith("-output", StringComparison.Ordinal) && scenario is not "menus-output" and not "pause-output" and not "resume-output") await OpenControl(scenario.Split('-')[0], "held-output");
@@ -353,6 +356,7 @@ internal static class ActualTransportReloadNativeFixture
     {
         private readonly HttpListener _listener = new(); private readonly ConcurrentDictionary<int, TaskCompletionSource> _started = new();
         private readonly ConcurrentDictionary<int, TaskCompletionSource> _release = new(); private readonly byte[] _bytes;
+        private readonly ConcurrentDictionary<int, bool> _failures = new();
         internal string Origin { get; }
         internal HeldMedia()
         {
@@ -365,6 +369,7 @@ internal static class ActualTransportReloadNativeFixture
         internal Task Started(int attempt) => _started.GetOrAdd(attempt, _ => Signal()).Task;
         internal bool WasStarted(int attempt) => _started.TryGetValue(attempt, out var started) && started.Task.IsCompleted;
         internal void Release(int attempt) => _release.GetOrAdd(attempt, _ => Signal()).TrySetResult();
+        internal void Fail(int attempt) { _failures[attempt] = true; Release(attempt); }
         internal void ReleaseAll() { for (var attempt = 0; attempt < 8; attempt++) Release(attempt); }
         private async Task AcceptAsync()
         {
@@ -379,7 +384,15 @@ internal static class ActualTransportReloadNativeFixture
             try
             {
                 var attempt = int.Parse(Path.GetFileNameWithoutExtension(context.Request.Url!.AbsolutePath), CultureInfo.InvariantCulture); _started.GetOrAdd(attempt, _ => Signal()).TrySetResult();
-                await _release.GetOrAdd(attempt, _ => Signal()).Task; context.Response.ContentType = "application/octet-stream"; context.Response.ContentLength64 = _bytes.Length;
+                await _release.GetOrAdd(attempt, _ => Signal()).Task;
+                if (_failures.ContainsKey(attempt))
+                {
+                    context.Response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                    context.Response.ContentLength64 = 0;
+                    context.Response.Close();
+                    return;
+                }
+                context.Response.ContentType = "application/octet-stream"; context.Response.ContentLength64 = _bytes.Length;
                 if (context.Request.HttpMethod != "HEAD") await context.Response.OutputStream.WriteAsync(_bytes); context.Response.Close();
             }
             catch (Exception error) when (error is HttpListenerException or ObjectDisposedException or IOException) { }

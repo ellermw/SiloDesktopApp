@@ -26,8 +26,12 @@ public partial class PlayerService
     }
     private bool ShuffleAwaitsLaterPart => IsShufflePlayback && PlaybackPartSequence.NextFileId(WatchDetail, ActiveMediaFileId) != null;
 
+    // The next part of the same title is a continuation, not a viewer start.
     private Task ContinueVideoPartAsync(string contentId, int fileId)
-        => PlayAsync(contentId, fromStart: true, fileId: fileId, libraryId: ActiveLibraryId, shuffleId: ActiveShuffleId, authority: _activeAuthority, cancellationToken: _authorityLifetimeCts.Token);
+    {
+        _stillWatching.ExpectAutomaticStart(contentId);
+        return PlayAsync(contentId, fromStart: true, fileId: fileId, libraryId: ActiveLibraryId, shuffleId: ActiveShuffleId, authority: _activeAuthority, cancellationToken: _authorityLifetimeCts.Token);
+    }
 
     public async Task StartShuffleAsync(ShuffleScopeRequest scope, CancellationToken ct = default)
     {
@@ -67,6 +71,7 @@ public partial class PlayerService
     public async Task PickAnotherShuffleItemAsync()
     {
         if (!IsShufflePlayback || IsWatchTogetherPlayback) return;
+        _stillWatching.RecordViewerInteraction();
         var shuffleId = ActiveShuffleId; var generation = Volatile.Read(ref _playRequestGeneration);
         bool Current() => ActiveShuffleId == shuffleId && generation == Volatile.Read(ref _playRequestGeneration) && !_closing;
         try { await ShuffleController.PickAnotherAsync(); if (Current()) InvokeSubscribersSafely(ShuffleChanged, nameof(ShuffleChanged)); }
@@ -82,10 +87,15 @@ public partial class PlayerService
         try { await stop; } catch { /* Stop is locally final even if deletion fails. */ }
     }
 
-    private async Task ContinueShuffleAsync()
+    private async Task ContinueShuffleAsync(PlaybackStartTrigger trigger = PlaybackStartTrigger.Viewer)
     {
         if (ContentId == null || !IsShufflePlayback) return;
+        // The pick is the server's, so an automatic advance is claimed before
+        // asking for it and announced once the pick is known.
         var contentId = ContentId; var shuffleId = ActiveShuffleId;
+        if (trigger == PlaybackStartTrigger.Automatic &&
+            !_stillWatching.TryBeginAutomaticAdvance(contentId, null, StillWatchingThresholdSetting, IsWatchTogetherPlayback)) return;
+        var started = false;
         var owner = _activeAuthority;
         var ownerToken = _authorityLifetimeCts.Token;
         var generation = Volatile.Read(ref _playRequestGeneration);
@@ -98,12 +108,20 @@ public partial class PlayerService
         {
             var shuffle = await ShuffleController.AdvanceAsync(contentId);
             if (shuffle == null || !Current()) return;
+            if (trigger == PlaybackStartTrigger.Automatic) _stillWatching.ExpectAutomaticStart(shuffle.Current.ContentId);
+            started = true;
             await PlayAsync(shuffle.Current.ContentId, fromStart: true, libraryId: libraryId, shuffleId: shuffle.Id, authority: owner, cancellationToken: ownerToken);
             if (restoreFullscreen && !ownerToken.IsCancellationRequested && ReferenceEquals(owner, _activeAuthority)) RestoreFullscreenAfterPostRollContinue();
         }
         catch (OperationCanceledException) { }
         catch { if (Current()) ReportShuffleFailure("Couldn't continue the shuffle."); }
-        finally { _restoreFullscreenAfterPostRollContinue = false; }
+        finally
+        {
+            // A pick that failed, was cancelled or was superseded started nothing:
+            // the attempt does not count and this title may still advance.
+            if (trigger == PlaybackStartTrigger.Automatic && !started) _stillWatching.CancelAutomaticAdvance(contentId);
+            _restoreFullscreenAfterPostRollContinue = false;
+        }
     }
 
     private static string WatchPreparationKey(string contentId, int? libraryId, int? fileId)

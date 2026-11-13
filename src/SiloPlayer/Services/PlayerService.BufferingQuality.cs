@@ -23,10 +23,11 @@ public partial class PlayerService
     private int _bufferingSampling;
     private long _bufferingPlanGeneration;
     private string? _publishedBufferingPill;
+    private bool _bufferingOutage, _publishedBufferingOutage;
     // Keep the synchronous native boundary separate from controller bookkeeping.
     private Func<SiloPlayer.Player.MpvPlayer, (long? Bytes, double? InputBytesPerSecond, double BufferedSeconds, double? SinceLastByteMs, bool TransportFailing, bool Seeking)> _readBufferingNetwork = static player => player.ReadMediaNetworkObservation();
     private Action<SiloPlayer.Player.MpvPlayer, string> _writeBufferingPill = static (player, pill) => player.SendScriptMessage("osc-buffering-quality", pill);
-    private sealed record BufferingPillPublication(SiloPlayer.Player.MpvPlayer Player, string Text, long Generation);
+    private sealed record BufferingPillPublication(SiloPlayer.Player.MpvPlayer Player, string Text, long Generation, bool Outage);
     private BufferingPillPublication? _pendingBufferingPill;
     private bool _bufferingPillPublishing;
     private sealed record BufferingActionOwner(PlaybackManager Manager, PlaybackStartResponse Session,
@@ -78,6 +79,7 @@ public partial class PlayerService
         lock (_bufferingGate)
         {
             _bufferingPlanGeneration++;
+            _bufferingOutage = false;
             FlushBufferingSummaryCore();
             var manager = _playbackManager;
             if (manager?.CurrentSession is not { } session || !manager.SupportsBufferingQuality) { _bufferingController = null; PublishBufferingPillCore(force: true); return; }
@@ -133,6 +135,7 @@ public partial class PlayerService
                 var silence = sample.SinceLastByteMs ?? now - _bufferingLastDataAt;
                 var segmented = _bufferingSession?.Delivery is "server_transcode_hls" or "server_remux_hls";
                 var outage = NativeBufferingSignalPolicy.IsOutage(wait, sample.TransportFailing, silence, segmented);
+                _bufferingOutage = outage && !paused && !seeking;
                 action = _bufferingController.Observe(new(now, wait, paused, seeking, outage, IsWatchTogetherPlayback,
                     sample.BufferedSeconds, rate, _bufferingObscured));
                 actionOwner = CaptureBufferingActionOwnerCore();
@@ -215,13 +218,14 @@ public partial class PlayerService
     private void PublishBufferingPillCore(bool force = false)
     {
         var pill = _bufferingObscured || IsWatchTogetherPlayback ? null : _bufferingController?.Pill;
-        if (!force && _publishedBufferingPill == pill) return;
+        if (!force && _publishedBufferingPill == pill && _publishedBufferingOutage == _bufferingOutage) return;
         _publishedBufferingPill = pill;
+        _publishedBufferingOutage = _bufferingOutage;
         // Called with the controller gate held. Only capture managed state here:
         // mpv_command can block just like mpv_get_property. One worker sends
         // outside the UI gate, coalescing pending updates without reordering an
         // in-flight send and the latest replacement/clear.
-        _pendingBufferingPill = _mpv is { } player ? new(player, pill ?? "", _bufferingPlanGeneration) : null;
+        _pendingBufferingPill = _mpv is { } player ? new(player, pill ?? "", _bufferingPlanGeneration, _bufferingOutage) : null;
         if (!_bufferingPillPublishing && _pendingBufferingPill != null)
         {
             _bufferingPillPublishing = true;
@@ -245,7 +249,11 @@ public partial class PlayerService
                 if (pending.Generation != _bufferingPlanGeneration || !ReferenceEquals(pending.Player, _mpv)) continue;
                 publication = pending;
             }
-            try { _writeBufferingPill(publication.Player, publication.Text); }
+            try
+            {
+                _writeBufferingPill(publication.Player, publication.Text);
+                publication.Player.SendScriptMessage("osc-set-connection-outage", publication.Outage ? "true" : "false");
+            }
             catch (Exception ex) { LogToFile("state_trace.txt", $"Buffering pill publication failed: {ex.GetType().Name}"); }
         }
     }
@@ -258,7 +266,12 @@ public partial class PlayerService
     }
     private void EndBufferingQuality()
     {
-        lock (_bufferingGate) { _bufferingPlanGeneration++; FlushBufferingSummaryCore(); _bufferingController = null; _bufferingManager = null; _bufferingSession = null; PublishBufferingPillCore(force: true); }
+        lock (_bufferingGate) { _bufferingPlanGeneration++; _bufferingOutage = false; FlushBufferingSummaryCore(); _bufferingController = null; _bufferingManager = null; _bufferingSession = null; PublishBufferingPillCore(force: true); }
         SetConnectionMediaActive(false);
+    }
+
+    private void SetPlaybackOutage(bool outage)
+    {
+        lock (_bufferingGate) { _bufferingOutage = outage; PublishBufferingPillCore(); }
     }
 }

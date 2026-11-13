@@ -620,11 +620,20 @@
 
         <!-- Layer 2: Loading overlay (shown while preparing playback) -->
         <Grid x:Name="LoadingOverlay" Visibility="Collapsed" Background="{StaticResource AppBackgroundBrush}">
+            <!-- PlayerLoadingCover (Silo Server #3993): black, with the title's
+                 backdrop dimmed under the spinner. The thumbhash paints first and
+                 the picture fades in over it once loaded. -->
+            <Grid x:Name="LoadingBackdropLayer" Visibility="Collapsed" Background="Black" IsHitTestVisible="False">
+                <Image x:Name="LoadingBackdropPlaceholder" Stretch="UniformToFill" Opacity="0.22"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Image x:Name="LoadingBackdropImage" Stretch="UniformToFill" Opacity="0"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
             <!-- Loading state -->
             <StackPanel x:Name="LoadingState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
-                <ProgressRing IsActive="True" Width="48" Height="48" />
-                <TextBlock Text="Preparing playback..." FontSize="16"
-                           Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
+                <!-- The cover is a status: its label is spoken, not shown (upstream aria-label). -->
+                <ProgressRing x:Name="LoadingProgressRing" IsActive="True" Width="36" Height="36"
+                              Foreground="#F5F3EF" AutomationProperties.Name="Preparing playback" />
             </StackPanel>
             <!-- Error state -->
             <StackPanel x:Name="ErrorState" Visibility="Collapsed"
@@ -698,9 +707,16 @@
                 <FontIcon Glyph="&#xE711;" FontSize="16" />
             </Button>
 
-            <ScrollViewer Grid.Row="0" HorizontalScrollMode="Disabled"
-                          VerticalScrollBarVisibility="Auto" Padding="24,22,24,18">
-                <StackPanel MaxWidth="820" HorizontalAlignment="Center" Spacing="12">
+            <Grid x:Name="PlayingNextComposition" Grid.RowSpan="2" Margin="48,72,48,24" ColumnSpacing="48" LayoutUpdated="PlayingNextComposition_LayoutUpdated">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="0"/></Grid.RowDefinitions>
+                <StackPanel x:Name="PlayingNextFinishingPanel" VerticalAlignment="Center" Spacing="10">
+                    <Border x:Name="PlayingNextFinishingSlot" Height="300" Background="#101013" CornerRadius="12" SizeChanged="PlayingNextFinishingSlot_SizeChanged"/>
+                    <TextBlock x:Name="PlayingNextFinishingTitle" Text="Finishing episode" FontSize="14" Foreground="#BDBAB3" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            <ScrollViewer x:Name="PlayingNextScroller" Grid.Column="1" HorizontalScrollMode="Disabled"
+                          VerticalScrollBarVisibility="Auto" Padding="0">
+                <StackPanel x:Name="PlayingNextColumn" MaxWidth="544" HorizontalAlignment="Stretch" VerticalAlignment="Center" Spacing="12">
                     <TextBlock x:Name="PlayingNextLabelText" Text="PLAYING NEXT" FontSize="11" FontWeight="SemiBold"
                                CharacterSpacing="250" Foreground="#66FFFFFF"
                                HorizontalAlignment="Center" Margin="0,4,0,0" />
@@ -708,14 +724,14 @@
                                TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Visibility="Collapsed" />
 
                     <StackPanel x:Name="PlayingNextEpisodePanel" Spacing="12">
-                        <Border x:Name="PlayingNextHero" Height="400" MaxWidth="820" CornerRadius="16"
+                        <Border x:Name="PlayingNextHero" Height="306" MaxWidth="544" CornerRadius="16"
                                 Background="#202733" BorderBrush="#14FFFFFF" BorderThickness="1">
                             <Image x:Name="PlayingNextPoster" Stretch="UniformToFill" Opacity="0" />
                         </Border>
 
-                        <StackPanel HorizontalAlignment="Center" Spacing="5" MaxWidth="650">
-                            <TextBlock x:Name="PlayingNextSeriesText" Text="" FontSize="18"
-                                       FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+                        <StackPanel x:Name="PlayingNextMetadata" HorizontalAlignment="Center" Spacing="5" MaxWidth="650">
+                            <TextBlock x:Name="PlayingNextSeriesText" Text="" FontSize="24"
+                                       FontWeight="SemiBold" Foreground="White" HorizontalAlignment="Center" />
                             <TextBlock x:Name="PlayingNextTitleText" Text="" FontSize="16"
                                        FontWeight="SemiBold" Foreground="#EBFFFFFF"
                                        TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
@@ -727,19 +743,19 @@
                                        TextTrimming="CharacterEllipsis" LineHeight="19" TextAlignment="Center" />
                         </StackPanel>
 
-                        <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <StackPanel x:Name="PlayingNextPrimaryActions" Orientation="Horizontal" Spacing="14" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <Button x:Name="PlayingNextPlayNowButton" Click="PlayingNextPlayNow_Click"
                             Style="{StaticResource AccentButtonStyle}" Padding="26,0"
                             Height="46" CornerRadius="23"
-                            Foreground="{StaticResource AccentForegroundBrush}">
+                            Foreground="#141417" Background="#F5F3EF">
                             <Button.KeyboardAccelerators>
                                 <KeyboardAccelerator Key="Enter" />
                             </Button.KeyboardAccelerators>
                         <Button.Resources>
-                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{StaticResource AccentHoverColor}" />
-                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{StaticResource AccentPressedColor}" />
-                            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{StaticResource AccentForegroundColor}" />
-                            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="{StaticResource AccentForegroundColor}" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#FFFFFF" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#D8D5CF" />
+                            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#141417" />
+                            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#141417" />
                         </Button.Resources>
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <FontIcon Glyph="&#xE768;" FontSize="14" />
@@ -788,12 +804,9 @@
                         <Button x:Name="PlayingNextPickAnother" Content="Pick Another" Click="PlayingNextPickAnother_Click" Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999" />
                         <Button x:Name="PlayingNextStopShuffle" Content="Stop shuffling" Click="PlayingNextStopShuffle_Click" Style="{StaticResource GhostButtonStyle}" />
                     </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
-
-            <StackPanel x:Name="PlayingNextOnDeckSection" Grid.Row="1" Visibility="Collapsed"
+            <StackPanel x:Name="PlayingNextOnDeckSection" Visibility="Collapsed"
                         PointerMoved="PlayingNextFinishedEngaged"
-                        Spacing="9" Margin="24,0,24,18">
+                        Spacing="9" Margin="0,28,0,12">
                 <Grid>
                     <TextBlock Text="ON DECK" FontSize="11" FontWeight="SemiBold"
                                CharacterSpacing="120" Foreground="#66FFFFFF"
@@ -847,6 +860,9 @@
                     </ItemsRepeater>
                 </ScrollViewer>
             </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+            </Grid>
         </Grid>
 
         <!-- Layer 5: Toast notifications (F2) — top-right, above everything
