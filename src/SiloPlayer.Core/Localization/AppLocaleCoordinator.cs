@@ -9,10 +9,12 @@ namespace SiloPlayer.Core.Localization;
 /// Before a profile's settings load (launch, sign-in, profile picker) it uses
 /// the device languages and the last explicit language a profile applied,
 /// cached locally. Once the profile's effective <c>ui.app_language</c> loads it
-/// is authoritative, null included, and the cache follows it. A read is bound
-/// to the request owner captured when it started: a result for a profile or
-/// account that is no longer current, or one overtaken by a newer refresh, is
-/// dropped and never applied.
+/// is authoritative, null included, and the cache follows it. A server that
+/// does not know the setting has no picker, so a cached language (another
+/// owner's choice) is dropped there and the device languages apply. A read is
+/// bound to the request owner captured when it started: a result for a profile
+/// or account that is no longer current, or one overtaken by a newer refresh,
+/// is dropped and never applied.
 /// </summary>
 public sealed class AppLocaleCoordinator
 {
@@ -89,9 +91,11 @@ public sealed class AppLocaleCoordinator
                 return false;
             }
             if (!IsCurrent(context, generation, token)) return false;
-            // An older server has nowhere to store the choice: keep the cached
-            // language, exactly as before its settings could load.
-            var locale = read.Supported ? _locales.Create(Resolve(read.Tag)) : null;
+            // An older server has nowhere to store the choice and hides the picker,
+            // so a language cached from another server, account or profile must not
+            // stay here: drop it and follow the device, like a null value.
+            var tag = read.Supported ? read.Tag : null;
+            var locale = _locales.Create(Resolve(tag));
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             using var cancellation = token.Register(() => completion.TrySetResult(false));
             var posted = _post(() =>
@@ -101,12 +105,13 @@ public sealed class AppLocaleCoordinator
                     if (!IsCurrent(context, generation, token)) { completion.TrySetResult(false); return; }
                     LoadedOwner = context;
                     ServerSupportsSetting = read.Supported;
-                    if (locale != null)
+                    var settings = _localSettings.Load();
+                    // Without a cached language an older server changes nothing.
+                    if (read.Supported || settings.LastAppLanguageOverride != null)
                     {
-                        var settings = _localSettings.Load();
-                        if (settings.LastAppLanguageOverride != read.Tag)
+                        if (settings.LastAppLanguageOverride != tag)
                         {
-                            settings.LastAppLanguageOverride = read.Tag;
+                            settings.LastAppLanguageOverride = tag;
                             _localSettings.Save(settings);
                         }
                         _locales.Apply(locale);

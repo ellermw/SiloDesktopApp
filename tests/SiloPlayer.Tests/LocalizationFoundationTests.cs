@@ -616,20 +616,53 @@ public sealed class AppLanguagePreferenceTests
     }
 
     [Fact]
-    public async Task UnsupportedServerKeepsTheCachedLanguage()
+    public async Task UnsupportedServerFollowsTheDeviceInsteadOfALanguageCachedElsewhere()
+    {
+        var wire = new SettingsWire { EffectiveValue = "\"ar\"" };
+        var (preference, client) = Create(wire);
+        var locales = new LocaleService();
+        using var directory = new TemporaryDirectory();
+        var local = new SettingsService(directory.Path);
+        var coordinator = new AppLocaleCoordinator(preference, locales, local, () => ["en-US"], "en-US", action => { action(); return true; });
+        coordinator.ApplyBeforeSettings();
+        Assert.True(await coordinator.RefreshAsync());
+        Assert.Equal("ar", locales.Current.Language);
+        Assert.Equal("ar", local.Load().LastAppLanguageOverride);
+
+        // Sign in to an older server: no picker there, so the other server's choice must not stick.
+        coordinator.Retire();
+        client.SetBaseUrl("https://older.invalid");
+        client.SetProfile("profile-b");
+        wire.Revision = 27;
+        Assert.Equal("ar", locales.Current.Language);
+        Assert.True(await coordinator.RefreshAsync());
+        Assert.False(coordinator.ServerSupportsSetting);
+        Assert.Equal("en", locales.Current.Language);
+        Assert.False(locales.Current.IsRightToLeft);
+        Assert.Null(local.Load().LastAppLanguageOverride);
+
+        // The next launch starts from the device languages too.
+        var relaunched = new LocaleService();
+        var restarted = new AppLocaleCoordinator(preference, relaunched, new SettingsService(directory.Path), () => ["en-US"], "en-US", action => { action(); return true; });
+        Assert.Equal("en", restarted.ApplyBeforeSettings().Language);
+        Assert.True(await restarted.RefreshAsync());
+        Assert.Equal("en", relaunched.Current.Language);
+    }
+
+    [Fact]
+    public async Task UnsupportedServerWithoutACachedLanguageLeavesTheLocaleAlone()
     {
         var wire = new SettingsWire { Revision = 27 };
         var (preference, _) = Create(wire);
         var locales = new LocaleService();
         using var directory = new TemporaryDirectory();
         var local = new SettingsService(directory.Path);
-        local.Save(new SiloPlayer.Core.Models.AppSettings { LastAppLanguageOverride = "fr" });
-        var coordinator = new AppLocaleCoordinator(preference, locales, local, () => ["en-US"], "en-US", action => { action(); return true; });
-        coordinator.ApplyBeforeSettings();
+        var coordinator = new AppLocaleCoordinator(preference, locales, local, () => ["de-DE"], "de-DE", action => { action(); return true; });
+        var before = coordinator.ApplyBeforeSettings();
         Assert.True(await coordinator.RefreshAsync());
-        Assert.Equal("fr", locales.Current.Language);
+        Assert.Same(before, locales.Current);
         Assert.False(coordinator.ServerSupportsSetting);
-        Assert.Equal("fr", local.Load().LastAppLanguageOverride);
+        Assert.Null(local.Load().LastAppLanguageOverride);
     }
 
     private static (AppLanguagePreference Preference, SiloApiClient Client) Create(SettingsWire wire)
