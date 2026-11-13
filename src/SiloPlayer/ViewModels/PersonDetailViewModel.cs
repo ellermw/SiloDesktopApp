@@ -103,11 +103,10 @@ public partial class PersonDetailViewModel : ObservableObject
         {
             if (Person == null || string.IsNullOrEmpty(Person.DeathDate)) return "";
             var age = ComputeAge(Person.BirthDate, Person.DeathDate);
-            var label = DateTime.TryParse(Person.DeathDate, out var death)
-                ? $"Died {FormatPersonDate(death)}"
-                : $"Died {Person.DeathDate}";
+            var date = DateTime.TryParse(Person.DeathDate, out var death) ? FormatPersonDate(death) : Person.DeathDate;
             return age > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.died", new Dictionary<string, object?>
-            { ["date"] = DateTime.TryParse(Person.DeathDate, out var parsed) ? FormatPersonDate(parsed) : Person.DeathDate, ["age"] = age }) : label;
+            { ["date"] = date, ["age"] = age })
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.item.editPerson.deathDate") + ": " + date;
         }
     }
 

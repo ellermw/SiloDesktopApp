@@ -244,7 +244,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             {
                 ResetTextPresentation();
                 TitleText.Text = item.SeriesTitle!;
-                string epLine = SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.episodeLabelWithTitle", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber, ["title"] = item.Title });
+                string epLine = SiloPlayer.Core.Localization.AppStrings.Get(string.IsNullOrWhiteSpace(item.Title) ? "web.home.continueWatching.episodeLabel" : "web.home.continueWatching.episodeLabelWithTitle", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber, ["title"] = item.Title });
                 SubtitleText.Text = epLine;
                 SubtitleText.Visibility = Visibility.Visible;
             }

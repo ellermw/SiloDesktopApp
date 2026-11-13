@@ -1,3 +1,31 @@
+# November 13 - PR #145 episode context, status counts and metadata labels
+
+The five findings on f1902cff are addressed. Continue Watching/Next Up uses the
+label without a separator when the episode title is missing or whitespace.
+Loaded Requests uses the shipped pluralized result-count message, including
+culture-formatted numbers, instead of an English request(s) suffix. The generated
+Match Item heading and both allowance-list retry buttons retain catalog keys.
+A death date with no usable positive age uses the translated Death Date label
+and culturally formatted date (or the raw unparseable date), without inventing
+an age. Known positive ages retain the original catalog sentence. Generated
+catalogs and raw request/person/media values remain unchanged.
+
+Release publish and native host build passed. Targeted and full native
+settings-localization, media-localization and shell-localization passed. New
+checks exercise empty/whitespace/raw episode titles, real Requests loads with
+0/1/2/5/11/23 rows, an open Match Item heading, both actual allowance-read failures
+and retry actions, and missing/invalid/zero/known-age birth/death data through
+en/de/ar/ja. All 6,221 unit tests passed with zero failures/skips (2m24s).
+All 1,991 frozen source/test inputs match. App DLL SHA-256:
+49F0A62EF71D911891CC0EE806D8891E9FFFC092538F9490781C56FDB2D3D5EB.
+Evidence: D:/SiloPlayer-build/review-ninth-{receipt,source-inputs}.json,
+review-ninth-{publish,native-build,units}.log and native result text.
+Pipeline QA, merge and Beta publication remain pending. Version stamps stay
+pipeline-owned; the installed player stays open. Earlier verification limits
+and the cleanup approval blocker remain; shared output is 1.185 GiB, with
+C: 190.00 GiB and D: 481.32 GiB free. No cleanup was retried and zero GiB
+was reclaimed on either drive.
+
 # November 13 - PR #145 picker recovery and retained confirmations
 
 Addresses the seven findings on 56965f64. Initial language capabilities or

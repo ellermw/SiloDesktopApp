@@ -115,7 +115,7 @@ public partial class RequestsViewModel : ObservableObject
             await Task.WhenAll(mineTask, discoveryTask, brandsTask);
             if (!isCurrentVisit() || revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
 
-            SetLocalizedMessage(nameof(StatusMessage), () => MyRequests.Count > 0 ? MyRequests.Count.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) + " request(s) loaded." : "", value => StatusMessage = value ?? "");
+            SetLocalizedMessage(nameof(StatusMessage), () => MyRequests.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultCount", new Dictionary<string, object?> { ["count"] = MyRequests.Count, ["shown"] = MyRequests.Count.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : "", value => StatusMessage = value ?? "");
             _lastLoadedAt = DateTime.UtcNow;
             _loadedContext = context;
             DataVersion++;

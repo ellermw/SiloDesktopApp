@@ -84,8 +84,8 @@ public sealed partial class MatchItemDialog : ContentDialog
         var heading = new Grid();
         heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        heading.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.dialog.matchItemTitle", fallback: "Match Item"), FontSize = 18, FontWeight = FontWeights.SemiBold,
-            Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        heading.Children.Add(MediaItemCardActions.Localize(new TextBlock { Text = AppStrings.Get("web.item.dialog.matchItemTitle", fallback: "Match Item"), FontSize = 18, FontWeight = FontWeights.SemiBold,
+            Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight }, text: "web.item.dialog.matchItemTitle"));
         var close = EditorDialogPresentation.CornerClose(this);
         close.Width = close.Height = 16; close.Padding = new Thickness(0); close.Margin = new Thickness(0, -8, -8, 0); close.VerticalAlignment = VerticalAlignment.Top;
         Grid.SetColumn(close, 1); heading.Children.Add(close); Title = heading;

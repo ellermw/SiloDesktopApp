@@ -72,6 +72,7 @@ internal static partial class SettingsLocalizationNativeFixture
             if (only is null or "household") await Household(parent);
             if (only is null or "metadata") await Metadata(parent);
             if (only is null or "language-picker") { await RegionalLanguagePicker(parent); await LanguagePicker(parent); }
+            if (only is null or "review-ninth") await ReviewNinth(parent, wire, client);
             if (only is null or "review-eighth") { await LanguageInitialLoadRecovery(parent); await ReviewEighthDialogs(parent, wire, client); }
             if (only is null or "language-refresh") await LanguageRefreshRecovery(parent, reload: false);
             if (only is null or "language-reload") await LanguageRefreshRecovery(parent, reload: true);
@@ -483,10 +484,13 @@ internal static partial class SettingsLocalizationNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public bool RequirePin { get; set; }
+        public bool AllowedListsFail { get; set; }
+        public int RequestCount { get; set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Check(request.RequestUri!.Host == Host, "External request blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (AllowedListsFail && (path.EndsWith("/allowed-titles") || path.EndsWith("/allowed-collections"))) return Json(new { }, HttpStatusCode.ServiceUnavailable);
             if (path.Contains("/webhook-sync/"))
             {
                 var connection = new { id = "c1", provider = "plex", server_name = "Synthetic connection", webhook_url = "/synthetic-secret" };
@@ -495,6 +499,8 @@ internal static partial class SettingsLocalizationNativeFixture
             }
             return Json(path switch
             {
+                "/api/v2/requests/status" => new { requests_enabled = true, discover_rows_supported = true },
+                "/api/v2/requests/mine" => new { items = Enumerable.Range(0, RequestCount).Select(index => new { id = "raw-request-" + index, title = "Raw request " + index, status = "pending", outcome = "active" }), page = new { has_more = false } },
                 "/api/v2/requests/fixture-cancel" => new { id = "fixture-cancel", outcome = "active", status = "pending" },
                 "/api/v2/watch-together/capabilities" => new { state = "available", allowed = true, staged_selection = true },
                 "/api/v2/subtitles/search" => new { results = Array.Empty<object>(), warnings = Array.Empty<object>() },

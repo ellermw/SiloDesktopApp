@@ -38,6 +38,8 @@ public sealed class AllowedTitlesSection : UserControl
         Content = panel;
         Localized.SetContent(_more, "web.profiles.allowedTitles.showMore");
         Localized.SetContent(_searchRetry, "web.catalog.page.retrySearch");
+        Localized.SetContent(_titleRetry, "common.tryAgain");
+        Localized.SetContent(_collectionRetry, "common.tryAgain");
         Localized.SetPlaceholder(_search, "web.profiles.allowedTitles.searchPlaceholder");
         Localized.SetHeader(_search, "web.profiles.allowedTitles.searchLabel");
         _search.TextChanged += (_, _) => { ++_searchVersion; _debounce.Stop(); _results.Children.Clear(); Localized.SetText(_searchError, null); _searchError.Text = ""; _searchRetry.Visibility = Visibility.Collapsed; if (!string.IsNullOrWhiteSpace(_search.Text)) _debounce.Start(); };
