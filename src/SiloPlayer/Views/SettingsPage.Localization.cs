@@ -80,9 +80,7 @@ public sealed partial class SettingsPage
         HomeLayoutMoreButton.Content = L("web.ui.pageMoreMenu.more", "More");
         // The directory, its cards and the shell's sidebar entries are rebuilt from keys.
         BuildSettingsOverview();
-        SettingsHeaderSubtitle.Text = _showingSettingsOverview
-            ? AppStrings.Get("web.settings.layout.subtitle")
-            : "Manage your playback preferences, libraries, and display options.";
+        SettingsHeaderSubtitle.Text = AppStrings.Get("web.settings.layout.subtitle");
         SettingsSearchBox_TextChanged(SettingsSearchBox, null!);
 
         // Retained text built in code: re-render from the current view-model state.

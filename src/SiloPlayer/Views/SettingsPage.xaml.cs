@@ -1194,7 +1194,7 @@ _webhookPlexAuthCts?.Cancel();
         if (button.Tag is "WebhookSync" && !WebhookAvailable) { ShowSettingsOverview(); return; }
         if ((button.Tag is "Account" or "Profiles" or "Sessions") && !_canManageProfiles || button.Tag is "Requests" && !_requestsAvailable) { ShowSettingsOverview(); return; }
         _showingSettingsOverview = false;
-        SettingsHeaderSubtitle.Text = "Manage your playback preferences, libraries, and display options.";
+        SettingsHeaderSubtitle.Text = AppStrings.Get("web.settings.layout.subtitle");
         SettingsOverviewPanel.Visibility = Visibility.Collapsed;
         SettingsLayoutGrid.Visibility = Visibility.Visible;
         SettingsAllSettingsButton.Visibility = SettingsViewportWidth < 1024

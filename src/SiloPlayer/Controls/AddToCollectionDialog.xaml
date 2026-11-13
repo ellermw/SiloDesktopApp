@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:loc="using:SiloPlayer.Services"
     Title="Add to Collection"
-    PrimaryButtonText="Add"
+    PrimaryButtonText="Add" loc:Localized.PrimaryButton="web.collections.manual.add"
     CloseButtonText="Cancel"
     DefaultButton="Primary"
     Background="{StaticResource CardBackgroundBrush}" loc:Localized.Title="web.collections.addToCollection.title" loc:Localized.CloseButton="common.cancel">

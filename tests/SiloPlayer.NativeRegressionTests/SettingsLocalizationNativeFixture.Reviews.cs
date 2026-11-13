@@ -43,6 +43,38 @@ internal static partial class SettingsLocalizationNativeFixture
         finally { parent.Children.Remove(allowance); }
 
         var person = new EditPersonDialog(new() { Name = "Raw person", Bio = "Raw bio" }) { XamlRoot = parent.XamlRoot };
+        var add = new AddToCollectionDialog("fixture-item", "Raw title") { XamlRoot = parent.XamlRoot };
+        await OpenReviewDialog(add, async () =>
+        {
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Settle(add);
+                Check(add.PrimaryButtonText == AppStrings.Get("web.collections.manual.add"), "Add-to-collection primary action did not refresh.");
+            }
+        });
+        var split = new SplitVersionsDialog(new() { ContentId = "fixture-split", Title = "Raw split title", Type = "movie" }, null) { XamlRoot = parent.XamlRoot };
+        await OpenReviewDialog(split, async () =>
+        {
+            var titleInput = Field<TextBox>(split, "_title");
+            titleInput.Text = "Unsaved split title";
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Settle(split);
+                foreach (var (field, placeholder, name) in new[] {
+                    ("_title", "web.item.dialog.fieldTitle", "web.item.split.searchTitle"),
+                    ("_year", "web.item.dialog.fieldYear", "web.item.split.searchYear"),
+                    ("_tmdb", "web.item.dialog.tmdbId", "web.item.dialog.tmdbId"),
+                    ("_imdb", "web.item.split.imdbPlaceholder", "web.item.dialog.imdbId"),
+                    ("_tvdb", "web.item.dialog.tvdbId", "web.item.dialog.tvdbId") })
+                {
+                    var input = Field<TextBox>(split, field);
+                    Check(input.PlaceholderText == AppStrings.Get(placeholder) &&
+                        Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(input) == AppStrings.Get(name),
+                        $"Split field did not refresh: {field}; locale={AppStrings.Language}; loaded={input.IsLoaded}; placeholder={input.PlaceholderText}; expected={AppStrings.Get(placeholder)}; name={Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(input)}; expectedName={AppStrings.Get(name)}");
+                }
+                Check(titleInput.Text == "Unsaved split title", "Split locale refresh discarded a draft.");
+            }
+        });
         await OpenReviewDialog(person, async () =>
         {
             var inputs = Field<Dictionary<string, TextBox>>(person, "_inputs");

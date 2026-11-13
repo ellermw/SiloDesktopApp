@@ -1,3 +1,43 @@
+# November 12 - PR #145 remaining dialog and reader review fixes
+
+Candidate based on `ada8bf030f0e7b2a236790de6fefc14114049d1f`.
+The Add to Collection primary action is keyed. Split Versions fields carry
+placeholder/accessibility keys. A native test reproduced placeholders and
+accessible names remaining German after switching to Arabic despite the fields
+being loaded: modal template relocation detached child subscriptions, and the
+existing dialog-level fallback refreshed only text/content. That fallback now
+also refreshes keyed TextBox placeholders/headers and accessible names without
+changing editable values. The same draft-preserving test passes after the fix.
+Settings resolves its generic subtitle on both detail navigation and live locale
+changes. Reader cached-settings/server-sync warnings use the shared catalog;
+local disk-save failure uses the existing generic translated save-failure text
+and never claims settings were saved. Inactive audiobook interval buttons omit
+redundant unselected help; active buttons retain translated Selected help.
+
+Release publish and native host build succeeded. Three native groups pass on the
+final payload: settings-localization (full group), reader-party-language and
+playback-localization. New checks cover real open Add/Split dialogs across
+de/ar/ja, raw split-title drafts, Settings detail subtitles, an actual forced
+reader-config failure with a local cache, an obstructed local-save directory,
+and audiobook interval accessibility text. Reader fixtures write only beneath
+the task result directory. The installed player remains open.
+App DLL SHA-256: `97A86F4B22A2D6FFBE6875C88ECF0D855C2DA7EFA64A8C7DC476E2243CB10938`.
+The first full unit run had 6,220 passes and one failure in unchanged
+RealtimeReadOwnershipTests.CurrentViewerWritePublishesItsCapturedItemAndContext
+(watchlist removal). All six cases passed in isolation without changing any
+assertion. The full retry passed 6,221/6,221 with zero failures/skips (2m25s); this is retry-passing, and the initial failure
+log is retained and its cause is not established.
+
+Evidence: `D:/SiloPlayer-build/review-fourth-receipt.json`,
+`review-fourth-source-inputs.json`, `review-fourth-final-{publish,native-build}.log`,
+`review-fourth-units{,-isolated,-retry}.log` and native result text, including
+archived Split-dialog red results. Earlier receipts retain their original
+source/payload scope and limits. Pipeline review, QA, merge and Beta publication
+remain required, and version stamps remain pipeline-owned. No installer was run.
+Generated output remains in the reusable task directory. Cleanup is still blocked
+by the earlier automatic approval review rejection; no deletion was retried and
+0 GiB was reclaimed on C: or D: during this follow-up.
+
 # November 12 ? PR #145 retained locale review follow-ups
 
 Candidate based on pipeline head `787456b0822a697d86f226e392f663572661ded9`;

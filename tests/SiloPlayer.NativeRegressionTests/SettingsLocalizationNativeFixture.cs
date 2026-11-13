@@ -135,6 +135,7 @@ internal static partial class SettingsLocalizationNativeFixture
             Apply("de"); await Settle(page);
             MediaLocalizationNativeFixture.CheckInlineChoiceLabels(page, "InterfacePosterSizeCombo", "QualityComboBox", "MaxBitrateComboBox", "SubtitleModeComboBox", "NextUpModeComboBox");
             page.SelectSettingsSection("Playback"); await Settle(page);
+            Check(((TextBlock)page.FindName("SettingsHeaderSubtitle")).Text == AppStrings.Get("web.settings.layout.subtitle"), "Settings detail subtitle stayed English on navigation.");
             var playbackNav = Descendants((Button)page.FindName("PlaybackTab")).OfType<TextBlock>().Last(text => text.Parent is StackPanel);
             Check(playbackNav.Text == AppStrings.Get("web.settings.playback.title"), "Sidebar tab text stayed English: " + playbackNav.Text);
             RequireText(page.FindName("PlaybackPanel") as DependencyObject ?? page, "web.settings.playback.quality.title", "Quality");
@@ -147,6 +148,7 @@ internal static partial class SettingsLocalizationNativeFixture
 
             Apply("ar"); await Settle(page);
             Check(password.Text == AppStrings.Get("web.settings.account.password.title"), "Retained Account tab did not refresh to Arabic: " + password.Text);
+            Check(((TextBlock)page.FindName("SettingsHeaderSubtitle")).Text == AppStrings.Get("web.settings.layout.subtitle"), "Retained Settings detail subtitle did not refresh.");
             Check(playbackNav.Text == AppStrings.Get("web.settings.playback.title"), "Retained sidebar tab did not refresh to Arabic.");
             Check(Equals(((Button)page.FindName("AccountPasswordTab")).Tag, "Account"), "Tab routing tag changed.");
             page.SelectSettingsSection("YourData"); await Settle(page);

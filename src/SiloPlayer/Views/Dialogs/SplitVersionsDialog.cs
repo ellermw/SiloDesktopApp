@@ -31,7 +31,11 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     private sealed record FileRow(string Id, string Path, string Caption, List<string>? GroupIds = null);
     private List<FileRow> _rows = [];
     private bool _editing;
-    private readonly TextBox _title = Input(AppStrings.Get("web.item.dialog.fieldTitle", fallback: "Title"), AppStrings.Get("web.item.split.searchTitle", fallback: "Search title")), _year = Input(AppStrings.Get("web.item.dialog.fieldYear", fallback: "Year"), AppStrings.Get("web.item.split.searchYear", fallback: "Search year")), _tmdb = Input(AppStrings.Get("web.item.dialog.tmdbId", fallback: AppStrings.Get("web.item.dialog.tmdbId", fallback: "TMDB ID")), "TMDB ID"), _imdb = Input(AppStrings.Get("web.item.split.imdbPlaceholder", fallback: "IMDb ID (tt…)"), AppStrings.Get("web.item.dialog.imdbId", fallback: "IMDb ID")), _tvdb = Input(AppStrings.Get("web.item.dialog.tvdbId", fallback: AppStrings.Get("web.item.dialog.tvdbId", fallback: "TVDB ID")), "TVDB ID");
+    private readonly TextBox _title = Input("web.item.dialog.fieldTitle", "web.item.split.searchTitle"),
+        _year = Input("web.item.dialog.fieldYear", "web.item.split.searchYear"),
+        _tmdb = Input("web.item.dialog.tmdbId", "web.item.dialog.tmdbId"),
+        _imdb = Input("web.item.split.imdbPlaceholder", "web.item.dialog.imdbId"),
+        _tvdb = Input("web.item.dialog.tvdbId", "web.item.dialog.tvdbId");
     private readonly CheckBox _unmatched = new() { Content = AppStrings.Get("web.item.split.detachUnmatched", fallback: "Detach as unmatched (identify later)"), FontSize = 14 };
     private readonly ComboBox _history = new() { HorizontalAlignment = HorizontalAlignment.Stretch, Height = 36, MinHeight = 0 };
     private readonly Button _search = new() { Content = AppStrings.Get("web.item.dialog.search", fallback: "Search"), HorizontalAlignment = HorizontalAlignment.Stretch, Height = 36, MinHeight = 0 };
@@ -84,8 +88,8 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         Opened += (_, _) => { Auth.UserChanged += AuthorityChanged; Auth.LoggedOut += AuthorityChanged; };
         Closed += (_, _) => { Auth.UserChanged -= AuthorityChanged; Auth.LoggedOut -= AuthorityChanged; _previewLifetime?.Cancel(); _previewLifetime?.Dispose(); };
     }
-    private static TextBox Input(string placeholder, string name)
-    { var input = new TextBox { PlaceholderText = placeholder, FontSize = 14, Height = 36, MinHeight = 0, MinWidth = 0, Padding = new Thickness(12, 6, 12, 6) }; AutomationProperties.SetName(input, name); return input; }
+    private static TextBox Input(string placeholderKey, string nameKey)
+    { var input = new TextBox { FontSize = 14, Height = 36, MinHeight = 0, MinWidth = 0, Padding = new Thickness(12, 6, 12, 6) }; return MediaItemCardActions.Localize(input, placeholder: placeholderKey, name: nameKey); }
     private static string Value(JsonElement value, string key) => value.TryGetProperty(key, out var property) ? property.ToString() : "";
     private bool ScopeOwner => !_authorityRetired && CanAct && Auth.SessionGeneration == _session && Auth.CurrentUser?.Id == _userId;
     private bool PlanValid => !_applyUnconfirmed && ScopeOwner && _scope.InventoryAvailable && _selected.Count > 0 && _selected.Count < _allFiles.Count && (_unmatched.IsChecked == true || _candidate != null && _scope.IsCurrent(_candidateScope));

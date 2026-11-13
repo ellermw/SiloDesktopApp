@@ -736,7 +736,7 @@ public sealed partial class EbookReaderPage : Page
             var localPending = false;
             try { if (File.Exists(LocalReaderConfigPath)) { using var stored = JsonDocument.Parse(await File.ReadAllTextAsync(LocalReaderConfigPath)); local = stored.RootElement.GetProperty("config").Clone(); localPending = stored.RootElement.TryGetProperty("pending", out var pending) && pending.GetBoolean(); } } catch { }
             try { config = JsonSerializer.SerializeToElement((await _ebooksApi.GetReaderConfigAsync(_contentId, _lifetime.Token)).Config); }
-            catch (Exception ex) when (ex is not OperationCanceledException && local.HasValue) { config = local.Value; SetSyncStatus(() => "Using settings saved on this device. Server sync is unavailable."); }
+            catch (Exception ex) when (ex is not OperationCanceledException && local.HasValue) { config = local.Value; SetSyncStatus(() => T("web.reader.sync.settingsFailed", "Reader settings are saved on this device, but could not sync. Reopen the book to reload server settings.")); }
             if (localPending && local.HasValue) config = local.Value;
             var settings = ReaderSettingsObject(JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(config.GetRawText()) ?? []);
             _suppressControls = true;
@@ -792,7 +792,7 @@ public sealed partial class EbookReaderPage : Page
         await SaveLocalReaderConfigAsync(config, pending: true, revision);
         if (revision != Volatile.Read(ref _localSettingsRevision)) return;
         _settingsWriter ??= new LatestSettingsWriter<Dictionary<string, object?>>(WriteReaderConfigAsync,
-            error => SetSyncStatus(error == null ? null : () => "Settings saved on this device. Could not sync; change a setting to retry."), TimeSpan.FromMilliseconds(400));
+            error => SetSyncStatus(error == null ? null : () => T("web.reader.sync.settingsFailed", "Reader settings are saved on this device, but could not sync. Reopen the book to reload server settings.")), TimeSpan.FromMilliseconds(400));
         await _settingsWriter.SaveAsync(config, _lifetime.Token);
     }
 
@@ -809,7 +809,7 @@ public sealed partial class EbookReaderPage : Page
             await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new { pending, config }));
             File.Move(temp, LocalReaderConfigPath, true);
         }
-        catch (Exception) { SetSyncStatus(() => "Could not save settings on this device."); }
+        catch (Exception) { SetSyncStatus(() => T("web.setup.wizard.saveFailed", "Failed to save")); }
         finally { _localSettingsGate.Release(); }
     }
     private async Task WriteReaderConfigAsync(Dictionary<string, object?> config, CancellationToken ct)

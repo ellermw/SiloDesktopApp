@@ -87,6 +87,27 @@ internal static class ReaderPartyLanguageNativeFixture
             ((TextBlock)page.FindName("TitleText")).Text = "The Fixture Book";
             Set(page, "_contentId", "fixture-book");
             Set(page, "_readerContext", api.CaptureContext());
+            var settingsDirectory = Path.Combine(Program.ResultDirectory, "reader-settings-review");
+            Directory.CreateDirectory(settingsDirectory);
+            Set(page, "_readerSettingsDirectory", settingsDirectory);
+            var configPath = (string)typeof(EbookReaderPage).GetProperty("LocalReaderConfigPath", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+            await File.WriteAllTextAsync(configPath, "{\"pending\":false,\"config\":{\"settings\":{\"fontSize\":112}}}");
+            handler.FailReaderConfig = true;
+            await (Task)Call(page, "LoadPreferencesAsync")!;
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Settle(page);
+                Require(((TextBlock)page.FindName("ReaderSyncStatus")).Text == AppStrings.Get("web.reader.sync.settingsFailed"),
+                    "Cached reader settings warning did not refresh.");
+            }
+            handler.FailReaderConfig = false;
+            var blockedDirectory = Path.Combine(settingsDirectory, "blocked-directory");
+            await File.WriteAllTextAsync(blockedDirectory, "fixture directory obstruction");
+            Set(page, "_readerSettingsDirectory", blockedDirectory);
+            await (Task)Call(page, "SaveLocalReaderConfigAsync", new Dictionary<string, object?>(), true, Field<long>(page, "_localSettingsRevision"))!;
+            Require(((TextBlock)page.FindName("ReaderSyncStatus")).Text == AppStrings.Get("web.setup.wizard.saveFailed"),
+                "Local reader save failure is untranslated or incorrectly claims settings were saved.");
+            Set(page, "_readerSettingsDirectory", settingsDirectory);
             await (Task)Call(page, "LoadAnnotationsAsync")!;
             Call(page, "OpenPanel", "annotations");
             Apply("ja"); await Settle(page);
@@ -379,6 +400,7 @@ internal static class ReaderPartyLanguageNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
+        internal bool FailReaderConfig;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -393,7 +415,9 @@ internal static class ReaderPartyLanguageNativeFixture
                 }
             }));
             if (path.EndsWith("/progress")) return Task.FromResult(Reply(new { progress = new { file_id = "42", location = "", progress = 0 } }));
-            if (path.EndsWith("/reader-config")) return Task.FromResult(Reply(new { config = new { } }));
+            if (path.EndsWith("/reader-config")) return Task.FromResult(FailReaderConfig
+                ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                : Reply(new { config = new { } }));
             throw new InvalidOperationException("Unexpected reader language route " + path);
         }
     }

@@ -171,6 +171,12 @@ internal static class PlaybackLocalizationNativeFixture
                 "Hosted audiobook settings did not switch to Japanese.");
             Require(Descendants<TextBlock>(panel).Any(text => text.Text == japanese.Get("web.audiobooks.player.smartRewind")),
                 "Smart rewind label did not switch to Japanese.");
+            var intervalButtons = Descendants<Button>(panel).Where(button => button.Tag is int).ToArray();
+            var selectedHelp = japanese.Get("web.player.quality.selected");
+            Require(intervalButtons.Any(button => AutomationProperties.GetHelpText(button) == selectedHelp)
+                && intervalButtons.Any(button => AutomationProperties.GetHelpText(button) == "")
+                && intervalButtons.All(button => AutomationProperties.GetHelpText(button) is var help && (help == "" || help == selectedHelp)),
+                "Audiobook interval choices expose untranslated selection help.");
             Program.Log("PASS: hosted audiobook settings panel switched German → Japanese in place.");
 
             locales.Apply(Locale("en"));

@@ -24,7 +24,7 @@ internal static class AudiobookSettingsFlyout
                 button.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(selected ? (byte)38 : (byte)0, 255, 255, 255));
                 button.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(selected ? (byte)255 : (byte)153, 255, 255, 255));
                 button.IsEnabled = !busy;
-                AutomationProperties.SetHelpText(button, selected ? AppStrings.Get("web.player.quality.selected", fallback: "Selected") : "Not selected");
+                AutomationProperties.SetHelpText(button, selected ? AppStrings.Get("web.player.quality.selected", fallback: "Selected") : "");
             }
         }
         void AddInterval(string key, string english, bool back)

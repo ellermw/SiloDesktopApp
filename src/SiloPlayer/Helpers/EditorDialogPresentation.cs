@@ -149,6 +149,18 @@ internal static class EditorDialogPresentation
                     && Localized.GetContent(control) is { Length: > 0 } key && control.Content is string current:
                     control.Content = AppStrings.Get(key, fallback: current); break;
             }
+            // Modal template relocation can also detach a field's own locale
+            // subscription. Refresh keyed field metadata from the open dialog;
+            // the editable value remains untouched.
+            if (element is TextBox input)
+            {
+                if (Localized.GetPlaceholder(input) is { Length: > 0 } placeholderKey)
+                    input.PlaceholderText = AppStrings.Get(placeholderKey, fallback: input.PlaceholderText);
+                if (Localized.GetHeader(input) is { Length: > 0 } headerKey)
+                    input.Header = AppStrings.Get(headerKey, fallback: input.Header as string);
+            }
+            if (Localized.GetName(element) is { Length: > 0 } nameKey)
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(element, AppStrings.Get(nameKey));
         }
     }
 
