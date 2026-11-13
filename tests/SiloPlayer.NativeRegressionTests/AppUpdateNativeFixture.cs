@@ -24,6 +24,13 @@ using SiloPlayer.Views;
 
 internal static partial class AppUpdateNativeFixture
 {
+    // The installed version stamp is pipeline owned and keeps rising, so the offered synthetic release follows it
+    // instead of a fixed number. Two patches ahead keeps both the stable and the beta.12 offer newer than any installed beta.
+    private static string OfferedVersion
+    {
+        get { var installed = typeof(App).Assembly.GetName().Version!; return $"{installed.Major}.{installed.Minor}.{installed.Build + 2}"; }
+    }
+
     internal static void Configure(IServiceCollection services)
     {
         services.AddSingleton<UpdateWire>();
@@ -110,10 +117,11 @@ internal static partial class AppUpdateNativeFixture
             {
                 var until = DateTime.UtcNow.AddSeconds(10);
                 while (updates.State.Release is null && DateTime.UtcNow < until) await Task.Delay(25);
+                var announcement = "Silo " + OfferedVersion + " is available.";
                 await Until(() => ((Button)root.FindName("UpdateAvailableButton")).Visibility == Visibility.Visible
-                    && Descendants<TextBlock>(root).Any(text => text.Text == "Silo 1.2.999 is available."));
+                    && Descendants<TextBlock>(root).Any(text => text.Text == announcement));
                 await Task.Delay(400); // Allow the toast's260ms entry animation to finish before capture.
-                DependencyObject toast = Descendants<TextBlock>(root).Single(text => text.Text == "Silo 1.2.999 is available.");
+                DependencyObject toast = Descendants<TextBlock>(root).Single(text => text.Text == announcement);
                 while (toast is not Border) toast = VisualTreeHelper.GetParent(toast)
                     ?? throw new InvalidOperationException("Update toast is detached.");
                 if (((Border)toast).Opacity < .9) throw new InvalidOperationException("Automatic update toast remains transparent.");
@@ -729,7 +737,7 @@ internal static partial class AppUpdateNativeFixture
         await Until(() => field.GetValue(window) is ContentDialog { IsLoaded: true });
         var dialog = (ContentDialog)field.GetValue(window)!;
         var selection = Descendants<ComboBox>(dialog).Single(c => c.Name == "AppUpdateChannelCombo");
-        if (selection.SelectedIndex != 1 || !Descendants<TextBlock>(dialog).Any(t => t.Text.Contains("1.2.999-beta.12", StringComparison.Ordinal)))
+        if (selection.SelectedIndex != 1 || !Descendants<TextBlock>(dialog).Any(t => t.Text.Contains(OfferedVersion + "-beta.12", StringComparison.Ordinal)))
             throw new InvalidOperationException("Dialog did not show the eligible semantic beta.");
         await CaptureAsync((FrameworkElement)dialog.Content, "channels-dialog-beta.png");
         selection.SelectedIndex = 0;
@@ -866,7 +874,7 @@ internal static partial class AppUpdateNativeFixture
                     return limited;
                 }
                 if (HoldMetadata) { MetadataEntered.TrySetResult(); await ReleaseMetadata.Task.WaitAsync(ct); }
-                var version = ChannelCatalog ? request.RequestUri.AbsolutePath.EndsWith("/latest") ? "1.2.516" : "1.2.999-beta.12" : "1.2.999";
+                var version = ChannelCatalog ? request.RequestUri.AbsolutePath.EndsWith("/latest") ? "1.2.516" : OfferedVersion + "-beta.12" : OfferedVersion;
                 var release = new { tag_name = "v" + version, draft = false, prerelease = version.Contains('-'), body = Notes, published_at = "2026-10-28T12:00:00Z",
                     assets = new[] { new { name = "SiloInstaller-Windows-x64.exe", state = "uploaded", size = _package.Length, digest = "sha256:" + Convert.ToHexString(SHA256.HashData(_package)), browser_download_url = "https://github.com/ellermw/SiloDesktopApp/releases/download/v"+version+"/SiloInstaller-Windows-x64.exe" } } };
                 var json = ChannelCatalog && request.RequestUri.AbsolutePath.EndsWith("/releases") ? JsonSerializer.Serialize(new[] { release }) : JsonSerializer.Serialize(release);
