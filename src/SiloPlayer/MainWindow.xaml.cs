@@ -3759,8 +3759,27 @@ public sealed partial class MainWindow : Window
     }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        DismissProfileFlyout();
-        _navigationService.Navigate<SettingsPage>();
+        var origin = ContentFrame.Content;
+        var identity = _apiClient.CaptureIdentityContext();
+        void OpenSettings(object? closedSender, object args)
+        {
+            ProfileFooterFlyout.Closed -= OpenSettings;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_windowClosed && CanExposeAuthenticatedNavigation &&
+                    _apiClient.IsCurrentIdentityContext(identity) && ReferenceEquals(origin, ContentFrame.Content))
+                    _navigationService.Navigate<SettingsPage>();
+            });
+        }
+        // Settings replaces the sidebar containing the popup's anchor. Wait
+        // for the presenter to close, then leave its native callback before
+        // navigating. A newer route or profile must not inherit this click.
+        if (ProfileFooterFlyout.IsOpen)
+        {
+            ProfileFooterFlyout.Closed += OpenSettings;
+            ProfileFooterFlyout.Hide();
+        }
+        else OpenSettings(null, EventArgs.Empty);
     }
 
     private void DismissProfileFlyout()
