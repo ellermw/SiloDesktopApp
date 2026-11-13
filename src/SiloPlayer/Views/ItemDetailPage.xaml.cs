@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.UI.Xaml.Automation;
@@ -87,7 +88,7 @@ public sealed partial class ItemDetailPage : Page
     private string? _requestSeasonsContentId;
     private int? _readerTargetFileId;
     private FrameworkElement? _mangaResumeRow;
-    private readonly List<(Expander Control, string Label)> _mangaVolumes = [];
+    private readonly List<(Expander Control, Func<string> Label)> _mangaVolumes = [];
     private Expander? _stickyVolume;
     private Grid? _tvViewport, _tvCopyHost;
     private ScrollViewer? _tvNavigation, _tvCopyScroll, _tvActionsScroll;
@@ -140,6 +141,7 @@ public sealed partial class ItemDetailPage : Page
         _seasonParentPlaybackRevision = ViewModel.ParentPlaybackRevision;
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         SimilarCarouselHost.Children.Remove(SimilarScroller);
         SimilarCarouselHost.Children.Add(new CarouselRail(SimilarScroller, webUiEdges: true));
         ComposeHeroLayout();
@@ -202,7 +204,7 @@ public sealed partial class ItemDetailPage : Page
             if (!current()) return false;
             if (setting.Settings.FirstOrDefault()?.EffectiveValue == "true")
             {
-                AdvisoryAgeText.Text = $"{item.AdvisoryAge}+";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(AdvisoryAgeText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.advisory", new Dictionary<string, object?> { ["age"] = item.AdvisoryAge }));
                 AdvisoryAgeBadge.Visibility = Visibility.Visible;
             }
             return true;
@@ -338,7 +340,7 @@ public sealed partial class ItemDetailPage : Page
             var bottom = top + volume.Control.ActualHeight;
             if (top >= 0 || bottom <= 0) continue;
             _stickyVolume = volume.Control;
-            MangaStickyHeaderButton.Content = volume.Label;
+            MediaItemCardActions.BindText(MangaStickyHeaderButton, "Content", element => element.Content = volume.Label());
             MangaStickyHeader.Visibility = Visibility.Visible;
             var headerHeight = MangaStickyHeader.ActualHeight > 0
                 ? MangaStickyHeader.ActualHeight
@@ -1069,19 +1071,19 @@ public sealed partial class ItemDetailPage : Page
         {
             var seasonCount = item.SeasonCount ?? ViewModel.Seasons.Count;
             var episodeCount = item.EpisodeCount ?? ViewModel.Seasons.Sum(season => Math.Max(0, season.EpisodeCount));
-            SeasonCountText.Text = $"{seasonCount} {(seasonCount == 1 ? "SEASON" : "SEASONS")}";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (seasonCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = seasonCount }));
             SeasonCountBadge.Visibility = seasonCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-            EpisodeCountText.Text = $"{episodeCount} {(episodeCount == 1 ? "EPISODE" : "EPISODES")}";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (episodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = episodeCount }));
             EpisodeCountBadge.Visibility = episodeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         else if (item.Type == "season")
         {
             var count = item.EpisodeCount ?? ViewModel.Episodes.Count;
-            RuntimeText.Text = $"{count} {(count == 1 ? "EPISODE" : "EPISODES")}";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(RuntimeText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count }));
             RuntimeBadge.Visibility = Visibility.Visible;
         }
         if (ViewModel.Episodes.Count > 0 && (item.Type == "season" || item.Type == "series" && ViewModel.Seasons.Count == 1))
-            EpisodesTotalText.Text = $"{item.EpisodeCount ?? ViewModel.Episodes.Count} total";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodesTotalText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.totalCount", new Dictionary<string, object?> { ["count"] = item.EpisodeCount ?? ViewModel.Episodes.Count }));
     }
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
@@ -1119,7 +1121,7 @@ public sealed partial class ItemDetailPage : Page
     private void UpdateActiveAudiobook()
     {
         if (!IsActiveAudiobook()) return;
-        PlayButtonText.Text = _playerService!.IsPaused ? "Resume" : "Pause";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = _playerService!.IsPaused ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume", fallback: "Resume") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.audiobook.pause", fallback: "Pause"));
         BookProgressSummaryText.Text = $"{FormatExtraDuration(_playerService.Position)} / {FormatExtraDuration(_playerService.Duration)}";
         BookProgressSummaryText.Visibility = Visibility.Visible;
     }
@@ -1206,7 +1208,7 @@ public sealed partial class ItemDetailPage : Page
     private string? _playableContentId; // The actual episode/movie ID used for watch detail
     private bool _subscribedToStateChanged;
     private double _seasonCardWidth;
-    private string _seasonEpisodesErrorMessage = "Season not found";
+    private Func<string> _seasonEpisodesErrorMessage = () => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.notFound");
     private int _seasonEpisodesLoads;
 
     private bool IsCurrentDetail(string contentId) =>
@@ -1254,7 +1256,7 @@ public sealed partial class ItemDetailPage : Page
         _selectedSubtitleIndex = null;
         _selectedSubtitleSignature = null;
         _downloadedSubtitles = [];
-        _seasonEpisodesErrorMessage = "Season not found";
+        _seasonEpisodesErrorMessage = () => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.notFound");
         SeasonEpisodesFatalError.Visibility = Visibility.Collapsed;
         ContentScroll.Visibility = Visibility.Visible;
 
@@ -1457,8 +1459,10 @@ public sealed partial class ItemDetailPage : Page
         {
             BreadcrumbPanel.Children.Add(MakeBreadcrumbSeparator());
 
-            var seasonLabel = seasonNum.Value == 0 ? "Specials" : $"Season {seasonNum.Value}";
+            string SeasonLabel() => seasonNum.Value == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.specials") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.numbered", new Dictionary<string, object?> { ["season"] = seasonNum.Value });
+            var seasonLabel = SeasonLabel();
             var seasonLink = MakeBreadcrumbLink(seasonLabel, contentId: null);
+            SiloPlayer.Controls.MediaItemCardActions.BindText((TextBlock)seasonLink.Content, "Text", element => element.Text = SeasonLabel());
             seasonLink.IsEnabled = false; // enabled once we resolve content_id
             BreadcrumbPanel.Children.Add(seasonLink);
 
@@ -1469,13 +1473,13 @@ public sealed partial class ItemDetailPage : Page
         if (episodeNum.HasValue)
         {
             BreadcrumbPanel.Children.Add(MakeBreadcrumbSeparator());
-            BreadcrumbPanel.Children.Add(new TextBlock
+            BreadcrumbPanel.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
-                Text = $"Episode {episodeNum.Value}",
+                Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = episodeNum.Value }),
                 FontSize = 13,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            });
+            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = episodeNum.Value })));
         }
 
         BreadcrumbPanel.Visibility = Visibility.Visible;
@@ -1563,11 +1567,13 @@ public sealed partial class ItemDetailPage : Page
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         });
+        SiloPlayer.Controls.MediaItemCardActions.BindText((TextBlock)BreadcrumbPanel.Children[^1], "Text", element => element.Text = SeasonLabel(item));
         BreadcrumbPanel.Visibility = Visibility.Visible;
     }
 
     private static string SeasonLabel(MediaItemDetail item) => item.IsSpecials == true || item.SeasonNumber == 0
-        ? "Specials" : string.IsNullOrWhiteSpace(item.Title) ? $"Season {item.SeasonNumber ?? 0}" : item.Title;
+        ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.specials") : string.IsNullOrWhiteSpace(item.Title)
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.numbered", new Dictionary<string, object?> { ["season"] = item.SeasonNumber ?? 0 }) : item.Title;
 
     private void UICustomization_Changed(object? sender, EventArgs e)
         => DispatcherQueue.TryEnqueue(() => UpdateResponsiveLayout(ActualWidth));
@@ -1684,7 +1690,7 @@ public sealed partial class ItemDetailPage : Page
         PlayProgressBar.Width = 0;
         HeroPosterContainer.Width = 170;
         HeroPosterContainer.Height = 255;
-        MediaLocationsTitle.Text = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) ? "Files" : "Media locations";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(MediaLocationsTitle, "Text", element => element.Text = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.sections.files", fallback: "Files") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.sections.mediaLocations", fallback: "Media locations"));
 
         // Reset breadcrumb visibility by default; episode case repopulates it
         BreadcrumbPanel.Children.Clear();
@@ -1709,15 +1715,15 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.Type is "movie" or "series" or "audiobook" or "ebook" or "manga")
         {
-            HeroContextText.Text = item.Type switch
+            SiloPlayer.Controls.MediaItemCardActions.BindText(HeroContextText, "Text", element => element.Text = item.Type switch
             {
-                "movie" => "Movie",
-                "series" => "Series",
-                "audiobook" => "Audiobook",
-                "ebook" => "Ebook",
-                "manga" => "Manga",
+                "movie" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeMovie", fallback: "Movie"),
+                "series" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeSeries", fallback: "Series"),
+                "audiobook" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeAudiobook", fallback: "Audiobook"),
+                "ebook" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeEbook", fallback: "Ebook"),
+                "manga" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeManga", fallback: "Manga"),
                 _ => "",
-            };
+            });
             HeroContextText.Visibility = Visibility.Visible;
         }
 
@@ -1876,7 +1882,7 @@ public sealed partial class ItemDetailPage : Page
         if (item.Type == "season")
         {
             var count = item.EpisodeCount ?? ViewModel.Episodes.Count;
-            RuntimeText.Text = $"{count} {(count == 1 ? "EPISODE" : "EPISODES")}";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(RuntimeText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count }));
         }
         MetaDot2.Visibility = Visibility.Collapsed;
 
@@ -1887,12 +1893,12 @@ public sealed partial class ItemDetailPage : Page
         {
             if (item.SeasonCount is > 0)
             {
-                SeasonCountText.Text = $"{item.SeasonCount} {(item.SeasonCount == 1 ? "SEASON" : "SEASONS")}";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (item.SeasonCount.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = item.SeasonCount }));
                 SeasonCountBadge.Visibility = Visibility.Visible;
             }
             if (item.EpisodeCount is > 0)
             {
-                EpisodeCountText.Text = $"{item.EpisodeCount} {(item.EpisodeCount == 1 ? "EPISODE" : "EPISODES")}";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (item.EpisodeCount.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = item.EpisodeCount }));
                 EpisodeCountBadge.Visibility = Visibility.Visible;
             }
             RuntimeBadge.Visibility = Visibility.Collapsed;
@@ -1953,7 +1959,7 @@ public sealed partial class ItemDetailPage : Page
         // Studios
         if (item.Studios?.Count > 0)
         {
-            StudiosText.Text = "Studios:  " + string.Join(", ", item.Studios);
+            SiloPlayer.Controls.MediaItemCardActions.BindText(StudiosText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.item.editMetadata.studios") + ":  " + string.Join(", ", item.Studios));
             StudiosText.Visibility = Visibility.Visible;
         }
         else
@@ -1964,7 +1970,7 @@ public sealed partial class ItemDetailPage : Page
         // Networks (series only)
         if (item.Networks?.Count > 0)
         {
-            NetworksText.Text = "Networks:  " + string.Join(", ", item.Networks);
+            SiloPlayer.Controls.MediaItemCardActions.BindText(NetworksText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.item.editMetadata.networks") + ":  " + string.Join(", ", item.Networks));
             NetworksText.Visibility = Visibility.Visible;
         }
         else
@@ -1975,7 +1981,7 @@ public sealed partial class ItemDetailPage : Page
         // Countries
         if (item.Countries?.Count > 0)
         {
-            CountriesText.Text = "Countries:  " + string.Join(", ", item.Countries);
+            SiloPlayer.Controls.MediaItemCardActions.BindText(CountriesText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.item.editMetadata.countries") + ":  " + string.Join(", ", item.Countries));
             CountriesText.Visibility = Visibility.Visible;
         }
         else
@@ -2166,17 +2172,17 @@ public sealed partial class ItemDetailPage : Page
             var narrators = PeopleNames(item.Audiobook?.Narrators, item.Crew, "Narrator");
             TaglineText.Visibility = Visibility.Collapsed;
             HeroCrewLine.Visibility = Visibility.Collapsed;
-            BookAuthorLine.Text = authors.Count > 0 ? $"By {string.Join(", ", authors)}" : "";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(BookAuthorLine, "Text", element => element.Text = authors.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.byAuthor", new Dictionary<string, object?> { ["author"] = string.Join(", ", authors) }) : "");
             BookAuthorLine.Visibility = authors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            BookNarratorLine.Text = narrators.Count > 0 ? $"Narrated by {string.Join(", ", narrators)}" : "";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(BookNarratorLine, "Text", element => element.Text = narrators.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.narratedBy", new Dictionary<string, object?> { ["narrator"] = string.Join(", ", narrators) }) : "");
             BookNarratorLine.Visibility = narrators.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             BuildBookGenreLinks(item);
 
             BuildAudiobookChapters(item);
             var currentChapter = FindAudiobookChapter(position);
-            PlayButtonText.Text = hasProgress
-                ? currentChapter == null ? "Resume" : $"Resume \u00B7 {currentChapter.Label}"
-                : "Listen";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = hasProgress
+                ? currentChapter == null ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.resume", fallback: "Resume") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume") + " · " + currentChapter.Label
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.listen", fallback: "Listen"));
             BookProgressSummaryText.Text = hasProgress
                 ? $"{FormatBookDuration(position)} listened \u00B7 {Math.Round(Math.Clamp(position / duration, 0, 1) * 100):0}%"
                 : "";
@@ -2201,11 +2207,11 @@ public sealed partial class ItemDetailPage : Page
             BookDownloadButton.Visibility = item.Versions.Count > 0 && CanCurrentUserDownload()
                 ? Visibility.Visible : Visibility.Collapsed;
             PlayButtonIcon.Glyph = "\uE736";
-            PlayButtonText.Text = "Read";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.read", fallback: "Read"));
             var authors = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
             TaglineText.Visibility = Visibility.Collapsed;
             BookAuthorLine.Visibility = Visibility.Collapsed;
-            HeroCrewLine.Text = authors.Count > 0 ? $"By {string.Join(", ", authors)}" : "";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(HeroCrewLine, "Text", element => element.Text = authors.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.byAuthor", new Dictionary<string, object?> { ["author"] = string.Join(", ", authors) }) : "");
             HeroCrewLine.Visibility = authors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             BuildBookGenreLinks(item);
             BuildBookRelatedGroups(item.Ebook?.Series, item.Ebook?.Related, authors.FirstOrDefault());
@@ -2238,7 +2244,7 @@ public sealed partial class ItemDetailPage : Page
             {
                 _readerTargetFileId = progress.FileId;
                 _selectedVersion = item.Versions.FirstOrDefault(v => v.FileId == progress.FileId) ?? _selectedVersion;
-                PlayButtonText.Text = $"Continue  {Math.Round(Math.Clamp(progress.Progress, 0, 1) * 100):0}%";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.continueReading") + "  " + Math.Clamp(progress.Progress, 0, 1).ToString("P0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));
                 _playProgressFraction = Math.Clamp(progress.Progress, 0, 1);
                 UpdatePlayProgressWidth();
             }
@@ -2292,7 +2298,7 @@ public sealed partial class ItemDetailPage : Page
         menu.Items.Add(new ToggleMenuFlyoutItem { Text = BookNarratorLine.Text, IsChecked = true, IsEnabled = false });
         foreach (var narration in item.Audiobook.OtherNarrations)
         {
-            var choice = new MenuFlyoutItem { Text = (narration.Narrators.Count > 0 ? string.Join(", ", narration.Narrators) : "Unknown narrator") + (narration.Year > 0 ? $" · {narration.Year}" : "") };
+            var choice = MediaItemCardActions.BindText(new MenuFlyoutItem(), "Text", element => element.Text = (narration.Narrators.Count > 0 ? string.Join(", ", narration.Narrators) : SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.narrator.unknown")) + (narration.Year > 0 ? " · " + narration.Year.Value.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) : ""));
             choice.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(MediaNavigationContext.Detail(narration.ContentId, ViewModel.LibraryId));
             menu.Items.Add(choice);
         }
@@ -2363,23 +2369,25 @@ public sealed partial class ItemDetailPage : Page
     {
         BookRelatedGroupsPanel.Children.Clear();
         if (series?.Entries.Count > 0)
-            AddBookRelatedGroup(!string.IsNullOrWhiteSpace(series.Name) ? $"In {series.Name}" : "In this series", series.Entries);
+            AddBookRelatedGroup(() => !string.IsNullOrWhiteSpace(series.Name) ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.inSeries", new Dictionary<string, object?> { ["series"] = series.Name }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.inThisSeries"), series.Entries);
         if (related?.AlsoByAuthor.Count > 0)
-            AddBookRelatedGroup($"Also by {author ?? "this author"}", related.AlsoByAuthor);
+            AddBookRelatedGroup(() => !string.IsNullOrWhiteSpace(author) ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.alsoByAuthor", new Dictionary<string, object?> { ["author"] = author }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.alsoByThisAuthor"), related.AlsoByAuthor);
         if (related?.Similar.Count > 0)
-            AddBookRelatedGroup("You might also like", related.Similar);
+            AddBookRelatedGroup(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.youMightAlsoLike"), related.Similar);
         BookRelatedSection.Visibility = BookRelatedGroupsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void AddBookRelatedGroup(string heading, IEnumerable<AudiobookRelatedItem> entries)
+    private void AddBookRelatedGroup(Func<string> heading, IEnumerable<AudiobookRelatedItem> entries)
     {
         var group = new StackPanel { Spacing = 12 };
-        group.Children.Add(new TextBlock
+        var headingText = new TextBlock
         {
-            Text = heading,
+            Text = heading(),
             Style = (Style)Application.Current.Resources["TitleTextStyle"],
             FontSize = 20,
-        });
+        };
+        MediaItemCardActions.BindText(headingText, "Text", element => element.Text = heading());
+        group.Children.Add(headingText);
         var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         foreach (var entry in entries)
         {
@@ -2423,7 +2431,7 @@ public sealed partial class ItemDetailPage : Page
                 var absoluteStart = offset + Math.Max(0, chapter.StartSeconds);
                 _audiobookChapterRows.Add(new AudiobookChapterRow(
                     positionIndex++,
-                    string.IsNullOrWhiteSpace(chapter.Title) ? $"Chapter {positionIndex - 1}" : chapter.Title,
+                    chapter.Title ?? "",
                     absoluteStart,
                     Math.Max(0, chapter.EndSeconds - chapter.StartSeconds),
                     version.FileId));
@@ -2432,7 +2440,7 @@ public sealed partial class ItemDetailPage : Page
         }
 
         if (_audiobookChapterRows.Count == 0) return;
-        AudiobookChapterCountText.Text = $"Chapters  ({_audiobookChapterRows.Count})";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookChapterCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.heading") + "  " + SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.count", new Dictionary<string, object?> { ["count"] = _audiobookChapterRows.Count }));
         AudiobookChaptersSection.Visibility = Visibility.Visible;
     }
 
@@ -2461,17 +2469,18 @@ public sealed partial class ItemDetailPage : Page
     private void AudiobookChapterSortButton_Click(object sender, RoutedEventArgs e)
     {
         var flyout = new MenuFlyout();
-        foreach (var option in new[] { (Label: "By position", Longest: false), (Label: "Longest first", Longest: true) })
+        foreach (var option in new[] { (Label: "By position", Key: "web.audiobooks.chapters.sortPosition", Longest: false), (Label: "Longest first", Key: "web.audiobooks.chapters.sortLongest", Longest: true) })
         {
             var item = new ToggleMenuFlyoutItem
             {
                 Text = option.Label,
                 IsChecked = _audiobookChaptersLongestFirst == option.Longest,
             };
+            Localized.SetText(item, option.Key);
             item.Click += (_, _) =>
             {
                 _audiobookChaptersLongestFirst = option.Longest;
-                AudiobookChapterSortText.Text = option.Label;
+                Localized.SetText(AudiobookChapterSortText, option.Key);
                 RenderAudiobookChapters();
             };
             flyout.Items.Add(item);
@@ -2498,7 +2507,7 @@ public sealed partial class ItemDetailPage : Page
                 Tag = chapter,
                 Background = isCurrent ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"] : null,
             };
-            AutomationProperties.SetName(button, $"Play {chapter.Label}");
+            MediaItemCardActions.BindText(button, "ChapterName", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.player.play") + " · " + chapter.DisplayLabel));
 
             var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 11, 16, 11) };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2) });
@@ -2526,12 +2535,13 @@ public sealed partial class ItemDetailPage : Page
             grid.Children.Add(number);
             var title = new TextBlock
             {
-                Text = chapter.Label,
+                Text = chapter.DisplayLabel,
                 FontSize = 14,
                 FontWeight = Microsoft.UI.Text.FontWeights.Medium,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
+            MediaItemCardActions.BindText(title, "Text", element => element.Text = chapter.DisplayLabel);
             Grid.SetColumn(title, 2);
             grid.Children.Add(title);
             var time = new TextBlock
@@ -2558,7 +2568,7 @@ public sealed partial class ItemDetailPage : Page
             {
                 var listening = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
                 listening.Children.Add(new FontIcon { Glyph = "\uE768", FontSize = 11, Foreground = (Brush)Application.Current.Resources["AccentBrush"] });
-                listening.Children.Add(new TextBlock { Text = "listening", FontSize = 12, Foreground = (Brush)Application.Current.Resources["AccentBrush"] });
+                listening.Children.Add(MediaItemCardActions.Localize(new TextBlock { Text = "listening", FontSize = 12, Foreground = (Brush)Application.Current.Resources["AccentBrush"] }, text: "web.audiobooks.chapters.listening"));
                 Grid.SetColumn(listening, 5);
                 grid.Children.Add(listening);
             }
@@ -2582,7 +2592,11 @@ public sealed partial class ItemDetailPage : Page
         string Label,
         double AbsoluteStart,
         double DurationSeconds,
-        int FileId);
+        int FileId)
+    {
+        internal string DisplayLabel => string.IsNullOrWhiteSpace(Label)
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.player.chapterNumber", new Dictionary<string, object?> { ["number"] = PositionIndex.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : Label;
+    }
 
     private void BuildMangaChapters(MediaItemDetail item)
     {
@@ -2598,18 +2612,12 @@ public sealed partial class ItemDetailPage : Page
         _readerTargetContentId = target?.ContentId;
         SplitPlayButton.Visibility = target != null ? Visibility.Visible : Visibility.Collapsed;
         PlayButtonIcon.Glyph = "\uE736";
-        PlayButtonText.Text = target == null ? "No chapters" : target.Progress > 0
-            ? $"Resume Reading  {MangaChapterLabel(target)}"
-            : chapters.Any(chapter => chapter.Read == true) && target.Read != true
-                ? $"Continue  {MangaChapterLabel(target)}"
-                : chapters.All(chapter => chapter.Read == true)
-                    ? $"Read Again  {MangaChapterLabel(target)}"
-                    : $"Start Reading  {MangaChapterLabel(target)}";
-        MangaProgressText.Text = chapters.Count == 0 ? "" : $"{chapters.Count(chapter => chapter.Read == true)} of {chapters.Count} read";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = target == null ? "No chapters" : (target.Progress > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.resumeReading") : chapters.Any(chapter => chapter.Read == true) && target.Read != true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.continueReading") : chapters.All(chapter => chapter.Read == true) ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.readAgain") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.startReading")) + "  " + MangaChapterLabel(target));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(MangaProgressText, "Text", element => element.Text = chapters.Count == 0 ? "" : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.readStatus") + " · " + chapters.Count(chapter => chapter.Read == true).ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) + " / " + chapters.Count.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture));
         MangaJumpButton.Visibility = chapters.Count > 10 && target != null
             ? Visibility.Visible
             : Visibility.Collapsed;
-        MangaJumpButtonText.Text = target == null ? "" : $"Jump to {MangaChapterLabel(target)}";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(MangaJumpButtonText, "Text", element => element.Text = target == null ? "" : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.jumpTo", new Dictionary<string, object?> { ["label"] = MangaChapterLabel(target) }));
 
         foreach (var group in chapters.GroupBy(
                      chapter => string.IsNullOrWhiteSpace(chapter.Volume) ? "" : chapter.Volume.Trim(),
@@ -2631,15 +2639,17 @@ public sealed partial class ItemDetailPage : Page
             var header = new Grid { Margin = new Thickness(14, 8, 10, 8), ColumnSpacing = 10 };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            header.Children.Add(new TextBlock
+            var volumeLabel = SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
-                Text = $"Volume {group.Key}",
+                Text = SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }),
                 FontSize = 13,
                 FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                 CharacterSpacing = 35,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }));
+            MediaItemCardActions.BindText(volumeLabel, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }));
+            header.Children.Add(volumeLabel);
             var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             if (allRead)
                 summary.Children.Add(new FontIcon
@@ -2648,12 +2658,12 @@ public sealed partial class ItemDetailPage : Page
                     FontSize = 13,
                     Foreground = (Brush)Application.Current.Resources["AccentBrush"],
                 });
-            summary.Children.Add(new TextBlock
+            summary.Children.Add(MediaItemCardActions.BindText(new TextBlock
             {
-                Text = $"{groupedChapters.Count} chapters",
+                Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.chapterCount", new Dictionary<string, object?> { ["count"] = groupedChapters.Count, ["count_text"] = (groupedChapters.Count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }),
                 FontSize = 12,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            });
+            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.chapterCount", new Dictionary<string, object?> { ["count"] = groupedChapters.Count, ["count_text"] = (groupedChapters.Count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })));
             Grid.SetColumn(summary, 1);
             header.Children.Add(summary);
 
@@ -2672,12 +2682,12 @@ public sealed partial class ItemDetailPage : Page
                 IsExpanded = !allRead,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
             };
-            _mangaVolumes.Add((expander, $"Volume {group.Key} · {groupedChapters.Count} chapters"));
+            _mangaVolumes.Add((expander, () => SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }) + " · " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.chapterCount", new Dictionary<string, object?> { ["count"] = groupedChapters.Count, ["count_text"] = (groupedChapters.Count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })));
             expander.Collapsed += (_, _) => UpdateMangaStickyHeader();
             MangaChaptersPanel.Children.Add(expander);
         }
         if (chapters.Count == 0)
-            MangaChaptersPanel.Children.Add(new TextBlock { Text = "No chapters found. Chapters appear here once the library scan completes.", Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            MangaChaptersPanel.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "No chapters found. Chapters appear here once the library scan completes.", Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] }, text: "web.detail.manga.noChapters"));
         MangaChaptersSection.Visibility = Visibility.Visible;
     }
 
@@ -2728,7 +2738,7 @@ public sealed partial class ItemDetailPage : Page
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var image = new Image { Stretch = Stretch.UniformToFill };
+        var image = new Image { FlowDirection = FlowDirection.LeftToRight, Stretch = Stretch.UniformToFill };
         imageHost.Children.Add(placeholder);
         imageHost.Children.Add(image);
         row.Children.Add(new Border
@@ -2743,14 +2753,14 @@ public sealed partial class ItemDetailPage : Page
             _ = LoadMangaChapterPosterAsync(image, placeholder, chapter);
 
         var labels = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(new TextBlock
+        labels.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
         {
             Text = MangaChapterLabel(chapter),
             FontSize = 15,
             FontWeight = Microsoft.UI.Text.FontWeights.Medium,
             Foreground = (Brush)Application.Current.Resources[chapter.Read == true ? "SecondaryTextBrush" : "PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
-        });
+        }, "Text", element => element.Text = MangaChapterLabel(chapter)));
         if (chapter.Read != true && chapter.Progress is > 0 and < 1)
         {
             var progressRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
@@ -2768,15 +2778,16 @@ public sealed partial class ItemDetailPage : Page
                 CornerRadius = new CornerRadius(2),
             });
             progressRow.Children.Add(track);
-            progressRow.Children.Add(new TextBlock
+            progressRow.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
-                Text = $"{Math.Round(chapter.Progress.Value * 100):0}%",
+                Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.percent", new Dictionary<string, object?> { ["percent"] = Math.Round(chapter.Progress.Value * 100).ToString("0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }),
                 FontSize = 11,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            });
+            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.percent", new Dictionary<string, object?> { ["percent"] = Math.Round(chapter.Progress.Value * 100).ToString("0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })));
             labels.Children.Add(progressRow);
         }
 
+        MediaItemCardActions.BindText((TextBlock)labels.Children[0], "Text", element => element.Text = MangaChapterLabel(chapter));
         var readButton = new Button
         {
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
@@ -2807,7 +2818,12 @@ public sealed partial class ItemDetailPage : Page
             Height = 34,
             Padding = new Thickness(0),
         };
-        ToolTipService.SetToolTip(toggle, chapter.Read == true ? "Mark chapter unread" : "Mark chapter read");
+        MediaItemCardActions.BindText(toggle, "ChapterRead", element =>
+        {
+            var label = chapter.Read == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.markChapterUnread") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.markChapterRead");
+            ToolTipService.SetToolTip(element, label);
+            AutomationProperties.SetName(element, label);
+        });
         toggle.Click += MangaWatched_Click;
         Grid.SetColumn(toggle, 3);
         row.Children.Add(toggle);
@@ -2823,7 +2839,7 @@ public sealed partial class ItemDetailPage : Page
                 Height = 34,
                 Padding = new Thickness(0),
             };
-            ToolTipService.SetToolTip(download, "Download chapter");
+            MediaItemCardActions.Localize(download, toolTip: "web.detail.manga.downloadChapter", name: "web.detail.manga.downloadChapter");
             download.Click += MangaDownload_Click;
             Grid.SetColumn(download, 4);
             row.Children.Add(download);
@@ -2889,7 +2905,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
         }
         finally
         {
@@ -2915,7 +2931,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
         }
         finally
         {
@@ -2925,7 +2941,7 @@ public sealed partial class ItemDetailPage : Page
 
     private static string MangaChapterLabel(MangaChapter chapter)
         => !string.IsNullOrWhiteSpace(chapter.Title) ? chapter.Title
-            : chapter.ChapterIndex.HasValue ? $"Chapter {chapter.ChapterIndex:0.##}" : "Chapter";
+            : chapter.ChapterIndex.HasValue ? SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.chapter", new Dictionary<string, object?> { ["number"] = chapter.ChapterIndex.Value.ToString("0.##", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.chapterFallback");
 
     private static double MangaVolumeSort(string? volume)
         => double.TryParse(volume?.TrimStart('v', 'V'), System.Globalization.NumberStyles.Float,
@@ -3161,25 +3177,25 @@ public sealed partial class ItemDetailPage : Page
         if (ViewModel.IsWatched)
         {
             WatchedIcon.Glyph = "\uE73E"; // Checkmark
-            WatchedText.Text = compactTv ? (ViewModel.IsWatched ? "Mark Unwatched" : "Mark Watched") : type switch
+            SiloPlayer.Controls.MediaItemCardActions.BindText(WatchedText, "Text", element => element.Text = compactTv ? (ViewModel.IsWatched ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.markUnwatched", fallback: "Mark Unwatched") : SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.markWatched", fallback: "Mark Watched")) : type switch
             {
-                "series" => "Mark Series Unwatched",
-                "season" => "Mark Season Unwatched",
-                "ebook" => "Mark Unread",
-                _ => "Mark Unwatched",
-            };
+                "series" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeriesUnwatched", fallback: "Mark Series Unwatched"),
+                "season" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeasonUnwatched", fallback: "Mark Season Unwatched"),
+                "ebook" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markUnread", fallback: "Mark Unread"),
+                _ => SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.markUnwatched", fallback: "Mark Unwatched"),
+            });
             WatchedIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
         }
         else
         {
             WatchedIcon.Glyph = "\uE73E"; // Checkmark outline
-            WatchedText.Text = compactTv ? (ViewModel.IsWatched ? "Mark Unwatched" : "Mark Watched") : type switch
+            SiloPlayer.Controls.MediaItemCardActions.BindText(WatchedText, "Text", element => element.Text = compactTv ? (ViewModel.IsWatched ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.markUnwatched", fallback: "Mark Unwatched") : SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.markWatched", fallback: "Mark Watched")) : type switch
             {
-                "series" => "Mark Series Watched",
-                "season" => "Mark Season Watched",
-                "ebook" => "Mark Read",
-                _ => "Mark Watched",
-            };
+                "series" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeriesWatched", fallback: "Mark Series Watched"),
+                "season" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeasonWatched", fallback: "Mark Season Watched"),
+                "ebook" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markRead", fallback: "Mark Read"),
+                _ => SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.markWatched", fallback: "Mark Watched"),
+            });
             WatchedIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
         }
     }
@@ -3310,8 +3326,12 @@ public sealed partial class ItemDetailPage : Page
         FavoriteIcon.Foreground = ViewModel.IsFavorite
             ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xF8, 0x71, 0x71)) // text-red-400
             : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
-        ToolTipService.SetToolTip(FavoriteButton, ViewModel.IsFavorite ? "Unfavorite" : "Favorite");
-        AutomationProperties.SetName(FavoriteButton, ViewModel.IsFavorite ? "Unfavorite" : "Favorite");
+        MediaItemCardActions.BindText(FavoriteButton, "Favorite", element =>
+        {
+            var label = ViewModel.IsFavorite ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.removeFromFavoritesShortcut") : SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.addToFavoritesShortcut");
+            ToolTipService.SetToolTip(element, label);
+            AutomationProperties.SetName(element, label);
+        });
     }
 
     /// <summary>
@@ -3355,7 +3375,7 @@ public sealed partial class ItemDetailPage : Page
             else await api.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, ViewModel.Item.Type == "movie" ? "movie" : "episode", ViewModel.Item.Title, posterUrl: ViewModel.Item.PosterUrl);
             App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
         }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not queue this title: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Could not queue this title: {ex.Message}")); }
     }
     private async Task ShowStartPartyAsync()
     {
@@ -3427,7 +3447,7 @@ public sealed partial class ItemDetailPage : Page
             var policyNotice = new TextBlock { Text = savedPolicy == null ? "Saved guest controls could not be read. The room will use its saved policy unless you change this switch." : "", TextWrapping = TextWrapping.Wrap };
             var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"], Visibility = Visibility.Collapsed };
             panel.Children.Add(mode); panel.Children.Add(pause); panel.Children.Add(policyNotice); panel.Children.Add(error);
-            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Start a party with this", Content = panel, PrimaryButtonText = "Create room", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
+            var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog { XamlRoot = XamlRoot, Title = "Start a party with this", Content = panel, PrimaryButtonText = "Create room", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary }, title: "web.watchTogether.startSheet.title", closeButton: "common.cancel");
             dialog.PrimaryButtonClick += async (_, args) =>
             {
                 args.Cancel = true; var deferral = args.GetDeferral(); dialog.IsPrimaryButtonEnabled = false;
@@ -3482,12 +3502,12 @@ public sealed partial class ItemDetailPage : Page
                     args.Cancel = false;
                     DispatcherQueue.TryEnqueue(() => App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs { RoomId = response.Room.RoomId, RoomAccessToken = response.RoomAccessToken }));
                 }
-                catch (Exception ex) { error.Text = ex.Message; error.Visibility = Visibility.Visible; }
+                catch (Exception ex) { SiloPlayer.Controls.MediaItemCardActions.BindText(error, "Text", element => element.Text = SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); error.Visibility = Visibility.Visible; }
                 finally { dialog.IsPrimaryButtonEnabled = true; pause.IsEnabled = mode.IsEnabled = targetChoice.IsEnabled = true; deferral.Complete(); }
             };
             await dialog.ShowAsync();
         }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
     }
 
     private void BuildMoreFlyout()
@@ -3499,7 +3519,7 @@ public sealed partial class ItemDetailPage : Page
         if ((item.Type == "series" && ViewModel.Seasons.Sum(season => Math.Max(0, season.EpisodeCount)) > 1) ||
             (item.Type == "season" && ViewModel.Episodes.Count(episode => episode.Files.Count > 0) > 1))
         {
-            var shuffle = new MenuFlyoutItem { Text = "Shuffle" };
+            var shuffle = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Shuffle" }, text: "web.detail.actions.shuffle");
             shuffle.Click += async (_, _) =>
             {
                 if (!IsCurrentDetail(item.ContentId)) return;
@@ -3513,7 +3533,7 @@ public sealed partial class ItemDetailPage : Page
         {
             if (item.Type != "season")
             {
-                var favorite = new MenuFlyoutItem { Text = ViewModel.IsFavorite ? "Remove from favorites" : "Add to favorites" };
+                var favorite = SiloPlayer.Controls.MediaItemCardActions.BindText(new MenuFlyoutItem(), "Text", element => element.Text = ViewModel.IsFavorite ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.removeFromFavorites") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.addToFavorites"));
                 favorite.Click += async (_, _) =>
                 {
                     await ViewModel.ToggleFavoriteCommand.ExecuteAsync(null);
@@ -3523,11 +3543,11 @@ public sealed partial class ItemDetailPage : Page
             }
             if (item.Type == "series")
             {
-                var rate = new MenuFlyoutSubItem { Text = "Rate" };
+                var rate = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutSubItem { Text = "Rate" }, text: "web.item.rating.label");
                 for (var value = 1; value <= 5; value++)
                 {
                     var rating = value;
-                    var star = new MenuFlyoutItem { Text = $"{rating} {(rating == 1 ? "star" : "stars")}" };
+                    var star = SiloPlayer.Controls.MediaItemCardActions.BindText(new MenuFlyoutItem(), "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.item.rating.stars", new Dictionary<string, object?> { ["count"] = rating }));
                     star.Click += async (_, _) =>
                     {
                         await ViewModel.SetRatingCommand.ExecuteAsync(rating);
@@ -3542,7 +3562,7 @@ public sealed partial class ItemDetailPage : Page
         if (item.Type is "movie" or "series" or "season" or "episode" &&
             AuthorizationPolicy.CanCurateMetadata(App.Services.GetRequiredService<AuthService>()))
         {
-            var edit = new MenuFlyoutItem { Text = "Edit Metadata", Icon = new FontIcon { Glyph = "\uE70F" } };
+            var edit = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Edit Metadata", Icon = new FontIcon { Glyph = "\uE70F" } }, text: "web.detail.actions.editMetadata");
             edit.Click += async (_, _) =>
             {
                 var client = App.Services.GetRequiredService<SiloApiClient>();
@@ -3557,7 +3577,7 @@ public sealed partial class ItemDetailPage : Page
         }
         if (item.Type is "movie" or "series" or "season" or "episode")
         {
-            var party = new MenuFlyoutItem { Text = "Start a party with this", Icon = new FontIcon { Glyph = "\uE716" } };
+            var party = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Start a party with this", Icon = new FontIcon { Glyph = "\uE716" } }, text: "web.detail.actions.startWatchParty");
             party.Click += async (_, _) => await ShowStartPartyAsync();
             MoreFlyout.Items.Add(party);
             hasOverflowActions = true;
@@ -3576,11 +3596,11 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.Type.Equals("manga", StringComparison.OrdinalIgnoreCase))
         {
-            var details = new MenuFlyoutItem
+            var details = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
             {
                 Text = "View Details",
                 Icon = new FontIcon { Glyph = "\uE946" },
-            };
+            }, text: "web.detail.manga.viewDetails");
             details.Click += async (_, _) => await ShowMangaDetailsDialogAsync();
             MoreFlyout.Items.Add(details);
             var mangaMaintenance = ItemMaintenanceActionPolicy.Resolve(
@@ -3590,7 +3610,7 @@ public sealed partial class ItemDetailPage : Page
             if (mangaMaintenance.CanRefreshMetadata)
             {
                 MoreFlyout.Items.Add(new MenuFlyoutSeparator());
-                var refresh = new MenuFlyoutItem { Text = "Refresh Metadata", Icon = new FontIcon { Glyph = "\uE72C" } };
+                var refresh = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Refresh Metadata", Icon = new FontIcon { Glyph = "\uE72C" } }, text: "web.detail.actions.refreshMetadata");
                 refresh.Click += async (_, _) => await ShowRefreshMetadataDialogAsync();
                 MoreFlyout.Items.Add(refresh);
             }
@@ -3599,11 +3619,11 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.UserData is { PositionSeconds: > 0, Played: false })
         {
-            var restart = new MenuFlyoutItem
+            var restart = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
             {
                 Text = "Play from Beginning",
                 Icon = new FontIcon { Glyph = "\uE777" },
-            };
+            }, text: "web.detail.actions.playFromBeginning");
             restart.Click += (_, _) => PlayFromStart_Click(restart, new RoutedEventArgs());
             MoreFlyout.Items.Add(restart);
             hasOverflowActions = true;
@@ -3629,7 +3649,7 @@ public sealed partial class ItemDetailPage : Page
                     await ViewModel.ReloadAsync(item.ContentId);
                     if (api.IsCurrentContext(context) && IsCurrentDetail(item.ContentId)) UpdateUI();
                 }
-                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
                 finally { reset.IsEnabled = true; }
             };
             MoreFlyout.Items.Add(reset);
@@ -3637,7 +3657,7 @@ public sealed partial class ItemDetailPage : Page
         }
         if (!MediaItemActionPolicy.CanAddToPersonalLists(item.Type) && ViewModel.IsFavorite)
         {
-            var removeFavorite = new MenuFlyoutItem { Text = "Remove from Favorites", Icon = new FontIcon { Glyph = "\uEB52" } };
+            var removeFavorite = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Remove from Favorites", Icon = new FontIcon { Glyph = "\uEB52" } }, text: "web.detail.actions.removeFromFavorites");
             removeFavorite.Click += async (_, _) => { await ViewModel.ToggleFavoriteCommand.ExecuteAsync(null); BuildMoreFlyout(); };
             MoreFlyout.Items.Add(removeFavorite);
         }
@@ -3649,6 +3669,8 @@ public sealed partial class ItemDetailPage : Page
                 Text = ViewModel.InWatchlist ? "Remove from Watchlist" : "Add to Watchlist",
                 Icon = new FontIcon { Glyph = ViewModel.InWatchlist ? "\uE73E" : "\uE710" },
             };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(wlItem, "watchlist");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(wlItem, "Text", element => element.Text = ViewModel.InWatchlist ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.removeFromWatchlist") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.addToWatchlist"));
             wlItem.Click += async (_, _) =>
             {
                 await ViewModel.ToggleWatchlistCommand.ExecuteAsync(null);
@@ -3672,7 +3694,7 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.Type == "series" && _requestSeasonsContentId == item.ContentId && int.TryParse(item.TmdbId, out var tmdbId))
         {
-            var request = new MenuFlyoutItem { Text = "Request seasons", Icon = new FontIcon { Glyph = "\uE710" } };
+            var request = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Request seasons", Icon = new FontIcon { Glyph = "\uE710" } }, text: "web.detail.actions.requestSeasons");
             request.Click += async (_, _) => await RequestSeriesSeasonsAsync(item, tmdbId);
             MoreFlyout.Items.Add(request);
             hasOverflowActions = true;
@@ -3680,11 +3702,11 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.Type is not ("season" or "episode"))
         {
-            var addToCollection = new MenuFlyoutItem
+            var addToCollection = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
             {
                 Text = "Add to Collection",
                 Icon = new FontIcon { Glyph = "\uE8B7" },
-            };
+            }, text: "web.detail.actions.addToCollection");
             addToCollection.Click += async (_, _) => await ShowAddToCollectionDialogAsync();
             MoreFlyout.Items.Add(addToCollection);
         }
@@ -3693,11 +3715,11 @@ public sealed partial class ItemDetailPage : Page
         {
             if (CanCurrentUserDownload())
             {
-                var download = new MenuFlyoutItem
+                var download = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
                 {
                     Text = "Download",
                     Icon = new FontIcon { Glyph = "\uE896" },
-                };
+                }, text: "web.detail.actions.download");
                 download.Click += DownloadButton_Click;
                 MoreFlyout.Items.Add(download);
                 hasOverflowActions = true;
@@ -3737,11 +3759,11 @@ public sealed partial class ItemDetailPage : Page
             if (hasOverflowActions)
                 MoreFlyout.Items.Add(new MenuFlyoutSeparator());
 
-            var mediaInfo = new MenuFlyoutItem
+            var mediaInfo = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
             {
                 Text = "Media Info",
                 Icon = new FontIcon { Glyph = "\uE946" },
-            };
+            }, text: "web.detail.mediaInfo.title");
             mediaInfo.Click += async (_, _) => await ShowMediaInfoDialogAsync();
             MoreFlyout.Items.Add(mediaInfo);
             hasOverflowActions = true;
@@ -3758,22 +3780,22 @@ public sealed partial class ItemDetailPage : Page
 
             if (maintenance.CanRefreshMetadata)
             {
-                var refreshItem = new MenuFlyoutItem
+                var refreshItem = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
                 {
                     Text = "Refresh Metadata",
                     Icon = new FontIcon { Glyph = "\uE72C" },
-                };
+                }, text: "web.detail.actions.refreshMetadata");
                 refreshItem.Click += async (_, _) => await ShowRefreshMetadataDialogAsync();
                 MoreFlyout.Items.Add(refreshItem);
             }
 
             if (maintenance.CanMatch)
             {
-                var match = new MenuFlyoutItem
+                var match = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
                 {
                     Text = "Match Item",
                     Icon = new FontIcon { Glyph = "\uE721" },
-                };
+                }, text: "web.detail.actions.matchItem");
                 match.Click += MatchButton_Click;
                 MoreFlyout.Items.Add(match);
             }
@@ -3821,7 +3843,7 @@ public sealed partial class ItemDetailPage : Page
             await LoadSeriesRequestActionAsync(item, token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Season request failed: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Season request failed: {ex.Message}")); }
     }
 
     private async Task ShowAddToCollectionDialogAsync()
@@ -3881,13 +3903,13 @@ public sealed partial class ItemDetailPage : Page
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12),
                 Padding = new Thickness(16, 24, 16, 24),
-                Child = new TextBlock
+                Child = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
                 {
                     Text = "No media files for this item.",
                     FontSize = 14,
                     Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                     HorizontalAlignment = HorizontalAlignment.Center,
-                },
+                }, text: "web.detail.mediaInfo.noFiles"),
             });
         }
         else if (versions.Count == 1)
@@ -3919,92 +3941,97 @@ public sealed partial class ItemDetailPage : Page
             }
         }
 
-        var dialog = new ContentDialog
+        var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Media Info",
             Content = new ScrollViewer { Content = body, MaxHeight = dialogHeight, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled },
             CloseButtonText = "Close",
-        };
+        }, title: "web.detail.mediaInfo.title", closeButton: "web.ui.close");
         await dialog.ShowAsync();
     }
 
     private StackPanel BuildMediaInfoSpecSheet(FileVersion version)
     {
         var sheet = new StackPanel { Spacing = 16, Padding = new Thickness(0, 8, 0, 8) };
-        AddMediaInfoSection(sheet, "General",
-        [
-            ("Container", version.Container?.ToUpperInvariant()),
-            ("File Size", version.FileSize > 0 ? FormatFileSize(version.FileSize) : null),
-            ("Duration", version.Duration > 0 ? FormatDetailedDuration(version.Duration) : null),
-            ("Overall Bitrate", FormatMediaBitrate(version.Bitrate)),
-            ("Edition", version.EditionRaw),
-            ("Added", FormatMediaAdded(version.AddedAt)),
-            ("File Path", version.FilePath),
-        ]);
-
-        var videos = version.VideoTracks ?? [];
-        for (var index = 0; index < videos.Count; index++)
+        void Refresh()
         {
-            var track = videos[index];
-            AddMediaInfoSection(sheet, videos.Count > 1 ? $"Video {index + 1}" : "Video",
+            sheet.Children.Clear();
+            AddMediaInfoSection(sheet, SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.section.general"),
             [
-                ("Codec", track.Codec?.ToUpperInvariant()),
-                ("Profile", track.Profile),
-                ("Level", FormatVideoLevel(track.Codec, track.Level)),
-                ("Resolution", track.Width > 0 && track.Height > 0 ? $"{track.Width}x{track.Height}" : null),
-                ("Aspect Ratio", track.AspectRatio),
-                ("Frame Rate", string.IsNullOrWhiteSpace(track.FrameRate) ? null : $"{track.FrameRate} fps"),
-                ("Bitrate", FormatMediaBitrate(track.Bitrate)),
-                ("Bit Depth", track.BitDepth > 0 ? $"{track.BitDepth}-bit" : null),
-                ("Pixel Format", track.PixelFormat),
-                ("Chroma Subsampling", FormatChromaSubsampling(track.PixelFormat)),
-                ("Dynamic Range", FormatTrackDynamicRange(track)),
-                ("Color Range", FormatColorRange(track.ColorRange)),
-                ("Color Primaries", track.ColorPrimaries),
-                ("Color Transfer", track.ColorTransfer),
-                ("Color Space", track.ColorSpace),
-                ("Reference Frames", track.ReferenceFrames > 0 ? track.ReferenceFrames.ToString() : null),
-                ("Scan", track.Interlaced == true ? "Interlaced" : "Progressive"),
+                (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.container"), version.Container?.ToUpperInvariant()),
+                (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.fileSize"), version.FileSize > 0 ? FormatFileSize(version.FileSize) : null),
+                (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.duration"), version.Duration > 0 ? FormatDetailedDuration(version.Duration) : null),
+                (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.overallBitrate"), FormatMediaBitrate(version.Bitrate)),
+                (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.edition"), version.EditionRaw),
+                (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.added"), FormatMediaAdded(version.AddedAt)),
+                (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.filePath"), version.FilePath),
             ]);
-        }
 
-        var audioTracks = version.AudioTracks ?? [];
-        for (var index = 0; index < audioTracks.Count; index++)
-        {
-            var track = audioTracks[index];
-            AddMediaInfoSection(sheet, audioTracks.Count > 1 ? $"Audio {index + 1}" : "Audio",
-            [
-                ("Title", !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle),
-                ("Language", string.IsNullOrWhiteSpace(track.Language) ? null : MediaLanguageCatalog.Label(track.Language)),
-                ("Codec", NormalizeAudioCodec(track.Codec, null)),
-                ("Profile", track.Profile),
-                ("Layout", track.Layout),
-                ("Channels", FormatMediaChannels(track.Channels)),
-                ("Bitrate", FormatMediaBitrate(track.Bitrate)),
-                ("Sample Rate", track.SampleRate > 0 ? $"{track.SampleRate:N0} Hz" : null),
-                ("Bit Depth", track.BitDepth > 0 ? $"{track.BitDepth}-bit" : null),
-                ("Default", track.Default ? "Yes" : null),
-            ]);
-        }
+            var videos = version.VideoTracks ?? [];
+            for (var index = 0; index < videos.Count; index++)
+            {
+                var track = videos[index];
+                AddMediaInfoSection(sheet, videos.Count > 1 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.section.videoNumbered", new Dictionary<string, object?> { ["number"] = index + 1 }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.video"),
+                [
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.codec"), track.Codec?.ToUpperInvariant()),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.profile"), track.Profile),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.level"), FormatVideoLevel(track.Codec, track.Level)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.resolution"), track.Width > 0 && track.Height > 0 ? $"{track.Width}x{track.Height}" : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.aspectRatio"), track.AspectRatio),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.frameRateLabel"), string.IsNullOrWhiteSpace(track.FrameRate) ? null : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.frameRate", new Dictionary<string, object?> { ["rate"] = track.FrameRate })),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.bitrate"), FormatMediaBitrate(track.Bitrate)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.bitDepthLabel"), track.BitDepth > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.bitDepth", new Dictionary<string, object?> { ["depth"] = track.BitDepth }) : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.pixelFormat"), track.PixelFormat),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.chromaSubsampling"), FormatChromaSubsampling(track.PixelFormat)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.dynamicRange"), FormatTrackDynamicRange(track)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.player.info.colorRange"), FormatColorRange(track.ColorRange)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.colorPrimaries"), track.ColorPrimaries),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.colorTransfer"), track.ColorTransfer),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.colorSpace"), track.ColorSpace),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.referenceFrames"), track.ReferenceFrames > 0 ? track.ReferenceFrames.ToString() : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.scan"), track.Interlaced == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.interlaced") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.progressive")),
+                ]);
+            }
 
-        var subtitleTracks = version.SubtitleTracks ?? [];
-        for (var index = 0; index < subtitleTracks.Count; index++)
-        {
-            var track = subtitleTracks[index];
-            AddMediaInfoSection(sheet, subtitleTracks.Count > 1 ? $"Subtitle {index + 1}" : "Subtitle",
-            [
-                ("Title", !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle),
-                ("Language", string.IsNullOrWhiteSpace(track.Language) ? null : MediaLanguageCatalog.Label(track.Language)),
-                ("Format", track.Codec?.ToUpperInvariant()),
-                ("Source", track.External == true ? "External" : "Embedded"),
-                ("File", track.External == true ? track.FileName : null),
-                ("Resolution", track.Resolution),
-                ("Forced", track.Forced == true ? "Yes" : null),
-                ("Default", track.Default == true ? "Yes" : null),
-                ("Hearing Impaired", track.HearingImpaired == true ? "Yes" : null),
-            ]);
-        }
+            var audioTracks = version.AudioTracks ?? [];
+            for (var index = 0; index < audioTracks.Count; index++)
+            {
+                var track = audioTracks[index];
+                AddMediaInfoSection(sheet, audioTracks.Count > 1 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.section.audioNumbered", new Dictionary<string, object?> { ["number"] = index + 1 }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.audio"),
+                [
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.titleLabel"), !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.language"), string.IsNullOrWhiteSpace(track.Language) ? null : MediaLanguageCatalog.Label(track.Language)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.codec"), NormalizeAudioCodec(track.Codec, null)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.profile"), track.Profile),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.layout"), track.Layout),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.channels"), FormatMediaChannels(track.Channels)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.bitrate"), FormatMediaBitrate(track.Bitrate)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.sampleRate"), track.SampleRate > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.sampleRate", new Dictionary<string, object?> { ["rate"] = track.SampleRate.Value.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.bitDepthLabel"), track.BitDepth > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.bitDepth", new Dictionary<string, object?> { ["depth"] = track.BitDepth }) : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.defaultLabel"), track.Default ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.yes") : null),
+                ]);
+            }
+
+            var subtitleTracks = version.SubtitleTracks ?? [];
+            for (var index = 0; index < subtitleTracks.Count; index++)
+            {
+                var track = subtitleTracks[index];
+                AddMediaInfoSection(sheet, subtitleTracks.Count > 1 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.section.subtitleNumbered", new Dictionary<string, object?> { ["number"] = index + 1 }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.subtitle"),
+                [
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.titleLabel"), !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.language"), string.IsNullOrWhiteSpace(track.Language) ? null : MediaLanguageCatalog.Label(track.Language)),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.format"), track.Codec?.ToUpperInvariant()),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.source"), track.External == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.external") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.embedded")),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.file"), track.External == true ? track.FileName : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.resolution"), track.Resolution),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.forcedLabel"), track.Forced == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.yes") : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.defaultLabel"), track.Default == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.yes") : null),
+                    (SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.row.hearingImpaired"), track.HearingImpaired == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.yes") : null),
+                ]);
+            }
+            }
+        SiloPlayer.Controls.MediaItemCardActions.BindText(sheet, "Specs", _ => Refresh());
         return sheet;
     }
 
@@ -4051,7 +4078,7 @@ public sealed partial class ItemDetailPage : Page
     {
         8 => "7.1",
         6 => "5.1",
-        2 => "stereo",
+        2 => SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.channels.stereo"),
         > 0 => $"{channels} ch",
         _ => null
     };
@@ -4091,7 +4118,7 @@ public sealed partial class ItemDetailPage : Page
             : normalized.Contains("avc") || normalized.Contains("h264") || normalized.Contains("264")
                 ? level.Value / 10d
                 : level.Value;
-        return Math.Abs(value - Math.Round(value)) < 0.001 ? Math.Round(value).ToString("0") : value.ToString("0.0");
+        return Math.Abs(value - Math.Round(value)) < 0.001 ? Math.Round(value).ToString("0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) : value.ToString("0.0", SiloPlayer.Core.Localization.AppStrings.FormatCulture);
     }
 
     private static readonly Dictionary<int, string> DolbyVisionCompatibilityLabels = new()
@@ -4220,20 +4247,20 @@ public sealed partial class ItemDetailPage : Page
 
     private async Task ShowDownloadDialogAsync(string title, IReadOnlyCollection<FileVersion> versions)
     {
-        var dialog = new ContentDialog
+        var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = $"Download: {title}",
             CloseButtonText = "Cancel",
-        };
+        }, closeButton: "common.cancel");
         var content = new StackPanel { Width = 410, Spacing = 10 };
-        content.Children.Add(new TextBlock
+        content.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
         {
             Text = "Choose a file to download. Make sure you have enough disk space.",
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
-        });
+        }, text: "web.downloads.versionPicker.description"));
         var versionButtons = new List<Button>();
         var downloadInProgress = false;
         foreach (var version in versions
@@ -4305,7 +4332,7 @@ public sealed partial class ItemDetailPage : Page
             content.Children.Add(versionButton);
         }
         if (versions.Count > 1)
-            content.Children.Add(new TextBlock { Text = "Larger files require more storage space.", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            content.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Larger files require more storage space.", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] }, text: "web.downloads.versionPicker.sizeNote"));
         dialog.Content = content;
         await dialog.ShowAsync();
     }
@@ -4350,7 +4377,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            toast.Error(ex);
+            toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
             return false;
         }
     }
@@ -4439,12 +4466,12 @@ public sealed partial class ItemDetailPage : Page
         {
             if (ViewModel.Item?.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) == true)
             {
-                MediaLocationsPanel.Children.Add(new TextBlock
+                MediaLocationsPanel.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
                 {
                     Text = "No ebook files found.",
                     Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                     FontSize = 13,
-                });
+                }, text: "web.detail.ebook.noFiles"));
                 MediaLocationsSection.Visibility = Visibility.Visible;
             }
             else
@@ -4537,8 +4564,8 @@ public sealed partial class ItemDetailPage : Page
                 CornerRadius = new CornerRadius(6),
                 Content = new FontIcon { Glyph = "\uE946", FontSize = 13 },
             };
-            ToolTipService.SetToolTip(infoBtn, "View media info");
-            AutomationProperties.SetName(infoBtn, $"View media info for {fileName}");
+            MediaItemCardActions.Localize(infoBtn, toolTip: "web.item.locations.viewMediaInfo");
+            MediaItemCardActions.BindText(infoBtn, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.locations.viewMediaInfoFor", new Dictionary<string, object?> { ["file"] = fileName })));
             infoBtn.Click += async (_, _) => await ShowMediaInfoDialogAsync(version.FileId);
             locationActions.Children.Add(infoBtn);
         }
@@ -4555,8 +4582,8 @@ public sealed partial class ItemDetailPage : Page
                 VerticalAlignment = VerticalAlignment.Top,
                 Content = new FontIcon { Glyph = "\uE8C8", FontSize = 13 }, // Copy
             };
-            ToolTipService.SetToolTip(copyBtn, "Copy full folder path");
-            AutomationProperties.SetName(copyBtn, $"Copy full folder path for {fileName}");
+            MediaItemCardActions.Localize(copyBtn, toolTip: "web.item.locations.copyFolderPath");
+            MediaItemCardActions.BindText(copyBtn, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.locations.copyFolderPathFor", new Dictionary<string, object?> { ["file"] = fileName })));
             copyBtn.Click += (_, _) =>
             {
                 var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
@@ -4626,7 +4653,7 @@ public sealed partial class ItemDetailPage : Page
         if (version.Duration > 0)
         {
             var pages = Math.Round(version.Duration);
-            parts.Add($"{pages:N0} {(pages == 1 ? "page" : "pages")}");
+            parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.ebook.pageCount", new Dictionary<string, object?> { ["count"] = pages, ["count_text"] = (pages).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
         }
         return string.Join(" \u00B7 ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
     }
@@ -4637,26 +4664,26 @@ public sealed partial class ItemDetailPage : Page
 
     private static string ExtraKindLabel(string kind) => kind switch
     {
-        "trailer" => "Trailer",
-        "teaser" => "Teaser",
-        "featurette" => "Featurette",
-        "clip" => "Clip",
-        "behind_the_scenes" => "Behind the Scenes",
-        "bloopers" => "Bloopers",
-        "deleted_scene" => "Deleted Scene",
-        _ => "Extra",
+        "trailer" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.trailer"),
+        "teaser" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.teaser"),
+        "featurette" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.featurette"),
+        "clip" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.clip"),
+        "behind_the_scenes" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.behindTheScenes"),
+        "bloopers" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.bloopers"),
+        "deleted_scene" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.deletedScene"),
+        _ => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kind.otherKind"),
     };
 
     private static string ExtraKindGroupLabel(string kind) => kind switch
     {
-        "trailer" => "Trailers",
-        "teaser" => "Teasers",
-        "featurette" => "Featurettes",
-        "clip" => "Clips",
-        "behind_the_scenes" => "Behind the Scenes",
-        "bloopers" => "Bloopers",
-        "deleted_scene" => "Deleted Scenes",
-        _ => "Other",
+        "trailer" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.trailer"),
+        "teaser" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.teaser"),
+        "featurette" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.featurette"),
+        "clip" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.clip"),
+        "behind_the_scenes" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.behindTheScenes"),
+        "bloopers" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.bloopers"),
+        "deleted_scene" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.deletedScene"),
+        _ => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.extras.kindGroup.otherKind"),
     };
 
     private void BuildTrailers(IReadOnlyList<ItemVideo> videos)
@@ -4689,8 +4716,7 @@ public sealed partial class ItemDetailPage : Page
             ? ExtraKindLabel(video.Kind)
             : video.Name!;
 
-        var thumbnail = new Image
-        {
+        var thumbnail = new Image { FlowDirection = FlowDirection.LeftToRight,
             Stretch = Stretch.UniformToFill,
             Source = (ImageSource)RemoteImageConverter.Convert(
                 $"https://i.ytimg.com/vi/{video.SiteKey}/hqdefault.jpg",
@@ -4728,12 +4754,12 @@ public sealed partial class ItemDetailPage : Page
         };
 
         var meta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
-        meta.Children.Add(new TextBlock
+        meta.Children.Add(MediaItemCardActions.BindText(new TextBlock
         {
             Text = ExtraKindLabel(video.Kind),
             FontSize = 11,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-        });
+        }, "Text", element => element.Text = ExtraKindLabel(video.Kind)));
         if (video.IsOfficial)
         {
             meta.Children.Add(new Border
@@ -4742,12 +4768,12 @@ public sealed partial class ItemDetailPage : Page
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(6, 0, 6, 0),
-                Child = new TextBlock
+                Child = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
                 {
                     Text = "Official",
                     FontSize = 10,
                     Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                },
+                }, text: "web.detail.trailers.official"),
             });
         }
 
@@ -4850,14 +4876,14 @@ public sealed partial class ItemDetailPage : Page
         foreach (var group in playable.GroupBy(extra => extra.Kind))
         {
             var groupPanel = new StackPanel { Spacing = 10 };
-            groupPanel.Children.Add(new TextBlock
+            groupPanel.Children.Add(MediaItemCardActions.BindText(new TextBlock
             {
                 Text = ExtraKindGroupLabel(group.Key).ToUpperInvariant(),
                 FontSize = 12,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 CharacterSpacing = 100,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            });
+            }, "Text", element => element.Text = ExtraKindGroupLabel(group.Key)));
 
             var grid = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
             for (var column = 0; column < 3; column++)
@@ -5032,7 +5058,7 @@ public sealed partial class ItemDetailPage : Page
         _playableContentId = item.HasAuthoritativePlayTarget ? item.PlayContentId
             : ViewModel.EpisodesSeasonContentId == item.ContentId ? ViewModel.Episodes.FirstOrDefault()?.ContentId : null;
         var playable = !string.IsNullOrWhiteSpace(_playableContentId);
-        PlayButtonText.Text = "Play First Episode";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.playFirstEpisode", fallback: "Play First Episode"));
         SplitPlayButton.Visibility = playable ? Visibility.Visible : Visibility.Collapsed;
         PrimaryPlayButton.IsEnabled = playable;
         SplitPlayButton.Opacity = playable ? 1 : .5;
@@ -5063,7 +5089,7 @@ public sealed partial class ItemDetailPage : Page
             && ViewModel.EpisodesSeasonContentId == season.ContentId && e.SeasonNumber == season.SeasonNumber).ToArray();
         var index = Math.Clamp((primaryAction.TargetEpisodeNumber ?? 1) - 1, 0, Math.Max(episodes.Length - 1, 0));
         _playableContentId = episodes.Length > 0 ? episodes[index].ContentId : null;
-        PlayButtonText.Text = primaryAction.Label;
+        MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = LegacySeriesActionLabel(ViewModel.Seasons));
         var playable = !string.IsNullOrWhiteSpace(_playableContentId);
         SplitPlayButton.Visibility = playable ? Visibility.Visible : Visibility.Collapsed;
         PrimaryPlayButton.IsEnabled = playable;
@@ -5076,7 +5102,7 @@ public sealed partial class ItemDetailPage : Page
         if (item?.Type != "series" || !item.HasAuthoritativePlayTarget) return false;
         var action = SeriesPrimaryActionResolver.ResolveDetail(item);
         _playableContentId = action.ContentId;
-        PlayButtonText.Text = action.Label;
+        MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SeriesActionLabel(item));
         SplitPlayButton.Visibility = Visibility.Visible;
         PrimaryPlayButton.IsEnabled = action.ContentId != null;
         SplitPlayButton.Opacity = action.ContentId == null ? .5 : 1;
@@ -5243,7 +5269,7 @@ public sealed partial class ItemDetailPage : Page
     {
         if (IsReaderItem(item))
         {
-            PlayButtonText.Text = "Read";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.read", fallback: "Read"));
             PlayButtonIcon.Glyph = "\uE736";
             VersionDropdownButton.Visibility = Visibility.Collapsed;
             VersionSeparator.Visibility = Visibility.Collapsed;
@@ -5259,7 +5285,7 @@ public sealed partial class ItemDetailPage : Page
         // Resume-choice items still intentionally render "Play" below, just
         // like ActionBar's displayedPlayLabel when it opens that dialog.
         if (item.Type is "movie" or "episode")
-            PlayButtonText.Text = DefaultLeafPlayLabel(item.Type);
+            MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = DefaultLeafPlayLabel(item.Type));
 
         // Show quality on play button from OverlaySummary or Versions
         var qualityParts = new List<string>();
@@ -5307,9 +5333,9 @@ public sealed partial class ItemDetailPage : Page
         // live resume point even while the historical played flag stays true.
         if (userData != null && userData.PositionSeconds > 0)
         {
-            PlayButtonText.Text = ShouldOfferResumeChoice(out _, out _)
-                ? "Play"
-                : "Resume";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = ShouldOfferResumeChoice(out _, out _)
+                ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.play", fallback: "Play")
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.resume", fallback: "Resume"));
 
             // Show progress bar
             if (userData.DurationSeconds > 0)
@@ -5485,46 +5511,46 @@ public sealed partial class ItemDetailPage : Page
         var percent = duration > 0
             ? (int)Math.Round(Math.Clamp(position / duration, 0, 1) * 100)
             : 0;
-        var description = percent > 0
-            ? $"You're {resumeTime} in, about {percent}% through."
-            : $"You're {resumeTime} in. Resume where you left off or start over.";
+        string ResumeDescription() => AppStrings.Get(percent > 0 ? "web.detail.actions.resumeDescriptionPercent" : "web.detail.actions.resumeDescription",
+            new Dictionary<string, object?> { ["time"] = resumeTime, ["percent"] = percent });
 
         var resumeButton = new Button
         {
-            Content = $"Resume at {resumeTime}",
+            Content = AppStrings.Get("web.detail.actions.resumeAt", new Dictionary<string, object?> { ["time"] = resumeTime }),
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(12, 8, 12, 8),
         };
-        var restartButton = new Button
+        var restartButton = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button
         {
             Content = "Play from Beginning",
             Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(12, 8, 12, 8),
-        };
+        }, content: "web.detail.actions.playFromBeginning");
         var content = new StackPanel { Spacing = 10 };
-        content.Children.Add(new TextBlock
+        MediaItemCardActions.BindText(resumeButton, "Content", element => element.Content = AppStrings.Get("web.detail.actions.resumeAt", new Dictionary<string, object?> { ["time"] = resumeTime }));
+        content.Children.Add(MediaItemCardActions.BindText(new TextBlock
         {
-            Text = description,
+            Text = ResumeDescription(),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 2),
-        });
+        }, "Text", element => element.Text = ResumeDescription()));
         content.Children.Add(resumeButton);
         content.Children.Add(restartButton);
 
-        var dialog = new ContentDialog
+        var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Resume Playback?",
             Content = content,
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.None,
-        };
+        }, title: "web.detail.actions.resumeDialogTitle", closeButton: "common.cancel");
         resumeButton.Click += (_, _) =>
         {
             dialog.Hide();
@@ -5564,13 +5590,13 @@ public sealed partial class ItemDetailPage : Page
 
         if (isResuming)
         {
-            PlayButtonText.Text = ShouldOfferResumeChoice(out _, out _)
-                ? "Play"
-                : "Resume";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = ShouldOfferResumeChoice(out _, out _)
+                ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.play", fallback: "Play")
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.resume", fallback: "Resume"));
         }
         else
         {
-            PlayButtonText.Text = DefaultLeafPlayLabel(ViewModel.Item?.Type);
+            MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = DefaultLeafPlayLabel(ViewModel.Item?.Type));
         }
 
         // Show version info for the best version
@@ -5664,6 +5690,7 @@ public sealed partial class ItemDetailPage : Page
     private void BuildAudioTracksFlyout(FileVersion? version)
     {
         _prePlayAudioSelection?.Clear();
+        SiloPlayer.Controls.MediaItemCardActions.BindText(AudioTracksFlyoutContent, "Tracks", _ => { });
         AudioTracksFlyoutContent.Children.Clear();
         var tracks = version?.AudioTracks;
         if (tracks == null || tracks.Count == 0)
@@ -5685,15 +5712,18 @@ public sealed partial class ItemDetailPage : Page
         if (autoIndex < 0 || autoIndex >= tracks.Count)
             autoIndex = tracks.FindIndex(t => t.Default);
         if (autoIndex < 0) autoIndex = 0;
-        RenderAudioTracksFlyout(version, tracks, autoIndex);
-        UpdateAudioTracksSummary(tracks, autoIndex);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(AudioTracksFlyoutContent, "Tracks", _ =>
+        {
+            RenderAudioTracksFlyout(version, tracks, autoIndex);
+            UpdateAudioTracksSummary(tracks, autoIndex);
+        });
     }
 
     private void RenderAudioTracksFlyout(FileVersion version, List<AudioTrackInfo> tracks, int autoIndex)
     {
         AudioTracksFlyoutContent.Children.Clear();
         var autoSummary = FormatAudioTrackSummary(tracks[autoIndex]);
-        var autoItem = CreateTrackSelectionRow("Auto", autoSummary, [], _selectedAudioTrackIndex is null);
+        var autoItem = CreateTrackSelectionRow(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.tracks.auto"), autoSummary, [], _selectedAudioTrackIndex is null);
         autoItem.Click += async (_, _) =>
         {
             await SelectPrePlayAudioAsync(version, tracks, autoIndex, null);
@@ -5708,7 +5738,7 @@ public sealed partial class ItemDetailPage : Page
                 ? MediaLanguageCatalog.Label(track.Language)
                 : !string.IsNullOrWhiteSpace(track.Title)
                     ? track.Title!
-                    : !string.IsNullOrWhiteSpace(track.EmbeddedTitle) ? track.EmbeddedTitle! : "Unknown";
+                    : !string.IsNullOrWhiteSpace(track.EmbeddedTitle) ? track.EmbeddedTitle! : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.audio.unknown");
             var embeddedTitle = track.Title?.Trim() ?? track.EmbeddedTitle?.Trim() ?? "";
             var descriptionParts = new List<string>();
             if (embeddedTitle.Length > 0 && !embeddedTitle.Equals(title, StringComparison.OrdinalIgnoreCase))
@@ -5720,7 +5750,7 @@ public sealed partial class ItemDetailPage : Page
             var badges = new List<string>();
             if (!string.IsNullOrWhiteSpace(track.Codec)) badges.Add(VersionRanking.AudioTrackLabel(track));
             if (track.Channels.HasValue) badges.Add(FormatAudioChannels(track.Channels.Value));
-            if (track.Default) badges.Add("DEFAULT");
+            if (track.Default) badges.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.defaultBadge"));
             var item = CreateTrackSelectionRow(
                 title,
                 string.Join(" · ", descriptionParts),
@@ -5768,8 +5798,9 @@ public sealed partial class ItemDetailPage : Page
         var shownIndex = _selectedAudioTrackIndex ?? autoIndex;
         if (shownIndex < 0 || shownIndex >= tracks.Count) shownIndex = 0;
         var track = tracks[shownIndex];
-        AudioTracksSummary.Text = (_selectedAudioTrackIndex == null ? "Auto: " : "") +
-                                  FormatAudioTrackSummary(track);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(AudioTracksSummary, "Text", element => element.Text = _selectedAudioTrackIndex == null
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.tracks.autoSummary", new Dictionary<string, object?> { ["summary"] = FormatAudioTrackSummary(track) })
+            : FormatAudioTrackSummary(track));
     }
 
     // ===== Pre-play subtitle popover (Phase 2b) =====
@@ -5783,6 +5814,7 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private void BuildSubtitlesPopoverFlyout(FileVersion? version, bool resetSelection = true)
     {
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SubtitlesPopoverContent, "Tracks", _ => { });
         SubtitlesPopoverContent.Children.Clear();
         var subs = version?.SubtitleTracks ?? [];
         if (version == null)
@@ -5806,12 +5838,16 @@ public sealed partial class ItemDetailPage : Page
         // for a selected version, even before any tracks are available:
         // Auto, Off, optional candidate sections, and the empty-state copy.
 
-        RenderSubtitlesPopoverFlyout(version, subs, downloaded);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SubtitlesPopoverContent, "Tracks", _ =>
+        {
+            RenderSubtitlesPopoverFlyout(version, subs, downloaded);
+            UpdateSubtitlesPopoverSummary(subs);
+        });
 
         if (hasSubtitleInventory)
             UpdateSubtitlesPopoverSummary(subs);
         else
-            SubtitlesSummary.Text = "Auto: Off";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(SubtitlesSummary, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.tracks.autoSummary", new Dictionary<string, object?> { ["summary"] = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off") }));
     }
 
     private void RenderSubtitlesPopoverFlyout(
@@ -5825,10 +5861,10 @@ public sealed partial class ItemDetailPage : Page
             ? _watchDetail?.EffectiveSubtitleTrackSignature
             : null;
         var autoItem = CreateTrackSelectionRow(
-            "Auto",
+            SiloPlayer.Core.Localization.AppStrings.Get("web.detail.tracks.auto"),
             preferredSignature is null
-                ? autoCandidate is null ? "Off" : FormatSubtitleTrackSummary(autoCandidate)
-                : "Reset to profile defaults",
+                ? autoCandidate is null ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off") : FormatSubtitleTrackSummary(autoCandidate)
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.resetToDefaults"),
             [],
             _selectedSubtitleIndex is null && _selectedSubtitleSignature is null && preferredSignature is null);
         autoItem.Click += async (_, _) =>
@@ -5842,7 +5878,7 @@ public sealed partial class ItemDetailPage : Page
         };
         SubtitlesPopoverContent.Children.Add(autoItem);
 
-        var offItem = CreateTrackSelectionRow("Off", null, [], _selectedSubtitleIndex == -1);
+        var offItem = CreateTrackSelectionRow(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off"), null, [], _selectedSubtitleIndex == -1);
         offItem.Click += async (_, _) =>
         {
             _selectedSubtitleIndex = -1;
@@ -5909,22 +5945,22 @@ public sealed partial class ItemDetailPage : Page
                 .ThenBy(
                     row => row.Track.Title ?? row.Track.EmbeddedTitle ?? row.Track.Codec ?? "",
                     StringComparer.CurrentCultureIgnoreCase);
-            AddTrackGroup("Embedded", indexedTracks.Where(row => row.Track.External != true));
-            AddTrackGroup("External", indexedTracks.Where(row => row.Track.External == true));
+            AddTrackGroup(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.embedded"), indexedTracks.Where(row => row.Track.External != true));
+            AddTrackGroup(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.mediaInfo.external"), indexedTracks.Where(row => row.Track.External == true));
 
             if (_loadingDownloadedSubtitles)
                 AddDownloadedSubtitlesLoadingState();
 
             if (downloaded.Count > 0)
             {
-                SubtitlesPopoverContent.Children.Add(new TextBlock
+                SubtitlesPopoverContent.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
                 {
                     Text = "Downloaded",
                     FontSize = 11,
                     FontWeight = Microsoft.UI.Text.FontWeights.Medium,
                     Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
                     Margin = new Thickness(12, 5, 12, 0),
-                });
+                }, text: "web.detail.subtitles.downloaded"));
                 foreach (var subtitle in downloaded
                     .OrderByDescending(entry => entry.Score)
                     .ThenBy(entry => entry.Provider, StringComparer.CurrentCultureIgnoreCase)
@@ -5970,13 +6006,13 @@ public sealed partial class ItemDetailPage : Page
         }
         else
         {
-            SubtitlesPopoverContent.Children.Add(new TextBlock
+            SubtitlesPopoverContent.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
             {
                 Text = "No subtitles available.",
                 FontSize = 13,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 Padding = new Thickness(12, 7, 12, 7),
-            });
+            }, text: "web.detail.subtitles.noneAvailable"));
         }
 
         void AddDownloadedSubtitlesLoadingState()
@@ -5994,21 +6030,21 @@ public sealed partial class ItemDetailPage : Page
                 IsActive = true,
                 VerticalAlignment = VerticalAlignment.Center,
             });
-            row.Children.Add(new TextBlock
+            row.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
             {
                 Text = "Loading downloaded...",
                 FontSize = 12,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            }, text: "web.detail.subtitles.loadingDownloaded"));
             SubtitlesPopoverContent.Children.Add(row);
         }
     }
 
     private static string DefaultLeafPlayLabel(string? itemType)
         => string.Equals(itemType, "episode", StringComparison.OrdinalIgnoreCase)
-            ? "Play Episode"
-            : "Play";
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.playEpisode")
+            : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.play");
 
     private void UpdatePlayProgressWidth()
     {
@@ -6054,10 +6090,13 @@ public sealed partial class ItemDetailPage : Page
     }
 
     private void UpdateSubtitlesPopoverSummary(List<VersionSubtitleTrack> subs)
+        => SiloPlayer.Controls.MediaItemCardActions.BindText(SubtitlesSummary, "Text", _ => RefreshSubtitlesPopoverSummary(subs));
+
+    private void RefreshSubtitlesPopoverSummary(List<VersionSubtitleTrack> subs)
     {
         if (_selectedSubtitleIndex == -1)
         {
-            SubtitlesSummary.Text = "Off";
+            SubtitlesSummary.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off", fallback: "Off");
             return;
         }
         if (_selectedSubtitleSignature?.Source.Equals("downloaded", StringComparison.OrdinalIgnoreCase) == true)
@@ -6093,14 +6132,14 @@ public sealed partial class ItemDetailPage : Page
             SubtitlesSummary.Text = resolved != null
                 ? preferredSignature != null
                     ? FormatSubtitleTrackSummary(resolved)
-                    : $"Auto: {FormatSubtitleTrackSummary(resolved)}"
-                : "Auto: Off";
+                    : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.tracks.autoSummary", new Dictionary<string, object?> { ["summary"] = FormatSubtitleTrackSummary(resolved) })
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.tracks.autoSummary", new Dictionary<string, object?> { ["summary"] = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off") });
             return;
         }
         var idx = _selectedSubtitleIndex.Value;
         if (idx < 0 || idx >= subs.Count)
         {
-            SubtitlesSummary.Text = "Auto: Off";
+            SubtitlesSummary.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.tracks.autoSummary", new Dictionary<string, object?> { ["summary"] = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off") });
             return;
         }
         SubtitlesSummary.Text = FormatSubtitleTrackSummary(subs[idx]);
@@ -6172,14 +6211,14 @@ public sealed partial class ItemDetailPage : Page
             ? MediaLanguageCatalog.Label(sub.Language)
             : !string.IsNullOrWhiteSpace(sub.Title)
                 ? sub.Title!
-                : "Unknown";
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.unknown");
         if (sub.HearingImpaired == true &&
             !System.Text.RegularExpressions.Regex.IsMatch(name, @"\b(?:sdh|cc|hi)\b",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-            name += " (SDH)";
+            name += " " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.sdhMarker");
         if (sub.Forced == true &&
             !name.Contains("forced", StringComparison.OrdinalIgnoreCase))
-            name += " (Forced)";
+            name += " " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.forcedMarker");
 
         var format = SubtitleFormatLabel(sub.Codec);
         return string.IsNullOrEmpty(format) ? name : $"{name} · {format}";
@@ -6454,7 +6493,7 @@ public sealed partial class ItemDetailPage : Page
     private static string FormatDownloadedSubtitleSummary(SubtitleEntry subtitle)
     {
         var language = MediaLanguageCatalog.Label(subtitle.Language);
-        if (subtitle.HearingImpaired) language += " (SDH)";
+        if (subtitle.HearingImpaired) language += " " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.sdhMarker");
         var format = SubtitleFormatLabel(subtitle.Format);
         return string.IsNullOrEmpty(format) ? language : $"{language} · {format}";
     }
@@ -6498,7 +6537,7 @@ public sealed partial class ItemDetailPage : Page
         var title = !string.IsNullOrWhiteSpace(track.Title) ? track.Title : track.EmbeddedTitle;
         if (!string.IsNullOrEmpty(lang)) parts.Add(lang);
         else if (!string.IsNullOrEmpty(title)) parts.Add(title!);
-        else parts.Add("Unknown");
+        else parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.audio.unknown"));
 
         if (!string.IsNullOrWhiteSpace(track.Codec))
             parts.Add(VersionRanking.AudioTrackLabel(track));
@@ -6510,7 +6549,7 @@ public sealed partial class ItemDetailPage : Page
                 2 => "stereo",
                 6 => "5.1",
                 8 => "7.1",
-                _ => $"{track.Channels.Value} ch",
+                _ => SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.channels.count", new Dictionary<string, object?> { ["count"] = track.Channels.Value, ["count_text"] = (track.Channels.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }),
             };
             parts.Add(ch);
         }
@@ -6549,13 +6588,14 @@ public sealed partial class ItemDetailPage : Page
         EditionButton.Visibility = showEditions ? Visibility.Visible : Visibility.Collapsed;
         if (showEditions && activeVariant != null)
         {
-            EditionSummaryText.Text = BuildEditionLabel(activeVariant, hasNamedEdition);
+            MediaItemCardActions.BindText(EditionSummaryText, "Text", element => element.Text = BuildEditionLabel(activeVariant, hasNamedEdition));
             foreach (var variant in orderedVariants)
             {
                 var option = new MenuFlyoutItem
                 {
                     Text = BuildEditionMenuLabel(variant, versions, hasNamedEdition),
                 };
+                MediaItemCardActions.BindText(option, "Text", element => element.Text = BuildEditionMenuLabel(variant, versions, hasNamedEdition));
                 var selectedVariant = variant;
                 option.Click += (_, _) =>
                 {
@@ -6593,7 +6633,7 @@ public sealed partial class ItemDetailPage : Page
                     ? "IMAX"
                     : char.ToUpperInvariant(part[0]) + part[1..]));
         }
-        return hasNamedEditions ? "Standard" : "Edition";
+        return hasNamedEditions ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.versions.standardEdition") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.versions.editionFallback");
     }
 
     private static string BuildEditionMenuLabel(
@@ -6605,7 +6645,7 @@ public sealed partial class ItemDetailPage : Page
         var firstPartVersions = variant.Parts.OrderBy(part => part.PartIndex).FirstOrDefault()?.Versions ?? [];
         var selected = ResolveVariantDefaultVersion(variant, versions);
         var detail = new List<string>();
-        if (firstPartVersions.Count > 1) detail.Add($"{firstPartVersions.Count} versions");
+        if (firstPartVersions.Count > 1) detail.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.versions.versionCount", new Dictionary<string, object?> { ["count"] = firstPartVersions.Count, ["count_text"] = (firstPartVersions.Count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
         if (selected != null)
         {
             var summary = BuildQualitySummary(selected);
@@ -6839,9 +6879,9 @@ public sealed partial class ItemDetailPage : Page
     {
         if (bytes <= 0) return "";
         double gb = bytes / 1_000_000_000.0;
-        if (gb >= 1) return $"{gb:F1} GB";
+        if (gb >= 1) return SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.size.gb", new Dictionary<string, object?> { ["size"] = gb.ToString("F1", SiloPlayer.Core.Localization.AppStrings.FormatCulture) });
         double mb = bytes / 1_000_000.0;
-        return $"{mb:F0} MB";
+        return SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.size.mb", new Dictionary<string, object?> { ["size"] = mb.ToString("F0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) });
     }
 
     /// <summary>
@@ -6956,6 +6996,9 @@ public sealed partial class ItemDetailPage : Page
     }
 
     private void BuildHeroCrewLine(MediaItemDetail item)
+        => SiloPlayer.Controls.MediaItemCardActions.BindText(HeroCrewLine, "Crew", _ => RefreshHeroCrewLine(item));
+
+    private void RefreshHeroCrewLine(MediaItemDetail item)
     {
         var crew = item.Crew ?? [];
         var leadJob = item.Type == "series" && crew.Any(c => c.Job == "Creator") ? "Creator" : "Director";
@@ -6999,9 +7042,9 @@ public sealed partial class ItemDetailPage : Page
             }
         }
 
-        AddPeople("By ", authors);
-        AddPeople(item.Type == "series" ? "Created by " : "Directed by ", directors);
-        AddPeople("Written by ", writers);
+        AddPeople(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.byAuthors") + " ", authors);
+        AddPeople((item.Type == "series" ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.createdBy") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.directedBy")) + " ", directors);
+        AddPeople(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.writtenBy") + " ", writers);
         if (genres.Count > 0)
         {
             AddSeparator();
@@ -7181,7 +7224,10 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            _seasonEpisodesErrorMessage = DetailFailurePolicy.Message(DetailFailurePolicy.Classify(ex));
+            _seasonEpisodesErrorMessage = () => MediaItemCardActions.Problem(ex, SiloPlayer.Core.Localization.AppStrings.Get(
+                DetailFailurePolicy.Classify(ex) == DetailFailureKind.NotFound ? "web.detail.seasons.notFound"
+                    : DetailFailurePolicy.Classify(ex) == DetailFailureKind.AccessDenied ? "web.detail.page.unavailableTitle" : "web.detail.page.itemLoadFailed",
+                fallback: DetailFailurePolicy.Message(DetailFailurePolicy.Classify(ex))));
             System.Diagnostics.Debug.WriteLine($"Season episodes load failed for {seasonContentId}: {ex}");
             return false;
         }
@@ -7191,8 +7237,8 @@ public sealed partial class ItemDetailPage : Page
     private void ShowSeasonEpisodesFatalError(MediaItemDetail season)
     {
         ContentScroll.Visibility = Visibility.Collapsed;
-        SeasonEpisodesBackButton.Content = $"\u2190 Back to {season.SeriesTitle ?? "Series"}";
-        SeasonEpisodesFatalErrorText.Text = _seasonEpisodesErrorMessage;
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonEpisodesBackButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.backToSeries", new Dictionary<string, object?> { ["title"] = season.SeriesTitle ?? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeSeries") }));
+        MediaItemCardActions.BindText(SeasonEpisodesFatalErrorText, "Text", element => element.Text = _seasonEpisodesErrorMessage());
         SeasonEpisodesFatalError.Visibility = Visibility.Visible;
     }
 
@@ -7300,7 +7346,7 @@ public sealed partial class ItemDetailPage : Page
             SiblingEpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
             SiblingEpisodesLoadError.Visibility = Visibility.Collapsed;
             SiblingEpisodesScrollViewer.Visibility = Visibility.Visible;
-            SiblingEpisodesTitle.Text = "More Episodes";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(SiblingEpisodesTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.moreEpisodes", fallback: "More Episodes"));
             SiblingEpisodesPanel.Children.Clear();
 
             _siblingEpisodes.Clear();
@@ -7567,7 +7613,7 @@ public sealed partial class ItemDetailPage : Page
         var combined = detail?.Type is "movie" or "series";
         var groups = combined ? CastCrewPresentation.BuildGroups(detail!.Type, detail.Crew ?? [], cast)
             : new List<CreditGroup> { new("Cast", cast.OrderBy(c => c.Order).Take(20).ToList()) };
-        CastHeader.Text = combined ? "Cast & Crew" : "Cast";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(CastHeader, "Text", element => element.Text = combined ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.sections.castAndCrew", fallback: "Cast & Crew") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.castCrew.cast", fallback: "Cast"));
         var cards = groups.SelectMany((group, index) => group.Members.Select((member, offset) =>
             (Member: member, Divider: index > 0 && offset == 0 ? group.Label : null))).ToList();
 
@@ -7726,8 +7772,7 @@ public sealed partial class ItemDetailPage : Page
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            var image = new Image
-            {
+            var image = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -7835,13 +7880,13 @@ public sealed partial class ItemDetailPage : Page
 
             if (i < members.Count - 1)
             {
-                panel.Children.Add(new TextBlock
+                panel.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
                 {
                     Text = ", ",
                     FontSize = 13,
                     Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
                     VerticalAlignment = VerticalAlignment.Center
-                });
+                }, text: "web.detail.separator.list"));
             }
         }
     }
@@ -7872,7 +7917,7 @@ public sealed partial class ItemDetailPage : Page
             UpdateSeasonScrollButtons();
             return;
         }
-        SeasonsTotalText.Text = $"{ViewModel.Seasons.Count} total";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonsTotalText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.totalCount", new Dictionary<string, object?> { ["count"] = ViewModel.Seasons.Count }));
 
         foreach (var season in ViewModel.Seasons.OrderBy(season => season.SeasonNumber))
         {
@@ -7888,9 +7933,9 @@ public sealed partial class ItemDetailPage : Page
         var cardWidth = _seasonCardWidth > 0
             ? _seasonCardWidth
             : SeasonWidth(ActualWidth);
-        var title = !string.IsNullOrWhiteSpace(season.Title)
+        string Title() => !string.IsNullOrWhiteSpace(season.Title)
             ? season.Title
-            : season.SeasonNumber == 0 ? "Specials" : $"Season {season.SeasonNumber}";
+            : season.SeasonNumber == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.specials") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.numbered", new Dictionary<string, object?> { ["season"] = season.SeasonNumber });
 
         var posterBorder = new Border
         {
@@ -7902,7 +7947,7 @@ public sealed partial class ItemDetailPage : Page
 
         var posterPlaceholder = new TextBlock
         {
-            Text = title,
+            Text = Title(),
             FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.Medium,
             TextWrapping = TextWrapping.Wrap,
@@ -7912,6 +7957,7 @@ public sealed partial class ItemDetailPage : Page
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
+        MediaItemCardActions.BindText(posterPlaceholder, "Text", element => element.Text = Title());
         posterBorder.Child = posterPlaceholder;
 
         // Load poster if available
@@ -7929,7 +7975,7 @@ public sealed partial class ItemDetailPage : Page
         // Title
         var titleText = new TextBlock
         {
-            Text = title,
+            Text = Title(),
             FontSize = 13,
             LineHeight = 19.5,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
@@ -7941,6 +7987,7 @@ public sealed partial class ItemDetailPage : Page
         };
 
         // Episode count / progress
+        MediaItemCardActions.BindText(titleText, "Text", element => element.Text = Title());
         var progressText = BuildSeasonProgressText(season);
 
         var content = new StackPanel
@@ -7960,7 +8007,7 @@ public sealed partial class ItemDetailPage : Page
             Tag = season.ContentId,
             CornerRadius = new CornerRadius(12),
         };
-        AutomationProperties.SetName(cardButton, $"{title}, {FormatSeasonProgressText(season)}");
+        MediaItemCardActions.BindText(cardButton, "Name", element => AutomationProperties.SetName(element, $"{Title()}, {FormatSeasonProgressText(season)}"));
 
         cardButton.PointerEntered += (_, _) =>
         {
@@ -8059,7 +8106,7 @@ public sealed partial class ItemDetailPage : Page
 
     private TextBlock BuildSeasonProgressText(Season season)
     {
-        return new TextBlock
+        return SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
         {
             Text = FormatSeasonProgressText(season),
             Style = (Style)Application.Current.Resources["CaptionTextStyle"],
@@ -8070,7 +8117,7 @@ public sealed partial class ItemDetailPage : Page
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxLines = 1,
             Margin = new Thickness(2, 0, 2, 0)
-        };
+        }, "Text", element => element.Text = FormatSeasonProgressText(season));
     }
 
     private static string FormatSeasonProgressText(Season season)
@@ -8078,8 +8125,9 @@ public sealed partial class ItemDetailPage : Page
         var userData = season.UserData;
         var hasProgress = userData is { Played: false } &&
             (userData.WatchedCount > 0 || userData.InProgressCount > 0);
-        var count = $"{season.EpisodeCount} {(season.EpisodeCount == 1 ? "episode" : "episodes")}";
-        return hasProgress ? $"{userData!.WatchedCount} of {count}" : count;
+        return hasProgress
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.watchedProgress", new Dictionary<string, object?> { ["count"] = season.EpisodeCount, ["watched"] = userData!.WatchedCount, ["count_text"] = (season.EpisodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })
+            : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.episodeCount", new Dictionary<string, object?> { ["count"] = season.EpisodeCount, ["count_text"] = (season.EpisodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) });
     }
 
     private async Task LoadSeasonPosterAsync(Border posterBorder, Season season)
@@ -8119,8 +8167,7 @@ public sealed partial class ItemDetailPage : Page
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            var image = new Image
-            {
+            var image = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -8161,8 +8208,8 @@ public sealed partial class ItemDetailPage : Page
             if (ViewModel.Item?.Type == "season")
             {
                 EpisodesSection.Visibility = Visibility.Visible;
-                EpisodesHeader.Text = "Episodes";
-                EpisodesTotalText.Text = "0 total";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodesHeader, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.heading", fallback: "Episodes"));
+                SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodesTotalText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.totalCount", new Dictionary<string, object?> { ["count"] = 0 }));
                 EpisodesEmptyState.Visibility = Visibility.Visible;
             }
             else
@@ -8177,15 +8224,13 @@ public sealed partial class ItemDetailPage : Page
         EpisodesEmptyState.Visibility = Visibility.Collapsed;
         if (ViewModel.Item?.Type == "season" || ViewModel.Item?.Type == "series" && ViewModel.Seasons.Count == 1)
         {
-            EpisodesHeader.Text = "Episodes";
-            EpisodesTotalText.Text = $"{ViewModel.Item.EpisodeCount ?? ViewModel.Episodes.Count} total";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodesHeader, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.heading", fallback: "Episodes"));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodesTotalText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.totalCount", new Dictionary<string, object?> { ["count"] = ViewModel.Item.EpisodeCount ?? ViewModel.Episodes.Count }));
         }
         else
         {
-            EpisodesHeader.Text = ViewModel.SelectedSeasonNumber == 0
-                ? "Specials"
-                : $"Season {ViewModel.SelectedSeasonNumber} Episodes";
-            EpisodesTotalText.Text = $"{ViewModel.Episodes.Count} total";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodesHeader, "Text", element => element.Text = ViewModel.SelectedSeasonNumber == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.specials") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.numbered", new Dictionary<string, object?> { ["season"] = ViewModel.SelectedSeasonNumber }) + " · " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.heading"));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodesTotalText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.totalCount", new Dictionary<string, object?> { ["count"] = ViewModel.Episodes.Count }));
         }
 
         LayoutEpisodeGrid();
@@ -8222,7 +8267,7 @@ public sealed partial class ItemDetailPage : Page
             if (status.OnView == "auto") await TranslateEpisodesAsync();
             else if (status.OnView == "button")
             {
-                TranslateEpisodesButton.Content = "Translate descriptions";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(TranslateEpisodesButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translateEpisodes", fallback: "Translate descriptions"));
                 TranslateEpisodesButton.IsEnabled = true;
                 TranslateEpisodesButton.Visibility = Visibility.Visible;
             }
@@ -8256,7 +8301,7 @@ public sealed partial class ItemDetailPage : Page
         bool Current() => !ct.IsCancellationRequested && api.IsCurrentContext(context) && owner != null && IsCurrentDetail(owner) && ViewModel.LibraryId == libraryId && EpisodeTranslationTarget().SeasonId == seasonId;
         _isTranslatingEpisodes = true;
         TranslateEpisodesButton.Visibility = Visibility.Visible;
-        TranslateEpisodesButton.Content = "Translating descriptions\u2026";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(TranslateEpisodesButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translating", fallback: "Translating descriptions…"));
         TranslateEpisodesButton.IsEnabled = false;
         try
         {
@@ -8275,7 +8320,7 @@ public sealed partial class ItemDetailPage : Page
             }
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (Current()) App.Services.GetRequiredService<ToastService>().Error(ex); }
+        catch (Exception ex) { if (Current()) App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
         finally
         {
             if (ReferenceEquals(_episodesTranslationCts, cts))
@@ -8283,7 +8328,7 @@ public sealed partial class ItemDetailPage : Page
                 _isTranslatingEpisodes = false;
                 if (!api.IsCurrentContext(context)) _episodesTranslationInterrupted = true;
                 if (owner != null && IsCurrentDetail(owner) && api.IsCurrentContext(context))
-                { TranslateEpisodesButton.IsEnabled = true; TranslateEpisodesButton.Content = "Translate descriptions"; }
+                { TranslateEpisodesButton.IsEnabled = true; SiloPlayer.Controls.MediaItemCardActions.BindText(TranslateEpisodesButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translateEpisodes", fallback: "Translate descriptions")); }
             }
         }
     }
@@ -8641,7 +8686,7 @@ public sealed partial class ItemDetailPage : Page
             catch (OperationCanceledException) when (!IsCurrentOwner()) { }
             catch (Exception ex)
             {
-                if (IsCurrentOwner()) App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+                if (IsCurrentOwner()) App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
             }
             finally
             {
@@ -8681,8 +8726,7 @@ public sealed partial class ItemDetailPage : Page
             BorderThickness = new Thickness(0),
             Content = new FontIcon { Glyph = "\uE712", FontSize = 14, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) },
         };
-        AutomationProperties.SetName(moreButton, "More actions");
-        ToolTipService.SetToolTip(moreButton, "More actions");
+        MediaItemCardActions.Localize(moreButton, name: "web.item.menu.moreActions", toolTip: "web.item.menu.moreActions");
 
         void UpdateQuickAction()
         {
@@ -8695,15 +8739,16 @@ public sealed partial class ItemDetailPage : Page
             quickWatchedIcon.Foreground = watched
                 ? new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80))
                 : new SolidColorBrush(Microsoft.UI.Colors.White);
-            var label = current.WatchedActionLabel;
+            var label = MediaItemCardActions.GetWatchedActionLabel("episode", watched);
             AutomationProperties.SetName(quickWatchedButton, label);
             ToolTipService.SetToolTip(quickWatchedButton, label);
-            var playLabel = (mediaItem.PositionSeconds > 0 ? "Resume " : "Play ") + caption.Presentation.SpokenTitle;
+            var playLabel = (mediaItem.PositionSeconds > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.play")) + " · " + caption.Presentation.SpokenTitle;
             AutomationProperties.SetName(quickPlayButton, playLabel);
             ToolTipService.SetToolTip(quickPlayButton, playLabel);
             RefreshActionState();
         }
 
+        SiloPlayer.Services.AppLocalization.Register(quickWatchedButton, UpdateQuickAction);
         quickWatchedButton.Click += async (_, _) =>
         {
             if (!quickWatchedButton.IsEnabled) return;
@@ -8723,7 +8768,7 @@ public sealed partial class ItemDetailPage : Page
             }
             catch (Exception ex)
             {
-                App.Services.GetRequiredService<Services.ToastService>().Error(ex);
+                App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
             }
             finally
             {
@@ -8886,9 +8931,9 @@ public sealed partial class ItemDetailPage : Page
 
         var seasonCount = ViewModel.Seasons.Count;
         var episodeCount = ViewModel.Seasons.Sum(season => Math.Max(0, season.EpisodeCount));
-        SeasonCountText.Text = $"{seasonCount} {(seasonCount == 1 ? "SEASON" : "SEASONS")}";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (seasonCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = seasonCount }));
         SeasonCountBadge.Visibility = seasonCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-        EpisodeCountText.Text = $"{episodeCount} {(episodeCount == 1 ? "EPISODE" : "EPISODES")}";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (episodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = episodeCount }));
         EpisodeCountBadge.Visibility = episodeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -8950,8 +8995,7 @@ public sealed partial class ItemDetailPage : Page
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            var image = new Image
-            {
+            var image = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
                 HorizontalAlignment = HorizontalAlignment.Stretch,

@@ -1,3 +1,15 @@
+# November 12 — Beta 1007 and localization integration in progress
+
+Published Beta **1.2.1007-beta.1** (`1a341042bb2e64ee37f6a065726776af08acf285`) includes household contracts and Featured hero PR **#143**, merged as `f22764d957e7e07401a06a9dc60311d838942c5c` and published November 12 at 17:00:32 UTC. The pipeline's final PR head was `420a43cc568e66babb912b96f320074fa276fcdf`. Its corrections preserve committed webhook/reset results through transport-only catch-up and keep reset confirmation usable while capability reloads. The earlier updater fix (#141) remains included. This publication was observed through authenticated GitHub PR/ref/release reads; no local installer or installed-player action ran.
+
+The working integration merges that exact Beta into local head `5feed4841dd50cf120a49885ada57a87edd67fec` and applies shell candidate `874eeb805f5d17ffe6960442a6044a9059038eb2` plus lead review corrections. The merge is resolved and deliberately uncommitted pending final combined verification. Pipeline-owned source version is **1.2.1007-beta.1**, numeric **1.2.1006.1**. The staged updater and continuing playback controls are preserved. Remaining media, settings, collections, reader and playback localization work is still being integrated; retained Favorites/Watchlist/History titles remain an explicit open integration item.
+
+Historical checkpoint `5feed484` passed **6,149/6,149 units**, a fresh Release publish, five transport/HUD native groups and the actual post-roll case. All 1,564 recorded inputs matched after the T3 restart. Those receipts remain frozen under `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-parent-integration/`; they do **not** verify the newer working source. Six remaining HUD completion cases will run on the final combined build instead of another intermediate build. The cancelled recovery was stopped only between cases, with no native child interrupted.
+
+Shell review regressions reproduced typed-problem summary loss, uppercase-label loss and regional-culture casing. Lead correction `128f7ab12586e0a80ced7c8507d3c03e54750655` on shell candidate `874eeb80` passes **12/12 focused units**, a fresh Release publish and both `shell-localization` and `localized-properties` native groups. All 1,564 frozen inputs match, with published app SHA-256 `E6E126B81682AF58264AEFC2F4EFFCF992EDAAFFFE4958E52D7B103CB6D4EE65`. Evidence is `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-5-shell/lead-review-r2/`; original failures remain in r1/r2. Header text now follows interface-language casing and refreshes from the retained shell root. Those receipts verify the isolated shell correction, not this combined integration. The password-session native fixture adds only its two required localization-service registrations; its original missing-service failures remain preserved, and its final native pass is still required.
+
+Settings `6b0df091`, Collections `ff578688` and Reader/Watch Party `60ff09fb` candidates have been applied to this working integration. Their independent source reviews are pending. Test selectors are composed so each original group remains reachable. The owner clarified that server-update passes cover all customer-facing WebUI/API additions, changes and removals while preserving Desktop soft navigation, retained state and native improvements. The remaining parity work is active under that scope. No complete localization, visual parity, live interoperability or final delivery claim is made by this checkpoint.
+
 # November 12 — Current Beta integrated with server-alignment foundation
 
 Integrated Beta `47d5da976cc23797272b779b5519fb20315c4f92` into the local server-alignment branch after `5a056300`, preserving the staged updater from PR #141 and continuing transport controls from PR #138 alongside the reviewed household/hero/localization foundation and original HUD work. Pipeline-owned source version remains **1.2.1003-beta.1** (numeric **1.2.1002.1**). This is a local integration checkpoint; the remaining localization rollout and HUD completion are still separate work.
@@ -11,12 +23,25 @@ Focused delivery **PR #143** (`codex/server-contracts-hero-nov12`, head `b90c3f6
 Official server recheck: newest successful Docker build **2212**, `d9a6cbb9f53cb7a0b444d70a12f526fba70c9254`, completed November 12, 2026 at 15:14:02 UTC. The only change beyond the previously checked `5327ba36` is WebUI seek-bar marker-region colors (#4033); no API drift. The runtime/API audit remains pinned to `0b579aa6`. Exact marker palette alignment is with the focused HUD delivery. Receipts for builds 2211 and 2212 are preserved under `.codex-tmp/upstream-review-2026-11-12/`.
 
 Compiler/analyzer warnings and known historical fixture limitations remain recorded. This checkpoint does not certify live accounts/server playback, SiloCast phone or Watch Party interoperability, OS text scaling/high DPI, complete visual parity, installers, or installed-app behavior. The installed player and real settings remain untouched.
+# November 12 — Focused household contracts and Featured hero Beta submission
+
+Selected Beta base `47d5da976cc23797272b779b5519fb20315c4f92`; verified product-source snapshot `1fd6db5e30cc93fcd4acee29e683db389b3e90dc` on `codex/server-contracts-hero-nov12`. Integrated commits `bd45bebc7a1f5c904cede5d85058328c568ddce6`, `e50337d0abe7c335fcbe90d29ed327723abc47b2`, and `1fd6db5e30cc93fcd4acee29e683db389b3e90dc` reproduce reviewed workers `7caf93e7`, `47b4f6f8`, and `d7369cee`. The 17-file source/test diff matches reviewed worker blobs except for the two native Program selector integrations. Existing product `1.2.1003-beta.1` and file/assembly `1.2.1002.1` stamps are unchanged. The documentation commit adds this receipt without changing tested product source. Official reference remains the supplied, unmodified `0b579aa6192d49d7e8e0921dde5e955ac29ce302`.
+
+Scope: household-manager gating across Webhook Sync entry points, captured request ownership and secret retirement; capability-bound atomic metadata reset with accurate target-lock/descendant semantics and labelled legacy unlock/quick-refresh; idle reconnect draft preservation, curator reset and item-specific copy; content-sized Featured heroes with Home/Library minimums, wrapping actions, retained navigation/counter and obsolete eyebrow removal. This submission excludes unfinished localization and playback/HUD work. Independent Task1 re-review and Task3 review approved with no P0–P2 findings.
+
+Fresh verification on that product-source snapshot: **5,992/5,992 full unit tests**, zero failures/skips; fresh self-contained win-x64 Release publish; **15/15 actual native groups**, each exit 0 plus completion sentinel: all 11 household-contract groups (including four review follow-ups), profiles-metadata, current-caption-metadata in metadata mode, oct24-hero (22 Home/Library sizing cases plus four existing overview cases), and home-row-window. A generated hero screenshot was inspected. All dotnet/publish/native runs held `SiloOct18Build` and verified the bundled engine; native launches additionally verified the published engine and identical host-side product DLL. Compiler/analyzer warnings remain in receipts: nullable, unreachable-code, MVVMTK and xUnit warnings; native build reports 37 warnings and zero errors. No product verification run failed. A temporary PowerShell harness-edit parse error occurred before any write/invocation, was corrected, and is recorded in `harness-preparation-note.txt`. No repeated full-suite run was needed because product/test source remained unchanged.
+
+Evidence root: `D:/SiloPlayer/.codex-tmp/server-align-nov12/first-beta-delivery/` (full unit TRX/log, publish/native logs and screenshots, source/artifact manifests, source receipt and copies of independent reviews). Product DLL SHA256 `CA558E95ABA20C845C2CBB27694EF646FED1036B351F1333D86D31EFCC67B059`; the native host copy is identical. `engine.json` SHA256 `DAEC33798AAB83FDA80112ADEDFEB8C95BACAFF4806C78AAE3719D13FA6E2E76`; source and published libmpv SHA256 `04E4D27DC385DC18DDD93FBE69C75E635B864F3C6EC53A9122DF54C2F7842F4A`. Source hashes were checked against the tested snapshot. No new complete PDB document-binding audit is claimed.
+
+Review follow-up after that snapshot (its source, tests, hashes and receipts above predate this change; the Beta pipeline owns its verification): a committed household or reset write that crosses a transport catch-up is now published while identity and access authority are unchanged, a legacy reset finishes its refresh after the committed unlock, Webhook Sync reads retired by catch-up are reloaded, and the Reset confirmation is re-enabled after its request.
+
+Retained review limits: a household read cancelled without a catch-up (for example a timeout) can still leave a loading state; switch tabs or reopen to reload. Failed capability reload requires reopening; atomic-path 422 wording may misidentify unrelated validation failures. Idle reconnect preservation is tested separately and does not certify those in-flight cases. Other original P3 advisories remain in the preserved review. Hero narrow Library/counter clearance intentionally adds height relative to the web; text enlargement is synthetic, not physical DPI/OS text-scale certification. The original broader collection route passed hero effects/layout before an unrelated `CardMenuSharesTheActionsAsync` menu failure, also reproduced on its untouched baseline; this submission does not claim that whole collection route passes. Existing red and diagnostic failures remain in the original Task1/Task3 evidence directories. No live provider persistence, real PIN/Plex/account testing, completed server-job or complete pixel-parity certification is implied. The installed player and real settings remain untouched. The Beta pipeline owns exact-head reviews, QA, merge, stamps and packaging.
 
 # November 12 — Beta 981 updater focus and completed-installation readiness
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -32,7 +57,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -48,7 +73,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -66,7 +91,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -82,7 +107,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -100,7 +125,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -300,7 +325,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -308,7 +333,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -316,7 +341,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -346,7 +371,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1003-beta.1`; numeric version: `1.2.1002.1`.
+Source version: `1.2.1007-beta.1`; numeric version: `1.2.1006.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

@@ -15,11 +15,11 @@ public sealed partial class MainWindow
         var active = _playerService.IsShufflePlayback;
         PlayingNextShuffleScope.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
         PlayingNextShuffleActions.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
-        PlayingNextFinishedDescription.Text = active ? "There are no more playable titles in this shuffle." : "There are no more episodes available. Pick something else from On Deck below.";
+        PlayingNextFinishedDescription.Text = PlayingNextFinishedDescriptionText(active);
         if (!active || PlayingNextOverlay.Visibility != Visibility.Visible) return;
-        PlayingNextShuffleScope.Text = "Shuffling " + _playerService.ShuffleScopeLabel;
+        PlayingNextShuffleScope.Text = PlayingNextShuffleScopeText(_playerService.ShuffleScopeLabel);
         var hasNext = _playerService.HasNextEpisodeForCurrentPlayback;
-        PlayingNextLabelText.Text = hasNext ? "PLAYING NEXT" : "FINISHED";
+        PlayingNextLabelText.Text = PlayingNextLabel(hasNext);
         PlayingNextEpisodePanel.Visibility = hasNext ? Visibility.Visible : Visibility.Collapsed;
         PlayingNextFinishedPanel.Visibility = hasNext ? Visibility.Collapsed : Visibility.Visible;
         PlayingNextTitleText.Text = _playerService.NextEpisodeTitle ?? "";
@@ -51,7 +51,7 @@ public sealed partial class MainWindow
             if (owner == _playerService.ActiveShuffleId && PlayingNextOverlay.Visibility == Visibility.Visible)
             {
                 _playingNextRemaining = PlayingNextCountdownSeconds;
-                PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+                PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
                 PlayingNextCountdownRing.Value = _playingNextRemaining;
                 UpdateShufflePostRoll();
                 if (PlayingNextCountdownAllowed && _playerService.HasNextEpisodeForCurrentPlayback && _playerService.IsPostRollVideoEnded) StartPlayingNextCountdown();

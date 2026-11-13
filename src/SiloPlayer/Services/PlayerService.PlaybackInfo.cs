@@ -47,7 +47,7 @@ public partial class PlayerService
         {
             _playbackInfoSpoken = rows.ToDictionary(row => row.Id, row => row.Value, StringComparer.Ordinal);
             _playbackInfoLiveSpokenAt = Environment.TickCount64;
-            text = "Playback info. " + string.Join(" ", rows.GroupBy(row => row.Section).Select(section =>
+            text = HudText("web.player.info.heading", "Playback info") + ". " + string.Join(" ", rows.GroupBy(row => row.Section).Select(section =>
                 section.Key + ": " + string.Join("; ", section.Select(row => row.Label + ", " + row.Value)) + "."));
         }
         else

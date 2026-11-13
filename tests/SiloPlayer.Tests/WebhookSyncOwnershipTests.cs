@@ -36,6 +36,46 @@ public sealed class WebhookSyncOwnershipTests
         });
         Assert.Equal(1, wire.Requests);
     }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    [InlineData("rotate")]
+    [InlineData("save-mappings")]
+    [InlineData("delete")]
+    public async Task TransportCatchUpCannotDiscardCommittedWrite(string operation)
+    {
+        using var wire = new Wire(); var client = new SiloApiClient(new HttpClient(wire));
+        client.SetBaseUrl("https://webhook.fixture.invalid"); client.SetAccessToken("fixture-only"); client.SetProfile("primary");
+        wire.OnRequest = () => Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
+        var api = new WebhookSyncApi(client);
+        const string receiver = "https://webhook.fixture.invalid/receiver";
+        switch (operation)
+        {
+            case "create": Assert.Equal(receiver, (await api.CreateConnectionAsync(new())).WebhookUrl); break;
+            case "update": Assert.Equal(receiver, (await api.UpdateConnectionAsync("c1", new())).WebhookUrl); break;
+            case "rotate": Assert.Equal(receiver, (await api.RotateWebhookAsync("c1")).WebhookUrl); break;
+            case "save-mappings": Assert.NotNull(await api.UpdateProfileMappingsAsync("c1", new { mappings = Array.Empty<object>() })); break;
+            case "delete": await api.DeleteConnectionAsync("c1"); break;
+        }
+        Assert.Equal(1, wire.Requests);
+    }
+
+    [Theory]
+    [InlineData("list", true)]
+    [InlineData("rotate", false)]
+    public async Task CatchUpStillRetiresReadsAndAccessChangeStillRetiresWrites(string operation, bool transportCatchUp)
+    {
+        using var wire = new Wire(); var client = new SiloApiClient(new HttpClient(wire));
+        client.SetBaseUrl("https://webhook.fixture.invalid"); client.SetAccessToken("fixture-only"); client.SetProfile("primary");
+        wire.OnRequest = () => Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp));
+        var api = new WebhookSyncApi(client);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            if (operation == "list") await api.GetConnectionsAsync(); else await api.RotateWebhookAsync("c1");
+        });
+        Assert.Equal(1, wire.Requests);
+    }
     private sealed class Wire : HttpMessageHandler
     {
         internal Action? OnRequest;

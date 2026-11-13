@@ -99,7 +99,7 @@ internal static class October20HomeRowsNativeFixture
             var source = Descendants(host).OfType<ComboBox>().First(combo => combo.Header?.ToString() == "Picks from");
             source.SelectedIndex = 1;
             if (config["source"].ToString() != "lists") throw new InvalidOperationException("List-only source was not selected.");
-            var add = Descendants(host).OfType<Button>().First(button => button.Content?.ToString() == "Add my own holiday");
+            var add = Descendants(host).OfType<Button>().First(button => button.Content?.ToString() == "Add a holiday" /* shared catalog wording (web.home.addRow.seasonal.addHoliday) */);
             ((IInvokeProvider)new ButtonAutomationPeer(add).GetPattern(PatternInterface.Invoke)!).Invoke();
             await Task.Delay(30);
             var holiday = AssertSingle(SeasonalRowConfiguration.Read(config, "custom_holidays", new List<SeasonalCustomHoliday>()));

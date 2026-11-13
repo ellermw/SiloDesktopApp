@@ -39,6 +39,7 @@ public sealed partial class RequestsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<RequestsViewModel>();
         InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); _renderedDataVersion = -1; Render(); });
         for (var i = 0; i < 4; i++)
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Padding = new Thickness(0, 12, 0, 12) };
@@ -51,7 +52,7 @@ public sealed partial class RequestsPage : Page
         PageContent.Children.Insert(PageContent.Children.IndexOf(LoadingSkeleton), _mineLoadingSkeleton);
         MyRequestsSection.Children.Remove(StatusGuide);
         var help = new Button { Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8,
-            Children = { SiloPlayer.Controls.WebUiIcon.Create("info", 16, Brush("SecondaryTextBrush")), new TextBlock { Text = "What the statuses mean", FontSize = 14, FontWeight = FontWeights.Normal, Foreground = Brush("SecondaryTextBrush") } } }, HorizontalAlignment = HorizontalAlignment.Left,
+            Children = { SiloPlayer.Controls.WebUiIcon.Create("info", 16, Brush("SecondaryTextBrush")), SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "What the statuses mean", FontSize = 14, FontWeight = FontWeights.Normal, Foreground = Brush("SecondaryTextBrush") }, text: "web.requests.hub.statusHelp") } }, HorizontalAlignment = HorizontalAlignment.Left,
             Style = (Style)Application.Current.Resources["GhostButtonStyle"], FontSize = 14, MinHeight = 0, Height = 32, Padding = new Thickness(12,0,12,0) };
         StatusGuide.Width = 286; StatusGuide.MaxWidth = 286;
         StatusGuideGrid.ColumnDefinitions.Clear(); StatusGuideGrid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -63,22 +64,21 @@ public sealed partial class RequestsPage : Page
         StatusGuideGrid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         var descriptions = new[]
         {
-            ("Pending", "Waiting for an admin. You can cancel it until it is sent to the download automation."),
-            ("Approved", "Approved, not yet sent to the download automation. You can still cancel it."),
-            ("Processing", "Sent to the download automation."),
-            ("Partially available", "Some episodes of the requested seasons have arrived."),
-            ("Available", "In your library and ready to watch."), ("Declined", "An admin declined it."),
-            ("Cancelled", "Withdrawn before it was sent to the download automation."),
-            ("Failed", "Silo or the download automation hit an error."),
+            ("pending", "Pending", "web.requests.hub.statusPending"), ("approved", "Approved", "web.requests.hub.statusApproved"),
+            ("processing", "Processing", "web.requests.hub.statusProcessing"), ("partially_available", "Partially available", "web.requests.hub.statusPartial"),
+            ("available", "Available", "web.requests.hub.statusAvailable"), ("declined", "Declined", "web.requests.hub.statusDeclined"),
+            ("cancelled", "Cancelled", "web.requests.hub.statusCancelled"), ("failed", "Failed", "web.requests.hub.statusFailed")
         };
-        for (var i = 0; i < descriptions.Length; i++)
+        for (var index = 0; index < descriptions.Length; index++)
         {
-            StatusGuideGrid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            var badge = SiloPlayer.Controls.ExternalTitleCard.StatusBadge(descriptions[i].Item1); badge.VerticalAlignment = VerticalAlignment.Top;
-            var text = new TextBlock { Text = descriptions[i].Item2, FontSize = 12, LineHeight = 20, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") };
-            if (descriptions[i].Item1 == "Failed") _failedStatusGuide = text;
-            Grid.SetRow(badge, i); Grid.SetRow(text, i); Grid.SetColumn(text, 1); StatusGuideGrid.Children.Add(badge); StatusGuideGrid.Children.Add(text);
+            var descriptor = descriptions[index];
+            var badge = SiloPlayer.Controls.ExternalTitleCard.StatusBadge(descriptor.Item2, display: () => SiloPlayer.Controls.MediaItemCardActions.RequestStatus(descriptor.Item1));
+            badge.VerticalAlignment = VerticalAlignment.Top;
+            var text = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "", FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") }, text: descriptor.Item1 == "failed" ? null : descriptor.Item3);
+            if (descriptor.Item1 == "failed") _failedStatusGuide = text;
+            Grid.SetRow(badge, index); Grid.SetRow(text, index); Grid.SetColumn(text, 1); StatusGuideGrid.Children.Add(badge); StatusGuideGrid.Children.Add(text);
         }
+        SiloPlayer.Services.Localized.SetDirection(StatusGuide, true);
         StatusGuide.Padding = new Thickness(0); StatusGuide.BorderThickness = new Thickness(0);
         StatusGuide.Background = null; StatusGuideGrid.ColumnSpacing = 12; StatusGuideGrid.RowSpacing = 10;
         var statusPresenter = new Style { TargetType = typeof(FlyoutPresenter) };
@@ -95,9 +95,9 @@ public sealed partial class RequestsPage : Page
         _mineHeading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         _mineHeading.RowDefinitions.Add(new() { Height = GridLength.Auto });
         _mineHeading.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        _mineHeading.Children.Add(new TextBlock { Text = "Requests from your account, grouped by what happens next.", FontSize = 14, LineHeight = 20,
+        _mineHeading.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Requests from your account, grouped by what happens next.", FontSize = 14, LineHeight = 20,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap,
-            Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+            Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center }, text: "web.requests.hub.yoursIntro"));
         _mineHelp = help; Grid.SetColumn(help, 1); _mineHeading.Children.Add(help); MyRequestsSection.Children.Insert(0, _mineHeading);
         foreach (var (brandRegion, type) in BrandsSection.Children.OfType<StackPanel>().ToArray().Zip(new[] { "studios", "networks", "genres" }))
         {
@@ -283,12 +283,12 @@ public sealed partial class RequestsPage : Page
         var busy = ViewModel.IsLoading || ViewModel.IsSearching;
         LoadingSkeleton.Visibility = busy
             ? Visibility.Visible : Visibility.Collapsed;
-        var pageError = !ViewModel.RequestsEnabled ? "Requests are disabled on this server."
+        var pageError = !ViewModel.RequestsEnabled ? SiloPlayer.Core.Localization.AppStrings.Get("web.requests.status.reason.requestsDisabled", fallback: "Requests are disabled on this server.")
             : string.IsNullOrWhiteSpace(ViewModel.SearchQuery) ? ViewModel.ErrorMessage ?? "" : "";
         ErrorText.Text = pageError;
         ErrorText.Visibility = string.IsNullOrWhiteSpace(pageError) ? Visibility.Collapsed : Visibility.Visible;
 
-        YoursCountText.Text = ViewModel.MyRequests.Count.ToString("N0");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(YoursCountText, "Text", element => element.Text = ViewModel.MyRequests.Count.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));
         YoursCountBadge.Visibility = ViewModel.MyRequests.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         // Preserve the mounted cards while a request or search is in flight.
@@ -312,16 +312,16 @@ public sealed partial class RequestsPage : Page
     {
         MyRequestsList.Children.Clear(); MineSummaryPanel.Children.Clear(); StatusGuide.Visibility = Visibility.Visible;
         if (_failedStatusGuide != null)
-            _failedStatusGuide.Text = "Silo or the download automation hit an error." + (ViewModel.Features.RemoveFailedSupported ? " You can remove it if nothing was delivered." : "");
+            _failedStatusGuide.Text = ViewModel.Features.RemoveFailedSupported ? SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.statusFailed") : "Silo or the download automation hit an error.";
         MineErrorPanel.Visibility = string.IsNullOrWhiteSpace(ViewModel.MineError) ? Visibility.Collapsed : Visibility.Visible;
         MineEmptyPanel.Visibility = ViewModel.MyRequests.Count == 0 && string.IsNullOrWhiteSpace(ViewModel.MineError) ? Visibility.Visible : Visibility.Collapsed;
         if (!string.IsNullOrWhiteSpace(ViewModel.MineError)) return;
         var groups = new[]
         {
-            ("Needs attention", ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) is "Declined" or "Failed")),
-            ("On the way", ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) is "Pending" or "Approved" or "Processing" or "Partially available")),
-            ("In your library", ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) == "Available")),
-            ("Cancelled", ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) == "Cancelled")),
+            (SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.needsAttention"), ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) is "Declined" or "Failed")),
+            (SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.onTheWay"), ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) is "Pending" or "Approved" or "Processing" or "Partially available")),
+            (SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.inLibrary"), ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) == "Available")),
+            (SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.cancelled"), ViewModel.MyRequests.Where(r => RequestDisplayLabel(r) == "Cancelled")),
         };
         foreach (var (title, items) in groups)
         {
@@ -331,7 +331,7 @@ public sealed partial class RequestsPage : Page
             var groupHeading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             groupHeading.Children.Add(new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeights.SemiBold, LineHeight = 28,
                 LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
-            groupHeading.Children.Add(new TextBlock { Text = values.Count.ToString(), FontSize = 14, Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+            groupHeading.Children.Add(new TextBlock { Text = values.Count.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture), FontSize = 14, Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center });
             region.Children.Add(groupHeading);
             var rows = new StackPanel();
             foreach (var request in values)
@@ -357,22 +357,22 @@ public sealed partial class RequestsPage : Page
         DiscoveryContent.Visibility = hasSearch ? Visibility.Collapsed : Visibility.Visible;
         if (!hasSearch) return;
 
-        var typeLabel = ViewModel.SelectedMediaType switch { "movie" => "MOVIES", "series" => "SERIES", _ => "ALL" };
-        SearchEyebrowText.Text = $"SEARCH RESULTS · {typeLabel}";
+        var typeLabel = ViewModel.SelectedMediaType switch { "movie" => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.movies"), "series" => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.series"), _ => SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.allMedia") };
+        SearchEyebrowText.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.search.label") + " · " + typeLabel;
         SearchTitleText.Text = $"“{ViewModel.SearchQuery}”";
         SearchCountText.Text = ViewModel.SearchResults.Count > 0
-            ? $"{ViewModel.SearchTotalResults:N0} results" + (ViewModel.SearchTotalPages > 1 ? $" · Page {ViewModel.SearchPage} of {ViewModel.SearchTotalPages}" : "") : "";
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultCount", new Dictionary<string, object?> { ["count"] = ViewModel.SearchTotalResults, ["shown"] = (ViewModel.SearchTotalResults).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) + (ViewModel.SearchTotalPages > 1 ? " · " + SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.pageOf", new Dictionary<string, object?> { ["page"] = ViewModel.SearchPage, ["total"] = ViewModel.SearchTotalPages }) : "") : "";
         foreach (var item in ViewModel.SearchResults)
             SearchResultsList.Children.Add(BuildMediaPosterCard(item));
 
         var empty = !ViewModel.IsSearching && ViewModel.SearchResults.Count == 0;
         SearchEmptyPanel.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
-        SearchEmptyTitle.Text = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? "Nothing found" : "Search failed";
+        SearchEmptyTitle.Text = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? SiloPlayer.Core.Localization.AppStrings.Get("web.search.noMatches") : SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.searchFailed");
         SearchEmptyDetail.Text = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
             ? $"No titles matched “{ViewModel.SearchQuery}”. Try a different spelling or media type."
-            : "TMDB search couldn’t be loaded. Try again in a moment.";
+            : SiloPlayer.Core.Localization.AppStrings.Get("web.requests.discoverSection.unreachable");
         SearchPager.Visibility = ViewModel.SearchTotalPages > 1 ? Visibility.Visible : Visibility.Collapsed;
-        SearchPageText.Text = $"Page {ViewModel.SearchPage} of {ViewModel.SearchTotalPages}";
+        SearchPageText.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.pageOf", new Dictionary<string, object?> { ["page"] = ViewModel.SearchPage, ["total"] = ViewModel.SearchTotalPages });
     }
 
     private void BuildDiscovery()
@@ -408,19 +408,19 @@ public sealed partial class RequestsPage : Page
             if (section == null || section.Results.Count == 0) continue;
             var panel = new StackPanel { Spacing = 20 };
             var heading = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = GridLength.Auto } } };
-            heading.Children.Add(new TextBlock
+            heading.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = row.Title,
                 FontSize = 20,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush("PrimaryTextBrush"),
-            });
-            var explore = new Button { Content = new TextBlock { Text = "EXPLORE ALL", FontSize = 11, FontWeight = FontWeights.SemiBold, CharacterSpacing = 140 },
+            }, "Text", element => element.Text = row.DisplayTitle));
+            var explore = new Button { Content = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "EXPLORE ALL", FontSize = 11, FontWeight = FontWeights.SemiBold, CharacterSpacing = 140 }, text: "web.catalog.carousel.exploreAll", uppercase: true),
                 Height = 24, MinHeight = 0, Padding = new Thickness(0), Foreground = Brush("SecondaryTextBrush"),
                 Style = (Style)Application.Current.Resources["GhostButtonStyle"],
                 Visibility = RequestDiscoveryLayout.HasExploreAll(section) ? Visibility.Visible : Visibility.Collapsed };
             explore.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestBrowsePage>(new RequestBrowseNavigation("section", section.Key));
-            AutomationProperties.SetName(explore, $"Explore {row.Title}");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(explore, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.exploreAllLabel", new Dictionary<string, object?> { ["title"] = row.DisplayTitle })));
             Grid.SetColumn(explore, 1); heading.Children.Add(explore); panel.Children.Add(heading);
 
             var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
@@ -440,7 +440,7 @@ public sealed partial class RequestsPage : Page
     private void AddBrandRegion(RequestDiscoverRow row)
     {
         if (!_brandRegions.TryGetValue(row.Type, out var region)) return;
-        region.Children.OfType<TextBlock>().First().Text = row.Title;
+        SiloPlayer.Controls.MediaItemCardActions.BindText(region.Children.OfType<TextBlock>().First(), "Text", element => element.Text = row.DisplayTitle);
         DiscoveryList.Children.Add(region);
     }
 
@@ -489,7 +489,7 @@ public sealed partial class RequestsPage : Page
         {
             var recovery = new StackPanel { Spacing = 12, Padding = new Thickness(0, 24, 0, 24) };
             recovery.Children.Add(new TextBlock { Text = error, FontSize = 14, Foreground = Brush("SecondaryTextBrush") });
-            var retry = new Button { Content = "Retry", HorizontalAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+            var retry = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Retry", HorizontalAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["GhostButtonStyle"] }, content: "common.retry");
             retry.Click += async (_, _) => { retry.IsEnabled = false; await ViewModel.RetryBrandAsync(kind); BuildBrands(); };
             recovery.Children.Add(retry); panel.Children.Add(recovery); return;
         }
@@ -506,8 +506,7 @@ public sealed partial class RequestsPage : Page
                 HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch,
             };
             if (!string.IsNullOrWhiteSpace(card.LogoUrl))
-                button.Content = new Image
-                {
+                button.Content = new Image { FlowDirection = FlowDirection.LeftToRight,
                     Source = (ImageSource)RemoteImageConverter.Convert(
                         card.LogoUrl,
                         typeof(ImageSource),
@@ -544,7 +543,7 @@ public sealed partial class RequestsPage : Page
         var row = new Grid { Padding = new Thickness(0,12,0,12), ColumnSpacing = ActualWidth < 640 ? 12 : 16 };
         row.ColumnDefinitions.Add(new() { Width = new GridLength(48) }); row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var poster = new Image { Width = 48, Height = 72, Stretch = Stretch.UniformToFill };
+        var poster = new Image { FlowDirection = FlowDirection.LeftToRight, Width = 48, Height = 72, Stretch = Stretch.UniformToFill };
         if (!string.IsNullOrWhiteSpace(request.PosterPath)) poster.Source = (ImageSource)RemoteImageConverter.Convert($"https://image.tmdb.org/t/p/w92{request.PosterPath}", typeof(ImageSource), null!, "");
         UIElement posterContent = poster;
         if (string.IsNullOrWhiteSpace(request.PosterPath))
@@ -559,45 +558,45 @@ public sealed partial class RequestsPage : Page
             TextTrimming = TextTrimming.CharacterEllipsis }, Height = 20, MinHeight = 0,
             Padding = new Thickness(0), Foreground = Brush("PrimaryTextBrush") };
         title.Click += (_,_) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(request.MediaType,request.TmdbId));
-        titleRow.Children.Add(title); titleRow.Children.Add(SiloPlayer.Controls.ExternalTitleCard.StatusBadge(RequestDisplayLabel(request)));
+        titleRow.Children.Add(title); titleRow.Children.Add(SiloPlayer.Controls.ExternalTitleCard.StatusBadge(RequestDisplayLabel(request), display: () => SiloPlayer.Controls.MediaItemCardActions.RequestStatus(request.Status, request.Outcome, request.State)));
         content.Children.Add(titleRow);
         var details = new List<string> { FormatMediaType(request.MediaType) };
         if (request.Year is >0) details.Add(request.Year.ToString()!);
         if (request.Seasons?.Count >0) details.Add(FormatRequestedSeasons(request.Seasons));
-        var progress = RequestDisplayLabel(request) == "Partially available" ? SiloPlayer.Core.Services.RequestViewerPolicy.SeasonProgressLabel(request.SeasonProgress) : "";
+        var progress = RequestDisplayLabel(request) == "Partially available" ? SiloPlayer.Controls.MediaItemCardActions.SeasonProgress(request.SeasonProgress) : "";
         if (progress.Length>0) details.Add(progress);
         content.Children.Add(new TextBlock { Text = string.Join(" · ", details), FontSize=12, LineHeight=16, LineStackingStrategy=LineStackingStrategy.BlockLineHeight, Foreground=Brush("SecondaryTextBrush"), TextWrapping=TextWrapping.Wrap });
         if (request.Download != null) content.Children.Add(SiloPlayer.Controls.RequestDownloadProgress.Build(request.Download, 256));
         var updated = LastChange(request);
-        var dates = new TextBlock { Text = "Requested " + FormatDate(request.CreatedAt) + (updated == null ? "" : " · Updated " + updated), FontSize=12, LineHeight=16, LineStackingStrategy=LineStackingStrategy.BlockLineHeight, Foreground=Brush("SecondaryTextBrush"), TextWrapping=TextWrapping.Wrap };
-        ToolTipService.SetToolTip(dates, "Requested " + FormatDate(request.CreatedAt) + (updated == null ? "" : " · Updated " + FormatDate(request.UpdatedAt)));
+        var dates = new TextBlock { Text = RequestDates(request), FontSize=12, LineHeight=16, LineStackingStrategy=LineStackingStrategy.BlockLineHeight, Foreground=Brush("SecondaryTextBrush"), TextWrapping=TextWrapping.Wrap };
+        SiloPlayer.Controls.MediaItemCardActions.BindText(dates, "Dates", element => { element.Text = RequestDates(request); ToolTipService.SetToolTip(element, element.Text); });
         content.Children.Add(dates);
-        if (!string.IsNullOrEmpty(request.LastError) || !string.IsNullOrEmpty(request.OutcomeReason)) content.Children.Add(new TextBlock { Text = request.LastError.Length>0 ? request.LastError : "Reason: " + request.OutcomeReason, FontSize=12, LineHeight=16.5, LineStackingStrategy=LineStackingStrategy.BlockLineHeight, Foreground=Brush(request.LastError.Length>0 ? "ErrorBrush" : "SecondaryTextBrush"), TextWrapping=TextWrapping.Wrap });
+        if (!string.IsNullOrEmpty(request.LastError) || !string.IsNullOrEmpty(request.OutcomeReason)) content.Children.Add(new TextBlock { Text = request.LastError.Length>0 ? request.LastError : SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.reason", new Dictionary<string, object?> { ["reason"] = request.OutcomeReason }), FontSize=12, LineHeight=16.5, LineStackingStrategy=LineStackingStrategy.BlockLineHeight, Foreground=Brush(request.LastError.Length>0 ? "ErrorBrush" : "SecondaryTextBrush"), TextWrapping=TextWrapping.Wrap });
         var actions = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing=8, VerticalSpacing=8, Margin=new Thickness(0,8,0,0) };
         if (request.LibraryContentId is { Length:>0 } id)
         {
             var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             label.Children.Add(SiloPlayer.Controls.WebUiIcon.Create("library", 14));
-            label.Children.Add(new TextBlock { Text = "Open in library", FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+            label.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Open in library", FontSize = 14, VerticalAlignment = VerticalAlignment.Center }, text: "web.requests.hub.openInLibrary"));
             var library = new Button { Content = label, FontSize = 14, Height = 32, MinHeight = 0,
                 Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
-            AutomationProperties.SetName(library, "Open " + request.Title + " in library");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(library, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.openInLibraryFor", new Dictionary<string, object?> { ["title"] = request.Title })));
             // The server's library match is global, not proof this profile can open it: read the item first.
             library.Click += async (_, _) => await OpenLibraryAsync(id);
             actions.Children.Add(library);
         }
         if (SiloPlayer.Core.Services.RequestViewerPolicy.CanCancel(request))
         {
-            var cancel = new Button { Content = "Cancel request", Tag = request, FontSize = 14, Height = 32, MinHeight = 0,
-                Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
-            AutomationProperties.SetName(cancel, "Cancel request for " + request.Title);
+            var cancel = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Cancel request", Tag = request, FontSize = 14, Height = 32, MinHeight = 0,
+                Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] }, content: "web.requests.cancel.action");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(cancel, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.cancel.actionFor", new Dictionary<string, object?> { ["title"] = request.Title })));
             cancel.Click += CancelRequest_Click; actions.Children.Add(cancel);
         }
         if (ViewModel.CanRemoveRequest(request))
         {
-            var remove = new Button { Content = "Remove request", Tag = request, FontSize = 14, Height = 32, MinHeight = 0,
-                Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
-            AutomationProperties.SetName(remove, "Remove request for " + request.Title);
+            var remove = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Remove request", Tag = request, FontSize = 14, Height = 32, MinHeight = 0,
+                Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] }, content: "web.requests.remove.action");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(remove, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.remove.actionFor", new Dictionary<string, object?> { ["title"] = request.Title })));
             if (ViewModel.IsRemovingRequest(request.Id)) { remove.IsEnabled = false; remove.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 }; }
             remove.Click += RemoveRequest_Click; actions.Children.Add(remove);
         }
@@ -620,21 +619,22 @@ public sealed partial class RequestsPage : Page
         {
             var first = sorted[i];
             while (i + 1 < sorted.Length && sorted[i + 1] == sorted[i] + 1) i++;
-            runs.Add(first == sorted[i] ? first.ToString() : $"{first}–{sorted[i]}");
+            runs.Add(first == sorted[i] ? first.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) : first.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) + "–" + sorted[i].ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture));
         }
-        return $"{(sorted.Length == 1 ? "Season" : "Seasons")} {string.Join(", ", runs)}";
+        return SiloPlayer.Core.Localization.AppStrings.Get("web.requests.status.seasonList", new Dictionary<string, object?> { ["count"] = sorted.Length, ["list"] = string.Join(", ", runs) });
     }
 
     private async void CancelRequest_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: MediaRequest request } || _requestConfirmationOpen) return;
-        var confirmation = new ContentDialog
+        var confirmation = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             Title = "Cancel this request?", Content = $"Your request for \"{request.Title}\" will be withdrawn before it is sent to the download automation.",
             PrimaryButtonText = "Cancel request", CloseButtonText = "Keep request", XamlRoot = XamlRoot,
             DefaultButton = ContentDialogButton.Close,
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-        };
+        }, title: "web.requests.cancel.title", primaryButton: "web.requests.cancel.action", closeButton: "web.requests.cancel.keep");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(confirmation, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.requests.cancel.description", new Dictionary<string, object?> { ["title"] = request.Title }));
         ContentDialogResult choice;
         _requestConfirmationOpen = true;
         try { choice = await confirmation.ShowAsync(); }
@@ -654,13 +654,14 @@ public sealed partial class RequestsPage : Page
         var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
         bool IsCurrent() => !visit.IsCancellationRequested && ReferenceEquals(_libraryCheckOwner, pageOwner) && IsLoaded &&
             api.IsCurrentIdentityContext(owner);
-        var confirmation = new ContentDialog
+        var confirmation = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             Title = "Remove this request?", Content = $"Your failed request for \"{request.Title}\" will be deleted. You can request the title again later.",
             PrimaryButtonText = "Remove request", CloseButtonText = "Keep request", XamlRoot = XamlRoot,
             DefaultButton = ContentDialogButton.Close,
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-        };
+        }, title: "web.requests.remove.title", primaryButton: "web.requests.remove.action", closeButton: "web.requests.cancel.keep");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(confirmation, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.requests.remove.description", new Dictionary<string, object?> { ["title"] = request.Title }));
         // ContentDialog permits only one open dialog, even when another row is activated.
         ContentDialogResult choice;
         _requestConfirmationOpen = true;
@@ -678,11 +679,11 @@ public sealed partial class RequestsPage : Page
         var toast = App.Services.GetService<SiloPlayer.Services.ToastService>();
         switch (result.Outcome)
         {
-            case RequestRemovalOutcome.Removed: toast?.Success("Request removed"); break;
+            case RequestRemovalOutcome.Removed: toast?.Success(SiloPlayer.Core.Localization.AppStrings.Get("web.common.requests.toast.removed")); break;
             case RequestRemovalOutcome.Skipped:
                 toast?.Error("Could not remove the request - the list changed, try again"); break;
             case RequestRemovalOutcome.Refused or RequestRemovalOutcome.Failed:
-                toast?.Error(string.IsNullOrWhiteSpace(result.Error) ? "Failed to remove request" : result.Error); break;
+                toast?.Error(string.IsNullOrWhiteSpace(result.Error) ? SiloPlayer.Core.Localization.AppStrings.Get("web.common.requests.toast.removeFailed") : result.Error); break;
         }
     }
 
@@ -715,7 +716,7 @@ public sealed partial class RequestsPage : Page
     private static string SelectedTag(ComboBox comboBox, string fallback)
         => comboBox.SelectedItem is ComboBoxItem item && item.Tag is string tag ? tag : fallback;
 
-    private static string FormatMediaType(string value) => string.Equals(value, "series", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+    private static string FormatMediaType(string value) => SiloPlayer.Core.Localization.AppStrings.Get(string.Equals(value, "series", StringComparison.OrdinalIgnoreCase) ? "web.requests.toAdd.series" : "web.requests.toAdd.movie");
 
     private static string FormatDate(string value)
         => DateTime.TryParse(value, out var dt) ? DateTimeDisplay.FormatDate(new DateTimeOffset(dt), medium: true) : value;

@@ -3,7 +3,9 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Services;
 using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace SiloPlayer.Controls;
@@ -90,6 +92,15 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             SelectLanguageByTag(UploadLanguageComboBox, defaultLanguage);
         }
 
+        // Media language names follow the interface language; Tag codes stay the wire values.
+        foreach (var combo in new[] { LanguageComboBox, UploadLanguageComboBox })
+            foreach (var item in combo.Items.OfType<ComboBoxItem>())
+                if (item.Tag is string code && AppStrings.English("language." + code, fallback: "").Length > 0)
+                    Localized.SetContent(item, "language." + code);
+        // An open dialog re-renders its text in place: drafts, selections,
+        // results and in-flight work are untouched.
+        AppLocalization.Register(this, RefreshText);
+
         Opened += OnOpened;
         Closed += (_, _) =>
         {
@@ -132,6 +143,25 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     {
         ErrorText.Text = message;
         ErrorBorder.Visibility = Visibility.Visible;
+    }
+
+    private static string T(string key, string english) => AppStrings.Get(key, fallback: english);
+
+    private Func<string>? _statusText, _uploadStatusText, _uploadFileText, _emptyStateText;
+    private void SetStatus(Func<string> text) { _statusText = text; StatusText.Text = text(); }
+    private void SetUploadStatus(Func<string> text) { _uploadStatusText = text; UploadStatusText.Text = text(); }
+    private void SetUploadFile(Func<string> text) { _uploadFileText = text; UploadFileText.Text = text(); }
+    private void SetEmptyState(Func<string> text) { _emptyStateText = text; EmptyStateText.Text = text(); }
+
+    private void RefreshText()
+    {
+        AppLocalization.ApplyDirection(this);
+        UploadHelpText.Text = AppStrings.Get("web.subtitles.upload.help", new Dictionary<string, object?> { ["megabytes"] = 5 },
+            fallback: "Drag and drop or browse for SRT, VTT, ASS, SSA, or SUB files up to 5 MB. Language is detected automatically when possible.");
+        if (_statusText != null) StatusText.Text = _statusText();
+        if (_uploadStatusText != null) UploadStatusText.Text = _uploadStatusText();
+        UploadFileText.Text = (_uploadFileText ?? (() => "No file selected"))();
+        EmptyStateText.Text = (_emptyStateText ?? (() => T("web.subtitles.search.prompt", "Select a language and press Search.")))();
     }
 
     private void ShowWarnings(IEnumerable<string> warnings)
@@ -193,7 +223,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            UploadStatusText.Text = $"Could not read subtitle file: {ex.Message}";
+            SetUploadStatus(() => $"Could not read subtitle file: {ex.Message}");
             UploadButton.IsEnabled = false;
         }
     }
@@ -204,7 +234,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             return;
 
         e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy;
-        e.DragUIOverride.Caption = "Drop subtitle file";
+        e.DragUIOverride.Caption = T("web.subtitles.upload.dropFile", "Drop subtitle file");
         e.DragUIOverride.IsCaptionVisible = true;
         e.Handled = true;
     }
@@ -224,7 +254,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            UploadStatusText.Text = $"Could not read subtitle file: {ex.Message}";
+            SetUploadStatus(() => $"Could not read subtitle file: {ex.Message}");
             UploadButton.IsEnabled = false;
         }
     }
@@ -240,8 +270,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         var extension = Path.GetExtension(file.Name);
         if (!IsAcceptedSubtitleExtension(extension))
         {
-            UploadFileText.Text = "No file selected";
-            UploadStatusText.Text = "Unsupported file type. Use SRT, VTT, ASS, SSA, or SUB.";
+            SetUploadFile(() => "No file selected");
+            SetUploadStatus(() => T("web.subtitles.upload.unsupportedType", "Unsupported file type. Use SRT, VTT, ASS, SSA, or SUB."));
             UploadButton.IsEnabled = false;
             return;
         }
@@ -249,8 +279,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         var properties = await file.GetBasicPropertiesAsync();
         if ((long)properties.Size > MaxSubtitleUploadBytes)
         {
-            UploadFileText.Text = "No file selected";
-            UploadStatusText.Text = "Subtitle file is larger than 5 MB.";
+            SetUploadFile(() => "No file selected");
+            SetUploadStatus(() => "Subtitle file is larger than 5 MB.");
             UploadButton.IsEnabled = false;
             return;
         }
@@ -262,7 +292,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         _uploadFileBytes = buffer.ToArray();
         _uploadFileName = file.Name;
         _uploadContentType = GuessSubtitleContentType(file.Name, file.ContentType);
-        UploadFileText.Text = file.Name;
+        var chosen = file.Name; SetUploadFile(() => chosen);
         UploadButton.IsEnabled = true;
         await DetectUploadLanguageAsync(selectionVersion);
     }
@@ -278,7 +308,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
         BrowseUploadButton.IsEnabled = false;
         UploadButton.IsEnabled = false;
-        UploadStatusText.Text = "Detecting language...";
+        SetUploadStatus(() => T("web.subtitles.upload.detecting", "Detecting language…"));
         try
         {
             var detection = await _playbackApi.DetectSubtitleLanguageAsync(
@@ -294,11 +324,14 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             if (!string.IsNullOrWhiteSpace(detection.Language))
             {
                 SelectLanguageByTag(UploadLanguageComboBox, detection.Language);
-                UploadStatusText.Text = $"Detected {Services.PlayerService.LanguageCodeToName(detection.Language)} from {DetectionSourceLabel(detection.Source)}.";
+                SetUploadStatus(() => AppStrings.Get("web.subtitles.upload.detected", new Dictionary<string, object?>
+                {
+                    ["language"] = Services.PlayerService.LanguageCodeToName(detection.Language), ["source"] = detection.Source ?? "",
+                }, fallback: $"Detected {Services.PlayerService.LanguageCodeToName(detection.Language)} from {DetectionSourceLabel(detection.Source)}."));
             }
             else
             {
-                UploadStatusText.Text = "Language detection did not return a language. Pick one before uploading.";
+                SetUploadStatus(() => "Language detection did not return a language. Pick one before uploading.");
             }
         }
         catch (OperationCanceledException) when (detectionToken.IsCancellationRequested)
@@ -308,7 +341,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            UploadStatusText.Text = $"Language detection failed: {ex.Message}";
+            SetUploadStatus(() => $"Language detection failed: {ex.Message}");
         }
         finally
         {
@@ -334,7 +367,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         UploadButton.IsEnabled = false;
         BrowseUploadButton.IsEnabled = false;
         ResultsList.IsEnabled = false;
-        UploadStatusText.Text = "Uploading subtitle...";
+        SetUploadStatus(() => T("web.subtitles.upload.uploading", "Uploading…"));
         try
         {
             SubtitleDownloadStarted?.Invoke();
@@ -350,8 +383,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 ct: _lifetimeCts.Token);
 
             if (!HasCurrentContext) return;
-            UploadStatusText.Text = "Subtitle uploaded.";
-            StatusText.Text = "Subtitle uploaded.";
+            SetUploadStatus(() => T("web.common.toast.subtitles.uploaded", "Subtitle uploaded"));
+            SetStatus(() => T("web.common.toast.subtitles.uploaded", "Subtitle uploaded"));
             try { SubtitleDownloaded?.Invoke(GetDownloadedSubtitleId(response)); } catch { }
             if (_playerMode)
             {
@@ -361,7 +394,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             {
                 _uploadFileBytes = null;
                 _uploadFileName = null;
-                UploadFileText.Text = "No file selected";
+                SetUploadFile(() => "No file selected");
                 UploadButton.IsEnabled = false;
             }
         }
@@ -371,8 +404,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            UploadStatusText.Text = $"Upload failed: {ex.Message}";
-            ShowError($"Upload failed: {ex.Message}");
+            SetUploadStatus(() => $"{T("web.subtitles.upload.uploadFailed", "Upload failed")}: {ex.Message}");
+            ShowError($"{T("web.subtitles.upload.uploadFailed", "Upload failed")}: {ex.Message}");
         }
         finally
         {
@@ -398,7 +431,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         SearchButton.IsEnabled = false;
         EmptyStateText.Visibility = Visibility.Collapsed;
         ResultsList.Items.Clear();
-        StatusText.Text = $"Searching {SelectedLanguage.ToUpperInvariant()} subtitles…";
+        SetStatus(() => T("web.subtitles.search.searching", "Searching…"));
 
         try
         {
@@ -411,10 +444,10 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
             if (result.Results.Count == 0)
             {
-                StatusText.Text = "No results.";
-                EmptyStateText.Text = _playerMode
+                SetStatus(() => "No results.");
+                SetEmptyState(() => _playerMode
                     ? "No subtitles found in this language."
-                    : "No subtitles found for this version and language.";
+                    : "No subtitles found for this version and language.");
                 EmptyStateText.Visibility = Visibility.Visible;
                 ShowWarnings(result.Warnings);
                 return;
@@ -423,7 +456,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             foreach (var r in result.Results.OrderByDescending(x => x.Score))
                 ResultsList.Items.Add(BuildResultRow(r));
             ShowWarnings(result.Warnings);
-            StatusText.Text = $"{result.Results.Count} result(s).";
+            SetStatus(() => $"{result.Results.Count} result(s).");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -431,7 +464,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            StatusText.Text = "Search failed.";
+            SetStatus(() => T("web.subtitles.search.searchFailed", "Search failed"));
             ShowError(ex.Message);
         }
         finally
@@ -499,7 +532,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         if (r.HearingImpaired)
         {
             var hiBadge = CreateBadge(
-                "HI",
+                T("subtitleSearch.hearingImpaired", "HI"),
                 Windows.UI.Color.FromArgb(0xFF, 0x9C, 0xA3, 0xAF),
                 fontSize: 9,
                 fontWeight: FontWeights.Normal);
@@ -509,7 +542,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
         var downloads = new TextBlock
         {
-            Text = $"↓{r.Downloads:N0}",
+            Text = AppStrings.Get("web.subtitles.search.downloads", new Dictionary<string, object?> { ["downloads"] = r.Downloads.ToString("N0", AppStrings.FormatCulture) }, fallback: $"↓{r.Downloads:N0}"),
             FontSize = 10,
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
             VerticalAlignment = VerticalAlignment.Center,
@@ -607,7 +640,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             10,
             FontWeights.Normal));
         if (result.HearingImpaired)
-            badges.Children.Add(CreateBadge("HI", Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE), 10, FontWeights.Normal));
+            badges.Children.Add(CreateBadge(T("subtitleSearch.hearingImpaired", "HI"), Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE), 10, FontWeights.Normal));
         if (result.Downloads > 0)
         {
             badges.Children.Add(new TextBlock
@@ -690,7 +723,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 Children =
                 {
                     new FontIcon { Glyph = "\uE896", FontSize = 14 },
-                    new TextBlock { Text = "Download", VerticalAlignment = VerticalAlignment.Center },
+                    new TextBlock { Text = T("web.detail.actions.download", "Download"), VerticalAlignment = VerticalAlignment.Center },
                 },
             },
         };
@@ -732,7 +765,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         UploadButton.IsEnabled = false;
         BrowseUploadButton.IsEnabled = false;
         ClearMessages();
-        StatusText.Text = $"Downloading {r.Language.ToUpperInvariant()} from {r.Provider}…";
+        SetStatus(() => $"Downloading {r.Language.ToUpperInvariant()} from {r.Provider}…");
         try
         {
             SubtitleDownloadStarted?.Invoke();
@@ -741,7 +774,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 r,
                 _lifetimeCts.Token);
             if (!HasCurrentContext) return;
-            StatusText.Text = $"Downloaded {r.Language.ToUpperInvariant()} · {r.Provider}.";
+            SetStatus(() => $"Downloaded {r.Language.ToUpperInvariant()} · {r.Provider}.");
             try { SubtitleDownloaded?.Invoke(GetDownloadedSubtitleId(response)); } catch { }
             if (_playerMode)
                 Hide();
@@ -752,7 +785,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            StatusText.Text = "Download failed.";
+            SetStatus(() => T("web.subtitles.search.downloadFailed", "Download failed"));
             ShowError(ex.Message);
         }
         finally

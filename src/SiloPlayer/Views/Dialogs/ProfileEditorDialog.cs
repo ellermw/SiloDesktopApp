@@ -13,6 +13,8 @@ using SiloPlayer.Helpers;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -24,9 +26,9 @@ namespace SiloPlayer.Views.Dialogs;
 public sealed partial class ProfileEditorDialog
 {
     private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
-    private static readonly (string Value, string Label)[] RatingOptions =
+    private static (string Value, string Label)[] RatingOptions =>
     [
-        ("", "Any content"),
+        ("", AppStrings.Get("web.profiles.helpers.contentRating.any", fallback: "Any content")),
         ("G", "G / TV-G"),
         ("6", "6 / FSK 6"),
         ("PG", "PG / TV-PG / TV-Y7"),
@@ -37,20 +39,20 @@ public sealed partial class ProfileEditorDialog
         ("R", "R / TV-MA / NC-17"),
     ];
 
-    private static readonly (string Value, string Label)[] QualityOptions =
+    private static (string Value, string Label)[] QualityOptions =>
     [
-        ("", "Any"),
-        ("1080p", "Standard"),
+        ("", AppStrings.Get("web.profiles.helpers.quality.any", fallback: "Any")),
+        ("1080p", AppStrings.Get("web.profiles.helpers.quality.standard", fallback: "Standard")),
         ("2160p", "4K"),
     ];
 
-    private static readonly (string Id, string Label)[] AvatarStyles =
+    private static (string Id, string Label)[] AvatarStyles =>
     [
-        ("identicon", "Identicon"),
-        ("initials", "Initials"),
-        ("bottts-neutral", "Bottts Neutral"),
-        ("fun-emoji", "Fun Emoji"),
-        ("pixel-art-neutral", "Pixel Art Neutral"),
+        ("identicon", AppStrings.Get("web.profiles.helpers.avatar.style.identicon.label", fallback: "Identicon")),
+        ("initials", AppStrings.Get("web.profiles.helpers.avatar.style.initials.label", fallback: "Initials")),
+        ("bottts-neutral", AppStrings.Get("web.profiles.helpers.avatar.style.botttsNeutral.label", fallback: "Bottts Neutral")),
+        ("fun-emoji", AppStrings.Get("web.profiles.helpers.avatar.style.funEmoji.label", fallback: "Fun Emoji")),
+        ("pixel-art-neutral", AppStrings.Get("web.profiles.helpers.avatar.style.pixelArtNeutral.label", fallback: "Pixel Art Neutral")),
     ];
 
     private static readonly string[] SeedAdjectives =
@@ -138,9 +140,9 @@ public sealed partial class ProfileEditorDialog
 
         _dialog = new ContentDialog
         {
-            Title = profile == null ? "New profile" : "Edit profile",
-            PrimaryButtonText = "Save profile",
-            CloseButtonText = "Cancel",
+            Title = profile == null ? AppStrings.Get("web.profiles.editor.titleNew") : AppStrings.Get("web.profiles.editor.titleEdit"),
+            PrimaryButtonText = AppStrings.Get("web.profiles.editor.save"),
+            CloseButtonText = AppStrings.Get("common.cancel"),
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = xamlRoot,
         };
@@ -149,6 +151,8 @@ public sealed partial class ProfileEditorDialog
         var heading = new StackPanel { Spacing = 8 };
         heading.Children.Add(new TextBlock { Text = profile == null ? "New profile" : "Edit profile", FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold });
         heading.Children.Add(new TextBlock { Text = "Set the avatar, name, PIN, and access rules for this profile.", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Normal, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        ((TextBlock)heading.Children[0]).Keyed(profile == null ? "web.profiles.editor.titleNew" : "web.profiles.editor.titleEdit");
+        ((TextBlock)heading.Children[1]).Keyed("web.profiles.editor.description");
         _dialog.Title = heading;
         void Reflow()
         {
@@ -179,6 +183,8 @@ public sealed partial class ProfileEditorDialog
         _clearPinButton.Style = (Style)Application.Current.Resources["GhostButtonStyle"]; _clearPinButton.Foreground = Brush("SecondaryTextBrush");
         InitializeValues();
         _dialog.Content = BuildContent();
+        // Retained while open: state-dependent text follows a language change.
+        AppLocalization.Register(_dialog, RefreshLocale);
         _dialog.PrimaryButtonClick += SaveButton_Click;
         _dialog.CloseButtonClick += (_, _) => _addSession?.Cancel();
         _dialog.Closing += (_, args) =>
@@ -233,23 +239,22 @@ public sealed partial class ProfileEditorDialog
     private void InitializeValues()
     {
         _nameBox.Text = _profile?.Name ?? "";
-        _pinBox.PlaceholderText = "4 digits";
-        _pinLabel.Text = _profile?.HasPin == true ? "New PIN" : "PIN (optional)";
+        RefreshPinText();
         _clearPinButton.Visibility = _profile?.HasPin == true ? Visibility.Visible : Visibility.Collapsed;
         _kidsToggle.IsOn = _profile?.IsChild ?? false;
         _restrictLibrariesToggle.IsOn = !_isPrimary && (_profile?.LibraryRestrictionsEnabled ?? false);
         _libraryRows.Visibility = _restrictLibrariesToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (var option in RatingOptions) _ratingBox.Items.Add(option.Label);
+        // Items are display text only; the selected index maps to _ratingValues.
         _ratingBox.SelectedIndex = Math.Max(0, Array.FindIndex(RatingOptions,
             option => string.Equals(option.Value, _profile?.MaxContentRating ?? "", StringComparison.OrdinalIgnoreCase)));
         if (_profile != null && !_ratingValues.Contains(_profile.MaxContentRating, StringComparer.OrdinalIgnoreCase))
         {
-            _ratingValues.Add(_profile.MaxContentRating); _ratingBox.Items.Add($"{_profile.MaxContentRating} (saved limit)");
+            _ratingValues.Add(_profile.MaxContentRating); _ratingBox.Items.Add(SavedLimitLabel(_profile.MaxContentRating));
             _ratingBox.SelectedIndex = _ratingValues.Count - 1;
         }
-        _advisoryBox.Items.Add("No limit");
-        for (var age = 1; age <= 21; age++) _advisoryBox.Items.Add($"Ages {age} and under");
+        foreach (var label in AdvisoryLabels()) _advisoryBox.Items.Add(label);
         _advisoryBox.SelectedIndex = _profile?.MaxAdvisoryAge is >= 1 and <= 21 ? _profile.MaxAdvisoryAge.Value : 0;
         _requireAdvisory.IsOn = _profile?.RequireAdvisoryAge == true;
         _requireAdvisory.IsEnabled = _advisoryBox.SelectedIndex > 0;
@@ -265,9 +270,7 @@ public sealed partial class ProfileEditorDialog
             _clearPin = !_clearPin;
             _pinBox.IsEnabled = !_clearPin;
             if (_clearPin) _pinBox.Password = "";
-            _pinLabel.Text = _clearPin ? "PIN will be removed" : "New PIN";
-            _pinBox.PlaceholderText = _clearPin ? "PIN will be removed on save" : "4 digits";
-            _clearPinButton.Content = _clearPin ? "Keep existing PIN" : "Remove PIN";
+            RefreshPinText();
             ClearValidation();
         };
         _restrictLibrariesToggle.Toggled += (_, _) =>
@@ -309,7 +312,7 @@ public sealed partial class ProfileEditorDialog
 
     private Border BuildProfileSection()
     {
-        var section = Section("Profile", "Choose an avatar and basic details.");
+        var section = Section("Profile", "Choose an avatar and basic details.", "web.profiles.editor.profileSection", "web.profiles.editor.profileSectionHint");
         var body = (StackPanel)section.Child;
 
         var basic = new Grid { ColumnSpacing = 16 };
@@ -341,7 +344,7 @@ public sealed partial class ProfileEditorDialog
         basic.Children.Add(previewCard);
 
         var fields = new StackPanel { Spacing = 16 };
-        fields.Children.Add(Field("Name", _nameBox));
+        fields.Children.Add(Field("Name", _nameBox, "web.profiles.editor.name"));
         var pinField = new StackPanel { Spacing = 8 };
         pinField.Children.Add(_pinLabel);
         pinField.Children.Add(_pinBox);
@@ -365,10 +368,10 @@ public sealed partial class ProfileEditorDialog
 
         var presetsSection = new StackPanel { Spacing = 12 };
         var presetsHeading = new StackPanel { Spacing = 4 };
-        presetsHeading.Children.Add(Label("Preset avatars"));
+        presetsHeading.Children.Add(Label("Preset avatars", "web.profiles.editor.presets"));
         presetsHeading.Children.Add(new TextBlock
         {
-            Text = "Pick a DiceBear style, shuffle fun options, or leave it blank to keep initials. A custom upload overrides presets.",
+            Text = AppStrings.Get("web.profiles.editor.presetsHint"),
             FontSize = 12,
             LineHeight = 16,
             Foreground = Brush("SecondaryTextBrush"),
@@ -383,7 +386,7 @@ public sealed partial class ProfileEditorDialog
         _avatarStyleStatus.Foreground = Brush("SecondaryTextBrush");
         _avatarStyleStatus.VerticalAlignment = VerticalAlignment.Center;
         presetHeader.Children.Add(_avatarStyleStatus);
-        var moreContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new FontIcon { Glyph = "\uE72C", FontSize = 16 }, new TextBlock { Text = "More options", FontSize = 14, FontWeight = FontWeights.Medium } } };
+        var moreContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new FontIcon { Glyph = "\uE72C", FontSize = 16 }, new TextBlock { Text = AppStrings.Get("web.profiles.editor.moreOptions"), FontSize = 14, FontWeight = FontWeights.Medium } } };
         var moreButton = new Button { Content = moreContent, Height = 32, MinHeight = 0, CornerRadius = new CornerRadius(10), Padding = new Thickness(10, 4, 10, 4), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(moreButton, "More options");
         moreButton.Click += (_, _) => { _avatarBatch++; BuildAvatarPresets(); };
@@ -398,33 +401,36 @@ public sealed partial class ProfileEditorDialog
 
     private Border BuildAccessSection()
     {
-        var section = Section("Access", "Content limits and library visibility for this profile.");
+        var section = Section("Access", "Content limits and library visibility for this profile.", "web.profiles.editor.accessSection", "web.profiles.editor.accessSectionHint");
         var body = (StackPanel)section.Child;
-        body.Children.Add(ToggleRow("Kids profile", "Seeds a safer default rating and library setup.", _kidsToggle));
+        body.Children.Add(ToggleRow("Kids profile", "Seeds a safer default rating and library setup.", _kidsToggle, "web.profiles.editor.kids", "web.profiles.editor.kidsHint"));
 
         var limits = new Grid { Name = "ProfileAccessLimits", ColumnSpacing = 16, RowSpacing = 16 };
         limits.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         limits.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        limits.Children.Add(Field("Maximum content rating", _ratingBox));
+        limits.Children.Add(Field("Maximum content rating", _ratingBox, "web.profiles.editor.maxContentRating"));
         if (_ageSupported)
         {
-            var advisory = Field("Maximum advisory age", _advisoryBox);
+            var advisory = Field("Maximum advisory age", _advisoryBox, "web.profiles.editor.maxAdvisoryAge");
             var help = new TextBlock { FontSize = 12, LineHeight = 16, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap };
             advisory.Children.Add(help);
             var requireRow = ToggleRow("Hide titles without an advisory age",
-                "Shows only titles rated at or under this age. Ages are looked up over time, so this profile may see few titles at first.", _requireAdvisory);
+                "Shows only titles rated at or under this age. Ages are looked up over time, so this profile may see few titles at first.", _requireAdvisory,
+                "web.profiles.editor.hideWithoutAge", "web.profiles.editor.hideWithoutAgeHint");
             requireRow.BorderThickness = new Thickness(0); requireRow.Padding = new Thickness(0, 4, 0, 0);
             if (_requireAgeSupported) advisory.Children.Add(requireRow);
             void ReflowAdvisory()
             {
                 requireRow.Visibility = _advisoryBox.SelectedIndex > 0 ? Visibility.Visible : Visibility.Collapsed;
-                help.Text = "Hides titles an advisory service such as Common Sense Media recommends for older viewers." +
-                    (_requireAgeSupported && _advisoryBox.SelectedIndex > 0 && _requireAdvisory.IsOn ? "" : " Titles without an advisory age are limited by the content rating alone.");
+                help.Text = _requireAgeSupported && _advisoryBox.SelectedIndex > 0 && _requireAdvisory.IsOn
+                    ? AppStrings.Get("web.profiles.editor.advisoryAgeHelp")
+                    : AppStrings.Get("web.profiles.editor.advisoryAgeHelpFallback");
             }
             _advisoryBox.SelectionChanged += (_, _) => ReflowAdvisory(); _requireAdvisory.Toggled += (_, _) => ReflowAdvisory(); ReflowAdvisory();
+            _localeRefreshers.Add(ReflowAdvisory);
             limits.Children.Add(advisory);
         }
-        limits.Children.Add(Field("Maximum playback quality", _qualityBox));
+        limits.Children.Add(Field("Maximum playback quality", _qualityBox, "web.profiles.editor.maxPlaybackQuality"));
         limits.RowDefinitions.Add(new() { Height = GridLength.Auto }); limits.RowDefinitions.Add(new() { Height = GridLength.Auto });
         void ReflowLimits()
         {
@@ -446,7 +452,7 @@ public sealed partial class ProfileEditorDialog
             return section;
         }
         var libraryGroup = new StackPanel { Spacing = 12 };
-        var libraryToggle = ToggleRow("Restrict libraries", "Limit this profile to a specific set of libraries.", _restrictLibrariesToggle);
+        var libraryToggle = ToggleRow("Restrict libraries", "Limit this profile to a specific set of libraries.", _restrictLibrariesToggle, "web.profiles.editor.restrictLibraries", "web.profiles.editor.restrictLibrariesHint");
         libraryToggle.BorderThickness = new Thickness(0); libraryToggle.Padding = new Thickness(0);
         libraryGroup.Children.Add(libraryToggle); libraryGroup.Children.Add(_libraryRows);
         body.Children.Add(new Border { BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12), Child = libraryGroup });
@@ -460,10 +466,10 @@ public sealed partial class ProfileEditorDialog
         if (!_avatarUploadEnabled)
         {
             var unavailable = new StackPanel { Spacing = 4 };
-            unavailable.Children.Add(new TextBlock { Text = "Custom uploads are unavailable", FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium });
+            unavailable.Children.Add(new TextBlock { Text = AppStrings.Get("web.profiles.editor.uploadsUnavailable"), FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium });
             unavailable.Children.Add(new TextBlock
             {
-                Text = "Configure private S3 avatar storage to enable uploaded profile avatars.",
+                Text = AppStrings.Get("web.profiles.editor.uploadsUnavailableHint"),
                 FontSize = 12,
                 Foreground = Brush("SecondaryTextBrush"),
                 TextWrapping = TextWrapping.Wrap,
@@ -479,7 +485,7 @@ public sealed partial class ProfileEditorDialog
             return panel;
         }
 
-        panel.Children.Add(Label("Custom upload"));
+        panel.Children.Add(Label("Custom upload", "web.profiles.editor.customUpload"));
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var choose = new Button { Content = "Choose image", Padding = new Thickness(12, 6, 12, 6) };
         var remove = new Button { Content = "Remove", Padding = new Thickness(12, 6, 12, 6) };
@@ -506,7 +512,7 @@ public sealed partial class ProfileEditorDialog
         _libraryChecks.Clear();
         if (_libraries.Count == 0)
         {
-            _libraryRows.Children.Add(new TextBlock { Text = "No libraries available.", Foreground = Brush("SecondaryTextBrush") });
+            _libraryRows.Children.Add(new TextBlock { Text = AppStrings.Get("web.profiles.noLibraries"), Foreground = Brush("SecondaryTextBrush") });
             return;
         }
 
@@ -600,7 +606,9 @@ public sealed partial class ProfileEditorDialog
         }
 
         ReflowAvatarGrids();
-        _avatarStyleStatus.Text = $"{AvatarStyleSummary(_activeAvatarStyle)}. Showing 18 options right now.";
+        _avatarStyleStatus.Text = AppStrings.Get("web.profiles.editor.presetsShowing",
+            new Dictionary<string, object?> { ["summary"] = AvatarStyleSummary(_activeAvatarStyle), ["count"] = 18, ["count_text"] = 18.ToString("N0", AppStrings.FormatCulture) },
+            $"{AvatarStyleSummary(_activeAvatarStyle)}. Showing 18 options right now.");
     }
 
     private void BuildAvatarPresets()
@@ -721,7 +729,7 @@ public sealed partial class ProfileEditorDialog
             if (_addSession?.CreatedProfile == null && !Validate()) return;
             _saving = true;
             sender.IsPrimaryButtonEnabled = false;
-            sender.PrimaryButtonText = "Saving...";
+            sender.PrimaryButtonText = AppStrings.Get("web.profiles.editor.saving");
 
             var preservingUpload = _profile?.AvatarSource == "upload" &&
                 !_removeUploadedAvatar && _avatarFileBytes == null && string.IsNullOrEmpty(_selectedAvatarPreset);
@@ -804,9 +812,9 @@ public sealed partial class ProfileEditorDialog
                 if (sender.Content is Control content) content.IsEnabled = false;
                 return;
             }
-            ShowValidation(ex.Message);
+            ShowValidation(ex.DisplayMessage());
             sender.IsPrimaryButtonEnabled = true;
-            sender.PrimaryButtonText = "Save profile";
+            sender.PrimaryButtonText = AppStrings.Get("web.profiles.editor.save");
         }
         finally
         {
@@ -819,17 +827,17 @@ public sealed partial class ProfileEditorDialog
     {
         if (string.IsNullOrWhiteSpace(_nameBox.Text))
         {
-            ShowValidation("Enter a profile name.");
+            ShowValidation(AppStrings.Get("web.profiles.editor.nameRequired"));
             return false;
         }
         if (!_clearPin && _pinBox.Password.Length > 0 && (_pinBox.Password.Length != 4 || _pinBox.Password.Any(ch => !char.IsDigit(ch))))
         {
-            ShowValidation("PIN must be exactly 4 digits.");
+            ShowValidation(AppStrings.Get("web.profiles.editor.pinInvalid"));
             return false;
         }
         if (!_isPrimary && _restrictLibrariesToggle.IsOn && !_libraryChecks.Values.Any(check => check.IsOn))
         {
-            ShowValidation("Choose at least one library.");
+            ShowValidation(AppStrings.Get("web.profiles.editor.librariesRequired"));
             return false;
         }
         _validationText.Visibility = Visibility.Collapsed;
@@ -867,7 +875,7 @@ public sealed partial class ProfileEditorDialog
 
     private void UpdateAvatarPreview()
     {
-        _avatarNamePreview.Text = string.IsNullOrWhiteSpace(_nameBox.Text) ? "Preview" : _nameBox.Text.Trim();
+        _avatarNamePreview.Text = string.IsNullOrWhiteSpace(_nameBox.Text) ? AppStrings.Get("web.profiles.editor.preview") : _nameBox.Text.Trim();
         if (_avatarFileBytes != null) return;
         var selectedParts = _selectedAvatarPreset.Split(':', StringSplitOptions.RemoveEmptyEntries);
         if (selectedParts.Length == 3 && selectedParts[0] == "dicebear")
@@ -891,14 +899,14 @@ public sealed partial class ProfileEditorDialog
                 string.Empty);
             _avatarPreview.Visibility = Visibility.Visible;
             _avatarFallback.Visibility = Visibility.Collapsed;
-            _avatarStatus.Text = "Custom upload";
+            _avatarStatus.Text = AppStrings.Get("web.profiles.editor.customUpload");
             return;
         }
 
         _avatarPreview.Visibility = Visibility.Collapsed;
         _avatarFallback.Visibility = Visibility.Visible;
         _avatarFallback.Text = string.IsNullOrWhiteSpace(_nameBox.Text) ? "?" : _nameBox.Text.Trim()[0].ToString().ToUpperInvariant();
-        _avatarStatus.Text = "Initials fallback";
+        _avatarStatus.Text = AppStrings.Get("web.profiles.editor.initialsFallback");
     }
 
     private void ShowValidation(string message)
@@ -914,22 +922,23 @@ public sealed partial class ProfileEditorDialog
 
     private static string AvatarStyleSummary(string style) => style switch
     {
-        "initials" => "Clean letter-based avatars with bold backgrounds",
-        "bottts-neutral" => "Cute modular robot-style icons",
-        "fun-emoji" => "Big, colorful, instantly readable faces",
-        "pixel-art-neutral" => "Retro pixel faces with lots of variation",
-        _ => "Geometric, technical, high-contrast patterns",
+        "initials" => AppStrings.Get("web.profiles.helpers.avatar.style.initials.summary"),
+        "bottts-neutral" => AppStrings.Get("web.profiles.helpers.avatar.style.botttsNeutral.summary"),
+        "fun-emoji" => AppStrings.Get("web.profiles.helpers.avatar.style.funEmoji.summary"),
+        "pixel-art-neutral" => AppStrings.Get("web.profiles.helpers.avatar.style.pixelArtNeutral.summary"),
+        _ => AppStrings.Get("web.profiles.helpers.avatar.style.identicon.summary"),
     };
 
     private static string AvatarPresetLabel(string style, string seed)
         => string.Join(" ", seed.Split('-').Select(word => word.Length == 0 ? word : char.ToUpperInvariant(word[0]) + word[1..]));
 
-    private static Border Section(string title, string description)
+    // English titles keep the section's stable element Name; keys supply the displayed text.
+    private static Border Section(string title, string description, string titleKey, string descriptionKey)
     {
         var stack = new StackPanel { Spacing = 16 };
         var heading = new StackPanel { Spacing = 4 };
-        heading.Children.Add(new TextBlock { Text = title, FontSize = 14, LineHeight = 20, FontWeight = FontWeights.SemiBold });
-        heading.Children.Add(new TextBlock { Text = description, FontSize = 14, LineHeight = 20, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        heading.Children.Add(new TextBlock { Text = title, FontSize = 14, LineHeight = 20, FontWeight = FontWeights.SemiBold }.Keyed(titleKey));
+        heading.Children.Add(new TextBlock { Text = description, FontSize = 14, LineHeight = 20, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }.Keyed(descriptionKey));
         stack.Children.Add(heading);
         return new Border
         {
@@ -942,15 +951,15 @@ public sealed partial class ProfileEditorDialog
         };
     }
 
-    private static StackPanel Field(string label, Control control)
+    private static StackPanel Field(string label, Control control, string key)
     {
         var stack = new StackPanel { Spacing = 8 };
-        stack.Children.Add(Label(label));
+        stack.Children.Add(Label(label, key));
         stack.Children.Add(control);
         return stack;
     }
 
-    private static TextBlock Label(string text) => new()
+    private static TextBlock Label(string text, string key) => new TextBlock
     {
         Text = text,
         FontSize = 14,
@@ -958,16 +967,16 @@ public sealed partial class ProfileEditorDialog
         LineHeight = 14,
         LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
         FontWeight = FontWeights.Medium,
-    };
+    }.Keyed(key);
 
-    private static Border ToggleRow(string title, string description, ToggleSwitch toggle)
+    private static Border ToggleRow(string title, string description, ToggleSwitch toggle, string titleKey, string descriptionKey)
     {
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var text = new StackPanel { Spacing = 2 };
-        text.Children.Add(Label(title));
-        text.Children.Add(new TextBlock { Text = description, FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(Label(title, titleKey));
+        text.Children.Add(new TextBlock { Text = description, FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }.Keyed(descriptionKey));
         grid.Children.Add(text);
         Grid.SetColumn(toggle, 1);
         grid.Children.Add(toggle);

@@ -216,19 +216,19 @@ public sealed partial class SectionRow : UserControl
         TitleLinkTitle.Text = title;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             TitleLinkBtn,
-            $"View {title}");
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.view") + " · " + title);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             ExploreAllBtn,
-            $"Explore all {title}");
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.exploreAllLabel", new Dictionary<string, object?> { ["title"] = title }));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             CardsScrollViewer,
-            $"{title} carousel");
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.label"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             ScrollLeftBtn,
-            $"Previous items in {title}");
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.scrollLeft"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             ScrollRightBtn,
-            $"Next items in {title}");
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.scrollRight"));
     }
 
     private void UpdateSection(HomeSectionWithItems section)

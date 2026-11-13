@@ -103,8 +103,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
         _artworkFallback = new DefaultArtwork();
 
-        _posterImage = new Image
-        {
+        _posterImage = new Image { FlowDirection = FlowDirection.LeftToRight,
             Width = cardWidth,
             Height = posterHeight,
             Stretch = Stretch.UniformToFill,
@@ -309,7 +308,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         var episodeTitle = MediaItemDisplayText.BuildEpisodeTitle(item);
         _episodeTitleText.Text = episodeTitle ?? "";
         _episodeTitleText.Visibility = episodeTitle is null ? Visibility.Collapsed : Visibility.Visible;
-        _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, sortKey);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(_subtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (MediaItemCardActions.CardSubtitle(item, sortKey)) : _subtitleText.Text);
         SetTop(_subtitleText, _posterHeight + (episodeTitle is null ? 34 : 56));
         ApplyCardPresentation();
         UpdateOverlays(item);
@@ -329,7 +328,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     public void RefreshState()
     {
         if (MediaItem is not { } item) return;
-        _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, SortKey);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(_subtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (MediaItemCardActions.CardSubtitle(item, SortKey)) : _subtitleText.Text);
         ApplyCardPresentation();
         UpdateOverlays(item);
         UpdateQuickActionState(item);

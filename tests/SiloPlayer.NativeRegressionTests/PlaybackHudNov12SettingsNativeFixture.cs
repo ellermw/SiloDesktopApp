@@ -37,7 +37,7 @@ internal static class PlaybackHudNov12SettingsNativeFixture
         var settings = new SettingsService(directory);
         var theme = new ThemeService(settings, api);
         var vm = new SettingsViewModel(api, new CatalogApi(client), new AuthApi(client), new HistoryImportApi(client), new WatchProvidersApi(client), auth, theme, settings, new AccessibilityService(settings, theme));
-        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(api).AddSingleton(settings)
+        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(api).AddSingleton(settings).AddSingleton<PlaybackApi>()
             .AddSingleton(new AuthApi(client)).AddSingleton(vm).AddSingleton(new NavigationService()).AddSingleton(new ToastService())
             .AddSingleton(new CardOverlayService(api)).AddSingleton(new UICustomizationService(api))
             .AddSingleton(new SiloPlayer.Core.Localization.AppLanguagePreference(api))

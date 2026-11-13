@@ -1,3 +1,4 @@
+using SiloPlayer.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Media;
@@ -18,6 +19,7 @@ public sealed partial class HistoryPage : Page
     {
         ViewModel = App.Services.GetRequiredService<HistoryViewModel>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); QueueCardBuild(); UpdateSelectionState(); });
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         ViewModel.Items.CollectionChanged += (_, _) =>
@@ -110,9 +112,10 @@ public sealed partial class HistoryPage : Page
         if (hasItems)
         {
             int displayCount = ViewModel.SelectedTab == "all" ? ViewModel.TotalCount : count;
-            CountLabel.Text = isInProgress ? "IN PROGRESS" : "WATCHED";
-            ItemCountText.Text = displayCount.ToString();
-            ItemCountLabel.Text = displayCount == 1 ? "title" : "titles";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(CountLabel, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(isInProgress ? SiloPlayer.Core.Localization.AppStrings.Get("watchParty.whoSeen.inProgress", fallback: "IN PROGRESS") : SiloPlayer.Core.Localization.AppStrings.Get("web.common.overlays.watched", fallback: "WATCHED")));
+            MediaItemCardActions.BindText(ItemCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.titleCount", new Dictionary<string, object?> { ["count"] = displayCount, ["shown"] = (displayCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
+            ItemCountLabel.Text = "";
+            ItemCountLabel.Visibility = Visibility.Collapsed;
         }
 
         foreach (var item in ViewModel.Items)
@@ -319,7 +322,7 @@ public sealed partial class HistoryPage : Page
         });
         actionContent.Children.Add(new TextBlock
         {
-            Text = item.Completed ? "Watch Again" : "Resume",
+            Text = item.Completed ? "Watch Again" : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume"),
             FontSize = 13,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentForegroundBrush"]
@@ -451,11 +454,7 @@ public sealed partial class HistoryPage : Page
         if (selected.Count == 0) return;
 
         var isShow = selected.Count == 1 && selected[0].Type is "series" or "season";
-        var description = selected.Count > 1
-            ? $"{selected.Count} selected items will have their watch history, watched status, and resume progress cleared for this profile."
-            : isShow
-                ? "This clears the show's watch history, watched episodes, and resume progress for this profile."
-                : "This clears the item's watch history, watched status, and resume progress for this profile.";
+        string Description() => selected.Count > 1 ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.history.dialogBodySelected", new Dictionary<string, object?> { ["count"] = selected.Count, ["selected"] = selected.Count.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : isShow ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.history.dialogBodyShow") : SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.history.dialogBody");
         var error = new TextBlock
         {
             Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
@@ -463,7 +462,7 @@ public sealed partial class HistoryPage : Page
             TextWrapping = TextWrapping.Wrap,
             Visibility = Visibility.Collapsed,
         };
-        var dialog = new ContentDialog
+        var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = selected.Count > 1 ? "Remove selected watch data?" : isShow ? "Remove show watch data?" : "Remove watch data?",
@@ -472,7 +471,7 @@ public sealed partial class HistoryPage : Page
                 Spacing = 10,
                 Children =
                 {
-                    new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap },
+                    MediaItemCardActions.BindText(new TextBlock { TextWrapping = TextWrapping.Wrap }, "Text", element => element.Text = Description()),
                     error,
                 },
             },
@@ -480,7 +479,9 @@ public sealed partial class HistoryPage : Page
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close
-        };
+        }, closeButton: "common.cancel");
+        SiloPlayer.Services.Localized.SetTitle(dialog, selected.Count > 1 ? "web.catalog.history.dialogTitleSelected" : isShow ? "web.catalog.history.dialogTitleShow" : "web.catalog.history.dialogTitle");
+        MediaItemCardActions.BindText(dialog, "PrimaryButton", element => element.PrimaryButtonText = element.IsPrimaryButtonEnabled ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.removeConfirm") : "Removing...");
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true;
@@ -497,7 +498,7 @@ public sealed partial class HistoryPage : Page
             }
             catch (Exception ex)
             {
-                error.Text = ex.Message;
+                MediaItemCardActions.BindText(error, "Text", element => element.Text = ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message);
                 error.Visibility = Visibility.Visible;
                 dialog.PrimaryButtonText = "Remove";
                 dialog.IsPrimaryButtonEnabled = true;
@@ -550,8 +551,7 @@ public sealed partial class HistoryPage : Page
                     System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.CopyTo(bgra, bitmap.PixelBuffer);
                     bitmap.Invalidate();
 
-                    posterBorder.Child = new Image
-                    {
+                    posterBorder.Child = new Image { FlowDirection = FlowDirection.LeftToRight,
                         Source = bitmap,
                         Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill
                     };
@@ -575,8 +575,7 @@ public sealed partial class HistoryPage : Page
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            posterBorder.Child = new Image
-            {
+            posterBorder.Child = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill
             };

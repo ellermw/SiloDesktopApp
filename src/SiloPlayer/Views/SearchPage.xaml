@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.SearchPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
@@ -47,7 +48,7 @@
                 LineHeight="57"
                 Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center"
-                Margin="0,0,0,16" />
+                Margin="0,0,0,16"  loc:Localized.Text="web.search.label"/>
 
             <!-- Subtitle (web: page-subtitle mb-8 max-w-xl text-sm) -->
             <TextBlock
@@ -58,7 +59,7 @@
                 TextAlignment="Center"
                 TextWrapping="Wrap"
                 MaxWidth="576"
-                Margin="0,0,0,32" />
+                Margin="0,0,0,32"  loc:Localized.Text="web.catalog.page.searchSubtitle"/>
 
             <!-- This host only reserves the input's layout slot. SearchSurface
                  remains a child of SearchRoot for the page's entire lifetime. -->
@@ -69,9 +70,9 @@
                   HorizontalAlignment="Center" />
             <StackPanel x:Name="EmptyScopeChips" Orientation="Horizontal" Spacing="8"
                         HorizontalAlignment="Center" Visibility="Collapsed">
-                <Button x:Name="EmptyVideoScope" Content="Media" Tag="video" Click="Scope_Click" />
-                <Button x:Name="EmptyAudiobookScope" Content="Audiobooks" Tag="audiobook" Click="Scope_Click" />
-                <Button x:Name="EmptyAllScope" Content="All" Tag="all" Click="Scope_Click" />
+                <Button x:Name="EmptyVideoScope" Content="Media" Tag="video" Click="Scope_Click"  loc:Localized.Content="web.catalog.mediaType.media"/>
+                <Button x:Name="EmptyAudiobookScope" Content="Audiobooks" Tag="audiobook" Click="Scope_Click"  loc:Localized.Content="web.catalog.mediaType.audiobooks"/>
+                <Button x:Name="EmptyAllScope" Content="All" Tag="all" Click="Scope_Click"  loc:Localized.Content="web.catalog.mediaType.all"/>
             </StackPanel>
         </StackPanel>
 
@@ -100,7 +101,7 @@
                     Foreground="{StaticResource PrimaryTextBrush}" />
 
                 <TextBlock Text="Refine the archive by type, era, rating, or genre."
-                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.page.catalogSubtitle"/>
 
                 <!-- Inline result count (web style: "N results" next to header) -->
                 <StackPanel x:Name="ResultCountPanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
@@ -131,7 +132,7 @@
                     Padding="4"
                     CornerRadius="20"
                     Background="{StaticResource SurfaceBrush}"
-                    AutomationProperties.Name="Search scope">
+                    AutomationProperties.Name="Search scope" loc:Localized.Name="web.catalog.search.scopeLabel">
                 <StackPanel x:Name="ResultsScopePanel"
                             Orientation="Horizontal"
                             Spacing="4">
@@ -146,7 +147,7 @@
                             BorderThickness="0"
                             FontSize="14"
                             FontWeight="Medium"
-                            AutomationProperties.Name="Search media" />
+                            AutomationProperties.Name="Search media"  loc:Localized.Content="web.catalog.mediaType.media"/>
                     <Button x:Name="ResultsAudiobookScope"
                             Content="Audiobooks"
                             Tag="audiobook"
@@ -158,7 +159,7 @@
                             BorderThickness="0"
                             FontSize="14"
                             FontWeight="Medium"
-                            AutomationProperties.Name="Search audiobooks" />
+                            AutomationProperties.Name="Search audiobooks"  loc:Localized.Content="web.catalog.mediaType.audiobooks"/>
                     <Button x:Name="ResultsAllScope"
                             Content="All"
                             Tag="all"
@@ -170,7 +171,7 @@
                             BorderThickness="0"
                             FontSize="14"
                             FontWeight="Medium"
-                            AutomationProperties.Name="Search all media" />
+                            AutomationProperties.Name="Search all media"  loc:Localized.Content="web.catalog.mediaType.all"/>
                 </StackPanel>
             </Border>
 
@@ -178,48 +179,48 @@
                                 Margin="40,0,40,24" HorizontalSpacing="10" VerticalSpacing="10"
                                 HorizontalAlignment="Stretch">
                 <ComboBox x:Name="ResultTypeCombo" Width="180" SelectionChanged="ResultFilter_Changed">
-                    <ComboBoxItem Content="Movies &amp; Series" Tag="video" IsSelected="True" />
-                    <ComboBoxItem Content="Movies" Tag="movie" />
-                    <ComboBoxItem Content="Series" Tag="series" />
-                    <ComboBoxItem Content="Episodes" Tag="episode" />
-                    <ComboBoxItem Content="Audiobooks" Tag="audiobook" />
-                    <ComboBoxItem Content="Ebooks" Tag="ebook" />
-                    <ComboBoxItem Content="Manga" Tag="manga" />
-                    <ComboBoxItem Content="All Media" Tag="all" />
+                    <ComboBoxItem Content="Movies &amp; Series" Tag="video" IsSelected="True"  loc:Localized.Content="web.catalog.mediaType.moviesAndSeries"/>
+                    <ComboBoxItem Content="Movies" Tag="movie"  loc:Localized.Content="web.catalog.mediaType.movies"/>
+                    <ComboBoxItem Content="Series" Tag="series"  loc:Localized.Content="web.search.typeSeries"/>
+                    <ComboBoxItem Content="Episodes" Tag="episode"  loc:Localized.Content="web.catalog.mediaType.episodes"/>
+                    <ComboBoxItem Content="Audiobooks" Tag="audiobook"  loc:Localized.Content="web.catalog.mediaType.audiobooks"/>
+                    <ComboBoxItem Content="Ebooks" Tag="ebook"  loc:Localized.Content="web.catalog.mediaType.ebooks"/>
+                    <ComboBoxItem Content="Manga" Tag="manga"  loc:Localized.Content="web.search.typeManga"/>
+                    <ComboBoxItem Content="All Media" Tag="all"  loc:Localized.Content="web.catalog.mediaType.allMedia"/>
                 </ComboBox>
                 <ComboBox x:Name="ResultSortCombo" Width="180" SelectionChanged="ResultSort_Changed">
                     <ComboBoxItem Content="Relevance" Tag="relevance" />
-                    <ComboBoxItem Content="Date Added" Tag="added_at" IsSelected="True" />
-                    <ComboBoxItem Content="Title" Tag="title" />
-                    <ComboBoxItem Content="Release Date" Tag="release_date" />
-                    <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date" />
-                    <ComboBoxItem Content="Latest Episode Added" Tag="latest_episode_added" />
-                    <ComboBoxItem Content="Year" Tag="year" />
-                    <ComboBoxItem Content="Content Rating" Tag="content_rating" />
-                    <ComboBoxItem Content="Duration" Tag="runtime" />
-                    <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
-                    <ComboBoxItem Content="TMDB Rating" Tag="rating_tmdb" />
-                    <ComboBoxItem Content="RT Critic Rating" Tag="rating_rt_critic" />
-                    <ComboBoxItem Content="RT Audience Rating" Tag="rating_rt_audience" />
-                    <ComboBoxItem Content="Resolution" Tag="resolution" />
-                    <ComboBoxItem Content="Bitrate" Tag="bitrate" />
-                    <ComboBoxItem Content="Progress" Tag="progress" />
-                    <ComboBoxItem Content="Date Viewed" Tag="date_viewed" />
-                    <ComboBoxItem Content="Plays" Tag="plays" />
-                    <ComboBoxItem Content="Author" Tag="author" />
-                    <ComboBoxItem Content="Narrator" Tag="narrator" />
-                    <ComboBoxItem Content="Series" Tag="series" />
+                    <ComboBoxItem Content="Date Added" Tag="added_at" IsSelected="True"  loc:Localized.Content="catalog.sort.added"/>
+                    <ComboBoxItem Content="Title" Tag="title"  loc:Localized.Content="catalog.sort.title"/>
+                    <ComboBoxItem Content="Release Date" Tag="release_date"  loc:Localized.Content="catalog.sort.released"/>
+                    <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date"  loc:Localized.Content="web.common.sort.latestEpisodeAirDate"/>
+                    <ComboBoxItem Content="Latest Episode Added" Tag="latest_episode_added"  loc:Localized.Content="web.common.sort.latestEpisodeAdded"/>
+                    <ComboBoxItem Content="Year" Tag="year"  loc:Localized.Content="catalog.sort.year"/>
+                    <ComboBoxItem Content="Content Rating" Tag="content_rating"  loc:Localized.Content="web.common.sort.contentRating"/>
+                    <ComboBoxItem Content="Duration" Tag="runtime"  loc:Localized.Content="web.common.sort.duration"/>
+                    <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb"  loc:Localized.Content="catalog.sort.imdbRating"/>
+                    <ComboBoxItem Content="TMDB Rating" Tag="rating_tmdb"  loc:Localized.Content="web.common.sort.tmdbRating"/>
+                    <ComboBoxItem Content="RT Critic Rating" Tag="rating_rt_critic"  loc:Localized.Content="web.common.sort.rtCriticRating"/>
+                    <ComboBoxItem Content="RT Audience Rating" Tag="rating_rt_audience"  loc:Localized.Content="web.common.sort.rtAudienceRating"/>
+                    <ComboBoxItem Content="Resolution" Tag="resolution"  loc:Localized.Content="catalog.sort.resolution"/>
+                    <ComboBoxItem Content="Bitrate" Tag="bitrate"  loc:Localized.Content="web.common.sort.bitrate"/>
+                    <ComboBoxItem Content="Progress" Tag="progress"  loc:Localized.Content="web.common.sort.progress"/>
+                    <ComboBoxItem Content="Date Viewed" Tag="date_viewed"  loc:Localized.Content="web.common.sort.dateViewed"/>
+                    <ComboBoxItem Content="Plays" Tag="plays"  loc:Localized.Content="web.common.sort.plays"/>
+                    <ComboBoxItem Content="Author" Tag="author"  loc:Localized.Content="catalog.sort.author"/>
+                    <ComboBoxItem Content="Narrator" Tag="narrator"  loc:Localized.Content="catalog.sort.narrator"/>
+                    <ComboBoxItem Content="Series" Tag="series"  loc:Localized.Content="web.search.typeSeries"/>
                 </ComboBox>
                 <ComboBox x:Name="ResultOrderCombo" Width="140" SelectionChanged="ResultFilter_Changed">
-                    <ComboBoxItem Content="Descending" Tag="desc" IsSelected="True" />
-                    <ComboBoxItem Content="Ascending" Tag="asc" />
+                    <ComboBoxItem Content="Descending" Tag="desc" IsSelected="True"  loc:Localized.Content="web.catalog.sort.descending"/>
+                    <ComboBoxItem Content="Ascending" Tag="asc"  loc:Localized.Content="web.catalog.sort.ascending"/>
                 </ComboBox>
                 <Button x:Name="ResultFiltersButton"
                         Style="{StaticResource OutlineButtonStyle}"
                         Click="OpenResultFilters_Click">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE71C;" FontSize="14" />
-                        <TextBlock Text="Filters" />
+                        <TextBlock Text="Filters"  loc:Localized.Text="web.catalog.filters.heading"/>
                         <Border x:Name="ResultFiltersButtonCountBadge"
                                 Visibility="Collapsed"
                                 Padding="6,0"
@@ -268,8 +269,8 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel x:Name="BoxSetSearchSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,24" Spacing="12" AutomationProperties.Name="Box sets">
-                        <TextBlock Text="Box sets" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold" />
+                    <StackPanel x:Name="BoxSetSearchSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,24" Spacing="12" AutomationProperties.Name="Box sets" loc:Localized.Name="web.search.boxSets">
+                        <TextBlock Text="Box sets" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold"  loc:Localized.Text="web.search.boxSets"/>
                         <ItemsRepeater x:Name="BoxSetSearchRepeater" ElementPrepared="BoxSetSearch_Prepared">
                             <ItemsRepeater.Layout>
                                 <UniformGridLayout x:Name="BoxSetSearchGridLayout" MinItemWidth="178" MinItemHeight="310" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" />
@@ -282,14 +283,14 @@
                     <StackPanel x:Name="PeopleSection" Grid.Row="1" Visibility="Collapsed" Margin="0,0,0,24">
                         <StackPanel Visibility="{x:Bind ViewModel.PeopleError, Mode=OneWay, Converter={StaticResource NullToVis}}" Spacing="8">
                             <TextBlock Text="{x:Bind ViewModel.PeopleError, Mode=OneWay}" TextWrapping="Wrap" />
-                            <Button Content="Retry people" Click="RetryPeople_Click" HorizontalAlignment="Left" />
+                            <Button Content="Retry people" Click="RetryPeople_Click" HorizontalAlignment="Left" loc:Localized.Content="web.catalog.page.retryPeople" />
                         </StackPanel>
                         <TextBlock
                             Text="People"
                             FontSize="{StaticResource FontSizeTitle}"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
-                            Margin="0,0,0,12" />
+                            Margin="0,0,0,12"  loc:Localized.Text="web.search.people"/>
 
                         <ItemsRepeater x:Name="PeopleRepeater">
                             <ItemsRepeater.Layout>
@@ -376,9 +377,9 @@
                                 <ItemsRepeater.ItemTemplate><DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate></ItemsRepeater.ItemTemplate>
                             </ItemsRepeater>
                         <StackPanel x:Name="RequestPagingPanel" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
-                            <Button x:Name="RequestPreviousButton" Content="Previous" Click="RequestPrevious_Click" />
+                            <Button x:Name="RequestPreviousButton" Content="Previous" Click="RequestPrevious_Click"  loc:Localized.Content="web.requests.results.previous"/>
                             <TextBlock x:Name="RequestPageText" VerticalAlignment="Center" />
-                            <Button x:Name="RequestNextButton" Content="Next" Click="RequestNext_Click" />
+                            <Button x:Name="RequestNextButton" Content="Next" Click="RequestNext_Click"  loc:Localized.Content="web.requests.results.next"/>
                         </StackPanel>
                         <TextBlock x:Name="RequestErrorText" TextWrapping="Wrap" />
                         <Button Content="Retry request results" Click="RequestRetry_Click" Visibility="{x:Bind ViewModel.OutsideError, Mode=OneWay, Converter={StaticResource NullToVis}}" HorizontalAlignment="Center" />
@@ -413,7 +414,7 @@
                         Style="{StaticResource BodyTextStyle}"
                         HorizontalAlignment="Center"
                         Margin="0,8,0,8" />
-                        <Button Content="Retry search" Click="RetrySearch_Click" HorizontalAlignment="Center" />
+                        <Button Content="Retry search" Click="RetrySearch_Click" HorizontalAlignment="Center"  loc:Localized.Content="web.catalog.page.retrySearch"/>
                     </StackPanel>
 
                     <!-- No results -->
@@ -425,7 +426,7 @@
                         Foreground="{StaticResource SecondaryTextBrush}"
                         HorizontalAlignment="Center"
                         Margin="0,40,0,0"
-                        Visibility="Collapsed" />
+                        Visibility="Collapsed"  loc:Localized.Text="web.catalog.grid.noItems"/>
                 </Grid>
             </ScrollViewer>
 
@@ -490,11 +491,11 @@
                     Background="Transparent"
                     BorderThickness="0"
                     CornerRadius="22"
-                    Foreground="{StaticResource PrimaryTextBrush}" />
+                    Foreground="{StaticResource PrimaryTextBrush}"  loc:Localized.Placeholder="web.search.placeholderProminent"/>
             </Grid>
         </Border>
 
-        <controls:SlideSheet x:Name="ResultFiltersSheet" Title="Filters" Canvas.ZIndex="40">
+        <controls:SlideSheet x:Name="ResultFiltersSheet" Title="Filters" Canvas.ZIndex="40" TitleKey="web.catalog.filters.heading">
             <controls:SlideSheet.SheetContent>
                 <Grid RowDefinitions="*,Auto" RowSpacing="16">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -506,21 +507,21 @@
                                 <Button Content="Apply filters" Click="ApplyAdvancedSearch_Click" />
                             </StackPanel>
                             <StackPanel Visibility="Collapsed" x:Name="GuidedSearchFilters" Spacing="12">
-                            <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.builder.fieldGenre"/>
                             <ComboBox x:Name="ResultGenreCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
-                            <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.common.sort.contentRating"/>
                             <ComboBox x:Name="ResultRatingCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
-                            <TextBlock Text="Resolution" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Resolution" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="catalog.sort.resolution"/>
                             <ComboBox x:Name="ResultResolutionCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
-                            <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.country"/>
                             <ComboBox x:Name="ResultCountryCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                     <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{StaticResource BorderBrush}" Padding="0,16,0,0">
                         <Grid ColumnDefinitions="*,Auto">
-                            <Button Content="Clear All" Height="32" MinHeight="32" FontSize="14" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearResultFilters_Click" />
-                            <Button Grid.Column="1" Content="Done" Height="32" MinHeight="32" FontSize="14" Style="{StaticResource AccentButtonStyle}" Click="CloseResultFilters_Click" />
+                            <Button Content="Clear All" Height="32" MinHeight="32" FontSize="14" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearResultFilters_Click"  loc:Localized.Content="web.catalog.filters.clearAll"/>
+                            <Button Grid.Column="1" Content="Done" Height="32" MinHeight="32" FontSize="14" Style="{StaticResource AccentButtonStyle}" Click="CloseResultFilters_Click"  loc:Localized.Content="common.done"/>
                         </Grid>
                     </Border>
                 </Grid>

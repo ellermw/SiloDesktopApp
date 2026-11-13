@@ -6,7 +6,7 @@ using SiloPlayer.Core.Services;
 namespace SiloPlayer.Controls;
 
 /// <summary>The shared caption below detail grid and sibling-carousel stills.</summary>
-public sealed class EpisodeCardCaption : StackPanel
+public sealed partial class EpisodeCardCaption : StackPanel
 {
     public Grid WatchedIndicator { get; }
     public TextBlock TitleText { get; }
@@ -41,7 +41,7 @@ public sealed class EpisodeCardCaption : StackPanel
         titleRow.Children.Add(TitleText);
         WatchedIndicator = new Grid { Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Center,
             Visibility = watched ? Visibility.Visible : Visibility.Collapsed };
-        AutomationProperties.SetName(WatchedIndicator, "Watched");
+        SiloPlayer.Services.Localized.SetName(WatchedIndicator, "web.item.card.watched");
         WatchedIndicator.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Stroke = muted, StrokeThickness = 1.5 });
         WatchedIndicator.Children.Add(new FontIcon { Glyph = "\uE73E", FontSize = 8, Foreground = muted,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
@@ -59,13 +59,13 @@ public sealed class EpisodeCardCaption : StackPanel
         {
             var notice = new TextBlock { Text = "⚠ Damaged file", FontSize = 11,
                 Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed), VerticalAlignment = VerticalAlignment.Center };
-            ToolTipService.SetToolTip(notice, "Silo couldn't read this file. It appears to be empty or damaged.");
+            SiloPlayer.Services.Localized.SetToolTip(notice, "web.player.unreadableFile.title");
+            SiloPlayer.Services.Localized.SetText(notice, "web.player.unreadableFile.label");
             Grid.SetColumn(notice, 1); MetadataRow.Children.Add(notice);
         }
         _translationIndicator = WebUiIcon.Create("languages", 14, muted);
         _translationIndicator.Visibility = Presentation.ShowTranslation ? Visibility.Visible : Visibility.Collapsed;
-        ToolTipService.SetToolTip(_translationIndicator, "AI-translated overview");
-        AutomationProperties.SetName(_translationIndicator, "AI-translated overview");
+        MediaItemCardActions.Localize(_translationIndicator, toolTip: "web.detail.translation.machineTranslated", name: "web.detail.translation.machineTranslated");
         Grid.SetColumn(_translationIndicator, 2); MetadataRow.Children.Add(_translationIndicator);
         MetadataRow.Visibility = compactTv || Presentation.Metadata.Length == 0 &&
             !Presentation.ShowUnreadable && !Presentation.ShowTranslation ? Visibility.Collapsed : Visibility.Visible;
@@ -79,6 +79,7 @@ public sealed class EpisodeCardCaption : StackPanel
             Visibility = compactTv || Presentation.Overview.Length == 0 ? Visibility.Collapsed : Visibility.Visible,
         };
         Children.Add(OverviewText);
+        MediaItemCardActions.BindText(this, "Caption", _ => RefreshDisplay(episode, formattedAirDate));
     }
 
     public void UpdateState(Episode episode, string? formattedAirDate, bool hideOverview, bool compactTv, bool watched)
@@ -88,6 +89,7 @@ public sealed class EpisodeCardCaption : StackPanel
         OverviewText.Text = Presentation.Overview;
         OverviewText.Visibility = compactTv || Presentation.Overview.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         _translationIndicator.Visibility = Presentation.ShowTranslation ? Visibility.Visible : Visibility.Collapsed;
+        MediaItemCardActions.BindText(this, "Caption", _ => RefreshDisplay(episode, formattedAirDate));
         MetadataRow.Visibility = compactTv || Presentation.Metadata.Length == 0 &&
             !Presentation.ShowUnreadable && !Presentation.ShowTranslation ? Visibility.Collapsed : Visibility.Visible;
     }

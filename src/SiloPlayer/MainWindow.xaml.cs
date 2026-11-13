@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -603,12 +604,11 @@ public sealed partial class MainWindow : Window
             var series = _playerService.NextEpisodeSeriesTitle;
             var overview = _playerService.NextEpisodeOverview ?? "";
 
-            PlayingNextLabelText.Text = hasNextEpisode ? "PLAYING NEXT" : "FINISHED";
+            EnsurePlayingNextTextKeys();
+            PlayingNextLabelText.Text = PlayingNextLabel(hasNextEpisode);
             PlayingNextEpisodePanel.Visibility = hasNextEpisode ? Visibility.Visible : Visibility.Collapsed;
             PlayingNextFinishedPanel.Visibility = hasNextEpisode ? Visibility.Collapsed : Visibility.Visible;
-            PlayingNextFinishedHeading.Text = !string.IsNullOrWhiteSpace(_playerService.WatchDetail?.SeriesTitle)
-                ? $"You've finished {_playerService.WatchDetail.SeriesTitle}"
-                : "End of playback";
+            PlayingNextFinishedHeading.Text = PlayingNextFinishedHeadingText(_playerService.WatchDetail?.SeriesTitle);
 
             PlayingNextTitleText.Text = title;
             PlayingNextSeriesText.Text = series ?? "";
@@ -631,9 +631,8 @@ public sealed partial class MainWindow : Window
 
             var playbackHasEnded = videoEnded || _playerService.IsPostRollVideoEnded;
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextCountdownRing.Value = _playingNextRemaining;
-            PlayingNextPlayNowText.Text = "Play Now";
             UpdatePlayingNextAutoPlayVisuals();
 
             // The native mpv popup is an owned HWND above the WinUI content.
@@ -759,7 +758,7 @@ public sealed partial class MainWindow : Window
             if (!_playerService.CanAdvanceAutomatically)
             {
                 _playingNextRemaining = PlayingNextCountdownSeconds;
-                PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+                PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
                 PlayingNextCountdownRing.Value = _playingNextRemaining;
                 UpdatePlayingNextAutoPlayVisuals();
                 return;
@@ -776,7 +775,7 @@ public sealed partial class MainWindow : Window
             }
             return;
         }
-        PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+        PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
         PlayingNextCountdownRing.Value = _playingNextRemaining;
     }
 
@@ -810,7 +809,7 @@ public sealed partial class MainWindow : Window
         {
             StopPlayingNextCountdown();
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextCountdownRing.Value = _playingNextRemaining;
         }
         UpdatePlayingNextAutoPlayVisuals();
@@ -820,7 +819,7 @@ public sealed partial class MainWindow : Window
             _playingNextTimer == null)
         {
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextCountdownRing.Value = _playingNextRemaining;
             StartPlayingNextCountdown();
         }
@@ -842,7 +841,7 @@ public sealed partial class MainWindow : Window
 
         StopPlayingNextCountdown();
         _playingNextRemaining = PlayingNextCountdownSeconds;
-        PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+        PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
         PlayingNextCountdownRing.Value = _playingNextRemaining;
 
         if (PlayingNextCountdownAllowed &&
@@ -860,9 +859,7 @@ public sealed partial class MainWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         PlayingNextAutoplayToggle.Visibility = hasNextEpisode ? Visibility.Visible : Visibility.Collapsed;
-        PlayingNextAutoplayToggleText.Text = _playingNextAutoPlay
-            ? "Auto-play is on"
-            : "Auto-play is off";
+        PlayingNextAutoplayToggleText.Text = PlayingNextAutoplayText(_playingNextAutoPlay);
     }
 
     private async void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
@@ -1121,6 +1118,7 @@ public sealed partial class MainWindow : Window
     private void OnNavigated_UpdateWindowTitle(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         if (AppWindow == null) return;
+        _dynamicShellTitle = false;
         var pageType = e.SourcePageType;
         if (pageType == null)
         {
@@ -1178,6 +1176,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public void SetDynamicTitle(string label)
     {
+        _dynamicShellTitle = true;
         if (AppWindow != null)
             AppWindow.Title = DocumentTitle.FromLabel(label);
     }
@@ -1262,7 +1261,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (await NativeOAuthCallbacks.TryHandleAsync(callback)) return;
-            App.Services.GetRequiredService<ToastService>().Error("This sign-in attempt has expired. Start sign-in again from Silo.");
+            App.Services.GetRequiredService<ToastService>().Error(AppStrings.Get("web.auth.oauthFailure.sessionExpired", fallback: "This sign-in attempt has expired. Start sign-in again from Silo."));
             if (ContentFrame.Content == null && !_authService.IsLoggedIn)
                 _navigationService.Navigate<ServerSelectPage>();
         }
@@ -2605,6 +2604,8 @@ public sealed partial class MainWindow : Window
                     ProfileSwitchButton.Visibility = canSwitch ? Visibility.Visible : Visibility.Collapsed;
                     // Profile management remains available even when there is nobody to switch to.
                     SettingsSidebarProfile.IsEnabled = true;
+                    Localized.SetText(ProfileNameText, null);
+                    Localized.SetText(ProfileDropdownName, null);
                     ProfileNameText.Text = profile.Name;
                     ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
                         ? profile.Name[0].ToString().ToUpperInvariant()
@@ -3198,9 +3199,9 @@ public sealed partial class MainWindow : Window
         {
             (label, icon) = source.Destination switch
             {
-                "home" => ("Home", "house"),
-                "for_you" => ("For You", "sparkles"),
-                "calendar" => ("Calendar", "calendar-days"),
+                "home" => (AppStrings.Get("web.shell.sidebar.home"), "house"),
+                "for_you" => (AppStrings.Get("web.shell.sidebar.forYou"), "sparkles"),
+                "calendar" => (AppStrings.Get("web.shell.sidebar.calendar"), "calendar-days"),
                 // Global media-family routes are not available yet. Match the
                 // WebUI by omitting them instead of silently choosing a library.
                 _ => ("", ""),
@@ -3309,7 +3310,8 @@ public sealed partial class MainWindow : Window
         };
         Grid.SetColumn(unpinButton, 1);
         ToolTipService.SetToolTip(unpinButton, "Unpin");
-        AutomationProperties.SetName(unpinButton, $"Unpin {pin.Label}");
+        Localized.SetToolTip(unpinButton, "web.shell.sidebar.unpin");
+        AppLocalization.Register(unpinButton, () => AutomationProperties.SetName(unpinButton, AppStrings.Get("web.shell.sidebar.unpin") + " " + pin.Label));
         content.Children.Add(unpinButton);
 
         void ShowUnpin() => unpinButton.Opacity = 1;
@@ -3723,7 +3725,9 @@ public sealed partial class MainWindow : Window
         LibrariesChevron.Source = new Microsoft.UI.Xaml.Media.Imaging.SvgImageSource(new Uri($"ms-appx:///Assets/Icons/{(_librariesExpanded ? "chevron-down" : "chevron-right")}.svg"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(
             LibrariesHeader,
-            _librariesExpanded ? "Collapse libraries" : "Expand libraries");
+            AppStrings.Get(_librariesExpanded ? "web.shell.sidebar.collapse" : "web.shell.sidebar.expand",
+                new Dictionary<string, object?> { ["name"] = AppStrings.Get("web.shell.sidebar.libraries") },
+                _librariesExpanded ? "Collapse libraries" : "Expand libraries"));
         UpdateLibraryNavigationVisibility(isOpen: true);
     }
 
@@ -3805,25 +3809,16 @@ public sealed partial class MainWindow : Window
                         _navigationService.Navigate<NotificationsPage>();
                         break;
                     case "Favorites":
-                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                            "favorites",
-                            "Favorites",
-                            "Movies and shows you've marked as favorites."));
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation("favorites"));
                         break;
                     case "Watchlist":
-                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                            "watchlist",
-                            "Watchlist",
-                            "Things you've saved to watch later."));
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation("watchlist"));
                         break;
                     case "WatchParty":
                         _navigationService.Navigate<WatchTogetherJoinPage>();
                         break;
                     case "History":
-                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                            "history",
-                            "History",
-                            "Everything you've recently watched."));
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation("history"));
                         break;
                     case "Collections":
                         _navigationService.Navigate<CollectionsPage>();

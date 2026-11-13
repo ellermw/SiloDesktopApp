@@ -28,11 +28,11 @@ public sealed class RequestsCurrentParitySourceTests
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "RequestsPage.xaml.cs");
         var card = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");
         Assert.Contains("ExternalTitleCard.Build(result", page);
-        Assert.Contains("Open {item.Title} request details", card);
+        Assert.Contains("web.item.menu.viewDetails", card);
         Assert.Contains("action.Button.GotFocus", card);
-        Assert.Contains("StatusBadge(label, overlay: true)", card);
+        Assert.Contains("StatusBadge(label, overlay: true, display:", card);
         Assert.Contains("RequestViewerPolicy.Label", card);
-        Assert.Contains("Open {item.Title} in library", card);
+        Assert.Contains("web.requests.hub.openInLibraryFor", card);
         Assert.Contains("CanCancel(request)", page);
         Assert.Contains("Navigate<RequestDetailPage>(new RequestDetailNavigation(request.MediaType,request.TmdbId))", page);
     }

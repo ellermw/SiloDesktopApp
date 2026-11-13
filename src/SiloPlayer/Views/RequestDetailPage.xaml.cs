@@ -36,6 +36,15 @@ public sealed partial class RequestDetailPage : Page
     public RequestDetailPage()
     {
         InitializeComponent();
+        MediaItemCardActions.BindText(AutoRequestExplanation, "Explanation", element =>
+        {
+            var link = new Microsoft.UI.Xaml.Documents.Hyperlink();
+            link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.request.watchlistAlsoRequests") });
+            link.Click += RequestSettings_Click;
+            element.Inlines.Clear();
+            element.Inlines.Add(link);
+        });
+        SiloPlayer.Services.AppLocalization.Register(this, () => { if (_item is { } item) { BuildMetadata(item); BuildSeasons(item); } });
         foreach (var section in new[] { SeasonsSection, CastSection, RecommendationsSection })
         {
             var scroll = section.Children.OfType<ScrollViewer>().Single();
@@ -147,7 +156,7 @@ public sealed partial class RequestDetailPage : Page
     private void Render(RequestMediaDetail item)
     {
         TitleText.Text = item.Title;
-        ContextText.Text = item.MediaType == "series" ? "SERIES" : "MOVIE";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(ContextText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(item.MediaType == "series" ? SiloPlayer.Core.Localization.AppStrings.Get("web.requests.browse.series", fallback: "SERIES") : SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.movie", fallback: "MOVIE")));
         PosterFallback.Text = item.Title;
         TaglineText.Text = item.Tagline ?? "";
         TaglineText.Visibility = string.IsNullOrWhiteSpace(item.Tagline) ? Visibility.Collapsed : Visibility.Visible;
@@ -160,9 +169,9 @@ public sealed partial class RequestDetailPage : Page
         {
             ScorePanel.Children.Add(DisplayRatingEntry.Create(new SiloPlayer.Core.Models.Catalog.DisplayRating
                 { Source = "tmdb", Name = "TMDB", Score = item.VoteAverage.Value, Display = item.VoteAverage.Value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) }));
-            if (item.VoteCount is > 0) ScorePanel.Children.Add(new TextBlock { Text = $"{FormatVoteCount(item.VoteCount.Value)} votes", FontSize = 12, Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+            if (item.VoteCount is > 0) ScorePanel.Children.Add(MediaItemCardActions.BindText(new TextBlock { FontSize = 12, Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.tmdbVotes", new Dictionary<string, object?> { ["count"] = item.VoteCount.Value, ["count_text"] = (item.VoteCount.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })));
         }
-        CrewText.Text = BuildCrew(item);
+        MediaItemCardActions.BindText(CrewText, "Text", element => element.Text = BuildCrew(item));
         ScorePanel.Visibility = ScorePanel.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         CrewText.Visibility = string.IsNullOrWhiteSpace(CrewText.Text) ? Visibility.Collapsed : Visibility.Visible;
         SetImage(BackdropImage, Tmdb(item.BackdropPath, "original"));
@@ -180,11 +189,13 @@ public sealed partial class RequestDetailPage : Page
     {
         MetadataPanel.Children.Clear();
         var values = new List<string>();
-        if (item.Year is > 0) values.Add(item.Year.Value.ToString());
+        if (item.Year is > 0) values.Add(item.Year.Value.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture));
         if (!string.IsNullOrWhiteSpace(item.ContentRating)) values.Add(item.ContentRating);
         if (item.MediaType == "movie" && item.Runtime is > 0) values.Add(FormatDuration(item.Runtime.Value));
-        if (item.MediaType == "series" && item.NumberOfSeasons is > 0) values.Add($"{item.NumberOfSeasons} season{(item.NumberOfSeasons == 1 ? "" : "s")}");
-        if (item.MediaType == "series" && item.NumberOfEpisodes is > 0) values.Add($"{item.NumberOfEpisodes} episode{(item.NumberOfEpisodes == 1 ? "" : "s")}");
+        if (item.MediaType == "series" && item.NumberOfSeasons is > 0) values.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons",
+            new Dictionary<string, object?> { ["count"] = item.NumberOfSeasons.Value, ["count_text"] = item.NumberOfSeasons.Value.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
+        if (item.MediaType == "series" && item.NumberOfEpisodes is > 0) values.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes",
+            new Dictionary<string, object?> { ["count"] = item.NumberOfEpisodes.Value, ["count_text"] = item.NumberOfEpisodes.Value.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
         if (item.MediaType == "series" && !string.IsNullOrWhiteSpace(item.Status)) values.Add(item.Status);
         foreach (var value in values)
             MetadataPanel.Children.Add(RoundedBadge.Apply(new Border
@@ -203,10 +214,10 @@ public sealed partial class RequestDetailPage : Page
         LinksPanel.Children.Clear(); DownloadProgressHost.Children.Clear();
         if (item.Request.Requestable)
         {
-            var button = SecondaryAction("request", $"Request {(item.MediaType == "series" ? "series" : "movie")}", "plus");
+            var button = SecondaryAction("request", $"Request {(item.MediaType == "series" ? "series" : "movie")}", "plus", display: () => SiloPlayer.Core.Localization.AppStrings.Get(item.MediaType == "series" ? "web.detail.request.requestSeries" : "web.detail.request.requestMovie"));
             StylePrimaryAction(button);
             button.Background = Brush("AccentBrush"); button.Foreground = Brush("AccentForegroundBrush"); button.BorderThickness = new Thickness(0);
-            AutomationProperties.SetName(button, $"Request {(item.MediaType == "series" ? "series" : "movie")}");
+            MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, item.MediaType == "series" ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.request.requestSeries") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.request.requestMovie")));
             button.Click += Request_Click;
             ActionsPanel.Children.Add(button);
         }
@@ -215,7 +226,7 @@ public sealed partial class RequestDetailPage : Page
             ActionsPanel.Children.Add(StatusPill("✓  Already in your library", "emerald"));
             if (!string.IsNullOrWhiteSpace(_libraryLink))
             {
-                var open = new Button { Content = "Open in library", Tag = _libraryLink, CornerRadius = new CornerRadius(22), Padding = new Thickness(18, 10, 18, 10) };
+                var open = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Open in library", Tag = _libraryLink, CornerRadius = new CornerRadius(22), Padding = new Thickness(18, 10, 18, 10) }, content: "web.requests.hub.openInLibrary");
                 open.Click += OpenLibrary_Click;
                 ActionsPanel.Children.Add(open);
             }
@@ -225,7 +236,7 @@ public sealed partial class RequestDetailPage : Page
             var label = !string.IsNullOrWhiteSpace(item.Request.Status) || !string.IsNullOrWhiteSpace(item.Request.State)
                 ? RequestViewerPolicy.Label(item.Request.Status, null, item.Request.State)
                 : Reason(item.Request.Reason);
-            var status = SecondaryAction("request-state", label, item.Request.State == "processing" || item.Request.Status is "queued" or "downloading" ? "hourglass" : "clock");
+            var status = SecondaryAction("request-state", label, item.Request.State == "processing" || item.Request.Status is "queued" or "downloading" ? "hourglass" : "clock", display: () => !string.IsNullOrWhiteSpace(item.Request.Status) || !string.IsNullOrWhiteSpace(item.Request.State) ? MediaItemCardActions.RequestStatus(item.Request.Status, state: item.Request.State) : MediaItemCardActions.RequestReason(item.Request.Reason));
             StylePrimaryAction(status);
             status.Background = Brush("AccentBrush"); status.Foreground = Brush("AccentForegroundBrush"); status.BorderThickness = new Thickness(0);
             status.IsEnabled = false; ActionsPanel.Children.Add(status);
@@ -233,28 +244,28 @@ public sealed partial class RequestDetailPage : Page
 
         if (!string.IsNullOrWhiteSpace(_libraryLink) && !ActionsPanel.Children.OfType<Button>().Any(b => b.Tag is string id && id == _libraryLink))
         {
-            var open = new Button { Content = "Open in library", Tag = _libraryLink, CornerRadius = new CornerRadius(22) };
+            var open = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Open in library", Tag = _libraryLink, CornerRadius = new CornerRadius(22) }, content: "web.requests.hub.openInLibrary");
             open.Click += OpenLibrary_Click;
             ActionsPanel.Children.Add(open);
         }
         if (RequestViewerPolicy.CanFollow(_features, item.Request))
         {
-            var follow = SecondaryAction("follow", item.Request.Following == true ? "Stop notifying me" : "Notify me when available", item.Request.Following == true ? "bell-off" : "bell", item.Request.Following == true);
+            var follow = SecondaryAction("follow", item.Request.Following == true ? "Stop notifying me" : "Notify me when available", item.Request.Following == true ? "bell-off" : "bell", item.Request.Following == true, () => SiloPlayer.Core.Localization.AppStrings.Get(item.Request.Following == true ? "web.detail.request.stopNotifying" : "web.detail.request.notifyWhenAvailable"));
             follow.Click += Follow_Click;
             ActionsPanel.Children.Add(follow);
         }
         if (_features.WatchlistTitlesSupported)
         {
-            var watchlist = SecondaryAction("watchlist", item.InWatchlist == true ? "On Watchlist" : "Add to Watchlist", item.InWatchlist == true ? "bookmark-check" : "bookmark", item.InWatchlist == true);
+            var watchlist = SecondaryAction("watchlist", item.InWatchlist == true ? "On Watchlist" : "Add to Watchlist", item.InWatchlist == true ? "bookmark-check" : "bookmark", item.InWatchlist == true, () => SiloPlayer.Core.Localization.AppStrings.Get(item.InWatchlist == true ? "web.detail.request.onWatchlist" : "web.requests.card.addToWatchlist"));
             watchlist.Click += Watchlist_Click;
             if (item.InWatchlist != true && _features.WatchlistRequests && item.Request.Requestable && item.Availability != "available")
-                ToolTipService.SetToolTip(watchlist, "Adding this title also requests it. You can change this in Settings.");
+                MediaItemCardActions.Localize(watchlist, toolTip: "web.detail.request.watchlistAlsoRequests");
             ActionsPanel.Children.Add(watchlist);
         }
         if (item.Request.RequestedByViewer == true && !string.IsNullOrWhiteSpace(item.Request.RequestId))
             _ = AddCancelActionAsync(item);
 
-        DownloadText.Text = RequestViewerPolicy.DownloadLabel(item.Request.Download);
+        MediaItemCardActions.BindText(DownloadText, "Text", target => target.Text = MediaItemCardActions.DownloadLabel(item.Request.Download));
         DownloadText.Visibility = Visibility.Collapsed;
         if (item.Request.Download != null) DownloadProgressHost.Children.Add(RequestDownloadProgress.Build(item.Request.Download, 320));
         DownloadProgressHost.Visibility = DownloadProgressHost.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -272,15 +283,25 @@ public sealed partial class RequestDetailPage : Page
         button.IsEnabled = false;
         button.Content = new ProgressRing { IsActive = true, Width = 18, Height = 18 };
     }
-    private static Button SecondaryAction(string id, string label, string icon, bool active = false)
+    private static Button SecondaryAction(string id, string label, string icon, bool active = false, Func<string>? display = null)
     {
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var glyph = WebUiIcon.Create(icon, 18);
         glyph.Tag = icon;
         content.Children.Add(glyph);
-        content.Children.Add(new TextBlock { Text = label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+        var labelText = new TextBlock { Text = label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+        content.Children.Add(labelText);
         var button = new Button { Tag = id, Content = content, Height = 44, MinWidth = 0, MinHeight = 0, Padding = new Thickness(12, 0, 12, 0), CornerRadius = new CornerRadius(22), Background = Brush(active ? "SurfaceRaisedBrush" : "SurfaceBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) };
-        AutomationProperties.SetName(button, label); AutomationProperties.SetAutomationId(button, id); AutomationProperties.SetHelpText(button, active ? "On" : "Off"); ToolTipService.SetToolTip(button, label); return button;
+        AutomationProperties.SetAutomationId(button, id);
+        MediaItemCardActions.BindText(button, "Label", target =>
+        {
+            var text = display?.Invoke() ?? label;
+            labelText.Text = text;
+            AutomationProperties.SetName(target, text);
+            AutomationProperties.SetHelpText(target, active ? "On" : "Off");
+            ToolTipService.SetToolTip(target, text);
+        });
+        return button;
     }
     private void RequestSettings_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().Navigate<SettingsPage>("requests");
 
@@ -310,12 +331,12 @@ public sealed partial class RequestDetailPage : Page
             var request = await _api.GetAsync(item.Request.RequestId, _lifetime.Token);
             if (_item != item || _lifetime.IsCancellationRequested || !RequestViewerPolicy.CanCancel(request)) return;
             var requestId = request.Id;
-            var cancel = SecondaryAction("cancel", "Cancel request", "x");
+            var cancel = SecondaryAction("cancel", "Cancel request", "x", display: () => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.cancel.action"));
             cancel.Click += async (_, _) =>
             {
                 if (_requestConfirmationOpen || _lifetime.IsCancellationRequested) return;
                 var owner = _api.CaptureIdentityContext();
-                var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "Cancel this request?", Content = $"Cancel your request for {item.Title}?", PrimaryButtonText = "Cancel request", CloseButtonText = "Keep request", DefaultButton = ContentDialogButton.Close };
+                var confirmation = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog { XamlRoot = XamlRoot, Title = "Cancel this request?", Content = $"Cancel your request for {item.Title}?", PrimaryButtonText = "Cancel request", CloseButtonText = "Keep request", DefaultButton = ContentDialogButton.Close }, title: "web.requests.cancel.title", primaryButton: "web.requests.cancel.action", closeButton: "web.requests.cancel.keep");
                 ContentDialogResult choice;
                 _requestConfirmationOpen = true;
                 try { choice = await confirmation.ShowAsync(); }
@@ -340,12 +361,12 @@ public sealed partial class RequestDetailPage : Page
                     await _api.CancelAsync(requestId, owner);
                     // A page replaced meanwhile cannot show the outcome: report it and reread the one mounted in its place.
                     if (!_lifetime.IsCancellationRequested || Abandoned()) return;
-                    toast.Success("Request cancelled");
+                    toast.Success(SiloPlayer.Core.Localization.AppStrings.Get("web.common.requests.toast.cancelled", fallback: "Request cancelled"));
                     _ = Successor()?.RefreshRequestAsync();
                 }
                 if (!_lifetime.IsCancellationRequested) { await MutateAsync(cancel, SubmitAsync); return; }
                 try { await SubmitAsync(); }
-                catch (Exception ex) { if (!Abandoned()) toast.Error(ex); }
+                catch (Exception ex) { if (!Abandoned()) toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
             };
             ApplyPendingAction(cancel); ActionsPanel.Children.Add(cancel);
         }
@@ -395,7 +416,7 @@ public sealed partial class RequestDetailPage : Page
             BuildActions(_item); BuildSeasons(_item);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
         finally
         {
             _pendingActions.Remove(actionId); button.IsEnabled = true; button.Content = original;
@@ -432,21 +453,21 @@ public sealed partial class RequestDetailPage : Page
     private void BuildSeasons(RequestMediaDetail item)
     {
         SeasonsPanel.Children.Clear();
-        SeasonsCountText.Text = $"{item.Seasons?.Count ?? 0} total";
+        SeasonsCountText.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.totalCount", new Dictionary<string, object?> { ["count"] = item.Seasons?.Count ?? 0 });
         SeasonsPanel.Spacing = 16;
         foreach (var season in item.Seasons ?? [])
         {
-            var state = RequestSeasonPickerState.Status(season, DateOnly.FromDateTime(DateTime.UtcNow));
+            var state = MediaItemCardActions.SeasonStatus(season, DateOnly.FromDateTime(DateTime.UtcNow));
             var card = new StackPanel { Width = 170, Spacing = 6 };
-            var image = new Image { Width = 170, Height = 255, Stretch = Stretch.UniformToFill };
+            var image = new Image { FlowDirection = FlowDirection.LeftToRight, Width = 170, Height = 255, Stretch = Stretch.UniformToFill };
             SetImage(image, Tmdb(season.PosterPath, "w342"));
             var poster = new Grid { Width = 170, Height = 255 };
-            poster.Children.Add(new TextBlock { Text = $"Season {season.SeasonNumber}", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
+            poster.Children.Add(new TextBlock { Text = MediaItemCardActions.SeasonName(season), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
             poster.Children.Add(image);
             card.Children.Add(new Border { CornerRadius = new CornerRadius(12), Background = Brush("SurfaceRaisedBrush"), Child = poster });
-            card.Children.Add(new TextBlock { Text = season.Name ?? $"Season {season.SeasonNumber}", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+            card.Children.Add(new TextBlock { Text = season.Name ?? MediaItemCardActions.SeasonName(season), FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
             var meta = new[] { season.AirDate is { Length: >= 4 } airDate ? airDate[..4] : null, season.EpisodeCount > 0 ? $"{season.EpisodeCount} episode{(season.EpisodeCount == 1 ? "" : "s")}" : null }.Where(s => s != null);
-            card.Children.Add(new TextBlock { Text = string.Join(" · ", meta) is { Length: > 0 } info ? info : "Not announced", FontSize = 12, Opacity = 0.65 });
+            card.Children.Add(new TextBlock { Text = MediaItemCardActions.SeasonMeta(season), FontSize = 12, Opacity = 0.65 });
             if (state != null) card.Children.Add(new TextBlock { Text = state, FontSize = 12, Opacity = 0.75 });
             SeasonsPanel.Children.Add(card);
         }
@@ -465,7 +486,7 @@ public sealed partial class RequestDetailPage : Page
             {
                 if (await Dialogs.RequestSeasonsDialog.PickAsync(XamlRoot, item, seasons => SubmitRequestAsync(item, seasons)) == null) return;
             }
-            else { button.Content = "Sending…"; await SubmitRequestAsync(item, null); }
+            else { SiloPlayer.Controls.MediaItemCardActions.BindText(button, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.sending", fallback: "Sending…")); await SubmitRequestAsync(item, null); }
             var fresh = await _api.GetDetailAsync(item.MediaType, item.TmdbId, _lifetime.Token);
             if (_lifetime.IsCancellationRequested || !_downloadRefreshClient.IsCurrentContext(context)) return;
             _item = fresh;
@@ -475,7 +496,7 @@ public sealed partial class RequestDetailPage : Page
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Request failed: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Request failed: {ex.Message}"));
         }
         finally
         {
@@ -492,7 +513,7 @@ public sealed partial class RequestDetailPage : Page
         foreach (var member in cast.Take(20))
         {
             var panel = new StackPanel { Width = 112, Spacing = 5 };
-            var image = new Image { Width = 112, Height = 168, Stretch = Stretch.UniformToFill };
+            var image = new Image { FlowDirection = FlowDirection.LeftToRight, Width = 112, Height = 168, Stretch = Stretch.UniformToFill };
             SetImage(image, Tmdb(member.ProfilePath, "w185"));
             panel.Children.Add(new Border { CornerRadius = new CornerRadius(7), Background = Brush("SurfaceRaisedBrush"), Child = image });
             panel.Children.Add(new TextBlock { Text = member.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 12, TextWrapping = TextWrapping.Wrap });
@@ -551,7 +572,7 @@ public sealed partial class RequestDetailPage : Page
     private void Fail(string text) { DetailSkeleton.Visibility = Visibility.Collapsed; LoadingText.Text = text; LoadingText.Visibility = Visibility.Visible; }
 
     private static Border StatusPill(string text, string tone)
-        => ExternalTitleCard.StatusBadge(text);
+        => ExternalTitleCard.StatusBadge(text, display: () => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.request.inLibrary", fallback: text));
 
     private Button ExternalLinkButton(string label, string url)
     {
@@ -572,14 +593,14 @@ public sealed partial class RequestDetailPage : Page
     {
         var parts = new List<string>();
         if (item.MediaType == "series" && item.Creators?.Count > 0) parts.Add($"Created by {string.Join(", ", item.Creators)}");
-        else if (!string.IsNullOrWhiteSpace(item.Director)) parts.Add($"Directed by {item.Director}");
+        else if (!string.IsNullOrWhiteSpace(item.Director)) parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.directedBy") + " " + item.Director);
         parts.AddRange((item.Genres ?? []).Take(4));
         return string.Join("  ·  ", parts);
     }
-    private static string FormatDuration(int minutes) => minutes >= 60 ? $"{minutes / 60}h{(minutes % 60 == 0 ? "" : $" {minutes % 60}m")}" : $"{minutes}m";
+    private static string FormatDuration(int minutes) => MediaItemCardActions.Runtime(minutes);
     private static string FormatVoteCount(int count) => count >= 1000 ? $"{count / 1000d:0.0}k" : count.ToString();
     private static string Format(string value) => string.IsNullOrWhiteSpace(value) ? "Requested" : char.ToUpperInvariant(value[0]) + value[1..];
-    private static string Reason(string value) => value switch { "already_requested" => "Already requested", "already_available" => "Available", "requests_disabled" => "Requests disabled", "quota_exceeded" => "Limit reached", "blocked" => "Blocked", _ => "Unavailable" };
+    private static string Reason(string value) => MediaItemCardActions.RequestReason(value);
     private static string? Tmdb(string? path, string size) => string.IsNullOrWhiteSpace(path) ? null : $"https://image.tmdb.org/t/p/{size}{path}";
     private static void SetImage(FrameworkElement image, string? url)
     {

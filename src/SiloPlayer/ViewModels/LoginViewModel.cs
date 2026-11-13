@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -29,11 +30,11 @@ public partial class LoginViewModel : ObservableObject
     public LoginNavigationRequest? NavigationRequest { get; set; }
     [ObservableProperty] private bool _sessionRestoreUnavailable;
     public string SessionRestoreMessage => NavigationRequest?.SessionRestoreErrorCode == "provider_unavailable"
-        ? "Can't reach the sign-in provider right now." : "Can't restore your session right now.";
+        ? AppStrings.Get("web.auth.login.restoreProviderUnavailable") : AppStrings.Get("web.auth.login.restoreUnavailable");
     public bool ShowEndedSession => NavigationRequest is { SignedOut: true } or { SessionEnded: true };
-    public string EndedSessionTitle => NavigationRequest is { SignedOut: true } ? "You're signed out" : "Your session ended";
+    public string EndedSessionTitle => NavigationRequest is { SignedOut: true } ? AppStrings.Get("web.auth.login.signedOutTitle", fallback: "You're signed out") : AppStrings.Get("web.auth.login.sessionEndedTitle", fallback: "Your session ended");
     public string EndedSessionMessage => NavigationRequest is { SignedOut: true }
-        ? "Sign in again whenever you're ready." : "This sign-in expired or was signed out. Sign in again to continue.";
+        ? AppStrings.Get("web.auth.login.signedOutBody", fallback: "Sign in again whenever you're ready.") : AppStrings.Get("web.auth.login.sessionEndedBody", fallback: "This sign-in expired or was signed out. Sign in again to continue.");
     public void SetNavigationRequest(LoginNavigationRequest? request)
     {
         NavigationRequest = request; SessionRestoreUnavailable = request?.SessionRestoreUnavailable == true;
@@ -64,6 +65,7 @@ public partial class LoginViewModel : ObservableObject
         _authApi = authApi;
         _settingsApi = settingsApi;
         _apiClient = apiClient;
+        LoginSubtitle = ShellText(nameof(LoginSubtitle), () => AppStrings.Get("web.auth.loginSubtitle.default"));
     }
 
     [ObservableProperty]
@@ -85,7 +87,7 @@ public partial class LoginViewModel : ObservableObject
     private string _serverName = "";
 
     [ObservableProperty]
-    private string _loginSubtitle = "Sign in with an existing account.";
+    private string _loginSubtitle = AppStrings.Get("web.auth.loginSubtitle.default", fallback: "Sign in with an existing account.");
 
     [ObservableProperty]
     private string? _loginBackgroundUrl;
@@ -186,16 +188,16 @@ public partial class LoginViewModel : ObservableObject
             if (!CurrentAuthInfo(generation, context, ct)) return;
             if (!string.IsNullOrWhiteSpace(branding.ServerName))
                 ServerName = branding.ServerName;
-            LoginSubtitle = string.IsNullOrWhiteSpace(branding.LoginSubtitle)
-                ? "Sign in with an existing account."
-                : branding.LoginSubtitle;
+            LoginSubtitle = ShellText(nameof(LoginSubtitle), () => string.IsNullOrWhiteSpace(branding.LoginSubtitle)
+                ? AppStrings.Get("web.auth.loginSubtitle.default", fallback: "Sign in with an existing account.")
+                : branding.LoginSubtitle);
             LoginBackgroundUrl = _apiClient.ResolveServerUrl(branding.LoginBackgroundUrl);
         }
         catch
         {
             if (!CurrentAuthInfo(generation, context, ct)) return;
             if (string.IsNullOrWhiteSpace(ServerName)) ServerName = "Silo";
-            LoginSubtitle = "Sign in with an existing account.";
+            LoginSubtitle = ShellText(nameof(LoginSubtitle), () => AppStrings.Get("web.auth.loginSubtitle.default", fallback: "Sign in with an existing account."));
             LoginBackgroundUrl = null;
         }
     }
@@ -276,14 +278,14 @@ public partial class LoginViewModel : ObservableObject
             _authService.SessionGeneration != _oauthGeneration || !attempt.TryConsumeCallback(uri, out var callback)) return false;
         try
         {
-            if (callback.Error.Length != 0) { ErrorMessage = ExternalSignInErrors.Describe(callback.Error); return true; }
+            if (callback.Error.Length != 0) { ErrorMessage = ShellText(nameof(ErrorMessage), () => ExternalSignInText(callback.Error)); return true; }
             var tokens = await _authApi.CompleteNativeOAuthAsync(attempt.ServerBase, callback.Code, attempt.CodeVerifier);
             var user = await _authApi.GetMeAsync(attempt.ServerBase, tokens.AccessToken);
             if (!ReferenceEquals(_oauthAttempt, attempt) || !_apiClient.IsCurrentContext(context.Value)) return true;
             var response = new LoginResponse { AccessToken = tokens.AccessToken, RefreshToken = tokens.RefreshToken, ExpiresIn = tokens.ExpiresIn, User = user };
             if (_authService.CompleteRecoveryLogin(response, _oauthGeneration, context.Value.BaseUrl)) LoginSucceeded?.Invoke();
         }
-        catch (Exception ex) { if (ReferenceEquals(_oauthAttempt, attempt) && _apiClient.IsCurrentContext(context.Value)) ErrorMessage = ex is ApiException api ? ExternalSignInErrors.Describe(api.ErrorCode) : "Sign-in with the provider failed. Try again."; }
+        catch (Exception ex) { if (ReferenceEquals(_oauthAttempt, attempt) && _apiClient.IsCurrentContext(context.Value)) ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is ApiException api ? ExternalSignInText(api.ErrorCode) : AppStrings.Get("web.auth.oauthFailure.fallback"))); }
         finally { if (ReferenceEquals(_oauthAttempt, attempt)) CancelOAuth(); }
         return true;
     }
@@ -319,9 +321,9 @@ public partial class LoginViewModel : ObservableObject
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (Current()) ErrorMessage = ex is ApiException problem
-                ? problem.StatusCode == 429 ? "Too many attempts. Wait a minute and try again." : ExternalSignInErrors.DescribeNetwork(problem.ErrorCode, provider.DisplayName)
-                : "Couldn't reach the server. Try again.";
+            if (Current()) ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is ApiException problem
+                ? problem.StatusCode == 429 ? AppStrings.Get("error.rate_limited") : NetworkSignInText(problem.ErrorCode, provider.DisplayName)
+                : "Couldn't reach the server. Try again."));
         }
         finally
         {
@@ -358,7 +360,7 @@ public partial class LoginViewModel : ObservableObject
             }
             DeviceSession = session;
             ShowDeviceFallback = false;
-            DeviceStatusMessage = "Waiting for approval on your phone...";
+            DeviceStatusMessage = ShellText(nameof(DeviceStatusMessage), () => AppStrings.Get("web.auth.login.device.waiting", fallback: "Waiting for approval on your phone..."));
             // Sign-in still works unbound, but the server does not tie it to this setup.
             DeviceBindingNotice = setup.Binding == DeviceLoginBinding.Bound ? null
                 : "This server doesn't support setup binding, so this sign-in isn't tied to this app. Approve only if your phone shows the code above.";
@@ -376,9 +378,9 @@ public partial class LoginViewModel : ObservableObject
             var current = _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration;
             CancelDeviceLogin(clearSession: true);
             // Retrying cannot help when the server refuses the bound setup itself.
-            if (current) ErrorMessage = ex is ApiException { ErrorCode: "device_binding_rejected" }
+            if (current) ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is ApiException { ErrorCode: "device_binding_rejected" }
                 ? "This server did not accept phone sign-in from this app. Sign in another way, or update the app and server."
-                : "Couldn't start phone sign-in. Try again.";
+                : "Couldn't start phone sign-in. Try again."));
         }
         finally
         {
@@ -456,21 +458,21 @@ public partial class LoginViewModel : ObservableObject
                     { CancelDeviceLogin(clearSession: true); return; }
                     _deviceCompleted = true;
 
-                    DeviceStatusMessage = "Signed in. Loading profiles...";
+                    DeviceStatusMessage = ShellText(nameof(DeviceStatusMessage), () => AppStrings.Get("web.auth.login.device.signedIn", fallback: "Signed in. Loading profiles..."));
                     LoginSucceeded?.Invoke();
                     return;
                 }
 
                 if (result.Status is "denied" or "expired" or "consumed" or "canceled")
                 {
-                    var message = result.Status == "denied"
-                        ? "Approval was denied. Start a new code to try again."
-                        : "This code is no longer valid. Start a new one.";
-                    _deviceCompleted = true; DeviceSession = null; DeviceQrImage = null; ErrorMessage = message;
+                    _deviceCompleted = true; DeviceSession = null; DeviceQrImage = null;
+                    ErrorMessage = ShellText(nameof(ErrorMessage), () => result.Status == "denied"
+                        ? AppStrings.Get("web.auth.login.device.denied", fallback: "Approval was denied. Start a new code to try again.")
+                        : AppStrings.Get("web.auth.login.device.invalid", fallback: "This code is no longer valid. Start a new one."));
                     return;
                 }
 
-                DeviceStatusMessage = result.Status == "opened" ? "Continue on your phone." : "Waiting for approval on your phone...";
+                DeviceStatusMessage = ShellText(nameof(DeviceStatusMessage), () => result.Status == "opened" ? AppStrings.Get("web.auth.login.device.continueOnPhone", fallback: "Continue on your phone.") : AppStrings.Get("web.auth.login.device.waiting", fallback: "Waiting for approval on your phone..."));
                 // Like the SiloCast handoff, a poll_after hint replaces the start interval.
                 wait = result.PollAfter > 0 ? TimeSpan.FromSeconds(Math.Min(result.PollAfter, maxWaitSeconds)) : interval;
                 await Task.Delay(wait, ct);
@@ -483,9 +485,9 @@ public partial class LoginViewModel : ObservableObject
             {
                 var current = _apiClient.IsCurrentContext(context) && authGeneration == _authService.SessionGeneration;
                 CancelDeviceLogin(clearSession: true);
-                if (current) ErrorMessage = ex is ApiException { ErrorCode: "device_binding_mismatch" }
+                if (current) ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is ApiException { ErrorCode: "device_binding_mismatch" }
                     ? "Phone sign-in could not verify this setup. Start a new code to try again."
-                    : "Phone sign-in failed. Start a new code to try again.";
+                    : "Phone sign-in failed. Start a new code to try again."));
             }
         }
         finally
@@ -543,7 +545,7 @@ public partial class LoginViewModel : ObservableObject
         {
             if (authGeneration.HasValue)
                 _authService.AbortAuthenticationAttempt(authGeneration.Value);
-            ErrorMessage = $"OAuth sign-in failed: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, $"OAuth sign-in failed: {ex.Message}"));
             throw;
         }
         finally
@@ -571,12 +573,12 @@ public partial class LoginViewModel : ObservableObject
         if (!CanStartAuthentication || !ShowPasswordForm) return;
         if (string.IsNullOrWhiteSpace(Username))
         {
-            ErrorMessage = "Username is required.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Username is required.");
             return;
         }
         if (string.IsNullOrWhiteSpace(Password))
         {
-            ErrorMessage = "Password is required.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Password is required.");
             return;
         }
 
@@ -592,24 +594,24 @@ public partial class LoginViewModel : ObservableObject
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.ErrorCode switch
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.ErrorCode switch
             {
                 "invalid_credentials" => "Invalid username or password.",
-                "user_disabled" => "This account has been disabled.",
+                "user_disabled" => AppStrings.Get("error.account_disabled"),
                 "local_login_disabled" => "Password sign-in is turned off for this account. Use " + string.Join(", ", OAuthProviders.Select(p => p.DisplayName).Concat(NetworkProviders.Select(p => p.Provider.DisplayName))) + " to sign in.",
-                "password_expired" => "Your password at the sign-in provider has expired. Change it there before signing in.",
-                "permission_denied" => "This account is disabled.",
-                "not_permitted" or "account_disabled" or "provider_unavailable" => ExternalSignInErrors.Describe(ex.ErrorCode),
+                "password_expired" => AppStrings.Get("web.auth.login.passwordExpired"),
+                "permission_denied" => AppStrings.Get("error.account_disabled", fallback: "This account is disabled."),
+                "not_permitted" or "account_disabled" or "provider_unavailable" => ExternalSignInText(ex.ErrorCode),
                 _ => ex.Message
-            };
+            }));
         }
         catch (HttpRequestException)
         {
-            ErrorMessage = "Unable to connect to the server. Check your network connection.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Unable to connect to the server. Check your network connection.");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"An error occurred: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, $"An error occurred: {ex.Message}"));
         }
         finally
         {

@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -14,6 +15,7 @@ internal static class CalendarCultureNativeFixture
     internal static async Task RunAsync()
     {
         var cultureBefore = CultureInfo.CurrentCulture;
+        var localeBefore = LocaleService.Shared.Current;
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var servicesBefore = (IServiceProvider)field.GetValue(null)!;
         try
@@ -21,6 +23,7 @@ internal static class CalendarCultureNativeFixture
             foreach (var name in new[] { "th-TH", "ar-SA", "fa-IR", "en-US" })
             {
                 CultureInfo.CurrentCulture = new CultureInfo(name);
+                LocaleService.Shared.Apply(LocaleService.Shared.Create(AppLocaleResolution.Resolve(null, [name], name)));
                 using var wire = new Wire();
                 using var http = new HttpClient(wire);
                 var client = new SiloApiClient(http); client.SetBaseUrl("https://calendar-culture.invalid");
@@ -53,7 +56,7 @@ internal static class CalendarCultureNativeFixture
                             var texts = Descendants(frame).OfType<TextBlock>().ToArray();
                             Require(texts.Any(t => t.Text == "Gregorian calendar fixture"), name + ": event missing from real CalendarPage.");
                             Require(texts.Any(t => t.Text == model.WeekRangeLabel && t.ActualHeight > 0), name + ": range label missing.");
-                            Require(model.WeekRangeLabel.EndsWith("2026", StringComparison.Ordinal), name + ": range year changed.");
+                            Require(model.WeekRangeLabel.Contains("2026", StringComparison.Ordinal), name + ": range year changed.");
                             Program.Log($"PASS: {name} actual HTTP week/navigation and CalendarPage at {width}px; range={model.WeekRangeLabel}.");
                         }
                         finally { frame.Content = null; window.Close(); }
@@ -62,7 +65,11 @@ internal static class CalendarCultureNativeFixture
                 finally { model.CancelLoad(); field.SetValue(null, servicesBefore); }
             }
         }
-        finally { field.SetValue(null, servicesBefore); CultureInfo.CurrentCulture = cultureBefore; }
+        finally
+        {
+            field.SetValue(null, servicesBefore); CultureInfo.CurrentCulture = cultureBefore;
+            LocaleService.Shared.Apply(LocaleService.Shared.Create(localeBefore.Resolution));
+        }
     }
 
     private static void Require(bool condition, string message)

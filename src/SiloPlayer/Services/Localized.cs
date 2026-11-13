@@ -9,6 +9,12 @@ namespace SiloPlayer.Services;
 /// <summary>Explicit catalog keys for native controls; original English property values are fallbacks.</summary>
 public static class Localized
 {
+    /// <summary>Preserves native uppercase label styling after resolving a catalog message.</summary>
+    public static readonly DependencyProperty UppercaseProperty = DependencyProperty.RegisterAttached(
+        "Uppercase", typeof(bool), typeof(Localized), new PropertyMetadata(false, OnKeyChanged));
+    public static bool GetUppercase(DependencyObject target) => (bool)target.GetValue(UppercaseProperty);
+    public static void SetUppercase(DependencyObject target, bool value) => target.SetValue(UppercaseProperty, value);
+
     public static readonly DependencyProperty TextProperty = DependencyProperty.RegisterAttached(
         "Text", typeof(string), typeof(Localized), new PropertyMetadata(null, OnKeyChanged));
     public static string? GetText(DependencyObject target) => (string?)target.GetValue(TextProperty);
@@ -89,7 +95,7 @@ public static class Localized
 
         public void Change(DependencyProperty key)
         {
-            if (key != DirectionProperty)
+            if (key != DirectionProperty && key != UppercaseProperty)
             {
                 if (string.IsNullOrWhiteSpace((string?)element.GetValue(key)))
                 {
@@ -99,7 +105,7 @@ public static class Localized
                 else if (!_bindings.ContainsKey(key))
                     _bindings.Add(key, new Binding(TargetProperty(element, key)));
             }
-            else if (!GetDirection(element) && _originalDirection is { } original)
+            else if (key == DirectionProperty && !GetDirection(element) && _originalDirection is { } original)
             {
                 element.FlowDirection = original.Direction;
                 element.Language = original.Language;
@@ -121,7 +127,8 @@ public static class Localized
                     binding.Captured = true;
                 }
                 var textKey = (string)element.GetValue(key);
-                element.SetValue(binding.Target, AppStrings.Get(textKey, fallback: binding.Original as string));
+                var text = AppStrings.Get(textKey, fallback: binding.Original as string);
+                element.SetValue(binding.Target, GetUppercase(element) ? AppStrings.Uppercase(text) : text);
             }
             if (GetDirection(element))
             {

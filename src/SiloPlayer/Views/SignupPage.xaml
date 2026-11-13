@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page xmlns:loc="using:SiloPlayer.Services"
     x:Class="SiloPlayer.Views.SignupPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -9,7 +9,7 @@
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
     FontFamily="{StaticResource ThemeFontFamily}"
-    Background="{StaticResource AppBackgroundBrush}">
+    Background="{StaticResource AppBackgroundBrush}" loc:Localized.Direction="True">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -20,7 +20,7 @@
 
     <!-- Full-page centered auth shell -->
     <Grid helpers:AuthBackdrop.Enabled="True" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-        <Image
+        <Image FlowDirection="LeftToRight"
             Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource UrlToImage}}"
             Stretch="UniformToFill"
             Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
@@ -54,7 +54,7 @@
                         Foreground="{StaticResource PrimaryTextBrush}"
                         CharacterSpacing="-40" />
                     <TextBlock
-                        Text="Public signups are currently closed."
+                        Text="Public signups are currently closed." loc:Localized.Text="web.auth.signup.closed"
                         Style="{StaticResource SecondaryTextStyle}"
                         FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" />
                 </StackPanel>
@@ -77,7 +77,7 @@
                             CharacterSpacing="-40" />
 
                         <TextBlock
-                            Text="Create a new account to get started."
+                            Text="Create a new account to get started." loc:Localized.Text="web.auth.signup.description"
                             Style="{StaticResource SecondaryTextStyle}"
                             FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" />
                     </StackPanel>
@@ -101,7 +101,7 @@
                         <!-- Username -->
                         <StackPanel Spacing="8">
                             <TextBlock
-                                Text="Username"
+                                Text="Username" loc:Localized.Text="web.auth.username"
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
@@ -115,7 +115,7 @@
                         <!-- Email -->
                         <StackPanel Spacing="8">
                             <TextBlock
-                                Text="Email"
+                                Text="Email" loc:Localized.Text="web.auth.email"
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
@@ -129,12 +129,12 @@
                         <!-- Password -->
                         <StackPanel x:Name="SignupPasswordGroup" Spacing="8">
                             <TextBlock
-                                Text="Password"
+                                Text="Password" loc:Localized.Text="web.auth.password"
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBlock
-                                Text="At least 8 characters"
+                                Text="At least 8 characters" loc:Localized.Text="web.auth.passwordRules.minLength"
                                 FontSize="12" Height="16" LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                 Foreground="{StaticResource SecondaryTextBrush}" />
                             <PasswordBox
@@ -147,7 +147,7 @@
                         <!-- Confirm Password -->
                         <StackPanel x:Name="SignupConfirmationGroup" Spacing="8">
                             <TextBlock
-                                Text="Confirm password"
+                                Text="Confirm password" loc:Localized.Text="web.auth.confirmPassword"
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
@@ -158,7 +158,7 @@
                                 KeyDown="InputBox_KeyDown" />
                             <TextBlock
                                 x:Name="PasswordMismatchText"
-                                Text="Passwords do not match"
+                                Text="Passwords do not match" loc:Localized.Text="web.auth.passwordRules.mismatch"
                                 Foreground="{StaticResource ErrorBrush}"
                                 FontSize="12" Height="16" LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                 Visibility="Collapsed" />
@@ -167,7 +167,7 @@
                         <!-- Invite Code -->
                         <StackPanel Spacing="8">
                             <TextBlock
-                                Text="Invite code"
+                                Text="Invite code" loc:Localized.Text="web.auth.signup.inviteCodeLabel"
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
@@ -175,13 +175,13 @@
                                 x:Name="InviteCodeBox"
                                 Text="{x:Bind ViewModel.InviteCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Style="{StaticResource DarkTextBoxStyle}"
-                                PlaceholderText="Enter your invite code"
+                                PlaceholderText="Enter your invite code" loc:Localized.Placeholder="web.auth.signup.inviteCodePlaceholder"
                                 KeyDown="InputBox_KeyDown" />
                         </StackPanel>
 
                         <!-- Sign up button -->
                         <Button
-                            Content="Create account"
+                            Content="Create account" loc:Localized.Content="web.auth.createAccount"
                             Style="{StaticResource AccentButtonStyle}"
                             HorizontalAlignment="Stretch"
                             Height="36" MinHeight="36" Padding="16,4"
@@ -189,9 +189,9 @@
                             IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="4" Height="20">
-                        <TextBlock Text="Already have an account?" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                        <TextBlock Visibility="Collapsed" Text="Already have an account?" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                         <HyperlinkButton Padding="0" MinHeight="0" MinWidth="0" Height="20" Click="BackToLoginButton_Click">
-                            <TextBlock Text="Sign in" FontSize="14" TextDecorations="Underline" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Sign in" loc:Localized.Text="web.auth.passwordRules.alreadyHaveAccount" FontSize="14" TextDecorations="Underline" Foreground="{StaticResource PrimaryTextBrush}" />
                         </HyperlinkButton>
                     </StackPanel>
                     </StackPanel>

@@ -9,6 +9,8 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views;
 
@@ -158,7 +160,7 @@ public sealed partial class SettingsPage
         {
             if (!Current()) { ReloadStaleYourData(generation, notice); return; }
             YourDataLoadingRing.IsActive = false;
-            YourDataContentHost.Children.Add(ErrorText($"Could not load: {ex.Message}"));
+            YourDataContentHost.Children.Add(ErrorText($"Could not load: {ex.DisplayMessage()}"));
         }
     }
 
@@ -212,7 +214,7 @@ public sealed partial class SettingsPage
                         attempt == 0)
                     {
                         if (!Current()) return;
-                        var (proof, failure) = await TryVerifyPinForYourDataAsync(api, context, generation, ex.Message);
+                        var (proof, failure) = await TryVerifyPinForYourDataAsync(api, context, generation, ex.DisplayMessage());
                         if (!Current()) return;
                         if (proof == null)
                         {
@@ -233,7 +235,7 @@ public sealed partial class SettingsPage
             catch (Exception ex)
             {
                 if (!Current()) return;
-                exportStatus.Text = ex.Message;
+                exportStatus.Text = ex.DisplayMessage();
                 exportStatus.Visibility = Visibility.Visible;
             }
             finally
@@ -317,7 +319,7 @@ public sealed partial class SettingsPage
                         attempt == 0)
                     {
                         if (!Current()) return;
-                        var (proof, failure) = await TryVerifyPinForYourDataAsync(api, context, generation, ex.Message);
+                        var (proof, failure) = await TryVerifyPinForYourDataAsync(api, context, generation, ex.DisplayMessage());
                         if (!Current()) return;
                         if (proof == null)
                         {
@@ -338,7 +340,7 @@ public sealed partial class SettingsPage
             catch (Exception ex)
             {
                 if (!Current()) return;
-                importStatus.Text = ex.Message;
+                importStatus.Text = ex.DisplayMessage();
                 importStatus.Visibility = Visibility.Visible;
             }
             finally
@@ -386,10 +388,10 @@ public sealed partial class SettingsPage
         foreach (var data in result.Data)
         {
             var counts = new List<string>();
-            if (data.Added > 0) counts.Add($"{data.Added} added");
-            if (data.Updated > 0) counts.Add($"{data.Updated} updated");
+            if (data.Added > 0) counts.Add(L("web.profiles.dataTypes.counts.added", $"{data.Added} added", Args(("count", Count(data.Added)))));
+            if (data.Updated > 0) counts.Add(L("web.profiles.dataTypes.counts.updated", $"{data.Updated} updated", Args(("count", Count(data.Updated)))));
             if (data.Unchanged > 0) counts.Add($"{data.Unchanged} unchanged");
-            if (data.LeftOut > 0) counts.Add($"{data.LeftOut} left out");
+            if (data.LeftOut > 0) counts.Add(L("web.profiles.dataTypes.counts.leftOut", $"{data.LeftOut} left out", Args(("count", Count(data.LeftOut)))));
             var label = DataTypeLabel(data.Type);
             var line = counts.Count > 0 ? $"{label}: {string.Join(", ", counts)}" : $"{label}: no changes";
             host.Children.Add(SecondaryText(line));
@@ -415,13 +417,13 @@ public sealed partial class SettingsPage
 
     private static string DataTypeLabel(string type) => type switch
     {
-        "watch_history" => "Watch history",
-        "ratings" => "Ratings",
-        "favorites" => "Favorites & watchlist",
-        "collections" => "Collections",
-        "dismissals" => "Dismissals",
-        "preferences" => "Preferences",
-        "notifications" => "Notifications",
+        "watch_history" => L("web.profiles.dataTypes.watchHistory", "Watch history"),
+        "ratings" => L("web.profiles.dataTypes.ratings", "Ratings"),
+        "favorites" => L("web.profiles.dataTypes.favorites", "Favorites & watchlist"),
+        "collections" => L("web.profiles.dataTypes.collections", "Collections"),
+        "dismissals" => L("web.profiles.dataTypes.dismissals", "Dismissals"),
+        "preferences" => L("web.profiles.dataTypes.preferences", "Preferences"),
+        "notifications" => L("web.profiles.dataTypes.notifications", "Notifications"),
         _ => type
     };
 
@@ -451,7 +453,7 @@ public sealed partial class SettingsPage
         string? verifiedToken = null;
         var pin = new PasswordBox
         {
-            PlaceholderText = "Enter 4-digit PIN",
+            PlaceholderText = L("web.profiles.pin.placeholder", "Enter 4-digit PIN"),
             MaxLength = 4,
             Width = 260,
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -459,10 +461,10 @@ public sealed partial class SettingsPage
         var error = new TextBlock { Foreground = (Brush)Application.Current.Resources["ErrorBrush"], TextWrapping = TextWrapping.Wrap };
         var dialog = new ContentDialog
         {
-            Title = $"Enter PIN for {profile.Name}",
+            Title = L("web.profiles.pin.title", $"Enter PIN for {profile.Name}", Args(("name", profile.Name))),
             Content = new StackPanel { Spacing = 12, Children = { new TextBlock { Text = "Your data requires your PIN.", TextWrapping = TextWrapping.Wrap }, pin, error } },
             PrimaryButtonText = "Verify",
-            CloseButtonText = "Cancel",
+            CloseButtonText = L("common.cancel", "Cancel"),
             XamlRoot = XamlRoot,
             DefaultButton = ContentDialogButton.Primary,
         };
@@ -485,7 +487,7 @@ public sealed partial class SettingsPage
                     args.Cancel = false;
                     return;
                 }
-                error.Text = "Incorrect PIN";
+                error.Text = L("web.profiles.pin.incorrect", "Incorrect PIN");
                 pin.Password = "";
                 pin.Focus(FocusState.Programmatic);
             }
@@ -522,8 +524,8 @@ public sealed partial class SettingsPage
 
     private static string FormatFileSize(long bytes)
     {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F0} KB";
-        return $"{bytes / (1024.0 * 1024.0):F0} MB";
+        if (bytes < 1024) return L("web.common.format.size.bytes", $"{bytes} B", Args(("size", Count(bytes))));
+        if (bytes < 1024 * 1024) return L("web.common.format.size.kb", $"{bytes / 1024.0:F0} KB", Args(("size", (bytes / 1024.0).ToString("N0", AppStrings.FormatCulture))));
+        return L("web.common.format.size.mb", $"{bytes / (1024.0 * 1024.0):F0} MB", Args(("size", (bytes / (1024.0 * 1024.0)).ToString("N0", AppStrings.FormatCulture))));
     }
 }

@@ -81,7 +81,7 @@ internal static class Oct24UiControlsNativeFixture
                 new() { Field = "future_rule", Op = "future_op", Value = false }] }] };
             var original = JsonSerializer.Serialize(query);
             editor.Load(query); parent.Children.Add(editor); attached.Add(editor); await Task.Delay(100); editor.UpdateLayout();
-            var choices = All<ComboBox>(editor).Where(c => AutomationProperties.GetName(c) == "Rule field").ToArray();
+            var choices = All<ComboBox>(editor).Where(c => AutomationProperties.GetAutomationId(c) == "Rule field").ToArray();
             Check(choices.Length == 1, "An unknown saved rule was offered as an editable rule.");
             var values = choices[0].Items.OfType<ComboBoxItem>().ToArray();
             Check(values.Any(i => Equals(i.Tag, "show_title")) == capable, "Show title capability gate differs in actual episode rule field menu.");

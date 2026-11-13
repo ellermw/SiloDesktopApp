@@ -145,8 +145,8 @@ public sealed partial class SettingsPage
 
     private void SynchronizeQualityDescription()
         => PreferredQualityDescription.Text = ViewModel.QualityPreference is "" or "auto" or "original"
-            ? "Plays the original file whenever your device and connection can handle it."
-            : "The resolution your profile should request when playback begins.";
+            ? L("web.settings.playback.quality.autoDescription", "Plays the original file whenever your device and connection can handle it.")
+            : L("web.settings.playback.quality.description", "The resolution your profile should request when playback begins.");
 
     private void NormalizeSettingsPageHeaders()
     {

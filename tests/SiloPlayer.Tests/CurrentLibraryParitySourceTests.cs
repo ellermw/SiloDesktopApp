@@ -54,12 +54,12 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("MoreButton_Click", card);
         Assert.Contains("CardBadgeHosts.For(item, service", card);
         Assert.Contains("GetOrderedDefinitions()", badges);
-        Assert.Contains("PosterCard.BuildAdvancedBadge", badges);
+        Assert.Contains("OverlayBadgeRenderer.Build", badges);
         Assert.Contains("case \"date_viewed\"", display);
         Assert.Contains("case \"narrator\"", display);
         Assert.Contains("\"series\" or \"tv\" when browseType == \"episode\" => \"episode\"", page);
-        Assert.Contains("scope is \"ebook\" or \"manga\" ? \"Date Read\" : \"Date Viewed\"", page);
-        Assert.Contains("scope is \"ebook\" or \"manga\" ? \"Reads\" : \"Plays\"", page);
+        Assert.Contains("web.common.sort.dateRead", page);
+        Assert.Contains("web.common.sort.reads", page);
     }
 
     [Fact]

@@ -17,7 +17,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("x:Name=\"SeasonEpisodesFatalErrorText\"", xaml);
         Assert.Contains("ShowSeasonEpisodesFatalError(ViewModel.Item);", code);
         Assert.Contains("ContentScroll.Visibility = Visibility.Collapsed;", code);
-        Assert.Contains("Back to {season.SeriesTitle ?? \"Series\"}", code);
+        Assert.Contains("web.detail.seasons.backToSeries", code);
         Assert.Contains("navigationToken.IsCancellationRequested", code);
     }
 
@@ -241,13 +241,13 @@ public sealed class ItemDetailCurrentParityTests
 
         Assert.Contains("BuildMediaInfoSpecSheet", page);
         Assert.Contains("new Expander", page);
-        Assert.Contains("(\"Profile\", track.Profile)", page);
-        Assert.Contains("(\"Chroma Subsampling\"", page);
-        Assert.Contains("(\"Color Range\", FormatColorRange(track.ColorRange))", page);
+        Assert.Contains("web.detail.mediaInfo.row.profile", page);
+        Assert.Contains("web.detail.mediaInfo.row.chromaSubsampling", page);
+        Assert.Contains("web.player.info.colorRange", page);
         Assert.Contains("\"tv\" => \"Limited (tv)\"", page);
         Assert.Contains("\"pc\" => \"Full (pc)\"", page);
         Assert.Contains("public string? ColorRange { get; set; }", models);
-        Assert.Contains("(\"Hearing Impaired\"", page);
+        Assert.Contains("web.detail.mediaInfo.row.hearingImpaired", page);
         Assert.Contains("Dolby Vision (HDR10 compatible)", page);
         Assert.Contains("HDR10 compatible", page);
         Assert.Contains("DolbyVisionCompatibilityLabels", page);
@@ -266,13 +266,13 @@ public sealed class ItemDetailCurrentParityTests
         var policy = Read("src", "SiloPlayer.Core", "Services", "AuthorizationPolicy.cs");
 
         Assert.Contains("x:Name=\"HeroContextText\"", xaml);
-        Assert.Contains("\"movie\" => \"Movie\"", page);
-        Assert.Contains("\"audiobook\" => \"Audiobook\"", page);
+        Assert.Contains("web.detail.hero.typeMovie", page);
+        Assert.Contains("web.detail.hero.typeAudiobook", page);
         Assert.Contains("AuthorizationPolicy.CanCurateMetadata(authService)", page);
         Assert.Contains("_watchDetail.Versions", page);
         Assert.Contains("x:Name=\"MediaLocationsSection\" Visibility=\"Collapsed\" Spacing=\"12\"", xaml);
         Assert.Contains("x:Name=\"MediaLocationsTitle\" Text=\"Media locations\" Style=\"{StaticResource TitleTextStyle}\" FontSize=\"16\"", xaml);
-        Assert.Contains("View media info for", page);
+        Assert.Contains("web.detail.mediaInfo.title", page);
         Assert.Contains("ShowMediaInfoDialogAsync(version.FileId)", page);
         Assert.Contains("profile?.IsPrimary == true", policy);
         Assert.Contains("user?.Permissions?.Contains(permission", policy);
@@ -300,15 +300,15 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("return string.Join(\" · \", parts)", page);
         Assert.Contains("2 => \"stereo\"", page);
         Assert.Contains("Auto, Off, optional candidate sections", page);
-        Assert.Contains("CreateTrackSelectionRow(\"Auto\"", page);
-        Assert.Contains("CreateTrackSelectionRow(\"Off\"", page);
+        Assert.Contains("CreateTrackSelectionRow(SiloPlayer.Core.Localization.AppStrings.Get(\"web.detail.tracks.auto\")", page);
+        Assert.Contains("CreateTrackSelectionRow(SiloPlayer.Core.Localization.AppStrings.Get(\"web.detail.subtitles.off\")", page);
         Assert.Contains("Text = \"No subtitles available.\"", page);
-        Assert.Contains("SubtitlesSummary.Text = \"Auto: Off\"", page);
+        Assert.Contains("web.detail.tracks.autoSummary", page);
         Assert.Contains("MediaLanguageCatalog.Label(sub.Language)", page);
         Assert.Contains("\"srt\" or \"subrip\" => \"SRT\"", page);
         Assert.Contains("PreferredTrackSignature: _watchDetail.EffectiveSubtitleTrackSignature", page);
-        Assert.Contains("AddTrackGroup(\"Embedded\"", page);
-        Assert.Contains("AddTrackGroup(\"External\"", page);
+        Assert.Contains("web.detail.mediaInfo.embedded", page);
+        Assert.Contains("web.detail.mediaInfo.external", page);
         Assert.Contains("Text = \"Downloaded\"", page);
         Assert.Contains("OrderBy(row => MediaLanguageCatalog.Label(row.Track.Language)", page);
         Assert.Contains("ThenByDescending(row => row.Track.Forced == true)", page);
@@ -371,7 +371,7 @@ public sealed class ItemDetailCurrentParityTests
 
         Assert.Contains("ShouldOfferResumeChoice", page);
         Assert.Contains("Title = \"Resume Playback?\"", page);
-        Assert.Contains("Content = $\"Resume at {resumeTime}\"", page);
+        Assert.Contains("Content = AppStrings.Get(\"web.detail.actions.resumeAt\", new Dictionary<string, object?> { [\"time\"] = resumeTime })", page);
         Assert.Contains("Content = \"Play from Beginning\"", page);
         Assert.Contains("versionCount <= 1", page);
         Assert.Contains("variantCount <= 1", page);
@@ -427,13 +427,13 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("AudiobookChapterSortButton", xaml);
         Assert.Contains("BookAuthorLine", xaml);
         Assert.Contains("BookNarratorLine", xaml);
-        Assert.Contains("Resume Reading", page);
+        Assert.Contains("web.detail.books.continueReading", page);
         Assert.Contains("Listen from Start", xaml);
         Assert.Contains("new EbookReaderNavigation(target, _readerTargetFileId, ViewModel.LibraryId)", page);
         Assert.Contains("startPositionOverride: chapter.AbsoluteStart", page);
         Assert.Contains("offset += Math.Max(0, version.Duration)", page);
         Assert.Contains("OrderByDescending(row => row.DurationSeconds)", page);
-        Assert.Contains("Resume \\u00B7 {currentChapter.Label}", page);
+        Assert.Contains("currentChapter.Label", page);
         Assert.Contains("BuildBookGenreLinks(item)", page);
         Assert.Contains("Genre: genre", page);
         Assert.Contains("GetMangaSeriesFilesAsync", api);
@@ -442,7 +442,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("new Expander", page);
         Assert.Contains("MangaDownload_Click", page);
         Assert.Contains("GetItemVersionsAsync(chapter.ContentId)", page);
-        Assert.Contains("Mark chapter unread", page);
+        Assert.Contains("web.detail.manga.markChapterUnread", page);
         Assert.Contains("MangaJumpButton", xaml);
         Assert.Contains("StartBringIntoView", page);
     }
@@ -474,7 +474,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("ViewModel.Item.ContentId,", page);
         Assert.Contains("navigationToken", page);
         Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
-        Assert.Contains("PlayButtonText.Text = \"Play First Episode\"", page);
+        Assert.Contains("web.detail.actions.playFirstEpisode", page);
         // Explicit server targets (including null) take precedence. Only
         // canonical rows from this season may supply the legacy first episode.
         Assert.Contains("_playableContentId = item.HasAuthoritativePlayTarget ? item.PlayContentId", page);
@@ -482,7 +482,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("No playable episodes found for this season.", page);
         Assert.DoesNotContain("NavigateToPlayer(ViewModel.Item.ContentId, fromStart: true", page);
         Assert.Contains("BuildSeasonBreadcrumb(item, seasonLabel)", page);
-        Assert.Contains("EpisodesHeader.Text = \"Episodes\"", page);
+        Assert.Contains("web.detail.episodes.heading", page);
         Assert.Contains("x:Name=\"EpisodesTotalText\"", Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml"));
         Assert.Contains("/api/v2/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", api);
         Assert.DoesNotContain("LoadSeasonEpisodesAsync(ViewModel.Item.SeriesId", page);
@@ -500,7 +500,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
         Assert.Contains("ViewModel.EpisodesSeasonContentId = seasonContentId;", page);
         Assert.Contains("SeasonNumber == 0", page);
-        Assert.Contains("EpisodesHeader.Text = ViewModel.SelectedSeasonNumber == 0", page);
+        Assert.Contains("ViewModel.SelectedSeasonNumber == 0", page);
         Assert.DoesNotContain("ViewModel.Seasons.Count <= 1", page);
     }
 
@@ -539,8 +539,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("EpisodesSection.Visibility = Visibility.Collapsed", page);
         Assert.Contains("Navigate<ItemDetailPage>(MediaNavigationContext.Detail(season.ContentId, ViewModel.LibraryId))", page);
         Assert.Contains("item.Type is \"season\" or \"episode\"", page);
-        Assert.Contains("\"series\" => \"Mark Series Unwatched\"", page);
-        Assert.Contains("\"season\" => \"Mark Season Unwatched\"", page);
+        Assert.Contains("web.detail.actions.markSeriesUnwatched", page);
+        Assert.Contains("web.detail.actions.markSeasonUnwatched", page);
         Assert.Contains("EpisodeContextText.Text = $\"S{item.SeasonNumber}", page);
         Assert.Contains("var currentEpisodeIndex = BuildSiblingEpisodeCards()", page);
         Assert.Contains("nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)))", landscape);
@@ -714,9 +714,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.DoesNotContain("Executive Producer\", StringComparison.OrdinalIgnoreCase", page);
         Assert.Contains("new EpisodeCardCaption(episode, FormatDetailDate(episode.AirDate)", page);
         Assert.Contains("DefaultLeafPlayLabel(item.Type)", page);
-        Assert.Contains("? \"Play Episode\"", page);
+        Assert.Contains("web.detail.actions.playEpisode", page);
         Assert.Contains("userData.WatchedCount > 0 || userData.InProgressCount > 0", page);
-        Assert.Contains("$\"{userData!.WatchedCount} of {count}\"", page);
+        Assert.Contains("web.detail.seasons.watchedProgress", page);
         Assert.Contains("FormatSeasonProgressText(season)", page);
     }
 
@@ -764,7 +764,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("AutomationProperties.Name=\"1 star\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"5 stars\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"More\"", xaml);
-        Assert.Contains("AutomationProperties.SetName(FavoriteButton", page);
+        Assert.Contains("MediaItemCardActions.BindText(FavoriteButton", page);
         Assert.Contains("KeyDown=\"Star_KeyDown\"", xaml);
         Assert.Contains("starButtons[i].IsTabStop = i + 1 == tabbableStar", page);
         Assert.Contains("Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFA, 0xCC, 0x15)", page);

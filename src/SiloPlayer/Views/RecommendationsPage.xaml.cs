@@ -20,6 +20,7 @@ public sealed partial class RecommendationsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<RecommendationsViewModel>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         NavigationCacheMode = NavigationCacheMode.Required;
     }
 
@@ -42,7 +43,7 @@ public sealed partial class RecommendationsPage : Page
                 {
                     DispatcherQueue.TryEnqueue(BuildTasteProfile);
                 }
-                else if (args.PropertyName is nameof(ViewModel.IsLoading) or nameof(ViewModel.ErrorMessage))
+                else if (args.PropertyName is nameof(ViewModel.IsLoading) or nameof(ViewModel.ErrorMessage) or nameof(ViewModel.Rows))
                 {
                     DispatcherQueue.TryEnqueue(() =>
                     {
@@ -174,6 +175,11 @@ public sealed partial class RecommendationsPage : Page
             var existing = RowsPanel.Children.OfType<SectionRow>().FirstOrDefault(section => ReferenceEquals(section.Tag, row));
             if (existing != null)
             {
+                existing.Section!.Title = row.Label;
+                existing.Section.TitleKey = SiloPlayer.Core.Localization.SectionTitles.Normalize(row.TitleKey);
+                existing.Section.TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(row.TitleArgs);
+                existing.Section.KeyedTitle = string.IsNullOrEmpty(row.TitleKey) ? null : row.Label;
+                existing.RefreshPresentation();
                 if (RowsPanel.Children.IndexOf(existing) != rowIndex) { RowsPanel.Children.Remove(existing); RowsPanel.Children.Insert(rowIndex, existing); }
                 rowIndex++;
                 continue;
@@ -197,7 +203,7 @@ public sealed partial class RecommendationsPage : Page
                 {
                     var nav = App.Services.GetRequiredService<NavigationService>();
                     nav.Navigate<RecommendationSectionPage>(
-                        new RecommendationSectionNavigationArgs(row.SectionKind, row.SectionKey, row.Label));
+                        new RecommendationSectionNavigationArgs(row.SectionKind, row.SectionKey, row.Label, row.TitleKey, SiloPlayer.Core.Localization.SectionTitles.CopyArguments(row.TitleArgs)));
                 };
             }
 
@@ -219,7 +225,8 @@ public sealed partial class RecommendationsPage : Page
         var hasError = loaded && !string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
         var hasContent = loaded && !hasError && ViewModel.Rows.Any(row => row.Items.Count > 0);
 
-        HeaderSubtitleText.Text = RecommendationPresentation.PageSubtitle(ViewModel.Rows.Select(row => row.Type));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(HeaderSubtitleText, "Text", element => element.Text = ViewModel.Rows.Count == 0 ? ""
+            : SiloPlayer.Core.Localization.AppStrings.Get(ViewModel.Rows.Any(row => row.Type is "cluster" or "similar_users_liked") ? "web.recommendations.subtitlePersonal" : "web.recommendations.subtitleDefault"));
         HeaderSubtitleText.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
 
         ErrorState.Visibility = hasError ? Visibility.Visible : Visibility.Collapsed;

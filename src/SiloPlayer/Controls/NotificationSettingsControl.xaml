@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Controls.NotificationSettingsControl"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:converters="using:SiloPlayer.Converters"
     xmlns:models="using:SiloPlayer.Core.Models.Notifications">
     <UserControl.Resources>
@@ -12,7 +13,7 @@
     </UserControl.Resources>
 
     <StackPanel Spacing="24">
-        <TextBlock Text="Notifications" FontSize="30" FontWeight="SemiBold" />
+        <TextBlock Text="Notifications" loc:Localized.Text="web.settings.notifications.title" FontSize="30" FontWeight="SemiBold" />
         <ProgressRing Width="30" Height="30" HorizontalAlignment="Center"
                       IsActive="{Binding IsLoading}" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
         <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap"
@@ -22,29 +23,29 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}">
             <StackPanel Spacing="14">
-                <TextBlock Text="New Episode Notifications" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock Text="Choose which series relationships notify this profile when a new episode arrives."
+                <TextBlock Text="New Episode Notifications" loc:Localized.Text="web.settings.notifications.episodes.title" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Choose which series relationships notify this profile when a new episode arrives." loc:Localized.Text="web.settings.notifications.episodes.description"
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="2">
-                        <TextBlock Text="Enable notifications" FontWeight="SemiBold" />
-                        <TextBlock Text="Master switch for this profile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Text="Enable notifications" loc:Localized.Text="web.settings.notifications.episodes.enable" FontWeight="SemiBold" />
+                        <TextBlock Text="Master switch for this profile" loc:Localized.Text="web.settings.notifications.episodes.enableHint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                     <ToggleSwitch Grid.Column="1" IsOn="{Binding NotificationsEnabled, Mode=TwoWay}" Toggled="NotificationPreference_Toggled" />
                 </Grid>
-                <Grid><TextBlock Text="Favorites" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyFavorites, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
-                <Grid><TextBlock Text="Watchlist" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyWatchlist, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
-                <Grid><TextBlock Text="Continue Watching" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyContinueWatching, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
-                <Grid><TextBlock Text="Next Up" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyNextUp, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
-                <Button x:Name="NotificationSeriesLink" Content="See which series notify you" HorizontalAlignment="Left" Click="SeeSeries_Click" Style="{StaticResource GhostButtonStyle}" Visibility="Collapsed" />
+                <Grid><TextBlock Text="Favorites" loc:Localized.Text="web.notifications.preferences.favorites" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyFavorites, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Grid><TextBlock Text="Watchlist" loc:Localized.Text="web.notifications.preferences.watchlist" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyWatchlist, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Grid><TextBlock Text="Continue Watching" loc:Localized.Text="web.notifications.preferences.continueWatching" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyContinueWatching, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Grid><TextBlock Text="Next Up" loc:Localized.Text="web.notifications.preferences.nextUp" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyNextUp, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Button x:Name="NotificationSeriesLink" Content="See which series notify you" loc:Localized.Content="web.settings.notifications.episodes.seriesLink" HorizontalAlignment="Left" Click="SeeSeries_Click" Style="{StaticResource GhostButtonStyle}" Visibility="Collapsed" />
             </StackPanel>
         </Border>
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasWebPush, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Browser Notifications" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock Text="Get notified even when Silo is closed. Notifications are encrypted end-to-end — the browser vendor's push service never sees their content."
+                <TextBlock Text="Browser Notifications" loc:Localized.Text="web.settings.notifications.push.title" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Get notified even when Silo is closed. Notifications are encrypted end-to-end — the browser vendor's push service never sees their content." loc:Localized.Text="web.settings.notifications.push.description"
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <TextBlock Text="Browser subscriptions are enabled from Silo's WebUI. This Windows app can review and remove the browsers registered to this profile."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
@@ -60,7 +61,7 @@
                                     <TextBlock Text="{x:Bind DeviceName}" FontWeight="SemiBold" />
                                     <TextBlock Text="{x:Bind DeliveryHealthText}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Remove" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="RemovePush_Click" />
+                                <Button Grid.Column="1" Content="Remove" loc:Localized.Content="web.settings.notifications.push.remove" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="RemovePush_Click" />
                             </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -70,47 +71,47 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasEmail, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Email Notifications" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock Text="Per profile: each profile verifies its own address and picks its own frequency."
+                <TextBlock Text="Email Notifications" loc:Localized.Text="web.settings.notifications.email.title" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Per profile: each profile verifies its own address and picks its own frequency." loc:Localized.Text="web.settings.notifications.email.description"
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="2">
-                        <TextBlock Text="Email this profile's notifications" FontWeight="SemiBold" />
-                        <TextBlock Text="Notifications you'd see in the inbox, delivered by email" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Text="Email this profile's notifications" loc:Localized.Text="web.settings.notifications.email.enable" FontWeight="SemiBold" />
+                        <TextBlock Text="Notifications you'd see in the inbox, delivered by email" loc:Localized.Text="web.settings.notifications.email.enableHint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                     <ToggleSwitch x:Name="EmailEnabledToggle" Grid.Column="1" IsOn="{Binding IsEmailEnabled}" IsEnabled="{Binding CanToggleEmail}" Toggled="EmailEnabled_Toggled" />
                 </Grid>
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="2">
-                        <TextBlock Text="Deliver to" />
+                        <TextBlock Text="Deliver to" loc:Localized.Text="web.settings.notifications.email.deliverTo" />
                         <TextBlock Text="{Binding EmailDestinationText}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Visibility="{Binding EmailPreferences.CanEditAddress, Converter={StaticResource BoolToVis}}">
-                        <Button Content="Remove" Style="{StaticResource SecondaryButtonStyle}" Click="ClearEmail_Click"
+                        <Button Content="Remove" loc:Localized.Content="web.settings.notifications.email.remove" Style="{StaticResource SecondaryButtonStyle}" Click="ClearEmail_Click"
                                 Visibility="{Binding HasVerifiedEmail, Converter={StaticResource BoolToVis}}" />
                         <Button x:Name="EmailAddressActionButton" Content="{Binding EmailAddressActionText}" Style="{StaticResource SecondaryButtonStyle}" Click="ToggleEmailEditor_Click" />
                     </StackPanel>
                 </Grid>
                 <StackPanel x:Name="EmailAddressEditor" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
-                    <TextBox x:Name="EmailAddressInput" Width="280" PlaceholderText="name@example.com" Text="{Binding EmailAddressInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="EmailAddressInput_KeyDown" />
-                    <Button Content="Send verification" Style="{StaticResource AccentButtonStyle}" Click="SetEmail_Click" />
+                    <TextBox x:Name="EmailAddressInput" Width="280" PlaceholderText="name@example.com" loc:Localized.Placeholder="web.settings.notifications.email.addressPlaceholder" Text="{Binding EmailAddressInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="EmailAddressInput_KeyDown" />
+                    <Button Content="Send verification" loc:Localized.Content="web.settings.notifications.email.requestVerification" Style="{StaticResource AccentButtonStyle}" Click="SetEmail_Click" />
                 </StackPanel>
                 <TextBlock Text="{Binding EmailPendingText}" Foreground="#F59E0B" FontSize="12" TextWrapping="Wrap"
                            Visibility="{Binding HasPendingEmail, Converter={StaticResource BoolToVis}}" />
-                <TextBlock Text="Child profiles can't receive email notifications." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                <TextBlock Text="Child profiles can't receive email notifications." loc:Localized.Text="web.settings.notifications.email.childProfile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
                            Visibility="{Binding EmailPreferences.CanEditAddress, Converter={StaticResource InverseBoolToVis}}" />
                 <Grid ColumnSpacing="16" Visibility="{Binding IsEmailEnabled, Converter={StaticResource BoolToVis}}">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="2">
-                        <TextBlock Text="Frequency" />
+                        <TextBlock Text="Frequency" loc:Localized.Text="web.settings.notifications.frequency.label" />
                         <TextBlock Text="{Binding EmailDigestDescription}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
                     <ComboBox x:Name="EmailModeCombo" Grid.Column="1" SelectionChanged="EmailModeCombo_SelectionChanged">
-                        <ComboBoxItem Content="Daily digest" Tag="daily_digest" />
-                        <ComboBoxItem Content="Every episode" Tag="per_episode" />
-                        <ComboBoxItem Content="Every episode + daily digest" Tag="per_episode_and_digest" />
+                        <ComboBoxItem Content="Daily digest" loc:Localized.Content="web.settings.notifications.frequency.dailyDigest" Tag="daily_digest" />
+                        <ComboBoxItem Content="Every episode" loc:Localized.Content="web.settings.notifications.frequency.perEpisode" Tag="per_episode" />
+                        <ComboBoxItem Content="Every episode + daily digest" loc:Localized.Content="web.settings.notifications.frequency.perEpisodeAndDigest" Tag="per_episode_and_digest" />
                     </ComboBox>
                 </Grid>
             </StackPanel>
@@ -118,8 +119,8 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasDiscord, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Discord Notifications" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock Text="Account-wide: the Silo bot sends direct messages covering every profile on this account. You must share a Discord server with the bot."
+                <TextBlock Text="Discord Notifications" loc:Localized.Text="web.settings.notifications.discord.title" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Account-wide: the Silo bot sends direct messages covering every profile on this account. You must share a Discord server with the bot." loc:Localized.Text="web.settings.notifications.discord.description"
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding DiscordPrimaryNotice}" TextWrapping="Wrap" FontSize="13"
                            Foreground="{StaticResource SecondaryTextBrush}"
@@ -127,33 +128,33 @@
                 <Grid ColumnSpacing="16" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource InverseBoolToVis}}">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="2">
-                        <TextBlock Text="Link your Discord account" FontWeight="SemiBold" />
-                        <TextBlock Text="Authorize on Discord so the bot knows who to message" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Text="Link your Discord account" loc:Localized.Text="web.settings.notifications.discord.link" FontWeight="SemiBold" />
+                        <TextBlock Text="Authorize on Discord so the bot knows who to message" loc:Localized.Text="web.settings.notifications.discord.linkHint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="Link Discord" Style="{StaticResource AccentButtonStyle}" Click="LinkDiscord_Click" IsEnabled="{Binding CanManageDiscord}" />
+                    <Button Grid.Column="1" Content="Link Discord" loc:Localized.Content="web.settings.notifications.discord.linkButton" Style="{StaticResource AccentButtonStyle}" Click="LinkDiscord_Click" IsEnabled="{Binding CanManageDiscord}" />
                 </Grid>
                 <StackPanel Spacing="14" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource BoolToVis}}">
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel Spacing="2">
                             <TextBlock Text="{Binding DiscordPreferences.DiscordUsername}" FontWeight="SemiBold" />
-                            <TextBlock Text="Notifications you'd see in the inbox, delivered as a DM" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Notifications you'd see in the inbox, delivered as a DM" loc:Localized.Text="web.settings.notifications.discord.enableHint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                             <ToggleSwitch x:Name="DiscordEnabledToggle" IsOn="{Binding IsDiscordEnabled}" Toggled="DiscordEnabled_Toggled" IsEnabled="{Binding CanManageDiscord}" />
-                            <Button Content="Unlink" Style="{StaticResource DestructiveButtonStyle}" Click="UnlinkDiscord_Click" IsEnabled="{Binding CanManageDiscord}" />
+                            <Button Content="Unlink" loc:Localized.Content="web.settings.notifications.discord.unlink" Style="{StaticResource DestructiveButtonStyle}" Click="UnlinkDiscord_Click" IsEnabled="{Binding CanManageDiscord}" />
                         </StackPanel>
                     </Grid>
                     <Grid ColumnSpacing="16" Visibility="{Binding IsDiscordEnabled, Converter={StaticResource BoolToVis}}">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
                         <StackPanel Spacing="2">
-                            <TextBlock Text="Frequency" />
+                            <TextBlock Text="Frequency" loc:Localized.Text="web.settings.notifications.frequency.label" />
                             <TextBlock Text="{Binding DiscordDigestDescription}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                         <ComboBox x:Name="DiscordModeCombo" Grid.Column="1" SelectionChanged="DiscordModeCombo_SelectionChanged" IsEnabled="{Binding CanManageDiscord}">
-                            <ComboBoxItem Content="Daily digest" Tag="daily_digest" />
-                            <ComboBoxItem Content="Every episode" Tag="per_episode" />
-                            <ComboBoxItem Content="Every episode + daily digest" Tag="per_episode_and_digest" />
+                            <ComboBoxItem Content="Daily digest" loc:Localized.Content="web.settings.notifications.frequency.dailyDigest" Tag="daily_digest" />
+                            <ComboBoxItem Content="Every episode" loc:Localized.Content="web.settings.notifications.frequency.perEpisode" Tag="per_episode" />
+                            <ComboBoxItem Content="Every episode + daily digest" loc:Localized.Content="web.settings.notifications.frequency.perEpisodeAndDigest" Tag="per_episode_and_digest" />
                         </ComboBox>
                     </Grid>
                     <TextBlock Text="{Binding DiscordPreferences.LinkFailure}" Foreground="#F59E0B" FontSize="12"
@@ -164,10 +165,10 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasWebhooks, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Webhooks" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock Text="Send this profile's notifications to a webhook URL. Discord URLs render as native embeds; other URLs receive signed JSON."
+                <TextBlock Text="Webhooks" loc:Localized.Text="web.settings.notifications.webhooks.title" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Send this profile's notifications to a webhook URL. Discord URLs render as native embeds; other URLs receive signed JSON." loc:Localized.Text="web.settings.notifications.webhooks.description"
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                <TextBlock Text="No webhooks yet." Foreground="{StaticResource SecondaryTextBrush}"
+                <TextBlock Text="No webhooks yet." loc:Localized.Text="web.settings.notifications.webhooks.empty" Foreground="{StaticResource SecondaryTextBrush}"
                            Visibility="{Binding HasWebhookEntries, Converter={StaticResource InverseBoolToVis}}" />
                 <ItemsControl ItemsSource="{Binding Webhooks}" Visibility="{Binding HasWebhookEntries, Converter={StaticResource BoolToVis}}">
                     <ItemsControl.ItemTemplate>
@@ -188,11 +189,11 @@
                                     <TextBlock Text="{x:Bind DeliveryStatusText}" Foreground="#F59E0B" FontSize="11" TextWrapping="Wrap"
                                                Visibility="{x:Bind DeliveryStatusText, Converter={StaticResource NullToVis}}" />
                                     <StackPanel Orientation="Horizontal" Spacing="7">
-                                        <Button Content="Test" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="TestWebhook_Click" />
-                                        <Button Content="Edit" Tag="{x:Bind}" Style="{StaticResource SecondaryButtonStyle}" Click="EditWebhook_Click" />
-                                        <Button Content="Rotate secret" Tag="{x:Bind}" Style="{StaticResource SecondaryButtonStyle}" Click="RotateSecret_Click"
+                                        <Button Content="Test" loc:Localized.Content="web.settings.notifications.webhooks.test" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="TestWebhook_Click" />
+                                        <Button Content="Edit" loc:Localized.Content="web.settings.notifications.webhooks.edit" Tag="{x:Bind}" Style="{StaticResource SecondaryButtonStyle}" Click="EditWebhook_Click" />
+                                        <Button Content="Rotate secret" loc:Localized.Content="web.settings.notifications.webhooks.rotateSecret" Tag="{x:Bind}" Style="{StaticResource SecondaryButtonStyle}" Click="RotateSecret_Click"
                                                 Visibility="{x:Bind CanRotateSecret, Converter={StaticResource BoolToVis}}" />
-                                        <Button Content="Delete" Tag="{x:Bind}" Style="{StaticResource DestructiveButtonStyle}" Click="DeleteWebhook_Click" />
+                                        <Button Content="Delete" loc:Localized.Content="web.settings.notifications.webhooks.delete" Tag="{x:Bind}" Style="{StaticResource DestructiveButtonStyle}" Click="DeleteWebhook_Click" />
                                     </StackPanel>
                                 </StackPanel>
                             </Border>

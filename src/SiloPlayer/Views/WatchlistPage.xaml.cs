@@ -1,3 +1,4 @@
+using SiloPlayer.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.ViewModels;
@@ -21,6 +22,7 @@ public sealed partial class WatchlistPage : Page
     {
         ViewModel = App.Services.GetRequiredService<WatchlistViewModel>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         PosterRepeater.ItemsSource = ViewModel.Items;
@@ -54,12 +56,12 @@ public sealed partial class WatchlistPage : Page
 
     private async Task LoadExternalAsync()
     {
-        ExternalStatusText.Text = "Loading titles…"; ExternalStatusText.Visibility = Visibility.Visible;
+        MediaItemCardActions.BindText(ExternalStatusText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("common.loading")); ExternalStatusText.Visibility = Visibility.Visible;
         EmptyState.Visibility = Visibility.Collapsed;
         await ViewModel.LoadExternalTitlesAsync();
         await App.Services.GetRequiredService<CardOverlayService>().EnsureLoadedAsync();
         if (WatchlistScope.SelectedIndex != 1) return;
-        ExternalStatusText.Text = ViewModel.ExternalTitlesError ?? (!ViewModel.ExternalTitlesSupported ? "This server doesn't currently support watchlist titles outside your library." : ViewModel.ExternalTitles.Count == 0 ? "No titles outside your library yet. Add titles from Search or Discover." : "");
+        MediaItemCardActions.BindText(ExternalStatusText, "Text", element => element.Text = ViewModel.ExternalTitlesError ?? (!ViewModel.ExternalTitlesSupported ? "This server doesn't currently support watchlist titles outside your library." : ViewModel.ExternalTitles.Count == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.emptyBody") : ""));
         ExternalStatusText.Visibility = string.IsNullOrEmpty(ExternalStatusText.Text) ? Visibility.Collapsed : Visibility.Visible;
         ApplySort(); UpdateCounts();
     }
@@ -69,7 +71,7 @@ public sealed partial class WatchlistPage : Page
         if (args.Element is not StackPanel panel || args.Index >= ViewModel.ExternalTitles.Count) return;
         var title = ViewModel.ExternalTitles[args.Index]; panel.Children.Clear();
         var status = RequestViewerPolicy.WatchlistPresentation(title);
-        var image = new Image { Width = 160, Height = 240, Stretch = Stretch.UniformToFill };
+        var image = new Image { FlowDirection = FlowDirection.LeftToRight, Width = 160, Height = 240, Stretch = Stretch.UniformToFill };
         if (title.PosterUrl is string url) image.Source = (ImageSource)new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(url, typeof(ImageSource), null!, "");
         var contents = new StackPanel { Spacing = 6 };
         var poster = new Grid { Width = 160, Height = 240 };
@@ -78,29 +80,29 @@ public sealed partial class WatchlistPage : Page
         var percent = overlays.GetPrefs()?.TryGetValue("request_status", out var badgeConfig) == true && badgeConfig.Enabled
             ? RequestViewerPolicy.DownloadPercent(title.Request.Download) : null;
         var hosts = SiloPlayer.Controls.CardBadgeHosts.Create(poster, SiloPlayer.Core.Services.CardOverlayGeometry.ForPoster(160), percent.HasValue ? 8 : 0);
-        hosts.Show(SiloPlayer.Controls.CardBadgeHosts.ForData(new OverlayData { RequestStatus = status.Badge, Year = title.Year, RatingTmdb = title.VoteAverage, ContentRating = title.ContentRating }, overlays, 160d / 185));
+        hosts.Show(SiloPlayer.Controls.CardBadgeHosts.ForData(new OverlayData { RequestStatus = status.Badge, Year = title.Year, RatingTmdb = title.VoteAverage, ContentRating = title.ContentRating }, overlays, 160d / 185, requestStatus: () => SiloPlayer.Controls.MediaItemCardActions.WatchlistText(title).Badge));
         if (percent is int progress)
             poster.Children.Add(new ProgressBar { Value = Math.Clamp(progress, 0, 100), Maximum = 100, Height = 3, VerticalAlignment = VerticalAlignment.Bottom });
         contents.Children.Add(poster);
         contents.Children.Add(new TextBlock { Text = title.Title, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis });
         contents.Children.Add(new TextBlock { Text = title.DisplayMeta, FontSize = 12, Opacity = 0.65 });
-        contents.Children.Add(new TextBlock { Text = status.Caption, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+        contents.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap }, "Text", element => element.Text = SiloPlayer.Controls.MediaItemCardActions.WatchlistText(title).Caption));
         var open = new Button { Content = contents, Padding = new Thickness(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(open, $"Open {title.Title}");
+        MediaItemCardActions.BindText(open, "Name", element => Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.viewDetails") + " · " + title.Title));
         open.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(title.MediaType, title.TmdbId));
         panel.Children.Add(open);
         if (title.Status is "needs_review" or "removed")
         {
-            var find = new Button { Content = "Find it", HorizontalAlignment = HorizontalAlignment.Stretch };
+            var find = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Find it", HorizontalAlignment = HorizontalAlignment.Stretch }, content: "web.library.watchlist.findIt");
             find.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<SearchPage>(title.Title);
             panel.Children.Add(find);
         }
-        var remove = new Button { Content = "Remove", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var remove = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Remove", HorizontalAlignment = HorizontalAlignment.Stretch }, content: "web.catalog.page.removeConfirm");
         remove.Click += async (_, _) =>
         {
             remove.IsEnabled = false;
             try { await ViewModel.RemoveExternalTitleAsync(title); UpdateCounts(); }
-            catch (Exception ex) { remove.IsEnabled = true; App.Services.GetRequiredService<ToastService>().Error(ex); }
+            catch (Exception ex) { remove.IsEnabled = true; App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
         };
         panel.Children.Add(remove);
     }
@@ -132,8 +134,9 @@ public sealed partial class WatchlistPage : Page
 
         if (hasItems)
         {
-            ItemCountText.Text = count.ToString();
-            ItemCountLabel.Text = count == 1 ? "title" : "titles";
+            MediaItemCardActions.BindText(ItemCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.titleCount", new Dictionary<string, object?> { ["count"] = count, ["shown"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
+            ItemCountLabel.Text = "";
+            ItemCountLabel.Visibility = Visibility.Collapsed;
         }
     }
 

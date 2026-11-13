@@ -53,7 +53,7 @@ public sealed partial class ItemDetailPage
             if (movie.ContentId == item.ContentId)
             {
                 current = index;
-                panel.Children.Add(new Border { IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(6), Padding = new Thickness(6, 3, 6, 3), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black), Child = new TextBlock { Text = "This film", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold } });
+                panel.Children.Add(new Border { IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(6), Padding = new Thickness(6, 3, 6, 3), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black), Child = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "This film", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold }, text: "web.detail.boxSet.thisFilm") });
                 AutomationProperties.SetName(card, movie.Title + ", This film");
             }
             BoxSetMovies.Children.Add(panel); index++;

@@ -28,7 +28,7 @@ internal static class BrowseRuleValueNativeFixture
             }
             async Task Choose(string op)
             {
-                var selector = Descendants<ComboBox>(editor).Single(box => AutomationProperties.GetName(box) == "Rule operator");
+                var selector = Descendants<ComboBox>(editor).Single(box => AutomationProperties.GetAutomationId(box) == "Rule operator");
                 selector.SelectedItem = selector.Items.Cast<object>().Single(item => item.GetType().GetProperty("Value")!.GetValue(item)?.ToString() == op);
                 await Task.Delay(50);
             }
@@ -40,7 +40,7 @@ internal static class BrowseRuleValueNativeFixture
                     if (property == null) failures.Add("Missing current field capability: " + name);
                     else property.SetValue(editor, value);
                 }
-                string[] Choices(string name) => Descendants<ComboBox>(editor).SingleOrDefault(box => AutomationProperties.GetName(box) == name)?.Items.Cast<object>().Select(item => item is ComboBoxItem option ? option.Tag?.ToString() ?? "" : item.GetType().GetProperty("Value")!.GetValue(item)?.ToString() ?? "").Where(value => value.Length > 0).ToArray() ?? [];
+                string[] Choices(string name) => Descendants<ComboBox>(editor).SingleOrDefault(box => AutomationProperties.GetAutomationId(box) == name)?.Items.Cast<object>().Select(item => item is ComboBoxItem option ? option.Tag?.ToString() ?? "" : item.GetType().GetProperty("Value")!.GetValue(item)?.ToString() ?? "").Where(value => value.Length > 0).ToArray() ?? [];
                 SetOption("ExtendedRules", false); SetOption("ShownRatingSources", new HashSet<string>());
                 editor.ConfigureCatalogScope("movie"); await Load(new() { Field = "genre", Op = "is", Value = "Drama" });
                 if (Choices("Rule field").Any(value => value is "title" or "runtime" or "rating_tmdb" or "status" or "last_air_date")) failures.Add("Unsupported extended/hidden/show-only fields are offered to new movie rules.");
@@ -57,8 +57,8 @@ internal static class BrowseRuleValueNativeFixture
                 await Load(new() { Field = "bitrate", Op = "gte", Value = 8000 });
                 if (!Descendants<TextBlock>(editor).Any(text => text.Text == "kbps")) failures.Add("Bitrate must expose its server unit in kbps.");
                 await Load(new() { Field = "added_at", Op = "in_last", Value = "30d" });
-                var amount = Descendants<TextBox>(editor).SingleOrDefault(box => AutomationProperties.GetName(box) == "Relative date amount");
-                var unit = Descendants<ComboBox>(editor).SingleOrDefault(box => AutomationProperties.GetName(box) == "Relative date unit");
+                var amount = Descendants<TextBox>(editor).SingleOrDefault(box => AutomationProperties.GetAutomationId(box) == "Relative date amount");
+                var unit = Descendants<ComboBox>(editor).SingleOrDefault(box => AutomationProperties.GetAutomationId(box) == "Relative date unit");
                 if (amount?.Text != "30" || unit == null) failures.Add("Relative dates need separate amount/unit controls.");
                 else { unit.SelectedItem = unit.Items.Cast<object>().Single(item => item.GetType().GetProperty("Value")!.GetValue(item)?.ToString() == "w"); await Task.Delay(30); if (QueryRuleValues.Format(editor.Query.Groups[0].Rules[0].Value) != "30w") failures.Add("Changing the relative date unit did not write the server's span format."); }
                 if (failures.Count > 0) throw new InvalidOperationException(string.Join("\n", failures));

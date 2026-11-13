@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Converters;
 using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -15,7 +17,7 @@ public sealed partial class CollectionEditorPage
         foreach (var width in new[] { new GridLength(28), new GridLength(24), new GridLength(36), new GridLength(1, GridUnitType.Star), GridLength.Auto, new GridLength(ActualWidth < 1024 ? 44 : 36) }) row.ColumnDefinitions.Add(new() { Width = width });
         var canMove = ViewModel.CanReorderManualItems && !ViewModel.IsManualMutationPending;
         var handle = new Button { Content = WebUiIcon.Create("grip-vertical", 18), Width = 28, Height = 36, MinHeight = 0, MinWidth = 0, Padding = new(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), CornerRadius = new(8), Visibility = canMove ? Visibility.Visible : Visibility.Collapsed };
-        AutomationProperties.SetName(handle, "Move " + item.Title);
+        AutomationProperties.SetName(handle, CollectionText.Get("web.collections.manual.moveTitle", "Move " + item.Title, ("title", item.Title)));
         Windows.Foundation.Point? dragOrigin = null;
         var dragging = false;
         var pointerTarget = index;
@@ -85,16 +87,16 @@ public sealed partial class CollectionEditorPage
             }
         }), true);
         row.Children.Add(handle);
-        var position = new TextBlock { Text = (index + 1).ToString(), FontSize = 13, Foreground = CurrentBrush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right }; Grid.SetColumn(position, 1); row.Children.Add(position);
+        var position = new TextBlock { Text = CollectionText.Number(index + 1), FontSize = 13, Foreground = CurrentBrush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right }; Grid.SetColumn(position, 1); row.Children.Add(position);
         var cover = new Border { Width = 36, Height = 54, CornerRadius = new(6), Background = CurrentBrush("SurfaceBrush") };
         if (!string.IsNullOrWhiteSpace(item.PosterUrl)) cover.Child = new Image { Stretch = Stretch.UniformToFill, Source = (ImageSource)new UrlToImageSourceConverter().Convert(item.PosterUrl, typeof(ImageSource), null!, "") };
         Grid.SetColumn(cover, 2); row.Children.Add(cover);
         var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
         copy.Children.Add(new TextBlock { Text = item.Title ?? item.ContentId ?? item.MediaItemId, FontSize = 14.5, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-        copy.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { item.Year > 0 ? item.Year.ToString() : null, item.Type == "series" ? "Series" : "Movie" }.Where(value => value != null)), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
+        copy.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { item.Year > 0 ? item.Year.ToString() : null, CollectionText.Get("web.collections.manual.typeLabel", item.Type == "series" ? "Series" : "Movie", ("type", item.Type == "series" ? "series" : "movie")) }.Where(value => value != null)), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
         Grid.SetColumn(copy, 3); row.Children.Add(copy);
         var remove = new Button { Content = WebUiIcon.Create("x", 16), Width = ActualWidth < 1024 ? 44 : 36, Height = ActualWidth < 1024 ? 44 : 36, MinHeight = 0, MinWidth = 0, Padding = new(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"], IsEnabled = !ViewModel.IsManualMutationPending };
-        AutomationProperties.SetName(remove, "Remove " + item.Title); remove.Click += async (_, _) => await ViewModel.RemoveManualItemCommand.ExecuteAsync(item); Grid.SetColumn(remove, 5); row.Children.Add(remove);
+        AutomationProperties.SetName(remove, CollectionText.Get("web.collections.manual.removeTitle", "Remove " + item.Title, ("title", item.Title))); remove.Click += async (_, _) => await ViewModel.RemoveManualItemCommand.ExecuteAsync(item); Grid.SetColumn(remove, 5); row.Children.Add(remove);
         var border = new Border { Child = row, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0, 0, 0, 1), BorderBrush = CurrentBrush("BorderBrush") };
         return border;
     }

@@ -46,7 +46,7 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
         Interlocked.Exchange(ref _externalLoad, load)?.Cancel();
         try
         {
-            ExternalTitlesError = null;
+            SetLocalizedMessage(nameof(ExternalTitlesError), () => null, value => ExternalTitlesError = value);
             var status = await _requestsApi.GetStatusAsync(load.Token);
             if (_externalLoad != load || load.IsCancellationRequested) return;
             ExternalTitlesSupported = status.RequestsEnabled && status.WatchlistTitlesSupported;
@@ -61,7 +61,7 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
                 ExternalTitles.Add(title);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (_externalLoad == load) ExternalTitlesError = $"Couldn't load titles outside your library: {ex.Message}"; }
+        catch (Exception ex) { if (_externalLoad == load) SetLocalizedMessage(nameof(ExternalTitlesError), () => $"Couldn't load titles outside your library: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ExternalTitlesError = value); }
         finally { Interlocked.CompareExchange(ref _externalLoad, null, load); load.Dispose(); }
     }
 
@@ -131,7 +131,7 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
         _loadInProgress = true;
         IsLoading = replace && Items.Count == 0;
         IsLoadingMore = !replace;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -153,7 +153,7 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load watchlist: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load watchlist: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {

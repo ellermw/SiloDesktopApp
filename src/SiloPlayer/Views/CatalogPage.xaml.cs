@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
@@ -105,11 +106,14 @@ public sealed partial class CatalogPage : Page,
         CatalogRetryIcon.Content = WebUiIcon.Create("refresh-cw", 16);
         ItemsRepeater.ItemsSource = _items;
         CatalogLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
+        AppLocalization.Register(this, RefreshCatalogHeading);
+        Loaded += (_, _) => RefreshCatalogHeading();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _headingActive = true;
         _uiCustomizationService.Changed += UICustomization_Changed;
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
@@ -124,17 +128,14 @@ public sealed partial class CatalogPage : Page,
             _sectionId = navigation.SectionId;
             _fixedLibraryId = navigation.LibraryId;
             _initialGenre = navigation.Genre;
-            PageTitleText.Text = navigation.Title ?? (_source == "history" ? "History" : "Catalog");
-            PageSubtitleText.Text = navigation.Subtitle ?? (_source == "watchlist" ? "Things you've saved to watch later." : _source == "history"
-                ? "Everything you've recently watched."
-                : "Refine the archive by library, type, era, rating, or genre.");
-            if (App.MainWindowInstance is MainWindow window)
-                window.SetDynamicTitle(PageTitleText.Text);
+            _titleOverride = navigation.Title;
+            _subtitleOverride = navigation.Subtitle;
+            RefreshCatalogHeading();
         }
 
         if (_source is "history" or "favorites" or "watchlist")
         {
-            SortCombo.Items.Insert(0, new ComboBoxItem
+            SortCombo.Items.Insert(0, MediaItemCardActions.Localize(new ComboBoxItem
             {
                 Content = PersonalCatalogSortPolicy.DefaultSortLabel(_source),
                 // The current WebUI presents these labels while preserving the
@@ -142,7 +143,7 @@ public sealed partial class CatalogPage : Page,
                 // added_at sort changes the history resolver path and can show
                 // the wrong catalog instead of the profile's visible history.
                 Tag = ""
-            });
+            }, content: PersonalCatalogSortPolicy.SupportsSourceOrder(_source) ? "web.catalog.sort.listOrder" : "catalog.sort.added"));
             SortCombo.SelectedIndex = 0;
             if (_source is "favorites" or "history")
                 OrderCombo.SelectedIndex = 0; // current WebUI defaults these recency lists to Descending
@@ -210,6 +211,7 @@ public sealed partial class CatalogPage : Page,
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _headingActive = false;
         ClearUndoState();
         _undoOperation = null;
         _undoResetPending = false;
@@ -283,8 +285,8 @@ public sealed partial class CatalogPage : Page,
             {
                 _items.Remove(item);
                 _totalItems = Math.Max(0, _totalItems - 1);
-                CountText.Text = _totalItems.ToString("N0");
-                ResultNounText.Text = _totalItems == 1 ? "RESULT" : "RESULTS";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(CountText, "Text", element => element.Text = _totalItems.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));
+                SiloPlayer.Controls.MediaItemCardActions.BindText(ResultNounText, "Text", element => element.Text = AppStrings.Uppercase(AppStrings.Get("web.catalog.page.resultNoun", new Dictionary<string, object?> { ["count"] = _totalItems })));
                 EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
                 return;
             }
@@ -404,8 +406,8 @@ public sealed partial class CatalogPage : Page,
 
     private void UpdateSectionCount()
     {
-        CountText.Text = _totalItems.ToString("N0");
-        ResultNounText.Text = _totalItems == 1 ? "RESULT" : "RESULTS";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(CountText, "Text", element => element.Text = _totalItems.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(ResultNounText, "Text", element => element.Text = AppStrings.Uppercase(AppStrings.Get("web.catalog.page.resultNoun", new Dictionary<string, object?> { ["count"] = _totalItems })));
         EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSelectionUi();
     }
@@ -819,8 +821,8 @@ public sealed partial class CatalogPage : Page,
             _retainedSectionWindowSize = null;
             _hasMore = response.HasMore || _offset < response.Total;
             _totalItems = response.Total;
-            CountText.Text = _totalItems.ToString("N0");
-            ResultNounText.Text = response.Total == 1 ? "RESULT" : "RESULTS";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(CountText, "Text", element => element.Text = _totalItems.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultNounText, "Text", element => element.Text = AppStrings.Uppercase(AppStrings.Get("web.catalog.page.resultNoun", new Dictionary<string, object?> { ["count"] = response.Total })));
             CountPanel.Visibility = response.TotalExact ? Visibility.Visible : Visibility.Collapsed;
             EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             ItemsRepeater.Visibility = Visibility.Visible;
@@ -837,8 +839,8 @@ public sealed partial class CatalogPage : Page,
             if (generation == Volatile.Read(ref _loadGeneration))
             {
                 var collectionUnavailable = ex is ApiException { StatusCode: 404 } && _source is "user_collection" or "library_collection";
-                CatalogErrorTitle.Text = collectionUnavailable ? "This collection isn't available" : "Could not load catalog results.";
-                ErrorText.Text = collectionUnavailable ? "It may have been deleted, or you may not have access to it." : "The catalog request failed. Please retry.";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(CatalogErrorTitle, "Text", element => element.Text = collectionUnavailable ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.collectionUnavailable", fallback: "This collection isn't available") : SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.catalogFailed", fallback: "Could not load catalog results."));
+                SiloPlayer.Controls.MediaItemCardActions.BindText(ErrorText, "Text", element => element.Text = collectionUnavailable ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.collectionUnavailableBody", fallback: "It may have been deleted, or you may not have access to it.") : SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.catalogFailedBody", fallback: "The catalog request failed. Please retry."));
                 ErrorText.Visibility = Visibility.Visible;
                 CatalogErrorPanel.Visibility = Visibility.Visible;
                 CatalogRetryButton.Visibility = collectionUnavailable ? Visibility.Collapsed : Visibility.Visible;
@@ -1041,11 +1043,9 @@ public sealed partial class CatalogPage : Page,
         var selected = _items.Where(item => _selectedIds.Contains(item.ContentId)).ToList();
         if (selected.Count == 0) return;
 
-        var description = selected.Count > 1
-            ? $"{selected.Count} selected items will have their watch history, watched status, and resume progress cleared for this profile."
-            : selected[0].Type is "series" or "season"
-                ? "This clears the show's watch history, watched episodes, and resume progress for this profile."
-                : "This clears the item's watch history, watched status, and resume progress for this profile.";
+        var isShow = selected.Count == 1 && selected[0].Type is "series" or "season";
+        string Description() => AppStrings.Get(selected.Count > 1 ? "web.catalog.history.dialogBodySelected" : isShow ? "web.catalog.history.dialogBodyShow" : "web.catalog.history.dialogBody",
+            new Dictionary<string, object?> { ["count"] = selected.Count, ["selected"] = selected.Count.ToString(AppStrings.FormatCulture) });
         var error = new TextBlock
         {
             Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
@@ -1058,11 +1058,11 @@ public sealed partial class CatalogPage : Page,
             Spacing = 10,
             Children =
             {
-                new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap },
+                MediaItemCardActions.BindText(new TextBlock { TextWrapping = TextWrapping.Wrap }, "Text", element => element.Text = Description()),
                 error,
             },
         };
-        var dialog = new ContentDialog
+        var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = selected.Count > 1
@@ -1073,7 +1073,8 @@ public sealed partial class CatalogPage : Page,
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close
-        };
+        }, primaryButton: "web.catalog.page.removeConfirm", closeButton: "common.cancel");
+        SiloPlayer.Services.Localized.SetTitle(dialog, selected.Count > 1 ? "web.catalog.history.dialogTitleSelected" : isShow ? "web.catalog.history.dialogTitleShow" : "web.catalog.history.dialogTitle");
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true;
@@ -1096,9 +1097,9 @@ public sealed partial class CatalogPage : Page,
             }
             catch (Exception ex)
             {
-                error.Text = ex.Message;
+                SiloPlayer.Controls.MediaItemCardActions.BindText(error, "Text", element => element.Text = SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
                 error.Visibility = Visibility.Visible;
-                dialog.PrimaryButtonText = "Remove";
+                dialog.PrimaryButtonText = AppStrings.Get("web.catalog.page.removeConfirm");
                 dialog.IsPrimaryButtonEnabled = true;
             }
             finally
@@ -1124,8 +1125,8 @@ public sealed partial class CatalogPage : Page,
 
     private void UpdateSelectionUi()
     {
-        SelectionModeButton.Content = _selectionMode ? "Done" : "Select";
-        SelectedCountText.Text = $"{_selectedIds.Count} selected";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SelectionModeButton, "Content", element => element.Content = _selectionMode ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.doneSelecting", fallback: "Done") : SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.select", fallback: "Select"));
+        SelectedCountText.Text = AppStrings.Get("web.catalog.page.selectedCount", new Dictionary<string, object?> { ["count"] = _selectedIds.Count, ["count_text"] = _selectedIds.Count.ToString(AppStrings.FormatCulture) });
         SelectedCountText.Visibility = _selectionMode ? Visibility.Visible : Visibility.Collapsed;
         SelectLoadedButton.Visibility = _selectionMode ? Visibility.Visible : Visibility.Collapsed;
         ClearSelectionButton.Visibility = _selectionMode ? Visibility.Visible : Visibility.Collapsed;
@@ -1192,7 +1193,7 @@ public sealed partial class CatalogPage : Page,
             operation.SelectedIndex = Math.Max(0, Array.FindIndex(AdvancedOperators, option => option.Value == rule.Op));
 
             var value = CreateAdvancedValueEditor(rule);
-            var remove = new Button { Content = "Remove", Padding = new Thickness(9, 5, 9, 5), Tag = rule };
+            var remove = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Remove", Padding = new Thickness(9, 5, 9, 5), Tag = rule }, content: "web.catalog.page.removeConfirm");
             if (Application.Current.Resources["OutlineButtonStyle"] is Style outline) remove.Style = outline;
 
             Grid.SetColumn(operation, 1);
@@ -1231,8 +1232,8 @@ public sealed partial class CatalogPage : Page,
         if (IsBooleanField(rule.Field))
         {
             var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            combo.Items.Add(new ComboBoxItem { Content = "True", Tag = "true" });
-            combo.Items.Add(new ComboBoxItem { Content = "False", Tag = "false" });
+            combo.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = "True", Tag = "true" }, content: "web.catalog.rules.yes"));
+            combo.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = "False", Tag = "false" }, content: "web.catalog.rules.no"));
             combo.SelectedIndex = rule.Value is false || string.Equals(rule.Value?.ToString(), "false", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             combo.SelectionChanged += (_, e) =>
             {
@@ -1248,6 +1249,7 @@ public sealed partial class CatalogPage : Page,
             PlaceholderText = rule.Op == "in_last" ? "e.g. 30d, 2w" : "Value",
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+        SiloPlayer.Controls.MediaItemCardActions.BindText(box, "Placeholder", element => element.PlaceholderText = rule.Op == "in_last" ? "e.g. 30d, 2w" : SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.rules.value"));
         if (IsNumberField(rule.Field)) box.InputScope = new Microsoft.UI.Xaml.Input.InputScope { Names = { new Microsoft.UI.Xaml.Input.InputScopeName(Microsoft.UI.Xaml.Input.InputScopeNameValue.Number) } };
         box.TextChanged += (_, e) =>
         {

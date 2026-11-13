@@ -97,15 +97,7 @@ public sealed partial class CollectionBrowsePage
         CollectionDescription.Text = header.Description ?? "";
         CollectionDescription.Visibility = header.Description == null ? Visibility.Collapsed : Visibility.Visible;
 
-        CollectionByline.Inlines.Clear();
-        var readOnlyOwner = header.Access is { Kind: CollectionPageAccessKind.ReadOnly, OwnerName: { Length: > 0 } owner } ? owner : null;
-        if (readOnlyOwner != null)
-        {
-            CollectionByline.Inlines.Add(new Run { Text = "by " });
-            CollectionByline.Inlines.Add(new Run { Text = readOnlyOwner, FontWeight = FontWeights.Medium, Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"] });
-            CollectionByline.Inlines.Add(new Run { Text = " · Read-only" });
-        }
-        CollectionByline.Visibility = readOnlyOwner == null ? Visibility.Collapsed : Visibility.Visible;
+        ApplyByline(header);
 
         // The owner of a personal collection changes it; everyone else can add it to their own Home.
         CollectionEditButton.Visibility = header.Access.Kind == CollectionPageAccessKind.Manage && _currentArgs is { IsUserCollection: true } ? Visibility.Visible : Visibility.Collapsed;

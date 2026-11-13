@@ -54,8 +54,8 @@ public partial class PlayerService
             await PlayAsync(shuffle.Current.ContentId, fromStart: true, libraryId: libraryId, shuffleId: shuffle.Id, authority: owner, cancellationToken: ct);
         }
         catch (OperationCanceledException) { }
-        catch (ApiException error) when (error.StatusCode == 409) { if (Current()) ReportShuffleFailure("Nothing here can be played."); }
-        catch { if (Current()) ReportShuffleFailure("Couldn't start shuffle."); }
+        catch (ApiException error) when (error.StatusCode == 409) { if (Current()) ReportShuffleFailure(HudText("shuffle.nothingToPlay", "Nothing here can be played.")); }
+        catch { if (Current()) ReportShuffleFailure(HudText("web.shuffle.startFailed", "Couldn't start shuffle.")); }
     }
 
     public async Task RefreshShuffleNextAsync()
@@ -76,7 +76,7 @@ public partial class PlayerService
         bool Current() => ActiveShuffleId == shuffleId && generation == Volatile.Read(ref _playRequestGeneration) && !_closing;
         try { await ShuffleController.PickAnotherAsync(); if (Current()) InvokeSubscribersSafely(ShuffleChanged, nameof(ShuffleChanged)); }
         catch (OperationCanceledException) { }
-        catch { if (Current()) ReportShuffleFailure("Couldn't pick another."); }
+        catch { if (Current()) ReportShuffleFailure(HudText("upNext.pickAnotherFailed", "Couldn't pick another.")); }
     }
 
     public async Task StopShuffleAsync()
@@ -112,7 +112,7 @@ public partial class PlayerService
             if (restoreFullscreen && !ownerToken.IsCancellationRequested && ReferenceEquals(owner, _activeAuthority)) RestoreFullscreenAfterPostRollContinue();
         }
         catch (OperationCanceledException) { }
-        catch { if (Current()) ReportShuffleFailure("Couldn't continue the shuffle."); }
+        catch { if (Current()) ReportShuffleFailure(HudText("upNext.shuffleContinueFailed", "Couldn't continue the shuffle.")); }
         finally { _restoreFullscreenAfterPostRollContinue = false; }
     }
 

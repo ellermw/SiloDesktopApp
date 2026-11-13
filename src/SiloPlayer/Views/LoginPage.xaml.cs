@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
@@ -19,11 +21,16 @@ public sealed partial class LoginPage : Page
     {
         ViewModel = App.Services.GetRequiredService<LoginViewModel>();
         this.InitializeComponent();
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); RefreshDeviceAddress(); });
+        ViewModel.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ViewModel.DeviceSession)) RefreshDeviceAddress(); };
         PasswordReveal.WrapInParent(PasswordBox, LoginPasswordGroup);
         SizeChanged += (_, e) => LoginLayout.Width = Math.Min(448, Math.Max(1, e.NewSize.Width - 48));
 
         ViewModel.LoginSucceeded += OnLoginSucceeded;
     }
+
+    private void RefreshDeviceAddress() => DeviceAddressText.Text = AppStrings.Get("web.auth.login.device.goToAndEnter",
+        new Dictionary<string, object?> { ["url"] = ViewModel.DeviceSession?.VerificationUri ?? "" });
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {

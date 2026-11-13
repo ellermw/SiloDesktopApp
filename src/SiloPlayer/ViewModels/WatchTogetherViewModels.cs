@@ -7,6 +7,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Dispatching;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Helpers;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 
@@ -54,11 +55,11 @@ public partial class WatchTogetherJoinViewModel : ObservableObject
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.Message;
+            SetLocalizedError(() => ApiProblemText.Display(ex));
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            ErrorMessage = $"Failed to create room: {ex.Message}";
+            SetLocalizedError(() => WatchPartyText.Get("web.watchTogether.hub.createFailed", "Failed to create room."));
         }
         finally { IsBusy = false; }
     }
@@ -70,7 +71,8 @@ public partial class WatchTogetherJoinViewModel : ObservableObject
         var code = RoomCode?.Trim().Replace(" ", "").Replace("-", "").ToUpperInvariant();
         if (string.IsNullOrEmpty(code))
         {
-            ErrorMessage = "Enter a room code.";
+            // No upstream key for an empty code; English fallback.
+            SetLocalizedError(() => "Enter a room code.");
             return;
         }
         IsBusy = true;
@@ -79,18 +81,9 @@ public partial class WatchTogetherJoinViewModel : ObservableObject
         {
             LastResponse = await _playbackApi.JoinWatchTogetherRoomAsync(code, null);
         }
-        catch (ApiException ex)
-        {
-            ErrorMessage = ex.StatusCode switch
-            {
-                404 => "Room not found.",
-                410 => "That room is no longer active.",
-                _ => ex.Message,
-            };
-        }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to join room: {ex.Message}";
+            SetJoinFailure(ex);
         }
         finally { IsBusy = false; }
     }
@@ -104,18 +97,9 @@ public partial class WatchTogetherJoinViewModel : ObservableObject
         {
             LastResponse = await _playbackApi.JoinWatchTogetherRoomAsync(null, inviteToken);
         }
-        catch (ApiException ex)
-        {
-            ErrorMessage = ex.StatusCode switch
-            {
-                404 => "Room not found.",
-                410 => "That room is no longer active.",
-                _ => ex.Message,
-            };
-        }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to join room: {ex.Message}";
+            SetJoinFailure(ex);
         }
         finally { IsBusy = false; }
     }
@@ -255,7 +239,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             if (!IsCurrent()) return;
-            ErrorMessage = $"Failed to load room: {ex.Message}";
+            SetLocalizedError(() => ex is ApiException api ? ApiProblemText.Display(api) : WatchPartyText.Get("web.watchTogether.room.unavailable", "Room is unavailable."));
         }
 
         if (!IsCurrent()) return;
@@ -289,7 +273,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             var resp = await _playbackApi.VoteWatchTogetherSuggestionAsync(RoomId, RoomToken, suggestionId);
             ReplaceSuggestions(resp.Suggestions);
         }
-        catch (Exception ex) { ErrorMessage = $"Vote failed: {ex.Message}"; }
+        catch (Exception ex) { SetLocalizedError(WatchPartyText.ActionFailure("web.watchTogether.room.voteFailed", "Vote failed", ex)); }
     }
 
     public async Task UnvoteAsync(string suggestionId)
@@ -300,7 +284,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             var resp = await _playbackApi.UnvoteWatchTogetherSuggestionAsync(RoomId, RoomToken, suggestionId);
             ReplaceSuggestions(resp.Suggestions);
         }
-        catch (Exception ex) { ErrorMessage = $"Unvote failed: {ex.Message}"; }
+        catch (Exception ex) { SetLocalizedError(WatchPartyText.ActionFailure("web.watchTogether.room.voteFailed", "Vote failed", ex)); }
     }
 
     public async Task DeleteSuggestionAsync(string suggestionId)
@@ -311,7 +295,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             var response = await _playbackApi.DeleteWatchTogetherSuggestionAsync(RoomId, RoomToken, suggestionId);
             ReplaceSuggestions(response.Suggestions);
         }
-        catch (Exception ex) { ErrorMessage = $"Delete failed: {ex.Message}"; }
+        catch (Exception ex) { SetLocalizedError(WatchPartyText.ActionFailure("web.watchTogether.room.removeFailed", "Could not remove that", ex)); }
     }
 
     public async Task PromoteSuggestionAsync(string suggestionId)
@@ -322,7 +306,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             var resp = await _playbackApi.PromoteWatchTogetherSuggestionAsync(RoomId, RoomToken, suggestionId);
             Room = resp.Room;
         }
-        catch (Exception ex) { ErrorMessage = $"Promote failed: {ex.Message}"; }
+        catch (Exception ex) { SetLocalizedError(WatchPartyText.ActionFailure("web.watchTogether.actions.promoteFailed", "Could not start that suggestion", ex)); }
     }
 
     private void ReplaceSuggestions(List<WatchTogetherSuggestion> next)
@@ -354,7 +338,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     public Task SetLobbyReadyAsync(bool ready)
     {
         if (!Capabilities.LobbyReady || Room?.Phase != "lobby" || string.IsNullOrWhiteSpace(Room.SelectedContentId) || ConnectionState != "connected")
-        { ErrorMessage = "Reconnect to the room before changing readiness."; return Task.CompletedTask; }
+        { SetLocalizedError(() => "Reconnect to the room before changing readiness."); return Task.CompletedTask; }
         return SendWsMessageAsync(new Dictionary<string, object?> { ["type"] = "lobby_ready", ["ready"] = ready });
     }
     public async Task StartStagedAsync()
@@ -362,7 +346,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         if (IsBusy || !IsHost || Room?.Phase != "lobby" || string.IsNullOrWhiteSpace(Room.SelectedContentId) || !Capabilities.StagedSelection) return;
         IsBusy = true; ErrorMessage = null;
         try { Room = (await _playbackApi.StartWatchTogetherRoomPlaybackAsync(RoomId!)).Room; }
-        catch (Exception ex) { ErrorMessage = $"Could not start playback: {ex.Message}"; }
+        catch (Exception ex) { SetLocalizedError(WatchPartyText.ActionFailure("web.watchTogether.actions.startFailed", "Could not start playback", ex)); }
         finally { IsBusy = false; }
     }
     public async Task ChangeSelectionModeAsync(string mode)
@@ -370,7 +354,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         if (IsBusy || !IsHost || Room?.Phase != "lobby" || !Capabilities.SelectionModeSwitch) return;
         IsBusy = true; ErrorMessage = null;
         try { Room = (await _playbackApi.UpdateWatchTogetherSelectionModeAsync(RoomId!, mode)).Room; UpdateSuggestionPermissions(Suggestions); }
-        catch (Exception ex) { ErrorMessage = $"Could not change selection mode: {ex.Message}"; }
+        catch (Exception ex) { SetLocalizedError(WatchPartyText.ActionFailure("web.watchTogether.actions.modeFailed", "Could not change how the room picks", ex)); }
         finally { IsBusy = false; }
     }
 
@@ -793,8 +777,9 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                     catch { /* malformed — ignore */ }
                     break;
                 case "error":
-                    ErrorMessage = root.TryGetProperty("message", out var error)
-                        ? error.GetString() : "The room rejected the request.";
+                    // A server-worded message is shown as sent; otherwise the keyed generic failure.
+                    if (root.TryGetProperty("message", out var error) && error.GetString() is { } serverMessage) ErrorMessage = serverMessage;
+                    else SetLocalizedError(() => WatchPartyText.Get("web.watchTogether.actions.genericFailed", "Something went wrong"));
                     break;
                 case "pong":
                     RecordClockPong(root, receivedAt);

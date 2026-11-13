@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Controls.MatchItemDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
@@ -56,7 +57,7 @@
              (movies) or library roots (series). Mirrors webui MediaLocations +
              FolderPathsList used inside MatchItemDialog. -->
         <StackPanel x:Name="LocalMediaSection" Spacing="12" Visibility="Collapsed">
-            <TextBlock Text="Local media" FontSize="16" FontWeight="SemiBold" Height="24" LineHeight="24" LineStackingStrategy="BlockLineHeight"
+            <TextBlock Text="Local media" loc:Localized.Text="web.item.match.localMedia" FontSize="16" FontWeight="SemiBold" Height="24" LineHeight="24" LineStackingStrategy="BlockLineHeight"
                        Foreground="{StaticResource PrimaryTextBrush}" />
             <StackPanel x:Name="LocalMediaPanel" Spacing="6" />
             <TextBlock x:Name="LocalMediaEmpty" FontSize="12"
@@ -81,8 +82,8 @@
                 x:Name="TitleBox"
                 Grid.Row="0"
                 Grid.ColumnSpan="2"
-                Header="Title"
-                PlaceholderText="Title"
+                Header="Title" loc:Localized.Header="web.item.dialog.fieldTitle"
+                PlaceholderText="Title" loc:Localized.Placeholder="web.item.dialog.fieldTitle"
                 FontSize="14"
                 CornerRadius="8"
                 KeyDown="SearchField_KeyDown" />
@@ -90,8 +91,8 @@
                 x:Name="YearBox"
                 Grid.Row="1"
                 Grid.Column="0"
-                Header="Year"
-                PlaceholderText="Year"
+                Header="Year" loc:Localized.Header="web.item.dialog.fieldYear"
+                PlaceholderText="Year" loc:Localized.Placeholder="web.item.dialog.fieldYear"
                 InputScope="Number"
                 FontSize="14"
                 CornerRadius="8"
@@ -100,7 +101,7 @@
                 x:Name="ImdbIdBox"
                 Grid.Row="1"
                 Grid.Column="1"
-                Header="IMDb ID"
+                Header="IMDb ID" loc:Localized.Header="web.item.dialog.imdbId"
                 PlaceholderText="tt1234567"
                 FontSize="14"
                 CornerRadius="8"
@@ -109,7 +110,7 @@
                 x:Name="TmdbIdBox"
                 Grid.Row="2"
                 Grid.Column="0"
-                Header="TMDB ID"
+                Header="TMDB ID" loc:Localized.Header="web.item.dialog.tmdbId"
                 PlaceholderText="12345"
                 FontSize="14"
                 CornerRadius="8"
@@ -118,7 +119,7 @@
                 x:Name="TvdbIdBox"
                 Grid.Row="2"
                 Grid.Column="1"
-                Header="TVDB ID"
+                Header="TVDB ID" loc:Localized.Header="web.item.dialog.tvdbId"
                 PlaceholderText="12345"
                 FontSize="14"
                 CornerRadius="8"
@@ -134,22 +135,22 @@
                 <TextBox
                     x:Name="GenericTitleBox"
                     Grid.Column="0"
-                    Header="Title"
-                    PlaceholderText="Title"
+                    Header="Title" loc:Localized.Header="web.item.dialog.fieldTitle"
+                    PlaceholderText="Title" loc:Localized.Placeholder="web.item.dialog.fieldTitle"
                     FontSize="14"
                     CornerRadius="8"
                     KeyDown="SearchField_KeyDown" />
                 <TextBox
                     x:Name="GenericYearBox"
                     Grid.Column="1"
-                    Header="Year"
-                    PlaceholderText="Year"
+                    Header="Year" loc:Localized.Header="web.item.dialog.fieldYear"
+                    PlaceholderText="Year" loc:Localized.Placeholder="web.item.dialog.fieldYear"
                     InputScope="Number"
                     FontSize="14"
                     CornerRadius="8"
                     KeyDown="SearchField_KeyDown" />
             </Grid>
-            <TextBlock Text="Provider IDs" FontSize="12"
+            <TextBlock Text="Provider IDs" loc:Localized.Text="web.item.match.providerIds" FontSize="12"
                        Foreground="{StaticResource SecondaryTextBrush}" />
             <StackPanel x:Name="ProviderIdsPanel" Spacing="8" />
             <Button
@@ -160,8 +161,8 @@
                 HorizontalAlignment="Left"
                 Style="{StaticResource SecondaryButtonStyle}"
                 Click="AddProviderId_Click"
-                AutomationProperties.Name="Add provider ID"
-                ToolTipService.ToolTip="Add provider ID">
+                AutomationProperties.Name="Add provider ID" loc:Localized.Name="web.item.match.addProviderId"
+                ToolTipService.ToolTip="Add provider ID" loc:Localized.ToolTip="web.item.match.addProviderId">
                 <FontIcon Glyph="&#xE710;" FontSize="12" />
             </Button>
         </StackPanel>
@@ -188,9 +189,9 @@
 
         <!-- Results list -->
         <StackPanel x:Name="ResultsSection" Spacing="8" Visibility="Collapsed">
-            <TextBlock Text="Results" FontSize="12" FontWeight="SemiBold"
+            <TextBlock Text="Results" loc:Localized.Text="web.item.match.results" FontSize="12" FontWeight="SemiBold"
                        Foreground="{StaticResource PrimaryTextBrush}" />
-            <TextBlock x:Name="TruncatedText" Text="Showing the first 500 matches. Refine the title, year, or provider ID to narrow the results." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Visibility="Collapsed"/>
+            <TextBlock x:Name="TruncatedText" Text="Showing the first 500 matches. Refine the title, year, or provider ID to narrow the results." loc:Localized.Text="web.item.match.truncated" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Visibility="Collapsed"/>
             <StackPanel x:Name="ResultsPanel" Spacing="4" />
         </StackPanel>
 

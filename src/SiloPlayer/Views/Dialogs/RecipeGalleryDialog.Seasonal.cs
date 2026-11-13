@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -37,7 +38,7 @@ public static partial class RecipeGalleryDialog
         {
             state.Ready = false;
             panel.Children.Clear();
-            panel.Children.Add(Hint("Loading holidays…"));
+            panel.Children.Add(Hint(CollectionText.Get("web.home.addRow.seasonal.loading", "Loading holidays…")));
             try
             {
                 var catalog = await api.GetSeasonalThemesAsync();
@@ -61,8 +62,8 @@ public static partial class RecipeGalleryDialog
             {
                 if (!host.Children.Contains(panel)) return;
                 panel.Children.Clear();
-                panel.Children.Add(Hint("Couldn't load the holidays. Try again."));
-                var retry = new Button { Content = "Try again", Style = ResourceStyle("GhostButtonStyle") };
+                panel.Children.Add(Hint(CollectionText.Get("web.home.addRow.seasonal.failed", "Couldn't load the holidays. Try again.")));
+                var retry = new Button { Content = CollectionText.Get("common.tryAgain", "Try again"), Style = ResourceStyle("GhostButtonStyle") };
                 retry.Click += async (_, _) => await LoadAsync();
                 panel.Children.Add(retry);
             }
@@ -96,8 +97,9 @@ public static partial class RecipeGalleryDialog
             TextBox? title = null;
             if (theme.Vibes.Count > 1)
             {
-                var combo = CreateCombo("Vibe", theme.Vibes.Select(vibe => new Option(vibe.Key, vibe.Name)).ToArray(), chosen.Key);
-                AutomationProperties.SetName(combo, $"Vibe for {theme.Name}");
+                // Theme and vibe names are the server's; only the control words are interface text.
+                var combo = CreateCombo(CollectionText.Get("web.home.addRow.seasonal.vibe", "Vibe"), theme.Vibes.Select(vibe => new Option(vibe.Key, vibe.Name)).ToArray(), chosen.Key);
+                AutomationProperties.SetName(combo, CollectionText.Get("web.home.addRow.seasonal.vibeFor", $"Vibe for {theme.Name}", ("holiday", theme.Name)));
                 combo.SelectionChanged += (_, _) =>
                 {
                     if (combo.SelectedItem is not Option option) return;
@@ -117,8 +119,8 @@ public static partial class RecipeGalleryDialog
                 if (theme.DatesEditable)
                 {
                     var own = dates.GetValueOrDefault(theme.Key);
-                    var start = new TextBox { Header = "Start (MM-DD)", PlaceholderText = theme.Start ?? "MM-DD", Text = own?.Start ?? "", MaxLength = 5 };
-                    var end = new TextBox { Header = "End (MM-DD)", PlaceholderText = theme.End ?? "MM-DD", Text = own?.End ?? "", MaxLength = 5 };
+                    var start = new TextBox { Header = CollectionText.Get("web.home.addRow.seasonal.starts", "Start (MM-DD)", ("holiday", theme.Name)), PlaceholderText = theme.Start ?? "MM-DD", Text = own?.Start ?? "", MaxLength = 5 };
+                    var end = new TextBox { Header = CollectionText.Get("web.home.addRow.seasonal.ends", "End (MM-DD)", ("holiday", theme.Name)), PlaceholderText = theme.End ?? "MM-DD", Text = own?.End ?? "", MaxLength = 5 };
                     void DatesChanged()
                     {
                         if (start.Text == "" && end.Text == "") dates.Remove(theme.Key);
@@ -139,10 +141,10 @@ public static partial class RecipeGalleryDialog
         }
         if (!family)
         {
-            host.Children.Add(Hint("The row shows whichever holiday is in season and hides itself when none is."));
+            host.Children.Add(Hint(CollectionText.Get("web.home.addRow.seasonal.inSeasonNote", "The row shows whichever holiday is in season and hides itself when none is.")));
             AddCustomHolidayFields(config, host, catalog.MaxCustomHolidays);
         }
-        AddCombo(host, "Picks from", [new("recommendations", "Silo recommendations"), new("lists", "The lists only")],
+        AddCombo(host, CollectionText.Get("web.home.addRow.seasonal.picksFrom", "Picks from"), [new("recommendations", CollectionText.Get("web.home.addRow.seasonal.sourceRecommendations", "Silo recommendations")), new("lists", CollectionText.Get("web.home.addRow.seasonal.sourceLists", "The lists only"))],
             StringValue(config, "source") == "lists" ? "lists" : "recommendations", value =>
             { if (value == "lists") config["source"] = value; else config.Remove("source"); });
         host.Children.Add(Hint("Silo recommendations starts with the list's titles you have, most popular first, then similar titles from your library. The lists only skips similar titles."));
@@ -152,7 +154,7 @@ public static partial class RecipeGalleryDialog
     {
         var holidays = SeasonalRowConfiguration.Read(config, "custom_holidays", new List<SeasonalCustomHoliday>());
         var rows = new StackPanel { Spacing = 12 };
-        var add = new Button { Content = "Add my own holiday", Style = ResourceStyle("GhostButtonStyle") };
+        var add = new Button { Content = CollectionText.Get("web.home.addRow.seasonal.addHoliday", "Add my own holiday"), Style = ResourceStyle("GhostButtonStyle") };
         void Commit()
         {
             if (holidays.Count == 0) config.Remove("custom_holidays");
@@ -172,15 +174,15 @@ public static partial class RecipeGalleryDialog
                     box.TextChanged += (_, _) => { change(box.Text.Trim()); Commit(); };
                     fields.Children.Add(box); return box;
                 }
-                Field("Holiday name", holiday.Name, "My holiday", value => holiday.Name = value);
+                Field(CollectionText.Get("web.home.addRow.seasonal.holidayName", "Holiday name", ("number", CollectionText.Number(index + 1))), holiday.Name, CollectionText.Get("web.home.addRow.seasonal.holidayNamePlaceholder", "My holiday"), value => holiday.Name = value);
                 Field("Start (MM-DD)", holiday.Start, "07-04", value => holiday.Start = value).MaxLength = 5;
                 Field("End (MM-DD)", holiday.End, "07-04", value => holiday.End = value).MaxLength = 5;
                 Field("Public MDBList list", holiday.ListUrl, "https://mdblist.com/lists/…", value => holiday.ListUrl = value);
                 Field("Name in season (optional)", holiday.Title ?? "", "Defaults to the holiday name", value => holiday.Title = value.Length == 0 ? null : value);
-                var remove = new Button { Content = "Remove holiday", Style = ResourceStyle("GhostButtonStyle") };
+                var remove = new Button { Content = CollectionText.Get("web.home.addRow.seasonal.removeHoliday", "Remove holiday", ("holiday", string.IsNullOrWhiteSpace(holiday.Name) ? CollectionText.Get("web.home.addRow.seasonal.holidayNumber", $"Custom holiday {index + 1}", ("number", CollectionText.Number(index + 1))) : holiday.Name)), Style = ResourceStyle("GhostButtonStyle") };
                 remove.Click += (_, _) => { holidays.Remove(holiday); Commit(); Render(); };
                 fields.Children.Add(remove);
-                rows.Children.Add(new Expander { Header = $"Custom holiday {index + 1}", IsExpanded = true, Content = fields,
+                rows.Children.Add(new Expander { Header = CollectionText.Get("web.home.addRow.seasonal.holidayNumber", $"Custom holiday {index + 1}", ("number", CollectionText.Number(index + 1))), IsExpanded = true, Content = fields,
                     HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
             }
             add.IsEnabled = holidays.Count < maximum;

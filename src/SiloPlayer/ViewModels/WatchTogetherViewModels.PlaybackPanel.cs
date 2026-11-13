@@ -69,12 +69,12 @@ public partial class WatchTogetherRoomViewModel
         }
         catch (Exception)
         {
-            if (Current()) ErrorMessage = action switch
+            if (Current()) SetLocalizedError(action switch
             {
-                "stop" => "Could not stop playback. Try again.",
-                "toggle-policy" => "Policy update failed. Try again.",
-                _ => "Failed to close room. Try again.",
-            };
+                "stop" => () => WatchPartyText.Get("web.watchTogether.actions.stopFailed", "Could not stop playback"),
+                "toggle-policy" => () => WatchPartyText.Get("web.watchTogether.actions.updateRoomFailed", "Failed to update room"),
+                _ => () => WatchPartyText.Get("web.watchTogether.actions.endRoomFailed", "Failed to close room. Try again."),
+            });
         }
         finally
         {

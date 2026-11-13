@@ -1,3 +1,4 @@
+using SiloPlayer.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.ViewModels;
@@ -15,6 +16,7 @@ public sealed partial class FavoritesPage : Page
     {
         ViewModel = App.Services.GetRequiredService<FavoritesViewModel>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         PosterRepeater.ItemsSource = ViewModel.Items;
@@ -63,8 +65,9 @@ public sealed partial class FavoritesPage : Page
 
         if (hasItems)
         {
-            ItemCountText.Text = count.ToString();
-            ItemCountLabel.Text = count == 1 ? "title" : "titles";
+            MediaItemCardActions.BindText(ItemCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.titleCount", new Dictionary<string, object?> { ["count"] = count, ["shown"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
+            ItemCountLabel.Text = "";
+            ItemCountLabel.Visibility = Visibility.Collapsed;
         }
     }
 

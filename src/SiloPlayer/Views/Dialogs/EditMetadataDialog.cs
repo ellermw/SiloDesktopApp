@@ -13,10 +13,11 @@ using SiloPlayer.Services;
 using SiloPlayer.Messaging;
 using CommunityToolkit.Mvvm.Messaging;
 using System.Text.Json;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Views.Dialogs;
 
-public sealed class EditMetadataDialog : ContentDialog
+public sealed partial class EditMetadataDialog : ContentDialog
 {
     private MediaItemDetail _item;
     private readonly MetadataEditState _state;
@@ -63,13 +64,15 @@ public sealed class EditMetadataDialog : ContentDialog
         _header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         _header.Padding = new Thickness(20, 16, 16, 16);
         var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
-        heading.Children.Add(new TextBlock { Text = "Edit Metadata", FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+        heading.Children.Add(new TextBlock { Text = "Edit Metadata", FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center }.Keyed("web.item.dialog.editMetadataTitle"));
         heading.Children.Add(new Border { Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(4), Background = Brush("SurfaceRaisedBrush"),
-            Child = new TextBlock { Text = item.Type.Length == 0 ? "Item" : char.ToUpperInvariant(item.Type[0]) + item.Type[1..], FontSize = 11, Foreground = Brush("SecondaryTextBrush") } });
+            Child = TypeBadge(item.Type) });
         _header.Children.Add(heading); _lockedCount.Foreground = Brush("SecondaryTextBrush");
         Grid.SetColumn(_lockedCount, 1); _header.Children.Add(_lockedCount);
         var cornerClose = EditorDialogPresentation.CornerClose(this); Grid.SetColumn(cornerClose, 2); _header.Children.Add(cornerClose);
-        Title = _header; PrimaryButtonText = "Save Changes"; CloseButtonText = "Cancel";
+        Title = _header; PrimaryButtonText = AppStrings.Get("web.item.editMetadata.saveChanges"); CloseButtonText = AppStrings.Get("common.cancel");
+        this.KeyedDialog(close: "common.cancel");
+        AppLocalization.Register(this, RefreshLocale);
         DefaultButton = ContentDialogButton.Primary; Background = Brush("AppBackgroundBrush");
         EditorDialogPresentation.Configure(this, 1024, new Thickness(0));
         Resources["ContentDialogTitleMargin"] = new Thickness(0);
@@ -125,18 +128,20 @@ public sealed class EditMetadataDialog : ContentDialog
         // An unselected section has not acquired a visual Parent yet. Its stored
         // layout still owns the rating row and is the authority for insertion.
         if (_fieldGroups.TryGetValue("rating_imdb", out var rating) && _fieldLayouts.Select(layout => layout.Grid).FirstOrDefault(grid => grid.Children.Contains(rating)) is Grid ratingRow)
-            dates.Children.Insert(dates.Children.IndexOf(ratingRow), new TextBlock { Text = "RATINGS", FontSize = 11,
+            dates.Children.Insert(dates.Children.IndexOf(ratingRow), _ratingsHeading = new TextBlock { Text = AppStrings.Uppercase(AppStrings.Get("web.item.editMetadata.ratings")), FontSize = 11,
                 FontWeight = FontWeights.SemiBold, CharacterSpacing = 100, Margin = new Thickness(0, 8, 0, 0), Foreground = Brush("SecondaryTextBrush") });
-        _reset = new Button { Content = "Reset to Provider", FontSize = 13, Height = 32, MinHeight = 0,
+        _reset = new Button { Content = AppStrings.Get("web.item.editMetadata.resetToProvider"), FontSize = 13, Height = 32, MinHeight = 0,
             Padding = new Thickness(12, 4, 12, 4), Foreground = Brush("SecondaryTextBrush"),
             Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left };
+        // Not a keyed control: rewriting the flyout owner's content on load/open can stop its
+        // confirmation flyout from opening. RefreshLocale updates it only on a real language change.
         _reset.Visibility = item.Type is "movie" or "series" or "season" or "episode" ? Visibility.Visible : Visibility.Collapsed;
         _reset.IsEnabled = false;
         var reset = _reset;
         var confirmation = new StackPanel { Spacing = 12, MaxWidth = 340 };
         confirmation.Children.Add(new TextBlock { Text = "Reset to Provider Metadata?", FontWeight = FontWeights.SemiBold });
         confirmation.Children.Add(_resetExplanation);
-        var confirm = new Button { Content = "Reset", Style = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
+        var confirm = new Button { Content = "Reset", Style = (Style)Application.Current.Resources["DestructiveButtonStyle"] }.Keyed("web.settings.resetButton.label");
         var flyout = new Flyout { Content = confirmation }; reset.Flyout = flyout; confirmation.Children.Add(confirm);
         confirm.Click += async (_, _) => { if (!CanSubmitReset || _resetCapability is not { } capability) return; _pending = true; confirm.IsEnabled = false; reset.IsEnabled = false; IsPrimaryButtonEnabled = false;
             try
@@ -154,7 +159,9 @@ public sealed class EditMetadataDialog : ContentDialog
             catch (ApiException ex) when (capability.AtomicReset && ex.StatusCode == 422)
             { if (CurrentOwner) Toast().Error(ex, "This server does not support atomic metadata reset. Nothing was changed."); }
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
-            finally { _pending = false; confirm.IsEnabled = CanSubmitReset; reset.IsEnabled = CanSubmitReset; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; } };
+            // Only _reset opens this flyout and the click re-checks CanSubmitReset, so the confirmation
+            // must not stay disabled while a reconnect is still reloading the capability.
+            finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = CanSubmitReset; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;
         var auth = App.Services.GetRequiredService<AuthService>();
@@ -217,7 +224,7 @@ public sealed class EditMetadataDialog : ContentDialog
             _reset.IsEnabled = CanSubmitReset;
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (CurrentOwner && owner == _owner) ToolTipService.SetToolTip(_reset, "Reset availability could not be checked. Reopen the editor to retry. " + ex.Message); }
+        catch (Exception ex) { if (CurrentOwner && owner == _owner) ToolTipService.SetToolTip(_reset, "Reset availability could not be checked. Reopen the editor to retry. " + ex.DisplayMessage()); }
     }
     private ToastService Toast() => App.Services.GetRequiredService<ToastService>();
     private void Changed() => WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, _item.ContentId, _item.SeriesId));
@@ -225,6 +232,7 @@ public sealed class EditMetadataDialog : ContentDialog
     {
         var panel = new StackPanel { Spacing = 16 }; _sections[key] = panel; _body.Children.Add(panel);
         var button = new Button { Content = title, Tag = key, FontSize = 13, FontWeight = FontWeights.Medium, Padding = new Thickness(16, 8, 16, 8), Height = 36, MinHeight = 36, CornerRadius = new CornerRadius(0), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+        if (SectionKey(key) is { } sectionKey) button.Keyed(sectionKey);
         button.Click += (_, _) => ShowSection(key); _navigation.Children.Add(button); return panel;
     }
     private void ShowSection(string key)
@@ -309,7 +317,7 @@ public sealed class EditMetadataDialog : ContentDialog
     }
     private Grid Label(string key, string text)
     {
-        var row = new Grid(); row.Children.Add(new TextBlock { Text = text, FontSize = 12, Height = 12, LineHeight = 12, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("SecondaryTextBrush"), FontWeight = FontWeights.Medium });
+        var row = new Grid(); row.Children.Add(new TextBlock { Text = text, FontSize = 12, Height = 12, LineHeight = 12, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("SecondaryTextBrush"), FontWeight = FontWeights.Medium }.Keyed(FieldKey(key) ?? ""));
         if (_state.FieldLockMap.TryGetValue(key, out var field))
         {
             var button = new Button { Padding = new Thickness(4, 0, 4, 0), Height = 18, MinHeight = 0, MinWidth = 0, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
@@ -321,14 +329,14 @@ public sealed class EditMetadataDialog : ContentDialog
     private void RefreshLocks()
     {
         var locks = _state.EffectiveLocks(_item.LockedFields);
-        _lockedCount.Text = $"{locks.Count} locked";
+        _lockedCount.Text = AppStrings.Get("web.item.editMetadata.lockedCount", new Dictionary<string, object?> { ["count"] = locks.Count.ToString("N0", AppStrings.FormatCulture) }, $"{locks.Count} locked");
         _lockedCount.Visibility = _state.FieldLockMap.Count > 0 && locks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var (field, button) in _lockButtons)
         {
             var locked = locks.Contains(_state.FieldLockMap[field]);
             button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Children =
                 { WebUiIcon.Create(locked ? "lock-keyhole" : "lock-keyhole-open", 12, Brush(locked ? "WarningBrush" : "SecondaryTextBrush")),
-                  new TextBlock { Text = locked ? "locked" : "", FontSize = 10, Foreground = Brush(locked ? "WarningBrush" : "SecondaryTextBrush") } } };
+                  new TextBlock { Text = locked ? AppStrings.Get("web.item.editMetadata.locked") : "", FontSize = 10, Foreground = Brush(locked ? "WarningBrush" : "SecondaryTextBrush") } } };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, (locked ? "Unlock " : "Lock ") + field);
         }
     }
@@ -370,10 +378,10 @@ public sealed class EditMetadataDialog : ContentDialog
         foreach (var (key, value) in changes)
             if (key.EndsWith("_date") && value is string date && date.Length > 0 && !DateOnly.TryParseExact(date, "yyyy-MM-dd", out _)) { Toast().Error("Use YYYY-MM-DD for dates."); return; }
         if (changes.Count == 0) { Hide(); return; }
-        _pending = true; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; PrimaryButtonText = "Saving...";
-        try { await _api.UpdateMetadataAsync(_item.ContentId, changes, _lifetime.Token); if (!CurrentOwner) return; HasSaved = true; Changed(); Toast().Success("Metadata saved"); Hide(); }
+        _pending = true; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; PrimaryButtonText = AppStrings.Get("web.item.dialog.saving");
+        try { await _api.UpdateMetadataAsync(_item.ContentId, changes, _lifetime.Token); if (!CurrentOwner) return; HasSaved = true; Changed(); Toast().Success(AppStrings.Get("web.item.toast.metadataSaved")); Hide(); }
         catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
-        finally { _pending = false; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; _reset.IsEnabled = CanSubmitReset; PrimaryButtonText = "Save Changes"; }
+        finally { _pending = false; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; _reset.IsEnabled = CanSubmitReset; PrimaryButtonText = AppStrings.Get("web.item.editMetadata.saveChanges"); }
     }
     private void CaptureVisibleValue(string key, object? value)
     {
@@ -389,31 +397,34 @@ public sealed class EditMetadataDialog : ContentDialog
             var panel = new StackPanel { Spacing = 12 };
             var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             heading.Children.Add(WebUiIcon.Create("languages", 16, Brush("SecondaryTextBrush")));
-            heading.Children.Add(new TextBlock { Text = "Translate with AI", FontSize = 14, FontWeight = FontWeights.Medium });
+            heading.Children.Add(new TextBlock { Text = "Translate with AI", FontSize = 14, FontWeight = FontWeights.Medium }.Keyed("web.item.translate.heading"));
             panel.Children.Add(heading);
             panel.Children.Add(new TextBlock { Text = (_item.Type == "series" ? "Translates the overview and tagline plus all season and episode overviews" : _item.Type == "movie" ? "Translates the overview and tagline" : "Translates the overview") + " into the chosen language. Translations are served to libraries using that metadata language; provider data replaces them when it becomes available.", FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") });
-            var languages = new ComboBox { Header = "Language", PlaceholderText = "Select…", MinWidth = 150,
+            var languages = new ComboBox { Header = AppStrings.Get("web.item.translate.language"), PlaceholderText = AppStrings.Get("web.item.translate.selectLanguage"), MinWidth = 150,
                 FontSize = 14, Padding = new Thickness(8, 4, 8, 4), VerticalAlignment = VerticalAlignment.Bottom };
             foreach (var language in MediaLanguageCatalog.All) languages.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
             var force = new ToggleSwitch { MinHeight = 36, Height = 36, VerticalAlignment = VerticalAlignment.Center };
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(force, "Re-translate existing");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(force, AppStrings.Get("web.item.translate.force"));
             var forceGroup = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Height = 36, VerticalAlignment = VerticalAlignment.Bottom };
             forceGroup.Children.Add(force);
-            forceGroup.Children.Add(new TextBlock { Text = "Re-translate existing", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
-            var button = new Button { Content = "Translate", Height = 32, MinHeight = 32, Padding = new Thickness(12, 0, 12, 0),
+            forceGroup.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.translate.force"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+            var button = new Button { Content = AppStrings.Get("web.item.translate.translate"), Height = 32, MinHeight = 32, Padding = new Thickness(12, 0, 12, 0),
                 Style = (Style)Application.Current.Resources["AccentButtonStyle"], VerticalAlignment = VerticalAlignment.Bottom };
             var controls = new WrapPanel { HorizontalSpacing = 12, VerticalSpacing = 12 };
             controls.Children.Add(languages); controls.Children.Add(forceGroup); controls.Children.Add(button);
             var status = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Foreground = Brush("SecondaryTextBrush") };
             panel.Children.Add(controls); panel.Children.Add(status);
             var general = _sections["general"];
-            var ratingRow = (UIElement)_fieldGroups["content_rating"].Parent;
+            // Opened can finish its capability read before WinUI assigns visual parents.
+            // The stored layout already owns this field, including at narrow widths.
+            var ratingRow = _fieldLayouts.Select(layout => layout.Grid)
+                .Single(grid => grid.Children.Contains(_fieldGroups["content_rating"]));
             general.Children.Insert(general.Children.IndexOf(ratingRow), new Border { Child = panel, Padding = new Thickness(12), BorderThickness = new Thickness(1), BorderBrush = Brush("BorderBrush"), CornerRadius = new CornerRadius(10), Background = TranslucentBrush("MutedBrush", .3) });
             Reflow();
             button.Click += async (_, _) =>
             {
-                if (languages.SelectedItem is not ComboBoxItem selected) { Toast().Error("Pick a target language first."); return; }
-                button.IsEnabled = false; languages.IsEnabled = false; force.IsEnabled = false; button.Content = "Translating…";
+                if (languages.SelectedItem is not ComboBoxItem selected) { Toast().Error(AppStrings.Get("web.item.translate.pickLanguage")); return; }
+                button.IsEnabled = false; languages.IsEnabled = false; force.IsEnabled = false; button.Content = AppStrings.Get("web.item.translate.translating");
                 try
                 {
                     var started = await _api.TranslateMetadataAsync(_item.ContentId, (string)selected.Tag, _item.Type == "series", force.IsOn, _lifetime.Token);
@@ -430,8 +441,9 @@ public sealed class EditMetadataDialog : ContentDialog
                             var fieldsTotal = job.TryGetProperty("fields_total", out var completedTotal) ? completedTotal.GetInt32() : 0;
                             var fieldsDone = job.TryGetProperty("fields_done", out var completedDone) ? completedDone.GetInt32() : 0;
                             HasSaved = true; Changed(); status.Text = ""; status.Visibility = Visibility.Collapsed;
-                            Toast().Success(fieldsTotal == 0 ? "Nothing to translate — all descriptions are already localized."
-                                : $"Translated {fieldsDone} description{(fieldsDone == 1 ? "" : "s")}.");
+                            Toast().Success(fieldsTotal == 0 ? AppStrings.Get("web.item.translate.nothingToTranslate")
+                                : AppStrings.Get("web.item.translate.translated", new Dictionary<string, object?> { ["count"] = fieldsDone, ["field_count"] = fieldsDone.ToString("N0", AppStrings.FormatCulture) },
+                                    $"Translated {fieldsDone} description{(fieldsDone == 1 ? "" : "s")}."));
                             break;
                         }
                         if (state == "failed") throw new InvalidOperationException(String(job, "error_message"));
@@ -440,7 +452,7 @@ public sealed class EditMetadataDialog : ContentDialog
                 }
                 catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
                 catch (Exception ex) { Toast().Error(ex); }
-                finally { button.IsEnabled = true; languages.IsEnabled = true; force.IsEnabled = true; button.Content = "Translate"; }
+                finally { button.IsEnabled = true; languages.IsEnabled = true; force.IsEnabled = true; button.Content = AppStrings.Get("web.item.translate.translate"); }
             };
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
@@ -449,7 +461,7 @@ public sealed class EditMetadataDialog : ContentDialog
     private void BuildImages(StackPanel panel)
     {
         panel.Spacing = 12;
-        var notice = new TextBlock { Text = "Image changes apply immediately and are not affected by Cancel.", FontSize = 11, TextWrapping = TextWrapping.Wrap };
+        var notice = new TextBlock { Text = AppStrings.Get("web.item.images.immediateNotice"), FontSize = 11, TextWrapping = TextWrapping.Wrap };
         notice.Foreground = Brush("SecondaryTextBrush");
         panel.Children.Add(new Border { Child = notice, Padding = new Thickness(12, 8, 12, 8), Background = TranslucentBrush("MutedBrush", .5), CornerRadius = new CornerRadius(12) });
         if (_item.Type == "season")
@@ -458,14 +470,14 @@ public sealed class EditMetadataDialog : ContentDialog
             hint.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             hint.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             hint.Children.Add(WebUiIcon.Create("circle-alert", 14, Brush("WarningBrush")));
-            var copy = new TextBlock { Text = "Only seeing one poster? Check for plugin updates and update TMDB and TVDB to load full season artwork galleries.",
+            var copy = new TextBlock { Text = AppStrings.Get("web.item.images.seasonNotice"),
                 FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = Brush("WarningBrush") };
             Grid.SetColumn(copy, 1); hint.Children.Add(copy);
             panel.Children.Add(new Border { Child = hint, Padding = new Thickness(12, 6, 12, 6), CornerRadius = new CornerRadius(8),
                 BorderThickness = new Thickness(1), BorderBrush = TranslucentBrush("WarningBrush", .2), Background = TranslucentBrush("WarningBrush", .05) });
         }
         var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        var textless = new ToggleButton { Content = "Textless", FontSize = 11, FontWeight = FontWeights.Medium, Height = 30, MinHeight = 0,
+        var textless = new ToggleButton { Content = AppStrings.Get("web.item.images.textless"), FontSize = 11, FontWeight = FontWeights.Medium, Height = 30, MinHeight = 0,
             Padding = new Thickness(10, 6, 10, 6), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Foreground = Brush("SecondaryTextBrush"), CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Right };
         var tabRow = new Grid(); tabRow.Children.Add(tabs); tabRow.Children.Add(textless); panel.Children.Add(tabRow);
@@ -506,7 +518,13 @@ public sealed class EditMetadataDialog : ContentDialog
             }
             apply.Visibility = selection.ValueKind == JsonValueKind.Object ? Visibility.Visible : Visibility.Collapsed;
             apply.IsEnabled = !_pending && !_imagePending && selection.ValueKind == JsonValueKind.Object;
-            apply.Content = _imagePending ? "Applying..." : "Apply " + char.ToUpperInvariant(type[0]) + type[1..];
+            apply.Content = _imagePending ? AppStrings.Get("web.item.dialog.applying") : type switch
+            {
+                "poster" => AppStrings.Get("web.item.images.applyPoster"),
+                "backdrop" => AppStrings.Get("web.item.images.applyBackdrop"),
+                "logo" => AppStrings.Get("web.item.images.applyLogo"),
+                _ => "Apply " + char.ToUpperInvariant(type[0]) + type[1..],
+            };
         }
         void Render()
         {
@@ -515,7 +533,7 @@ public sealed class EditMetadataDialog : ContentDialog
                 (!String(image, "original_url").StartsWith("upload://", StringComparison.Ordinal) || IsCurrentImage(String(image, "original_url"))) &&
                 (textless.IsChecked != true || type == "logo" || String(image, "language").Length == 0)).ToArray() ?? [];
             foreach (var tab in tabs.Children.OfType<Button>()) tab.Style = (Style)Application.Current.Resources[Equals(tab.Tag, type) ? "AccentButtonStyle" : "GhostButtonStyle"];
-            if (choices.Length == 0) grid.Children.Add(new TextBlock { Text = textless.IsChecked == true ? "No textless images available." : "No images available.", FontSize = 14 });
+            if (choices.Length == 0) grid.Children.Add(new TextBlock { Text = textless.IsChecked == true ? AppStrings.Get("web.item.images.noTextless") : AppStrings.Get("web.item.images.noImages"), FontSize = 14 });
             foreach (var image in choices)
             {
                 var picture = new Image { Stretch = Stretch.UniformToFill };
@@ -524,7 +542,7 @@ public sealed class EditMetadataDialog : ContentDialog
                 var original = String(image, "original_url"); var isCurrent = IsCurrentImage(original);
                 if (isCurrent) body.Children.Add(new Border { Margin = new Thickness(4), Padding = new Thickness(6, 2, 6, 2), CornerRadius = new CornerRadius(4),
                     Background = TranslucentBrush("AccentBrush", .9), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
-                    Child = new TextBlock { Text = "Current", FontSize = 9, Foreground = Brush("AccentForegroundBrush"), FontWeight = FontWeights.SemiBold } });
+                    Child = new TextBlock { Text = AppStrings.Get("web.item.images.current"), FontSize = 9, Foreground = Brush("AccentForegroundBrush"), FontWeight = FontWeights.SemiBold } });
                 var selectionBadge = new Border { Tag = "selection", Width = 20, Height = 20, Margin = new Thickness(4), CornerRadius = new CornerRadius(10),
                     Background = Brush("AccentBrush"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Visibility = Visibility.Collapsed,
                     Child = WebUiIcon.Create("check", 12, Brush("AccentForegroundBrush")) };
@@ -542,7 +560,7 @@ public sealed class EditMetadataDialog : ContentDialog
         }
         foreach (var imageType in _item.Type == "season" ? new[] { "poster" } : new[] { "poster", "backdrop", "logo" })
         {
-            var button = new Button { Content = imageType switch { "poster" => "Posters", "backdrop" => "Backdrops", _ => "Logos" }, Tag = imageType, FontSize = 12, FontWeight = FontWeights.Medium,
+            var button = new Button { Content = imageType switch { "poster" => AppStrings.Get("web.item.images.posters"), "backdrop" => AppStrings.Get("web.item.images.backdrops"), _ => AppStrings.Get("web.item.images.logos") }, Tag = imageType, FontSize = 12, FontWeight = FontWeights.Medium,
                 Height = 30, MinHeight = 0, Padding = new Thickness(12, 6, 12, 6), Style = (Style)Application.Current.Resources[imageType == "poster" ? "AccentButtonStyle" : "GhostButtonStyle"] };
             button.Click += (_, _) => { type = imageType; textless.IsChecked = false; textless.Visibility = type == "logo" ? Visibility.Collapsed : Visibility.Visible; Render(); }; tabs.Children.Add(button);
         }
@@ -550,19 +568,19 @@ public sealed class EditMetadataDialog : ContentDialog
         apply.Click += async (_, _) =>
         {
             if (_pending || _imagePending || !CurrentOwner || selection.ValueKind != JsonValueKind.Object || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
-            var selected = selection; var selectedType = String(selected, "type"); _imagePending = true; apply.IsEnabled = false; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; apply.Content = "Applying...";
+            var selected = selection; var selectedType = String(selected, "type"); _imagePending = true; apply.IsEnabled = false; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; apply.Content = AppStrings.Get("web.item.dialog.applying");
             try { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id")); if (!CurrentOwner) return;
                 applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true; Changed();
-                var refreshed = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); if (!CurrentOwner) return; _item = refreshed; RefreshLocks(); Render(); Toast().Success("Image applied successfully"); }
+                var refreshed = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); if (!CurrentOwner) return; _item = refreshed; RefreshLocks(); Render(); Toast().Success(AppStrings.Get("web.item.toast.imageApplied")); }
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
             finally { _imagePending = false; IsPrimaryButtonEnabled = CurrentOwner && !_pending; _reset.IsEnabled = CanSubmitReset; SelectionPresentation(); }
         };
         Opened += async (_, _) =>
         {
             grid.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24 });
-            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); images = result.Items; current = result.Current; warnings.Text = result.Errors.Count > 0 ? "Could not load from " + string.Join(", ", result.Errors.Keys.Select(key => key.ToUpperInvariant())) : ""; warnings.Visibility = result.Errors.Count > 0 ? Visibility.Visible : Visibility.Collapsed; Render(); }
+            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); images = result.Items; current = result.Current; warnings.Text = result.Errors.Count > 0 ? AppStrings.Get("web.item.images.providerErrors", new Dictionary<string, object?> { ["providers"] = string.Join(", ", result.Errors.Keys.Select(key => key.ToUpperInvariant())) }, "Could not load from " + string.Join(", ", result.Errors.Keys.Select(key => key.ToUpperInvariant()))) : ""; warnings.Visibility = result.Errors.Count > 0 ? Visibility.Visible : Visibility.Collapsed; Render(); }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-            catch { grid.Children.Clear(); grid.Children.Add(new TextBlock { Text = "Failed to load images.", FontSize = 14 }); }
+            catch { grid.Children.Clear(); grid.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.images.loadFailed"), FontSize = 14 }); }
         };
     }
 }

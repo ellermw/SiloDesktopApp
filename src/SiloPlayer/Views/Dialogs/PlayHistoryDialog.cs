@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using System.Text.Json;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -11,7 +13,7 @@ public sealed class PlayHistoryDialog : ContentDialog
 {
     private readonly string _id;
     private readonly StackPanel _rows = new() { Spacing = 0 };
-    private readonly Button _more = new() { Content = "Load more" };
+    private readonly Button _more = new() { Content = AppStrings.Get("web.common.ui.loadMore.button", fallback: "Load more") };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
     private readonly CancellationTokenSource _lifetime = new();
     private readonly SiloApiClient _client;
@@ -22,7 +24,7 @@ public sealed class PlayHistoryDialog : ContentDialog
     public PlayHistoryDialog(string contentId)
     {
         _id = contentId; _client = App.Services.GetRequiredService<SiloApiClient>(); _context = _client.CaptureContext();
-        Title = "Play History"; CloseButtonText = "Close";
+        Title = "Play History"; CloseButtonText = AppStrings.Get("web.ui.close"); this.KeyedDialog(close: "web.ui.close");
         var body = new StackPanel { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch }; body.Children.Add(_status); body.Children.Add(_rows); body.Children.Add(_more);
         var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -32,7 +34,7 @@ public sealed class PlayHistoryDialog : ContentDialog
     private async Task Load()
     {
         if (_loading || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
-        _loading = true; _more.IsEnabled = false; _status.Text = "Loading…";
+        _loading = true; _more.IsEnabled = false; _status.Text = AppStrings.Get("web.item.menu.loading", fallback: "Loading…");
         try
         {
             if (!_client.IsCurrentContext(_context)) throw new OperationCanceledException();
@@ -57,7 +59,7 @@ public sealed class PlayHistoryDialog : ContentDialog
             _status.Text = _rows.Children.Count == 0 ? "No playback history." : "";
         }
         catch (OperationCanceledException) { _more.Visibility = Visibility.Collapsed; }
-        catch (Exception ex) { _status.Text = ex.Message; _more.Content = "Retry"; _more.Visibility = Visibility.Visible; }
+        catch (Exception ex) { _status.Text = ex.DisplayMessage(); _more.Content = AppStrings.Get("common.retry"); _more.Visibility = Visibility.Visible; }
         finally { _loading = false; _more.IsEnabled = true; }
     }
 }

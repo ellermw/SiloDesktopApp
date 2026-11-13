@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.RequestsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
@@ -47,17 +48,17 @@
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="288"/></Grid.ColumnDefinitions>
                 <StackPanel Spacing="4">
-                    <TextBlock x:Name="PageTitleText" Text="Requests" FontSize="30" FontWeight="Bold" CharacterSpacing="-25"/>
-                    <TextBlock Text="Ask for movies and series that aren’t in the library yet, and follow your requests." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="PageTitleText" Text="Requests" FontSize="30" FontWeight="Bold" CharacterSpacing="-25" loc:Localized.Text="web.requests.title"/>
+                    <TextBlock Text="Ask for movies and series that aren’t in the library yet, and follow your requests." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" loc:Localized.Text="web.requests.hub.intro"/>
                 </StackPanel>
                 <Grid x:Name="SearchBarGrid" Grid.Column="1" VerticalAlignment="Bottom">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="0"/><ColumnDefinition Width="*"/><ColumnDefinition Width="0"/></Grid.ColumnDefinitions>
                     <ComboBox x:Name="MediaTypeComboBox" Visibility="Collapsed" SelectionChanged="MediaType_Changed"><ComboBoxItem Tag="all" IsSelected="True"/></ComboBox>
                     <Grid x:Name="SearchInputGrid" Grid.Column="1">
-                        <TextBox x:Name="SearchBox" Height="36" CornerRadius="12" Background="{StaticResource AppBackgroundBrush}" PlaceholderText="Search movies and series" Padding="36,4,34,4" KeyDown="SearchBox_KeyDown" TextChanged="SearchBox_TextChanged"/>
+                        <TextBox x:Name="SearchBox" Height="36" CornerRadius="12" Background="{StaticResource AppBackgroundBrush}" PlaceholderText="Search movies and series" Padding="36,4,34,4" KeyDown="SearchBox_KeyDown" TextChanged="SearchBox_TextChanged" loc:Localized.Placeholder="web.requests.hub.search"/>
                         <FontIcon Glyph="&#xE721;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False"/>
-                        <Button x:Name="ClearSearchButton" Style="{StaticResource GhostButtonStyle}" Width="30" Height="30" MinHeight="0" Padding="0" HorizontalAlignment="Right" Margin="0,0,4,0" Click="ClearSearch_Click" Visibility="Collapsed" AutomationProperties.Name="Clear search"><FontIcon Glyph="&#xE711;" FontSize="12"/></Button>
+                        <Button x:Name="ClearSearchButton" Style="{StaticResource GhostButtonStyle}" Width="30" Height="30" MinHeight="0" Padding="0" HorizontalAlignment="Right" Margin="0,0,4,0" Click="ClearSearch_Click" Visibility="Collapsed" AutomationProperties.Name="Clear search" loc:Localized.Name="web.search.clear"><FontIcon Glyph="&#xE711;" FontSize="12"/></Button>
                     </Grid>
                     <Button x:Name="SearchButton" Visibility="Collapsed" Click="Search_Click"/>
                 </Grid>
@@ -72,14 +73,14 @@
                 </Grid.ColumnDefinitions>
                 <Grid Grid.Column="0">
                     <Button x:Name="DiscoverTabButton" Tag="discover" Click="RequestTab_Click" KeyDown="RequestTab_KeyDown" Style="{StaticResource WebUiLineTabStyle}" BorderBrush="Transparent" VerticalAlignment="Center" HorizontalAlignment="Stretch">
-                        <TextBlock Text="Discover" FontSize="14" />
+                        <TextBlock Text="Discover" FontSize="14"  loc:Localized.Text="web.requests.discoverSection.fallbackTitle"/>
                     </Button>
                     <Border x:Name="DiscoverTabUnderline" Height="2" Background="{StaticResource PrimaryTextBrush}" VerticalAlignment="Bottom" IsHitTestVisible="False" />
                 </Grid>
                 <Grid Grid.Column="1">
                     <Button x:Name="YoursTabButton" Tag="yours" Click="RequestTab_Click" KeyDown="RequestTab_KeyDown" Style="{StaticResource WebUiLineTabStyle}" BorderBrush="Transparent" VerticalAlignment="Center" HorizontalAlignment="Stretch">
                         <StackPanel Orientation="Horizontal" Spacing="7">
-                            <TextBlock Text="Yours" FontSize="14" />
+                            <TextBlock Text="Yours" FontSize="14"  loc:Localized.Text="web.requests.hub.yours"/>
                             <Border x:Name="YoursCountBadge" Background="{StaticResource SurfaceBrush}" CornerRadius="10" MinWidth="20" Height="20" Padding="6,0" Margin="6,0,0,0" Visibility="Collapsed"><TextBlock x:Name="YoursCountText" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" /></Border>
                         </StackPanel>
                     </Button>
@@ -95,7 +96,7 @@
 
             <StackPanel x:Name="DiscoverySection" Margin="0,8,0,0" Spacing="40" Visibility="Collapsed">
                 <Border x:Name="DiscoveryErrorPanel" Padding="0,64" Visibility="Collapsed">
-                    <StackPanel Spacing="16" HorizontalAlignment="Center"><TextBlock Text="TMDB couldn’t be reached, so there is nothing to discover right now." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap" /><Button Content="Retry" Click="RetryDiscovery_Click" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/></StackPanel>
+                    <StackPanel Spacing="16" HorizontalAlignment="Center"><TextBlock Text="TMDB couldn’t be reached, so there is nothing to discover right now." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap"  loc:Localized.Text="web.requests.hub.discoverFailed"/><Button Content="Retry" Click="RetryDiscovery_Click" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" loc:Localized.Content="common.retry"/></StackPanel>
                 </Border>
                 <StackPanel x:Name="SearchSection" Spacing="20" Visibility="Collapsed">
                     <Grid BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,14">
@@ -104,14 +105,14 @@
                     </Grid>
                     <controls:WrapPanel x:Name="SearchResultsList" HorizontalSpacing="14" VerticalSpacing="22" />
                     <Border x:Name="SearchEmptyPanel" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="16" Padding="24,42" Visibility="Collapsed"><StackPanel Spacing="6" HorizontalAlignment="Center"><TextBlock x:Name="SearchEmptyTitle" FontWeight="SemiBold" HorizontalAlignment="Center" /><TextBlock x:Name="SearchEmptyDetail" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="430" /></StackPanel></Border>
-                    <Grid x:Name="SearchPager" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,14,0,0" Visibility="Collapsed"><Button Content="Previous" HorizontalAlignment="Left" Click="PreviousSearch_Click" /><TextBlock x:Name="SearchPageText" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" /><Button Content="Next" HorizontalAlignment="Right" Click="NextSearch_Click" /></Grid>
+                    <Grid x:Name="SearchPager" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,14,0,0" Visibility="Collapsed"><Button Content="Previous" HorizontalAlignment="Left" Click="PreviousSearch_Click"  loc:Localized.Content="web.requests.results.previous"/><TextBlock x:Name="SearchPageText" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" /><Button Content="Next" HorizontalAlignment="Right" Click="NextSearch_Click"  loc:Localized.Content="web.requests.results.next"/></Grid>
                 </StackPanel>
                 <StackPanel x:Name="DiscoveryContent" Spacing="40">
                     <StackPanel x:Name="DiscoveryList" Spacing="40" />
                     <StackPanel x:Name="BrandsSection" Spacing="40">
-                        <StackPanel Spacing="10"><TextBlock Text="Studios" FontSize="20" FontWeight="SemiBold" /><ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="StudiosPanel" Orientation="Horizontal" Spacing="10" /></ScrollViewer></StackPanel>
-                        <StackPanel Spacing="10"><TextBlock Text="Networks" FontSize="20" FontWeight="SemiBold" /><ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="NetworksPanel" Orientation="Horizontal" Spacing="10" /></ScrollViewer></StackPanel>
-                        <StackPanel Spacing="10"><TextBlock Text="Genres" FontSize="20" FontWeight="SemiBold" /><ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="GenresPanel" Orientation="Horizontal" Spacing="10" /></ScrollViewer></StackPanel>
+                        <StackPanel Spacing="10"><TextBlock Text="Studios" FontSize="20" FontWeight="SemiBold"  loc:Localized.Text="web.item.editMetadata.studios"/><ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="StudiosPanel" Orientation="Horizontal" Spacing="10" /></ScrollViewer></StackPanel>
+                        <StackPanel Spacing="10"><TextBlock Text="Networks" FontSize="20" FontWeight="SemiBold"  loc:Localized.Text="web.item.editMetadata.networks"/><ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="NetworksPanel" Orientation="Horizontal" Spacing="10" /></ScrollViewer></StackPanel>
+                        <StackPanel Spacing="10"><TextBlock Text="Genres" FontSize="20" FontWeight="SemiBold"  loc:Localized.Text="web.item.editMetadata.genres"/><ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="GenresPanel" Orientation="Horizontal" Spacing="10" /></ScrollViewer></StackPanel>
                     </StackPanel>
                 </StackPanel>
             </StackPanel>
@@ -122,11 +123,11 @@
                     <Grid x:Name="StatusGuideGrid" ColumnSpacing="28" RowSpacing="20"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <StackPanel Spacing="5"><TextBlock Text="Status guide" FontWeight="SemiBold" /><TextBlock Text="Statuses update automatically as Silo checks the library and connected request integrations." FontSize="13" LineHeight="20" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" /></StackPanel>
                         <StackPanel Grid.Column="1" Spacing="7"><TextBlock Text="Request progress" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /><TextBlock Text="Pending  ·  Waiting for admin approval" FontSize="12" /><TextBlock Text="Approved  ·  Approved and preparing" FontSize="12" /><TextBlock Text="Queued  ·  Sent to automation" FontSize="12" /><TextBlock Text="Downloading  ·  Acquisition in progress" FontSize="12" /><TextBlock Text="Completed  ·  Ready in your library" FontSize="12" /></StackPanel>
-                        <StackPanel Grid.Column="2" Spacing="7"><TextBlock Text="Needs attention" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /><TextBlock Text="Declined  ·  Declined by an admin" FontSize="12" /><TextBlock Text="Cancelled  ·  Cancelled before completion" FontSize="12" /><TextBlock Text="Failed  ·  Automation reported an error" FontSize="12" /></StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="7"><TextBlock Text="Needs attention" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.requests.hub.needsAttention"/><TextBlock Text="Declined  ·  Declined by an admin" FontSize="12" /><TextBlock Text="Cancelled  ·  Cancelled before completion" FontSize="12" /><TextBlock Text="Failed  ·  Automation reported an error" FontSize="12" /></StackPanel>
                     </Grid>
                 </Border>
-                <Border x:Name="MineEmptyPanel" Padding="0,64" Visibility="Collapsed"><StackPanel Spacing="12" HorizontalAlignment="Center"><TextBlock Text="You haven’t requested anything." FontSize="14" FontWeight="Medium" HorizontalAlignment="Center" /><TextBlock Text="Find a title on Discover or with search, and request it from its page. It shows up here with its status." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="384" /><Button Content="Browse Discover" Click="BrowseDiscover_Click" HorizontalAlignment="Center"/></StackPanel></Border>
-                <Border x:Name="MineErrorPanel" Padding="0,64" Visibility="Collapsed"><StackPanel Spacing="16" HorizontalAlignment="Center"><TextBlock Text="Couldn’t load your requests." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" /><Button Content="Retry" Click="RetryMine_Click" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center"/></StackPanel></Border>
+                <Border x:Name="MineEmptyPanel" Padding="0,64" Visibility="Collapsed"><StackPanel Spacing="12" HorizontalAlignment="Center"><TextBlock Text="You haven’t requested anything." FontSize="14" FontWeight="Medium" HorizontalAlignment="Center"  loc:Localized.Text="web.requests.hub.empty"/><TextBlock Text="Find a title on Discover or with search, and request it from its page. It shows up here with its status." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="384"  loc:Localized.Text="web.requests.hub.emptyHint"/><Button Content="Browse Discover" Click="BrowseDiscover_Click" HorizontalAlignment="Center" loc:Localized.Content="web.requests.hub.browseDiscover"/></StackPanel></Border>
+                <Border x:Name="MineErrorPanel" Padding="0,64" Visibility="Collapsed"><StackPanel Spacing="16" HorizontalAlignment="Center"><TextBlock Text="Couldn’t load your requests." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.requests.hub.loadFailed"/><Button Content="Retry" Click="RetryMine_Click" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center" loc:Localized.Content="common.retry"/></StackPanel></Border>
                 <StackPanel x:Name="MyRequestsList" Spacing="32" />
             </StackPanel>
         </StackPanel>

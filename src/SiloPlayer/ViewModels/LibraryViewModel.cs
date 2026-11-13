@@ -610,7 +610,7 @@ public partial class LibraryViewModel : ObservableObject
             _recentWindows.AddFirst(cached);
             ApplyWindowResponse(cached.Start, cached.Response, cached.IncludesTotal);
             IsLoading = false;
-            ErrorMessage = null;
+            SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
             WindowLoaded?.Invoke();
             return Task.CompletedTask;
         }
@@ -680,7 +680,7 @@ public partial class LibraryViewModel : ObservableObject
         var queryVersion = _queryVersion;
 
         IsLoading = true;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -742,7 +742,7 @@ public partial class LibraryViewModel : ObservableObject
             if (queryVersion == _queryVersion && windowVersion == _windowLoadVersion)
             {
                 if (letterLoad is { IsCurrent: true }) letterLoad.Failed = true;
-                else if (letterLoad is null) ErrorMessage = $"Failed to load catalog: {ex.Message}";
+                else if (letterLoad is null) SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load catalog: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
             }
         }
         finally
@@ -781,7 +781,7 @@ public partial class LibraryViewModel : ObservableObject
         TotalCount = 0;
         DisplayTotalCount = 0;
         HasMore = false;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         ClearActiveWindow(notify: true);
         // Sorting or jumping to a letter cancels the query token. Retry any
         // filter load that was already requested but had not finished yet.
@@ -870,7 +870,7 @@ public partial class LibraryViewModel : ObservableObject
         if (pagesToLoad.Count == 0) return;
 
         IsLoading = true;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -895,7 +895,7 @@ public partial class LibraryViewModel : ObservableObject
         catch (Exception ex)
         {
             if (version == _queryVersion)
-                ErrorMessage = $"Failed to load catalog: {ex.Message}";
+                SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load catalog: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {

@@ -38,6 +38,9 @@ public partial class PersonDetailViewModel : ObservableObject
     private string? _errorMessage;
 
     [ObservableProperty]
+    private DetailFailureKind _failure;
+
+    [ObservableProperty]
     private string _selectedTypeFilter = "all";
 
     [ObservableProperty]
@@ -54,7 +57,7 @@ public partial class PersonDetailViewModel : ObservableObject
 
     public ObservableCollection<MediaItem> Filmography { get; } = [];
     public bool ActingAdmin { get; set; }
-    public Func<DateTime, string> FormatPersonDate { get; set; } = date => date.ToString("MMM d, yyyy");
+    public Func<DateTime, string> FormatPersonDate { get; set; } = date => date.ToString("D", SiloPlayer.Core.Localization.AppStrings.FormatCulture);
 
     /// <summary>Page size for filmography pagination (matches webui 60).</summary>
     private const int FilmographyPageSize = 60;
@@ -78,47 +81,19 @@ public partial class PersonDetailViewModel : ObservableObject
             if (endDate.Month < birth.Month || (endDate.Month == birth.Month && endDate.Day < birth.Day)) age--;
 
             if (!string.IsNullOrEmpty(Person.DeathDate)) return "";
-            return age > 0 ? $"{age} years old" : "";
+            return age > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.age", new Dictionary<string, object?> { ["age"] = age }) : "";
         }
     }
 
-    public string DatesDisplay
-    {
-        get
-        {
-            if (Person == null) return "";
-
-            var parts = new List<string>();
-
-            if (!string.IsNullOrEmpty(Person.BirthDate))
-            {
-                if (DateTime.TryParse(Person.BirthDate, out var birth))
-                    parts.Add($"Born {FormatPersonDate(birth)}");
-                else
-                    parts.Add($"Born {Person.BirthDate}");
-            }
-
-            if (!string.IsNullOrEmpty(Person.DeathDate))
-            {
-                var age = ComputeAge(Person.BirthDate, Person.DeathDate);
-                if (DateTime.TryParse(Person.DeathDate, out var death))
-                    parts.Add($"Died {FormatPersonDate(death)}{(age > 0 ? $" (age {age})" : "")}");
-                else
-                    parts.Add($"Died {Person.DeathDate}");
-            }
-
-            return string.Join(" \u00B7 ", parts);
-        }
-    }
+    public string DatesDisplay => string.Join(" · ", new[] { BirthDateDisplay, DeathDateDisplay }.Where(value => value.Length > 0));
 
     public string BirthDateDisplay
     {
         get
         {
             if (Person == null || string.IsNullOrEmpty(Person.BirthDate)) return "";
-            return DateTime.TryParse(Person.BirthDate, out var birth)
-                ? $"Born {FormatPersonDate(birth)}"
-                : $"Born {Person.BirthDate}";
+            return SiloPlayer.Core.Localization.AppStrings.Get("web.person.born", new Dictionary<string, object?>
+            { ["date"] = DateTime.TryParse(Person.BirthDate, out var birth) ? FormatPersonDate(birth) : Person.BirthDate });
         }
     }
 
@@ -131,7 +106,8 @@ public partial class PersonDetailViewModel : ObservableObject
             var label = DateTime.TryParse(Person.DeathDate, out var death)
                 ? $"Died {FormatPersonDate(death)}"
                 : $"Died {Person.DeathDate}";
-            return age > 0 ? $"{label} (age {age})" : label;
+            return age > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.died", new Dictionary<string, object?>
+            { ["date"] = DateTime.TryParse(Person.DeathDate, out var parsed) ? FormatPersonDate(parsed) : Person.DeathDate, ["age"] = age }) : label;
         }
     }
 
@@ -159,7 +135,8 @@ public partial class PersonDetailViewModel : ObservableObject
         CancelRefreshRequest();
 
         IsLoading = true;
-        ErrorMessage = null;
+        Failure = DetailFailureKind.None;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         SelectedTypeFilter = "all";
         try
         {
@@ -178,13 +155,14 @@ public partial class PersonDetailViewModel : ObservableObject
         {
             if (!ReferenceEquals(_pageCts, cts) || !_apiClient.IsCurrentContext(context)) return;
             CancelFilmographyLoad();
+            Failure = DetailFailurePolicy.Classify(ex);
             if (ex is ApiException { StatusCode: 404 })
             {
                 Person = null;
                 Filmography.Clear(); FilmographyTotal = 0;
-                ErrorMessage = "Person not found.";
+                SetLocalizedMessage(nameof(ErrorMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.person.notFoundTitle", fallback: "Person not found."), value => ErrorMessage = value);
             }
-            else ErrorMessage = $"Failed to load person: {ex.Message}";
+            else SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load person: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {
@@ -197,6 +175,7 @@ public partial class PersonDetailViewModel : ObservableObject
     private void PublishPerson(Person person)
     {
         CancelRefresh();
+        Failure = DetailFailureKind.None;
         Person = person;
         OnPropertyChanged(nameof(AgeDisplay)); OnPropertyChanged(nameof(DatesDisplay));
         OnPropertyChanged(nameof(BirthDateDisplay)); OnPropertyChanged(nameof(DeathDateDisplay));
@@ -216,7 +195,7 @@ public partial class PersonDetailViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(context) && Person?.Id == person.Id)
-                ErrorMessage = $"Could not refresh person: {ex.Message}";
+                SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not refresh person: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
     }
 
@@ -302,7 +281,7 @@ public partial class PersonDetailViewModel : ObservableObject
         previous?.Dispose();
         IsLoadingFilmography = true;
         _filmographyPagingBlocked = false;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         Filmography.Clear(); FilmographyTotal = 0;
         try
         {
@@ -312,7 +291,7 @@ public partial class PersonDetailViewModel : ObservableObject
             if (ReferenceEquals(_filmographyCts, cts) && _apiClient.IsCurrentContext(context)) ApplyFilmography(response);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
-        catch (Exception ex) { if (ReferenceEquals(_filmographyCts, cts) && _apiClient.IsCurrentContext(context)) ErrorMessage = $"Could not load filmography: {ex.Message}"; }
+        catch (Exception ex) { if (ReferenceEquals(_filmographyCts, cts) && _apiClient.IsCurrentContext(context)) SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not load filmography: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value); }
         finally
         {
             if (ReferenceEquals(Interlocked.CompareExchange(ref _filmographyCts, null, cts), cts))
@@ -353,7 +332,7 @@ public partial class PersonDetailViewModel : ObservableObject
             if (Filmography.Count == offset && Filmography.Count < FilmographyTotal)
             {
                 _filmographyPagingBlocked = true;
-                ErrorMessage = "Could not load more filmography. Reload to try again.";
+                SetLocalizedMessage(nameof(ErrorMessage), () => "Could not load more filmography. Reload to try again.", value => ErrorMessage = value);
             }
             OnPropertyChanged(nameof(FilmographyHasMore));
         }
@@ -363,7 +342,7 @@ public partial class PersonDetailViewModel : ObservableObject
             if (ReferenceEquals(_filmographyCts, cts) && _apiClient.IsCurrentContext(context))
             {
                 _filmographyPagingBlocked = true;
-                ErrorMessage = $"Could not load more filmography: {ex.Message}";
+                SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not load more filmography: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
                 OnPropertyChanged(nameof(FilmographyHasMore));
             }
         }

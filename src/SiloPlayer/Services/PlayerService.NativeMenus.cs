@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Player;
@@ -187,7 +188,7 @@ public partial class PlayerService
         catch (Exception)
         {
             if (menu != null) menu.Close(PlaybackMenuCloseReason.OwnerRetired); else Finish(PlaybackMenuCloseReason.OwnerRetired);
-            if (owner.IsCurrent()) ShowNotice("Menu unavailable", "Please try opening the menu again.", "error");
+            if (owner.IsCurrent()) ShowNotice("Menu unavailable", "Please try opening the menu again.", "error"); // native-only
         }
     }
 
@@ -203,11 +204,11 @@ public partial class PlayerService
         // Rows opened during a continuing reload say why they cannot be chosen;
         // the presentation retires on the busy/idle transition, like Quality.
         var openedIdle = TransportIdle();
-        return new PlaybackAudioMenu(owner.Video, request.Anchor,
-            tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current) with
+        PlaybackAudioChoice[] Rows() => tracks.Select((track, index) => DescribeAudioMenuChoice(track, index, current) with
             {
                 IsEnabled = openedIdle, DisabledReason = openedIdle ? "" : "A playback change is already in progress."
-            }).ToArray(),
+            }).ToArray();
+        var menu = new PlaybackAudioMenu(owner.Video, request.Anchor, Rows(),
             () => InventoryCurrent() && (_playbackManager?.CurrentSession?.AudioTrackIndex ?? -1) == current &&
                 (openedIdle || _sessionHasFramed) && openedIdle == TransportIdle() && _nativeMenuGate.IsCurrent(request),
             index =>
@@ -216,12 +217,15 @@ public partial class PlayerService
                     _ = SelectNativeAudioAsync(owner, index, InventoryCurrent);
             }, finish, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root),
             allowDisabledTraversal: !openedIdle);
+        // Language names, channel words and units re-render; raw track titles stay.
+        menu.Localize(PlaybackAudioMenu.Heading, () => PlaybackAudioMenu.Rows(Rows()));
+        return menu;
     }
 
     private async Task SelectNativeAudioAsync(NativeMenuOwner owner, int sourceIndex, Func<bool> current)
     {
         try { if (current()) await SwitchAudioTrackCoreAsync(sourceIndex, current); }
-        catch (Exception) { if (owner.IsCurrent()) ShowNotice("Audio unavailable", "Please try selecting the track again.", "error"); }
+        catch (Exception) { if (owner.IsCurrent()) ShowNotice("Audio unavailable", "Please try selecting the track again.", "error"); } // native-only
     }
 
     private void HandleNativeMenuInput(string token, string sequence, string action)
@@ -236,18 +240,25 @@ public partial class PlayerService
     private static PlaybackAudioChoice DescribeAudioMenuChoice(AudioTrackInfo track, int index, int current)
     {
         var language = string.IsNullOrWhiteSpace(track.Language) ? "" : LanguageCodeToName(track.Language.Trim());
-        var title = AudioMenuText(track.Title, track.EmbeddedTitle, language.Length > 0 ? language : $"Track {index + 1}");
+        // Raw titles win; generated names and units follow the interface language (formatChannels in mediaFormat.ts).
+        var title = AudioMenuText(track.Title, track.EmbeddedTitle, language.Length > 0 ? language
+            : AppStrings.Get("web.player.audioMenu.trackFallback", new Dictionary<string, object?> { ["number"] = index + 1 }, fallback: $"Track {index + 1}"));
         var channels = track.Channels switch
         {
-            1 => "Mono", 2 => "Stereo", 6 => "5.1", 8 => "7.1",
-            > 0 => $"{track.Channels} ch", _ => AudioMenuText(track.Layout, "", ""),
+            6 => "5.1", 8 => "7.1",
+            2 => AppStrings.Get("web.common.format.channels.stereo", fallback: "stereo"),
+            > 0 => AppStrings.Get("web.common.format.channels.count", new Dictionary<string, object?>
+                { ["count"] = track.Channels.Value, ["count_text"] = track.Channels.Value.ToString("N0", AppStrings.FormatCulture) },
+                fallback: $"{track.Channels} ch"),
+            _ => AudioMenuText(track.Layout, "", ""),
         };
         var metadata = string.Join(" · ", new[]
         {
             !string.Equals(language, title, StringComparison.OrdinalIgnoreCase) ? language : "",
             AudioMenuText(track.Layout, "", ""),
             AudioTrackDisplayText.FormatBitrate(track.Bitrate),
-            track.SampleRate is > 0 ? $"{track.SampleRate.Value / 1000d:0.#} kHz" : "",
+            // Native-only units (no catalog kHz/bit-depth formats); numbers use the display culture.
+            track.SampleRate is > 0 ? (track.SampleRate.Value / 1000d).ToString("0.#", AppStrings.FormatCulture) + " kHz" : "",
             track.BitDepth is > 0 ? $"{track.BitDepth}-bit" : "",
         }.Where(text => text.Length > 0));
         return new PlaybackAudioChoice(index, title, metadata, VersionRanking.AudioTrackLabel(track), channels, track.Default, index == current);

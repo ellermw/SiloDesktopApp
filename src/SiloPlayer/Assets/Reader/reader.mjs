@@ -16,6 +16,14 @@ const tableOfContents = (items = book?.toc ?? [], depth = 0, entries = []) => {
     return entries;
 };
 const error = message => send({type:'reader-error', message});
+// Interface text comes from the native shell as an explicit same-key payload
+// (EbookReaderPage.Localization.cs). The shell's language never sets the
+// document direction: the book keeps its own direction and page order.
+let localeStrings = {};
+const text = (key, english) => typeof localeStrings[key] === 'string' && localeStrings[key] ? localeStrings[key] : english;
+const openFailed = () => text('web.reader.error.openFailed', 'Unable to open ebook');
+const locationUnresolved = () => text('desktop.reader.locationUnresolved', 'This saved reading location could not be resolved. Choose a chapter or move the progress slider to continue.');
+const locationUnavailable = () => text('desktop.reader.locationUnavailable', 'This reading location is unavailable in this file.');
 
 async function navigate(location) {
     const activeView = view, activeBook = book, current = generation, paths = chapterPaths;
@@ -80,14 +88,19 @@ async function drawAnnotations() {
 }
 
 window.siloReader = {
+    locale(payload) {
+        localeStrings = payload && typeof payload.strings === 'object' && payload.strings ? {...payload.strings} : {};
+        if (typeof payload?.language === 'string' && payload.language) document.documentElement.lang = payload.language;
+    },
     async open(options) {
         const current = ++generation;
         ready = false; snapshot = null;
         view?.close(); view?.remove(); book?.destroy?.();
         annotations = options.annotations ?? []; chapterPaths = options.chapters ?? []; format = options.format;
-        const response = await fetch(options.url);
+        // A missing or blocked local book rejects fetch itself; word both failures the same way.
+        const response = await fetch(options.url).catch(() => null);
         if (current !== generation) return false;
-        if (!response.ok) throw new Error('The local book could not be opened.');
+        if (!response?.ok) throw new Error(openFailed());
         const file = new File([await response.blob()], `book.${options.format}`);
         if (current !== generation) return false;
         const nextBook = await makeBook(file);
@@ -127,7 +140,7 @@ window.siloReader = {
                 if (current !== generation) return false;
                 // Fail visibly and suppress saves; never replace an unknown shared
                 // location with a silent chapter-zero save.
-                throw new Error('This saved reading location could not be resolved. Choose a chapter or move the progress slider to continue.');
+                throw new Error(locationUnresolved());
             }
         } else if (Number.isFinite(options.progress) && options.progress > 0) {
             await activeView.goToFraction(options.progress);
@@ -142,12 +155,12 @@ window.siloReader = {
     async go(location) {
         const current = generation;
         try {
-            if (!await navigate(location)) { if (current === generation) error('This reading location is unavailable in this file.'); return false; }
+            if (!await navigate(location)) { if (current === generation) error(locationUnavailable()); return false; }
             if (current !== generation) return false;
             ready = true; if (snapshot) send({type:'relocate',...snapshot});
             send({type:'reader-ready',count:book.sections.length,toc:tableOfContents()});
             return true;
-        } catch { if (current === generation) error('This reading location is unavailable in this file.'); return false; }
+        } catch { if (current === generation) error(locationUnavailable()); return false; }
     },
     async chapter(index) {
         const current = generation, activeView = view;

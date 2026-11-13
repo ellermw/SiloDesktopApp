@@ -7,6 +7,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
@@ -23,10 +24,17 @@ public enum PlayerState { Idle, Expanded, Fullscreen, Minimized, PictureInPictur
 
 public sealed record AudiobookChapterInfo(
     int Index,
-    string Title,
+    string RawTitle,
     double StartSeconds,
     double EndSeconds,
-    int FileId);
+    int FileId)
+{
+    /// <summary>The chapter's own title, or the catalog's numbered fallback in the current interface language.</summary>
+    public string Title => string.IsNullOrWhiteSpace(RawTitle)
+        ? AppStrings.Get("web.audiobooks.chapter.fallbackTitle",
+            new Dictionary<string, object?> { ["number"] = Index + 1 }, fallback: $"Chapter {Index + 1}")
+        : RawTitle;
+}
 
 public partial class PlayerService : IDisposable
 {
@@ -236,6 +244,7 @@ public partial class PlayerService : IDisposable
         ObserveSubtitlePreferences();
         InitializeConnectionObservation();
         _stillWatching.Changed += PublishStillWatchingGate;
+        AttachPlaybackLocalization();
 
         // Restore persisted volume + mute so the player starts where the user
         // left it instead of at 100%. These are applied to mpv on
@@ -723,7 +732,7 @@ public partial class PlayerService : IDisposable
         else SeekTo(target);
     }
 
-    public void ShowWatchPartyNotice(string message) => ShowNotice("Watch Party", message, "info");
+    public void ShowWatchPartyNotice(string message) => ShowNotice(AppStrings.Get("web.player.room.noticeTitle", fallback: "Watch Party"), message, "info");
 
     public void OfferWatchPartyLowerQuality()
     {
@@ -1780,7 +1789,8 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}");
             if (CurrentOwner() && ReferenceEquals(track, _executedSubtitleTrack))
-                ShowNotice("Subtitle preference not saved", "Captions are still applied, but your preference could not be saved. Select the subtitle again to retry.", "warning");
+                ShowNotice(AppStrings.Get("web.common.toast.subtitles.savePreferenceFailed", fallback: "Failed to save subtitle preference"),
+                    "Captions are still applied, but your preference could not be saved. Select the subtitle again to retry.", "warning");
             return false;
         }
         finally { if (entered) _subtitlePreferenceSaveGate.Release(); }
@@ -2186,7 +2196,7 @@ public partial class PlayerService : IDisposable
                     var absoluteEnd = part.Start + Math.Max(chapter.StartSeconds, chapter.EndSeconds);
                     result.Add(new AudiobookChapterInfo(
                         result.Count,
-                        string.IsNullOrWhiteSpace(chapter.Title) ? $"Chapter {result.Count + 1}" : chapter.Title,
+                        chapter.Title ?? "",
                         absoluteStart,
                         absoluteEnd > absoluteStart ? absoluteEnd : absoluteStart + 1,
                         part.Version.FileId));
@@ -3282,16 +3292,20 @@ public partial class PlayerService : IDisposable
             var transportDescription = PlaybackFailureDescription.DescribeTransport(api);
             if (transportDescription != null)
                 return (transportDescription.Title, transportDescription.Message);
-            return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
+            return (PlaybackUnavailableTitle, ApiProblemText.Display(api, string.IsNullOrWhiteSpace(api.Message)
+                ? AppStrings.Get("web.player.watch.startFailed", fallback: "Silo could not start playback.") : null));
         }
         if (ex is UserStateChangedException)
             return ("Progress changed", "This title's saved progress changed while playback was starting. Try again.");
         if (ex.Message == "No compatible file version found")
-            return ("No compatible version found", "Silo could not find a playable version for this device.");
+            return (AppStrings.Get("web.player.error.noPlayableVersion.title", fallback: "No playable version found"),
+                AppStrings.Get("web.player.error.noPlayableVersion.message", fallback: "Silo couldn't find a way to play this file on this device. Try another version if one is available."));
         if (!string.IsNullOrWhiteSpace(ex.Message))
-            return ("Playback unavailable", ex.Message);
-        return ("Playback unavailable", "Playback could not start.");
+            return (PlaybackUnavailableTitle, ex.Message);
+        return (PlaybackUnavailableTitle, AppStrings.Get("web.player.watch.startFailed", fallback: "Silo could not start playback."));
     }
+
+    private static string PlaybackUnavailableTitle => AppStrings.Get("web.player.watch.playbackUnavailable", fallback: "Playback unavailable");
 
     /// <summary>
     /// Handles <see cref="PlaybackManager.ProgressReportingFailed"/>. A short
@@ -4163,16 +4177,20 @@ public partial class PlayerService : IDisposable
         RefusePendingSubtitleSelectionWithoutLoad();
 
         var terminal = error as PlaybackPlanTerminalException;
-        var description = terminal != null
+        // Re-described when the interface language changes while the panel shows.
+        PlaybackFailurePresentation Describe() => terminal != null
             ? PlaybackFailureDescription.Describe(terminal)
             : error is ApiException api && PlaybackFailureDescription.DescribeTransport(api) is { } transport
                 ? transport
+                // Desktop recovery wording: no catalog equivalent (native-only English).
                 : new PlaybackFailurePresentation(
                     "Playback interrupted",
                     string.IsNullOrWhiteSpace(error.Message)
                         ? "Playback could not continue. Try reconnecting or exit the player."
                         : error.Message,
                     CanRetry: true);
+        var description = Describe();
+        _playbackFailureText = Describe;
         var retainedSession = _playbackManager?.CurrentSession ?? restartSession;
         if (retainedSession == null || _playbackManager == null || _mpv == null)
             description = description with { CanRetry = false };
@@ -4245,6 +4263,7 @@ public partial class PlayerService : IDisposable
     private void ClearPlaybackTerminalState()
     {
         _playbackTerminalState = null;
+        _playbackFailureText = null;
         _mpv?.SendScriptMessage("osc-clear-playback-failure");
     }
 
@@ -4968,13 +4987,12 @@ public partial class PlayerService : IDisposable
             // previous native-only "Series - S02E10" title made the same
             // episode visibly disagree between WebUI and desktop.
             Title = watchDetail.SeriesTitle ?? watchDetail.Title;
-            Subtitle = $"S{watchDetail.SeasonNumber.Value} · E{watchDetail.EpisodeNumber.Value}" +
-                (string.IsNullOrWhiteSpace(watchDetail.Title)
-                    ? string.Empty
-                    : $" \u2014 {watchDetail.Title}");
+            _hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title);
+            Subtitle = HudEpisodeLine();
         }
         else
         {
+            _hudEpisode = null;
             Title = watchDetail.Title;
             Subtitle = watchDetail.Year > 0 ? watchDetail.Year.ToString() : null;
         }
@@ -5846,7 +5864,8 @@ public partial class PlayerService : IDisposable
         if (acceptSelection != null && !acceptSelection()) return;
         if (IsWatchTogetherPlayback)
         {
-            ShowWatchPartyNotice("The room's shared version is locked. Choose a playback quality instead.");
+            ShowWatchPartyNotice(AppStrings.Get("web.player.quality.watchPartyVersionLocked",
+                fallback: "Watch Party keeps everyone on the same version. You can adjust your streaming quality below."));
             return;
         }
         if (_mpv == null || _playbackManager == null) return;
@@ -7394,7 +7413,7 @@ public partial class PlayerService : IDisposable
             }
             using var fallbackDeadline = new CancellationTokenSource(SubtitleUrlFallbackTimeout, _subtitleUrlFallbackTimeProvider);
             using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token, fallbackDeadline.Token);
-            ShowNotice("Loading subtitle", "Large or bitmap subtitles can take a few minutes to load. Your current captions stay applied; choose another subtitle to cancel this download.", "info");
+            ShowNotice(AppStrings.Get("web.player.subtitles.loading", fallback: "Loading subtitles…"), "Large or bitmap subtitles can take a few minutes to load. Your current captions stay applied; choose another subtitle to cancel this download.", "info");
             // Do not hand slow extraction to mpv: its per-file socket timeout
             // also limits the header wait. Stream to disk without buffering a
             // second full copy of bitmap tracks or changing the applied SID.
@@ -7567,28 +7586,31 @@ public partial class PlayerService : IDisposable
 
         // Send stream info
         var pi = session.PlaybackInfo;
+        // Display text only; the raw method travels separately for OSC logic.
         var playMethodDisplay = session.PlayMethod switch
         {
-            "direct" => "Direct Play",
-            "remux" => "Direct Streaming",
-            "transcode" => "Transcode",
+            "direct" => AppStrings.Get("web.player.info.delivery.directPlay", fallback: "Direct Play"),
+            "remux" => AppStrings.Get("web.player.info.delivery.directStream", fallback: "Direct Streaming"),
+            "transcode" => AppStrings.Get("web.player.info.delivery.transcode", fallback: "Transcode"),
             _ => session.PlayMethod
         };
         var streamType = pi?.StreamType switch
         {
             "hls" => "HLS",
-            _ => "Progressive"
+            _ => AppStrings.Get("web.player.info.streamTypeProgressive", fallback: "Progressive")
         };
         var streamUrl = _playbackManager.StreamUrl ?? "";
         var protocol = streamUrl.StartsWith("https") ? "https" : "http";
 
-        var vcSuffix = session.PlayMethod == "direct" ? "(direct)" : session.PlayMethod == "remux" ? "(copy)" : "(transcoded)";
-        var acSuffix = (pi?.TranscodeAudio == true) ? "(transcoded)" : (session.PlayMethod == "direct" ? "(direct)" : "(copy)");
-        var vcDisplay = $"{(pi?.VideoCodec ?? version.CodecVideo ?? "").ToUpper()} {vcSuffix}";
-        var acDisplay = $"{(pi?.AudioCodec ?? version.CodecAudio ?? "").ToUpper()} {acSuffix}";
+        var vcSuffix = session.PlayMethod == "direct" ? "direct" : session.PlayMethod == "remux" ? "copy" : "transcoded";
+        var acSuffix = (pi?.TranscodeAudio == true) ? "transcoded" : (session.PlayMethod == "direct" ? "direct" : "copy");
+        static string CodecDisplay(string codec, string delivery) => AppStrings.Get("web.player.info.codec." + delivery,
+            new Dictionary<string, object?> { ["codec"] = codec }, fallback: $"{codec} ({delivery})");
+        var vcDisplay = CodecDisplay((pi?.VideoCodec ?? version.CodecVideo ?? "").ToUpper(), vcSuffix);
+        var acDisplay = CodecDisplay((pi?.AudioCodec ?? version.CodecAudio ?? "").ToUpper(), acSuffix);
 
         _mpv.SendScriptMessage("osc-set-stream-info", playMethodDisplay, streamType, protocol, vcDisplay, acDisplay,
-            (pi?.TargetVideoBitrateKbps ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            (pi?.TargetVideoBitrateKbps ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture), session.PlayMethod ?? "");
     }
 
     private string BuildRequestedSourceLabel(FileVersion currentVersion)
@@ -9034,6 +9056,7 @@ public partial class PlayerService : IDisposable
 
     public void Dispose()
     {
+        DetachPlaybackLocalization();
         RetirePendingSubtitleReadyRefresh();
         RetireNativeMenus();
         ResetVideoPlaybackRateSession();
@@ -9430,7 +9453,7 @@ public partial class PlayerService : IDisposable
         try
         {
             App.Services.GetService<ToastService>()?.Error(
-                string.IsNullOrWhiteSpace(message) ? "Subtitle translation failed" : $"Translation failed: {message}");
+                string.IsNullOrWhiteSpace(message) ? AppStrings.Get("web.player.subtitles.processingFailed", fallback: "Subtitle processing failed") : $"Translation failed: {message}");
         }
         catch { }
     }
@@ -9447,7 +9470,7 @@ public partial class PlayerService : IDisposable
         try
         {
             App.Services.GetService<ToastService>()?.Error(
-                string.IsNullOrWhiteSpace(message) ? "Subtitle translation failed" : $"Translation failed: {message}");
+                string.IsNullOrWhiteSpace(message) ? AppStrings.Get("web.player.subtitles.processingFailed", fallback: "Subtitle processing failed") : $"Translation failed: {message}");
         }
         catch { }
     }
@@ -10175,22 +10198,23 @@ public partial class PlayerService : IDisposable
 
             case "display_message":
                 ShowNotice(
-                    cmd.GetString("title") ?? "Playback notice",
-                    cmd.GetString("message") ?? "A server message was received.",
+                    // Server-written title/message are shown as sent; only the fallbacks are catalog text.
+                    cmd.GetString("title") ?? AppStrings.Get("web.player.serverMessage.title", fallback: "Playback notice"),
+                    cmd.GetString("message") ?? AppStrings.Get("web.player.serverMessage.fallback", fallback: "A server message was received."),
                     "info");
                 return Complete(new CommandResult());
 
             case "server_restarting":
                 ShowNotice(
-                    cmd.GetString("title") ?? "Server restarting",
-                    cmd.GetString("message") ?? "Playback may end shortly while the server restarts.",
+                    cmd.GetString("title") ?? AppStrings.Get("web.player.serverMessage.restartingTitle", fallback: "Server restarting"),
+                    cmd.GetString("message") ?? AppStrings.Get("web.player.serverMessage.restarting", fallback: "Playback may end shortly while the server restarts."),
                     "warning");
                 return Complete(new CommandResult());
 
             case "server_shutting_down":
                 ShowNotice(
-                    cmd.GetString("title") ?? "Server shutting down",
-                    cmd.GetString("message") ?? "Playback may end shortly while the server shuts down.",
+                    cmd.GetString("title") ?? AppStrings.Get("web.player.serverMessage.shuttingDownTitle", fallback: "Server shutting down"),
+                    cmd.GetString("message") ?? AppStrings.Get("web.player.serverMessage.shuttingDown", fallback: "Playback may end shortly while the server shuts down."),
                     "warning");
                 return Complete(new CommandResult());
 
@@ -10210,7 +10234,9 @@ public partial class PlayerService : IDisposable
                 if (msg != null)
                 {
                     ShowNotice(
-                        cmd.GetString("title") ?? (cmd.Name == "terminate" ? "Playback ended" : "Playback stopping"),
+                        cmd.GetString("title") ?? (cmd.Name == "terminate"
+                            ? AppStrings.Get("web.player.serverMessage.endedTitle", fallback: "Playback ended")
+                            : AppStrings.Get("web.player.serverMessage.stoppingTitle", fallback: "Playback stopping")),
                         msg,
                         "warning");
                 }
@@ -10366,9 +10392,15 @@ public partial class PlayerService : IDisposable
             : $"{ts.Minutes}:{ts.Seconds:D2}";
     }
 
+    /// <summary>A media language code's display name in the interface language (English names are the fallback).</summary>
     public static string LanguageCodeToName(string? code)
     {
-        if (string.IsNullOrEmpty(code)) return "Unknown";
+        if (string.IsNullOrEmpty(code)) return AppStrings.Get("web.languageName.unknown", fallback: "Unknown");
+        return AudioTrackDisplayText.LanguageName(code, EnglishLanguageName(code));
+    }
+
+    private static string EnglishLanguageName(string code)
+    {
         return code.ToLowerInvariant() switch
         {
             "eng" or "en" => "English",

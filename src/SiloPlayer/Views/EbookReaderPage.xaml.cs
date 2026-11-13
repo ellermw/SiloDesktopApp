@@ -82,6 +82,7 @@ public sealed partial class EbookReaderPage : Page
         SpreadCombo.SelectedIndex = 0;
         FlowCombo.SelectedIndex = 0;
         InitializeReaderControls();
+        InitializeLocalization();
         OpenPanel("contents");
         ReadingSurface.SizeChanged += (_, _) => UpdateRulerOverlay();
         UpdateReaderResponsiveLayout();
@@ -146,7 +147,7 @@ public sealed partial class EbookReaderPage : Page
         _libraryId = e.Parameter is EbookReaderNavigation scoped ? scoped.LibraryId : null;
         if (string.IsNullOrWhiteSpace(_contentId))
         {
-            ShowFailure("Ebook not found.");
+            ShowFailure(NotFound);
             return;
         }
 
@@ -155,7 +156,7 @@ public sealed partial class EbookReaderPage : Page
             _item = await _catalogApi.GetItemDetailAsync(_contentId, _libraryId, _lifetime.Token);
             if (!string.Equals(_item.Type, "ebook", StringComparison.OrdinalIgnoreCase))
             {
-                ShowFailure("Ebook not found.");
+                ShowFailure(NotFound);
                 return;
             }
             TitleText.Text = _item.Title;
@@ -166,7 +167,7 @@ public sealed partial class EbookReaderPage : Page
             var version = ChooseVersion(_readerFiles, requestedFileId);
             if (version == null)
             {
-                ShowFailure("Unsupported ebook format.");
+                ShowFailure(() => T("web.reader.page.unsupportedFormat", "Unsupported ebook format."));
                 return;
             }
             await ReaderWebView.EnsureCoreWebView2Async();
@@ -180,7 +181,8 @@ public sealed partial class EbookReaderPage : Page
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            ShowFailure(_item == null ? "Ebook not found." : ex.Message);
+            if (_item == null) ShowFailure(NotFound);
+            else ShowFailure(ex);
         }
     }
 
@@ -277,13 +279,9 @@ public sealed partial class EbookReaderPage : Page
         FileSelector.Items.Clear();
         foreach (var version in _readerFiles)
         {
-            var format = FormatOf(version).ToUpperInvariant();
-            var name = Path.GetFileName(version.FileName ?? version.FilePath ?? "");
-            if (string.IsNullOrWhiteSpace(name))
-                name = $"File {version.FileId}";
             FileSelector.Items.Add(new ComboBoxItem
             {
-                Content = string.IsNullOrWhiteSpace(format) ? name : $"{format} · {name}",
+                Content = FileOptionLabel(version),
                 Tag = version.FileId,
             });
         }
@@ -313,11 +311,12 @@ public sealed partial class EbookReaderPage : Page
         LoadingLayer.Visibility = Visibility.Visible;
         if (LoadingLayer.Children.FirstOrDefault() is StackPanel panel && panel.Children.FirstOrDefault() is ProgressRing ring)
             ring.IsActive = true;
-        LoadingText.Text = "Downloading book…";
+        // No upstream key distinguishes the download step; English fallback.
+        SetLoading(() => "Downloading book…");
         _sourceBytes = await _ebooksApi.ReadFileAsync(_contentId, _fileId, _lifetime.Token);
         _lifetime.Token.ThrowIfCancellationRequested();
         if (_leaving) return;
-        LoadingText.Text = "Preparing reader…";
+        SetLoading(() => T("web.reader.loading", "Loading reader..."));
         if (_readerDirectories.Count == 0)
             _ = Task.Run(() => EbookReaderCache.PruneInactive(EbookReaderCache.DefaultRoot));
         var cacheRoot = EbookReaderCache.Allocate(EbookReaderCache.DefaultRoot);
@@ -380,11 +379,7 @@ public sealed partial class EbookReaderPage : Page
             var index = chapters.FindIndex(chapter => chapter.ContentId == _contentId);
             if (index < 0 || index + 1 >= chapters.Count) return;
             _nextMangaChapter = chapters[index + 1];
-            var label = MangaChapterLabel(_nextMangaChapter);
-            NextChapterLabel.Text = label;
-            EndOfBookNextLabel.Text = $"Next: {label}";
-            AutomationProperties.SetName(NextChapterButton, $"Next chapter: {label}");
-            AutomationProperties.SetName(EndOfBookNextButton, $"Next chapter: {label}");
+            ApplyNextChapterLabels();
             NextChapterButton.Visibility = Visibility.Visible;
         }
         catch (ApiException) { }
@@ -424,12 +419,8 @@ public sealed partial class EbookReaderPage : Page
         if (version == null) return;
         try { await OpenVersionAsync(version, restoreProgress: true); }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { ShowFailure(ex.Message); }
+        catch (Exception ex) { ShowFailure(ex); }
     }
-
-    private static string MangaChapterLabel(MangaChapter chapter)
-        => !string.IsNullOrWhiteSpace(chapter.Title) ? chapter.Title
-            : chapter.ChapterIndex.HasValue ? $"Chapter {chapter.ChapterIndex:0.##}" : "Chapter";
 
     private static double MangaVolumeSort(string? volume)
         => double.TryParse(volume?.TrimStart('v', 'V'), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
@@ -531,6 +522,7 @@ public sealed partial class EbookReaderPage : Page
             var type = message.RootElement.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : null;
             if (type == "shell-ready" && UsesSharedRenderer)
             {
+                await PushRendererLocaleAsync();
                 await OpenSharedRendererAsync();
             }
             else if (type == "reader-ready" && UsesSharedRenderer)
@@ -549,7 +541,8 @@ public sealed partial class EbookReaderPage : Page
             else if (type == "reader-error")
             {
                 LoadingLayer.Visibility = Visibility.Collapsed;
-                App.Services.GetRequiredService<ToastService>().Error(message.RootElement.GetProperty("message").GetString() ?? "Reading location unavailable.");
+                // The renderer words its errors from the keyed locale payload.
+                App.Services.GetRequiredService<ToastService>().Error(message.RootElement.GetProperty("message").GetString() ?? LocationUnavailableEnglish);
             }
             else if (type == "search-results")
             {
@@ -559,7 +552,8 @@ public sealed partial class EbookReaderPage : Page
                     var result = new BookSearchResult(0, item.GetProperty("chapterTitle").GetString() ?? "", item.GetProperty("snippet").GetString() ?? "", SearchBox.Text, item.GetProperty("cfi").GetString());
                     SearchResultsList.Items.Add(new ListViewItem { Content = $"{result.ChapterTitle}\n{result.Snippet}", Tag = result });
                 }
-                SearchStatusText.Text = $"{SearchResultsList.Items.Count} matches";
+                var count = SearchResultsList.Items.Count;
+                SetSearchStatus(() => MatchCountText(count));
             }
             else if (type == "selection")
             {
@@ -573,7 +567,7 @@ public sealed partial class EbookReaderPage : Page
         }
         catch (JsonException) { }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (!_leaving) ShowFailure(ex.Message); }
+        catch (Exception ex) { if (!_leaving) ShowFailure(ex); }
     }
 
     private async Task PopulateVoicesAsync()
@@ -589,7 +583,7 @@ public sealed partial class EbookReaderPage : Page
                 : JsonSerializer.Deserialize<List<ReaderVoice>>(serialized, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
             _suppressControls = true;
             VoiceCombo.Items.Clear();
-            VoiceCombo.Items.Add(new ComboBoxItem { Content = "Default", Tag = "" });
+            VoiceCombo.Items.Add(new ComboBoxItem { Content = T("web.reader.settings.voiceDefault", "Default"), Tag = "" });
             foreach (var voice in voices)
                 VoiceCombo.Items.Add(new ComboBoxItem { Content = voice.Name, Tag = voice.Uri });
             SetComboByTag(VoiceCombo, selected);
@@ -667,10 +661,9 @@ public sealed partial class EbookReaderPage : Page
     {
         _suppressControls = true;
         ProgressSlider.Value = OverallProgress;
-        ProgressText.Text = $"{OverallProgress:P0}";
+        ProgressText.Text = ProgressPercentText();
         HeaderProgressText.Text = ProgressText.Text;
-        var pageDetail = _book?.Format == "pdf" && _rendererPageCount > 0
-            ? $"Page {_chapterIndex + 1} of {_rendererPageCount} · {ProgressText.Text}" : ProgressText.Text;
+        var pageDetail = PageDetailText(ProgressText.Text);
         ToolTipService.SetToolTip(ProgressText, pageDetail);
         ToolTipService.SetToolTip(HeaderProgressText, pageDetail);
         EndOfBookNextButton.Visibility = _nextMangaChapter != null && OverallProgress >= 0.995
@@ -743,7 +736,7 @@ public sealed partial class EbookReaderPage : Page
             var localPending = false;
             try { if (File.Exists(LocalReaderConfigPath)) { using var stored = JsonDocument.Parse(await File.ReadAllTextAsync(LocalReaderConfigPath)); local = stored.RootElement.GetProperty("config").Clone(); localPending = stored.RootElement.TryGetProperty("pending", out var pending) && pending.GetBoolean(); } } catch { }
             try { config = JsonSerializer.SerializeToElement((await _ebooksApi.GetReaderConfigAsync(_contentId, _lifetime.Token)).Config); }
-            catch (Exception ex) when (ex is not OperationCanceledException && local.HasValue) { config = local.Value; ReaderSyncStatus.Text = "Using settings saved on this device. Server sync is unavailable."; ReaderSyncStatus.Visibility = Visibility.Visible; }
+            catch (Exception ex) when (ex is not OperationCanceledException && local.HasValue) { config = local.Value; SetSyncStatus(() => "Using settings saved on this device. Server sync is unavailable."); }
             if (localPending && local.HasValue) config = local.Value;
             var settings = ReaderSettingsObject(JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(config.GetRawText()) ?? []);
             _suppressControls = true;
@@ -799,7 +792,7 @@ public sealed partial class EbookReaderPage : Page
         await SaveLocalReaderConfigAsync(config, pending: true, revision);
         if (revision != Volatile.Read(ref _localSettingsRevision)) return;
         _settingsWriter ??= new LatestSettingsWriter<Dictionary<string, object?>>(WriteReaderConfigAsync,
-            error => { ReaderSyncStatus.Text = error == null ? "" : "Settings saved on this device. Could not sync; change a setting to retry."; ReaderSyncStatus.Visibility = error == null ? Visibility.Collapsed : Visibility.Visible; }, TimeSpan.FromMilliseconds(400));
+            error => SetSyncStatus(error == null ? null : () => "Settings saved on this device. Could not sync; change a setting to retry."), TimeSpan.FromMilliseconds(400));
         await _settingsWriter.SaveAsync(config, _lifetime.Token);
     }
 
@@ -816,7 +809,7 @@ public sealed partial class EbookReaderPage : Page
             await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new { pending, config }));
             File.Move(temp, LocalReaderConfigPath, true);
         }
-        catch (Exception) { ReaderSyncStatus.Text = "Could not save settings on this device."; ReaderSyncStatus.Visibility = Visibility.Visible; }
+        catch (Exception) { SetSyncStatus(() => "Could not save settings on this device."); }
         finally { _localSettingsGate.Release(); }
     }
     private async Task WriteReaderConfigAsync(Dictionary<string, object?> config, CancellationToken ct)
@@ -843,11 +836,9 @@ public sealed partial class EbookReaderPage : Page
         {
             _annotations = await _ebooksApi.GetAnnotationsAsync(_contentId, _lifetime.Token);
             if (_leaving || !_ebooksApi.IsCurrentContext(_readerContext)) return;
-            foreach (var annotation in _annotations)
-                AnnotationsList.Children.Add(CreateAnnotationRow(annotation));
+            RenderAnnotations();
             if (UsesSharedRenderer && _rendererReady)
                 await ReaderWebView.ExecuteScriptAsync($"window.siloReader?.annotations({JsonSerializer.Serialize(_annotations, ReaderJsonOptions)})");
-            EmptyAnnotationsText.Visibility = _annotations.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (ApiException ex) when (ex.StatusCode == 404)
         {
@@ -866,6 +857,7 @@ public sealed partial class EbookReaderPage : Page
         if (_leaving || generation != _openGeneration) return;
         await _ebooksApi.CreateAnnotationAsync(_contentId, new EbookReaderAnnotationInput
         {
+            // The note is saved annotation data, not interface text: keep the stored English form.
             Kind = "bookmark", Location = CurrentLocation, Note = _book.Format == "pdf" ? $"Page {_chapterIndex + 1}" : _book.Chapters[Math.Min(_chapterIndex, _book.Chapters.Count - 1)].Title
         }, _readerContext, _lifetime.Token);
         await LoadAnnotationsAsync();
@@ -886,7 +878,7 @@ public sealed partial class EbookReaderPage : Page
         var parts = annotation.Location.Split(';');
         if (!int.TryParse(parts.FirstOrDefault(p => p.StartsWith("chapter:"))?[8..], out var chapter) || _book == null || chapter < 0 || chapter >= _book.Chapters.Count)
         {
-            App.Services.GetRequiredService<ToastService>().Error("This reading location is unavailable in this file.");
+            App.Services.GetRequiredService<ToastService>().Error(LocationUnavailableEnglish);
             return;
         }
         var fractionText = parts.FirstOrDefault(p => p.StartsWith("fraction:"))?[9..];
@@ -1026,9 +1018,7 @@ public sealed partial class EbookReaderPage : Page
         UpdateReaderResponsiveLayout();
         SidePanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         PanelToggleIcon.Glyph = open ? "\uE89F" : "\uE8A0";
-        var label = open ? "Close reader panel" : "Open reader panel";
-        ToolTipService.SetToolTip(PanelToggleButton, label);
-        AutomationProperties.SetName(PanelToggleButton, label);
+        UpdatePanelToggleLabel();
     }
 
     private async void Highlight_Click(object sender, RoutedEventArgs e)
@@ -1059,12 +1049,14 @@ public sealed partial class EbookReaderPage : Page
 
     private Border CreateAnnotationRow(EbookReaderAnnotation annotation)
     {
+        // Notes, highlighted text and locations are the person's data; only the kind and action are interface text.
         var label = annotation.Kind == "bookmark"
             ? (string.IsNullOrWhiteSpace(annotation.Note) ? annotation.Location : annotation.Note)
             : (string.IsNullOrWhiteSpace(annotation.SelectedText) ? annotation.Note : annotation.SelectedText);
+        var kind = AnnotationKindLabel(annotation);
         var open = new Button
         {
-            Content = new TextBlock { Text = label ?? annotation.Kind, TextWrapping = TextWrapping.Wrap, MaxLines = 3 },
+            Content = new TextBlock { Text = label ?? kind, TextWrapping = TextWrapping.Wrap, MaxLines = 3 },
             HorizontalContentAlignment = HorizontalAlignment.Left,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Tag = annotation
@@ -1073,7 +1065,9 @@ public sealed partial class EbookReaderPage : Page
         {
             NavigateToAnnotation(annotation);
         };
-        var delete = new Button { Content = "Delete", Tag = annotation, HorizontalAlignment = HorizontalAlignment.Right };
+        var deleteLabel = T("web.reader.notes.delete", "Delete annotation");
+        var delete = new Button { Content = deleteLabel, Tag = annotation, HorizontalAlignment = HorizontalAlignment.Right };
+        AutomationProperties.SetName(delete, deleteLabel);
         delete.Click += async (_, _) =>
         {
             await _ebooksApi.DeleteAnnotationAsync(_contentId, annotation.Id, _lifetime.Token);
@@ -1082,7 +1076,7 @@ public sealed partial class EbookReaderPage : Page
                 NavigateToChapter(_chapterIndex, _chapterFraction);
         };
         var stack = new StackPanel { Spacing = 6 };
-        stack.Children.Add(new TextBlock { Text = annotation.Kind, FontSize = 11, Opacity = 0.65 });
+        stack.Children.Add(new TextBlock { Text = kind, FontSize = 11, Opacity = 0.65 });
         stack.Children.Add(open);
         stack.Children.Add(delete);
         return new Border { Padding = new Thickness(8), CornerRadius = new CornerRadius(8), Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"], Child = stack };
@@ -1101,8 +1095,8 @@ public sealed partial class EbookReaderPage : Page
     {
         var query = SearchBox.Text.Trim();
         SearchResultsList.Items.Clear();
-        if (_book == null || query.Length < 2) { SearchStatusText.Text = "Enter at least two characters."; return; }
-        SearchStatusText.Text = "Searching...";
+        if (_book == null || query.Length < 2) { SetSearchStatus(() => "Enter at least two characters."); return; }
+        SetSearchStatus(() => T("web.search.searching", "Searching..."));
         if (UsesSharedRenderer)
         {
             // WebView2 does not await JavaScript promises. Search completion is
@@ -1113,7 +1107,8 @@ public sealed partial class EbookReaderPage : Page
         var results = await Task.Run(() => SearchBook(query), _lifetime.Token);
         foreach (var result in results)
             SearchResultsList.Items.Add(new ListViewItem { Content = $"{result.ChapterTitle}\n{result.Snippet}", Tag = result });
-        SearchStatusText.Text = results.Count == 0 ? "No matches" : $"{results.Count} match{(results.Count == 1 ? "" : "es")}";
+        var matches = results.Count;
+        SetSearchStatus(() => MatchCountText(matches));
     }
 
     private List<BookSearchResult> SearchBook(string query)
@@ -1223,9 +1218,8 @@ public sealed partial class EbookReaderPage : Page
     private void UpdateRulerOverlay()
     {
         var visible = !IsComicBook && ReadingRulerCheck.IsChecked == true;
-        AutomationProperties.SetName(
-            ReadingRulerToolbarButton,
-            visible ? "Disable reading ruler" : "Enable reading ruler");
+        // Matches the WebUI's keyed toggle label; the ruler state is shown by the button paint and the overlay.
+        AutomationProperties.SetName(ReadingRulerToolbarButton, T("web.reader.toolbar.toggleRuler", "Toggle reading ruler"));
         ReadingRulerToolbarButton.Background = visible
             ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         RulerOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
@@ -1331,12 +1325,6 @@ public sealed partial class EbookReaderPage : Page
         if (e.Key == Windows.System.VirtualKey.Left) { Previous_Click(sender, new RoutedEventArgs()); e.Handled = true; }
         else if (e.Key == Windows.System.VirtualKey.Right) { Next_Click(sender, new RoutedEventArgs()); e.Handled = true; }
         else if (e.Key == Windows.System.VirtualKey.Escape) { Back_Click(sender, new RoutedEventArgs()); e.Handled = true; }
-    }
-
-    private void ShowFailure(string message)
-    {
-        LoadingText.Text = message;
-        if (LoadingLayer.Children.FirstOrDefault() is StackPanel panel && panel.Children.FirstOrDefault() is ProgressRing ring) ring.IsActive = false;
     }
 
     private static string SelectedTag(ComboBox combo, string fallback) => (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? fallback;

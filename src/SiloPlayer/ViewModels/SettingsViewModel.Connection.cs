@@ -4,6 +4,8 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels;
 
@@ -20,7 +22,7 @@ public partial class SettingsViewModel
     [ObservableProperty] private bool _connectionMetered;
     [ObservableProperty] private string _connectionBudget = "";
     [ObservableProperty] private string _connectionSettingsMessage = "";
-    [ObservableProperty] private string _connectionReading = "Not measured yet";
+    [ObservableProperty] private string _connectionReading = AppStrings.Get("web.settings.playbackConnection.notMeasured");
     [ObservableProperty] private string _learnedConnectionLimit = "";
     [ObservableProperty] private bool _bufferingDeviceOverride;
     public bool CanResetLearnedLimit { get; private set; }
@@ -38,7 +40,7 @@ public partial class SettingsViewModel
         var revision = ++_connectionSettingsRevision;
         var context = _settingsApi.CaptureContext();
         ConnectionSettingsBusy = true; BufferingQualitySupported = ConnectionSpeedSupported = false; _bufferingSettingsOwner = _connectionSettingsOwner = null;
-        ConnectionReading = "Not measured yet"; LearnedConnectionLimit = ConnectionBudget = "";
+        ConnectionReading = AppStrings.Get("web.settings.playbackConnection.notMeasured"); LearnedConnectionLimit = ConnectionBudget = "";
         try
         {
             var api = App.Services.GetRequiredService<PlaybackApi>();
@@ -64,7 +66,7 @@ public partial class SettingsViewModel
             SetConnectionNetwork(network.Metered, network.Transport);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context) && revision == _connectionSettingsRevision) ConnectionSettingsMessage = ex.Message; }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context) && revision == _connectionSettingsRevision) ConnectionSettingsMessage = ex.DisplayMessage(); }
         finally { if (revision == _connectionSettingsRevision) ConnectionSettingsBusy = false; }
     }
     public async Task SaveBufferingQualityModeAsync(string mode, bool thisDevice)
@@ -77,7 +79,7 @@ public partial class SettingsViewModel
             if (thisDevice) await _settingsApi.SetContractSettingValueAsync(owner, "playback.buffering_quality_mode", "profile_device", mode);
             else await _settingsApi.SaveProfileDefaultAsync(owner, "playback.buffering_quality_mode", mode, BufferingDeviceOverride);
         }
-        catch (Exception ex) { failure = ex.Message; }
+        catch (Exception ex) { failure = ex.DisplayMessage(); }
         finally
         {
             ConnectionSettingsBusy = false; await LoadConnectionSettingsAsync();
@@ -104,12 +106,13 @@ public partial class SettingsViewModel
             if (network.Metered) return;
             ConnectionSettingsMessage = ex switch
             {
-                ApiException { StatusCode: 429 } rate => rate.Message,
-                ConnectionProbeNotSavedException => "Couldn't save the speed test. Try again.",
-                InvalidOperationException busy when busy.Message.StartsWith("Stop playback", StringComparison.Ordinal) => "Stop playback before testing, then try again.",
-                InvalidOperationException busy when busy.Message.StartsWith("A speed test", StringComparison.Ordinal) => busy.Message,
-                OperationCanceledException when ConnectionObserver.IsMediaActive => "Stop playback before testing, then try again.",
-                _ => "Couldn't measure the connection speed. Try again.",
+                ApiException { StatusCode: 429 } rate => ApiProblemText.Display(rate),
+                ConnectionProbeNotSavedException => AppStrings.Get("web.settings.playbackConnection.notSaved"),
+                // Branching stays on the observer's stable English exception text; only the display translates.
+                InvalidOperationException busy when busy.Message.StartsWith("Stop playback", StringComparison.Ordinal) => AppStrings.Get("web.settings.playbackConnection.stopPlayback"),
+                InvalidOperationException busy when busy.Message.StartsWith("A speed test", StringComparison.Ordinal) => AppStrings.Get("web.settings.playbackConnection.busy", fallback: busy.Message),
+                OperationCanceledException when ConnectionObserver.IsMediaActive => AppStrings.Get("web.settings.playbackConnection.stopPlayback"),
+                _ => AppStrings.Get("web.settings.playbackConnection.testFailed"),
             };
             if (ex is ApiException { StatusCode: 429 } limited)
                 _ = ClearConnectionMessageAsync(++_connectionMessageRevision, owner, limited.RetryAfterSeconds ?? 30);
@@ -121,41 +124,61 @@ public partial class SettingsViewModel
         if (ConnectionSettingsBusy || _connectionSettingsOwner is not { } owner || !_settingsApi.IsCurrentContext(owner)) return;
         ConnectionSettingsBusy = true;
         try { await ConnectionObserver.ResetAsync(); if (_settingsApi.IsCurrentContext(owner)) { ApplyConnectionState(ConnectionObserver.State); ConnectionSettingsMessage = ""; } }
-        catch (Exception) { if (_settingsApi.IsCurrentContext(owner)) ConnectionSettingsMessage = "Couldn't reset the limit. Try again."; }
+        catch (Exception) { if (_settingsApi.IsCurrentContext(owner)) ConnectionSettingsMessage = AppStrings.Get("web.settings.playbackConnection.resetFailed"); }
         finally { ConnectionSettingsBusy = false; }
     }
     private void ApplyConnectionState(PlaybackConnectionState? state)
     {
         PlaybackConnectionSample? sample = state?.Probe ?? (PlaybackConnectionSample?)state?.PlaybackSample;
         var lower = ReferenceEquals(sample, state?.PlaybackSample) || sample is PlaybackConnectionProbe { LowerBound: true };
-        var transport = sample is PlaybackConnectionProbe probe ? probe.Transport switch { "wifi" => "Wi-Fi", "ethernet" => "Ethernet", "cellular" => "cellular", _ => "this connection" } : "";
-        ConnectionReading = sample == null ? "Not measured yet" : sample is PlaybackConnectionProbe
-            ? $"{(lower ? "Faster than " : "")}{ConnectionRate(sample.Kbps)} · measured {MeasuredAgo(sample.MeasuredAt)} on {transport}"
-            : $"Faster than {ConnectionRate(sample.Kbps)} · seen during playback {MeasuredAgo(sample.MeasuredAt)}";
+        var transport = sample is PlaybackConnectionProbe probe ? probe.Transport switch
+        {
+            "wifi" => AppStrings.Get("web.settings.playbackConnection.transport.wifi"),
+            "ethernet" => AppStrings.Get("web.settings.playbackConnection.transport.ethernet"),
+            "cellular" => AppStrings.Get("web.settings.playbackConnection.transport.cellular"),
+            _ => AppStrings.Get("web.settings.playbackConnection.transport.unknown"),
+        } : "";
+        ConnectionReading = sample == null ? AppStrings.Get("web.settings.playbackConnection.notMeasured") : sample is PlaybackConnectionProbe
+            ? AppStrings.Get("web.settings.playbackConnection.measured", Args(("rate", lower ? AppStrings.Get("web.settings.playbackConnection.fasterThan", Args(("rate", ConnectionRate(sample.Kbps)))) : ConnectionRate(sample.Kbps)),
+                ("ago", MeasuredAgo(sample.MeasuredAt)), ("transport", transport)))
+            : AppStrings.Get("web.settings.playbackConnection.seenDuringPlayback", Args(("rate", ConnectionRate(sample.Kbps)), ("ago", MeasuredAgo(sample.MeasuredAt))));
         var limit = state?.LearnedLimit is { } l && l.ExpiresAt > DateTimeOffset.UtcNow ? l : null;
-        LearnedConnectionLimit = limit == null || BufferingQualityMode == "never" ? "" : $"Limited to {ConnectionRate(limit.Kbps)} after buffering on {limit.ObservedAt.ToLocalTime():MMM d}";
+        LearnedConnectionLimit = limit == null || BufferingQualityMode == "never" ? "" : AppStrings.Get("web.settings.playbackConnection.learnedLimit",
+            Args(("rate", ConnectionRate(limit.Kbps)), ("date", DateTimeDisplay.FormatDate(limit.ObservedAt, medium: true))));
         ConnectionBudget = state?.AutoBudgetKbps is int budget && !(BufferingQualityMode == "never" && limit != null)
-            ? $"Auto plays videos up to {ConnectionRate(budget)} without converting them." : "";
+            ? AppStrings.Get("web.settings.playbackConnection.autoBudget", Args(("rate", ConnectionRate(budget)))) : "";
         CanResetLearnedLimit = limit != null; OnPropertyChanged(nameof(CanResetLearnedLimit));
     }
     private void SetConnectionNetwork(bool metered, string transport)
     {
         ConnectionMetered = metered;
         if (metered) ConnectionReading = transport == "cellular"
-            ? "Speed tests are skipped on cellular, and the Cellular quality settings apply."
-            : "Speed tests are skipped on metered networks.";
+            ? AppStrings.Get("web.settings.playbackConnection.skippedCellular")
+            : AppStrings.Get("web.settings.playbackConnection.skippedMetered");
     }
+
+    /// <summary>Re-reads the connection summary in the current interface language (retained settings view).</summary>
+    public void RefreshConnectionLocale()
+    {
+        if (ConnectionMetered) SetConnectionNetwork(true, PlaybackConnectionNetwork.Capture().Transport);
+        else ApplyConnectionState(ConnectionObserver.State);
+    }
+
+    private static Dictionary<string, object?> Args(params (string Name, object? Value)[] values)
+        => values.ToDictionary(value => value.Name, value => value.Value);
     private async Task ClearConnectionMessageAsync(long revision, ApiRequestContext owner, double seconds)
     {
         await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(seconds, 1, 86400)));
         if (revision == _connectionMessageRevision && _settingsApi.IsCurrentContext(owner)) ConnectionSettingsMessage = "";
     }
-    private static string ConnectionRate(int kbps) => kbps < 1000 ? $"{Math.Max(0, kbps)} kbps" : kbps < 10000 ? $"{Math.Floor(kbps / 100d) / 10:0.0} Mbps" : $"{kbps / 1000} Mbps";
+    private static string ConnectionRate(int kbps) => kbps < 1000
+        ? AppStrings.Get("web.common.format.bitrate.kbps", Args(("rate", Math.Max(0, kbps).ToString("N0", AppStrings.FormatCulture))))
+        : AppStrings.Get("web.common.format.bitrate.mbps", Args(("rate", kbps < 10000 ? (Math.Floor(kbps / 100d) / 10).ToString("0.0", AppStrings.FormatCulture) : (kbps / 1000).ToString("N0", AppStrings.FormatCulture))));
     private static string MeasuredAgo(DateTimeOffset at)
     {
         var minutes = Math.Max(0, (int)(DateTimeOffset.UtcNow - at).TotalMinutes);
-        if (minutes == 0) return "just now";
-        var (count, unit) = minutes < 60 ? (minutes, "minute") : minutes < 1440 ? (minutes / 60, "hour") : (minutes / 1440, "day");
-        return $"{count} {unit}{(count == 1 ? "" : "s")} ago";
+        if (minutes == 0) return AppStrings.Get("web.settings.playbackConnection.ago.justNow");
+        var (count, key) = minutes < 60 ? (minutes, "minutes") : minutes < 1440 ? (minutes / 60, "hours") : (minutes / 1440, "days");
+        return AppStrings.Get("web.settings.playbackConnection.ago." + key, Args(("count", count), ("count_text", count.ToString("N0", AppStrings.FormatCulture))));
     }
 }

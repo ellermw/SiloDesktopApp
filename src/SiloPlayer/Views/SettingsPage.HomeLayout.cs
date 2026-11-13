@@ -7,13 +7,14 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using SiloPlayer.Services;
 using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class SettingsPage
 {
-    private string CurrentHomePageLabel() => ViewModel.SelectedScope == "home" ? "Home"
-        : ViewModel.LibraryCards.FirstOrDefault(card => $"library:{card.LibraryId}" == ViewModel.SelectedScope)?.LibraryName ?? "this page";
+    private string CurrentHomePageLabel() => ViewModel.SelectedScope == "home" ? L("web.home.rows.pages.home", "Home")
+        : ViewModel.LibraryCards.FirstOrDefault(card => $"library:{card.LibraryId}" == ViewModel.SelectedScope)?.LibraryName ?? L("web.home.addRow.pages.thisPage", "this page");
 
     private readonly SemaphoreSlim _homePeekBudget = new(3);
     private readonly Dictionary<string, List<MediaItem>> _homePeekCache = [];
@@ -81,7 +82,7 @@ public sealed partial class SettingsPage
         {
             Title = row.IsCustom ? "Delete row?" : "Remove from my page?",
             Content = row.IsCustom ? $"Delete “{row.DisplayTitle}” from this profile?" : $"Remove “{row.DisplayTitle}” from this profile's page? You can bring it back by resetting the page.",
-            PrimaryButtonText = row.IsCustom ? "Delete row" : "Remove row", CloseButtonText = "Cancel", XamlRoot = XamlRoot,
+            PrimaryButtonText = row.IsCustom ? L("web.home.rows.deleteRow", "Delete row") : L("web.home.rows.remove.confirm", "Remove row"), CloseButtonText = L("common.cancel", "Cancel"), XamlRoot = XamlRoot,
             DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"]
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || !_layoutTransferActive || !api.IsCurrentContext(context) || scope != ViewModel.SelectedScope || !ViewModel.CanEditHomeSections) return;
@@ -125,7 +126,7 @@ public sealed partial class SettingsPage
         content.Children.Add(_customizeHomeHeading = new TextBlock { Text = heading, FontSize = 30, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         content.Children.Add(_customizeHomeCopy = new TextBlock { Text = copy, TextWrapping = TextWrapping.Wrap });
         content.Children.Add(sections);
-        var export = new Button { Content = "Export layout", HorizontalAlignment = HorizontalAlignment.Left };
+        var export = new Button { Content = L("web.settings.homeScreen.export", "Export layout"), HorizontalAlignment = HorizontalAlignment.Left };
         export.Click += HomeExport_Click; content.Children.Add(export);
         return _customizeHomeContent = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     }
@@ -187,7 +188,7 @@ public sealed partial class SettingsPage
             App.Services.GetRequiredService<ToastService>().Success("Layout exported");
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not export layout: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not export layout: {ex.DisplayMessage()}"); }
         finally { TransferBusy(false); }
     }
     private async void HomeImport_Click(object sender, RoutedEventArgs e)
@@ -201,7 +202,7 @@ public sealed partial class SettingsPage
             var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
             var load = new Button { Content = "Load JSON file", HorizontalAlignment = HorizontalAlignment.Left };
             var content = new StackPanel { Spacing = 12, Children = { new TextBlock { Text = "Paste a layout or load an exported JSON file. Review the mapped scopes before applying.", TextWrapping = TextWrapping.Wrap }, source, load, error } };
-            var input = new ContentDialog { Title = "Import Home layout", Content = content, PrimaryButtonText = "Preview import", CloseButtonText = "Cancel", XamlRoot = XamlRoot, DefaultButton = ContentDialogButton.Close };
+            var input = new ContentDialog { Title = L("web.home.layout.title", "Import Home layout"), Content = content, PrimaryButtonText = "Preview import", CloseButtonText = L("common.cancel", "Cancel"), XamlRoot = XamlRoot, DefaultButton = ContentDialogButton.Close };
             _layoutTransferPreview = input;
             load.Click += async (_, _) =>
             {
@@ -213,7 +214,7 @@ public sealed partial class SettingsPage
                     if ((await selected.GetBasicPropertiesAsync()).Size > HomeLayoutTransfer.MaximumBytes) throw new InvalidDataException("Layout exceeds the 5 MiB limit.");
                     source.Text = await Windows.Storage.FileIO.ReadTextAsync(selected);
                 }
-                catch (Exception ex) { error.Text = ex.Message; }
+                catch (Exception ex) { error.Text = ex.DisplayMessage(); }
             };
             HomeLayoutPlan? plan = null;
             input.PrimaryButtonClick += async (_, args) =>
@@ -224,7 +225,7 @@ public sealed partial class SettingsPage
                     plan = await transfer.PreviewAsync(source.Text);
                     if (!api.IsCurrentContext(context) || !_layoutTransferActive) args.Cancel = true;
                 }
-                catch (Exception ex) { args.Cancel = true; error.Text = ex.Message; }
+                catch (Exception ex) { args.Cancel = true; error.Text = ex.DisplayMessage(); }
                 finally { input.IsPrimaryButtonEnabled = true; deferral.Complete(); }
             };
             if (await input.ShowAsync() != ContentDialogResult.Primary || plan == null || !api.IsCurrentContext(context) || !_layoutTransferActive) return;
@@ -233,7 +234,7 @@ public sealed partial class SettingsPage
             if (plan.HideWatchedItems.HasValue) descriptions.Add($"Hide watched items: {(plan.HideWatchedItems.Value ? "On" : "Off")}");
             descriptions.Add("Imports from another server preserve this server's section hides and ordering.");
             if (plan.Skipped.Count > 0) descriptions.Add("Skipped:\n" + string.Join("\n", plan.Skipped));
-            var preview = new ContentDialog { Title = "Import layout preview", PrimaryButtonText = "Apply layout", CloseButtonText = "Cancel",
+            var preview = new ContentDialog { Title = "Import layout preview", PrimaryButtonText = "Apply layout", CloseButtonText = L("common.cancel", "Cancel"),
                 XamlRoot = XamlRoot, DefaultButton = ContentDialogButton.Close,
                 IsPrimaryButtonEnabled = plan.Pages.Count > 0 || plan.HideWatchedItems.HasValue };
             var applyError = new TextBlock { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed,
@@ -247,7 +248,7 @@ public sealed partial class SettingsPage
                 args.Cancel = true;
                 if (applying || !api.IsCurrentContext(context) || !_layoutTransferActive) return;
                 var deferral = args.GetDeferral(); applying = true;
-                preview.IsPrimaryButtonEnabled = false; preview.PrimaryButtonText = "Importing…";
+                preview.IsPrimaryButtonEnabled = false; preview.PrimaryButtonText = L("web.home.layout.importing", "Importing…");
                 var close = SiloPlayer.Helpers.EditorDialogPresentation.Descendants<Button>(preview).FirstOrDefault(button => button.Name == "CloseButton");
                 if (close != null) close.IsEnabled = false;
                 var saved = false;
@@ -263,7 +264,7 @@ public sealed partial class SettingsPage
                 catch (OperationCanceledException) { }
                 catch (Exception ex)
                 {
-                    applyError.Text = $"Applied {transfer.AppliedPages} layout pages. Import stopped: {ex.Message}";
+                    applyError.Text = $"Applied {transfer.AppliedPages} layout pages. Import stopped: {ex.DisplayMessage()}";
                     applyError.Visibility = Visibility.Visible;
                     App.Services.GetRequiredService<ToastService>().Error(applyError.Text);
                 }
@@ -279,7 +280,7 @@ public sealed partial class SettingsPage
             await preview.ShowAsync();
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Applied {transfer.AppliedPages} layout pages. Import stopped: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Applied {transfer.AppliedPages} layout pages. Import stopped: {ex.DisplayMessage()}"); }
         finally { _layoutTransferPreview = null; TransferBusy(false); }
     }
 }

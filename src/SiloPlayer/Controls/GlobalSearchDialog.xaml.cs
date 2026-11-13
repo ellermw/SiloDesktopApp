@@ -82,14 +82,15 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         _dialogContext = _apiClient.CaptureContext();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, Render);
         _boxSets.Items.CollectionChanged += (_, _) => Render();
         _boxSets.PropertyChanged += (_, _) => Render();
         // TextBox consumes arrow navigation before ordinary routed handlers.
         SearchBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(SearchBox_KeyDown), true);
         _scopeLoadTask = LoadScopeAsync();
         CornerRadius = new CornerRadius(12);
-        SearchFooterHints.Children.Add(CreateKeyHint(["↑", "↓"], "Navigate"));
-        SearchFooterHints.Children.Add(CreateKeyHint(["Esc"], "Close"));
+        SearchFooterHints.Children.Add(CreateKeyHint(["↑", "↓"], () => SiloPlayer.Core.Localization.AppStrings.Get("web.search.navigate")));
+        SearchFooterHints.Children.Add(CreateKeyHint(["Esc"], () => SiloPlayer.Core.Localization.AppStrings.Get("web.search.close")));
         Resources["ContentDialogPadding"] = new Thickness(0);
         Resources["ContentDialogMinHeight"] = 0d;
         Resources["ContentDialogMinWidth"] = 0d;
@@ -164,13 +165,13 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] },
     };
 
-    private static StackPanel CreateKeyHint(string[] keys, string label)
+    private static StackPanel CreateKeyHint(string[] keys, Func<string> label)
     {
         var hint = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         foreach (var key in keys) hint.Children.Add(CreateKeyChip(key));
-        hint.Children.Add(new TextBlock { Text = label, FontSize = 12, LineHeight = 16,
+        hint.Children.Add(MediaItemCardActions.BindText(new TextBlock { Text = label(), FontSize = 12, LineHeight = 16,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] }, "Text", element => element.Text = label()));
         return hint;
     }
 
@@ -441,14 +442,14 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         EmptyText.Visibility = Visibility.Collapsed;
         if ((_searchFailed || _peopleSearchFailed) && _results.Count + _peopleResults.Count + _boxSets.Items.Count == 0)
         {
-            EmptyText.Text = "Could not load results. Press Enter to open the search page.";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EmptyText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.search.loadFailed", fallback: "Could not load results. Press Enter to open the search page."));
             EmptyText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
             EmptyText.Padding = new Thickness(12, 16, 12, 16);
             EmptyText.Visibility = Visibility.Visible;
         }
         else if (!_catalogPending && !_peoplePending && !_requestsPending && !_boxSets.IsLoading && _results.Count + _peopleResults.Count + _requestResults.Count + _boxSets.Items.Count == 0)
         {
-            EmptyText.Text = "No matches";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EmptyText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.search.noMatches", fallback: "No matches"));
             EmptyText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
             EmptyText.Padding = new Thickness(12, 24, 12, 24);
             EmptyText.Visibility = Visibility.Visible;
@@ -459,7 +460,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             if (_results.Count > 0 && (_peopleResults.Count > 0 || _boxSets.Items.Count > 0))
             {
                 if (_peopleFirst) AddGroupDivider();
-                AddGroupHeading("TITLES");
+                AddGroupHeading(SiloPlayer.Core.Localization.AppStrings.Get("web.search.titles"));
             }
             for (int i = 0; i < _results.Count; i++)
                 ResultsPanel.Children.Add(BuildResultRow(_results[i], _boxSets.Items.Count + (_peopleFirst ? _peopleResults.Count : 0) + i));
@@ -468,7 +469,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         void AddGroupDivider() => ResultsPanel.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 4, 0, 4), Background = new SolidColorBrush(Colors.White) { Opacity = .05 } });
         if (_boxSets.Items.Count > 0)
         {
-            AddGroupHeading("BOX SETS");
+            AddGroupHeading(SiloPlayer.Core.Localization.AppStrings.Get("web.search.boxSets"));
             for (var i = 0; i < _boxSets.Items.Count; i++) ResultsPanel.Children.Add(BuildBoxSetRow(_boxSets.Items[i], i));
             if (_results.Count + _peopleResults.Count > 0) AddGroupDivider();
         }
@@ -476,7 +477,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         if (_peopleResults.Count > 0)
         {
             if (!_peopleFirst && _results.Count > 0) AddGroupDivider();
-            AddGroupHeading("PEOPLE");
+            AddGroupHeading(SiloPlayer.Core.Localization.AppStrings.Get("web.search.people"));
             for (var i = 0; i < _peopleResults.Count; i++)
             {
                 var person = _peopleResults[i];
@@ -499,7 +500,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
                     Spacing = 8,
                     Margin = new Thickness(12, 12, 12, 4),
                 };
-                header.Children.Add(new TextBlock
+                header.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
                 {
                     Text = "REQUEST TO ADD",
                     FontSize = 10,
@@ -507,7 +508,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
                     LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                     CharacterSpacing = 100,
                     Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                });
+                }, text: "web.requests.toAdd.heading"));
                 header.Children.Add(new Border
                 {
                     CornerRadius = new CornerRadius(8),
@@ -515,7 +516,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
                     Background = (Brush)Application.Current.Resources["SurfaceBrush"],
                     Child = new TextBlock
                     {
-                        Text = _requestResults.Count.ToString(),
+                        Text = _requestResults.Count.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture),
                         FontSize = 10,
                         LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                         Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
@@ -527,7 +528,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             {
                 ResultsPanel.Children.Add(new TextBlock
                 {
-                    Text = _catalogPending || _searchFailed ? "Discovery matches:" : "Not in your library",
+                    Text = SiloPlayer.Core.Localization.AppStrings.Get(_catalogPending || _searchFailed ? "web.requests.toAdd.headerUnknown" : "web.requests.toAdd.headerNoHits"),
                     Margin = new Thickness(12, 16, 12, 4),
                     FontSize = 12,
                     LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
@@ -548,18 +549,18 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         thumb.Children.Add(new Border { Background = (Brush)Application.Current.Resources["BorderBrush"], CornerRadius = new CornerRadius(5), Margin = new Thickness(4, -4, -4, 4) });
         thumb.Children.Add(new Border { Background = (Brush)Application.Current.Resources["SurfaceBrush"], CornerRadius = new CornerRadius(5), Margin = new Thickness(2, -2, -2, 2) });
         var face = new Grid(); var fallback = new DefaultArtwork(); fallback.Reset("movie", set.PosterThumbhash); _ = fallback.ShowThumbhashAsync(); face.Children.Add(fallback);
-        if (!string.IsNullOrWhiteSpace(set.PosterUrl)) face.Children.Add(new Image { Source = RemoteImageConverter.Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill });
+        if (!string.IsNullOrWhiteSpace(set.PosterUrl)) face.Children.Add(new Image { FlowDirection = FlowDirection.LeftToRight, Source = RemoteImageConverter.Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill });
         thumb.Children.Add(face);
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = set.Title, FontSize = 14, FontWeight = FontWeights.Medium, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
-        text.Children.Add(new TextBlock { Text = $"Box set · {set.MovieCount} films" + (set.Years.Length > 0 ? " · " + set.Years : ""), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        text.Children.Add(new TextBlock { Text = SiloPlayer.Core.Localization.AppStrings.Get("web.search.boxSets") + " · " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.filmCount", new Dictionary<string, object?> { ["count"] = set.MovieCount }) + (set.Years.Length > 0 ? " · " + set.Years : ""), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         grid.Children.Add(thumb); Grid.SetColumn(text, 1); grid.Children.Add(text);
         var enter = CreateKeyChip("↵"); enter.Tag = "QuickSelectedEnter"; enter.Visibility = Visibility.Collapsed; AutomationProperties.SetAccessibilityView(enter, AccessibilityView.Raw); Grid.SetColumn(enter, 2); grid.Children.Add(enter);
         var row = new Button { Tag = index, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Colors.Transparent), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Content = new Border { CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 12, 8), Child = grid } };
-        AutomationProperties.SetName(row, $"Open {set.Title}, Box set, {set.MovieCount} films, {set.Years}");
+        MediaItemCardActions.BindText(row, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.searchOptionLabel", new Dictionary<string, object?> { ["title"] = set.Title, ["detail"] = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.filmCount", new Dictionary<string, object?> { ["count"] = set.MovieCount }) + " · " + set.Years })));
         var owner = _searchCts; var query = _renderedQuery; var generation = _boxSets.Generation;
         row.Click += (_, _) => { if (owner != null && IsCurrentSearchOwner(owner, query) && _boxSets.CanOpen(set, generation)) PickResult(index); };
         row.PointerMoved += (_, _) => { if (_boxSets.CanOpen(set, generation)) SelectResultByPointer($"box-set:{set.LibraryId}:{set.Id}"); };
@@ -587,8 +588,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         };
         if (!string.IsNullOrWhiteSpace(item.PosterUrl))
         {
-            thumb.Child = new Image
-            {
+            thumb.Child = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = (ImageSource)RemoteImageConverter.Convert(
                     item.PosterUrl,
                     typeof(ImageSource),
@@ -665,7 +665,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         var container = new Grid { Tag = index };
         container.Children.Add(row);
         var play = new Button { Width = 24, Height = 24, MinHeight = 0, MinWidth = 0, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(20,0,0,0), Padding = new Thickness(0), CornerRadius = new CornerRadius(12), Content = new FontIcon { Glyph = "\uE768", FontSize = 10 }, Opacity = 0 };
-        AutomationProperties.SetName(play, $"Play {item.Title}");
+        MediaItemCardActions.BindText(play, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.card.play", new Dictionary<string, object?> { ["title"] = item.Title })));
         var rowQuery = _renderedQuery;
         var rowOwner = _searchCts;
         play.Click += (_, _) =>
@@ -686,8 +686,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         var poster = new Border { Width = 40, Height = 56, CornerRadius = new CornerRadius(10), Background = (Brush)Application.Current.Resources["SurfaceBrush"], Opacity = item.Request.Requestable ? 1 : .7 };
         if (!string.IsNullOrWhiteSpace(item.PosterUrl))
         {
-            poster.Child = new Image
-            {
+            poster.Child = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = (ImageSource)RemoteImageConverter.Convert(
                     item.PosterUrl,
                     typeof(ImageSource),
@@ -722,14 +721,14 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         if (!string.IsNullOrEmpty(item.Request.Status))
         {
-            var badge = ExternalTitleCard.StatusBadge(RequestViewerPolicy.Label(item.Request.Status, null, item.Request.State));
+            var badge = ExternalTitleCard.StatusBadge(RequestViewerPolicy.Label(item.Request.Status, null, item.Request.State), display: () => MediaItemCardActions.RequestStatus(item.Request.Status, state: item.Request.State));
             badge.CornerRadius = new CornerRadius(10);
             badge.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(badge, 2); grid.Children.Add(badge);
         }
         else if (!requestable)
         {
-            var reason = new TextBlock { Text = RequestViewerPolicy.Reason(item.Request.Reason), FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
+            var reason = new TextBlock { Text = MediaItemCardActions.RequestReason(item.Request.Reason), FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
             Grid.SetColumn(reason, 2); grid.Children.Add(reason);
         }
@@ -762,13 +761,13 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private static string TypeLabel(string? type) => type?.ToLowerInvariant() switch
     {
-        "movie" => "Movie",
-        "series" => "Series",
-        "season" => "Season",
-        "episode" => "Episode",
-        "audiobook" => "Audiobook",
-        "ebook" => "Ebook",
-        "manga" => "Manga",
+        "movie" => SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeMovie"),
+        "series" => SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeSeries"),
+        "season" => SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeSeason"),
+        "episode" => SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeEpisode"),
+        "audiobook" => SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeAudiobook"),
+        "ebook" => SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeEbook"),
+        "manga" => SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeManga"),
         "person" => "Person",
         _ => type ?? "",
     };

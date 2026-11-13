@@ -2,13 +2,14 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Text;
 using Windows.System;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Controls;
 
 public sealed class MetadataTagsInput : UserControl
 {
     private readonly WrapPanel _chips = new() { HorizontalSpacing = 6, VerticalSpacing = 6 };
-    private readonly TextBox _input = new() { PlaceholderText = "Add...", MinWidth = 80, Width = 80, Height = 22, MinHeight = 0,
+    private readonly TextBox _input = new() { PlaceholderText = AppStrings.Get("web.common.ui.tagInput.placeholder", fallback: "Add..."), MinWidth = 80, Width = 80, Height = 22, MinHeight = 0,
         Padding = new Thickness(0), FontSize = 14, BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
     private readonly List<string> _values;
     public event EventHandler? Changed;
@@ -58,7 +59,7 @@ public sealed class MetadataTagsInput : UserControl
                 Background = new SolidColorBrush(accent.Color) { Opacity = .15 } };
             _chips.Children.Add(chip);
         }
-        _input.PlaceholderText = _values.Count == 0 ? "Add..." : "";
+        _input.PlaceholderText = _values.Count == 0 ? AppStrings.Get("web.common.ui.tagInput.placeholder", fallback: "Add...") : "";
         _chips.Children.Add(_input);
     }
 }

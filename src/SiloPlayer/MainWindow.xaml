@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Window
+<Window xmlns:loc="using:SiloPlayer.Services"
     x:Class="SiloPlayer.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -91,8 +91,8 @@
                       Tapped="SidebarBrandHost_Tapped"
                       IsTabStop="True"
                       KeyDown="SidebarBrandHost_KeyDown"
-                      AutomationProperties.Name="Go to home">
-                    <Image
+                      AutomationProperties.Name="Go to home" loc:Localized.Name="web.shell.sidebar.goHome">
+                    <Image FlowDirection="LeftToRight"
                         x:Name="SiloWordmarkImage"
                         Source="ms-appx:///Assets/silo-wordmark-sidebar.png"
                         Width="112"
@@ -106,7 +106,7 @@
                             <ScalarTransition Duration="0:0:0.3" />
                         </Image.OpacityTransition>
                     </Image>
-                    <Image
+                    <Image FlowDirection="LeftToRight"
                         x:Name="SiloMarkImage"
                         Source="ms-appx:///Assets/silo-mark-transparent.png"
                         Width="36"
@@ -124,10 +124,10 @@
                     </Image>
                 </Grid>
                 <StackPanel x:Name="SettingsSidebarHeader" Visibility="Collapsed" Spacing="16" Margin="12,24,12,16" Width="236" HorizontalAlignment="Left">
-                    <Button Click="SettingsSidebarBack_Click" Background="Transparent" BorderThickness="0" Padding="8,6" CornerRadius="8" HorizontalAlignment="Left" MinWidth="0" MinHeight="0" AutomationProperties.Name="Back to App">
-                        <StackPanel Orientation="Horizontal" Spacing="8"><Image Source="ms-appx:///Assets/Icons/arrow-left.svg" Width="16" Height="16"/><TextBlock Text="Back to App" FontSize="13"/></StackPanel>
+                    <Button Click="SettingsSidebarBack_Click" Background="Transparent" BorderThickness="0" Padding="8,6" CornerRadius="8" HorizontalAlignment="Left" MinWidth="0" MinHeight="0" AutomationProperties.Name="Back to App" loc:Localized.Name="web.settings.sidebar.backToApp">
+                        <StackPanel Orientation="Horizontal" Spacing="8"><Image FlowDirection="LeftToRight" Source="ms-appx:///Assets/Icons/arrow-left.svg" Width="16" Height="16"/><TextBlock Text="Back to App" loc:Localized.Text="web.settings.sidebar.backToApp" FontSize="13"/></StackPanel>
                     </Button>
-                    <TextBlock Text="Settings" FontSize="22" FontWeight="ExtraBold" CharacterSpacing="-30" Margin="8,0,8,0" />
+                    <TextBlock Text="Settings" loc:Localized.Text="web.shell.sidebar.settings" FontSize="22" FontWeight="ExtraBold" CharacterSpacing="-30" Margin="8,0,8,0" />
                     <Button x:Name="SettingsSidebarProfile" Click="SwitchProfile_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Padding="8,6" CornerRadius="12" MinWidth="0" MinHeight="0">
                         <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/></Grid.ColumnDefinitions>
@@ -137,12 +137,12 @@
                                 </Border>
                                 <Ellipse Visibility="{Binding Visibility, ElementName=ProfileAvatarImage}"><Ellipse.Fill><ImageBrush ImageSource="{Binding ImageSource, ElementName=ProfileAvatarBrush}" Stretch="UniformToFill"/></Ellipse.Fill></Ellipse>
                             </Grid>
-                            <StackPanel Grid.Column="1" Spacing="0" VerticalAlignment="Center"><TextBlock Text="Current profile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"/><TextBlock Text="{Binding Text, ElementName=ProfileNameText}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel>
-                            <Image Grid.Column="2" Source="ms-appx:///Assets/Icons/chevron-right.svg" Width="16" Height="16"/>
+                            <StackPanel Grid.Column="1" Spacing="0" VerticalAlignment="Center"><TextBlock Text="Current profile" loc:Localized.Text="web.settings.currentProfileLink.caption" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"/><TextBlock Text="{Binding Text, ElementName=ProfileNameText}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel>
+                            <Image FlowDirection="LeftToRight" Grid.Column="2" Source="ms-appx:///Assets/Icons/chevron-right.svg" Width="16" Height="16"/>
                         </Grid>
                     </Button>
                     <Grid>
-                        <TextBox x:Name="SettingsSidebarSearch" PlaceholderText="Search settings" TextChanged="SettingsSidebarSearch_TextChanged" AutomationProperties.Name="Search settings" Height="44" CornerRadius="12" Padding="36,8,12,8"/>
+                        <TextBox x:Name="SettingsSidebarSearch" PlaceholderText="Search settings" loc:Localized.Placeholder="web.settings.search.placeholder" TextChanged="SettingsSidebarSearch_TextChanged" AutomationProperties.Name="Search settings" loc:Localized.Name="web.settings.search.placeholder" Height="44" CornerRadius="12" Padding="36,8,12,8"/>
                         <FontIcon Glyph="&#xE721;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}"
                                   HorizontalAlignment="Left" Margin="12,0,0,0" IsHitTestVisible="False" />
                     </Grid>
@@ -154,7 +154,7 @@
                 <!-- Home -->
                 <NavigationViewItem
                     x:Name="HomeNavItem"
-                    Content="Home"
+                    Content="Home" loc:Localized.Content="web.shell.sidebar.home"
                     Tag="Home">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE80F;" />
@@ -172,7 +172,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock
-                                Text="Search"
+                                Text="Search" loc:Localized.Text="web.shell.sidebar.search"
                                 VerticalAlignment="Center" />
                             <Border
                                 Grid.Column="1"
@@ -196,7 +196,7 @@
                 <NavigationViewItem x:Name="LibrariesHeader" SelectsOnInvoked="False"
                                     Tapped="LibrariesHeader_Tapped"
                                     KeyDown="LibrariesHeader_KeyDown"
-                                    AutomationProperties.Name="Libraries"
+                                    AutomationProperties.Name="Libraries" loc:Localized.Name="web.shell.sidebar.libraries"
                                     AutomationProperties.HelpText="Collapse libraries">
                     <NavigationViewItem.Content>
                         <Grid>
@@ -207,7 +207,7 @@
                             <ImageIcon x:Name="LibrariesChevron" Width="12" Height="12" Source="ms-appx:///Assets/Icons/chevron-down.svg"
                                        Foreground="{StaticResource SecondaryTextBrush}"
                                        VerticalAlignment="Center" Margin="0,0,4,0" />
-                            <TextBlock Grid.Column="1" Text="LIBRARIES" FontSize="10" FontWeight="SemiBold"
+                            <TextBlock x:Name="ShellLibrariesLabel" Grid.Column="1" Text="LIBRARIES" loc:Localized.Text="web.shell.sidebar.libraries" loc:Localized.Uppercase="True" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="220"
                                        Foreground="{StaticResource TertiaryTextBrush}"
                                        VerticalAlignment="Center" />
@@ -228,24 +228,24 @@
                 <!-- Libraries inserted dynamically after this point -->
 
                 <!-- DISCOVER section header -->
-                <NavigationViewItemHeader Content="DISCOVER" />
+                <NavigationViewItemHeader x:Name="ShellDiscoverHeader" Content="DISCOVER" loc:Localized.Content="web.shell.sidebar.discover" loc:Localized.Uppercase="True" />
 
-                <NavigationViewItem x:Name="RecommendationsNavItem" Content="For You" Tag="Recommendations">
+                <NavigationViewItem x:Name="RecommendationsNavItem" Content="For You" loc:Localized.Content="web.shell.sidebar.forYou" Tag="Recommendations">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE735;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="RequestsNavItem" Content="Requests" Tag="Requests" Visibility="Collapsed">
+                <NavigationViewItem x:Name="RequestsNavItem" Content="Requests" loc:Localized.Content="web.shell.sidebar.requests" Tag="Requests" Visibility="Collapsed">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8F4;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="CalendarNavItem" Content="Calendar" Tag="Calendar">
+                <NavigationViewItem x:Name="CalendarNavItem" Content="Calendar" loc:Localized.Content="web.shell.sidebar.calendar" Tag="Calendar">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE787;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="NotificationsNavItem" Content="Notifications" Tag="Notifications">
+                <NavigationViewItem x:Name="NotificationsNavItem" Content="Notifications" loc:Localized.Content="web.shell.sidebar.notifications" Tag="Notifications">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE7F4;" />
                     </NavigationViewItem.Icon>
@@ -261,40 +261,40 @@
                 </NavigationViewItem>
 
                 <!-- YOUR STUFF section header -->
-                <NavigationViewItemHeader Content="YOUR STUFF" />
-                <NavigationViewItem Content="Favorites" Tag="Favorites">
+                <NavigationViewItemHeader x:Name="ShellYourStuffHeader" Content="YOUR STUFF" loc:Localized.Content="web.shell.sidebar.yourStuff" loc:Localized.Uppercase="True" />
+                <NavigationViewItem Content="Favorites" loc:Localized.Content="web.shell.sidebar.favorites" Tag="Favorites">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE734;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Watchlist" Tag="Watchlist">
+                <NavigationViewItem Content="Watchlist" loc:Localized.Content="web.shell.sidebar.watchlist" Tag="Watchlist">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8B7;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Watch Party" Tag="WatchParty">
+                <NavigationViewItem Content="Watch Party" loc:Localized.Content="web.shell.sidebar.watchParty" Tag="WatchParty">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE716;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Collections" Tag="Collections">
+                <NavigationViewItem Content="Collections" loc:Localized.Content="web.shell.sidebar.collections" Tag="Collections">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8FD;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="History" Tag="History">
+                <NavigationViewItem Content="History" loc:Localized.Content="web.shell.sidebar.history" Tag="History">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE81C;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Downloads" Tag="Downloads">
+                <NavigationViewItem Content="Downloads" loc:Localized.Content="web.setup.features.downloads" Tag="Downloads">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE896;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
 
                 <!-- Plugin-supplied user navigation is inserted below this header. -->
-                <NavigationViewItemHeader x:Name="AppsHeader" Content="APPS" Visibility="Collapsed" />
+                <NavigationViewItemHeader x:Name="AppsHeader" Content="APPS" loc:Localized.Content="web.shell.sidebar.apps" loc:Localized.Uppercase="True" Visibility="Collapsed" />
             </NavigationView.MenuItems>
 
             <NavigationView.PaneFooter>
@@ -357,7 +357,7 @@
                                     HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed" />
                             </Grid>
                             <TextBlock
-                                x:Name="ProfileNameText"
+                                x:Name="ProfileNameText" loc:Localized.Text="web.profiles.streams.profileFallback"
                                 Text="Profile"
                                 Foreground="{StaticResource PrimaryTextBrush}"
                                 VerticalAlignment="Center"
@@ -385,7 +385,7 @@
                                         <Setter Property="BorderThickness" Value="1" />
                                     </Style>
                                 </Flyout.FlyoutPresenterStyle>
-                                <ScrollViewer x:Name="ProfileMenuScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ScrollViewer x:Name="ProfileMenuScroller" loc:Localized.Direction="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                 <StackPanel Spacing="0">
                                     <!-- Avatar + name header -->
                                     <Grid ColumnSpacing="12" Margin="8,8">
@@ -411,7 +411,7 @@
                                             </Ellipse>
                                         </Grid>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="0">
-                                            <TextBlock x:Name="ProfileDropdownName" Text="Profile" TextTrimming="CharacterEllipsis"
+                                            <TextBlock x:Name="ProfileDropdownName" loc:Localized.Text="web.profiles.streams.profileFallback" Text="Profile" TextTrimming="CharacterEllipsis"
                                                        FontSize="14" FontWeight="SemiBold"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
                                             <TextBlock x:Name="ProfileDropdownUsername" Text="" TextTrimming="CharacterEllipsis"
@@ -430,8 +430,8 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock
-                                            Text="THEME"
+                                        <TextBlock x:Name="ShellThemeLabel"
+                                            Text="THEME" loc:Localized.Text="settingsManifest.ui.theme.label" loc:Localized.Uppercase="True"
                                             FontSize="10"
                                             FontWeight="Medium"
                                             CharacterSpacing="140"
@@ -454,7 +454,7 @@
                                             Click="Settings_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="10">
                                             <ImageIcon Width="18" Height="18" Source="ms-appx:///Assets/Icons/settings.svg" Foreground="{StaticResource PrimaryTextBrush}" />
-                                            <TextBlock Text="Settings" FontSize="13" FontWeight="Medium"
+                                            <TextBlock Text="Settings" loc:Localized.Text="web.shell.sidebar.settings" FontSize="13" FontWeight="Medium"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
@@ -468,7 +468,7 @@
                                             Click="SwitchProfile_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="12">
                                             <ImageIcon Width="18" Height="18" Source="ms-appx:///Assets/Icons/circle-user.svg" Foreground="{StaticResource PrimaryTextBrush}" />
-                                            <TextBlock Text="Switch Profile" FontSize="13" FontWeight="SemiBold"
+                                            <TextBlock Text="Switch Profile" loc:Localized.Text="web.shell.sidebar.switchProfile" FontSize="13" FontWeight="SemiBold"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
@@ -480,7 +480,7 @@
                                             Click="Logout_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="12">
                                             <ImageIcon Width="18" Height="18" Source="ms-appx:///Assets/Icons/log-out.svg" Foreground="{StaticResource PrimaryTextBrush}" />
-                                            <TextBlock Text="Logout" FontSize="13" FontWeight="SemiBold"
+                                            <TextBlock Text="Logout" loc:Localized.Text="web.shell.sidebar.logout" FontSize="13" FontWeight="SemiBold"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
@@ -543,7 +543,7 @@
                                 BorderThickness="0"
                                 CornerRadius="12"
                                 Click="MobileMenu_Click"
-                                AutomationProperties.Name="Open menu">
+                                AutomationProperties.Name="Open menu" loc:Localized.Name="web.shell.layout.openMenu">
                                 <FontIcon
                                     Glyph="&#xE700;"
                                     FontSize="20"
@@ -554,7 +554,7 @@
                                 Background="Transparent"
                                 BorderThickness="0"
                                 Click="MobileHome_Click"
-                                AutomationProperties.Name="Home">
+                                AutomationProperties.Name="Home" loc:Localized.Name="web.shell.sidebar.home">
                                 <Image
                                     x:Name="MobileSiloWordmarkImage"
                                     Source="ms-appx:///Assets/silo-wordmark-sidebar.png"
@@ -577,7 +577,7 @@
                                 BorderThickness="0"
                                 CornerRadius="12"
                                 Click="MobileSearch_Click"
-                                AutomationProperties.Name="Search">
+                                AutomationProperties.Name="Search" loc:Localized.Name="web.shell.sidebar.search">
                                 <FontIcon
                                     Glyph="&#xE721;"
                                     FontSize="20"

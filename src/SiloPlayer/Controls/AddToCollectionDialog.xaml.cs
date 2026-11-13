@@ -56,9 +56,9 @@ public sealed partial class AddToCollectionDialog : ContentDialog
         {
             LoadingRing.IsActive = false;
             LoadingPanel.Visibility = Visibility.Collapsed;
-            StatusText.Text = ex.Message;
+            MediaItemCardActions.BindText(StatusText, "Text", element => element.Text = ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message);
             StatusText.Visibility = Visibility.Visible;
-            EmptyText.Text = "Collections could not be loaded.";
+            MediaItemCardActions.Localize(EmptyText, text: "web.collections.addToCollection.loadFailed");
             EmptyText.Visibility = Visibility.Visible;
         }
     }
@@ -134,7 +134,7 @@ public sealed partial class AddToCollectionDialog : ContentDialog
                     button.Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"];
                     IsPrimaryButtonEnabled = true;
                 };
-                AutomationProperties.SetName(button, $"Select {pick.Title}");
+                MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.card.select", new Dictionary<string, object?> { ["title"] = pick.Title })));
                 GroupsPanel.Children.Add(button);
             }
         }
@@ -153,7 +153,7 @@ public sealed partial class AddToCollectionDialog : ContentDialog
         var deferral = args.GetDeferral();
         args.Cancel = true;
         IsPrimaryButtonEnabled = false;
-        StatusText.Text = "Adding to collection…";
+        MediaItemCardActions.BindText(StatusText, "Text", element => element.Text = "Adding to collection…");
         StatusText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
         StatusText.Visibility = Visibility.Visible;
         try
@@ -168,7 +168,7 @@ public sealed partial class AddToCollectionDialog : ContentDialog
         }
         catch (Exception ex)
         {
-            StatusText.Text = ex.Message;
+            MediaItemCardActions.BindText(StatusText, "Text", element => element.Text = MediaItemCardActions.Problem(ex));
             StatusText.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFC, 0xA5, 0xA5));
             IsPrimaryButtonEnabled = true;
         }

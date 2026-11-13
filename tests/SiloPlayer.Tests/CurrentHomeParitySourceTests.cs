@@ -290,8 +290,8 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("CardBadgeHosts.For(item, service", code);
         Assert.Contains("x:Name=\"BadgePill\"", xaml);
         Assert.Contains("GetBadgeLabel(item)", code);
-        Assert.Contains("case \"season_premiere\": return \"SEASON PREMIERE\";", code);
-        Assert.Contains("TimeLeftText.Text = badgeLabel == null ? \"Next Episode\" : \"\"", code);
+        Assert.Contains("web.calendar.event.badge.seasonPremiere", code);
+        Assert.Contains("web.home.continueWatching.nextEpisode", code);
         Assert.Contains("TimeLeftText.Visibility = badgeLabel == null ? Visibility.Visible : Visibility.Collapsed", code);
         Assert.Contains("item.ProgressUpdatedAt", menu);
         Assert.Contains("MediaSurfaceChangeKind.HomeDismissed", menu);

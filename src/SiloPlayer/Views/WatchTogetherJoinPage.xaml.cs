@@ -62,6 +62,7 @@ public sealed partial class WatchTogetherJoinPage : Page
         Loaded += (_, _) => SubscribeToViewModel();
         Unloaded += (_, _) => UnsubscribeFromViewModel();
         UpdateSelectionButtons();
+        InitializeLocalization();
     }
 
     private void DetachGlow()
@@ -128,12 +129,15 @@ public sealed partial class WatchTogetherJoinPage : Page
         // Deep-link: invite token auto-joins
         if (e.Parameter is string token && !string.IsNullOrWhiteSpace(token))
         {
-            HeadlineText.Text = "Joining Watch Party";
+            _autoJoining = true;
+            ApplyHeadline();
             AutoJoinPanel.Visibility = Visibility.Visible;
             ContentStack.Visibility = Visibility.Collapsed;
             await ViewModel.JoinByInviteTokenAsync(token.Trim());
             if (ViewModel.LastResponse == null)
             {
+                _autoJoining = false;
+                ApplyHeadline();
                 AutoJoinPanel.Visibility = Visibility.Collapsed;
                 ContentStack.Visibility = Visibility.Visible;
             }
@@ -197,11 +201,12 @@ public sealed partial class WatchTogetherJoinPage : Page
         try
         {
             var text = await ClipboardTextReader();
-            if (string.IsNullOrWhiteSpace(text)) { ViewModel.ErrorMessage = "Clipboard contains no room code."; return; }
+            // No upstream keys for these desktop clipboard states; English fallbacks.
+            if (string.IsNullOrWhiteSpace(text)) { ViewModel.SetLocalizedError(() => "Clipboard contains no room code."); return; }
             ViewModel.ErrorMessage = null;
             await ApplyPastedTextAsync(text);
         }
-        catch { ViewModel.ErrorMessage = "Could not paste room code."; }
+        catch { ViewModel.SetLocalizedError(() => "Could not paste room code."); }
     }
     private static async Task<string?> ReadClipboardTextAsync()
     {
@@ -228,10 +233,12 @@ public sealed partial class WatchTogetherJoinPage : Page
         var entries = suppliedEntries ?? await SiloPlayer.Services.RecentPartyStore.ReadAsync(client, auth, RecentPartyDirectory);
         if (!client.IsCurrentContext(authority) || !_subscribed) return;
         RecentRoomsList.Children.Clear();
+        _recentRowText.Clear();
         RecentRoomsPanel.Visibility = entries.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var entry in entries)
         {
-            var row = new Button { Content = $"{entry.Code} · Checking…", HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, IsEnabled = false };
+            var row = new Button { HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, IsEnabled = false };
+            SetRecentRow(row, entry.Code, RecentChecking);
             row.Click += (_, _) =>
             {
                 if (!_subscribed || !client.IsCurrentContext(authority)) return;
@@ -242,12 +249,12 @@ public sealed partial class WatchTogetherJoinPage : Page
             {
                 var room = await App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>().GetWatchTogetherRoomAsync(entry.RoomId, entry.Token);
                 if (!client.IsCurrentContext(authority) || !_subscribed) return;
-                row.Content = $"{entry.Code} · {(room.Room.Phase == "ended" ? "Ended" : "Rejoin")}";
+                SetRecentRow(row, entry.Code, room.Room.Phase == "ended" ? RecentEnded : RecentRejoin);
                 row.IsEnabled = room.Room.Phase != "ended";
             }
             catch (SiloPlayer.Core.Api.ApiException ex) when (ex.StatusCode == 403) { row.Visibility = Visibility.Collapsed; }
-            catch (SiloPlayer.Core.Api.ApiException ex) when (ex.StatusCode is 404 or 409 or 410) { row.Content = $"{entry.Code} · Ended"; }
-            catch { row.Content = $"{entry.Code} · Status unavailable · Rejoin"; row.IsEnabled = true; }
+            catch (SiloPlayer.Core.Api.ApiException ex) when (ex.StatusCode is 404 or 409 or 410) { SetRecentRow(row, entry.Code, RecentEnded); }
+            catch { SetRecentRow(row, entry.Code, RecentUnknown); row.IsEnabled = true; }
         }
     }
 
@@ -334,7 +341,7 @@ public sealed partial class WatchTogetherJoinPage : Page
         HeadlineText.FontSize = width < 640 ? 30 : 36;
         HeadlineText.LineHeight = width < 640 ? 36 : 40;
         if (ViewModel.LastResponse == null && AutoJoinPanel.Visibility != Visibility.Visible)
-            HeadlineText.Text = compact ? "Watch together,\nwherever everyone is." : "Watch together, wherever everyone is.";
+            ApplyHeadline();
         PasteLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         ModeOptionsGrid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
         ModeOptionsGrid.ColumnSpacing = compact ? 0 : 8;

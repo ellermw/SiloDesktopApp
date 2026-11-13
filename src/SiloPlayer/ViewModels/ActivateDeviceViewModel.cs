@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
@@ -159,7 +160,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
         var normalized = NormalizeCode(CodeInput);
         if (string.IsNullOrEmpty(normalized))
         {
-            ErrorMessage = "Enter the code shown on your other device.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Enter the code shown on your other device.");
             return;
         }
 
@@ -256,11 +257,11 @@ public partial class ActivateDeviceViewModel : ObservableObject
             if (ReferenceEquals(_loadCts, cts))
             {
                 Details = null;
-                ErrorMessage = ex.ErrorCode switch
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => ex.ErrorCode switch
                 {
-                    "not_found" => "That sign-in request could not be found.",
-                    _ => ex.Message,
-                };
+                    "not_found" => AppStrings.Get("web.auth.activate.notFound", fallback: "That sign-in request could not be found."),
+                    _ => ShellProblem(ex, ex.Message),
+                });
             }
         }
         catch (HttpRequestException)
@@ -268,7 +269,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
             if (ReferenceEquals(_loadCts, cts))
             {
                 Details = null;
-                ErrorMessage = "Unable to reach the server. Check your connection.";
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => "Unable to reach the server. Check your connection.");
             }
         }
         catch (Exception ex)
@@ -276,7 +277,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
             if (ReferenceEquals(_loadCts, cts))
             {
                 Details = null;
-                ErrorMessage = ex.Message;
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.Message));
             }
         }
         finally
@@ -318,37 +319,38 @@ public partial class ActivateDeviceViewModel : ObservableObject
                     await _authApi.DeviceApproveHandoffAsync(tokenArg, codeArg);
                 else
                     await _authApi.DeviceApproveAsync(tokenArg, codeArg);
-                StatusMessage = IsRemotePlaybackHandoff
+                StatusMessage = ShellText(nameof(StatusMessage), () => IsRemotePlaybackHandoff
                     ? "Playback handoff approved. Continue on the other device."
-                    : "Approved. Finish sign-in on the other device.";
+                    : "Approved. Finish sign-in on the other device.");
             }
             else
             {
                 await _authApi.DeviceDenyAsync(tokenArg, codeArg);
-                StatusMessage = "Request denied.";
+                StatusMessage = ShellText(nameof(StatusMessage), () => "Request denied.");
             }
             // Refresh details so the UI reflects the new status.
             await LoadDetailsAsync();
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.ErrorCode switch
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ex.ErrorCode == "not_found"
+                ? AppStrings.Get("web.auth.activate.notFound", fallback: "That sign-in request could not be found.")
+                : ShellProblem(ex, ex.ErrorCode switch
             {
                 "unauthorized" => "You must be signed in to approve a device.",
-                "not_found" => "That sign-in request could not be found.",
                 "expired" => "This sign-in request has expired.",
                 "consumed" => "This sign-in request has already been used.",
                 "denied" => "This sign-in request has already been denied.",
                 _ => ex.Message,
-            };
+            }));
         }
         catch (HttpRequestException)
         {
-            ErrorMessage = "Unable to reach the server. Check your connection.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Unable to reach the server. Check your connection.");
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.Message));
         }
         finally
         {

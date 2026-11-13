@@ -51,6 +51,12 @@ public sealed partial class CalendarPage : Page
     {
         ViewModel = App.Services.GetRequiredService<CalendarViewModel>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () =>
+        {
+            ViewModel.RefreshLocalization();
+            ViewModel.WeekRangeLabel = CalendarViewModel.FormatWeekRangeLabel(ViewModel.WeekStart);
+            if (IsLoaded) RebuildAll();
+        });
         BuildFilterPills();
         NavigationCacheMode = NavigationCacheMode.Required;
         BuildLoadingSkeleton();
@@ -85,7 +91,7 @@ public sealed partial class CalendarPage : Page
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Error: {ex.Message}";
+            ViewModel.SetLocalizedMessage(nameof(ViewModel.ErrorMessage), () => SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Error: {ex.Message}"), value => ViewModel.ErrorMessage = value);
         }
     }
 
@@ -244,7 +250,7 @@ public sealed partial class CalendarPage : Page
         try
         {
             LibraryComboBox.Items.Clear();
-            LibraryComboBox.Items.Add(new ComboBoxItem { Content = "All Libraries", Tag = null });
+            LibraryComboBox.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = "All Libraries", Tag = null }, content: "web.calendar.allLibraries"));
             foreach (var lib in ViewModel.Libraries)
                 LibraryComboBox.Items.Add(new ComboBoxItem { Content = lib.Name, Tag = lib.Id });
 
@@ -412,7 +418,7 @@ public sealed partial class CalendarPage : Page
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (SelectedDayEmptyState.Visibility == Visibility.Visible)
-            SelectedDayEmptyText.Text = $"Nothing scheduled for {CalendarViewModel.FormatDayHeading(activeSelectedDay!)}.";
+            SelectedDayEmptyText.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.nothingScheduledFor", new Dictionary<string, object?> { ["date"] = CalendarViewModel.FormatDayHeading(activeSelectedDay!) });
     }
 
     // ---------- Day rows ----------
@@ -488,14 +494,14 @@ public sealed partial class CalendarPage : Page
                 Padding = new Thickness(8, 0, 8, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Left,
-                Child = new TextBlock
+                Child = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
                 {
                     Text = "TODAY",
                     FontSize = 10,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"],
                     VerticalAlignment = VerticalAlignment.Center,
-                },
+                }, text: "web.calendar.today", uppercase: true),
             };
             Grid.SetColumn(todayPill, 1);
             headingGrid.Children.Add(todayPill);
@@ -503,7 +509,7 @@ public sealed partial class CalendarPage : Page
 
         var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (var existing in headingGrid.Children.OfType<Border>().ToArray()) { headingGrid.Children.Remove(existing); pills.Children.Add(existing); }
-        var focused = new Border { Height = 21, Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .4 }, Visibility = day.Date == _selectedDay ? Visibility.Visible : Visibility.Collapsed, Child = new TextBlock { Text = "FOCUSED", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["AccentBrush"], VerticalAlignment = VerticalAlignment.Center } };
+        var focused = new Border { Height = 21, Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .4 }, Visibility = day.Date == _selectedDay ? Visibility.Visible : Visibility.Collapsed, Child = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "FOCUSED", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["AccentBrush"], VerticalAlignment = VerticalAlignment.Center }, text: "web.calendar.focused", uppercase: true) };
         pills.Children.Add(focused); _focusedPills[day.Date] = focused; Grid.SetColumn(pills, 1); headingGrid.Children.Add(pills);
         Grid.SetRow(headingGrid, 0);
         container.Children.Add(headingGrid);
@@ -564,8 +570,7 @@ public sealed partial class CalendarPage : Page
         var artworkFallback = new DefaultArtwork { MediaType = ev.Type == "movie" ? "movie" : "series", Thumbhash = ev.PosterThumbhash };
         artworkFallback.Visibility = string.IsNullOrEmpty(ev.PosterUrl) ? Visibility.Visible : Visibility.Collapsed;
         posterPanel.Children.Add(artworkFallback);
-        var posterImage = new Image
-        {
+        var posterImage = new Image { FlowDirection = FlowDirection.LeftToRight,
             Stretch = Stretch.UniformToFill,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -577,7 +582,7 @@ public sealed partial class CalendarPage : Page
         if (ev.Watched)
         {
             var check = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(179, backgroundColor.R, backgroundColor.G, backgroundColor.B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Child = new FontIcon { Glyph = "\uE73E", FontSize = 16 } };
-            Canvas.SetZIndex(check, 2); AutomationProperties.SetName(check, "Watched"); posterPanel.Children.Add(check);
+            Canvas.SetZIndex(check, 2); SiloPlayer.Controls.MediaItemCardActions.Localize(check, name: "web.calendar.watched"); posterPanel.Children.Add(check);
         }
 
         // Bottom gradient overlay for legibility

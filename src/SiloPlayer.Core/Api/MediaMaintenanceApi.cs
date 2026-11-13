@@ -43,6 +43,8 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
     {
         EnsureSecureBaseUrl();
         var owner = capability.Owner;
+        // Captured before the owner check: identity cannot change without retiring the owner.
+        var identity = client.CaptureIdentityContext();
         RequireCurrent(owner, ct);
         var path = $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}";
         if (!capability.AtomicReset)
@@ -50,12 +52,24 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
             // Explicit legacy behavior: no atomic failure/empty-field guarantees.
             await client.SendRequestAsync<SiloPlayer.Core.Models.Catalog.MediaItemDetail>(owner,
                 HttpMethod.Patch, path + "/metadata", new { locked_fields = locksToKeep.ToArray() }, ct).ConfigureAwait(false);
-            RequireCurrent(owner, ct);
+            // A reconnect must not strand the committed unlock without its refresh.
+            owner = RequireCommitted(identity, owner, ct);
         }
         var receipt = await client.SendRequestAsync<MetadataRefreshReceipt>(owner, HttpMethod.Post,
             path + "/refresh-metadata", new { mode = capability.AtomicReset ? "reset" : "quick" }, ct).ConfigureAwait(false);
-        RequireCurrent(owner, ct);
+        RequireCommitted(identity, owner, ct);
         return receipt;
+    }
+
+    // Transport catch-up retires reads only. A write the server has already
+    // accepted stays publishable while its identity and access are unchanged.
+    private ApiRequestContext RequireCommitted(ApiIdentityContext identity, ApiRequestContext owner, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var current = client.CaptureContext();
+        if (!client.IsCurrentIdentityContext(identity) || current.AccessGeneration != owner.AccessGeneration)
+            throw new OperationCanceledException("Metadata reset owner changed.", ct);
+        return current;
     }
 
     public Task<SiloPlayer.Core.Models.Catalog.MediaItemDetail> UpdateMetadataAsync(string itemId,

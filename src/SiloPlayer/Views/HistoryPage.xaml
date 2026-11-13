@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.HistoryPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
@@ -62,7 +63,7 @@
                         FontSize="{StaticResource FontSizeDisplayLarge}"
                         FontWeight="Bold"
                         Foreground="{StaticResource PrimaryTextBrush}"
-                        VerticalAlignment="Center" />
+                        VerticalAlignment="Center"  loc:Localized.Text="web.catalog.page.historyHeading"/>
 
                     <!-- Tab pills -->
                     <Border
@@ -75,7 +76,7 @@
                                 Content="In Progress"
                                 Style="{StaticResource HistoryTabActiveStyle}"
                                 Click="Tab_Click"
-                                Tag="in_progress" />
+                                Tag="in_progress"  loc:Localized.Content="web.collections.guidedRules.inProgress"/>
                             <Button
                                 x:Name="AllHistoryTab"
                                 Content="All History"
@@ -104,20 +105,20 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Spacing="2" VerticalAlignment="Center">
-                            <TextBlock Text="Watch History" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Watch History" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"  loc:Localized.Text="web.catalog.page.historyHeading"/>
                             <TextBlock Text="Removing items clears watch history, watched status, and resume progress for this profile."
-                                       FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                       FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap"  loc:Localized.Text="web.catalog.page.historyBody"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Button x:Name="BeginSelectionButton" Content="Select" Click="BeginSelection_Click" />
+                            <Button x:Name="BeginSelectionButton" Content="Select" Click="BeginSelection_Click"  loc:Localized.Content="web.catalog.page.select"/>
                             <StackPanel x:Name="SelectionControls" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
                                 <TextBlock x:Name="SelectedCountText" Text="0 selected" VerticalAlignment="Center"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
-                                <Button Content="Select Loaded" Click="SelectLoaded_Click" />
-                                <Button Content="Clear" Click="ClearSelection_Click" />
+                                <Button Content="Select Loaded" Click="SelectLoaded_Click"  loc:Localized.Content="web.catalog.page.selectLoaded"/>
+                                <Button Content="Clear" Click="ClearSelection_Click"  loc:Localized.Content="web.catalog.page.clearSelection"/>
                                 <Button x:Name="RemoveSelectedButton" Content="Remove Selected" Click="RemoveSelected_Click"
-                                        IsEnabled="False" />
-                                <Button Content="Done" Click="EndSelection_Click" />
+                                        IsEnabled="False"  loc:Localized.Content="web.catalog.page.removeSelected"/>
+                                <Button Content="Done" Click="EndSelection_Click"  loc:Localized.Content="web.catalog.page.doneSelecting"/>
                             </StackPanel>
                         </StackPanel>
                     </Grid>

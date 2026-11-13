@@ -877,6 +877,8 @@ public partial class SiloApiClient
 
     private void AddDeviceHeadersUnsafe(HttpRequestMessage request)
     {
+        request.Headers.AcceptLanguage.Clear();
+        request.Headers.AcceptLanguage.ParseAdd(SiloPlayer.Core.Localization.AppStrings.Language);
         request.Headers.TryAddWithoutValidation("X-Silo-Client", _clientName);
         // Silo's typed settings contract never infers the like-client family
         // from the free-form platform string.  Native Windows belongs to the

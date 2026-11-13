@@ -4,6 +4,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Controls;
 
@@ -14,7 +15,7 @@ public sealed class AllowedTitlesSection : UserControl
     private readonly string _profile;
     private readonly StackPanel _titles = new() { Spacing = 8 }, _collections = new() { Spacing = 8 }, _results = new() { Spacing = 8 };
     private readonly TextBlock _titleError = new() { TextWrapping = TextWrapping.Wrap }, _collectionError = new() { TextWrapping = TextWrapping.Wrap }, _searchError = new() { TextWrapping = TextWrapping.Wrap }, _mutationError = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Button _more = new() { Content = "Show more", Visibility = Visibility.Collapsed }, _titleRetry = new() { Content = "Retry titles", Visibility = Visibility.Collapsed }, _collectionRetry = new() { Content = "Retry collections", Visibility = Visibility.Collapsed }, _searchRetry = new() { Content = "Retry search", Visibility = Visibility.Collapsed };
+    private readonly Button _more = new() { Content = AppStrings.Get("web.profiles.allowedTitles.showMore", fallback: "Show more"), Visibility = Visibility.Collapsed }, _titleRetry = new() { Content = "Retry titles", Visibility = Visibility.Collapsed }, _collectionRetry = new() { Content = "Retry collections", Visibility = Visibility.Collapsed }, _searchRetry = new() { Content = AppStrings.Get("web.catalog.page.retrySearch", fallback: "Retry search"), Visibility = Visibility.Collapsed };
     private readonly TextBox _search = new() { PlaceholderText = "Search movies and series", Header = "Add allowed title" };
     private readonly DispatcherTimer _debounce = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly List<MediaItem> _loadedTitles = [];
@@ -29,10 +30,10 @@ public sealed class AllowedTitlesSection : UserControl
     {
         _owner = owner; _profile = profileId;
         var panel = new StackPanel { Spacing = 10 };
-        panel.Children.Add(new TextBlock { Text = "Allowed titles", FontSize = 16 });
+        panel.Children.Add(new TextBlock { Text = AppStrings.Get("web.profiles.allowedTitles.heading", fallback: "Allowed titles"), FontSize = 16 });
         panel.Children.Add(new TextBlock { Text = "Movies and series this profile may watch above its limits. Changes save immediately, separately from Save profile. Library access still applies.", TextWrapping = TextWrapping.Wrap });
         foreach (var child in new UIElement[] { _search, _searchError, _searchRetry, _results, _titleError, _titleRetry, _titles, _more,
-            new TextBlock { Text = "Allowed collections", FontSize = 15 }, _collectionError, _collectionRetry, _collections, _mutationError }) panel.Children.Add(child);
+            new TextBlock { Text = AppStrings.Get("web.profiles.allowedTitles.collectionsHeading", fallback: "Allowed collections"), FontSize = 15 }, _collectionError, _collectionRetry, _collections, _mutationError }) panel.Children.Add(child);
         Content = panel;
         _search.TextChanged += (_, _) => { ++_searchVersion; _debounce.Stop(); _results.Children.Clear(); _searchError.Text = ""; _searchRetry.Visibility = Visibility.Collapsed; if (!string.IsNullOrWhiteSpace(_search.Text)) _debounce.Start(); };
         // Enter belongs to search, never the containing profile form's default Save command.
@@ -66,7 +67,7 @@ public sealed class AllowedTitlesSection : UserControl
             _titleError.Text = ""; RenderTitles();
         }
         catch (OperationCanceledException) { }
-        catch { if (_owner.IsCurrent && ReferenceEquals(_titleRead, read)) { _titleError.Text = _loadedTitles.Count > 0 ? "Couldn’t refresh allowed titles. Showing the previous list." : "Couldn’t load allowed titles."; _titleRetry.Visibility = Visibility.Visible; } }
+        catch { if (_owner.IsCurrent && ReferenceEquals(_titleRead, read)) { _titleError.Text = _loadedTitles.Count > 0 ? "Couldn’t refresh allowed titles. Showing the previous list." : AppStrings.Get("web.profiles.allowedTitles.titlesFailed", fallback: "Couldn’t load allowed titles."); _titleRetry.Visibility = Visibility.Visible; } }
         finally { if (ReferenceEquals(_titleRead, read)) { _titleRead = null; _more.IsEnabled = true; } }
     }
     private void RenderTitles()
@@ -109,12 +110,12 @@ public sealed class AllowedTitlesSection : UserControl
             foreach (var item in result.Items.Where(item => item.Type is "movie" or "series"))
             {
                 var already = _loadedTitles.Any(title => title.ContentId == item.ContentId);
-                var row = Row($"{item.Title} · {item.Year} · {item.Type}", already ? "Allowed" : "Allow", item.ContentId,
+                var row = Row($"{item.Title} · {item.Year} · {item.Type}", already ? AppStrings.Get("web.profiles.allowedTitles.allowed", fallback: "Allowed") : AppStrings.Get("web.profiles.allowedTitles.allow", fallback: "Allow"), item.ContentId,
                     () => version == _searchVersion ? MutateAsync((api, owner, ct) => api.SetTitleAsync(owner, _profile, item.ContentId, true, ct)) : Task.CompletedTask);
                 if (already) row.Children.OfType<Button>().Single().IsEnabled = false;
                 _results.Children.Add(row);
             }
-            if (_results.Children.Count == 0) _searchError.Text = "No matching movies or series.";
+            if (_results.Children.Count == 0) _searchError.Text = AppStrings.Get("web.profiles.allowedTitles.noMatch", fallback: "No matching movies or series.");
         }
         catch (OperationCanceledException) { }
         catch { if (_owner.IsCurrent && version == _searchVersion) { _searchError.Text = "Couldn’t search titles. Previous results may be out of date."; _searchRetry.Visibility = Visibility.Visible; } }

@@ -3,6 +3,16 @@ namespace SiloPlayer.Tests;
 public sealed class RequestDetailCurrentParitySourceTests
 {
     [Fact]
+    public void RetainedActionsKeepTheirStableLabelAndAccessibleToggleState()
+    {
+        var source = ReadRepoFile("src", "SiloPlayer", "Views", "RequestDetailPage.xaml.cs");
+        Assert.Contains("var labelText = new TextBlock", source);
+        Assert.Contains("labelText.Text = text", source);
+        Assert.Contains("AutomationProperties.SetHelpText(target, active ? \"On\" : \"Off\")", source);
+        Assert.DoesNotContain("((TextBlock)content.Children[1]).Text", source);
+    }
+
+    [Fact]
     public void FailedRequestActionsRestoreTheirLabelsAndUseGlobalFeedback()
     {
         var source = ReadRepoFile("src", "SiloPlayer", "Views", "RequestDetailPage.xaml.cs");
@@ -27,7 +37,7 @@ public sealed class RequestDetailCurrentParitySourceTests
         Assert.Contains("ExternalTitleCard.Build(item, width, watchlist: watchlist)", source);
         Assert.Contains("RequestViewerPolicy.Label", source);
         Assert.Contains("RequestDownloadProgress.Build", source);
-        Assert.Contains("FormatVoteCount(item.VoteCount.Value)", source);
+        Assert.Contains("web.detail.overview.tmdbVotes", source);
         Assert.Contains("(item.Genres ?? []).Take(4)", source);
     }
 

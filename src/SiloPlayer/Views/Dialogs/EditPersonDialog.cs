@@ -5,6 +5,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -14,7 +15,7 @@ public sealed class EditPersonDialog : ContentDialog
     private readonly Dictionary<string, TextBox> _inputs = [];
     private readonly Dictionary<string, string> _original = [];
     private readonly Dictionary<string, StackPanel> _groups = [];
-    private readonly TextBlock _heading = new() { Text = "Edit Person Metadata", FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly TextBlock _heading = new TextBlock { Text = "Edit Person Metadata", FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private readonly Grid _form = new() { RowSpacing = 16, ColumnSpacing = 16 };
     private bool _pending;
     public bool HasSaved { get; private set; }
@@ -24,17 +25,18 @@ public sealed class EditPersonDialog : ContentDialog
         var header = new Grid(); header.Children.Add(_heading);
         var close = EditorDialogPresentation.CornerClose(this); close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Margin = new Thickness(0, -8, -8, 0); header.Children.Add(close); Title = header;
-        PrimaryButtonText = "Save"; CloseButtonText = "Cancel";
+        PrimaryButtonText = AppStrings.Get("common.save", fallback: "Save"); CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel");
         DefaultButton = ContentDialogButton.Primary;
         Background = (Brush)Application.Current.Resources["AppBackgroundBrush"];
         EditorDialogPresentation.Configure(this, 672, new Thickness(24));
         _form.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         _form.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        Add("name", "Name", person.Name, true);
-        Add("bio", "Bio", person.Bio, true);
-        Add("birth_date", "Birth Date", person.BirthDate); Add("death_date", "Death Date", person.DeathDate);
-        Add("birthplace", "Birthplace", person.Birthplace); Add("homepage", "Homepage", person.Homepage);
-        Add("tmdb_id", "TMDB ID", person.TmdbId); Add("imdb_id", "IMDb ID", person.ImdbId); Add("tvdb_id", "TVDB ID", person.TvdbId);
+        _heading.Keyed("web.item.editPerson.title");
+        Add("name", AppStrings.Get("web.item.editPerson.name"), person.Name, true);
+        Add("bio", AppStrings.Get("web.item.editPerson.bio", fallback: "Bio"), person.Bio, true);
+        Add("birth_date", AppStrings.Get("web.item.editPerson.birthDate", fallback: "Birth Date"), person.BirthDate); Add("death_date", AppStrings.Get("web.item.editPerson.deathDate", fallback: "Death Date"), person.DeathDate);
+        Add("birthplace", AppStrings.Get("web.item.editPerson.birthplace", fallback: "Birthplace"), person.Birthplace); Add("homepage", AppStrings.Get("web.item.editPerson.homepage", fallback: "Homepage"), person.Homepage);
+        Add("tmdb_id", AppStrings.Get("web.item.dialog.tmdbId", fallback: "TMDB ID"), person.TmdbId); Add("imdb_id", AppStrings.Get("web.item.dialog.imdbId", fallback: "IMDb ID"), person.ImdbId); Add("tvdb_id", AppStrings.Get("web.item.dialog.tvdbId", fallback: "TVDB ID"), person.TvdbId);
         Content = new ScrollViewer { Content = _form, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Opened += (_, _) => Reflow(); SizeChanged += (_, _) => Reflow();
         PrimaryButtonClick += Save;
@@ -86,9 +88,9 @@ public sealed class EditPersonDialog : ContentDialog
             changes[key] = key.EndsWith("_date") && input.Text.Length == 0 ? null : input.Text;
         }
         if (changes.Count == 0) { Hide(); return; }
-        _pending = true; IsPrimaryButtonEnabled = false; PrimaryButtonText = "Saving...";
+        _pending = true; IsPrimaryButtonEnabled = false; PrimaryButtonText = AppStrings.Get("web.item.dialog.saving", fallback: "Saving...");
         try { await App.Services.GetRequiredService<PeopleApi>().UpdatePersonAsync(_person.Id, changes); HasSaved = true; Hide(); }
         catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
-        finally { _pending = false; IsPrimaryButtonEnabled = true; PrimaryButtonText = "Save"; }
+        finally { _pending = false; IsPrimaryButtonEnabled = true; PrimaryButtonText = AppStrings.Get("common.save", fallback: "Save"); }
     }
 }

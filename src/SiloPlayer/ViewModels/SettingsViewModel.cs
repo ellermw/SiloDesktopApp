@@ -14,6 +14,8 @@ using SiloPlayer.Core.Models.WatchProviders;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using SiloPlayer.Services;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels;
 
@@ -95,7 +97,7 @@ public partial class LibraryCardViewModel : ObservableObject
     private bool _isExpanded;
 
     [ObservableProperty]
-    private string _summaryText = "Uses profile defaults";
+    private string _summaryText = AppStrings.Get("web.settings.library.summary.profileDefaults", fallback: "Uses profile defaults");
 
     [ObservableProperty]
     private bool _hasCustomOverrides;
@@ -106,36 +108,47 @@ public partial class LibraryCardViewModel : ObservableObject
         string.IsNullOrEmpty(SubtitleMode) &&
         string.IsNullOrEmpty(ForcedSubtitles);
 
+    /// <summary>Re-reads the summary in the current interface language.</summary>
+    public void RefreshLocale() => UpdateSummary();
+
     private void UpdateSummary()
     {
         HasCustomOverrides = !IsAllDefaults;
 
         if (IsAllDefaults)
         {
-            SummaryText = "Uses profile defaults";
+            SummaryText = AppStrings.Get("web.settings.library.summary.profileDefaults");
             return;
         }
 
         var parts = new List<string>();
         if (!string.IsNullOrEmpty(AudioLanguage))
-            parts.Add($"Audio: {GetLanguageName(AudioLanguage)}");
+            parts.Add(AppStrings.Get("web.settings.library.summary.audio", new Dictionary<string, object?> { ["language"] = GetLanguageName(AudioLanguage) }, $"Audio: {GetLanguageName(AudioLanguage)}"));
         if (!string.IsNullOrEmpty(SubtitleLanguage))
-            parts.Add($"Subtitles: {GetLanguageName(SubtitleLanguage)}");
+            parts.Add(AppStrings.Get("web.settings.library.summary.subtitles", new Dictionary<string, object?> { ["language"] = GetLanguageName(SubtitleLanguage) }, $"Subtitles: {GetLanguageName(SubtitleLanguage)}"));
         if (!string.IsNullOrEmpty(SubtitleMode))
-            parts.Add($"Behavior: {char.ToUpper(SubtitleMode[0]) + SubtitleMode[1..]}");
+            parts.Add(AppStrings.Get("web.settings.library.summary.behavior", new Dictionary<string, object?> { ["mode"] = SubtitleModeName(SubtitleMode) }, $"Behavior: {char.ToUpper(SubtitleMode[0]) + SubtitleMode[1..]}"));
         if (!string.IsNullOrEmpty(ForcedSubtitles))
             parts.Add($"Forced: {char.ToUpper(ForcedSubtitles[0]) + ForcedSubtitles[1..]}");
 
-        SummaryText = parts.Count > 0 ? string.Join(" \u2022 ", parts) : "Uses profile defaults";
+        SummaryText = parts.Count > 0 ? string.Join(" \u2022 ", parts) : AppStrings.Get("web.settings.library.summary.profileDefaults", fallback: "Uses profile defaults");
     }
+
+    private static string SubtitleModeName(string mode) => mode switch
+    {
+        "auto" => AppStrings.Get("settingsManifest.playback.subtitle_mode.option.auto"),
+        "always" => AppStrings.Get("settingsManifest.playback.subtitle_mode.option.always"),
+        "off" => AppStrings.Get("settingsManifest.playback.subtitle_mode.option.off"),
+        _ => char.ToUpper(mode[0]) + mode[1..],
+    };
 
     private static string GetLanguageName(string code)
     {
         return code.Trim().ToLowerInvariant() switch
         {
-            "" => "Profile default",
-            "original" => "Original Language",
-            "none" => "None",
+            "" => AppStrings.Get("web.settings.library.profileDefault"),
+            "original" => AppStrings.Get("web.settings.metadataLanguage.originalLanguage"),
+            "none" => AppStrings.Get("settingsManifest.playback.subtitle_language.unsetLabel"),
             _ => MediaLanguageCatalog.Label(code),
         };
     }
@@ -159,7 +172,7 @@ public partial class LibraryCardViewModel : ObservableObject
             if (IsAllDefaults)
             {
                 await _settingsApi.DeleteLibraryPlaybackPrefsAsync(LibraryId);
-                _showStatus("Reset to profile defaults");
+                _showStatus(AppStrings.Get("web.settings.library.resetToProfileDefaults"));
             }
             else
             {
@@ -178,7 +191,7 @@ public partial class LibraryCardViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _showError($"Failed to save library prefs: {ex.Message}");
+            _showError($"Failed to save library prefs: {ex.DisplayMessage()}");
         }
     }
 
@@ -405,7 +418,7 @@ public partial class SettingsViewModel : ObservableObject
             VideoSkipBackSeconds = seeks.VideoBack; VideoSkipForwardSeconds = seeks.VideoForward;
             AudiobookSkipBackSeconds = seeks.AudiobookBack; AudiobookSkipForwardSeconds = seeks.AudiobookForward;
         }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ShowError($"Could not reload seek settings: {ex.Message}"); }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ShowError($"Could not reload seek settings: {ex.DisplayMessage()}"); }
         finally { _suppressSeekSave = false; }
     }
     [RelayCommand]
@@ -425,7 +438,7 @@ public partial class SettingsViewModel : ObservableObject
             await App.Services.GetRequiredService<PlayerService>().RefreshSeekPreferencesAsync();
             ShowStatus("Imported this PC's audiobook intervals into the selected profile");
         }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ShowError($"Import stopped; an interval may already have been saved: {ex.Message}"); }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ShowError($"Import stopped; an interval may already have been saved: {ex.DisplayMessage()}"); }
     }
     [ObservableProperty] private bool _showAdvisoryAge;
     [ObservableProperty] private bool _hideWatchedItems;
@@ -723,7 +736,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load settings: {ex.Message}";
+            ErrorMessage = $"Failed to load settings: {ex.DisplayMessage()}";
             _suppressSave = false;
         }
         finally
@@ -786,7 +799,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             // Non-fatal: the rest of settings still work
-            ErrorMessage = $"Failed to load libraries: {ex.Message}";
+            ErrorMessage = $"Failed to load libraries: {ex.DisplayMessage()}";
         }
     }
 
@@ -821,7 +834,7 @@ public partial class SettingsViewModel : ObservableObject
             if (highContrast.HasValue) await _settingsApi.PutSettingAsync("ui_high_contrast", HighContrast ? "true" : "false");
             ShowStatus("Accessibility preference saved");
         }
-        catch (Exception ex) { ShowError($"Failed to save accessibility preference: {ex.Message}"); }
+        catch (Exception ex) { ShowError($"Failed to save accessibility preference: {ex.DisplayMessage()}"); }
     }
 
     private static List<int> ParseLibraryIds(string? json)
@@ -864,7 +877,7 @@ public partial class SettingsViewModel : ObservableObject
             _settingsService.Save(local);
             ShowStatus("Library visibility saved");
         }
-        catch (Exception ex) { ShowError($"Failed to update library visibility: {ex.Message}"); }
+        catch (Exception ex) { ShowError($"Failed to update library visibility: {ex.DisplayMessage()}"); }
     }
 
     [RelayCommand]
@@ -908,7 +921,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             LibraryCards.Move(newIndex, oldIndex);
-            ShowError($"Failed to update library order: {ex.Message}");
+            ShowError($"Failed to update library order: {ex.DisplayMessage()}");
         }
     }
 
@@ -936,7 +949,7 @@ public partial class SettingsViewModel : ObservableObject
             catch { }
             ShowStatus("Auto-play preference saved");
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to save auto-play preference: {ex.Message}"; }
+        catch (Exception ex) { ErrorMessage = $"Failed to save auto-play preference: {ex.DisplayMessage()}"; }
     }
 
     partial void OnShowForcedSubtitlesChanged(bool value)
@@ -1039,8 +1052,8 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             if (_settingsApi.IsCurrentContext(context)) ShowError(saved
-                ? $"Profile setting saved, but the device override could not be cleared: {ex.Message}"
-                : $"Failed to save setting: {ex.Message}");
+                ? $"Profile setting saved, but the device override could not be cleared: {ex.DisplayMessage()}"
+                : $"Failed to save setting: {ex.DisplayMessage()}");
         }
         // A secondary cleanup failure cannot undo a committed profile value.
         return saved;
@@ -1060,7 +1073,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (_settingsApi.IsCurrentContext(context)) ShowError($"Failed to reset setting: {ex.Message}");
+            if (_settingsApi.IsCurrentContext(context)) ShowError($"Failed to reset setting: {ex.DisplayMessage()}");
         }
     }
 
@@ -1145,7 +1158,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to save {field}: {ex.Message}";
+            ErrorMessage = $"Failed to save {field}: {ex.DisplayMessage()}";
         }
     }
 
@@ -1179,7 +1192,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load sessions: {ex.Message}";
+            ErrorMessage = $"Failed to load sessions: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1198,7 +1211,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to revoke session: {ex.Message}";
+            ErrorMessage = $"Failed to revoke session: {ex.DisplayMessage()}";
         }
     }
 
@@ -1224,7 +1237,7 @@ public partial class SettingsViewModel : ObservableObject
             await _settingsApi.PutSettingAsync(key, value);
             ShowStatus("Date and time preference saved");
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to save date and time preference: {ex.Message}"; }
+        catch (Exception ex) { ErrorMessage = $"Failed to save date and time preference: {ex.DisplayMessage()}"; }
     }
 
     private static string NormalizeDateFormat(string? value)
@@ -1263,7 +1276,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load watch providers: {ex.Message}";
+            ErrorMessage = $"Failed to load watch providers: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1295,7 +1308,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load {card.DisplayName}: {ex.Message}";
+            ErrorMessage = $"Failed to load {card.DisplayName}: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1322,7 +1335,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to start {card.DisplayName} activation: {ex.Message}";
+            ErrorMessage = $"Failed to start {card.DisplayName} activation: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1355,7 +1368,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to connect {card.DisplayName}: {ex.Message}";
+            ErrorMessage = $"Failed to connect {card.DisplayName}: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1378,7 +1391,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to finish {card.DisplayName} activation: {ex.Message}";
+            ErrorMessage = $"Failed to finish {card.DisplayName} activation: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1407,7 +1420,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!_settingsApi.IsCurrentContext(context)) return;
-            ErrorMessage = $"Failed to save {card.DisplayName}: {ex.Message}";
+            ErrorMessage = $"Failed to save {card.DisplayName}: {ex.DisplayMessage()}";
             card.SettingsExpanded = true;
             card.SettingsError = ErrorMessage;
             await LoadWatchProviderCardStateAsync(card);
@@ -1433,7 +1446,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to sync {card.DisplayName}: {ex.Message}";
+            ErrorMessage = $"Failed to sync {card.DisplayName}: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1455,7 +1468,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to disconnect {card.DisplayName}: {ex.Message}";
+            ErrorMessage = $"Failed to disconnect {card.DisplayName}: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1549,7 +1562,7 @@ public partial class SettingsViewModel : ObservableObject
         {
             if (!_settingsApi.IsCurrentContext(context)) return;
             SubtitlePreferencesLoaded = false;
-            ErrorMessage = $"Could not load subtitle preferences: {ex.Message}";
+            ErrorMessage = $"Could not load subtitle preferences: {ex.DisplayMessage()}";
         }
     }
 
@@ -1566,7 +1579,7 @@ public partial class SettingsViewModel : ObservableObject
             if (_settingsApi.IsCurrentContext(state.Context)) ShowStatus("Subtitle offset saved");
         }
         catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(state.Context)) { }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to save subtitle offset: {ex.Message}"; }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to save subtitle offset: {ex.DisplayMessage()}"; }
         finally { IsSavingSubtitlePreferences = false; }
     }
 
@@ -1612,7 +1625,7 @@ public partial class SettingsViewModel : ObservableObject
             if (_settingsApi.IsCurrentContext(state.Context)) ShowStatus("Subtitle appearance saved for this profile");
         }
         catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(state.Context)) { }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to save subtitle appearance: {ex.Message}"; }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to save subtitle appearance: {ex.DisplayMessage()}"; }
         finally { IsSavingSubtitlePreferences = false; }
     }
 
@@ -1629,10 +1642,10 @@ public partial class SettingsViewModel : ObservableObject
             await _settingsApi.Subtitles.ResetAppearanceAsync(state);
             if (!_settingsApi.IsCurrentContext(state.Context)) return;
             await ReloadSubtitlePreferencesAsync();
-            if (_settingsApi.IsCurrentContext(state.Context)) ShowStatus("Subtitle appearance reset to the default");
+            if (_settingsApi.IsCurrentContext(state.Context)) ShowStatus(AppStrings.Get("web.settings.subtitleAppearance.resetDone"));
         }
         catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(state.Context)) { }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to reset subtitle appearance: {ex.Message}"; }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to reset subtitle appearance: {ex.DisplayMessage()}"; }
         finally { IsSavingSubtitlePreferences = false; }
     }
 
@@ -1709,7 +1722,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             if (generation != _homeLoadGeneration || !_settingsApi.IsCurrentContext(context)) return;
-            ErrorMessage = $"Failed to load home sections: {ex.Message}";
+            ErrorMessage = $"Failed to load home sections: {ex.DisplayMessage()}";
             CanEditHomeSections = false;
             HomeSectionsEditStateMessage = "Saved section state failed to load. Editing is disabled.";
         }
@@ -1761,7 +1774,7 @@ public partial class SettingsViewModel : ObservableObject
                     failure = null;
                     if (savedScope.Scope == "home") WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeLayoutChanged, string.Empty));
                 }
-                catch (Exception ex) { failure = $"Could not save your rows: {ex.Message}"; }
+                catch (Exception ex) { failure = AppStrings.Get("web.home.rows.draft.saveFailedDetail", new Dictionary<string, object?> { ["detail"] = ex.DisplayMessage() }, $"Could not save your rows: {ex.DisplayMessage()}"); }
             }
         }
         finally
@@ -1804,7 +1817,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to reset home sections: {ex.Message}";
+            ErrorMessage = $"Failed to reset home sections: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1947,7 +1960,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (_historyImportApi.IsCurrentIdentityContext(context)) ErrorMessage = $"Emby Connect login failed: {ex.Message}";
+            if (_historyImportApi.IsCurrentIdentityContext(context)) ErrorMessage = $"Emby Connect login failed: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -1988,7 +2001,7 @@ public partial class SettingsViewModel : ObservableObject
             catch (Exception ex)
             {
                 PlexAuthStatus = "";
-                PlexAuthError = $"Could not open the Plex approval page: {ex.Message}";
+                PlexAuthError = $"Could not open the Plex approval page: {ex.DisplayMessage()}";
                 return;
             }
 
@@ -2016,7 +2029,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             PlexAuthStatus = "";
-            if (_historyImportApi.IsCurrentIdentityContext(context)) PlexAuthError = $"Plex sign-in failed: {ex.Message}";
+            if (_historyImportApi.IsCurrentIdentityContext(context)) PlexAuthError = $"Plex sign-in failed: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -2145,7 +2158,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to start import: {ex.Message}";
+            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to start import: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -2195,7 +2208,7 @@ public partial class SettingsViewModel : ObservableObject
             }
             catch (Exception ex)
             {
-                if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to load saved import sources: {ex.Message}";
+                if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to load saved import sources: {ex.DisplayMessage()}";
             }
 
             // Fetch the user's profiles for the import-target dropdown.
@@ -2238,7 +2251,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to load import runs: {ex.Message}";
+            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to load import runs: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -2314,7 +2327,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load plugin settings: {ex.Message}";
+            ErrorMessage = $"Failed to load plugin settings: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -2335,7 +2348,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to save plugin settings: {ex.Message}";
+            ErrorMessage = $"Failed to save plugin settings: {ex.DisplayMessage()}";
         }
     }
 }

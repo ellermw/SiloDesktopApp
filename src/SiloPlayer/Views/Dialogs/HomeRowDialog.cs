@@ -19,7 +19,8 @@ public static class HomeRowDialog
         var scroller = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }; Grid.SetRow(scroller, 1); sheet.Children.Add(scroller);
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var save = new Button { Content = saveLabel, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
-        var cancel = new Button { Content = "Cancel", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] };
+        // The caller words the title and save action; Cancel and the sheet's direction follow the interface language.
+        var cancel = SiloPlayer.Helpers.CollectionText.KeyedContent(new Button { Content = "Cancel", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] }, "common.cancel");
         var footer = new StackPanel { Spacing = 8, Children = { error, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, save } } } }; Grid.SetRow(footer, 2); sheet.Children.Add(footer);
         void Close(bool result) { popup.IsOpen = false; completion.TrySetResult(result); }
         cancel.Click += (_, _) => Close(false);
@@ -28,6 +29,7 @@ public static class HomeRowDialog
         var escape = new KeyboardAccelerator { Key = Windows.System.VirtualKey.Escape };
         escape.Invoked += (_, args) => { Close(false); args.Handled = true; }; sheet.KeyboardAccelerators.Add(escape);
         overlay.Children.Add(sheet); popup.Child = overlay;
+        SiloPlayer.Services.Localized.SetDirection(overlay, true);
         void Resize(XamlRoot sender, XamlRootChangedEventArgs args)
         {
             overlay.Width = root.Size.Width; overlay.Height = root.Size.Height;

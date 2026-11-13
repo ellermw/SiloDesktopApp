@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page xmlns:loc="using:SiloPlayer.Services"
     x:Class="SiloPlayer.Views.ServerSelectPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -7,7 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
-    Background="{StaticResource AppBackgroundBrush}">
+    Background="{StaticResource AppBackgroundBrush}" loc:Localized.Direction="True">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -104,7 +104,7 @@
                         Style="{StaticResource DarkTextBoxStyle}" />
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                         <Button
-                            Content="Cancel"
+                            Content="Cancel" loc:Localized.Content="common.cancel"
                             Style="{StaticResource SecondaryButtonStyle}"
                             Command="{x:Bind ViewModel.CancelAddServerCommand}" />
                         <Button

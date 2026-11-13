@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
     <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackQualityMenuModel.cs" Link="Production\PlaybackQualityMenuModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackSpeedMenuModel.cs" Link="Production\PlaybackSpeedMenuModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\PlayerService.OscLocalization.cs" Link="Production\PlayerService.OscLocalization.cs" />
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Letters.cs" Link="Production\LibraryViewModel.Letters.cs" />
@@ -61,6 +62,18 @@
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RequestsViewModel.cs" Link="Production\RequestsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\NotificationsViewModel.cs" Link="Production\NotificationsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\ProfileSelectViewModel.cs" Link="Production\ProfileSelectViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\WatchlistViewModel.Localization.cs" Link="Production\WatchlistViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\SearchViewModel.Localization.cs" Link="Production\SearchViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\RequestsViewModel.Localization.cs" Link="Production\RequestsViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationsViewModel.Localization.cs" Link="Production\RecommendationsViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationSectionViewModel.Localization.cs" Link="Production\RecommendationSectionViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\PersonDetailViewModel.Localization.cs" Link="Production\PersonDetailViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Localization.cs" Link="Production\LibraryViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.Localization.cs" Link="Production\ItemDetailViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\FavoritesViewModel.Localization.cs" Link="Production\FavoritesViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\DownloadsViewModel.Localization.cs" Link="Production\DownloadsViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\CalendarViewModel.Localization.cs" Link="Production\CalendarViewModel.Localization.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\BoxSetViewModel.Localization.cs" Link="Production\BoxSetViewModel.Localization.cs" />
   </ItemGroup>
 
 </Project>

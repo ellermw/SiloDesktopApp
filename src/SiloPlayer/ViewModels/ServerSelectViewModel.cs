@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -56,7 +57,7 @@ public partial class ServerSelectViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(NewServerUrl))
         {
-            ErrorMessage = "Server URL is required.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Server URL is required.");
             return;
         }
 
@@ -68,7 +69,7 @@ public partial class ServerSelectViewModel : ObservableObject
         }
         if (!ServerUrlIdentity.TryNormalizeHttpOrigin(url, out url))
         {
-            ErrorMessage = "Enter a valid HTTP or HTTPS server address without embedded credentials.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Enter a valid HTTP or HTTPS server address without embedded credentials.");
             return;
         }
 
@@ -85,7 +86,7 @@ public partial class ServerSelectViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to add server: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to add server: {ShellProblem(ex, ex.Message)}");
         }
     }
 
@@ -102,7 +103,7 @@ public partial class ServerSelectViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to remove server: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to remove server: {ShellProblem(ex, ex.Message)}");
         }
     }
 

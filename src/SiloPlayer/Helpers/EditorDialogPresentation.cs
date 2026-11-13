@@ -2,6 +2,9 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Helpers;
 
@@ -21,6 +24,9 @@ internal static class EditorDialogPresentation
         dialog.Resources["ContentDialogTopOverlay"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         dialog.Resources["ContentDialogSeparatorThickness"] = new Thickness(0);
         dialog.Resources["OverlayCornerRadius"] = new CornerRadius(12);
+        // Dialogs render outside the shell's mirrored root; follow the interface direction while open.
+        Localized.SetDirection(dialog, true);
+        AppLocalization.Register(dialog, () => RefreshKeyedDescendants(dialog));
     }
 
     internal static Button CornerClose(ContentDialog dialog)
@@ -28,7 +34,7 @@ internal static class EditorDialogPresentation
         var close = new Button { Content = WebUiIcon.Create("x", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]),
             Width = 24, Height = 24, MinHeight = 0, MinWidth = 0, Padding = new Thickness(4),
             Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(close, "Close");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(close, "Close"); close.KeyedName("web.ui.close");
         close.Click += (_, _) => dialog.Hide(); return close;
     }
 
@@ -105,6 +111,59 @@ internal static class EditorDialogPresentation
         Grid.SetRow(reset, narrow ? 1 : 0); Grid.SetColumn(reset, 0); Grid.SetColumnSpan(reset, narrow ? 5 : 1);
         reset.Margin = new Thickness(0, narrow ? 8 : 0, 0, 0);
         reset.HorizontalAlignment = HorizontalAlignment.Left;
+    }
+
+    // Keyed retained text: the literal English already assigned is the fallback, and the
+    // catalog text replaces it on load and after every interface-language change.
+    // Key only fixed labels; text that code later rewrites uses AppStrings.Get instead.
+    internal static T Keyed<T>(this T element, string key) where T : FrameworkElement
+    {
+        if (element is TextBlock or MenuFlyoutItem or MenuFlyoutSubItem) Localized.SetText(element, key);
+        else if (element is ContentControl) Localized.SetContent(element, key);
+        else throw new ArgumentException("Keyed text is not supported on " + element.GetType().Name + ".");
+        return element;
+    }
+    /// <summary>
+    /// The text to show for a failed request: v2 problem details through the catalog
+    /// (<see cref="ApiProblemText"/>), other failures as their message. Machine handling
+    /// keeps branching on codes and status, never on this text.
+    /// </summary>
+    internal static string DisplayMessage(this Exception exception)
+        => exception is ApiException api ? ApiProblemText.Display(api) : exception.Message;
+
+    /// <summary>
+    /// Re-applies keyed text and content under an open dialog. A dialog's own locale
+    /// registration survives its template relocation; a child's Loaded/Unloaded order
+    /// can leave the child unsubscribed while it is still shown, so the dialog refresh
+    /// re-reads its keyed descendants (title presenter and content alike).
+    /// </summary>
+    internal static void RefreshKeyedDescendants(DependencyObject root)
+    {
+        foreach (var element in Descendants<FrameworkElement>(root))
+        {
+            switch (element)
+            {
+                case TextBlock text when Localized.GetText(text) is { Length: > 0 } key: text.Text = AppStrings.Get(key, fallback: text.Text); break;
+                // A flyout owner's content is never rewritten here (doing so can stop its flyout opening).
+                case ContentControl control when control is not Button { Flyout: not null }
+                    && Localized.GetContent(control) is { Length: > 0 } key && control.Content is string current:
+                    control.Content = AppStrings.Get(key, fallback: current); break;
+            }
+        }
+    }
+
+    internal static T KeyedHeader<T>(this T element, string key) where T : FrameworkElement { Localized.SetHeader(element, key); return element; }
+    internal static T KeyedPlaceholder<T>(this T element, string key) where T : FrameworkElement { Localized.SetPlaceholder(element, key); return element; }
+    internal static T KeyedName<T>(this T element, string key) where T : FrameworkElement { Localized.SetName(element, key); return element; }
+    internal static T KeyedToolTip<T>(this T element, string key) where T : FrameworkElement { Localized.SetToolTip(element, key); return element; }
+    internal static ContentDialog KeyedDialog(this ContentDialog dialog, string? title = null, string? primary = null, string? secondary = null, string? close = null)
+    {
+        if (title != null) Localized.SetTitle(dialog, title);
+        if (primary != null) Localized.SetPrimaryButton(dialog, primary);
+        if (secondary != null) Localized.SetSecondaryButton(dialog, secondary);
+        if (close != null) Localized.SetCloseButton(dialog, close);
+        Localized.SetDirection(dialog, true);
+        return dialog;
     }
 
     internal static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject

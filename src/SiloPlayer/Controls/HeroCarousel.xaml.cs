@@ -78,6 +78,7 @@ public sealed partial class HeroCarousel : UserControl
     public HeroCarousel()
     {
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshPrimaryAction(); SetCarouselPaused(_isPaused); if (_items != null && _currentIndex < _items.Count) UpdateLocalizedMetadata(_items[_currentIndex]); });
         SetPrimaryIcon("play");
         MoreInfoIcon.Children.Add(WebUiIcon.Create("info", 16, new SolidColorBrush(Microsoft.UI.Colors.White)));
     }
@@ -414,6 +415,26 @@ public sealed partial class HeroCarousel : UserControl
         if (!isSameVisibleSlide)
             AnimateProgressRail();
 
+        UpdateLocalizedMetadata(item);
+        SlideControlsPanel.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        PrevButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        NextButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateHeightFromWindow();
+
+        UpdateDots();
+
+        if (!isSameBackdrop)
+        {
+            // Load backdrop image into the INACTIVE layer, then crossfade.
+            CancelBackdropLoad(clearImages: false);
+            _imageCts = new CancellationTokenSource();
+            var version = _imageLoadGate.BeginNextLoad();
+            _ = LoadBackdropAsync(item, version, _imageCts.Token);
+        }
+    }
+
+    private void UpdateLocalizedMetadata(MediaItem item)
+    {
         HeroMetaPillsRow.Children.Clear();
         _previousMetadataWasText = false;
         var runtimeSeconds = item.Runtime > 0 && double.IsFinite(item.Runtime * 60d)
@@ -423,14 +444,14 @@ public sealed partial class HeroCarousel : UserControl
         if (item.Type == "episode")
         {
             if (item.SeasonNumber is >= 0 && item.EpisodeNumber is >= 0)
-                AddHeroMeta($"S{item.SeasonNumber} · E{item.EpisodeNumber}");
+                AddHeroMeta(SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.episodeIdentity", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber }));
             if (runtime != null) AddHeroMeta(runtime);
             if (!string.IsNullOrEmpty(contentRating)) AddHeroMeta(contentRating);
         }
         else
         {
             if (item.Year > 0)
-                AddHeroMeta(item.Year.ToString());
+                AddHeroMeta(item.Year.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture));
             if (runtime != null)
                 AddHeroMeta(runtime);
             var primaryRating = RatingPresentation.PrimaryCardRating(item.RatingImdb, item.RatingTmdb);
@@ -447,21 +468,6 @@ public sealed partial class HeroCarousel : UserControl
         }
 
         HeroMetaPillsRow.Visibility = HeroMetaPillsRow.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        SlideControlsPanel.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
-        PrevButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
-        NextButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
-        UpdateHeightFromWindow();
-
-        UpdateDots();
-
-        if (!isSameBackdrop)
-        {
-            // Load backdrop image into the INACTIVE layer, then crossfade.
-            CancelBackdropLoad(clearImages: false);
-            _imageCts = new CancellationTokenSource();
-            var version = _imageLoadGate.BeginNextLoad();
-            _ = LoadBackdropAsync(item, version, _imageCts.Token);
-        }
     }
 
     private void CancelBackdropLoad(bool clearImages)
@@ -526,7 +532,7 @@ public sealed partial class HeroCarousel : UserControl
             if (status.OnView == "auto") await TranslateHeroAsync(item, context, cts);
             else if (status.OnView == "button")
             {
-                HeroTranslateButton.Content = "Translate description";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(HeroTranslateButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translate", fallback: "Translate description"));
                 HeroTranslateButton.IsEnabled = true;
                 HeroTranslateButton.Visibility = Visibility.Visible;
             }
@@ -554,7 +560,7 @@ public sealed partial class HeroCarousel : UserControl
         cts.CancelAfter(TimeSpan.FromSeconds(45));
         HeroTranslateButton.Visibility = Visibility.Visible;
         HeroTranslateButton.IsEnabled = false;
-        HeroTranslateButton.Content = "Translating\u2026";
+        MediaItemCardActions.BindText(HeroTranslateButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translating"));
         HeroOverview.Opacity = 0.55;
         var api = App.Services.GetRequiredService<CatalogApi>();
         try
@@ -576,11 +582,11 @@ public sealed partial class HeroCarousel : UserControl
             }
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (IsCurrentHeroTranslation(item, context, ct)) App.Services.GetRequiredService<ToastService>().Error(ex); }
+        catch (Exception ex) { if (IsCurrentHeroTranslation(item, context, ct)) App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
         finally
         {
             if (ReferenceEquals(_translationItem, item) && IsLoaded && api.IsCurrentContext(context))
-            { HeroOverview.Opacity = 1; HeroTranslateButton.IsEnabled = true; HeroTranslateButton.Content = "Translate description"; }
+            { HeroOverview.Opacity = 1; HeroTranslateButton.IsEnabled = true; SiloPlayer.Controls.MediaItemCardActions.BindText(HeroTranslateButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translate", fallback: "Translate description")); }
         }
     }
 
@@ -642,7 +648,7 @@ public sealed partial class HeroCarousel : UserControl
     {
         if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
         {
-            PlayButtonText.Text = "Read";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.read", fallback: "Read"));
             SetPrimaryIcon("read");
             return;
         }
@@ -650,28 +656,28 @@ public sealed partial class HeroCarousel : UserControl
         SetPrimaryIcon("play");
         if (!item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
         {
-            PlayButtonText.Text = "Play";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.play", fallback: "Play"));
             return;
         }
 
         var player = App.Services.GetRequiredService<PlayerService>();
         if (player.IsAudiobook && string.Equals(player.ContentId, item.ContentId, StringComparison.Ordinal))
         {
-            PlayButtonText.Text = player.IsPaused ? "Resume" : "Pause";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = player.IsPaused ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume", fallback: "Resume") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.audiobook.pause", fallback: "Pause"));
             SetPrimaryIcon(player.IsPaused ? "play" : "pause");
         }
         else if ((item.PositionSeconds ?? 0) > 0 &&
                  ((item.DurationSeconds ?? 0) <= 0 || item.PositionSeconds < item.DurationSeconds))
         {
-            PlayButtonText.Text = "Resume";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume", fallback: "Resume"));
         }
         else if (item.UserState?.Played == true)
         {
-            PlayButtonText.Text = "Listen Again";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.listenAgain", fallback: "Listen Again"));
         }
         else
         {
-            PlayButtonText.Text = "Listen";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.audiobook.listen", fallback: "Listen"));
         }
     }
 
@@ -705,10 +711,10 @@ public sealed partial class HeroCarousel : UserControl
         if (seconds is null or <= 0 || !double.IsFinite(seconds.Value)) return null;
         var minutes = (int)Math.Round(seconds.Value / 60d, MidpointRounding.AwayFromZero);
         if (minutes <= 0) return null;
-        if (minutes < 60) return $"{minutes} min";
+        if (minutes < 60) return SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.runtimeMinutes", new Dictionary<string, object?> { ["minutes"] = minutes });
         var hours = minutes / 60;
         var remainder = minutes % 60;
-        return remainder == 0 ? $"{hours}h" : $"{hours}h {remainder}m";
+        return remainder == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.runtimeHours", new Dictionary<string, object?> { ["hours"] = hours }) : SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.runtimeHoursMinutes", new Dictionary<string, object?> { ["hours"] = hours, ["minutes"] = remainder });
     }
 
     private void SetPrimaryIcon(string action)
@@ -1073,7 +1079,7 @@ public sealed partial class HeroCarousel : UserControl
     {
         _isPaused = paused;
         PauseCarouselIcon.Glyph = paused ? "\uE768" : "\uE769";
-        var label = paused ? "Play slideshow" : "Pause slideshow";
+        var label = paused ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.playSlideshow", fallback: "Play slideshow") : SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.pauseSlideshow", fallback: "Pause slideshow");
         ToolTipService.SetToolTip(PauseCarouselButton, label);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PauseCarouselButton, label);
     }

@@ -15,6 +15,7 @@ namespace SiloPlayer;
 public sealed partial class MainWindow
 {
     private IDisposable? _appLanguageShell;
+    private IDisposable? _appLanguageText;
     private AppLocaleCoordinator? _appLocaleCoordinator;
     private ApiRequestContext? _appLanguageRequestedOwner;
     private Task? _appLanguageRefresh;
@@ -25,10 +26,13 @@ public sealed partial class MainWindow
         // NavView holds the shell and pages. The player overlay, mini player and
         // the native video window keep left-to-right geometry.
         _appLanguageShell = AppLocalization.AttachShell(RootGrid, NavView);
+        _appLanguageText = AppLocalization.Register(RootGrid, RefreshShellLanguage);
     }
 
     private void ReleaseAppLanguage()
     {
+        _appLanguageText?.Dispose();
+        _appLanguageText = null;
         _appLanguageShell?.Dispose();
         _appLanguageShell = null;
         _appLocaleCoordinator?.Retire();

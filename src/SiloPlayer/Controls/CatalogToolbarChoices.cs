@@ -23,7 +23,9 @@ internal static class CatalogToolbarChoices
             choice.RegisterPropertyChangedCallback(Control.FontFamilyProperty, (_, _) => Resize());
             choice.RegisterPropertyChangedCallback(Control.FontSizeProperty, (_, _) => Resize());
             choice.RegisterPropertyChangedCallback(Control.FontWeightProperty, (_, _) => Resize());
-            choice.SelectionChanged += (_, _) => Resize(); choice.Loaded += (_, _) => Resize(); Resize();
+            choice.SelectionChanged += (_, _) => Resize(); choice.Loaded += (_, _) => Resize();
+            SiloPlayer.Services.AppLocalization.Register(choice, () => choice.DispatcherQueue.TryEnqueue(Resize));
+            Resize();
         }
     }
 }

@@ -197,7 +197,7 @@ public partial class PlayerService
         {
             if (!IsBufferingActionCurrent(owner)) return;
             if (action.Replan is { } replan) _ = ApplyBufferingQualityAsync(replan, owner);
-            else if (action.Kind == "cant_lower") ShowNotice("Playback keeps buffering", "Can't lower quality for this video", "info");
+            else if (action.Kind == "cant_lower") ShowNotice(HudText("bufferingQuality.prompt.title", "Playback keeps buffering"), HudText("bufferingQuality.cantLower", "Can't lower quality for this video"), "info");
         });
     }
     private async Task ApplyBufferingQualityAsync(PlaybackBufferingReplan replan, BufferingActionOwner actionOwner)

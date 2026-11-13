@@ -35,6 +35,7 @@ public sealed partial class CollectionsPage : Page
         ViewModel = App.Services.GetRequiredService<CollectionsViewModel>();
         this.InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+        AttachLocalization();
         ViewModel.Collections.CollectionChanged += (_, _) => QueueCollectionBuild();
         ViewModel.Groups.CollectionChanged += (_, _) => QueueCollectionBuild();
         ViewModel.ServerLibraries.CollectionChanged += (_, _) => QueueCollectionBuild();
@@ -520,7 +521,7 @@ public sealed partial class CollectionsPage : Page
         heading.Children.Add(headingTitle);
         heading.Children.Add(new TextBlock
         {
-            Text = items.Count.ToString(),
+            Text = CollectionText.Number(items.Count),
             FontSize = 12,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
@@ -564,8 +565,9 @@ public sealed partial class CollectionsPage : Page
                 CancelRename();
             }
 
+            // Desktop-only personal groups: the catalog has no group messages, so their names stay English.
             renameEditor.Children.Add(BuildCollectionActionButton("\uE73E", "Save group name", CommitRenameAsync));
-            renameEditor.Children.Add(BuildCollectionActionButton("\uE711", "Cancel", () =>
+            renameEditor.Children.Add(BuildCollectionActionButton("\uE711", CollectionText.Get("common.cancel", "Cancel"), () =>
             {
                 CancelRename();
                 return Task.CompletedTask;
@@ -975,6 +977,11 @@ public sealed partial class CollectionsPage : Page
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = XamlRoot
         };
+        CollectionText.Dialog(dialog, () =>
+        {
+            if (dialog.IsPrimaryButtonEnabled) dialog.PrimaryButtonText = CollectionText.Get("web.collections.deleteDialog.delete", "Delete");
+            dialog.CloseButtonText = CollectionText.Get("common.cancel", "Cancel");
+        });
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true;
@@ -995,7 +1002,7 @@ public sealed partial class CollectionsPage : Page
             }
             finally
             {
-                dialog.PrimaryButtonText = "Delete";
+                dialog.PrimaryButtonText = CollectionText.Get("web.collections.deleteDialog.delete", "Delete");
                 dialog.IsPrimaryButtonEnabled = true;
                 deferral.Complete();
             }

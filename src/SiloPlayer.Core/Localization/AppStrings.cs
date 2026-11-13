@@ -44,6 +44,9 @@ public static class AppStrings
     /// <summary>Culture for displayed dates and numbers. Never use it for wire values or parsing.</summary>
     public static CultureInfo FormatCulture => Current.FormatCulture;
 
+    /// <summary>Uppercases interface text using its language, independently of regional date and number formats.</summary>
+    public static string Uppercase(string text) => text.ToUpper(CultureInfo.GetCultureInfo(Language));
+
     public static bool IsRightToLeft => Current.IsRightToLeft;
 
     /// <summary>The interface language tag (one of <see cref="MessageCatalog.ShippedLanguages"/>).</summary>

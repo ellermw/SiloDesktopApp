@@ -5,6 +5,8 @@ using SiloPlayer.Controls;
 using SiloPlayer.Converters;
 using SiloPlayer.Core.Models.Home;
 using Windows.System;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -50,14 +52,17 @@ public sealed partial class CollectionEditorPage
         row.Children.Add(poster);
         var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         copy.Children.Add(new TextBlock { Text = item.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-        var type = item.Type switch { "movie" => "Movie", "series" => "Show", "season" => "Season", "episode" => "Episode", _ => item.Type };
+        var type = item.Type is "movie" or "series" or "season" or "episode"
+            ? CollectionText.Get("web.collections.manual.typeLabel", item.Type switch { "movie" => "Movie", "series" => "Show", "season" => "Season", _ => "Episode" }, ("type", item.Type))
+            : item.Type;
         copy.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { item.Year > 0 ? item.Year.ToString() : null, type }.Where(v => !string.IsNullOrEmpty(v))), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
         Grid.SetColumn(copy, 1); row.Children.Add(copy);
-        var action = new Button { Content = added ? "In this collection" : "Add", FontSize = 13, MinWidth = 0, MinHeight = 0, Padding = new(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"], VerticalAlignment = VerticalAlignment.Center, IsEnabled = !added && !ViewModel.IsManualMutationPending };
+        var inCollection = CollectionText.Get("web.collections.copy.inThisCollection", "In this collection"); var addLabel = CollectionText.Get("web.collections.manual.add", "Add");
+        var action = new Button { Content = added ? inCollection : addLabel, FontSize = 13, MinWidth = 0, MinHeight = 0, Padding = new(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"], VerticalAlignment = VerticalAlignment.Center, IsEnabled = !added && !ViewModel.IsManualMutationPending };
         action.Click += async (_, _) => await AddSearchedTitleAsync(item);
         Grid.SetColumn(action, 2); row.Children.Add(action);
         var border = new Border { Child = row, CornerRadius = new(10), Background = ViewModel.SearchResults.IndexOf(item) == _manualSearchHighlight ? CurrentBrush("SurfaceBrush") : null };
-        AutomationProperties.SetName(border, item.Title + " · " + type); AutomationProperties.SetHelpText(border, added ? "In this collection" : "Add");
+        AutomationProperties.SetName(border, item.Title + " · " + type); AutomationProperties.SetHelpText(border, added ? inCollection : addLabel);
         border.Tapped += async (_, args) =>
         {
             for (var source = args.OriginalSource as DependencyObject; source != null && source != border; source = VisualTreeHelper.GetParent(source))

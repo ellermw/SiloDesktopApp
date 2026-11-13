@@ -3,6 +3,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels;
 
@@ -40,7 +42,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
     public bool CanManageDiscord => authService?.SelectedProfile is { IsPrimary: true } profile
         && profile.Id == notificationsApi.RequestContext.ProfileId && !IsBusy;
     public bool DiscordPrimaryNoticeVisible => !CanManageDiscord && !IsBusy;
-    public string DiscordPrimaryNotice => "Switch to the primary profile to manage Discord notifications for this account.";
+    public string DiscordPrimaryNotice => AppStrings.Get("web.settings.notifications.discord.primaryOnly");
     partial void OnIsBusyChanged(bool value) { OnPropertyChanged(nameof(CanManageDiscord)); OnPropertyChanged(nameof(DiscordPrimaryNoticeVisible)); }
 
     public void RefreshDiscordAuthority()
@@ -57,10 +59,10 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
     public bool HasVerifiedEmail => !string.IsNullOrWhiteSpace(EmailPreferences.CustomEmail);
     public bool HasPendingEmail => !string.IsNullOrWhiteSpace(EmailPreferences.PendingEmail);
     public bool CanToggleEmail => IsEmailEnabled || HasVerifiedEmail;
-    public string EmailAddressActionText => HasVerifiedEmail ? "Change" : "Add address";
+    public string EmailAddressActionText => HasVerifiedEmail ? AppStrings.Get("web.settings.notifications.email.change") : AppStrings.Get("web.settings.notifications.email.addAddress");
     public string EmailDestinationText => HasVerifiedEmail
         ? EmailPreferences.CustomEmail
-        : "No address set — verify one to receive emails";
+        : AppStrings.Get("web.settings.notifications.email.noAddress");
     public string EmailPendingText => HasPendingEmail
         ? $"Verification email sent to {EmailPreferences.PendingEmail} — it becomes active once the link in it is opened."
         : "";
@@ -148,7 +150,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            ErrorMessage = ex.DisplayMessage();
         }
         finally
         {
@@ -256,7 +258,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
             if (!notificationsApi.IsCurrentContext(context.Value)) return;
             DiscordPreferences = new NotificationDiscordPreferences();
             DiscordMode = "off";
-            StatusMessage = "Discord account unlinked.";
+            StatusMessage = AppStrings.Get("web.notifications.queries.discordUnlinked", fallback: "Discord account unlinked.");
         });
     }
 
@@ -300,7 +302,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
         {
             await notificationsApi.DeleteWebhookAsync(id);
             await ReloadWebhooksAsync();
-            StatusMessage = "Webhook deleted.";
+            StatusMessage = AppStrings.Get("web.common.toast.notificationWebhooks.deleted", fallback: "Webhook deleted.");
         });
 
     public async Task DeleteWebPushSubscriptionAsync(string id)
@@ -336,7 +338,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
         ErrorMessage = null;
         StatusMessage = null;
         try { await action(); }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+        catch (Exception ex) { ErrorMessage = ex.DisplayMessage(); }
         finally { IsBusy = false; }
     }
 }

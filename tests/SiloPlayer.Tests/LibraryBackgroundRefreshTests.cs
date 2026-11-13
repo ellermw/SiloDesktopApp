@@ -293,7 +293,17 @@ public sealed class LibraryBackgroundRefreshTests
             Reconnect(wire);
             Assert.True(model.RequiresCatalogRefresh);
             Assert.Null(model.GetRenderableWindowItem(500));
+            // The count is an independent background read. HTTP idleness does
+            // not mean its continuation has published the count under suite load.
+            var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            System.ComponentModel.PropertyChangedEventHandler onCount = (_, args) =>
+            {
+                if (args.PropertyName == nameof(model.TotalCount) && model.TotalCount == 0) counted.TrySetResult();
+            };
+            model.PropertyChanged += onCount;
             var result = await model.RefreshInPlaceAsync(500, 60);
+            try { if (!failRefresh) await counted.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+            finally { model.PropertyChanged -= onCount; }
             await wire.Idle();
             Assert.Equal(failRefresh ? LibraryViewModel.CatalogRefreshResult.Failed :
                 LibraryViewModel.CatalogRefreshResult.Completed, result);

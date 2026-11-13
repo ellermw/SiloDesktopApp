@@ -22,6 +22,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
     // "the web app"). Until it has desktop-neutral keys they show in English.
     internal const string UnavailableEnglish = "This language isn’t available in this app yet, so the app follows your device here.";
     internal const string DeviceClearFailedEnglish = "Saved, but this device still uses its own language.";
+    internal const string EarlierSaveDeviceClearPendingEnglish = "Your earlier choice was saved, but this device still uses its own language.";
 
     private readonly AppLanguagePreference _preference;
     private readonly AppLocaleCoordinator _coordinator;
@@ -102,7 +103,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
                 if (_deviceClearOwner == settingsOwner && _preference.IsCurrentContext(context))
                 {
                     _owner = context;
-                    ShowStatus(DeviceClearFailedEnglish, retry: true);
+                    ShowStatus(_statusKind == StatusKind.SaveFailedDevicePending ? _statusKind : StatusKind.DeviceClear);
                 }
                 else Visibility = Visibility.Collapsed;
             }
@@ -112,7 +113,7 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         _owner = context;
         Visibility = state.Supported ? Visibility.Visible : Visibility.Collapsed;
         _storedTag = state.ProfileTag;
-        if (_deviceClearOwner == settingsOwner) ShowStatus(DeviceClearFailedEnglish, retry: true);
+        if (_deviceClearOwner == settingsOwner) ShowStatus(_statusKind == StatusKind.SaveFailedDevicePending ? _statusKind : StatusKind.DeviceClear);
         else HideStatus();
         Populate();
     }
@@ -195,14 +196,15 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
             if (!_preference.IsCurrentContext(context)) return;
             _storedTag = tag;
             Populate();
-            if (!result.DeviceValueCleared) ShowStatus(DeviceClearFailedEnglish, retry: true);
+            if (!result.DeviceValueCleared) ShowStatus(StatusKind.DeviceClear);
             await _coordinator.RefreshAsync();
         }
         catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException or ArgumentException)
         {
             if (!_preference.IsCurrentContext(context)) return;
-            if (_deviceClearOwner == settingsOwner) ShowStatus(DeviceClearFailedEnglish, retry: true);
-            else ShowStatus(AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed"), retry: false);
+            // Say what this attempt did: a new choice that failed is not the earlier device clear.
+            if (_deviceClearOwner == settingsOwner) ShowStatus(clearDeviceOnly ? StatusKind.DeviceClear : StatusKind.SaveFailedDevicePending);
+            else ShowStatus(StatusKind.SaveFailed);
             Populate();
         }
         finally
@@ -213,15 +215,26 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         }
     }
 
-    private void ShowStatus(string text, bool retry)
+    private enum StatusKind { None, DeviceClear, SaveFailed, SaveFailedDevicePending }
+    private StatusKind _statusKind;
+
+    private void ShowStatus(StatusKind kind)
     {
-        _status.Text = text;
+        _statusKind = kind;
+        _status.Text = kind switch
+        {
+            StatusKind.DeviceClear => DeviceClearFailedEnglish,
+            StatusKind.SaveFailedDevicePending => AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed") + ". " + EarlierSaveDeviceClearPendingEnglish,
+            _ => AppStrings.Get("web.settings.accessibility.appLanguageSaveFailed"),
+        };
         _status.Visibility = Visibility.Visible;
-        _retry.Visibility = retry ? Visibility.Visible : Visibility.Collapsed;
+        // Retry only finishes the earlier device clear; it never resends a profile value.
+        _retry.Visibility = kind is StatusKind.DeviceClear or StatusKind.SaveFailedDevicePending ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void HideStatus()
     {
+        _statusKind = StatusKind.None;
         _status.Visibility = Visibility.Collapsed;
         _retry.Visibility = Visibility.Collapsed;
     }
@@ -236,5 +249,6 @@ public sealed partial class AppLanguageSettingsGroup : UserControl
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(Picker, _label.Text);
         // Labels follow the language; the selection stays the stored value.
         if (Picker.Items.Count > 0) Populate();
+        if (_statusKind != StatusKind.None) ShowStatus(_statusKind);
     }
 }

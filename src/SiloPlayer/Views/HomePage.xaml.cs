@@ -34,6 +34,7 @@ public sealed partial class HomePage : Page
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         ArtworkViewport.For(ContentScrollViewer);
         // Reuse the mounted home surface instead of reconstructing its hero,
         // section rows, and cards on every top-level navigation.
@@ -65,7 +66,7 @@ public sealed partial class HomePage : Page
             if (!_pageActive || activation != _activationGeneration) return;
             _isRefreshingLayout = false;
             LocalLog.AppendException("home_error.txt", ex, "page_load");
-            ViewModel.ErrorMessage = "Unable to load the homepage";
+            ViewModel.SetLocalizedMessage(nameof(ViewModel.ErrorMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.home.page.loadFailedTitle"), value => ViewModel.ErrorMessage = value);
         }
     }
 

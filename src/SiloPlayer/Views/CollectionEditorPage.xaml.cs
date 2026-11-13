@@ -9,6 +9,7 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -41,7 +42,9 @@ public sealed partial class CollectionEditorPage : Page
         ImportedRemovePosterButton.Content = SiloPlayer.Controls.WebUiIcon.Create("x", 12);
         _importedSortChoices = SiloPlayer.Controls.CatalogSortChoices.Capture(ImportedDefaultSortCombo);
         SiloPlayer.Controls.CatalogSortChoices.Apply(ImportedDefaultSortCombo, _importedSortChoices, _shownRatingSources, null, "");
+        LocalizeImportedSortChoices();
         _suppressImportedSortEvents = false;
+        AttachLocalization();
         foreach (var image in new[] { ImportedPosterPreviewFrame, PosterDraftPreviewFrame })
         {
             image.SizeChanged += (_, _) => ClipPosterPreview(image);
@@ -551,6 +554,7 @@ public sealed partial class CollectionEditorPage : Page
         SmartTypeButton.IsEnabled = editable && !isExistingCollection;
         SourceUrlTextBox.IsEnabled = editable
             && ViewModel.HasEditableSourceUrl;
+        // The catalog only words "Read-only" inside the owner byline; this title suffix stays English.
         if (!editable) PageTitle.Text = $"{ViewModel.Name} · Read-only";
     }
 
@@ -724,11 +728,9 @@ public sealed partial class CollectionEditorPage : Page
     private async void DeleteCollection_Click(object sender, RoutedEventArgs e)
     {
         var content = new StackPanel { Spacing = 10 };
-        content.Children.Add(new TextBlock
-        {
-            Text = $"Delete collection \"{ViewModel.Name}\"? This action cannot be undone.",
-            TextWrapping = TextWrapping.Wrap
-        });
+        var name = ViewModel.Name;
+        var question = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        content.Children.Add(question);
         var error = new TextBlock
         {
             Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
@@ -746,6 +748,13 @@ public sealed partial class CollectionEditorPage : Page
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close
         };
+        CollectionText.Dialog(dialog, () =>
+        {
+            dialog.Title = CollectionText.Get("web.collections.pageActions.deleteTitle", "Delete collection", ("name", name));
+            question.Text = CollectionText.Get("web.collections.copy.cantBeUndone", $"Delete collection \"{name}\"? This action cannot be undone.");
+            if (dialog.IsPrimaryButtonEnabled) dialog.PrimaryButtonText = CollectionText.Get("web.collections.deleteDialog.delete", "Delete");
+            dialog.CloseButtonText = CollectionText.Get("common.cancel", "Cancel");
+        });
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true;
@@ -767,7 +776,7 @@ public sealed partial class CollectionEditorPage : Page
             }
             finally
             {
-                dialog.PrimaryButtonText = "Delete";
+                dialog.PrimaryButtonText = CollectionText.Get("web.collections.deleteDialog.delete", "Delete");
                 dialog.IsPrimaryButtonEnabled = true;
                 deferral.Complete();
             }
@@ -870,15 +879,15 @@ public sealed partial class CollectionEditorPage : Page
         }
         if (ViewModel.ManualItems.Count > 10)
         {
-            var more = new Button { Content = _showAllManualItems ? "Show less" : $"Show all {ViewModel.ManualItems.Count} titles", Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+            var more = new Button { Content = _showAllManualItems ? CollectionText.Get("web.collections.manual.showFewer", "Show less") : CollectionText.Get("web.collections.manual.showAll", $"Show all {ViewModel.ManualItems.Count} titles", ("count", CollectionText.Number(ViewModel.ManualItems.Count))), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
             more.Click += (_, _) => { _showAllManualItems = !_showAllManualItems; BuildManualItemsUI(); }; ManualItemsPanel.Children.Add(more);
         }
         if (ViewModel.CanReorderManualItems)
-            ManualItemsPanel.Children.Add(new TextBlock { Text = "Drag, or focus a handle and press Space, then ↑ or ↓.", FontSize = 12.5,
+            ManualItemsPanel.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.manual.reorderHint", "Drag, or focus a handle and press Space, then ↑ or ↓."), FontSize = 12.5,
                 Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 12, 0, 0) });
         if (ViewModel.LastRemovedItem is { } removed)
         {
-            var undo = new Button { Content = $"Removed {removed.Title} · Undo", Style = (Style)Application.Current.Resources["GhostButtonStyle"], Command = ViewModel.UndoRemoveManualItemCommand };
+            var undo = new Button { Content = CollectionText.Get("web.collections.copy.removedTitle", $"Removed {removed.Title}", ("title", removed.Title)) + " · " + CollectionText.Get("web.collections.manual.undo", "Undo"), Style = (Style)Application.Current.Resources["GhostButtonStyle"], Command = ViewModel.UndoRemoveManualItemCommand };
             ManualItemsPanel.Children.Add(undo);
         }
     }

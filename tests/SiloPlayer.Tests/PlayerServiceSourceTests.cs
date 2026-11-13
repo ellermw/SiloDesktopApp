@@ -1442,8 +1442,9 @@ public sealed class PlayerServiceSourceTests
             "PlayerService.cs"));
 
         Assert.Contains("Title = watchDetail.SeriesTitle ?? watchDetail.Title;", source, StringComparison.Ordinal);
-        Assert.Contains("$\"S{watchDetail.SeasonNumber.Value} · E{watchDetail.EpisodeNumber.Value}\"", source, StringComparison.Ordinal);
-        Assert.Contains(": $\" \\u2014 {watchDetail.Title}\"", source, StringComparison.Ordinal);
+        // Task 5: the "S2 · E10 — Title" line now comes from web.player.hud.* (PlayerService.Localization.cs).
+        Assert.Contains("_hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title);", source, StringComparison.Ordinal);
+        Assert.Contains("Subtitle = HudEpisodeLine();", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1742,7 +1743,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("using var fallbackDeadline = new CancellationTokenSource(SubtitleUrlFallbackTimeout, _subtitleUrlFallbackTimeProvider);", fallback);
         Assert.Contains("using var fallbackBudget = CancellationTokenSource.CreateLinkedTokenSource(bounded.Token, fallbackDeadline.Token);", fallback);
         Assert.DoesNotContain("CancelAfter(TimeSpan.FromSeconds(8))", fallback);
-        Assert.Contains("ShowNotice(\"Loading subtitle\"", fallback);
+        Assert.Contains("ShowNotice(AppStrings.Get(\"web.player.subtitles.loading\"", fallback);
         Assert.Contains("choose another subtitle to cancel this download", fallback);
         // Slow extraction must use managed HTTP: mpv's per-file socket timeout
         // can expire before headers arrive. Stream bounded bytes to disk, then

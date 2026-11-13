@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Controls;
 
@@ -11,7 +12,7 @@ public sealed class AllowCollectionDialog : ContentDialog
     private readonly Collection _collection;
     private readonly StackPanel _rows = new() { Spacing = 12 };
     private readonly TextBlock _error = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Button _retry = new() { Content = "Retry", Visibility = Visibility.Collapsed };
+    private readonly Button _retry = new() { Content = AppStrings.Get("common.retry", fallback: "Retry"), Visibility = Visibility.Collapsed };
     private readonly HashSet<string> _uncertainCopies = [];
     private readonly Dictionary<string, int> _added = [];
     private bool _open, _busy, _loaded;
@@ -19,7 +20,7 @@ public sealed class AllowCollectionDialog : ContentDialog
     public AllowCollectionDialog(TitleAllowanceSession owner, Collection collection)
     {
         _owner = owner; _collection = collection;
-        Title = "Allow for… " + collection.Name; CloseButtonText = "Done";
+        Title = AppStrings.Get("web.collections.actions.allowFor", fallback: "Allow for…") + " " + collection.Name; CloseButtonText = AppStrings.Get("common.done", fallback: "Done");
         var content = new StackPanel { Spacing = 12, MinWidth = 280, MaxWidth = 440 };
         content.Children.Add(new TextBlock { Text = collection.CollectionType == "manual"
             ? "Allow every movie and series in this collection, including titles added later. Library access still applies."
@@ -66,7 +67,7 @@ public sealed class AllowCollectionDialog : ContentDialog
                 }
                 else
                 {
-                    var button = new Button { Content = "Allow current titles", Tag = profile.Id };
+                    var button = new Button { Content = AppStrings.Get("web.profiles.allow.allowCurrent", fallback: "Allow current titles"), Tag = profile.Id };
                     button.Click += async (_, _) => await ChangeAsync(profile.Id, true);
                     label.Children.Add(button); _rows.Children.Add(label);
                 }

@@ -123,4 +123,33 @@ public sealed partial class MpvOscRuntimeTests
             """, rawAss: true, resultProperty: "user-data/completion", beforeScript: AutoplayHudProbe);
         Assert.Equal("owned still", result);
     }
+
+    [Theory]
+    [InlineData("intro", "FFD474", "Intro")]
+    [InlineData("recap", "FFB4C4", "Recap")]
+    [InlineData("credits", "ADA1FF", "Credits / Outro")]
+    [InlineData("preview", "B5E95E", "Preview")]
+    public void CompletionMarkerRegionsAndHoverUseCurrentKindPalette(string kind, string bgr, string label)
+    {
+        // Server #4033 uses the locked Tailwind 4.2.1 300 palette. ASS is sRGB/BGR.
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local s=osc_test_state
+            s.osc_disabled,s.current_alpha=false,1
+            s.duration,s.time_pos=100,0
+            s.marker_segments={ {kind='{{kind}}',start_seconds=10,end_seconds=20} }
+            s.mouse_in_bar,s.mouse_x,s.mouse_y=false,-100,-100
+            osc_test_layout(); osc_test_render_hud()
+            assert(s.osc_overlay.data:find('\\1c&H{{bgr}}&\\1a&H8C&',1,true), 'Normal region lost its kind tint or 45 percent opacity')
+            local sb=s.layout.seek_bar
+            s.mouse_in_bar,s.mouse_x,s.mouse_y=true,sb.x1+(sb.x2-sb.x1)*0.15,sb.draw_y
+            osc_test_render_hud()
+            local ass=s.osc_overlay.data
+            assert(ass:find('\\1c&H{{bgr}}&\\1a&H40&',1,true), 'Active region lost its matching brighter tint')
+            assert(ass:find('{{label}}',1,true) and ass:find('\\1c&H{{bgr}}&\\1a&H00&',1,true), 'Hover label/dot lost the shared kind color')
+            osc_test_mouse_down()
+            assert(s.dragging_seek and math.abs(s.seek_drag_pos-0.15)<0.001,'Palette changed the continuous seek target')
+            mp.set_property('user-data/completion','kind palette and seek')
+            """, rawAss: true, resultProperty: "user-data/completion", beforeScript: AutoplayHudProbe);
+        Assert.Equal("kind palette and seek", result);
+    }
 }

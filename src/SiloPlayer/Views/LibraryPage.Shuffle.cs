@@ -23,8 +23,8 @@ public sealed partial class LibraryPage
         LibraryShuffleButton.Visibility = type is "movie" or "movies" or "series" or "tv" or "show" or "tvshows" or "mixed" ? Visibility.Visible : Visibility.Collapsed;
         var icon = new FontIcon { Glyph = "\uE8B1", FontSize = 16 };
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { icon } };
-        if (ActualWidth >= 640) content.Children.Add(new TextBlock { Text = "Shuffle", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        if (ActualWidth >= 640) content.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Shuffle", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold }, text: "web.library.header.shuffle"));
         LibraryShuffleButton.Content = content;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LibraryShuffleButton, "Shuffle");
+        SiloPlayer.Services.Localized.SetName(LibraryShuffleButton, "web.library.header.shuffle");
     }
 }

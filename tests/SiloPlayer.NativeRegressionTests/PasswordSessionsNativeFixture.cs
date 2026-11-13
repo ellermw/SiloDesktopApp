@@ -35,6 +35,11 @@ internal static class PasswordSessionsNativeFixture
         var api = new SettingsApi(client);
         var theme = new ThemeService(settings, api);
         using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authApi)
+            .AddSingleton(new SiloPlayer.Core.Localization.AppLanguagePreference(api))
+            .AddSingleton(sp => new SiloPlayer.Core.Localization.AppLocaleCoordinator(
+                sp.GetRequiredService<SiloPlayer.Core.Localization.AppLanguagePreference>(),
+                SiloPlayer.Core.Localization.LocaleService.Shared, settings, () => ["en-US"], "en-US",
+                AppLocalization.PostTo(parent.DispatcherQueue)))
             .AddTransient(_ => new SettingsViewModel(api, new CatalogApi(client), authApi,
                 new HistoryImportApi(client), new WatchProvidersApi(client), auth, theme, settings,
                 new AccessibilityService(settings, theme))).BuildServiceProvider();
