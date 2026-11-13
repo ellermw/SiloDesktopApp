@@ -127,7 +127,8 @@ internal static class UpstreamShellNativeFixture
                 "Secret description", played: true);
             typeof(MainWindow).GetMethod("UpdatePlayingNextLayout", instance)!.Invoke(window, [1920d, 1080d]);
             var hero = Named<FrameworkElement>("PlayingNextHero");
-            Check(hero.Width == 820, $"Playing Next hero had no fixed width before its picture (width {hero.Width})");
+            // Beside the finishing video the next column, and so its hero, is capped at 544 (PlayingNextScreen.tsx).
+            Check(hero.Width == 544, $"Playing Next hero had no fixed width before its picture (width {hero.Width})");
             var prepare = (Task)typeof(MainWindow).GetMethod("PreparePlayingNextArtAsync", instance)!.Invoke(window, null)!;
             await prepare;
             Check(prepare.GetType().GetProperty("Result")!.GetValue(prepare) is not null, "Next episode artwork was not prepared during playback");
@@ -164,7 +165,9 @@ internal static class UpstreamShellNativeFixture
             var startClose = typeof(MainWindow).GetMethod("StartFinishedAutoClose", instance)!;
             var tick = typeof(MainWindow).GetMethod("PlayingNextTimer_Tick", instance)!;
             var engaged = typeof(MainWindow).GetField("_playingNextEngaged", instance)!;
-            void Tick() => tick.Invoke(window, [null, null]);
+            var timer = typeof(MainWindow).GetField("_playingNextTimer", instance)!;
+            // Only the countdown's own timer may tick it; a retired or foreign sender is ignored.
+            void Tick() => tick.Invoke(window, [timer.GetValue(window), null]);
             engaged.SetValue(window, false);
             startClose.Invoke(window, null);
             Check(countdown.Visibility == Visibility.Visible && countdown.Text == "Closing in 10s", "Finished screen did not show its close countdown");

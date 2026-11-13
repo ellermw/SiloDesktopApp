@@ -87,8 +87,11 @@ internal static class SiloCastScopeChecks
         Require(libraryWatch.PreparedLibraryId == 7 && libraryWatch.PreparedFileId == 42 &&
                 otherLibraryWatch.PreparedLibraryId == 9 && otherLibraryWatch.PreparedFileId == 43 && ReferenceEquals(libraryWatch, cachedLibraryWatch),
             "Browsing lost library/file preparation or shared cache entries across different routes.");
-        Require(localHandler.Requests.Where(r => r.Path == "/api/v2/watch/library-movie").Select(r => r.Query)
-            .SequenceEqual(new[] { "?library_id=7&file_id=42", "?library_id=9&file_id=43" }),
+        // Watch reads also carry the display's backdrop_width after the route's
+        // own parameters; its value belongs to the host screen, not this fixture.
+        var libraryQueries = localHandler.Requests.Where(r => r.Path == "/api/v2/watch/library-movie").Select(r => r.Query).ToArray();
+        Require(libraryQueries.Length == 2 && IsWatchRouteQuery(libraryQueries[0], "?library_id=7&file_id=42") &&
+                IsWatchRouteQuery(libraryQueries[1], "?library_id=9&file_id=43"),
             "Library/file watch routes were dropped or fetched more than once.");
         var remoteLibraryWatch = await (Task<WatchDetailResponse>)playbackCore.Invoke(service,
             ["library-movie", true, CancellationToken.None, 7, 42, null, null])!;
@@ -301,6 +304,13 @@ internal static class SiloCastScopeChecks
         => (target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public)
             ?? throw new InvalidOperationException("Fixture property missing: " + name)).SetValue(target, value);
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+    private static bool IsWatchRouteQuery(string query, string route)
+    {
+        const string width = "&backdrop_width=";
+        return query.StartsWith(route + width, StringComparison.Ordinal) &&
+            int.TryParse(query[(route.Length + width.Length)..], System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var pixels) && pixels is >= 320 and <= 7680;
+    }
 
     private sealed class MemoryCredentialStore : ICredentialStore
     {

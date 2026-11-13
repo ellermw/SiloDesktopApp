@@ -54,6 +54,13 @@ internal static class LocalizedPropertiesNativeFixture
             Require((string)save.Content == AppStrings.Get("common.save"), "reloaded keyed control retained a detached locale");
             Program.Log("PASS: key replacement/removal, Arabic direction and detached/reloaded locale refresh.");
 
+            parent.Children.Remove(root); await Task.Delay(30);
+            Localized.SetContent(save, "common.cancel");
+            parent.Children.Add(root); await Settle(root);
+            Require((string)save.Content == AppStrings.Get("common.cancel"), "key replaced while detached retained the previous text in the same locale");
+            Localized.SetContent(save, "common.save");
+            Program.Log("PASS: a key replaced while detached refreshes on reload without changing the locale.");
+
             var dialog = new ContentDialog { XamlRoot = parent.XamlRoot, Title = "Settings", PrimaryButtonText = "Save", SecondaryButtonText = "Cancel", CloseButtonText = "Close", Content = new TextBlock { Text = "Dialog fixture" } };
             Localized.SetTitle(dialog, "web.common.title.settings.index");
             Localized.SetPrimaryButton(dialog, "common.save");

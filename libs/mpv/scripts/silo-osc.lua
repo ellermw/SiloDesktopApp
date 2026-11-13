@@ -1551,6 +1551,7 @@ local function channel_label(channels)
     if channels == 8 then return "7.1" end
     if channels == 6 then return "5.1" end
     if channels == 2 then return T("web.common.format.channels.stereo") end
+    if channels == 1 then return "Mono" end
     return channels > 0 and TN("web.common.format.channels.count", channels) or ""
 end
 

@@ -92,9 +92,10 @@ public partial class PlayerService
         if (ContentId == null || !IsShufflePlayback) return;
         // The pick is the server's, so an automatic advance is claimed before
         // asking for it and announced once the pick is known.
-        if (trigger == PlaybackStartTrigger.Automatic &&
-            !_stillWatching.TryBeginAutomaticAdvance(ContentId, null, StillWatchingThresholdSetting, IsWatchTogetherPlayback)) return;
         var contentId = ContentId; var shuffleId = ActiveShuffleId;
+        if (trigger == PlaybackStartTrigger.Automatic &&
+            !_stillWatching.TryBeginAutomaticAdvance(contentId, null, StillWatchingThresholdSetting, IsWatchTogetherPlayback)) return;
+        var started = false;
         var owner = _activeAuthority;
         var ownerToken = _authorityLifetimeCts.Token;
         var generation = Volatile.Read(ref _playRequestGeneration);
@@ -108,12 +109,19 @@ public partial class PlayerService
             var shuffle = await ShuffleController.AdvanceAsync(contentId);
             if (shuffle == null || !Current()) return;
             if (trigger == PlaybackStartTrigger.Automatic) _stillWatching.ExpectAutomaticStart(shuffle.Current.ContentId);
+            started = true;
             await PlayAsync(shuffle.Current.ContentId, fromStart: true, libraryId: libraryId, shuffleId: shuffle.Id, authority: owner, cancellationToken: ownerToken);
             if (restoreFullscreen && !ownerToken.IsCancellationRequested && ReferenceEquals(owner, _activeAuthority)) RestoreFullscreenAfterPostRollContinue();
         }
         catch (OperationCanceledException) { }
         catch { if (Current()) ReportShuffleFailure(HudText("upNext.shuffleContinueFailed", "Couldn't continue the shuffle.")); }
-        finally { _restoreFullscreenAfterPostRollContinue = false; }
+        finally
+        {
+            // A pick that failed, was cancelled or was superseded started nothing:
+            // the attempt does not count and this title may still advance.
+            if (trigger == PlaybackStartTrigger.Automatic && !started) _stillWatching.CancelAutomaticAdvance(contentId);
+            _restoreFullscreenAfterPostRollContinue = false;
+        }
     }
 
     private static string WatchPreparationKey(string contentId, int? libraryId, int? fileId)

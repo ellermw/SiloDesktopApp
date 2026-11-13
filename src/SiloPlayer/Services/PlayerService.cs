@@ -3405,6 +3405,7 @@ public partial class PlayerService : IDisposable
                 mpv.SendScriptMessage("osc-set-loading", "true");
             }
             PublishPlaybackHudPreferences(mpv);
+
             ConfigureAudioOutput(mpv);
             var bufferProfile = prepared.Plan.IsHls
                 ? MpvNetworkBufferSizing.Default
@@ -5722,9 +5723,10 @@ public partial class PlayerService : IDisposable
                 _mpv?.IsCurrentInput(output.Url) != true) return;
             var loadingOwner = Volatile.Read(ref _mpvLoadingOverlayOwner);
             _transportHasFirstOutput = true;
-            _framedSession = output.SessionCurrent;
             SetPlaybackOutage(false);
             RetireLoadingCover();
+            _framedSession = output.SessionCurrent;
+
             // MPV_EVENT_PLAYBACK_RESTART is the first-frame-ready boundary for
             // an initial load and fires again after seeks/cache recovery. Keep
             // the opaque startup surface visible through FILE_LOADED so the

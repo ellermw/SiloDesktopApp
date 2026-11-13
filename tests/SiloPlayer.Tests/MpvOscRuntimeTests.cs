@@ -1539,8 +1539,7 @@ public sealed partial class MpvOscRuntimeTests
             local wait_data = state.playback_wait_overlay and state.playback_wait_overlay.data or ''
             local has_spinner = wait_data:find('draw_circle', 1, true) ~= nil or #wait_data > 10
             table.insert(results, 'spinner:' .. tostring(has_spinner))
-            -- A dark spinner disc is allowed. Detect the fullscreen rectangle
-            -- by its geometry so a circle's black fill is not mistaken for it.
+            -- A black spinner disc is allowed; only the full-frame startup rectangle is opaque.
             local full_frame = string.format('m 0 0 l %d 0 %d %d 0 %d', state.osd_width, state.osd_width, state.osd_height, state.osd_height)
             local has_black_rect = wait_data:find(full_frame, 1, true) ~= nil
             table.insert(results, 'black_rect:' .. tostring(has_black_rect))

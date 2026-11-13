@@ -96,7 +96,7 @@ internal static partial class MediaLocalizationNativeFixture
                 {
                     Apply(language); await Task.Delay(100);
                     Require(dialog.Title?.ToString() == AppStrings.Get("web.collections.addToCollection.title"), "Open collection dialog title did not refresh");
-                    Require(Text(dialog, "EmptyText") == AppStrings.Get("web.collections.addToCollection.loadFailed"), "Open collection dialog failure did not refresh");
+                    Require(Text(dialog, "EmptyText") == AppStrings.Get("web.collections.addToCollection.loadFailed"), "Open collection dialog failure did not refresh: language=" + language + "; actual=" + Text(dialog, "EmptyText") + "; expected=" + AppStrings.Get("web.collections.addToCollection.loadFailed") + "; loaded=" + failure.IsLoaded);
                     Require(dialog.FlowDirection == (language == "ar" ? FlowDirection.RightToLeft : FlowDirection.LeftToRight), "Open collection dialog direction did not refresh");
                 }
             }

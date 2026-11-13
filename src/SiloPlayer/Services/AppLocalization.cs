@@ -122,7 +122,13 @@ public static class AppLocalization
         {
             // Dialog template relocation can raise Unloaded after Opened.
             // Remain subscribed for the public open lifetime.
-            if (!_dialogOpen) Detach();
+            if (!_dialogOpen)
+            {
+                Detach();
+                // Keys and other presentation state can change while detached,
+                // even when the interface language stays the same.
+                _appliedGeneration = -1;
+            }
         }
 
         private void Detach()

@@ -33,7 +33,7 @@ internal static class PlaybackHudNov12SettingsNativeFixture
         auth.SetCurrentUser(new() { Id = "fixture", Username = "Fixture", Role = "user" });
         auth.SelectProfile("fixture", profile: new() { Id = "fixture", Name = "Primary", IsPrimary = true });
         var api = new SettingsApi(client);
-        var directory = Path.Combine(Program.ResultDirectory, "still-watching-settings");
+        var directory = Path.Combine(Program.ResultDirectory, "still-watching-settings-" + Guid.NewGuid().ToString("N"));
         var settings = new SettingsService(directory);
         var theme = new ThemeService(settings, api);
         var vm = new SettingsViewModel(api, new CatalogApi(client), new AuthApi(client), new HistoryImportApi(client), new WatchProvidersApi(client), auth, theme, settings, new AccessibilityService(settings, theme));

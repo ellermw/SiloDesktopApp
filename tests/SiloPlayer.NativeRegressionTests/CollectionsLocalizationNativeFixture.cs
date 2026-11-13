@@ -144,7 +144,9 @@ internal static class CollectionsLocalizationNativeFixture
             Check(rules.Query.Groups.Single().Rules.Single() is { Op: "is", Field: "genre" }, $"{language}: redrawing the rules changed the saved rule");
             Check(Descendants<TextBlock>(page).Any(text => text.Text == AppStrings.Get("web.collections.editor.rulesHeading")), $"{language}: retained rules heading");
             var movies = scope.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, "movie"));
-            await Until(() => Equals(movies.Content, AppStrings.Get("web.home.addRow.rules.scopeMovie")), () => language + " scope " + movies.Content);
+            await Until(() => Equals(movies.Content, AppStrings.Get("web.home.addRow.rules.scopeMovie")), () => language + " scope " + movies.Content
+                + "; loaded=" + scope.IsLoaded + "; locale=" + AppStrings.Language + "; rows=" + scope.Items.Count
+                + "; contents=" + string.Join(",", scope.Items.OfType<ComboBoxItem>().Select(item => item.Tag + "=" + item.Content)));
             Program.Log($"PASS: smart editor rule operator, heading and scope choices redraw in {language} with the saved rule unchanged.");
         }
         // A TMDB chart collection's generated name is saved, so it never follows the interface language.

@@ -34,7 +34,7 @@ internal static class PasswordSessionsNativeFixture
         var settings = new SettingsService(Path.Combine(Program.ResultDirectory, "password-session-settings"));
         var api = new SettingsApi(client);
         var theme = new ThemeService(settings, api);
-        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authApi)
+        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authApi).AddSingleton<PlaybackApi>()
             .AddSingleton(new SiloPlayer.Core.Localization.AppLanguagePreference(api))
             .AddSingleton(sp => new SiloPlayer.Core.Localization.AppLocaleCoordinator(
                 sp.GetRequiredService<SiloPlayer.Core.Localization.AppLanguagePreference>(),
