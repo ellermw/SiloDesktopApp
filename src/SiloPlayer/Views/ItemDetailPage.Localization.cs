@@ -15,7 +15,7 @@ public sealed partial class ItemDetailPage
     {
         if (seasons.Count == 0) return AppStrings.Get("web.detail.actions.browseSeries");
         if (seasons.Any(season => season.UserData is { } progress &&
-            (progress.InProgressCount > 0 || progress.WatchedCount > 0 || progress.UnplayedCount < season.EpisodeCount))) return "Play Latest";
+            (progress.InProgressCount > 0 || progress.WatchedCount > 0 || progress.UnplayedCount < season.EpisodeCount))) return AppStrings.Get("web.detail.actions.playNext");
         return AppStrings.Get("web.detail.actions.startFromFirstEpisode", new Dictionary<string, object?> { ["episode"] = 1 });
     }
 }

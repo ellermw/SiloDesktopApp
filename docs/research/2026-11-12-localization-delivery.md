@@ -104,3 +104,27 @@ passed, plus localized-properties, subtitle-preferences (actual dialog, revision
 See `D:/SiloPlayer-build/slider-review-receipt.json` for final source/payload
 binding and logs. The earlier 23-group result is not a new run on this correction.
 PR #145 still requires pipeline review, merge and Beta delivery.
+
+## Second review follow-up candidate
+
+Prepared locally on pipeline head `a7c4393409d46d819e2d9768c050bcab44df7205`
+while the pipeline owns its next fix round. The duplicate progressed-series
+comments identify one issue: the fallback now uses the catalog's translated
+Play Next action without changing the playback target resolver. Home and library
+View All routes carry the original title key, arguments and keyed-title snapshot.
+The catalog resolves these again on each locale refresh; user-renamed titles
+retain their raw text. Navigation takes independent argument copies.
+
+Candidate checks: successful Release publish, 9 focused unit tests, and passing
+`media-catalog-localization` and `oct20-home-rows` native groups. The new catalog
+case verifies title/window refresh in German, Arabic and Japanese, Back, raw
+renamed titles, and the progressed-series label. Actual Home/library buttons
+verify complete title metadata and independent arguments. Initial fixture-only
+failures came from applying personal-list subtitle/sort expectations to section
+catalogs; those assertions remain in place for personal-list routes.
+
+This candidate is not yet pushed: wait for the pipeline's active fix round, then
+integrate its commit and verify the combined source. The remaining dropdown
+finding must be checked across owners after that integration. Existing broad
+verification receipts do not certify this newer source. Receipt:
+`D:/SiloPlayer-build/review-followup-receipt.json`.

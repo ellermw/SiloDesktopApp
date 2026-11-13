@@ -5,12 +5,17 @@ namespace SiloPlayer.Views;
 public sealed partial class CatalogPage
 {
     private string? _titleOverride;
+    private string? _titleKey;
+    private Dictionary<string, string>? _titleArgs;
+    private string? _keyedTitle;
     private string? _subtitleOverride;
     private bool _headingActive;
 
     private void RefreshCatalogHeading()
     {
-        PageTitleText.Text = _titleOverride ?? AppStrings.Get(_source switch
+        PageTitleText.Text = _titleOverride != null
+            ? SectionTitles.Display(_titleOverride, _titleKey, _titleArgs, _keyedTitle)
+            : AppStrings.Get(_source switch
         {
             "favorites" => "web.catalog.page.favorites",
             "watchlist" => "web.catalog.page.watchlist",

@@ -25,7 +25,10 @@ public sealed record CatalogNavigation(
     string? Scope = null,
     string? SectionId = null,
     int? LibraryId = null,
-    string? Genre = null);
+    string? Genre = null,
+    string? TitleKey = null,
+    Dictionary<string, string>? TitleArgs = null,
+    string? KeyedTitle = null);
 
 public sealed partial class CatalogPage : Page,
     IRecipient<MediaSurfaceChanged>,
@@ -129,6 +132,9 @@ public sealed partial class CatalogPage : Page,
             _fixedLibraryId = navigation.LibraryId;
             _initialGenre = navigation.Genre;
             _titleOverride = navigation.Title;
+            _titleKey = navigation.TitleKey;
+            _titleArgs = SectionTitles.CopyArguments(navigation.TitleArgs);
+            _keyedTitle = navigation.KeyedTitle;
             _subtitleOverride = navigation.Subtitle;
             RefreshCatalogHeading();
         }

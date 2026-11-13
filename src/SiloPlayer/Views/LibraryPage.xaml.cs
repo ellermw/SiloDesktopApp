@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.UI.Xaml.Automation;
@@ -3655,7 +3656,8 @@ public sealed partial class LibraryPage : Page,
                 Title: section.Title,
                 Scope: "library",
                 SectionId: section.Id,
-                LibraryId: libraryId));
+                LibraryId: libraryId,
+                TitleKey: section.TitleKey, TitleArgs: SectionTitles.CopyArguments(section.TitleArgs), KeyedTitle: section.KeyedTitle));
     }
 
     private async Task RetryLibrarySectionAsync(SectionRow row, string sectionId, int libraryId)

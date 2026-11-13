@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using System.Text.Json;
@@ -426,7 +427,8 @@ public sealed partial class HomePage : Page
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<CatalogPage>(new CatalogNavigation(
-                Source: "section", Title: section.Title, Scope: "home", SectionId: section.Id));
+                Source: "section", Title: section.Title, Scope: "home", SectionId: section.Id,
+                TitleKey: section.TitleKey, TitleArgs: SectionTitles.CopyArguments(section.TitleArgs), KeyedTitle: section.KeyedTitle));
         };
     }
 

@@ -83,6 +83,35 @@ internal static partial class MediaLocalizationNativeFixture
             frame.Navigate(typeof(Page)); frame.GoBack(); await Task.Delay(200);
             await CheckHeadingAsync((CatalogPage)frame.Content, window, "favorites", custom.Title, custom.Subtitle);
             Require(custom.Title == raw && custom.Subtitle == raw + " raw subtitle", "Explicit custom headings were rewritten");
+            var keyed = new CatalogNavigation(Source: "section", Title: "Because you enjoy " + raw,
+                SectionId: "localized-section", TitleKey: "home.section.becauseYouEnjoy",
+                TitleArgs: new() { ["genres"] = raw }, KeyedTitle: "Because you enjoy " + raw);
+            Apply("de"); frame.Navigate(typeof(CatalogPage), keyed); await Task.Delay(200);
+            var keyedPage = (CatalogPage)frame.Content;
+            keyedPage.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Task.Delay(120);
+                var expectedTitle = SectionTitles.Display(keyed.Title!, keyed.TitleKey, keyed.TitleArgs, keyed.KeyedTitle);
+                Require(expectedTitle != keyed.Title, "Section title fixture did not resolve its catalog key");
+                await CheckHeadingAsync(keyedPage, window, "section", expectedTitle, null);
+                var seasons = new List<SiloPlayer.Core.Models.Catalog.Season>
+                {
+                    new() { EpisodeCount = 6, UserData = new() { InProgressCount = 1, UnplayedCount = 5 } }
+                };
+                var legacyLabel = (string)typeof(ItemDetailPage).GetMethod("LegacySeriesActionLabel", BindingFlags.NonPublic | BindingFlags.Static)!
+                    .Invoke(null, new object[] { seasons })!;
+                Require(legacyLabel == AppStrings.Get("web.detail.actions.playNext") && legacyLabel != "Play Latest",
+                    "Legacy progressed-series action did not use the active language");
+            }
+            frame.Navigate(typeof(Page)); frame.GoBack(); await Task.Delay(200);
+            await CheckHeadingAsync((CatalogPage)frame.Content, window, "section",
+                SectionTitles.Display(keyed.Title!, keyed.TitleKey, keyed.TitleArgs, keyed.KeyedTitle), null);
+            var renamed = keyed with { Title = raw };
+            frame.Navigate(typeof(CatalogPage), renamed); await Task.Delay(200);
+            await CheckHeadingAsync((CatalogPage)frame.Content, window, "section", raw, null);
+            Require(keyed.TitleArgs!["genres"] == raw, "Section navigation rewrote raw title arguments");
+            Program.Log("PASS: keyed section catalog and window headings refresh de/ar/ja and Back; renamed titles stay raw; legacy progressed-series action translates.");
             wire.FailCollections = true;
             var dialog = new AddToCollectionDialog("fixture-title", raw) { XamlRoot = frame.XamlRoot };
             var pending = dialog.ShowAsync();
@@ -113,11 +142,13 @@ internal static partial class MediaLocalizationNativeFixture
 
     private static async Task CheckHeadingAsync(CatalogPage page, MainWindow window, string source, string? rawTitle, string? rawSubtitle)
     {
-        var title = rawTitle ?? AppStrings.Get("web.catalog.page." + source);
-        var subtitle = rawSubtitle ?? AppStrings.Get("web.catalog.page." + source + "Subtitle");
+        var headingSource = source is "favorites" or "watchlist" or "history" ? source : "catalog";
+        var title = rawTitle ?? AppStrings.Get("web.catalog.page." + headingSource);
+        var subtitle = rawSubtitle ?? AppStrings.Get("web.catalog.page." + headingSource + "Subtitle");
         Require(Text(page, "PageTitleText") == title, source + ": retained catalog title did not refresh");
         Require(Text(page, "PageSubtitleText") == subtitle, source + ": retained catalog subtitle did not refresh");
         Require(window.AppWindow.Title == DocumentTitle.FromLabel(title), source + ": actual window title did not refresh");
+        if (source is not ("favorites" or "watchlist" or "history")) return;
         var sort = (ComboBox)page.FindName("SortCombo");
         sort.IsDropDownOpen = true; await Task.Delay(100);
         try

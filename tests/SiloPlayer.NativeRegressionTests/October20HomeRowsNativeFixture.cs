@@ -47,6 +47,7 @@ internal static class October20HomeRowsNativeFixture
             foreach (var library in new[] { false, true })
             {
                 var section = new HomeSectionWithItems { Id = "short-" + type, SectionType = type, Title = "Short " + type,
+                    TitleKey = "home.section.becauseYouEnjoy", TitleArgs = new() { ["genres"] = "Raw genre" }, KeyedTitle = "Short " + type,
                     ItemLimit = 20, TotalCount = 1, LoadCompleted = true, Items = [new() { ContentId = "fixture-one", Title = "One", Type = "movie" }] };
                 var row = library
                     ? (SectionRow)typeof(LibraryPage).GetMethod("CreateLibrarySectionRow", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(libraryPage, [section, 23])!
@@ -63,6 +64,9 @@ internal static class October20HomeRowsNativeFixture
                         await Task.Delay(20);
                         if (captured is not { Source: "section" } || captured.Scope != (library ? "library" : "home") || captured.SectionId != section.Id || captured.LibraryId != (library ? 23 : null))
                             throw new InvalidOperationException($"{type}/{library}/{name} lost its section route.");
+                        if (captured.TitleKey != section.TitleKey || captured.KeyedTitle != section.KeyedTitle
+                            || captured.TitleArgs?["genres"] != "Raw genre" || ReferenceEquals(captured.TitleArgs, section.TitleArgs))
+                            throw new InvalidOperationException("Section route lost its title metadata or shared mutable arguments.");
                     }
                     if (((FrameworkElement)row.FindName("TitleViewSuffix")).Visibility != Visibility.Collapsed)
                         throw new InvalidOperationException("Explore all duplicated a View suffix.");
