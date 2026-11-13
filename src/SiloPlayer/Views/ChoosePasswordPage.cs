@@ -17,6 +17,7 @@ public sealed partial class ChoosePasswordPage : Page
     private readonly CancellationTokenSource _lifetime = new();
     private RequiredPasswordTransition? _flow;
     private Exception? _statusException;
+    private string? _statusKey;
     private readonly PasswordBox _temporary = new() { Header = "Temporary password" };
     private readonly PasswordBox _password = new() { Header = "New password" };
     private readonly PasswordBox _confirmation = new() { Header = "Confirm new password" };
@@ -31,7 +32,7 @@ public sealed partial class ChoosePasswordPage : Page
         AppLocalization.Register(this, () =>
         {
             AppLocalization.ApplyDirection(this);
-            if (_statusException is ApiException problem) _status.Text = ApiProblemText.Display(problem);
+            RefreshStatus();
         });
         FontFamily = (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["ThemeFontFamily"];
         var form = new StackPanel { Spacing = 24 };
@@ -104,14 +105,26 @@ public sealed partial class ChoosePasswordPage : Page
         if (_flow == null || !_save.IsEnabled) return;
         _save.IsEnabled = false; Localized.SetContent(_save, "web.ui.saving");
         foreach (var input in new[] { _temporary, _password, _confirmation }) input.IsEnabled = false;
-        _statusException = null; _status.Text = ""; _status.Visibility = Visibility.Collapsed;
+        _statusException = null; _statusKey = null; _status.Text = ""; _status.Visibility = Visibility.Collapsed;
         try
         {
             if (await _flow.SaveAsync(_temporary.Password, _password.Password, _confirmation.Password, _lifetime.Token))
                 App.Services.GetRequiredService<NavigationService>().Navigate<ProfileSelectPage>();
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (!_lifetime.IsCancellationRequested) { _statusException = ex; _status.Text = ex is ApiException problem ? ApiProblemText.Display(problem) : ex.Message; _status.Visibility = Visibility.Visible; } }
+        catch (Exception ex)
+        {
+            if (!_lifetime.IsCancellationRequested)
+            {
+                _statusException = ex;
+                _statusKey = _flow.PasswordSaved ? "web.auth.choosePassword.settleFailed"
+                    : ex is ApiException ? null
+                    : _password.Password.Length < 8 ? "web.auth.passwordRules.minLength"
+                    : _password.Password != _confirmation.Password ? "web.auth.passwordRules.mismatch"
+                    : "web.auth.choosePassword.changeFailed";
+                RefreshStatus(); _status.Visibility = Visibility.Visible;
+            }
+        }
         finally
         {
             if (!_lifetime.IsCancellationRequested)
@@ -124,11 +137,17 @@ public sealed partial class ChoosePasswordPage : Page
                     _temporary.Visibility = _password.Visibility = _confirmation.Visibility = Visibility.Collapsed;
                     foreach (var input in new[] { _temporary, _password, _confirmation })
                         if (input.Parent is FrameworkElement surface && surface.Parent is FrameworkElement passwordGroup) passwordGroup.Visibility = Visibility.Collapsed;
-                    Localized.SetContent(_save, null); _save.Content = "Retry sign-in";
+                    Localized.SetContent(_save, "common.tryAgain");
                 }
             }
         }
     }
+    private void RefreshStatus()
+    {
+        if (_statusKey != null) _status.Text = AppStrings.Get(_statusKey);
+        else if (_statusException is ApiException problem) _status.Text = ApiProblemText.Display(problem);
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     { _lifetime.Cancel(); base.OnNavigatedFrom(e); }
 }

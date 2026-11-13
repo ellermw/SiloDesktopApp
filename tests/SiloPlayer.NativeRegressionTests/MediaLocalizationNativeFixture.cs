@@ -40,6 +40,7 @@ internal static partial class MediaLocalizationNativeFixture
             Program.Log("PASS: retained recommendation metadata, copied arguments, mounted section action and RTL preserve raw titles.");
             parent.Children.Remove(row);
             await VerifyOwnedPagesAsync(parent, raw, model);
+            await VerifyDismissalMenusAsync(parent);
             await VerifyCatalogHeadingAsync(raw);
         }
         finally
@@ -47,6 +48,31 @@ internal static partial class MediaLocalizationNativeFixture
             parent.Children.Remove(row);
             LocaleService.Shared.Apply(LocaleService.Shared.Create(before.Resolution));
         }
+    }
+
+    private static async Task VerifyDismissalMenusAsync(StackPanel parent)
+    {
+        foreach (var (type, surface, key) in new[] {
+            ("movie", MediaItemMenu.Surface.ContinueWatching, "web.item.menu.removeFromContinueWatching"),
+            ("audiobook", MediaItemMenu.Surface.ContinueWatching, "web.item.menu.removeFromContinueListening"),
+            ("ebook", MediaItemMenu.Surface.ContinueWatching, "web.item.menu.removeFromContinueReading"),
+            ("episode", MediaItemMenu.Surface.NextUp, "web.item.menu.removeFromNextUp") })
+        {
+            var anchor = new Button { Content = "Dismissal fixture" }; parent.Children.Add(anchor);
+            var menu = MediaItemMenu.Build(new MediaItem { ContentId = "dismiss-fixture", Title = "Raw dismissal title", Type = type,
+                SeriesId = "fixture-series", ProgressUpdatedAt = "2026-11-13T00:00:00Z" }, surface, showCollectionActions: false, owner: anchor);
+            try
+            {
+                foreach (var language in new[] { "de", "ar", "ja" })
+                {
+                    Apply(language); menu.ShowAt(anchor); await Task.Delay(120);
+                    Require(menu.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == AppStrings.Get(key) && Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(item) == item.Text), "Retained dismissal label did not translate: " + type);
+                    menu.Hide();
+                }
+            }
+            finally { menu.Hide(); parent.Children.Remove(anchor); }
+        }
+        Program.Log("PASS retained Continue Watching/Listening/Reading and Next Up dismissal menus through de/ar/ja.");
     }
 
     private static void Apply(string language) => LocaleService.Shared.Apply(LocaleService.Shared.Create(AppLocaleResolution.Resolve(language, ["en-US"], "en-US")));

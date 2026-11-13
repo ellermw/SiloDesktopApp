@@ -148,6 +148,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     private static string T(string key, string english) => AppStrings.Get(key, fallback: english);
 
     private Func<string>? _statusText, _uploadStatusText, _uploadFileText, _emptyStateText;
+    private readonly List<Action> _resultTextRefreshes = [];
+    private void BindResultText(Action refresh) { _resultTextRefreshes.Add(refresh); refresh(); }
     private void SetStatus(Func<string> text) { _statusText = text; StatusText.Text = text(); }
     private void SetUploadStatus(Func<string> text) { _uploadStatusText = text; UploadStatusText.Text = text(); }
     private void SetUploadFile(Func<string> text) { _uploadFileText = text; UploadFileText.Text = text(); }
@@ -158,6 +160,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         AppLocalization.ApplyDirection(this);
         UploadHelpText.Text = AppStrings.Get("web.subtitles.upload.help", new Dictionary<string, object?> { ["megabytes"] = 5 },
             fallback: "Drag and drop or browse for SRT, VTT, ASS, SSA, or SUB files up to 5 MB. Language is detected automatically when possible.");
+        foreach (var refresh in _resultTextRefreshes) refresh();
         if (_statusText != null) StatusText.Text = _statusText();
         if (_uploadStatusText != null) UploadStatusText.Text = _uploadStatusText();
         UploadFileText.Text = (_uploadFileText ?? (() => "No file selected"))();
@@ -430,6 +433,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         SearchProgress.IsActive = true;
         SearchButton.IsEnabled = false;
         EmptyStateText.Visibility = Visibility.Collapsed;
+        _resultTextRefreshes.Clear();
         ResultsList.Items.Clear();
         SetStatus(() => T("web.subtitles.search.searching", "Searching…"));
 
@@ -531,8 +535,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
         if (r.HearingImpaired)
         {
-            var hiBadge = CreateBadge(
-                T("subtitleSearch.hearingImpaired", "HI"),
+            var hiBadge = CreateLocalizedBadge(
+                () => T("subtitleSearch.hearingImpaired", "HI"),
                 Windows.UI.Color.FromArgb(0xFF, 0x9C, 0xA3, 0xAF),
                 fontSize: 9,
                 fontWeight: FontWeights.Normal);
@@ -547,6 +551,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        BindResultText(() => downloads.Text = AppStrings.Get("web.subtitles.search.downloads",
+            new Dictionary<string, object?> { ["downloads"] = r.Downloads.ToString("N0", AppStrings.FormatCulture) }));
         Grid.SetColumn(downloads, 3);
         grid.Children.Add(downloads);
 
@@ -567,7 +573,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         };
         var captured = r;
         rowButton.Click += async (_, _) => await DownloadAsync(captured, rowButton);
-        AutomationProperties.SetName(rowButton, $"Download {displayName}");
+        BindResultText(() => AutomationProperties.SetName(rowButton, AppStrings.Get("web.detail.actions.download") + " " + displayName));
+        BindResultText(() => ((TextBlock)scoreBadge.Child).Text = Math.Round(r.Score).ToString("0", AppStrings.FormatCulture));
         return rowButton;
     }
 
@@ -619,7 +626,14 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 },
             },
         };
-        AutomationProperties.SetName(scorePanel, $"Match score {Math.Round(result.Score):0}");
+        BindResultText(() =>
+        {
+            var labels = ((StackPanel)scorePanel.Child).Children.OfType<TextBlock>().ToArray();
+            labels[0].Text = Math.Round(result.Score).ToString("0", AppStrings.FormatCulture);
+            labels[1].Text = AppStrings.Uppercase(AppStrings.Get("web.detail.subtitleSearch.scoreLabel"));
+            AutomationProperties.SetName(scorePanel, AppStrings.Get("web.detail.subtitleSearch.matchScore",
+                new Dictionary<string, object?> { ["score"] = labels[0].Text }));
+        });
 
         var provider = result.Provider.ToLowerInvariant() switch
         {
@@ -634,22 +648,25 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         badges.Children.Add(CreateBadge(provider.Item1, provider.Item2, 10, FontWeights.SemiBold));
         badges.Children.Add(CreateBadge(result.Format.ToUpperInvariant(), Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE), 10, FontWeights.Normal));
-        badges.Children.Add(CreateBadge(
-            Services.PlayerService.LanguageCodeToName(result.Language),
+        badges.Children.Add(CreateLocalizedBadge(
+            () => Services.PlayerService.LanguageCodeToName(result.Language),
             Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE),
             10,
             FontWeights.Normal));
         if (result.HearingImpaired)
-            badges.Children.Add(CreateBadge(T("subtitleSearch.hearingImpaired", "HI"), Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE), 10, FontWeights.Normal));
+            badges.Children.Add(CreateLocalizedBadge(() => T("subtitleSearch.hearingImpaired", "HI"), Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE), 10, FontWeights.Normal));
         if (result.Downloads > 0)
         {
-            badges.Children.Add(new TextBlock
+            var downloadCount = new TextBlock
             {
-                Text = $"{result.Downloads:N0} {(result.Downloads == 1 ? "download" : "downloads")}",
+                Text = "",
                 FontSize = 11,
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x88, 0xFF, 0xFF, 0xFF)),
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            };
+            BindResultText(() => downloadCount.Text = AppStrings.Get("web.detail.subtitleSearch.downloadCount",
+                new Dictionary<string, object?> { ["count"] = result.Downloads, ["count_text"] = result.Downloads.ToString("N0", AppStrings.FormatCulture) }));
+            badges.Children.Add(downloadCount);
         }
 
         var releaseText = new TextBlock
@@ -692,16 +709,17 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 Padding = new Thickness(0, 2, 4, 2),
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xAA, 0xFF, 0xFF, 0xFF)),
-                Content = $"⌄  {extras.Count} more variant{(extras.Count == 1 ? "" : "s")}",
+                Content = "",
                 FontSize = 11,
             };
+            void RefreshVariants() => expandButton.Content = extrasPanel.Visibility == Visibility.Visible
+                ? AppStrings.Get("web.detail.subtitleSearch.collapse")
+                : AppStrings.Get("web.detail.subtitleSearch.moreVariants", new Dictionary<string, object?> { ["count"] = extras.Count });
+            BindResultText(RefreshVariants);
             expandButton.Click += (_, _) =>
             {
-                var expanding = extrasPanel.Visibility != Visibility.Visible;
-                extrasPanel.Visibility = expanding ? Visibility.Visible : Visibility.Collapsed;
-                expandButton.Content = expanding
-                    ? "⌃  Collapse"
-                    : $"⌄  {extras.Count} more variant{(extras.Count == 1 ? "" : "s")}";
+                extrasPanel.Visibility = extrasPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+                RefreshVariants();
             };
             releasePanel.Children.Add(extrasPanel);
             releasePanel.Children.Add(expandButton);
@@ -728,7 +746,12 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             },
         };
         downloadButton.Click += async (_, _) => await DownloadAsync(result, downloadButton);
-        AutomationProperties.SetName(downloadButton, $"Download {primaryReleaseName}");
+        BindResultText(() =>
+        {
+            var label = AppStrings.Get("web.detail.actions.download");
+            ((StackPanel)downloadButton.Content).Children.OfType<TextBlock>().Single().Text = label;
+            AutomationProperties.SetName(downloadButton, label + " " + primaryReleaseName);
+        });
 
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -806,6 +829,13 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     {
         var id = response.Subtitle?.Id ?? response.Id;
         return id > 0 ? id : null;
+    }
+
+    private Border CreateLocalizedBadge(Func<string> text, Windows.UI.Color color, double fontSize, Windows.UI.Text.FontWeight fontWeight)
+    {
+        var badge = CreateBadge(text(), color, fontSize, fontWeight);
+        BindResultText(() => ((TextBlock)badge.Child).Text = text());
+        return badge;
     }
 
     private static Border CreateBadge(

@@ -67,6 +67,7 @@ internal static partial class MediaLocalizationNativeFixture
                 var route = new CatalogNavigation(Source: source);
                 frame.Navigate(typeof(CatalogPage), route); await Task.Delay(250);
                 var page = (CatalogPage)frame.Content; page.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+                if (source == "favorites") await VerifyAdvancedChoicesAsync(page);
                 await CheckHeadingAsync(page, window, source, null, null);
                 Apply("ar"); await Task.Delay(120);
                 await CheckHeadingAsync(page, window, source, null, null);
@@ -158,6 +159,41 @@ internal static partial class MediaLocalizationNativeFixture
                 AppStrings.Get(source == "history" ? "catalog.sort.added" : "web.catalog.sort.listOrder")), source + ": personal default sort option or raw order tag changed");
         }
         finally { sort.IsDropDownOpen = false; }
+    }
+
+    private static async Task VerifyAdvancedChoicesAsync(CatalogPage page)
+    {
+        Invoke(page, "OpenFilters_Click", page, new RoutedEventArgs());
+        Invoke(page, "FilterMode_Click", new Button { Tag = "advanced" }, new RoutedEventArgs());
+        await Task.Delay(250);
+        var rules = Get<List<SiloPlayer.Core.Models.Collections.QueryRule>>(page, "_advancedRules");
+        var rule = new SiloPlayer.Core.Models.Collections.QueryRule { Field = "genre", Op = "contains", Value = "Unsaved filter draft" };
+        var booleanRule = new SiloPlayer.Core.Models.Collections.QueryRule { Field = "watched", Op = "is", Value = true };
+        rules.Add(rule); rules.Add(booleanRule); Invoke(page, "BuildAdvancedRulesUi");
+        var row = ((Panel)page.FindName("AdvancedRulesPanel")).Children.OfType<Grid>().First();
+        var combos = row.Children.OfType<ComboBox>().ToArray(); var input = row.Children.OfType<TextBox>().Single();
+        foreach (var language in new[] { "de", "ar", "ja" })
+        {
+            Apply(language); await Task.Delay(180); page.UpdateLayout();
+            Require(ReferenceEquals(((Panel)page.FindName("AdvancedRulesPanel")).Children[0], row), "Advanced rule was rebuilt during localization.");
+            foreach (var combo in combos)
+            {
+                foreach (var option in combo.Items.OfType<ComboBoxItem>())
+                {
+                    var key = Localized.GetContent(option);
+                    Require(key != null && key.StartsWith("web.collections.builder.", StringComparison.Ordinal) && MessageCatalog.Load(AppStrings.Language).Contains(key), "Advanced choice lacks a shipped catalog key.");
+                    Require(Equals(option.Content, AppStrings.Get(key!)), "Advanced choice did not refresh: " + key + " actual=" + option.Content + " expected=" + AppStrings.Get(key!) + " locale=" + AppStrings.Language);
+                }
+            }
+            Require(Equals((combos[0].SelectedItem as ComboBoxItem)?.Tag, "genre") && Equals((combos[1].SelectedItem as ComboBoxItem)?.Tag, "contains"), "Advanced choice wire value changed.");
+            Require(input.Text == "Unsaved filter draft" && Equals(rule.Value, input.Text), "Advanced filter draft changed during refresh.");
+            Require(booleanRule.Value is true, "Advanced boolean draft changed during localization.");
+        }
+        rules.Clear(); Invoke(page, "BuildAdvancedRulesUi");
+        ((SlideSheet)page.FindName("FiltersSheet")).IsOpen = false;
+        Invoke(page, "FilterMode_Click", new Button { Tag = "guided" }, new RoutedEventArgs());
+        await Task.Delay(250);
+        Program.Log("PASS all advanced field/operator labels refresh through de/ar/ja without replacing rule controls, selections or drafts.");
     }
 
     private sealed class CatalogHeadingWire : HttpMessageHandler

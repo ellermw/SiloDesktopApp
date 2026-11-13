@@ -83,23 +83,23 @@ public sealed partial class CatalogPage : Page,
     private readonly object _sortPreferenceGate = new();
     private Task _sortPreferenceTail = Task.CompletedTask;
 
-    private static readonly (string Label, string Value)[] AdvancedFields =
+    private static readonly (string Label, string Value, string Key)[] AdvancedFields =
     [
-        ("Genre", "genre"), ("Year", "year"), ("IMDb Rating", "rating_imdb"),
-        ("Type", "type"), ("Content Rating", "content_rating"), ("Studio", "studio"),
-        ("Actor", "actor"), ("Director", "director"), ("Writer", "writer"),
-        ("Producer", "producer"), ("Network", "network"), ("Country", "country"),
-        ("Status", "status"), ("Added", "added_at"), ("Release Date", "release_date"),
-        ("Watched", "watched"), ("Favorited", "favorited"), ("In Watchlist", "in_watchlist"),
-        ("In Progress", "in_progress"), ("Resolution", "resolution"), ("HDR", "hdr"),
-        ("Dolby Vision", "dolby_vision"), ("Bitrate", "bitrate")
+        ("Genre", "genre", "web.collections.builder.fieldGenre"), ("Year", "year", "web.collections.builder.fieldYear"), ("IMDb Rating", "rating_imdb", "web.collections.builder.fieldRatingImdb"),
+        ("Type", "type", "web.collections.builder.fieldType"), ("Content Rating", "content_rating", "web.collections.builder.fieldContentRating"), ("Studio", "studio", "web.collections.builder.fieldStudio"),
+        ("Actor", "actor", "web.collections.builder.fieldActor"), ("Director", "director", "web.collections.builder.fieldDirector"), ("Writer", "writer", "web.collections.builder.fieldWriter"),
+        ("Producer", "producer", "web.collections.builder.fieldProducer"), ("Network", "network", "web.collections.builder.fieldNetwork"), ("Country", "country", "web.collections.builder.fieldCountry"),
+        ("Status", "status", "web.collections.builder.fieldStatus"), ("Added", "added_at", "web.collections.builder.fieldAdded"), ("Release Date", "release_date", "web.collections.builder.fieldReleaseDate"),
+        ("Watched", "watched", "web.collections.builder.fieldWatched"), ("Favorited", "favorited", "web.collections.builder.fieldFavorited"), ("In Watchlist", "in_watchlist", "web.collections.builder.fieldInWatchlist"),
+        ("In Progress", "in_progress", "web.collections.builder.fieldInProgress"), ("Resolution", "resolution", "web.collections.builder.fieldResolution"), ("HDR", "hdr", "web.collections.builder.fieldHdr"),
+        ("Dolby Vision", "dolby_vision", "web.collections.builder.fieldDolbyVision"), ("Bitrate", "bitrate", "web.collections.builder.fieldBitrate")
     ];
 
-    private static readonly (string Label, string Value)[] AdvancedOperators =
+    private static readonly (string Label, string Value, string Key)[] AdvancedOperators =
     [
-        ("is", "is"), ("is not", "is_not"), ("contains", "contains"),
-        (">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"),
-        ("in the last", "in_last")
+        ("is", "is", "web.collections.builder.opIs"), ("is not", "is_not", "web.collections.builder.opIsNot"), ("contains", "contains", "web.collections.builder.opContains"),
+        (">=", "gte", "web.collections.builder.opAtLeast"), ("<=", "lte", "web.collections.builder.opAtMost"), (">", "gt", "web.collections.builder.opAbove"), ("<", "lt", "web.collections.builder.opBelow"),
+        ("in the last", "in_last", "web.collections.builder.opInLast")
     ];
 
     public CatalogPage()
@@ -1190,12 +1190,12 @@ public sealed partial class CatalogPage : Page,
 
             var field = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
             foreach (var option in AdvancedFields)
-                field.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
+                field.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = SiloPlayer.Core.Localization.AppStrings.Get(option.Key), Tag = option.Value }, content: option.Key));
             field.SelectedIndex = Math.Max(0, Array.FindIndex(AdvancedFields, option => option.Value == rule.Field));
 
             var operation = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
             foreach (var option in AdvancedOperators)
-                operation.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
+                operation.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = SiloPlayer.Core.Localization.AppStrings.Get(option.Key), Tag = option.Value }, content: option.Key));
             operation.SelectedIndex = Math.Max(0, Array.FindIndex(AdvancedOperators, option => option.Value == rule.Op));
 
             var value = CreateAdvancedValueEditor(rule);
@@ -1212,6 +1212,7 @@ public sealed partial class CatalogPage : Page,
 
             field.SelectionChanged += (_, _) =>
             {
+                if (_initializing) return;
                 rule.Field = SelectedTag(field) ?? "genre";
                 rule.Op = DefaultOperator(rule.Field);
                 rule.Value = DefaultAdvancedValue(rule.Field);
@@ -1220,6 +1221,7 @@ public sealed partial class CatalogPage : Page,
             };
             operation.SelectionChanged += (_, _) =>
             {
+                if (_initializing) return;
                 rule.Op = SelectedTag(operation) ?? "is";
                 Filter_Changed(operation, new SelectionChangedEventArgs([], []));
             };
@@ -1238,11 +1240,12 @@ public sealed partial class CatalogPage : Page,
         if (IsBooleanField(rule.Field))
         {
             var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            combo.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = "True", Tag = "true" }, content: "web.catalog.rules.yes"));
-            combo.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = "False", Tag = "false" }, content: "web.catalog.rules.no"));
+            combo.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.rules.yes"), Tag = "true" }, content: "web.catalog.rules.yes"));
+            combo.Items.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBoxItem { Content = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.rules.no"), Tag = "false" }, content: "web.catalog.rules.no"));
             combo.SelectedIndex = rule.Value is false || string.Equals(rule.Value?.ToString(), "false", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             combo.SelectionChanged += (_, e) =>
             {
+                if (_initializing) return;
                 rule.Value = SelectedTag(combo) == "true";
                 Filter_Changed(combo, e);
             };

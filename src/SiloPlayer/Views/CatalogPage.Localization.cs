@@ -45,6 +45,9 @@ public sealed partial class CatalogPage
             SiloPlayer.Services.Localized.RefreshItems(WatchStatusCombo);
             SiloPlayer.Services.Localized.RefreshItems(AddedInLastCombo);
             SiloPlayer.Services.Localized.RefreshItems(ReleasedInLastCombo);
+            foreach (var row in AdvancedRulesPanel.Children.OfType<Microsoft.UI.Xaml.Controls.Grid>())
+                foreach (var combo in row.Children.OfType<Microsoft.UI.Xaml.Controls.ComboBox>())
+                    SiloPlayer.Services.Localized.RefreshItems(combo);
         }
         finally { _initializing = previous; }
     }

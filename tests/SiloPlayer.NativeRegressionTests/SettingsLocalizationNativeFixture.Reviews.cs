@@ -134,6 +134,7 @@ internal static partial class SettingsLocalizationNativeFixture
             });
         }
         await ReviewSubtitleColorsAndWatchlistFailure(parent);
+        await ReviewVisibleSubtitleResults(parent);
         Program.Log("PASS review followups: region-only Settings refresh, allowed titles, retained person/refresh dialogs, capability search hints and real empty subtitle search; drafts preserved.");
     }
 
@@ -191,6 +192,35 @@ internal static partial class SettingsLocalizationNativeFixture
             yield return child;
             foreach (var descendant in LogicalToggleDescendants(child)) yield return descendant;
         }
+    }
+
+    private static async Task ReviewVisibleSubtitleResults(StackPanel parent)
+    {
+        var dialog = new SubtitleSearchDialog(42, "en", playerMode: false) { XamlRoot = parent.XamlRoot };
+        await OpenReviewDialog(dialog, async () =>
+        {
+            var result = new SubtitleSearchResult { Provider = "subdl", SubtitleId = "fixture", Language = "de", Format = "srt",
+                Score = 87, Downloads = 1234, HearingImpaired = true, ReleaseName = "Raw release\nRaw alternate" };
+            var row = (FrameworkElement)typeof(SubtitleSearchDialog).GetMethod("BuildResultRow", Private)!.Invoke(dialog, [result])!;
+            var results = (ListView)dialog.FindName("ResultsList"); results.Items.Add(row); await Settle(dialog);
+            var buttons = Descendants(row).OfType<Button>().ToArray();
+            var expand = buttons.Single(button => button.Content is string);
+            Click(expand); await Settle(dialog);
+            var download = buttons.Single(button => button.Content is StackPanel);
+            download.IsEnabled = false; results.IsEnabled = false;
+            foreach (var language in new[] { "de", "ar", "ja" })
+            {
+                Apply(language); await Settle(dialog);
+                Check(ReferenceEquals(results.Items[0], row) && !download.IsEnabled && !results.IsEnabled, "Subtitle refresh replaced a row or cleared busy state.");
+                var text = Descendants(row).OfType<TextBlock>().Select(label => label.Text).ToArray();
+                foreach (var expected in new[] { AppStrings.Get("subtitleSearch.hearingImpaired"), PlayerService.LanguageCodeToName("de"), AppStrings.Get("web.detail.actions.download"),
+                    AppStrings.Get("web.detail.subtitleSearch.downloadCount", new Dictionary<string, object?> { ["count"] = 1234, ["count_text"] = 1234.ToString("N0", AppStrings.FormatCulture) }), "Raw release", "Raw alternate" })
+                    Check(text.Contains(expected), "Retained subtitle result did not refresh/preserve: " + expected);
+                Check(Equals(expand.Content, AppStrings.Get("web.detail.subtitleSearch.collapse")), "Subtitle variants lost expansion state.");
+                Check(Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(download) == AppStrings.Get("web.detail.actions.download") + " Raw release", "Subtitle download accessible name did not refresh.");
+            }
+        });
+        Program.Log("PASS retained subtitle result labels, metadata, expansion and disabled download state through de/ar/ja.");
     }
 
     private static async Task ReviewSubtitleColorsAndWatchlistFailure(StackPanel parent)

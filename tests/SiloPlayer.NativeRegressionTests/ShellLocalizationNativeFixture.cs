@@ -122,6 +122,7 @@ internal static class ShellLocalizationNativeFixture
             render.Invoke(recovery, ["request", recoveryTitle, recoveryDescription, null]);
             await Show(recovery, "web.auth.forgotPassword.send", page => (string)All<Button>(page).Single(button => Localized.GetContent(button) == "web.auth.forgotPassword.send" || Equals(button.Content, "Send reset link")).Content);
             await Show(new ChoosePasswordPage(), "web.auth.passwordRules.savePassword", page => (string)All<Button>(page).Single(button => Localized.GetContent(button) == "web.auth.passwordRules.savePassword" || Equals(button.Content, "Save password")).Content);
+            await RequiredPasswordFailures(parent);
             var notificationsPage = new NotificationsPage();
             await Show(notificationsPage, "web.notifications.inbox.title", page => ((TextBlock)((StackPanel)((Grid)page.FindName("HeaderGrid")).Children[0]).Children[1]).Text);
             var notifications = provider.GetRequiredService<NotificationsViewModel>();
@@ -320,6 +321,61 @@ internal static class ShellLocalizationNativeFixture
             locales.Apply(locales.Create(previousLocale.Resolution));
         }
     }
+    private static async Task RequiredPasswordFailures(StackPanel parent)
+    {
+        const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var serviceSlot = typeof(App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var previous = serviceSlot.GetValue(null);
+        using var wire = new RequiredPasswordWire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://password-failure.fixture.invalid");
+        using var auth = new AuthService(client, new AuthApi(client));
+        auth.SetTokens("fixture-restricted", "fixture-refresh", 3600);
+        auth.SetCurrentUser(new() { Id = "fixture-required", Username = "Raw username", PasswordChangeRequired = true });
+        using var provider = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton<NavigationService>().BuildServiceProvider();
+        serviceSlot.SetValue(null, provider);
+        ChoosePasswordPage? page = null;
+        try
+        {
+            page = new ChoosePasswordPage(); parent.Children.Add(page); await Settle(page);
+            var flow = new RequiredPasswordTransition(auth, client);
+            typeof(ChoosePasswordPage).GetField("_flow", flags)!.SetValue(page, flow);
+            PasswordBox Input(string name) => (PasswordBox)typeof(ChoosePasswordPage).GetField(name, flags)!.GetValue(page)!;
+            var save = (Button)typeof(ChoosePasswordPage).GetField("_save", flags)!.GetValue(page)!;
+            var status = (TextBlock)typeof(ChoosePasswordPage).GetField("_status", flags)!.GetValue(page)!;
+            var click = (RoutedEventHandler)typeof(ChoosePasswordPage).GetMethod("Save_Click", flags)!.CreateDelegate(typeof(RoutedEventHandler), page);
+            foreach (var (password, confirmation, key) in new[] {
+                ("short", "short", "web.auth.passwordRules.minLength"),
+                ("long-password", "different-password", "web.auth.passwordRules.mismatch"),
+                ("long-password", "long-password", "web.auth.choosePassword.settleFailed") })
+            {
+                Input("_temporary").Password = "temporary"; Input("_password").Password = password; Input("_confirmation").Password = confirmation;
+                click(save, new RoutedEventArgs());
+                for (var attempt = 0; attempt < 300 && !save.IsEnabled; attempt++) await Task.Delay(20);
+                if (!save.IsEnabled) throw new InvalidOperationException("Required-password fixture did not settle.");
+                foreach (var language in new[] { "de", "ar", "ja" })
+                {
+                    Apply(language); await Settle(page);
+                    if (status.Text != AppStrings.Get(key)) throw new InvalidOperationException("Required-password outcome did not refresh: " + key);
+                }
+            }
+            if (!flow.PasswordSaved || wire.PasswordWrites != 1) throw new InvalidOperationException("Required-password fixture did not isolate saved-password sign-in failure.");
+            if (Input("_password").Password.Length != 0 || !Equals(save.Content, AppStrings.Get("common.tryAgain"))) throw new InvalidOperationException("Saved-password recovery did not clear secrets/localize retry.");
+        }
+        finally { if (page != null) parent.Children.Remove(page); serviceSlot.SetValue(null, previous); }
+        Program.Log("PASS required-password validation and saved-password settlement failure refresh through de/ar/ja; one password write.");
+    }
+
+    private sealed class RequiredPasswordWire : HttpMessageHandler
+    {
+        internal int PasswordWrites;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.RequestUri!.Host != "password-failure.fixture.invalid") throw new InvalidOperationException("External password fixture request refused.");
+            if (request.RequestUri.AbsolutePath == "/api/v2/account/password") { PasswordWrites++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)); }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") });
+        }
+    }
+
     private static IEnumerable<T> All<T>(DependencyObject root) where T : DependencyObject
     {
         if (root is T match) yield return match;

@@ -288,14 +288,20 @@ public static class MediaItemMenu
 
             string surfaceKey = surface == Surface.ContinueWatching ? "continue_watching" : "next_up";
             var dropsShow = item.Type is "episode" or "series";
-            string label = surface == Surface.ContinueWatching
-                ? item.Type == "audiobook"
-                    ? "Remove from Continue Listening"
-                    : item.Type == "ebook"
-                        ? "Remove from Continue Reading"
-                        : "Remove from Continue Watching"
-                : "Remove from Next Up";
-            flyout.Items.Add(BuildItem(() => label, "\uE711", async () =>
+            var labelKey = surface == Surface.ContinueWatching
+                ? item.Type switch
+                {
+                    "audiobook" => "web.item.menu.removeFromContinueListening",
+                    "ebook" => "web.item.menu.removeFromContinueReading",
+                    _ => "web.item.menu.removeFromContinueWatching"
+                }
+                : "web.item.menu.removeFromNextUp";
+            var successKey = surface == Surface.NextUp ? "web.home.dismiss.removedNextUp"
+                : dropsShow ? "web.home.dismiss.removedContinueWatchingAndNextUp"
+                : item.Type == "audiobook" ? "web.home.dismiss.removedContinueListening"
+                : item.Type == "ebook" ? "web.home.dismiss.removedContinueReading"
+                : "web.home.dismiss.removedContinueWatching";
+            flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get(labelKey), "\uE711", async () =>
             {
                 var actionId = Guid.NewGuid().ToString("N");
                 using var operation = LocalLog.BeginOperation(actionId);
@@ -340,7 +346,7 @@ public static class MediaItemMenu
                         MediaSurfaceChangeKind.HomeDismissed, item.ContentId,
                         dismissalSeriesId, context: context));
                     stage = "success_toast";
-                    toast.Success(dropsShow ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.dismiss.removedContinueWatchingAndNextUp", fallback: "Removed from Continue Watching and Next Up") : label);
+                    toast.Success(SiloPlayer.Core.Localization.AppStrings.Get(successKey));
                     LocalLog.AppendLine("home_actions.txt",
                         $"dismissal action={actionId} surface={surfaceKey} stage=complete serverAccepted=true elapsedMs={elapsed.ElapsedMilliseconds}");
                 }
