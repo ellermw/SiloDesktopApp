@@ -224,6 +224,9 @@ public partial class LibraryViewModel
                 _catalogRefreshPending = false;
                 _catalogRefreshRetainsRows = false;
                 _catalogRefreshReleasedVersion = version;
+                _confirmedRefreshViewport = null;
+                _confirmedRefreshViewportVersion = -1;
+                ResumeOptionalCatalogReads();
                 WindowLoaded?.Invoke();
             }
             else RetireUnconfirmedHeldRows();
@@ -458,6 +461,15 @@ public partial class LibraryViewModel
         if (unheld && _recentWindows.Count < 8 &&
             _recentWindows.Sum(window => window.Response.Items.Count) + replacement.Count <= 1200)
             RememberWindow(start, new CatalogResponse { Items = replacement.ToList(), Snapshot = _snapshot }, false);
+    }
+
+    // A retained handback must resume optional reads canceled by the rebase,
+    // even when cached cards mean no foreground window request is needed.
+    private void ResumeOptionalCatalogReads()
+    {
+        if (LetterIndex is null && _letterIndexKey is null && !LetterIndexFailed && SelectedSort == "title")
+            _ = EnsureLetterIndexAsync();
+        EnsureExactCountRequested();
     }
 
     private static bool SameLetterIndex(CatalogLettersResponse? current, CatalogLettersResponse? next) =>

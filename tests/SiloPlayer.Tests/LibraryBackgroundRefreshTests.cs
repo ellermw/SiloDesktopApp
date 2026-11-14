@@ -99,6 +99,7 @@ public sealed class LibraryBackgroundRefreshTests
         using (wire)
         {
             await wire.Idle();
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
             if (churn) { wire.ChangeSnapshotAt = 560; wire.SnapshotChangesRemaining = 20; }
             else wire.FailWindowAt = 560;
             var reads = wire.Requests.Count;
@@ -111,8 +112,91 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.Equal("item-0", model.GetRenderableWindowItem(0)?.ContentId);
             Assert.InRange(wire.Requests.Count - reads, 2, 4);
             var stopped = wire.Requests.Count;
+            // A cached foreground read must not leave the successful new-snapshot
+            // viewport spliced into the retained old-snapshot windows.
+            await model.LoadWindowAsync(500, 60);
+            var ids = Enumerable.Range(499, 62).Select(index => model.GetRenderableWindowItem(index)?.ContentId).ToArray();
+            Assert.DoesNotContain(ids, id => id is null);
+            Assert.Equal(ids.Length, ids.Distinct().Count());
+            Assert.Equal("item-499", ids[0]);
+            Assert.Equal("item-500", ids[1]);
+            Assert.Equal("item-560", ids[^1]);
             await wire.Idle();
             Assert.Equal(stopped, wire.Requests.Count);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetainedRefreshHandbackRestartsCanceledLettersAndCount(bool churn)
+    {
+        using var wire = new Catalog { HoldLetters = true, HoldCount = true };
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        try
+        {
+            await model.LoadCommand.ExecuteAsync(null);
+            await wire.LettersStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await wire.CountStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await model.LoadWindowAsync(400, 100);
+            await model.LoadWindowAsync(500, 100);
+            Assert.True(model.IsLetterIndexLoading);
+            Assert.Null(model.LetterIndex);
+            wire.HoldLetters = wire.HoldCount = false;
+            if (churn) { wire.ChangeSnapshotAt = 560; wire.SnapshotChangesRemaining = 20; }
+            else wire.FailWindowAt = 560;
+
+            var result = await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+
+            Assert.Equal(churn ? LibraryViewModel.CatalogRefreshResult.Deferred : LibraryViewModel.CatalogRefreshResult.Failed, result);
+            await wire.Idle();
+            Assert.Equal(2, wire.LetterReads);
+            Assert.Equal(2, wire.CountReads);
+            Assert.NotNull(model.LetterIndex);
+            Assert.False(model.IsLetterIndexLoading);
+            Assert.False(model.LetterIndexFailed);
+            Assert.Equal(1000, model.DisplayTotalCount);
+            Assert.Equal("item-500", model.GetRenderableWindowItem(500)?.ContentId);
+        }
+        finally
+        {
+            wire.ReleaseLetters.TrySetResult();
+            wire.ReleaseCount.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task InterruptedRetainedRefreshRestartsCountEvenWhenLetterReadFails()
+    {
+        using var wire = new Catalog { HoldCount = true };
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        try
+        {
+            await model.LoadCommand.ExecuteAsync(null);
+            await model.EnsureLetterIndexAsync();
+            await wire.CountStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await model.LoadWindowAsync(400, 100);
+            await model.LoadWindowAsync(500, 100);
+            wire.HoldWindowAt = 500;
+            var refresh = model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            wire.HoldCount = false;
+            wire.FailLetters = true;
+
+            await model.JumpToLetterCommand.ExecuteAsync("M").WaitAsync(TimeSpan.FromSeconds(3));
+            wire.ReleaseChunk.TrySetResult();
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await refresh);
+
+            await wire.Idle();
+            Assert.NotNull(model.LetterJumpError);
+            Assert.Equal(2, wire.CountReads);
+            Assert.Equal(1000, model.DisplayTotalCount);
+            Assert.Equal("item-500", model.GetRenderableWindowItem(500)?.ContentId);
+        }
+        finally
+        {
+            wire.ReleaseChunk.TrySetResult();
+            wire.ReleaseCount.TrySetResult();
         }
     }
 
@@ -1028,8 +1112,10 @@ public sealed class LibraryBackgroundRefreshTests
         internal readonly List<Dictionary<string, string>> Requests = [];
         private readonly Dictionary<string, List<(string Id, string Title)>> _snapshots = [];
         private int _inFlight;
-        internal int LetterReads, LetterPosition = 500;
-        internal bool Fail, FailLetters, OmitWindowTotals, ZeroWindowTotal, HoldCount, TimeoutWindow, HeldWindowCancelled;
+        internal int LetterReads, CountReads, LetterPosition = 500;
+        internal bool Fail, FailLetters, OmitWindowTotals, ZeroWindowTotal, HoldCount, HoldLetters, TimeoutWindow, HeldWindowCancelled;
+        internal readonly TaskCompletionSource LettersStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseLetters = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource CountStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int? FailWindowAt, HoldWindowAt, HoldSecondWindowAt, ChangeSnapshotAt;
@@ -1059,6 +1145,11 @@ public sealed class LibraryBackgroundRefreshTests
                 if (path.EndsWith("/catalog/letters"))
                 {
                     Interlocked.Increment(ref LetterReads);
+                    if (HoldLetters)
+                    {
+                        LettersStarted.TrySetResult();
+                        await ReleaseLetters.Task.WaitAsync(ct);
+                    }
                     if (FailLetters) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"fixture\"}") };
                     var position = LetterPosition;
                     return Reply(new
@@ -1095,10 +1186,14 @@ public sealed class LibraryBackgroundRefreshTests
                     query["window"] = snapshot;
                     lock (Requests) Requests.Add(query);
                 }
-                if (!query.ContainsKey("skip_total") && HoldCount)
+                if (!query.ContainsKey("skip_total"))
                 {
-                    CountStarted.TrySetResult();
-                    await ReleaseCount.Task.WaitAsync(ct);
+                    Interlocked.Increment(ref CountReads);
+                    if (HoldCount)
+                    {
+                        CountStarted.TrySetResult();
+                        await ReleaseCount.Task.WaitAsync(ct);
+                    }
                 }
                 if (query.ContainsKey("skip_total") && offset == HoldWindowAt)
                 {

@@ -307,6 +307,7 @@ public partial class LibraryViewModel
                 _letterRestoreWindow = null;
                 PendingLetter = null;
             }
+            if (interruptedHealthyRefresh && IsCurrent()) ResumeOptionalCatalogReads();
         }
     }
 
