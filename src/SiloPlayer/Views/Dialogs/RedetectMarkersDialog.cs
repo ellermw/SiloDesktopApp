@@ -22,7 +22,14 @@ public sealed class RedetectMarkersDialog : ItemScopedDialog
             var content = new Grid { ColumnSpacing = 12 }; content.ColumnDefinitions.Add(new() { Width = new GridLength(20) }); content.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
             var glyph = WebUiIcon.Create(icon, 20, Brush("SecondaryTextBrush")); glyph.VerticalAlignment = VerticalAlignment.Top; content.Children.Add(glyph); Grid.SetColumn(copy, 1); content.Children.Add(copy);
             var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(16), BorderThickness = new Thickness(1), BorderBrush = Brush("BorderBrush"), Background = Brush("SurfaceBrush"), CornerRadius = new CornerRadius(12), IsEnabled = false };
-            AutomationProperties.SetName(button, label); button.Click += async (_, _) => await RunActionAsync(async () => { await new MediaMarkerApi(Client).RedetectAsync(Context, ItemId, "episode", kind, Lifetime.Token); RequireAuthority(); HasSaved = true; WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, ItemId, context: Context)); DispatcherQueue.TryEnqueue(Hide); });
+            AutomationProperties.SetName(button, label); button.Click += async (_, _) => await RunActionAsync(async () =>
+            {
+                await new MediaMarkerApi(Client).RedetectAsync(Context, ItemId, "episode", kind, Lifetime.Token);
+                // An accepted request retires cached markers even if dialog authority was revoked.
+                if (Client.IsCurrentContext(Context))
+                    WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, ItemId, context: Context));
+                RequireAuthority(); HasSaved = true; DispatcherQueue.TryEnqueue(Hide);
+            });
             choices.Children.Add(button); _choices.Add((kind, button, help));
         }
     }
