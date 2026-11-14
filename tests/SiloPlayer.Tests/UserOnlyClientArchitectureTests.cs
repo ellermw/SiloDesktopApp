@@ -3,52 +3,43 @@ namespace SiloPlayer.Tests;
 public sealed class UserOnlyClientArchitectureTests
 {
     [Fact]
-    public void DesktopProjectContainsNoAdministrationUiTrees()
+    public void DesktopProjectContainsOnlyApprovedMonitorAdministrationSurfaces()
     {
         var root = FindRepositoryRoot();
-
-        var adminViews = Path.Combine(root, "src", "SiloPlayer", "Views", "Admin");
-        var adminViewModels = Path.Combine(root, "src", "SiloPlayer", "ViewModels", "Admin");
-        Assert.False(Directory.Exists(adminViews) && Directory.EnumerateFiles(adminViews, "*", SearchOption.AllDirectories).Any());
-        Assert.False(Directory.Exists(adminViewModels) && Directory.EnumerateFiles(adminViewModels, "*", SearchOption.AllDirectories).Any());
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Controls", "AdminCommandPaletteDialog.cs")));
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Controls", "ServerActivityButton.xaml")));
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs")));
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Views", "SetupWizardPage.xaml")));
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Views", "SetupWizardPage.xaml.cs")));
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "SetupWizardViewModel.cs")));
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Controls", "ImpersonationBanner.xaml")));
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer", "Controls", "ImpersonationBanner.xaml.cs")));
-
-        var forbiddenNames = Directory.EnumerateFiles(
-                Path.Combine(root, "src"),
-                "*",
-                SearchOption.AllDirectories)
-            .Where(path => !path.Split(Path.DirectorySeparatorChar).Any(segment =>
-                segment.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
-                segment.Equals("obj", StringComparison.OrdinalIgnoreCase)))
-            .Where(path => path.Split(Path.DirectorySeparatorChar).Any(segment =>
-                segment.Contains("Admin", StringComparison.OrdinalIgnoreCase) ||
-                segment.Contains("SetupWizard", StringComparison.OrdinalIgnoreCase) ||
-                segment.Contains("Impersonation", StringComparison.OrdinalIgnoreCase) ||
-                segment.Contains("MarkerEditor", StringComparison.OrdinalIgnoreCase)))
-            // This permission-gated item dialog now exists in the ordinary WebUI
-            // action bar. Standalone admin trees and the playback marker editor
-            // remain forbidden; allow only this exact item-scoped source file.
-            .Where(path => !path.Equals(Path.Combine(root, "src", "SiloPlayer", "Views", "Dialogs", "MarkerEditorDialog.cs"), StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        Assert.Empty(forbiddenNames);
+        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(root, "docs", "parity", "admin-monitor-surfaces.json")));
+        var approved = manifest.RootElement.GetProperty("sourceFiles").EnumerateArray()
+            .Select(value => value.GetString()!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("src/SiloPlayer/Views/Admin/AdminShellPage.cs", approved);
+        var unexpected = Directory.EnumerateFiles(Path.Combine(root, "src"), "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
+            .Where(path => !path.Split('/').Any(segment => segment.Equals("bin", StringComparison.OrdinalIgnoreCase)
+                || segment.Equals("obj", StringComparison.OrdinalIgnoreCase)))
+            .Where(path => path.Split('/').Any(segment => segment.Contains("Admin", StringComparison.OrdinalIgnoreCase)
+                || segment.Contains("SetupWizard", StringComparison.OrdinalIgnoreCase)
+                || segment.Contains("Impersonation", StringComparison.OrdinalIgnoreCase)
+                || segment.Contains("MarkerEditor", StringComparison.OrdinalIgnoreCase)))
+            .Where(path => path != "src/SiloPlayer/Views/Dialogs/MarkerEditorDialog.cs")
+            .Where(path => !approved.Contains(path)).ToArray();
+        Assert.Empty(unexpected);
+        Assert.All(approved, path => Assert.True(File.Exists(Path.Combine(root, path)), path));
+        Assert.DoesNotContain(approved, path => path.Contains("SetupWizard", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("Impersonation", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public void DesktopProjectContainsNoDedicatedAdministrationApiOrModels()
+    public void MonitorDoesNotRestoreLegacyOrUnrelatedAdministrationApis()
     {
         var root = FindRepositoryRoot();
-
         Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "AdminApi.cs")));
-        var adminModels = Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Admin");
-        Assert.False(Directory.Exists(adminModels) && Directory.EnumerateFiles(adminModels, "*", SearchOption.AllDirectories).Any());
-        Assert.False(File.Exists(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "AdminLogStreamClient.cs")));
+        var apiSources = Directory.EnumerateFiles(Path.Combine(root, "src", "SiloPlayer.Core", "Api"), "AdminMonitorApi*.cs")
+            .Select(File.ReadAllText);
+        foreach (var source in apiSources)
+        {
+            Assert.DoesNotContain("/api/v1/", source);
+            foreach (var forbidden in new[] { "/admin/access-groups", "/admin/invitations", "/admin/plugins", "/admin/impersonation", "/admin/setup" })
+                Assert.DoesNotContain(forbidden, source);
+        }
     }
 
     [Fact]
@@ -92,7 +83,9 @@ public sealed class UserOnlyClientArchitectureTests
         var buildScript = File.ReadAllText(Path.Combine(root, "installer", "build.ps1"));
 
         Assert.Contains("ForbiddenPublishedResourcePatterns", buildScript, StringComparison.Ordinal);
-        Assert.Contains("Admin", buildScript, StringComparison.Ordinal);
+        Assert.Contains("ApprovedMonitorPublishedResources", buildScript, StringComparison.Ordinal);
+        Assert.Contains("Views/Admin/AdminShellPage.xbf", buildScript, StringComparison.Ordinal);
+        Assert.Contains("'Admin'", buildScript, StringComparison.Ordinal);
         Assert.Contains("SetupWizard", buildScript, StringComparison.Ordinal);
         Assert.Contains("Impersonation", buildScript, StringComparison.Ordinal);
         Assert.Contains("MarkerEditor", buildScript, StringComparison.Ordinal);

@@ -215,6 +215,7 @@ public sealed partial class MainWindow : Window
         if (AppWindow != null) AppWindow.Closing += OnWindowClosing;
         App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().Initialize(DispatcherQueue);
         InitializeAppUpdates();
+        InitializeAdminMonitor();
     }
 
     private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
@@ -306,6 +307,7 @@ public sealed partial class MainWindow : Window
         if (MobileShellHeader.Visibility != mobileHeaderVisibility)
             MobileShellHeader.Visibility = mobileHeaderVisibility;
 
+        UpdateAdminChrome();
         if (!NavView.IsPaneVisible)
             return;
 
@@ -478,6 +480,7 @@ public sealed partial class MainWindow : Window
     {
         if (_receiverShutdownStarted) return;
         _receiverShutdownStarted = true;
+        if (ContentFrame.Content is SiloPlayer.Views.Admin.AdminShellPage admin && !await admin.CanLeaveAsync()) { _receiverShutdownStarted = false; return; }
         if(!await PrepareAppUpdateExitAsync()){_receiverShutdownStarted=false;return;}
         try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
         catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
@@ -491,6 +494,7 @@ public sealed partial class MainWindow : Window
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         _realtimeMediaStateRefresh.Dispose();
+        DisposeAdminMonitor();
         _windowClosed = true;
         if (ContentFrame.Content is ItemDetailPage detail) detail.ViewModel.CancelPendingLoads();
         Interlocked.Exchange(ref _loadingOverlayOwner, null);
@@ -1152,6 +1156,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (FocusSettingsSidebarSearch()) return;
+        if (TryAdminShellSearch()) return;
         try
         {
             var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot, InitialQuery = _globalSearchQuery };
@@ -1811,7 +1816,7 @@ public sealed partial class MainWindow : Window
             var desiredPaneOpen = !_isNarrowShell && DesktopSidebarIsOpen;
             if (NavView.IsPaneOpen != desiredPaneOpen)
                 NavView.IsPaneOpen = desiredPaneOpen;
-            if (!NavView.IsPaneVisible)
+            if (!NavView.IsPaneVisible && !IsAdminShellActive)
                 NavView.IsPaneVisible = true;
             ApplyResponsiveShellLayout();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
@@ -2119,6 +2124,9 @@ public sealed partial class MainWindow : Window
         if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
             return false;
 
+        if (TryAdminShellBack())
+            return true;
+
         if (!_navigationService.CanGoBack)
             return false;
 
@@ -2228,6 +2236,7 @@ public sealed partial class MainWindow : Window
 
         ProfileNameText.Opacity = isOpen ? 1 : 0;
         ProfileNameText.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAdminFooterPresentation(isOpen);
         ProfileAvatarSlot.Width = 28;
         ProfileAvatarSlot.Margin = isOpen ? new Thickness(-5, 0, -5, 0) : new Thickness(0);
         ProfileFooterContent.Spacing = isOpen ? 10 : 0;
@@ -2405,7 +2414,7 @@ public sealed partial class MainWindow : Window
 
         // Restore the authenticated shell at the frame boundary so navigation
         // never leaves the user-controlled pane in a transient hidden state.
-        if (!NavView.IsPaneVisible)
+        if (!NavView.IsPaneVisible && !IsAdminShellActive)
             NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout(duringFrameNavigation: true);
         SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
@@ -2956,6 +2965,7 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Activate();
                 break;
         }
+        UpdateAdminChrome();
         ApplyPendingAccessRefresh();
     }
 

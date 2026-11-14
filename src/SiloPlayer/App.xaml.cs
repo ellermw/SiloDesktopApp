@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Core.Services.Updates;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
@@ -364,6 +365,14 @@ public partial class App : Application
 
         // Event channel client (realtime WebSocket for history_import, sessions, etc.)
         services.AddSingleton<EventChannelClient>();
+
+        // The Admin Monitor placements share one authority owner and event-channel lease.
+        services.AddSingleton<AdminMonitorApi>();
+        services.AddSingleton<AdminMonitorAuthority>();
+        services.AddSingleton<LogsStreamClient>();
+        services.AddSingleton(sp => new ServerActivityStore(
+            sp.GetRequiredService<AdminMonitorApi>(), sp.GetRequiredService<AdminMonitorAuthority>(),
+            new EventChannelAdminRealtime(sp.GetRequiredService<EventChannelClient>()), new SystemAdminScheduler()));
 
         // Image service
         services.AddSingleton(new ImageService(imageCacheDir));

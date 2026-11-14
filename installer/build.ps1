@@ -349,6 +349,15 @@ if ([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PublishRoot 'SiloP
 
 # A user-only desktop build must never package a removed administration,
 # setup-wizard, impersonation, or writable marker-editor resource.
+$ApprovedMonitorPublishedResources = @(
+    'Views/Admin/AdminShellPage.xbf',
+    'Views/Admin/AdminDashboardPage.xbf',
+    'Views/Admin/AdminActivityPage.xbf',
+    'Views/Admin/AdminLogsPage.xbf',
+    'Views/Admin/AdminDiagnosticsPage.xbf',
+    'Views/Admin/AdminLoggingSettingsPage.xbf',
+    'Controls/ServerActivityButton.xbf'
+)
 $ForbiddenPublishedResourcePatterns = @(
     'Admin',
     'SetupWizard',
@@ -357,14 +366,15 @@ $ForbiddenPublishedResourcePatterns = @(
 )
 $ForbiddenPublishedResources = Get-ChildItem -LiteralPath $PublishDir -Recurse -File |
     Where-Object {
-        $relativePath = [System.IO.Path]::GetRelativePath($PublishDir, $_.FullName)
+        $relativePath = [System.IO.Path]::GetRelativePath($PublishDir, $_.FullName).Replace('\', '/')
+        if ($ApprovedMonitorPublishedResources -contains $relativePath) { return $false }
         $ForbiddenPublishedResourcePatterns.Where({
             $relativePath -match [regex]::Escape($_)
         }).Count -gt 0
     }
 if ($ForbiddenPublishedResources) {
     $names = ($ForbiddenPublishedResources | Select-Object -ExpandProperty FullName) -join "`n"
-    throw "Forbidden user-only resources were found in the publish output:`n$names"
+    throw "Forbidden non-Monitor resources were found in the publish output:`n$names"
 }
 
 # Copy libmpv if not already in publish output

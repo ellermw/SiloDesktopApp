@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <Using Include="Xunit" />
+    <ProjectReference Include="../../src/SiloPlayer.Core/SiloPlayer.Core.csproj" />
+    <Reference Include="Microsoft.CodeAnalysis" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.dll" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.CSharp.dll" />
+    <Compile Include="../SiloPlayer.Tests/AdminMonitorTestKit.cs" Link="AdminMonitorTestKit.cs" />
+    <Compile Include="../SiloPlayer.Tests/AdminMonitorLogs*.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../SiloPlayer.Tests/AdminMonitorLogging*.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../SiloPlayer.Tests/AdminMonitorDiagnostics*.cs" Link="%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

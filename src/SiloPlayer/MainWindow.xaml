@@ -311,6 +311,40 @@
                         Margin="0,0,0,8"
                         Opacity="0.7" />
 
+                    <!-- Admin (AppSidebar.tsx footer): acting admin only, directly above the profile. -->
+                    <Button
+                        x:Name="AdminFooterButton"
+                        Visibility="Collapsed"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        MinWidth="0" MinHeight="0"
+                        Padding="12"
+                        Margin="12,0"
+                        CornerRadius="12"
+                        AutomationProperties.Name="Admin">
+                        <StackPanel x:Name="AdminFooterContent" Orientation="Horizontal" Spacing="10">
+                            <Viewbox x:Name="AdminFooterIconSlot" Width="18" Height="18">
+                                <Canvas Width="24" Height="24">
+                                    <Path Data="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+                                          Stroke="{StaticResource SecondaryTextBrush}" StrokeThickness="2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                                </Canvas>
+                            </Viewbox>
+                            <TextBlock
+                                x:Name="AdminFooterLabel"
+                                Text="Admin"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                VerticalAlignment="Center"
+                                FontSize="13"
+                                FontWeight="Medium">
+                                <TextBlock.OpacityTransition>
+                                    <ScalarTransition Duration="0:0:0.3" />
+                                </TextBlock.OpacityTransition>
+                            </TextBlock>
+                        </StackPanel>
+                    </Button>
 
                     <!-- Profile button with dropdown (webui: Settings + Switch Profile + Logout inside avatar dropdown) -->
                     <Grid>
@@ -583,6 +617,10 @@
                                     FontSize="20"
                                     Foreground="{StaticResource SecondaryTextBrush}" />
                             </Button>
+                            <!-- Layout.tsx narrow header: Search, Server Activity, avatar. -->
+                            <controls:ServerActivityButton
+                                x:Name="MobileServerActivityButton"
+                                VerticalAlignment="Center" />
                             <Button
                                 x:Name="MobileProfileButton"
                                 Width="40"
@@ -617,6 +655,14 @@
 
             </Grid>
         </NavigationView>
+
+        <!-- Desktop Server Activity (Layout.tsx: fixed end-5 top-6, z-40); the control applies the admin gate. -->
+        <controls:ServerActivityButton
+            x:Name="MainServerActivityButton"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Margin="0,24,20,0"
+            Canvas.ZIndex="40" />
 
         <!-- Layer 2: Loading overlay (shown while preparing playback) -->
         <Grid x:Name="LoadingOverlay" Visibility="Collapsed" Background="{StaticResource AppBackgroundBrush}">
