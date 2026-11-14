@@ -315,7 +315,7 @@ public sealed partial class HomePage : Page
     }
 
     private void PersonalizeHome_Click(object sender, RoutedEventArgs e)
-        => Frame.Navigate(typeof(TasteSeedPage), true);
+        => Frame.Navigate(typeof(TasteSeedPage), true, PageTransitionHelper.ForPageChange());
 
     private void DismissTasteSeed_Click(object sender, RoutedEventArgs e)
     {

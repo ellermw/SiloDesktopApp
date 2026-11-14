@@ -736,7 +736,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         App.Services.GetRequiredService<WatchTogetherCoordinator>().ClearActiveRoom();
         ViewModel.Dispose();
-        Frame?.Navigate(typeof(WatchTogetherJoinPage));
+        Frame?.Navigate(typeof(WatchTogetherJoinPage), null, PageTransitionHelper.ForPageChange());
     }
 
     private async void SuggestionVoteButton_Click(object sender, RoutedEventArgs e)

@@ -3331,7 +3331,8 @@ public sealed partial class ItemDetailPage : Page
     {
         if (_currentContentId == null) return;
         App.Services.GetRequiredService<ItemDetailPrefetchCache>().Invalidate(_currentContentId);
-        Frame?.Navigate(typeof(ItemDetailPage), _currentContentId == null ? null : MediaNavigationContext.Detail(_currentContentId, ViewModel.LibraryId));
+        var retry = MediaNavigationContext.Detail(_currentContentId, ViewModel.LibraryId);
+        Frame?.Navigate(typeof(ItemDetailPage), retry, PageTransitionHelper.ForPageChange());
     }
 
     private async void RetryMetadataRefresh_Click(object sender, RoutedEventArgs e)
