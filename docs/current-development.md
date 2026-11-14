@@ -1,3 +1,64 @@
+# November 13 - Finishing artwork on the ended screen
+
+Owner report: after the last Cops episode ended, "You've finished Cops" and On
+Deck were right but the finishing slot beside them was a large empty grey
+rectangle. True EOF hides the native preview and the slot had no picture of its
+own. It now shows the finished title's watch backdrop (a series backdrop for an
+episode: never an episode still or anything of the next item), decoded under
+the live preview and revealed only at true EOF; with no usable picture the slot
+leaves the layout. Closing Playing Next, a newer playback and a profile change
+each retire it. A second defect found on the way is fixed: any window move or
+resize on the ended screen re-showed the finished video over it.
+
+Branch codex/finished-preview-nov13 on Beta cbafac58; version 1.2.1017-beta.1 /
+1.2.1016.1 unchanged. Four new hud-completion cases (finished-early-eof,
+finished-eof, finished-no-art, finished-stale) failed against the unfixed
+product at an actual libmpv EOF and pass after it, with the nine existing
+hud-completion cases, hud-completion-scope and hud-nov12; 6,108/6,108 units.
+Product DLL SHA256 E553BDE9D1DDB6B86B36ECDD08C1A3D35C79B88F9DACE725601C1B83D70919D7.
+Receipt: D:/SiloPlayer-build/finished-preview-receipt.json.
+November 14 lead review: residual mini-bar/PiP resize re-show reproduced and
+corrected. Final lead verification passed the four new EOF cases, live
+post-roll, and 91 related source/API tests; delivery hashes are recorded in
+D:/SiloPlayer-build/finished-preview-delivery-receipt.json. See
+[scope and review limits](audit-gaps/2026-11-14-finished-preview.md).
+
+Limits: synthetic solid-colour backdrops and fixture HTTP, not a live server or
+the owner's library; shuffle and physical DPI were not exercised. The WebUI
+fades its finished mini player out and leaves that column empty; showing
+artwork there is a deliberate desktop difference. hud-completion `still` and
+hud-nov12 fail when rerun in a result directory that holds an earlier run's
+cached image or saved threshold, and pass in a fresh one; the `still` held URL
+is now unique per run. Output reuses the same payload (1.4 GiB); cleanup was
+not attempted after the earlier policy rejection, recovered 0 GiB on both
+drives. Installed player untouched.
+
+---
+# November 13 - Continue Watching stale/duplicate-card repair
+
+Independent branch codex/continue-watching-duplicate-nov13 starts at Beta
+cbafac58, version 1.2.1017-beta.1 / 1.2.1016.1 unchanged. Unique server data
+could still render an old card after Move then Replace. RepeaterItemsSource
+now coalesces Move batches into its existing owned deferred Reset; model
+membership/order stay authoritative. This is separate from the blank finished
+player preview and previous alignment PRs.
+
+Baseline native reproduction failed. Final Release publish/native build,
+214 focused Home/media reconciliation units, home-continue-duplicate and
+home-reconcile-data passed. Native assertions cover every initial episode
+card/title, repeated reorders, insertion before Move, retained horizontal
+scroll and detached/reloaded rows. Two of three mid-layout rejection scenarios
+were reached, including shrink; the reloaded mid-layout trigger was skipped.
+Keyboard focus was unavailable in the hidden host; strict home-reconcile did
+not pass. Independent review's P2 fixture finding is corrected; no product
+P0/P1/P2 was found, and no second independent review is claimed.
+
+See [incident and limits](audit-gaps/2026-11-13-continue-watching-duplicate.md).
+Receipt: D:/SiloPlayer-build/continue-duplicate-receipt.json. One reusable output
+payload; prior cleanup rejection was not retried, 0 GiB recovered on C: and D:.
+The installed player was not changed or restarted; pipeline owns packaging.
+
+---
 # November 13 - Metered quality alignment verified for Beta
 
 Branch codex/metered-quality-4448-nov13 starts at Beta 6f9f87f7 with version
@@ -36,6 +97,25 @@ submitted in PR148; metered quality and library scan refresh remain pending.
 Output reuses the same sub-1.3GiB payload; free C:192.84GiB, D:480.83GiB.
 Cleanup remains unattempted after the prior policy rejection; recovered0GiB on
 both drives. Installed player remains open and PR145 is untouched.
+
+---
+# November 13 - Upstream 4448e401 Auto ranking and multipart increment
+
+Reviewed Beta base is 6f9f87f7, version 1.2.1017-beta.1 / 1.2.1016.1. The first
+independent increment of the 43-commit update implements server-order detail Auto,
+saved later-part Resume, first-part Start Over and ordered multipart downloads.
+67 related units, Release publish, native host build and both track-choices and
+detail-action-hover native fixtures passed. Independent review found no P0-P2.
+See [scope and limits](parity/2026-11-13-upstream-4448-ranking.md).
+
+Marker invalidation is covered by the increment above; connection-quality and
+mounted-library scan refresh remain separate pending increments. Pipeline owns
+review/fixes/QA/delivery after each qualifying Beta submission. PR145 is untouched;
+versions remain pipeline-owned.
+One existing output/publish/native payload is reused. Generated data stays below
+1.3 GiB, free C: 192.83 GiB and D: 480.84 GiB. Cleanup is not retried after the
+previous automatic approval block; recovered 0 GiB on each drive. Installed
+player PID38020 remains open.
 
 ---
 # November 13 - Edition-scoped detail Auto verified locally

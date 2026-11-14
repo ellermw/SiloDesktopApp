@@ -757,7 +757,13 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="0"/></Grid.RowDefinitions>
                 <StackPanel x:Name="PlayingNextFinishingPanel" VerticalAlignment="Center" Spacing="10">
-                    <Border x:Name="PlayingNextFinishingSlot" Height="300" Background="#101013" CornerRadius="12" SizeChanged="PlayingNextFinishingSlot_SizeChanged"/>
+                    <!-- The live native preview covers this slot until true EOF; then the
+                         finished title's own backdrop shows here (MainWindow.PlayingNextFinishingArt.cs). -->
+                    <Border x:Name="PlayingNextFinishingSlot" Height="300" Background="#101013" CornerRadius="12" SizeChanged="PlayingNextFinishingSlot_SizeChanged">
+                        <Image x:Name="PlayingNextFinishingArt" Stretch="UniformToFill" Opacity="0"
+                               ImageFailed="PlayingNextFinishingArt_ImageFailed"
+                               AutomationProperties.AccessibilityView="Raw" />
+                    </Border>
                     <TextBlock x:Name="PlayingNextFinishingTitle" Text="Finishing episode" FontSize="14" Foreground="#BDBAB3" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             <ScrollViewer x:Name="PlayingNextScroller" Grid.Column="1" HorizontalScrollMode="Disabled"
