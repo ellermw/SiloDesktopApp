@@ -1106,6 +1106,13 @@ public sealed class PlayerServiceSourceTests
 
         Assert.Contains("else if (_postRollActive && !_postRollVideoEnded)", source, StringComparison.Ordinal);
         Assert.Contains("_videoWindow?.EnterPostRollPreview();", source, StringComparison.Ordinal);
+        // Every owner move and resize reaches HandleWindowMinimized: on the ended
+        // screen it must not show the finished video over the finishing artwork.
+        var restore = source[source.IndexOf("public void HandleWindowMinimized(bool minimized)", StringComparison.Ordinal)..];
+        restore = restore[..restore.IndexOf("\n    }", StringComparison.Ordinal)];
+        var ended = restore.IndexOf("else if (_postRollVideoEnded)", StringComparison.Ordinal);
+        Assert.True(ended >= 0 && ended < restore.IndexOf("_videoWindow?.Show();", StringComparison.Ordinal),
+            "An owner move or resize on the ended screen must keep the finished video hidden.");
         Assert.Contains("_closing = true;", source, StringComparison.Ordinal);
         Assert.Contains("_playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;", source, StringComparison.Ordinal);
         Assert.DoesNotContain("if (State != PlayerState.Idle)\n        {\n            _playbackManager?.Dispose();", source.ReplaceLineEndings("\n"), StringComparison.Ordinal);
