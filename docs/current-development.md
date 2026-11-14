@@ -1,3 +1,39 @@
+# November 14 - Mini-player native popup during replacement preparation
+
+Independent increment from Beta cbafac58cdd4987323d36031b7881e2f2fc98e54;
+version 1.2.1017-beta.1 / 1.2.1016.1 unchanged. Stopping a mini video left
+its 200x112 native popup over Preparing Playback; queued resize/restore could
+re-show it after a one-time hide. Preparation owns suppression of native
+ShowWindow and SWP_SHOWWINDOW until the matching ready playback releases it.
+Suppression hides idle, mini and PiP surfaces; expanded/fullscreen replacements
+retain their outgoing surface so fullscreen preparation does not expose the
+desktop. First native initialization is gated too. Delayed fullscreen position
+reassertion dispatches to the UI queue.
+
+The implementation run passed 6,107 units and six new native preparation cases,
+plus post-roll, autoplay and five adjacent native groups. Independent review
+found that blanket suppression hid fullscreen playback. Lead reproduced that
+failure, scoped suppression, and added expanded/fullscreen/PiP controls. Lead's
+final Release publish and host build pass; all nine preparation cases plus
+post-roll/autoplay pass on the final product. The lead reran 112 focused tests.
+Published/reference/host product SHA256:
+F760F9E715896334D40CBD5BBF3A2412DAC0C5F576208435C089440C0313DDC1.
+Earlier full-suite/adjacent results predate the final scope correction and are
+not claimed as fresh full-suite verification of that correction.
+
+Evidence: D:/SiloPlayer-build/mini-prepare-delivery-receipt.json,
+mini-prepare-lead-focused.log, mini-prepare-verified-source-publish.log,
+mini-prepare-verified-source-native-build.log and
+results/hud-completion-*-verified-source/results.txt. Original red receipts and
+mini-prepare-receipt.json retain their original hashes and scope.
+
+The installed player PID 40372 remains open. Native checks use held synthetic
+HTTP preparation and real offscreen HWND visibility/geometry, not live-account
+visual verification. No installed-player change, installer or direct release.
+Earlier automatic approval review blocked cleanup; no deletion was retried,
+0 GiB recovered on C: and D:, about 1.93 GiB shared generated output retained.
+
+---
 # November 13 - Marker-save watch-cache invalidation
 
 Independent upstream4448e401 marker increment: accepted edits/redetection publish

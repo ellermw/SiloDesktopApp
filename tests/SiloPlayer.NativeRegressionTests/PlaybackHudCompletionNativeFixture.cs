@@ -61,13 +61,16 @@ internal static partial class PlaybackHudCompletionNativeFixture
             await Task.Delay(150);
             var mode = Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE") ?? "postroll";
             wire.HasEpisodes=mode=="metadata";
+            wire.HasSeries = !mode.StartsWith("mini-prepare", StringComparison.Ordinal);
             await service.PlayAsync("episode-1", fromStart: true);
             await Until(() => service.Mpv != null && !service.IsLoading && service.WatchDetail?.ContentId == "episode-1" && (bool)Field(service,"_transportHasFirstOutput")!, "Actual PlayAsync did not load the first episode.");
             service.Mpv!.SetProperty("ao", "null"); service.Mpv.SetProperty("loop-file", "inf");
             Call(service, "StopPlaybackStallWatchdog");
             await LoadProductionOsc(service.Mpv);
             Call(service,"SendMarkersToOsc"); await WaitForOscOwner(service);
-            if (mode == "postroll")
+            if (mode.StartsWith("mini-prepare", StringComparison.Ordinal))
+                await VerifyMiniPreparation(service, wire, api, window, mode);
+            else if (mode == "postroll")
             {
                 service.SetNextEpisodeHint("episode-1", "episode-2", "The next episode", "Synthetic Show", null, "Next episode overview", runtimeSeconds: 30, seasonNumber: 1, episodeNumber: 2);
                 var position = service.Mpv.Position;
@@ -301,6 +304,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint hwnd);
     private sealed class Wire(string origin) : HttpMessageHandler
     {
+        internal readonly Dictionary<string, PreparationGate> HeldPreparations = [];
+        internal bool HasSeries = true;
         internal int Stops, Starts, Advances;
         internal bool FailStart, FailAdvance, HoldAdvance, HasEpisodes;
         internal bool HideImages=true, HoldStill;
@@ -342,7 +347,12 @@ internal static partial class PlaybackHudCompletionNativeFixture
             {
                 WatchQueries.Add(request.RequestUri.Query);
                 var id=path.Split('/').Last();
-                return Json(new { content_id=id,type="episode",title="Finishing episode",series_id="series",series_title="Synthetic Show",season_number=1,episode_number=1,
+                if (HeldPreparations.TryGetValue(id, out var preparation))
+                {
+                    preparation.Entered.TrySetResult();
+                    await preparation.Release.Task;
+                }
+                return Json(new { content_id=id,type=HasSeries ? "episode" : "movie",title="Finishing episode",series_id=HasSeries ? "series" : null,series_title="Synthetic Show",season_number=1,episode_number=1,
                     versions=new[] {new {file_id=42,duration=30,container="y4m",codec_video="rawvideo"}} });
             }
             if (path.EndsWith("/progress"))
