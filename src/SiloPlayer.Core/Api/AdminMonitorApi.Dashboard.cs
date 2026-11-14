@@ -164,10 +164,7 @@ public sealed partial class AdminMonitorApi
         var (values, etag) = await client.GetDashboardJsonWithETagAsync<Dictionary<string, JsonElement>>(
             lease.Context, "/api/v2/admin/settings/effective", linked.Token).ConfigureAwait(false);
         lease.ThrowIfRetired();
-        var projected = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (key, value) in values)
-            if (DashboardAttentionKeys.Contains(key) && value.ValueKind == JsonValueKind.String)
-                projected[key] = value.GetString() ?? "";
+        var projected = ProjectEffectiveSettings(values, DashboardAttentionKeys.Contains);
         return new DashboardAttentionSettings(projected, etag);
     }
 

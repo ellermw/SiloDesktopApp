@@ -110,16 +110,8 @@ public sealed partial class AdminMonitorApi
     }
 
     private static Dictionary<string, string> LoggingProjectSettings(Dictionary<string, JsonElement> values, bool includeDiagnostics = false)
-    {
-        var projected = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (key, value) in values)
-        {
-            if (!LoggingDraft.Keys.Contains(key, StringComparer.Ordinal) && !(includeDiagnostics && key == "diagnostics.uploads_enabled")) continue;
-            if (value.ValueKind == JsonValueKind.String) projected[key] = value.GetString()!;
-            else if (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False) projected[key] = value.GetRawText();
-        }
-        return projected;
-    }
+        => ProjectEffectiveSettings(values, key => LoggingDraft.Keys.Contains(key, StringComparer.Ordinal) ||
+            (includeDiagnostics && key == "diagnostics.uploads_enabled"));
 
     private static ApiCollectionPage<T> LogsValidatePage<T>(ApiCollectionPage<T> page, string? cursor, int maxItems)
     {

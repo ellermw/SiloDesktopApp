@@ -193,6 +193,22 @@ public sealed class AdminDashboardApiTests : IDisposable
     }
 
     [Fact]
+    public async Task AttentionSettingsProjectMixedScalarsAndIgnoreNonScalarOrUnrelatedValues()
+    {
+        _kit.Http.Respond = (_, _) => Task.FromResult(WithETag(AdminMonitorKit.Json(
+            """{"database.max_connections":100,"playback.transcode_enabled":true,"email.enabled":false,"email.smtp_host":"smtp.test","server.public_url":"","s3.public_bucket":null,"s3.private_bucket":{},"redis.url":[],"unrelated.number":42,"unrelated.boolean":true,"unrelated.string":"ignored"}"""), "\"S1\""));
+        using var lease = _authority.Capture();
+        var settings = await _api.GetDashboardAttentionSettingsAsync(lease);
+        Assert.Equal("\"S1\"", settings.ETag);
+        Assert.Equal(5, settings.Values.Count);
+        Assert.Equal("100", settings.Values["database.max_connections"]);
+        Assert.Equal("true", settings.Values["playback.transcode_enabled"]);
+        Assert.Equal("false", settings.Values["email.enabled"]);
+        Assert.Equal("smtp.test", settings.Values["email.smtp_host"]);
+        Assert.Equal("", settings.Values["server.public_url"]);
+    }
+
+    [Fact]
     public async Task AuthorityLostDuringAResponseNeverPublishes()
     {
         var gate = new TaskCompletionSource();

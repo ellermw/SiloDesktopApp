@@ -142,6 +142,42 @@ public sealed class AdminMonitorActivityApiTests
         Assert.True(identities[3].Sequence > identities[2].Sequence);
     }
 
+    [Theory]
+    [InlineData("message")]
+    [InlineData("pause")]
+    [InlineData("stop")]
+    public async Task UnknownOutcomeReusesIdentityAfterTransportCatchUp(string action)
+    {
+        var (kit, authority, api) = Create();
+        using var _k = kit; using var _a = authority;
+        var identities = new List<(string Id, long Sequence)>();
+        kit.Http.Respond = async (request, _) =>
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            var id = body.RootElement.GetProperty("command_id").GetString()!;
+            var sequence = body.RootElement.GetProperty("sequence").GetInt64();
+            identities.Add((id, sequence));
+            if (identities.Count == 1) throw new HttpRequestException("Connection lost after send.");
+            return AdminMonitorKit.Json($$"""{"command_id":"{{id}}","sequence":{{sequence}},"outcome":"replayed","delivery":"dispatched"}""");
+        };
+        using var lease = authority.Capture();
+        var before = lease.Context;
+        await Assert.ThrowsAsync<HttpRequestException>(() => api.SendActivityCommandAsync(lease, "s", action, "Restart soon"));
+        Assert.True(api.ActivityCommandLedger.HasUnsettled("s"));
+
+        Assert.True(kit.Client.TryInvalidateAccessContext(before, out var updated, transportCatchUp: true));
+        Assert.NotEqual(before.RequestContextGeneration, updated.RequestContextGeneration);
+        Assert.Equal(before.AccessGeneration, updated.AccessGeneration);
+        Assert.True(lease.IsCurrent);
+        Assert.Equal(updated, lease.Context);
+
+        var receipt = await api.SendActivityCommandAsync(lease, "s", action, "Restart soon");
+        Assert.Equal("replayed", receipt.Outcome);
+        Assert.Equal(2, identities.Count);
+        Assert.Equal(identities[0], identities[1]);
+        Assert.False(api.ActivityCommandLedger.HasUnsettled("s"));
+    }
+
     [Fact]
     public async Task StaleRefusalRaisesTheAllocationFloor()
     {

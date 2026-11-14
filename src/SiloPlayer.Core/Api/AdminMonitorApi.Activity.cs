@@ -82,17 +82,22 @@ public partial class AdminMonitorApi
 
     /// <summary>The intent a repeated command must share to reuse an unsettled identity (no secrets).</summary>
     public static string ActivityCommandIntent(MonitorAuthorityLease lease, string action, string? message)
-        => JsonSerializer.Serialize(new object?[]
+    {
+        var context = lease.Context;
+        // Transport catch-up rebinds requests, but must not change an unknown
+        // command's identity. Other context changes retire the lease's epoch.
+        return JsonSerializer.Serialize(new object?[]
         {
-            lease.Context.BaseUrl,
-            lease.Context.AuthenticationGeneration,
-            lease.Context.RequestContextGeneration,
-            lease.Context.ProfileId,
+            context.BaseUrl,
+            context.AuthenticationGeneration,
+            context.AccessGeneration,
+            context.ProfileId,
             lease.AccountId,
             lease.Epoch,
             action,
             action == "message" ? message ?? "" : null,
         });
+    }
 
     /// <summary>
     /// Sends one sequenced pause, resume, stop or message command. It is never
