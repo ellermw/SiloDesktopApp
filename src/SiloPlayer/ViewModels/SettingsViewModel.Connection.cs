@@ -143,7 +143,7 @@ public partial class SettingsViewModel
         ConnectionMetered = metered;
         if (metered) ConnectionReading = transport == "cellular"
             ? "Speed tests are skipped on cellular, and the Cellular quality settings apply."
-            : "Speed tests are skipped on metered networks.";
+            : "Speed tests are skipped on metered networks. Metered quality and bitrate settings apply to playback.";
     }
     private async Task ClearConnectionMessageAsync(long revision, ApiRequestContext owner, double seconds)
     {
