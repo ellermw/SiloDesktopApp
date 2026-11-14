@@ -223,6 +223,10 @@ public partial class LibraryViewModel
                 // foreground reads without a self-retry or mixed snapshot rows.
                 _catalogRefreshPending = false;
                 _catalogRefreshRetainsRows = false;
+                // Held rows are display-only: the next index/foreground read
+                // must not pair fresh positions with the pre-refresh cursor.
+                _snapshot = null;
+                _completedBoundaries.Clear();
                 _catalogRefreshReleasedVersion = version;
                 // A joined viewport outside the held set can stay visible while
                 // its ordinary read starts. Never splice fresh positions into
