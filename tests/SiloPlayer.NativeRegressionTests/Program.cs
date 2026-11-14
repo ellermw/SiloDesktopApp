@@ -519,6 +519,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await MatchSplitScopeNativeFixture.RunAsync(parent, reviewOnly: true);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "marker-cache")
+            {
+                await MediaToolsDialogsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-scope")
             {
                 await MatchSplitScopeNativeFixture.RunAsync(parent);
