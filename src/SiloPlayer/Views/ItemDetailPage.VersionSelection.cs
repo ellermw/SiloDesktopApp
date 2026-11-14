@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
+using Windows.Networking.Connectivity;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -17,12 +19,15 @@ public sealed partial class ItemDetailPage
     private SettingsApi? _versionSettings;
     private EventChannelClient? _versionEvents;
     private SiloApiClient? _versionClient;
+    private Func<(string Key, bool Metered, string Transport)> _detailNetwork = PlaybackConnectionNetwork.CaptureForQuality;
+    private bool? _detailQualityMetered;
 
     private void ObserveVersionSelection()
     {
         StopObservingVersionSelection();
         _versionClient = App.Services.GetRequiredService<SiloApiClient>();
         _versionClient.ContextInvalidated += VersionContextChanged;
+        NetworkInformation.NetworkStatusChanged += VersionNetworkChanged;
         _versionSettings = App.Services.GetService<SettingsApi>();
         if (_versionSettings != null) _versionSettings.LocalProfileSettingChanged += VersionSettingChanged;
         _versionEvents = App.Services.GetService<EventChannelClient>();
@@ -33,6 +38,7 @@ public sealed partial class ItemDetailPage
     private void StopObservingVersionSelection()
     {
         ++_versionQualityRevision;
+        NetworkInformation.NetworkStatusChanged -= VersionNetworkChanged;
         if (_versionClient != null) _versionClient.ContextInvalidated -= VersionContextChanged;
         if (_versionSettings != null) _versionSettings.LocalProfileSettingChanged -= VersionSettingChanged;
         if (_versionEvents != null) _versionEvents.EventReceived -= VersionSettingEvent;
@@ -49,9 +55,13 @@ public sealed partial class ItemDetailPage
 
     private void VersionSettingChanged(string key)
     {
-        if (key is not ("playback.preferred_quality" or "playback.max_bitrate_kbps")) return;
+        if (key is not ("playback.preferred_quality" or "playback.max_bitrate_kbps" or
+            "playback.cellular_preferred_quality" or "playback.cellular_max_bitrate_kbps")) return;
         DispatcherQueue.TryEnqueue(() => { if (IsLoaded) _ = RefreshVersionQualityAsync(); });
     }
+
+    private void VersionNetworkChanged(object sender)
+        => DispatcherQueue.TryEnqueue(() => { if (IsLoaded) _ = RefreshVersionQualityAsync(); });
 
     private void VersionSettingEvent(string channel, string name, JsonElement data)
     {
@@ -69,9 +79,11 @@ public sealed partial class ItemDetailPage
         if (_detailVersionOwner is { } owner && client.IsCurrentIdentityContext(owner)) return;
         _detailVersionOwner = client.CaptureIdentityContext();
         _detailVersions = new();
+        _detailQualityMetered = null;
         _selectedVersionWasExplicit = false;
         _selectedVersionOwner = null;
-        _detailVersions.SetQuality(App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference, settled: false);
+        _detailVersions.SetQuality(_detailNetwork().Metered ? "720p"
+            : App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference, settled: false);
     }
 
     private async Task RefreshVersionQualityAsync()
@@ -83,13 +95,22 @@ public sealed partial class ItemDetailPage
         EnsureDetailVersionOwner();
         var selection = _detailVersions;
         var context = client.CaptureContext();
+        var network = _detailNetwork();
+        if (_detailQualityMetered != network.Metered)
+        {
+            _detailQualityMetered = network.Metered;
+            selection.SetQuality(network.Metered ? "720p"
+                : App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference, settled: false);
+            RepaintDetailVersions();
+        }
         try
         {
             var quality = await PlaybackQualityPreferences.ReadAsync(client,
                 App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference,
-                navigation.Token, expectedContext: context);
+                navigation.Token, expectedContext: context, metered: network.Metered);
             if (revision != _versionQualityRevision || navigation.IsCancellationRequested
-                || _currentContentId != contentId || !client.IsCurrentContext(context) || !ReferenceEquals(selection, _detailVersions)) return;
+                || _currentContentId != contentId || !client.IsCurrentContext(context) || !ReferenceEquals(selection, _detailVersions)
+                || network != _detailNetwork()) return;
             selection.SetQuality(quality.Quality, settled: true);
             RepaintDetailVersions();
         }

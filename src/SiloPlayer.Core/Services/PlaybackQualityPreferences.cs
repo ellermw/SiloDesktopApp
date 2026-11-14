@@ -34,29 +34,48 @@ public sealed record PlaybackQualityPreferences(ApiRequestContext Context, strin
     }
 
     public static async Task<PlaybackQualityPreferences> ReadAsync(SiloApiClient client, string? fallback, CancellationToken ct, bool includeBuffering = false,
-        ApiRequestContext? expectedContext = null)
+        ApiRequestContext? expectedContext = null, bool metered = false)
     {
         var context = expectedContext ?? client.CaptureContext();
-        var quality = Normalize(fallback);
-        int? cap = null;
+        var quality = metered ? "720p" : Normalize(fallback);
+        int? cap = metered ? 2000 : null;
+        var qualityKey = metered ? "playback.cellular_preferred_quality" : "playback.preferred_quality";
+        var bitrateKey = metered ? "playback.cellular_max_bitrate_kbps" : "playback.max_bitrate_kbps";
         var buffering = "never";
         try
         {
             var settings = new SettingsApi(client);
             ContractEffectiveSettingsResponse response;
             try { response = await settings.GetContractEffectiveSettingsAsync(context,
-                includeBuffering ? ["playback.preferred_quality", "playback.max_bitrate_kbps", "playback.buffering_quality_mode"] :
-                    ["playback.preferred_quality", "playback.max_bitrate_kbps"], ct: ct).ConfigureAwait(false); }
+                includeBuffering ? [qualityKey, bitrateKey, "playback.buffering_quality_mode"] :
+                    [qualityKey, bitrateKey], ct: ct).ConfigureAwait(false); }
             catch (ApiException ex) when (includeBuffering && ex.StatusCode is not (401 or 403))
             { response = await settings.GetContractEffectiveSettingsAsync(context,
-                ["playback.preferred_quality", "playback.max_bitrate_kbps"], ct: ct).ConfigureAwait(false); }
-            var preferred = response.Settings.FirstOrDefault(entry => entry.Key == "playback.preferred_quality");
+                [qualityKey, bitrateKey], ct: ct).ConfigureAwait(false); }
+            var preferred = response.Settings.FirstOrDefault(entry => entry.Key == qualityKey);
             if (preferred?.Value.ValueKind == JsonValueKind.String) quality = Normalize(preferred.Value.GetString());
-            var bandwidth = response.Settings.FirstOrDefault(entry => entry.Key == "playback.max_bitrate_kbps");
+            var bandwidth = response.Settings.FirstOrDefault(entry => entry.Key == bitrateKey);
+            if (bandwidth?.Value.ValueKind == JsonValueKind.Null) cap = null;
             if (bandwidth?.Value.ValueKind == JsonValueKind.Number && bandwidth.Value.TryGetInt32(out var value) && value is >= 100 and <= 200000)
                 cap = value;
             var mode = response.Settings.FirstOrDefault(entry => entry.Key == "playback.buffering_quality_mode");
             if (mode?.Value.ValueKind == JsonValueKind.String && mode.Value.GetString() is "always" or "ask" or "never") buffering = mode.Value.GetString()!;
+        }
+        catch (ApiException ex) when (metered && ex.StatusCode == 422)
+        {
+            // Pre-revision-20 servers reject cellular keys. Keep their contract defaults,
+            // but resolve buffering independently so a supported preference still applies.
+            if (includeBuffering)
+            {
+                try
+                {
+                    var response = await new SettingsApi(client).GetContractEffectiveSettingsAsync(context,
+                        ["playback.buffering_quality_mode"], ct: ct).ConfigureAwait(false);
+                    var mode = response.Settings.FirstOrDefault(entry => entry.Key == "playback.buffering_quality_mode");
+                    if (mode?.Value.ValueKind == JsonValueKind.String && mode.Value.GetString() is "always" or "ask" or "never") buffering = mode.Value.GetString()!;
+                }
+                catch (ApiException unavailable) when (unavailable.StatusCode is 404 or 405 or 422 or 501) { }
+            }
         }
         catch (ApiException ex) when (ex.StatusCode is 404 or 405 or 501) { /* Older servers retain their profile preference. */ }
         ct.ThrowIfCancellationRequested();

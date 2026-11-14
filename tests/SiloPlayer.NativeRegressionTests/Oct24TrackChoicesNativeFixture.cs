@@ -21,6 +21,7 @@ internal static class Oct24TrackChoicesNativeFixture
         var playback = new PlaybackApi(api);
         slot.SetValue(null, new Services(previous, api, new CatalogApi(api), playback));
         var page = new ItemDetailPage { Width = 900, Height = 700 };
+        Set(page, "_detailNetwork", (Func<(string, bool, string)>)(() => ("fixture", false, "ethernet")));
         var version = new FileVersion
         {
             FileId = 42, EffectiveAudioTrackIndex = 0,
@@ -216,12 +217,33 @@ internal static class Oct24TrackChoicesNativeFixture
             retiredOwner.SetResult(QualityResponse("2160p")); await loadingOwner;
             Require(!state.QualitySettled, "Retired profile accepted a late settings response.");
             api.SetProfile("fixture");
+            var metered = false;
+            Set(page, "_detailNetwork", (Func<(string, bool, string)>)(() => (metered ? "mobile" : "wired", metered, metered ? "cellular" : "ethernet")));
+            state = Fresh(); state.SelectEdition("extended");
+            var main = Queue(); main.SetResult(QualityResponse("2160p")); await Refresh();
+            Require(state.Quality == "2160p", "Unmetered detail did not use main quality.");
+            metered = true; var mobile = Queue(); mobile.SetResult(QualityResponse("2160p"));
+            Call(page, "VersionNetworkChanged", new object());
+            await Until(() => state.QualitySettled && state.Quality == "720p");
+            Require(state.EditionKey == "extended", "Metered transition replaced the selected edition.");
+            var cellularSetting = Queue(); cellularSetting.SetResult(QualityResponse("2160p", "480p"));
+            Call(page, "VersionSettingChanged", "playback.cellular_preferred_quality");
+            await Until(() => state.QualitySettled && state.Quality == "480p");
+            state.SelectFile(new FileVersion { FileId = 55, EditionKey = "extended" });
+            metered = false; var back = Queue(); back.SetResult(QualityResponse("2160p"));
+            Call(page, "VersionNetworkChanged", new object());
+            await Until(() => state.QualitySettled && state.Quality == "2160p");
+            Require(state.ManualFileId == 55 && state.EditionKey == "extended", "Network transition discarded an explicit file pin.");
+            state = Fresh(); var retiredNetwork = Queue(); var loadingNetwork = Refresh();
+            metered = true; retiredNetwork.SetResult(QualityResponse("2160p")); await loadingNetwork;
+            Require(!state.QualitySettled, "A settings response from a departed network was accepted.");
+            Program.Log("PASS: real network/settings handlers switch main/cellular limits, retain edition and manual pin, and reject a departed-network response.");
         }
         finally { Set(page, "_navigationCts", null); }
     }
-    private static HttpResponseMessage QualityResponse(string quality) => new(HttpStatusCode.OK)
+    private static HttpResponseMessage QualityResponse(string quality, string cellular = "720p") => new(HttpStatusCode.OK)
     {
-        Content = new StringContent(JsonSerializer.Serialize(new { items = new[] { new { key = "playback.preferred_quality", value = quality } } })),
+        Content = new StringContent(JsonSerializer.Serialize(new { items = new[] { new { key = "playback.preferred_quality", value = quality }, new { key = "playback.cellular_preferred_quality", value = cellular } } })),
     };
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready)

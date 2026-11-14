@@ -716,6 +716,64 @@
                             </ComboBox>
                         </Grid>
 
+                        <Border Style="{StaticResource SettingsSeparator}" />
+                        <!-- Metered quality -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Metered quality" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock  Text="Used on connections Windows identifies as metered, including metered Wi-Fi and Ethernet."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="MeteredQualityComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="MeteredQualityComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Auto" Tag="auto" />
+                                <ComboBoxItem Content="480p" Tag="480p" />
+                                <ComboBoxItem Content="720p" Tag="720p" />
+                                <ComboBoxItem Content="1080p" Tag="1080p" />
+                                <ComboBoxItem Content="4K" Tag="2160p" />
+                            </ComboBox>
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <!-- Metered maximum bitrate -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Metered maximum bitrate" FontSize="14" FontWeight="Medium"
+                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="This separate bandwidth limit applies on metered connections. Older servers use 720p and 2 Mbps."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="MeteredBitrateComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="MeteredBitrateComboBox_SelectionChanged">
+                                <ComboBoxItem Content="No limit" Tag="" />
+                                <ComboBoxItem Content="1.5 Mbps" Tag="1500" />
+                                <ComboBoxItem Content="2 Mbps" Tag="2000" />
+                                <ComboBoxItem Content="4 Mbps" Tag="4000" />
+                                <ComboBoxItem Content="6 Mbps" Tag="6000" />
+                                <ComboBoxItem Content="10 Mbps" Tag="10000" />
+                                <ComboBoxItem Content="15 Mbps" Tag="15000" />
+                                <ComboBoxItem Content="20 Mbps" Tag="20000" />
+                                <ComboBoxItem Content="40 Mbps" Tag="40000" />
+                                <ComboBoxItem Content="60 Mbps" Tag="60000" />
+                                <ComboBoxItem Content="100 Mbps" Tag="100000" />
+                                <ComboBoxItem Content="200 Mbps" Tag="200000" />
+                            </ComboBox>
+                        </Grid>
+
                     </StackPanel>
                 </Border>
                 <controls:PlaybackConnectionSettingsControl />
