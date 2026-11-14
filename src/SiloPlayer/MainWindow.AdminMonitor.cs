@@ -189,10 +189,27 @@ public sealed partial class MainWindow
         if (adminShell)
         {
             // The admin area replaces the whole app shell.
-            if (NavView.IsPaneVisible) NavView.IsPaneVisible = false;
+            ScheduleAdminNavigationHide();
             NavView.SelectedItem = null;
             if (MobileShellHeader.Visibility != Visibility.Collapsed) MobileShellHeader.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private bool _adminNavigationHideQueued;
+
+    private void ScheduleAdminNavigationHide()
+    {
+        if (_adminNavigationHideQueued) return;
+        _adminNavigationHideQueued = true;
+        // Navigated runs inside the frame/pane transition. Leave that callback
+        // before hiding, and use the shared COM guard and bounded retries.
+        if (!DispatcherQueue.TryEnqueue(() =>
+        {
+            _adminNavigationHideQueued = false;
+            if (_windowClosed || !IsAdminShellActive) return;
+            if (NavView.IsPaneVisible || NavView.IsPaneOpen || _mainNavigationHidePending)
+                ApplyMainNavigationHidden();
+        })) _adminNavigationHideQueued = false;
     }
 
     /// <summary>Back inside Admin walks admin pages before leaving the shell.</summary>

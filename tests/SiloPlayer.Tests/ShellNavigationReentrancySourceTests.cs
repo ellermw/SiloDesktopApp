@@ -41,6 +41,31 @@ public sealed class ShellNavigationReentrancySourceTests
     }
 
     [Fact]
+    public void AdminPaneHideIsDeferredGuardedAndDoesNotReopenOnPlaybackCompletion()
+    {
+        var admin = ReadRepoFile("src", "SiloPlayer", "MainWindow.AdminMonitor.cs");
+        var chrome = MethodBody(admin, "internal void UpdateAdminChrome(");
+        Assert.Contains("ScheduleAdminNavigationHide();", chrome);
+        Assert.DoesNotContain("NavView.IsPaneVisible =", chrome);
+        var schedule = MethodBody(admin, "private void ScheduleAdminNavigationHide(");
+        Assert.Contains("DispatcherQueue.TryEnqueue(", schedule);
+        Assert.Contains("if (_windowClosed || !IsAdminShellActive) return;", schedule);
+        Assert.Contains("ApplyMainNavigationHidden();", schedule);
+
+        var window = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        var hide = MethodBody(window, "private void ApplyMainNavigationHidden(");
+        Assert.Contains("catch (System.Runtime.InteropServices.COMException", hide);
+        Assert.Contains("0x80004005", hide);
+        Assert.Contains("0x8000FFFF", hide);
+        Assert.Contains("_mainNavigationHidePending = true;", hide);
+        Assert.Contains("RetryMainNavigationHideAsync();", hide);
+        var playback = MethodBody(window, "private void OnPlayerStateChanged(");
+        Assert.Equal(3, playback.Split("if (!IsAdminShellActive) NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;").Length - 1);
+        Assert.Contains("if (IsAdminShellActive || !NavView.IsPaneVisible)", MethodBody(window, "private void ApplyResponsiveShellLayout("));
+        Assert.Contains("if (!IsAdminShellActive) _mainNavigationHidePending = false;", MethodBody(window, "private void OnNavigated_SynchronizeShellChrome("));
+    }
+
+    [Fact]
     public void ReconnectKeepsHealthyDetailsButStillSchedulesDeferredShellHydrationAndRetriesFailedRoutes()
     {
         var source = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs").ReplaceLineEndings("\n");

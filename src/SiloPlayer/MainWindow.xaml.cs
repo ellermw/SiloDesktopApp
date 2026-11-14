@@ -339,7 +339,7 @@ public sealed partial class MainWindow : Window
             MobileShellHeader.Visibility = mobileHeaderVisibility;
 
         UpdateAdminChrome();
-        if (!NavView.IsPaneVisible)
+        if (IsAdminShellActive || !NavView.IsPaneVisible)
             return;
 
         if (isNarrow)
@@ -2492,6 +2492,7 @@ public sealed partial class MainWindow : Window
 
         // Restore the authenticated shell at the frame boundary so navigation
         // never leaves the user-controlled pane in a transient hidden state.
+        if (!IsAdminShellActive) _mainNavigationHidePending = false;
         if (!NavView.IsPaneVisible && !IsAdminShellActive)
             NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout(duringFrameNavigation: true);
@@ -2902,6 +2903,7 @@ public sealed partial class MainWindow : Window
     private void SynchronizeDesktopPaneState()
     {
         if (_synchronizingDesktopPaneState ||
+            IsAdminShellActive ||
             _isNarrowShell ||
             !NavView.IsPaneVisible ||
             !CanExposeAuthenticatedNavigation)
@@ -3031,7 +3033,7 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
                 MiniPlayerBarControl.Deactivate();
                 MiniPlayerBarControl.ResetSleepTimer();
-                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
+                if (!IsAdminShellActive) NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
                 ApplyResponsiveShellLayout();
                 LogState($"  -> Idle: NavView.IsPaneVisible={NavView.IsPaneVisible} _navInitialized={_navInitialized}");
@@ -3065,7 +3067,7 @@ public sealed partial class MainWindow : Window
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 MiniPlayerBarControl.Deactivate();
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
-                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
+                if (!IsAdminShellActive) NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
                 ApplyResponsiveShellLayout();
                 break;
@@ -3075,7 +3077,7 @@ public sealed partial class MainWindow : Window
                 AudiobookNowListeningControl.Deactivate();
                 PlayerOverlayControl.Deactivate();
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
-                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
+                if (!IsAdminShellActive) NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0, 0, 0, _playerService.IsAudiobook ? Controls.MiniPlayerBar.AudiobookHeightForWidth(MiniPlayerBarControl.ActualWidth) : 132);
                 ApplyResponsiveShellLayout();
                 MiniPlayerBarControl.Visibility = Visibility.Visible;
