@@ -1842,6 +1842,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        _mainNavigationHidePending = false; // a hide still waiting to apply must not hide the shown shell
         // Restored sessions reach the shell without a later profile event; the same owner is a no-op.
         RefreshAppLanguageForOwner();
         var shellKey = GetAuthenticatedShellKey();
@@ -2744,10 +2745,7 @@ public sealed partial class MainWindow : Window
     public void HideMainNavigation()
     {
         RestoreAppSidebar();
-        // Hide the pane before closing it so the authenticated-pane guard does
-        // not treat login/profile transitions as an accidental collapse.
-        NavView.IsPaneVisible = false;
-        NavView.IsPaneOpen = false;
+        ApplyMainNavigationHidden();
         RetireSidebarNavigation();
         BuildPluginApps([]);
         _hydratedShellKey = null;
@@ -2928,6 +2926,42 @@ public sealed partial class MainWindow : Window
         if (!_windowClosed) ApplyResponsiveShellLayout();
     }
 
+    // A hide WinUI refused stays pending until it applies or the shell is shown again.
+    private bool _mainNavigationHidePending;
+    private int _mainNavigationHideFailures;
+
+    // Hide the pane before closing it so the authenticated-pane guard does not
+    // treat login/profile transitions as an accidental collapse. NavigationView
+    // refuses pane changes (0x80004005, or 0x8000FFFF) while its own pane state
+    // is still settling, here right after the profile flyout closes (native
+    // profile-menu, PR 145: Switch Profile threw from IsPaneVisible and the app
+    // closed). A refused hide is logged and retried after the layout pass; the
+    // close waits for it, since the guard would cancel a close of a visible pane.
+    private void ApplyMainNavigationHidden()
+    {
+        try
+        {
+            NavView.IsPaneVisible = false;
+            NavView.IsPaneOpen = false;
+            _mainNavigationHidePending = false;
+            _mainNavigationHideFailures = 0;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+            when (ex.HResult is unchecked((int)0x80004005) or unchecked((int)0x8000FFFF))
+        {
+            LocalLog.AppendException("navigation_errors.txt", ex, "hide_main_navigation");
+            _mainNavigationHidePending = true;
+            if (++_mainNavigationHideFailures <= 8)
+                _ = RetryMainNavigationHideAsync();
+        }
+    }
+
+    private async Task RetryMainNavigationHideAsync()
+    {
+        await Task.Delay(120);
+        if (!_windowClosed && _mainNavigationHidePending) ApplyMainNavigationHidden();
+    }
+
     public void RestoreMainPane()
     {
         if (!CanExposeAuthenticatedNavigation)
@@ -2936,6 +2970,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        _mainNavigationHidePending = false;
         NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout();
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
