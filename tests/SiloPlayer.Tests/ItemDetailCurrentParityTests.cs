@@ -357,8 +357,9 @@ public sealed class ItemDetailCurrentParityTests
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
 
         Assert.Contains("VersionDropdownButton.Visibility = versions.Count > 1", page);
-        Assert.Contains("activeVariant?.Parts", page);
-        Assert.Contains("EditionButton.Visibility = showEditions", page);
+        Assert.Contains("DetailVersionRanking.Editions(versions, variants)", page);
+        Assert.Contains("BuildVersionFlyout(active?.Versions ?? versions", page);
+        Assert.Contains("EditionButton.Visibility = editions.Count > 1", page);
         Assert.Contains("parts.Add(version.Container.ToUpperInvariant())", page);
         Assert.Contains(".OrderByDescending(v => ResolutionRank(v.Resolution))", page);
         Assert.DoesNotContain(".ThenByDescending(v => v.Bitrate)", page);

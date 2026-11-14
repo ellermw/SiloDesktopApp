@@ -72,6 +72,16 @@ public partial class DownloadsViewModel : ObservableObject
 
             IsEmpty = Downloads.Count == 0;
         }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            // Hidden titles and missing records both return 404. Retire only
+            // this viewer's stale row; this does not confirm server deletion.
+            var item = Downloads.FirstOrDefault(d => d.Id == id);
+            if (item != null)
+                Downloads.Remove(item);
+
+            IsEmpty = Downloads.Count == 0;
+        }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // Explicit cancellation leaves the registry row intact. A network

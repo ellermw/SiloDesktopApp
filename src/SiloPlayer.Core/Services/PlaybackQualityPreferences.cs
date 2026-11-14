@@ -33,7 +33,7 @@ public sealed record PlaybackQualityPreferences(ApiRequestContext Context, strin
         };
     }
 
-    internal static async Task<PlaybackQualityPreferences> ReadAsync(SiloApiClient client, string? fallback, CancellationToken ct, bool includeBuffering = false,
+    public static async Task<PlaybackQualityPreferences> ReadAsync(SiloApiClient client, string? fallback, CancellationToken ct, bool includeBuffering = false,
         ApiRequestContext? expectedContext = null)
     {
         var context = expectedContext ?? client.CaptureContext();
