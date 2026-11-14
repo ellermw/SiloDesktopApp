@@ -1,3 +1,28 @@
+# November 13 - Continue Watching stale/duplicate-card repair
+
+Independent branch codex/continue-watching-duplicate-nov13 starts at Beta
+cbafac58, version 1.2.1017-beta.1 / 1.2.1016.1 unchanged. Unique server data
+could still render an old card after Move then Replace. RepeaterItemsSource
+now coalesces Move batches into its existing owned deferred Reset; model
+membership/order stay authoritative. This is separate from the blank finished
+player preview and previous alignment PRs.
+
+Baseline native reproduction failed. Final Release publish/native build,
+214 focused Home/media reconciliation units, home-continue-duplicate and
+home-reconcile-data passed. Native assertions cover every initial episode
+card/title, repeated reorders, insertion before Move, retained horizontal
+scroll and detached/reloaded rows. Two of three mid-layout rejection scenarios
+were reached, including shrink; the reloaded mid-layout trigger was skipped.
+Keyboard focus was unavailable in the hidden host; strict home-reconcile did
+not pass. Independent review's P2 fixture finding is corrected; no product
+P0/P1/P2 was found, and no second independent review is claimed.
+
+See [incident and limits](audit-gaps/2026-11-13-continue-watching-duplicate.md).
+Receipt: D:/SiloPlayer-build/continue-duplicate-receipt.json. One reusable output
+payload; prior cleanup rejection was not retried, 0 GiB recovered on C: and D:.
+The installed player was not changed or restarted; pipeline owns packaging.
+
+---
 # November 13 - Metered quality alignment verified for Beta
 
 Branch codex/metered-quality-4448-nov13 starts at Beta 6f9f87f7 with version
