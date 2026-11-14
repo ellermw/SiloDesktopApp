@@ -2,7 +2,7 @@
 
 <!-- badges:start -->
 [![Stable](https://img.shields.io/github/v/release/ellermw/SiloDesktopApp?label=stable&color=2ea44f)](https://github.com/ellermw/SiloDesktopApp/releases/latest)
-[![Beta](https://img.shields.io/badge/beta-1.2.1060--beta.1-orange)](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.1060-beta.1)
+[![Beta](https://img.shields.io/badge/beta-1.2.1064--beta.1-orange)](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.1064-beta.1)
 [![Downloads](https://img.shields.io/github/downloads/ellermw/SiloDesktopApp/total)](https://github.com/ellermw/SiloDesktopApp/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)](#download)
 [![Open pull requests](https://img.shields.io/github/issues-pr/ellermw/SiloDesktopApp)](https://github.com/ellermw/SiloDesktopApp/pulls)
@@ -24,11 +24,11 @@ Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo S
 <!-- beta-download:start -->
 ### Beta
 
-**Latest beta: 1.2.1060-beta.1** · An optional pre-release for testing, which may be less stable than the current release.
+**Latest beta: 1.2.1064-beta.1** · An optional pre-release for testing, which may be less stable than the current release.
 
-[**Download beta 1.2.1060-beta.1 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.1060-beta.1/SiloInstaller-Windows-x64.exe)
+[**Download beta 1.2.1064-beta.1 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.1064-beta.1/SiloInstaller-Windows-x64.exe)
 
-[Beta release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.1060-beta.1) · [Beta SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.1060-beta.1/SiloInstaller-Windows-x64.exe.sha256)
+[Beta release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.1064-beta.1) · [Beta SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.1064-beta.1/SiloInstaller-Windows-x64.exe.sha256)
 <!-- beta-download:end -->
 
 See the [release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.1007) for what's new in 1.2.1007.
