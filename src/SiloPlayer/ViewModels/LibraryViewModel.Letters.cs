@@ -34,7 +34,7 @@ public partial class LibraryViewModel
     private string? _letterFeedbackKey;
     private bool _letterJumpRetiredScope;
     private sealed record LetterWindowSnapshot(int Start, IReadOnlyList<MediaItem> Items,
-        (int Start, CatalogResponse Response, bool IncludesTotal)[] Windows, bool HasMore);
+        (int Start, CatalogResponse Response, bool IncludesTotal)[] Windows, bool HasMore, string? Snapshot);
     private LetterWindowSnapshot? _letterRestoreWindow;
     public bool IsLetterJumpViewportBlocked => _letterJumpRetiredScope && WindowStartIndex < 0 && LetterJumpError is not null;
     private string? _letterIndexKey;
@@ -175,6 +175,15 @@ public partial class LibraryViewModel
             _catalogRefreshRetainsRows = false;
             _catalogRefreshVersion = -1;
             _confirmedRefreshViewport = null;
+            // The rail is reread without a cursor. Its target must also start
+            // fresh, while held cards remain visible until that read succeeds.
+            _snapshot = null;
+            _completedBoundaries.Clear();
+            _hasExactTotal = false;
+            _observedCatalogEnd = 0;
+            _catalogEndTotal = null;
+            _exactCountQueryVersion = -1;
+            _catalogRefreshReleasedVersion = _queryVersion;
         }
         var currentKey = LetterQueryKey();
         var knownIndex = (LetterIndex is not null && _letterIndexKey == currentKey) ||
@@ -246,7 +255,7 @@ public partial class LibraryViewModel
                 // Superseding clicks share the last restorable viewport, not a
                 // cache already cleared by the preceding forced target read.
                 var previous = _letterRestoreWindow ??= new LetterWindowSnapshot(
-                    WindowStartIndex, _windowItems, _recentWindows.ToArray(), HasMore);
+                    WindowStartIndex, _windowItems, _recentWindows.ToArray(), HasMore, _snapshot);
                 _activeLetterJumpVersion = jump;
                 var loadVersion = jump;
                 var loadKey = key;
@@ -282,6 +291,12 @@ public partial class LibraryViewModel
                     _recentWindows.Clear();
                     foreach (var window in previous.Windows) _recentWindows.AddLast(window);
                     HasMore = previous.HasMore;
+                    if (previous.Snapshot != _snapshot)
+                    {
+                        _snapshot = null;
+                        _completedBoundaries.Clear();
+                        _catalogRefreshReleasedVersion = _queryVersion;
+                    }
                     if (!load.Failed || attempt != 0) _letterIndexKey = null;
                     if (!load.Failed)
                     {

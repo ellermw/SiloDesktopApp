@@ -131,7 +131,9 @@ public sealed class LibraryBackgroundRefreshTests
     [InlineData(true)]
     public async Task RetainedRefreshHandbackRestartsCanceledLettersAndCount(bool churn)
     {
-        using var wire = new Catalog { HoldLetters = true, HoldCount = true };
+        // A skip-total response must omit its count so the optional count read
+        // actually starts and can be canceled by the retained refresh.
+        using var wire = new Catalog { HoldLetters = true, HoldCount = true, OmitWindowTotals = true };
         var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
         try
         {
@@ -218,7 +220,8 @@ public sealed class LibraryBackgroundRefreshTests
     [Fact]
     public async Task InterruptedRetainedRefreshRestartsCountEvenWhenLetterReadFails()
     {
-        using var wire = new Catalog { HoldCount = true };
+        // Exact totals on card windows would bypass the held count entirely.
+        using var wire = new Catalog { HoldCount = true, OmitWindowTotals = true };
         var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
         try
         {
@@ -283,6 +286,45 @@ public sealed class LibraryBackgroundRefreshTests
             finally { wire.ReleaseChunk.TrySetResult(); }
             Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await refresh);
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LetterJumpDuringHealthyRefreshUsesFreshRowsWhenTitlesBeforeTheLetterMove(bool remove)
+    {
+        using var wire = new Catalog();
+        for (var index = 0; index < wire.Titles.Count; index++)
+            wire.Titles[index] = ("item-" + index, (index < 500 ? "A " : "M ") + index);
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync();
+        await model.LoadWindowAsync(400, 100);
+        await model.LoadWindowAsync(500, 100);
+        await wire.Idle();
+        if (remove) wire.Titles.RemoveRange(100, 10);
+        else wire.Titles.InsertRange(100, Enumerable.Range(0, 10).Select(index => ("added-" + index, "A added " + index)));
+        wire.LetterPosition = remove ? 490 : 510;
+        wire.HoldWindowAt = 500;
+        var landed = -1;
+        model.LetterJumpRequested += position => landed = position;
+        var refresh = model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+        try
+        {
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var reads = wire.Requests.Count;
+            await model.JumpToLetterCommand.ExecuteAsync("M").WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(wire.LetterPosition, landed);
+            Assert.Equal("item-500", model.GetRenderableWindowItem(landed)?.ContentId);
+            Assert.Equal("M 500", model.GetRenderableWindowItem(landed)?.Title);
+            Assert.Null(model.GetWindowItem(0)); // Old-snapshot held rows are no longer authoritative.
+            var target = wire.Requests.Skip(reads).First(read => read.ContainsKey("skip_total"));
+            Assert.False(target.ContainsKey("cursor"));
+            await model.LoadWindowAsync(100, 60);
+            Assert.Equal(wire.Titles[100].Id, model.GetRenderableWindowItem(100)?.ContentId);
+        }
+        finally { wire.ReleaseChunk.TrySetResult(); }
+        Assert.Equal(LibraryViewModel.CatalogRefreshResult.Deferred, await refresh);
     }
 
     [Fact]
@@ -1216,8 +1258,8 @@ public sealed class LibraryBackgroundRefreshTests
                     var position = LetterPosition;
                     return Reply(new
                     {
-                        total = 1000,
-                        letters = new[] { new { letter = "A", count = position, position = 0 }, new { letter = "M", count = 1000 - position, position } },
+                        total = Titles.Count,
+                        letters = new[] { new { letter = "A", count = position, position = 0 }, new { letter = "M", count = Titles.Count - position, position } },
                         runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position } },
                     });
                 }

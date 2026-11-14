@@ -314,7 +314,7 @@ public partial class LibraryViewModel : ObservableObject
         if (!HasMore || Library == null || TotalCount <= 0) return;
         EnsureCatalogScope();
         // Legacy sparse-page loading must not start catch-up ahead of the viewport.
-        if (_catalogRefreshPending) return;
+        if (_catalogRefreshPending || (_catalogRefreshReleasedVersion == _queryVersion && _snapshot is null)) return;
 
         var pageCount = (TotalCount + PageSize - 1) / PageSize;
         for (int page = 0; page < pageCount; page++)
@@ -395,7 +395,8 @@ public partial class LibraryViewModel : ObservableObject
             return [];
         // A failed catch-up keeps only the extent. Let a foreground window
         // establish its fresh snapshot before speculative reads populate caches.
-        if (ct.IsCancellationRequested || WindowStartIndex < 0) return [];
+        if (ct.IsCancellationRequested || WindowStartIndex < 0 ||
+            (_catalogRefreshReleasedVersion == _queryVersion && _snapshot is null)) return [];
 
         var (first, indices) = Neighborhood(startIndex, endIndex, forward);
         var version = _queryVersion;
@@ -570,6 +571,10 @@ public partial class LibraryViewModel : ObservableObject
         // The page retries its latest range once the jump has completed.
         if (!force && IsLetterJumpInProgress) return Task.CompletedTask;
         var viewportVersion = ++_viewportRequestVersion;
+        // A seek interrupted a retained reread. Held cards are display-only
+        // until a fresh snapshot lands; cached ranges cannot authorize a read.
+        if (_catalogRefreshReleasedVersion == _queryVersion && _snapshot is null)
+            force = true;
         EnsureExactCountRequested();
         startIndex = TotalCount > 0 ? Math.Clamp(startIndex, 0, TotalCount - 1) : 0;
         itemCount = TotalCount > 0 ? Math.Min(itemCount, TotalCount - startIndex) : itemCount;
@@ -701,6 +706,14 @@ public partial class LibraryViewModel : ObservableObject
                 if (_catalogRefreshReleasedVersion == queryVersion)
                 {
                     _confirmedRefreshViewport = null;
+                    if (_snapshot is null)
+                    {
+                        // Retire display-only rows before publishing a new snapshot.
+                        _pageResponses.Clear();
+                        _recentWindows.Clear();
+                        Items.Reset(TotalCount);
+                        ClearActiveWindow(notify: false);
+                    }
                 }
                 ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
                 RememberWindow(startIndex, response, includeTotal);

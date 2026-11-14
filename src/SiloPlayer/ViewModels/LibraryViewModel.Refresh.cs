@@ -224,8 +224,15 @@ public partial class LibraryViewModel
                 _catalogRefreshPending = false;
                 _catalogRefreshRetainsRows = false;
                 _catalogRefreshReleasedVersion = version;
-                _confirmedRefreshViewport = null;
-                _confirmedRefreshViewportVersion = -1;
+                // A joined viewport outside the held set can stay visible while
+                // its ordinary read starts. Never splice fresh positions into
+                // overlapping retained windows from the old snapshot.
+                if (_confirmedRefreshViewport is { } confirmed &&
+                    Enumerable.Range(confirmed.Start, confirmed.Response.Items.Count).Any(index => GetWindowItem(index) is not null))
+                {
+                    _confirmedRefreshViewport = null;
+                    _confirmedRefreshViewportVersion = -1;
+                }
                 ResumeOptionalCatalogReads();
                 WindowLoaded?.Invoke();
             }
