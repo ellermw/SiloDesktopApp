@@ -269,6 +269,8 @@ internal static class Oct24TrackChoicesNativeFixture
             if (request.RequestUri?.Host != "oct24-track-choices.invalid") throw new InvalidOperationException("Native track fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
             JsonElement? body = request.Content == null ? null : JsonDocument.Parse(await request.Content.ReadAsStringAsync(ct)).RootElement.Clone();
+            if (path == "/api/v2/settings/contract/capabilities")
+                return new(HttpStatusCode.OK) { Content = new StringContent("""{"api_version":1,"manifest_revision":20,"supports_batched_effective":true}""") };
             if (path == "/api/v2/settings/values/effective")
                 return QualityReads.Count > 0 ? await QualityReads.Dequeue().Task.WaitAsync(ct) : QualityResponse("auto");
             if (request.Method == HttpMethod.Get && path.StartsWith("/api/v2/subtitles/", StringComparison.Ordinal))

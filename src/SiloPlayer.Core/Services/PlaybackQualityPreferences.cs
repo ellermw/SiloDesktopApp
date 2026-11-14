@@ -37,14 +37,24 @@ public sealed record PlaybackQualityPreferences(ApiRequestContext Context, strin
         ApiRequestContext? expectedContext = null, bool metered = false)
     {
         var context = expectedContext ?? client.CaptureContext();
-        var quality = metered ? "720p" : Normalize(fallback);
-        int? cap = metered ? 2000 : null;
-        var qualityKey = metered ? "playback.cellular_preferred_quality" : "playback.preferred_quality";
-        var bitrateKey = metered ? "playback.cellular_max_bitrate_kbps" : "playback.max_bitrate_kbps";
+        var quality = Normalize(fallback);
+        int? cap = null;
         var buffering = "never";
         try
         {
             var settings = new SettingsApi(client);
+            if (metered)
+            {
+                try
+                {
+                    var capability = await settings.GetContractCapabilitiesAsync(context, ct).ConfigureAwait(false);
+                    metered = capability.ApiVersion == 1 && capability.Revision >= 20 && capability.SupportsBatchedEffective;
+                }
+                catch (ApiException ex) when (ex.StatusCode is 404 or 405 or 501) { metered = false; }
+            }
+            var qualityKey = metered ? "playback.cellular_preferred_quality" : "playback.preferred_quality";
+            var bitrateKey = metered ? "playback.cellular_max_bitrate_kbps" : "playback.max_bitrate_kbps";
+            if (metered) { quality = "720p"; cap = 2000; }
             ContractEffectiveSettingsResponse response;
             try { response = await settings.GetContractEffectiveSettingsAsync(context,
                 includeBuffering ? [qualityKey, bitrateKey, "playback.buffering_quality_mode"] :
@@ -63,21 +73,15 @@ public sealed record PlaybackQualityPreferences(ApiRequestContext Context, strin
         }
         catch (ApiException ex) when (metered && ex.StatusCode == 422)
         {
-            // Pre-revision-20 servers reject cellular keys. Keep their contract defaults,
-            // but resolve buffering independently so a supported preference still applies.
-            if (includeBuffering)
-            {
-                try
-                {
-                    var response = await new SettingsApi(client).GetContractEffectiveSettingsAsync(context,
-                        ["playback.buffering_quality_mode"], ct: ct).ConfigureAwait(false);
-                    var mode = response.Settings.FirstOrDefault(entry => entry.Key == "playback.buffering_quality_mode");
-                    if (mode?.Value.ValueKind == JsonValueKind.String && mode.Value.GetString() is "always" or "ask" or "never") buffering = mode.Value.GetString()!;
-                }
-                catch (ApiException unavailable) when (unavailable.StatusCode is 404 or 405 or 422 or 501) { }
-            }
+            // If cellular keys are unavailable despite the advertised contract, use main settings.
+            return await ReadAsync(client, fallback, ct, includeBuffering, context, metered: false).ConfigureAwait(false);
         }
-        catch (ApiException ex) when (ex.StatusCode is 404 or 405 or 501) { /* Older servers retain their profile preference. */ }
+        catch (ApiException ex) when (ex.StatusCode is 404 or 405 or 501)
+        {
+            // Older servers without effective settings retain their profile preference.
+            quality = Normalize(fallback);
+            cap = null;
+        }
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Playback quality owner changed.", ct);
         return new(context, quality, cap) { BufferingQualityMode = buffering };

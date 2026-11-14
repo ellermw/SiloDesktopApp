@@ -752,7 +752,7 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Metered maximum bitrate" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="This separate bandwidth limit applies on metered connections. Older servers use 720p and 2 Mbps."
+                                <TextBlock Text="This separate bandwidth limit applies on metered connections. Older servers use your main quality settings."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>

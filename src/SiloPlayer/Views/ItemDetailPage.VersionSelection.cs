@@ -82,8 +82,7 @@ public sealed partial class ItemDetailPage
         _detailQualityMetered = null;
         _selectedVersionWasExplicit = false;
         _selectedVersionOwner = null;
-        _detailVersions.SetQuality(_detailNetwork().Metered ? "720p"
-            : App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference, settled: false);
+        _detailVersions.SetQuality(App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference, settled: false);
     }
 
     private async Task RefreshVersionQualityAsync()
@@ -99,8 +98,7 @@ public sealed partial class ItemDetailPage
         if (_detailQualityMetered != network.Metered)
         {
             _detailQualityMetered = network.Metered;
-            selection.SetQuality(network.Metered ? "720p"
-                : App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference, settled: false);
+            selection.SetQuality(App.Services.GetRequiredService<AuthService>().SelectedProfile?.QualityPreference, settled: false);
             RepaintDetailVersions();
         }
         try

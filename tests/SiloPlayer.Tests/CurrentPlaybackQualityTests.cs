@@ -10,20 +10,69 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentPlaybackQualityTests
 {
     [Fact]
-    public async Task OlderCellularContractStillReadsBufferingSeparately()
+    public async Task RejectedCellularKeysFallBackToMainSettingsIncludingBuffering()
     {
         using var scope = new Fixture(); scope.Wire.RejectCellular = true;
         var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "auto", CancellationToken.None, includeBuffering: true, metered: true);
-        Assert.Equal("720p", preferences.Quality); Assert.Equal(2000, preferences.BandwidthCapKbps);
+        Assert.Equal("1080p", preferences.Quality); Assert.Equal(3500, preferences.BandwidthCapKbps);
         Assert.Equal("always", preferences.BufferingQualityMode);
+        Assert.Equal(2, scope.Wire.CellularReads);
     }
     [Fact]
-    public async Task OlderServerRejectingCellularKeysUsesDefaults()
+    public async Task OlderServerRejectingCellularKeysUsesMainSettings()
     {
         using var scope = new Fixture(); scope.Manager.IsMeteredConnection = () => true;
+        scope.Wire.ContractRevision = 19;
         scope.Wire.RejectCellular = true;
         var preferences = await scope.Manager.ResolveQualityPreferencesAsync();
-        Assert.Equal("720p", preferences.Quality); Assert.Equal(2000, preferences.BandwidthCapKbps);
+        Assert.Equal("1080p", preferences.Quality); Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Fact]
+    public async Task OlderContractWithMissingCellularRowsUsesMainSettingsIncludingBuffering()
+    {
+        using var scope = new Fixture(); scope.Wire.ContractRevision = 19; scope.Wire.OmitCellular = true;
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, includeBuffering: true, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal("always", preferences.BufferingQualityMode);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(405)]
+    [InlineData(501)]
+    public async Task MissingContractCapabilitiesUsesMainSettings(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.ContractStatus = (HttpStatusCode)statusCode;
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(405)]
+    [InlineData(501)]
+    public async Task MeteredMissingOlderSettingsEndpointUsesLegacyPreferenceWithoutInventingCap(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.SettingsStatus = (HttpStatusCode)statusCode;
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, metered: true);
+        Assert.Equal("2160p", preferences.Quality);
+        Assert.Null(preferences.BandwidthCapKbps);
+    }
+
+    [Fact]
+    public async Task MeteredStartWithoutSettingsEndpointUsesLegacyPreferenceWithoutInventingCap()
+    {
+        using var scope = new Fixture(); scope.Wire.MissingSettings = true;
+        scope.Manager.IsMeteredConnection = () => true;
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal("720p", scope.Wire.Start!.Value.GetProperty("quality_preference").GetString());
+        Assert.True(!scope.Wire.Start.Value.TryGetProperty("bandwidth_cap_kbps", out var cap) || cap.ValueKind == JsonValueKind.Null);
     }
     [Fact]
     public async Task MeteredStartUsesCellularQualityAndBitrate()
@@ -184,19 +233,30 @@ public sealed class CurrentPlaybackQualityTests
         public bool MissingSettings, Cropped, OmitCellular, RejectCellular;
         public string CellularQuality = "720p";
         public int? CellularCap = 2000;
-        public int SettingsReads;
+        public int SettingsReads, CellularReads;
+        public int ContractRevision = 20;
+        public HttpStatusCode? ContractStatus, SettingsStatus;
         public Action? BeforeSettingsReply;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/settings/contract/capabilities")
+                return ContractStatus is { } contractStatus
+                    ? new(contractStatus) { Content = new StringContent("{}") }
+                    : Json(JsonSerializer.Serialize(new { api_version = 1, manifest_revision = ContractRevision, supports_batched_effective = true }));
             if (path == "/api/v2/settings/values/effective")
             {
                 SettingsReads++;
-                if (RejectCellular && request.RequestUri!.Query.Contains("cellular", StringComparison.Ordinal)) return new(HttpStatusCode.UnprocessableEntity) { Content = new StringContent("{}") };
+                if (request.RequestUri!.Query.Contains("cellular", StringComparison.Ordinal))
+                {
+                    CellularReads++;
+                    if (RejectCellular) return new(HttpStatusCode.UnprocessableEntity) { Content = new StringContent("{}") };
+                }
+                if (SettingsStatus is { } settingsStatus) return new(settingsStatus) { Content = new StringContent("{}") };
                 BeforeSettingsReply?.Invoke();
                 if (MissingSettings) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
                 return Json(OmitCellular
-                    ? """{"items":[{"key":"playback.preferred_quality","value":"1080p"},{"key":"playback.max_bitrate_kbps","value":3500}]}"""
+                    ? """{"items":[{"key":"playback.preferred_quality","value":"1080p"},{"key":"playback.max_bitrate_kbps","value":3500},{"key":"playback.buffering_quality_mode","value":"always"}]}"""
                     : JsonSerializer.Serialize(new { items = new object[] {
                         new { key = "playback.buffering_quality_mode", value = "always" },
                         new { key = "playback.preferred_quality", value = "1080p" },
