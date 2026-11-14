@@ -7,13 +7,40 @@ units, fresh publish/native build and library-scan-refresh/library-reconnect
 native groups passed. Initial full6115 preceded review corrections and remains
 historical only. See [scope/evidence](parity/2026-11-13-upstream-4448-library.md).
 
-Base6f9f87f7;1.2.1017-beta.1 /1.2.1016.1 unchanged. RankingPR148 is a separate
-submission; markerPR149 has landed on Beta. Metered quality remains an independent pending branch.
+Base6f9f87f7;1.2.1017-beta.1 /1.2.1016.1 unchanged. At submission, RankingPR148
+was separate and metered quality was pending; both have since landed on Beta.
+MarkerPR149 has landed on Beta.
 PR145 remains pipeline-owned. Existing output area is reused within10GiB and
 both drives remain above50GiB; no cleanup retried after the prior policy block,
 recovered0GiB C:/D:. Installed player remains open.
 
 ---
+# November 13 - Metered quality alignment verified for Beta
+
+Branch codex/metered-quality-4448-nov13 starts at Beta 6f9f87f7 with version
+1.2.1017-beta.1 / 1.2.1016.1 unchanged. Shared connection quality uses cellular
+limits on identified metered links. Detail observes network/settings changes,
+retaining edition/pin and request ownership. Native Settings exposes both limits.
+Unknown/offline links keep main quality; older-server 422 uses contract defaults.
+
+Final verification: 6,113 full units passed, zero failures/skips (2m23s).
+After review corrections, 60 focused quality/settings/connection tests passed.
+Release publish/native build and actual oct24-track-choices plus
+settings-visual-oct24 passed, including separate writes, No limit and responsive
+geometry at 600-3840 pixels. The P1/two P2 independent review findings were
+corrected by the lead; no second independent review is claimed.
+See [the complete parity/audit record](parity/2026-11-13-upstream-4448-metered.md).
+
+Official main was rechecked at 4448e401. All 43 commits since 7edef3dd were
+classified. Separate PRs #148 (ranking/multipart), #149 (marker cache), and
+#150 (scan refresh) are pipeline-owned; this metered increment is separate.
+No combined integration, physical-network or live-server certification is claimed.
+
+Output: 1.569 GiB. Free C: 192.290 GiB; D: 480.387 GiB. Earlier automatic
+cleanup rejection remains in force; no retry, 0 GiB recovered on each drive.
+The installed player was not installed, restarted or modified.
+---
+
 # November 13 - Marker-save watch-cache invalidation
 
 Independent upstream4448e401 marker increment: accepted edits/redetection publish
@@ -26,6 +53,25 @@ submitted in PR148; metered quality and library scan refresh remained pending.
 Output reuses the same sub-1.3GiB payload; free C:192.84GiB, D:480.83GiB.
 Cleanup remains unattempted after the prior policy rejection; recovered0GiB on
 both drives. Installed player remains open and PR145 is untouched.
+
+---
+# November 13 - Upstream 4448e401 Auto ranking and multipart increment
+
+Reviewed Beta base is 6f9f87f7, version 1.2.1017-beta.1 / 1.2.1016.1. The first
+independent increment of the 43-commit update implements server-order detail Auto,
+saved later-part Resume, first-part Start Over and ordered multipart downloads.
+67 related units, Release publish, native host build and both track-choices and
+detail-action-hover native fixtures passed. Independent review found no P0-P2.
+See [scope and limits](parity/2026-11-13-upstream-4448-ranking.md).
+
+Marker invalidation is covered by the increment above; connection-quality and
+mounted-library scan refresh remain separate pending increments. Pipeline owns
+review/fixes/QA/delivery after each qualifying Beta submission. PR145 is untouched;
+versions remain pipeline-owned.
+One existing output/publish/native payload is reused. Generated data stays below
+1.3 GiB, free C: 192.83 GiB and D: 480.84 GiB. Cleanup is not retried after the
+previous automatic approval block; recovered 0 GiB on each drive. Installed
+player PID38020 remains open.
 
 ---
 # November 13 - Edition-scoped detail Auto verified locally
