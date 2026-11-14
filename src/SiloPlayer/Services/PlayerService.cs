@@ -2983,6 +2983,9 @@ public partial class PlayerService : IDisposable
         _playbackCts?.Dispose();
         var playbackCts = CancellationTokenSource.CreateLinkedTokenSource(requestToken);
         _playbackCts = playbackCts;
+        // Retire detached preview surfaces without exposing the desktop during fullscreen replacement.
+        if (State is PlayerState.Idle or PlayerState.Minimized or PlayerState.PictureInPicture)
+            _videoWindow?.SuppressVisibility(playbackCts);
 
         var loadingWindow = App.MainWindowInstance;
         // Retain the same surface owner through preparation, native loading,
@@ -3199,6 +3202,7 @@ public partial class PlayerService : IDisposable
                 _ = ApplySubtitleAppearanceWhenLoadedAsync(subtitleAppearanceTask, _activeAuthority, _apiClient.CaptureContext(), Volatile.Read(ref _playRequestGeneration));
             }
 
+            _videoWindow?.ReleaseVisibility(playbackCts);
             SetState(IsAudiobook ? PlayerState.Minimized : PlayerState.Expanded);
             ApplyPreparedTransport(prepared);
 
@@ -3278,6 +3282,13 @@ public partial class PlayerService : IDisposable
             _playbackCts = null;
             SetState(PlayerState.Idle);
             App.MainWindowInstance?.ShowPlaybackError(errTitle, errDetail);
+        }
+        finally
+        {
+            // Every exit retires this preparation's suppression, including
+            // cancellation, failure and early return. Owner matching preserves
+            // any successor's suppression; releasing does not show the window.
+            _videoWindow?.ReleaseVisibility(playbackCts);
         }
     }
 
@@ -5225,6 +5236,8 @@ public partial class PlayerService : IDisposable
 
         _videoWindow = new MpvVideoWindow();
         _videoWindow.Create(parentHwnd);
+        if (_playbackCts is { } preparationOwner)
+            _videoWindow.SuppressVisibility(preparationOwner);
         WireVideoWindowEvents();
 
         _mpv = new MpvPlayer();
