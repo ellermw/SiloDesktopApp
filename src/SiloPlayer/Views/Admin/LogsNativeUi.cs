@@ -286,7 +286,7 @@ internal sealed class LogsActionFeedback : ContentControl
         owner.SizeChanged += (_, args) => Width = Math.Min(356, Math.Max(0, args.NewSize.Width - 48));
         Padding = new(16); Margin = new(24); CornerRadius = new(12); BorderThickness = new(1); Background = LogsNativeUi.Brush("SurfaceRaisedBrush"); BorderBrush = LogsNativeUi.Brush("BorderBrush"); Visibility = Visibility.Collapsed;
         AutomationProperties.SetAutomationId(this, "LogsActionFeedback"); AutomationProperties.SetLiveSetting(this, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
-        _timer.Tick += (_, _) => { _timer.Stop(); Visibility = Visibility.Collapsed; };
+        _timer.Tick += (_, _) => { _timer.Stop(); _last = null; Visibility = Visibility.Collapsed; };
     }
     internal void Present(string? error, string? notice)
     {

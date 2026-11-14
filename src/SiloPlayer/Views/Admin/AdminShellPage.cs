@@ -202,6 +202,7 @@ public sealed partial class AdminShellPage : Page
             return;
         }
         Recapture();
+        AttachLoggingHealth();
         RebuildSidebars();
     });
 
@@ -260,8 +261,7 @@ public sealed partial class AdminShellPage : Page
     {
         var route = (e.Parameter as AdminRouteRequest)?.Route ?? AdminRoute.Dashboard;
         AttachRestartBanner();
-        DetachLoggingHealth();
-        if (_frame.Content is AdminLoggingSettingsPage logging) { _loggingHealthSource = logging; logging.SettingsHealthChanged += OnLoggingHealthChanged; }
+        AttachLoggingHealth();
         _route = route;
         _topics.Arrive(AdminNavigation.TopicOf(route));
         _narrowTitle.Text = AdminNavigation.HeaderTitle(route);
@@ -269,6 +269,15 @@ public sealed partial class AdminShellPage : Page
         RebuildSidebars();
         RouteChanged?.Invoke(route);
         if (_lease != null) _ = LoadServerStatusAsync(_lease, force: false);
+    }
+
+    private void AttachLoggingHealth()
+    {
+        DetachLoggingHealth();
+        if (!_active || _lease?.IsCurrent != true || _frame.Content is not AdminLoggingSettingsPage logging) return;
+        _loggingHealthSource = logging;
+        logging.SettingsHealthChanged += OnLoggingHealthChanged;
+        OnLoggingHealthChanged(logging.SettingsHealth);
     }
 
     private void DetachLoggingHealth()

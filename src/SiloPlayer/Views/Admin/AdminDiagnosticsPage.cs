@@ -73,6 +73,7 @@ public sealed partial class AdminDiagnosticsPage : Page
     private FrameworkElement Filter(string label, string key, double width, string? placeholder = null)
     {
         var input = Input(placeholder ?? D("filters." + label), "DiagnosticsFilter_" + key, width, key == "short"); _filters[key] = input;
+        AutomationProperties.SetName(input, D("filters." + label));
         input.KeyDown += async (_, args) => { if (args.Key == VirtualKey.Enter) { args.Handled = true; await ApplyAsync(); } }; var field = Labelled(D("filters." + label), input, key != "user");
         if (key == "user") input.InputScope = new Microsoft.UI.Xaml.Input.InputScope { Names = { new Microsoft.UI.Xaml.Input.InputScopeName { NameValue = Microsoft.UI.Xaml.Input.InputScopeNameValue.Number } } };
         if (key == "short") input.CharacterCasing = CharacterCasing.Upper;
