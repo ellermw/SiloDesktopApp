@@ -735,9 +735,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("var selectionsMatchContent = string.Equals(", playback);
         Assert.Contains("_watchDetail?.ContentId ?? ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal)", playback);
         Assert.Contains("fileId: selectionsMatchContent ? fileId : null", playback);
-        Assert.Contains("audioTrackIndex: selectionsMatchContent ? _selectedAudioTrackIndex : null", playback);
-        Assert.Contains("subtitleSelection: selectionsMatchContent ? _selectedSubtitleIndex : null", playback);
-        Assert.Contains("subtitleTrackSignature: selectionsMatchContent ? _selectedSubtitleSignature : null", playback);
+        Assert.Contains("audioTrackIndex: selectionsMatchContent ? playbackIntent.AudioTrackIndex : null", playback);
+        Assert.Contains("subtitleSelection: selectionsMatchContent ? playbackIntent.SubtitleIndex : null", playback);
+        Assert.Contains("subtitleTrackSignature: selectionsMatchContent ? playbackIntent.SubtitleSignature : null", playback);
         Assert.Contains("sourceVersionPinned: selectionsMatchContent && IsSelectedVersionPinned", playback);
     }
 

@@ -53,13 +53,13 @@ public static class DetailVersionRanking
         void Add(string? key, string? raw, IEnumerable<FileVersion> first, IEnumerable<FileVersion> all)
         {
             var edition = editions.FirstOrDefault(e => Same(e.Key, key));
-            if (edition == null) { edition = new(key ?? "", raw, [], []); editions.Add(edition); }
+            if (edition == null) { edition = new(key?.Trim() ?? "", raw, [], []); editions.Add(edition); }
             edition.Versions.AddRange(first);
             edition.AllVersions.AddRange(all);
         }
         if (variants is { Count: > 0 })
         {
-            foreach (var variant in variants.OrderBy(VersionRanking.PlaybackVariantEditionPreference))
+            foreach (var variant in variants)
             {
                 var parts = variant.Parts.OrderBy(part => part.PartIndex).ToList();
                 if (parts.FirstOrDefault() is not { Versions.Count: > 0 } first) continue;
@@ -67,7 +67,15 @@ public static class DetailVersionRanking
             }
         }
         else foreach (var file in files) Add(file.EditionKey, file.EditionRaw, [file], [file]);
-        return editions;
+        var order = files.Select((file, index) => (file.FileId, index))
+            .GroupBy(entry => entry.FileId).ToDictionary(group => group.Key, group => group.First().index);
+        foreach (var edition in editions)
+        {
+            var sorted = edition.Versions.OrderBy(file => order.GetValueOrDefault(file.FileId, int.MaxValue)).ToList();
+            edition.Versions.Clear(); edition.Versions.AddRange(sorted);
+        }
+        return editions.OrderBy(edition => VersionRanking.PlaybackVariantEditionPreference(
+            new PlaybackVariant { EditionKey = edition.Key, EditionRaw = edition.Raw })).ToList();
     }
 
     public static FileVersion? Select(IReadOnlyList<FileVersion> files, IReadOnlyList<PlaybackVariant>? variants,
@@ -78,7 +86,21 @@ public static class DetailVersionRanking
             ?? (effectiveEditionKey == null ? null : editions.FirstOrDefault(e => Same(e.Key, effectiveEditionKey)))
             ?? (history?.LastEditionKey == null ? null : editions.FirstOrDefault(e => Same(e.Key, history.LastEditionKey)))
             ?? editions.FirstOrDefault(e => e.AllVersions.Any(file => file.FileId == history?.LastFileId));
-        return Rank(edition?.Versions ?? editions.SelectMany(e => e.Versions).ToList(), quality);
+        if (edition != null)
+        {
+            var later = history?.PositionSeconds > 0
+                ? edition.AllVersions.FirstOrDefault(file => file.FileId == history.LastFileId
+                    && edition.Versions.All(first => first.FileId != file.FileId)) : null;
+            return later ?? Rank(edition.Versions, quality);
+        }
+        // Cuts compete without file size: cap fit, resolution, HDR, then the
+        // edition preference/server order already established above.
+        var cap = ResolutionScore(quality?.Split('-')[0]);
+        return editions.Select(edition => Rank(edition.Versions, quality)).OfType<FileVersion>()
+            .Select(file => new { File = file, Rank = ResolutionScore(file.Resolution) })
+            .Select(entry => new { entry.File, entry.Rank, Fit = entry.Rank < 0 ? 2 : cap < 0 || entry.Rank <= cap ? 0 : 1 })
+            .OrderBy(entry => entry.Fit).ThenBy(entry => entry.Fit == 0 ? -entry.Rank : entry.Rank)
+            .ThenByDescending(entry => entry.File.Hdr).FirstOrDefault()?.File;
     }
 
     public static FileVersion? Rank(IReadOnlyList<FileVersion> files, string? quality)
@@ -96,17 +118,29 @@ public static class DetailVersionRanking
             if (!aboveCap) candidates = within;
         }
         return candidates.OrderBy(file => (aboveCap ? 1 : -1) * ResolutionScore(file.Resolution))
-            .ThenByDescending(file => file.Hdr).ThenByDescending(file => VersionRanking.AudioScore(file.CodecAudio)).FirstOrDefault();
+            .ThenByDescending(file => file.Hdr).ThenByDescending(file => file.FileSize).FirstOrDefault();
+    }
+
+    public static FileVersion? StartVersion(FileVersion? selected, IReadOnlyList<PlaybackVariant>? variants, string? quality)
+    {
+        if (selected == null) return null;
+        var first = PresentationParts(selected, variants).FirstOrDefault();
+        return first == null || first.Versions.Any(file => file.FileId == selected.FileId)
+            ? selected : Rank(first.Versions, quality) ?? selected;
     }
 
     public static List<FileVersion> DownloadFiles(FileVersion? selected, IReadOnlyList<PlaybackVariant>? variants, string? quality)
     {
         if (selected == null) return [];
-        var variant = variants?.FirstOrDefault(v => v.Parts.Any(p => p.Versions.Any(file => file.FileId == selected.FileId)));
-        return new[] { selected }.Concat(variant?.Parts.OrderBy(p => p.PartIndex)
-            .Where(p => !p.Versions.Any(file => file.FileId == selected.FileId))
-            .Select(p => Rank(p.Versions, quality)).OfType<FileVersion>() ?? []).ToList();
+        var parts = PresentationParts(selected, variants);
+        return parts.Count == 0 ? [selected] : parts.Select(part =>
+            part.Versions.Any(file => file.FileId == selected.FileId) ? selected : Rank(part.Versions, quality))
+            .OfType<FileVersion>().ToList();
     }
 
-    private static bool Same(string? left, string? right) => string.Equals(left ?? "", right ?? "", StringComparison.OrdinalIgnoreCase);
+    private static List<PlaybackVariantPart> PresentationParts(FileVersion file, IReadOnlyList<PlaybackVariant>? variants)
+        => variants?.FirstOrDefault(variant => variant.Parts.Any(part => part.Versions.Any(candidate => candidate.FileId == file.FileId)))
+            ?.Parts.OrderBy(part => part.PartIndex).ToList() ?? [];
+
+    private static bool Same(string? left, string? right) => string.Equals(left?.Trim() ?? "", right?.Trim() ?? "", StringComparison.OrdinalIgnoreCase);
 }

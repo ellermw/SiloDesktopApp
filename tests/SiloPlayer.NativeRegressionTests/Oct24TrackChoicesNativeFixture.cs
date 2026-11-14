@@ -157,6 +157,17 @@ internal static class Oct24TrackChoicesNativeFixture
                 "Quality refresh exposed movie badges on the audiobook surface.");
             page.ViewModel.Item = originalItem;
             Set(page, "_watchDetail", detail);
+            var laterPart = new FileVersion { FileId = 45, Resolution = "1080p", EditionKey = "" };
+            variants[0].Parts.Add(new() { PartIndex = 1, Versions = [laterPart] });
+            detail.Versions.Add(laterPart);
+            detail.UserData = new() { LastFileId = 45, LastEditionKey = "", PositionSeconds = 42, Played = true };
+            Call(page, "UpdatePlayButton");
+            Require(Get<FileVersion>(page, "_selectedVersion")?.FileId == 45,
+                "Actual Resume detail lost the saved later multipart file during a rewatch.");
+            Require(DetailVersionRanking.StartVersion(laterPart, variants, "auto")?.FileId == 42
+                && DetailVersionRanking.DownloadFiles(laterPart, variants, "auto").Select(file => file.FileId).SequenceEqual(new[] { 42, 45 }),
+                "Multipart Start Over or download ordering did not begin with the first part.");
+            Program.Log("PASS: saved later-part Resume stays on its part; Start Over and downloads resolve the presentation in play order.");
             await VerifyQualityReadsAsync(page, api, wire);
             Program.Log("PASS: same-file download inventory refreshes without losing choices; playback return retires them; catalog resume and metadata-free Auto labels remain usable; audiobook badges stay hidden; real settings reads reject stale revisions, content and owners and recover after failure.");
             var range = typeof(ItemDetailPage).GetMethod("FormatTrackDynamicRange", BindingFlags.NonPublic | BindingFlags.Static)!
