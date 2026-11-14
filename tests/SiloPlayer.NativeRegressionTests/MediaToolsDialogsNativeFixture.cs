@@ -1,3 +1,5 @@
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Messaging;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
@@ -19,6 +21,7 @@ internal static class MediaToolsDialogsNativeFixture
         using var wire = new Wire(); using var http = new HttpClient(wire); var client = new SiloApiClient(http); client.SetBaseUrl("https://media-tools-fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SetCurrentUser(new() { Id = "fixture", Role = "admin" });
         slot.SetValue(null, new Services(original, client, auth));
+        WeakReferenceMessenger.Default.Register<Wire, MediaSurfaceChanged>(wire, static (recipient, message) => recipient.Notices.Add(message));
         var window = new Window { Content = new Grid { Background = (Brush)Application.Current.Resources["AppBackgroundBrush"] } }; var owner = (Grid)window.Content;
         try
         {
@@ -49,17 +52,18 @@ internal static class MediaToolsDialogsNativeFixture
                 }
                 finally { dialog.Hide(); await showing; }
             }
-            var revoked = new MarkerEditorDialog("fixture") { XamlRoot = owner.XamlRoot }; var revokedShowing = revoked.ShowAsync(); await Task.Delay(120); var count = wire.Writes.Count; auth.SetCurrentUser(new() { Id = "fixture", Role = "user" });
-            Invoke(Descendants<Button>(revoked).Single(button => button.Name == "PrimaryButton")); await Task.Delay(100); Check(wire.Writes.Count == count, "Revoked marker permission wrote remotely"); revoked.Hide(); await revokedShowing;
+            var revoked = new MarkerEditorDialog("fixture") { XamlRoot = owner.XamlRoot }; var revokedShowing = revoked.ShowAsync(); await Task.Delay(120); var count = wire.Writes.Count; var noticesBeforeRevocation = wire.Notices.Count; auth.SetCurrentUser(new() { Id = "fixture", Role = "user" });
+            Invoke(Descendants<Button>(revoked).Single(button => button.Name == "PrimaryButton")); await Task.Delay(100); Check(wire.Writes.Count == count && wire.Notices.Count == noticesBeforeRevocation, "Revoked marker permission wrote or invalidated remotely"); revoked.Hide(); await revokedShowing;
             Program.Log("PASS: actual media tools load current contracts, gate pending commands, preview before split, invalidate stale plans, and retain visible narrow footers without live API writes.");
         }
-        finally { slot.SetValue(null, original); window.Close(); }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(wire); slot.SetValue(null, original); window.Close(); }
     }
     private static async Task MarkersAsync(FrameworkElement owner, Wire wire)
     {
         var unchanged = new MarkerEditorDialog("fixture") { XamlRoot = owner.XamlRoot }; var showing = unchanged.ShowAsync(); await Task.Delay(130);
         Invoke(Descendants<Button>(unchanged).Single(button => button.Name == "PrimaryButton")); await Until(() => showing.Status != Windows.Foundation.AsyncStatus.Started); await showing;
         Check(wire.Writes.Count == 0, "Untouched marker dialog resaves detected markers");
+        Check(wire.Notices.Count == 0, "Unchanged markers invalidated playback snapshots");
         var dialog = new MarkerEditorDialog("fixture") { XamlRoot = owner.XamlRoot }; showing = dialog.ShowAsync(); await Task.Delay(130);
         try
         {
@@ -76,6 +80,7 @@ internal static class MediaToolsDialogsNativeFixture
             Check(!start.IsEnabled && !Descendants<Button>(dialog).Single(button => button.Name == "CloseButton").IsEnabled, "Pending marker mutation leaves dismiss/edit controls enabled");
             var body = wire.Writes.Last().Body; Check(body.GetProperty("intro").GetProperty("start_seconds").GetDouble() == 91, "Edited marker did not use current contract"); Check(!body.TryGetProperty("credits", out _), "Unchanged absent marker is overwritten");
             wire.Gate.SetResult(); await Until(() => showing.Status != Windows.Foundation.AsyncStatus.Started); await showing; Check(dialog.HasSaved, "Saved marker response is not recorded");
+            Check(wire.Notices.Count == 1 && wire.Notices[0].Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && wire.Notices[0].ContentId == "fixture", "Saved markers did not invalidate watch snapshots exactly once");
         }
         finally { wire.Gate?.TrySetResult(); wire.Gate = null; dialog.Hide(); await showing; }
     }
@@ -95,8 +100,10 @@ internal static class MediaToolsDialogsNativeFixture
         {
             Button Choice(string name) => Descendants<Button>(dialog).Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == name);
             Check(!Choice("Intro").IsEnabled && Choice("Credits").IsEnabled && !Choice("Intro and credits").IsEnabled, "Explicit off detection setting is ignored");
+            var noticesBefore = wire.Notices.Count;
             Invoke(Choice("Credits")); await Until(() => showing.Status != Windows.Foundation.AsyncStatus.Started); await showing;
             Check(wire.Writes.Last().Body.GetProperty("kind").GetString() == "credits", "Detection kind changes during submission");
+            Check(wire.Notices.Count == noticesBefore + 1 && wire.Notices.Last().Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed, "Accepted redetection did not retire old watch snapshots");
         }
         finally { dialog.Hide(); await showing; }
     }
@@ -145,6 +152,7 @@ internal static class MediaToolsDialogsNativeFixture
     private record Write(string Path, JsonElement Body);
     private sealed class Wire : HttpMessageHandler
     {
+        public List<MediaSurfaceChanged> Notices = [];
         public List<Write> Writes = []; public TaskCompletionSource? Gate; public bool SeekOff; public int FileCount = 2;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
