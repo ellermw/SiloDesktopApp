@@ -43,10 +43,18 @@ public sealed class ServerActivityStoreTests
         private readonly List<(DateTimeOffset Due, Action Callback, Cancel Token)> _timers = [];
         public DateTimeOffset UtcNow { get; private set; } = DateTimeOffset.Parse("2026-11-14T12:00:00Z");
 
+        public bool FireNextBeforeReturning;
+
         public IDisposable Schedule(TimeSpan delay, Action callback)
         {
             var token = new Cancel();
-            lock (_timers) _timers.Add((UtcNow + delay, callback, token));
+            if (FireNextBeforeReturning)
+            {
+                FireNextBeforeReturning = false;
+                UtcNow += delay;
+                callback();
+            }
+            else lock (_timers) _timers.Add((UtcNow + delay, callback, token));
             return token;
         }
 
@@ -261,6 +269,28 @@ public sealed class ServerActivityStoreTests
     }
 
     [Fact]
+    public async Task TrailingCallbackBeforeScheduleReturnsDoesNotBlockLaterBursts()
+    {
+        using var h = new Harness();
+        using var demand = h.Store.AcquireReads();
+        await Until(() => h.Store.Current.SessionsLoaded && h.Store.Current.Preparations != null);
+
+        h.Channel.Event("sessions", "sessions.replaced", "{}");
+        await Until(() => h.HitCount("/api/v2/admin/sessions") == 2);
+        h.Scheduler.Advance(TimeSpan.FromMilliseconds(4999));
+        h.Scheduler.FireNextBeforeReturning = true;
+        h.Channel.Event("sessions", "sessions.replaced", "{}");
+        await Until(() => h.HitCount("/api/v2/admin/sessions") == 3);
+
+        // The just-fired handle must not remain installed as the trailing timer.
+        h.Channel.Event("sessions", "sessions.replaced", "{}");
+        Assert.Equal(1, h.Scheduler.Pending);
+        h.Scheduler.Advance(ServerActivityStore.EventCoalescing);
+        await Until(() => h.HitCount("/api/v2/admin/sessions") == 4);
+        Assert.Equal(0, h.Scheduler.Pending);
+    }
+
+    [Fact]
     public async Task PreparationProgressPatchesWithoutReadAndMaintenanceRunsEverySixtySeconds()
     {
         using var h = new Harness();
@@ -321,6 +351,50 @@ public sealed class ServerActivityStoreTests
         Assert.False(h.Store.Current.ScansLoaded);
         h.Channel.Snapshot("scans", "[]");
         Assert.True(h.Store.Current.ScansLoaded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DashboardSessionsKeepSharedReadErrorsAndAnyEarlierData(bool previouslyLoaded)
+    {
+        using var h = new Harness();
+        if (previouslyLoaded)
+            h.Sessions = """{"items":[{"session_id":"s","user_id":"7","media_file_id":"1","requested_media_file_id":"1"}],"page":{"has_more":false}}""";
+        else
+            h.Override = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+        using var feed = new ServerActivityDashboardFeed(h.Store);
+        using var lease = h.Authority.Capture();
+        SynchronizationContext.SetSynchronizationContext(null);
+        using var dashboard = new DashboardDataStore(new AdminMonitorApi(h.Kit.Client), lease, feed, new DashboardManualTime());
+        dashboard.Start();
+        await h.Store.RefreshAllAsync();
+        await Until(() => h.Store.Current.SessionsLoaded &&
+            (previouslyLoaded ? dashboard.Get(DashboardDataStore.Sessions).Data != null : dashboard.Get(DashboardDataStore.Sessions).Error != null));
+        var data = dashboard.Get(DashboardDataStore.Sessions).Data;
+        var updatedAt = dashboard.Get(DashboardDataStore.Sessions).UpdatedAt;
+        if (previouslyLoaded)
+            Assert.Single(dashboard.Get(DashboardDataStore.Sessions).As<IReadOnlyList<SiloPlayer.Core.Models.Admin.DashboardSession>>()!);
+
+        h.Override = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+        await dashboard.FetchAsync(DashboardDataStore.Sessions, force: true);
+
+        var state = dashboard.Get(DashboardDataStore.Sessions);
+        Assert.NotNull(h.Store.Current.SessionsError);
+        Assert.NotNull(state.Error);
+        Assert.Same(data, state.Data);
+        Assert.Equal(updatedAt, state.UpdatedAt);
+        if (!previouslyLoaded)
+        {
+            Assert.Null(state.Data);
+            Assert.Null(state.UpdatedAt);
+        }
+
+        h.Override = null;
+        await dashboard.FetchAsync(DashboardDataStore.Sessions, force: true);
+        Assert.Null(state.Error);
+        Assert.NotNull(state.Data);
+        Assert.NotNull(state.UpdatedAt);
     }
 
     [Fact]

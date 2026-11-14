@@ -58,7 +58,7 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
         using var abort = lifetime.Token.Register(socket.Abort);
         var origin = new Uri(lease.Context.BaseUrl);
         if (origin.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(origin.UserInfo)) throw new InvalidDataException("Invalid log stream origin.");
-        var address = new UriBuilder(origin) { Scheme = origin.Scheme == "https" ? "wss" : "ws", Path = "/api/v2/admin/logs/ws", Query = "stream=" + stream + "&" + query.ToQuery(stream).TrimStart('?'), Fragment = "" }.Uri;
+        var address = new UriBuilder(origin) { Scheme = origin.Scheme == "https" ? "wss" : "ws", Path = origin.AbsolutePath.TrimEnd('/') + "/api/v2/admin/logs/ws", Query = "stream=" + stream + "&" + query.ToQuery(stream).TrimStart('?'), Fragment = "" }.Uri;
         try
         {
             await socket.ConnectAsync(address, [Protocol, "silo.ticket." + ticket.Ticket], lifetime.Token).ConfigureAwait(false);

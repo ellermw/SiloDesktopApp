@@ -417,7 +417,7 @@ public sealed class DashboardDataStore : IDisposable
                 await _feed.RefreshSessionsAsync();
                 lease.ThrowIfRetired();
                 var current = _feed.Current;
-                if (!current.SessionsLoaded) throw new InvalidOperationException(current.SessionsError ?? "Sessions unavailable.");
+                if (current.SessionsError != null || !current.SessionsLoaded) throw new InvalidOperationException(current.SessionsError ?? "Sessions unavailable.");
                 _sessionSignature = SessionSignature(current.Sessions);
                 return current.Sessions;
             }
@@ -468,12 +468,12 @@ public sealed class DashboardDataStore : IDisposable
         if (!IsCurrent || _feed == null) return;
         var current = _feed.Current;
         var entry = EntryFor(Sessions);
-        if (current.SessionsLoaded)
+        if (current.SessionsLoaded && current.SessionsError == null)
         {
             var signature = SessionSignature(current.Sessions);
             var changed = signature != _sessionSignature || entry.State.Data == null;
             entry.State.Data = current.Sessions;
-            entry.State.Error = current.SessionsError != null ? new InvalidOperationException(current.SessionsError) : null;
+            entry.State.Error = null;
             if (changed)
             {
                 var hadData = _sessionSignature != null;

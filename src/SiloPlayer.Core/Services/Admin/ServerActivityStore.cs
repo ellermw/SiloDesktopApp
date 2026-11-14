@@ -450,26 +450,28 @@ public sealed class ServerActivityStore : IDisposable
 
     private void ScheduleTrailing(Resource resource, TimeSpan delay)
     {
-        MonitorAuthorityLease? lease;
-        lock (_gate) lease = _lease;
-        if (lease == null) return;
-        var timer = _scheduler.Schedule(delay, () =>
-        {
-            lock (_gate)
-            {
-                if (!ReferenceEquals(_lease, lease)) return;
-                var state = _resources[resource];
-                state.Trailing?.Dispose();
-                state.Trailing = null;
-                state.LastEventRefresh = _scheduler.UtcNow;
-            }
-            _ = StartRead(resource, force: true);
-        });
         lock (_gate)
         {
+            var lease = _lease;
             var state = _resources[resource];
-            if (!ReferenceEquals(_lease, lease) || state.Trailing != null) { timer.Dispose(); return; }
-            state.Trailing = timer;
+            if (lease == null || _disposed || state.Trailing != null) return;
+            // Publish the handle before a concurrent callback can take the gate.
+            // A scheduler may also invoke inline; never retain that fired handle.
+            var fired = false;
+            var timer = _scheduler.Schedule(delay, () =>
+            {
+                lock (_gate)
+                {
+                    fired = true;
+                    if (!ReferenceEquals(_lease, lease)) return;
+                    state.Trailing?.Dispose();
+                    state.Trailing = null;
+                    state.LastEventRefresh = _scheduler.UtcNow;
+                }
+                _ = StartRead(resource, force: true);
+            });
+            if (fired) timer.Dispose();
+            else state.Trailing = timer;
         }
     }
 

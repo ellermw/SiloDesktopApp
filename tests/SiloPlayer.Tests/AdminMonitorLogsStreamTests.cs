@@ -83,10 +83,17 @@ public sealed class AdminMonitorLogsStreamTests
         Assert.True(socket.Aborted);
     }
 
-    [Fact]
-    public async Task LogSocketUsesTicketProtocolsAndWaitsForMatchingSnapshot()
+    [Theory]
+    [InlineData("https://silo.test", "wss://silo.test/api/v2/admin/logs/ws")]
+    [InlineData("https://silo.test/silo", "wss://silo.test/silo/api/v2/admin/logs/ws")]
+    [InlineData("https://silo.test/silo/", "wss://silo.test/silo/api/v2/admin/logs/ws")]
+    [InlineData("http://silo.test:8080/silo", "ws://silo.test:8080/silo/api/v2/admin/logs/ws")]
+    public async Task LogSocketUsesTicketProtocolsAndWaitsForMatchingSnapshot(string baseUrl, string socketUrl)
     {
         using var kit = AdminMonitorKit.Create();
+        kit.Client.SetBaseUrl(baseUrl);
+        kit.Auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+        kit.Auth.SelectProfile("p1", null, new SiloPlayer.Core.Models.Auth.Profile { Id = "p1", Name = "Primary", IsPrimary = true });
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"ticket":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","protocol":"silo.admin-logs.v2","expires_in":30,"max_connection_seconds":300}"""));
         var socket = new LogsSyntheticSocket();
@@ -95,7 +102,7 @@ public sealed class AdminMonitorLogsStreamTests
         var received = new TaskCompletionSource<LogsSocketFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         var run = client.RunAsync(lease, "app", new() { Message = "secret test filter" }, frame => received.TrySetResult(frame));
         await socket.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("wss://silo.test/api/v2/admin/logs/ws?stream=app&q=secret%20test%20filter&limit=100", socket.Address!.AbsoluteUri);
+        Assert.Equal(socketUrl + "?stream=app&q=secret%20test%20filter&limit=100", socket.Address!.AbsoluteUri);
         Assert.Equal(["silo.admin-logs.v2", "silo.ticket.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], socket.Protocols);
         await socket.Frames.Writer.WriteAsync("""{"type":"snapshot","stream":"audit","entries":[]}""");
         Assert.False(received.Task.IsCompleted);
