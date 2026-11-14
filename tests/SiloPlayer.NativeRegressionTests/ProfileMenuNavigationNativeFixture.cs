@@ -16,6 +16,7 @@ using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
+using SiloPlayer.Views.Admin;
 
 internal static class ProfileMenuNavigationNativeFixture
 {
@@ -44,6 +45,7 @@ internal static class ProfileMenuNavigationNativeFixture
         prefs.TasteSeedDismissedProfileIds.AddRange(["first", "second"]); local.Save(prefs);
         var serviceCollection = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(local).AddSingleton(http)
+            .AddSingleton<AdminMonitorAuthority>()
             .AddSingleton<CredentialStore>().AddSingleton<AuthApi>().AddSingleton<SettingsApi>().AddSingleton<CatalogApi>()
             .AddSingleton<RequestsApi>().AddSingleton<NotificationsApi>().AddSingleton<PlaybackApi>().AddSingleton<HistoryImportApi>()
             .AddSingleton<WatchProvidersApi>().AddSingleton<RecommendationsApi>().AddSingleton<CollectionsApi>()
@@ -176,6 +178,7 @@ internal static class ProfileMenuNavigationNativeFixture
             navigation.Navigate<HomePage>();
             await Until(() => navigation.Frame.Content is HomePage home && home.IsLoaded && !home.ViewModel.IsLoading && home.ViewModel.Sections.Any(section => section.Items.Count > 0));
             Program.Log($"PASS: {width}px Settings opened and Library/Home loaded populated data after leaving Settings.");
+            await CheckAdminPlaybackCompletion(window, navigation, auth, width, height);
             await OpenMenu(); Click((Button)root.FindName("ProfileSwitchButton"));
             await Until(() => navigation.Frame.Content is ProfileSelectPage profiles && profiles.ViewModel.Profiles.Count == 2 && !profiles.ViewModel.IsLoading);
             var profilesPage = (ProfileSelectPage)navigation.Frame.Content;
@@ -193,6 +196,54 @@ internal static class ProfileMenuNavigationNativeFixture
             mainProperty.SetValue(null, previousMain); servicesField.SetValue(null, previous);
         }
     }
+    private static async Task CheckAdminPlaybackCompletion(MainWindow window, NavigationService navigation, AuthService auth, int originalWidth, int height)
+    {
+        var root = (FrameworkElement)window.Content;
+        var nav = (NavigationView)root.FindName("NavView");
+        var header = (FrameworkElement)root.FindName("MobileShellHeader");
+        var footer = (Button)root.FindName("AdminFooterButton");
+        var stateChanged = typeof(MainWindow).GetMethod("OnPlayerStateChanged", Instance)!;
+        // Exercise the real shell callbacks with synthetic player states; no
+        // decoder, live session or Admin API is needed for pane ownership.
+        void State(PlayerState state) => stateChanged.Invoke(window, [state]);
+        auth.SetCurrentUser(new() { Id = "fixture", Username = "Fixture", Role = "admin" });
+        await Until(() => footer.Visibility == Visibility.Visible);
+        foreach (var width in new[] { 1280, 800 })
+        {
+            window.AppWindow.ResizeClient(new(width, height));
+            await Until(() => (bool)typeof(MainWindow).GetField("_isNarrowShell", Instance)!.GetValue(window)! == (width < 1024));
+            await Task.Delay(300);
+            State(PlayerState.Minimized);
+            nav.IsPaneOpen = true;
+            await Task.Delay(300);
+            // Narrow entry closes the drawer immediately before Frame.Navigated.
+            Click(footer);
+            await Until(() => navigation.Frame!.Content is AdminShellPage && !nav.IsPaneVisible && !nav.IsPaneOpen);
+            var reopened = false;
+            var token = nav.RegisterPropertyChangedCallback(NavigationView.IsPaneVisibleProperty, (_, _) => reopened |= nav.IsPaneVisible);
+            try
+            {
+                State(PlayerState.Idle); // mini playback stopped / reached EOF
+                State(PlayerState.PictureInPicture);
+                State(PlayerState.Minimized);
+                State(PlayerState.Idle);
+                await Task.Delay(400);
+                if (reopened || nav.IsPaneVisible || header.Visibility != Visibility.Collapsed)
+                    throw new InvalidOperationException($"{width}px Admin playback completion reopened app navigation.");
+            }
+            finally { nav.UnregisterPropertyChangedCallback(NavigationView.IsPaneVisibleProperty, token); }
+            navigation.Navigate<Page>();
+            await Until(() => navigation.Frame!.Content is Page and not AdminShellPage && nav.IsPaneVisible);
+            await Task.Delay(300);
+            if (!nav.IsPaneVisible) throw new InvalidOperationException("An Admin hide retry hid the returned app shell.");
+            Program.Log($"PASS: {width}px Admin footer entry and mini-to-idle shell callbacks keep navigation hidden without a visible-pane pulse.");
+        }
+        auth.SetCurrentUser(new() { Id = "fixture", Username = "Fixture", Role = "user" });
+        window.AppWindow.ResizeClient(new(originalWidth, height));
+        await Until(() => (bool)typeof(MainWindow).GetField("_isNarrowShell", Instance)!.GetValue(window)! == (originalWidth < 1024));
+        await Task.Delay(300);
+    }
+
     private static void Click(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Until(Func<bool> ready)
     { for (var i = 0; i < 240 && !ready(); i++) await Task.Delay(25); if (!ready()) throw new InvalidOperationException("Profile menu navigation failed to reach its destination."); }

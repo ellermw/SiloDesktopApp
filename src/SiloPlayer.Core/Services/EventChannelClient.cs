@@ -569,6 +569,9 @@ public sealed class EventChannelClient : IDisposable
                            .Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
                            .TrimEnd('/');
         wsUrl += "/api/v2/events/ws";
+        // Connection indicators distinguish an attempt in progress from a
+        // dropped socket, as the WebUI's connecting/live/disconnected states do.
+        StateChanged?.Invoke(WebSocketState.Connecting);
         var connectStartedAt = MonotonicNow();
         var (ticket, lifetimeSeconds) = await MintEventsTicketAsync(ct).ConfigureAwait(false);
         if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);

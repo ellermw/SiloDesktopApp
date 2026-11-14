@@ -219,6 +219,7 @@ public sealed partial class MainWindow : Window
         if (AppWindow != null) AppWindow.Closing += OnWindowClosing;
         App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().Initialize(DispatcherQueue);
         InitializeAppUpdates();
+        InitializeAdminMonitor();
     }
 
     private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
@@ -337,7 +338,8 @@ public sealed partial class MainWindow : Window
         if (MobileShellHeader.Visibility != mobileHeaderVisibility)
             MobileShellHeader.Visibility = mobileHeaderVisibility;
 
-        if (!NavView.IsPaneVisible)
+        UpdateAdminChrome();
+        if (IsAdminShellActive || !NavView.IsPaneVisible)
             return;
 
         if (isNarrow)
@@ -534,19 +536,30 @@ public sealed partial class MainWindow : Window
     {
         if (_receiverShutdownStarted) return;
         _receiverShutdownStarted = true;
-        if(!await PrepareAppUpdateExitAsync()){_receiverShutdownStarted=false;return;}
-        try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
-        catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
+        try
+        {
+            if (ContentFrame.Content is SiloPlayer.Views.Admin.AdminShellPage admin && !await admin.CanLeaveAsync()) return;
+            if (!await PrepareAppUpdateExitAsync()) return;
+            try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
+            catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
+            finally
+            {
+                _receiverShutdownComplete = true;
+                Close();
+            }
+        }
+        catch (Exception ex) { LocalLog.AppendException("silocast.txt", ex, "window_close_failed"); }
         finally
         {
-            _receiverShutdownComplete = true;
-            Close();
+            // A cancelled or failed leave/update guard must allow another close attempt.
+            if (!_receiverShutdownComplete) _receiverShutdownStarted = false;
         }
     }
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         _realtimeMediaStateRefresh.Dispose();
+        DisposeAdminMonitor();
         _windowClosed = true;
         if (ContentFrame.Content is ItemDetailPage detail) detail.ViewModel.CancelPendingLoads();
         Interlocked.Exchange(ref _loadingOverlayOwner, null);
@@ -1211,6 +1224,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (FocusSettingsSidebarSearch()) return;
+        if (TryAdminShellSearch()) return;
         try
         {
             var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot, InitialQuery = _globalSearchQuery };
@@ -1879,7 +1893,7 @@ public sealed partial class MainWindow : Window
             var desiredPaneOpen = !_isNarrowShell && DesktopSidebarIsOpen;
             if (NavView.IsPaneOpen != desiredPaneOpen)
                 NavView.IsPaneOpen = desiredPaneOpen;
-            if (!NavView.IsPaneVisible)
+            if (!NavView.IsPaneVisible && !IsAdminShellActive)
                 NavView.IsPaneVisible = true;
             ApplyResponsiveShellLayout();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
@@ -2188,6 +2202,9 @@ public sealed partial class MainWindow : Window
         if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
             return false;
 
+        if (TryAdminShellBack())
+            return true;
+
         if (!_navigationService.CanGoBack)
             return false;
 
@@ -2297,6 +2314,7 @@ public sealed partial class MainWindow : Window
 
         ProfileNameText.Opacity = isOpen ? 1 : 0;
         ProfileNameText.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAdminFooterPresentation(isOpen);
         ProfileAvatarSlot.Width = 28;
         ProfileAvatarSlot.Margin = isOpen ? new Thickness(-5, 0, -5, 0) : new Thickness(0);
         ProfileFooterContent.Spacing = isOpen ? 10 : 0;
@@ -2474,7 +2492,8 @@ public sealed partial class MainWindow : Window
 
         // Restore the authenticated shell at the frame boundary so navigation
         // never leaves the user-controlled pane in a transient hidden state.
-        if (!NavView.IsPaneVisible)
+        if (!IsAdminShellActive) _mainNavigationHidePending = false;
+        if (!NavView.IsPaneVisible && !IsAdminShellActive)
             NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout(duringFrameNavigation: true);
         SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
@@ -2884,6 +2903,7 @@ public sealed partial class MainWindow : Window
     private void SynchronizeDesktopPaneState()
     {
         if (_synchronizingDesktopPaneState ||
+            IsAdminShellActive ||
             _isNarrowShell ||
             !NavView.IsPaneVisible ||
             !CanExposeAuthenticatedNavigation)
@@ -3013,7 +3033,7 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
                 MiniPlayerBarControl.Deactivate();
                 MiniPlayerBarControl.ResetSleepTimer();
-                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
+                if (!IsAdminShellActive) NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
                 ApplyResponsiveShellLayout();
                 LogState($"  -> Idle: NavView.IsPaneVisible={NavView.IsPaneVisible} _navInitialized={_navInitialized}");
@@ -3047,7 +3067,7 @@ public sealed partial class MainWindow : Window
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 MiniPlayerBarControl.Deactivate();
                 MiniPlayerBarControl.Visibility = Visibility.Collapsed;
-                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
+                if (!IsAdminShellActive) NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0);
                 ApplyResponsiveShellLayout();
                 break;
@@ -3057,13 +3077,14 @@ public sealed partial class MainWindow : Window
                 AudiobookNowListeningControl.Deactivate();
                 PlayerOverlayControl.Deactivate();
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
-                NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
+                if (!IsAdminShellActive) NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
                 NavView.Margin = new Thickness(0, 0, 0, _playerService.IsAudiobook ? Controls.MiniPlayerBar.AudiobookHeightForWidth(MiniPlayerBarControl.ActualWidth) : 132);
                 ApplyResponsiveShellLayout();
                 MiniPlayerBarControl.Visibility = Visibility.Visible;
                 MiniPlayerBarControl.Activate();
                 break;
         }
+        UpdateAdminChrome();
         ApplyPendingAccessRefresh();
     }
 
@@ -3148,16 +3169,29 @@ public sealed partial class MainWindow : Window
     public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null, Func<bool>? isCurrent = null, bool activate = true, Func<ContentDialog, Task>? showDialog = null)
         => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot, isCurrent, activate, showDialog);
 
-    public void NavigateToHome()
+    public async void NavigateToHome()
     {
-        if (!_navigationService.Navigate<HomePage>())
+        if (_adminNavigationPending) return;
+        try
         {
-            var failure = new InvalidOperationException("The navigation frame rejected the Home page.");
-            LogNavigationFailure("navigate_home", failure);
-            ShowPlaybackError("Page failed to open", "Silo could not open Home. The current page is still available.");
-            return;
+            if (ContentFrame.Content is Views.Admin.AdminShellPage shell && shell.RequiresLeaveConfirmation && _adminAuthority?.IsAvailable == true)
+            {
+                // Confirm before Frame.Navigate: an intentional cancellation is not a page failure.
+                _adminNavigationPending = true;
+                if (!await shell.CanLeaveAsync() || _windowClosed || !ReferenceEquals(ContentFrame.Content, shell)) return;
+                // Discard's health render may still be queued when the Frame guard runs.
+                _adminNavigationApproved = true;
+            }
+            if (!_navigationService.Navigate<HomePage>())
+            {
+                var failure = new InvalidOperationException("The navigation frame rejected the Home page.");
+                LogNavigationFailure("navigate_home", failure);
+                ShowPlaybackError("Page failed to open", "Silo could not open Home. The current page is still available.");
+                return;
+            }
+            NavView.SelectedItem = HomeNavItem;
         }
-        NavView.SelectedItem = HomeNavItem;
+        finally { _adminNavigationApproved = false; _adminNavigationPending = false; }
     }
 
     public bool TryEnterAuthenticatedPage(Type pageType, object? parameter, out Exception? failure)

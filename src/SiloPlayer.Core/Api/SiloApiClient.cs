@@ -75,6 +75,7 @@ public partial class SiloApiClient
     private string _baseUrl = "";
     private long _authenticationGeneration;
     private long _requestContextGeneration;
+    private long _transportCatchUpGeneration;
     private long _accessGeneration;
     private long _identityGeneration;
     private Func<CancellationToken, Task<bool>>? _tokenRefresher;
@@ -86,6 +87,17 @@ public partial class SiloApiClient
     public ApiRequestContext CaptureContext()
     {
         lock (_authStateGate) return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId) { AccessGeneration = _accessGeneration };
+    }
+    // Monitor page ownership survives transport catch-up, but not any other
+    // context change (including profile proofs and device changes). The authority
+    // key is only for comparison; requests must use the unmodified Request value.
+    internal (ApiRequestContext Request, ApiRequestContext Authority) CaptureMonitorContext()
+    {
+        lock (_authStateGate)
+        {
+            var request = CaptureContext();
+            return (request, request with { RequestContextGeneration = _requestContextGeneration - _transportCatchUpGeneration });
+        }
     }
     public bool IsCurrentContext(ApiRequestContext context) => CaptureContext() == context;
     public string? DeviceId { get { lock (_authStateGate) return _deviceId; } }
@@ -157,7 +169,8 @@ public partial class SiloApiClient
             if (updated != expected) return false;
             _requestContextGeneration++;
             // Reconnect catch-up retires requests, not the catalog's access authority.
-            if (!transportCatchUp) _accessGeneration++;
+            if (transportCatchUp) _transportCatchUpGeneration++;
+            else _accessGeneration++;
             updated = CaptureContext();
         }
         ContextInvalidated?.Invoke();

@@ -74,4 +74,6 @@ public class AppSettings
     /// before Silo waits for the viewer. Null uses the default; 0 never asks.</summary>
     public int? StillWatchingThreshold { get; set; }
     public Dictionary<string, string> ThemeOverrides { get; set; } = [];
+    /// <summary>Admin sidebar topics the admin opened or closed (WebUI `silo.admin-nav.open-topics`).</summary>
+    public Dictionary<string, bool> AdminNavOpenTopics { get; set; } = [];
 }
