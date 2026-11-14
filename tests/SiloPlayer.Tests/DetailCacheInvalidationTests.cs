@@ -14,6 +14,19 @@ namespace SiloPlayer.Tests;
 /// </summary>
 public sealed class DetailCacheInvalidationTests
 {
+    [Fact]
+    public async Task MarkerMetadataChangeRetiresPrefetchedWatchSnapshot()
+    {
+        var (freshness, messenger, _) = CreateFreshness();
+        var stale = await freshness.ReadAsync("episode:a", _ => Task.FromResult(new WatchDetailResponse { ContentId = "episode:a", Intro = new() { Start = 1, End = 10 } }), CancellationToken.None);
+        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, "episode:a"));
+        Assert.False(freshness.IsCurrent(stale));
+        var reads = 0;
+        var current = await freshness.GetCurrentAsync(ct => ++reads == 1 ? Task.FromResult(stale)
+            : freshness.ReadAsync("episode:a", _ => Task.FromResult(new WatchDetailResponse { ContentId = "episode:a", Intro = new() { Start = 20, End = 30 } }), ct), _ => { }, CancellationToken.None);
+        Assert.Equal(2, reads);
+        Assert.Equal(20, current.Intro?.Start);
+    }
     [Theory]
     [InlineData(MediaSurfaceChangeKind.WatchedMarked)]
     [InlineData(MediaSurfaceChangeKind.WatchedCleared)]

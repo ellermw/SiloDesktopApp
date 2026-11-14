@@ -7,11 +7,25 @@ units, fresh publish/native build and library-scan-refresh/library-reconnect
 native groups passed. Initial full6115 preceded review corrections and remains
 historical only. See [scope/evidence](parity/2026-11-13-upstream-4448-library.md).
 
-Base6f9f87f7;1.2.1017-beta.1 /1.2.1016.1 unchanged. RankingPR148 and markerPR149
-are separate submissions. Metered quality remains an independent pending branch.
+Base6f9f87f7;1.2.1017-beta.1 /1.2.1016.1 unchanged. RankingPR148 is a separate
+submission; markerPR149 has landed on Beta. Metered quality remains an independent pending branch.
 PR145 remains pipeline-owned. Existing output area is reused within10GiB and
 both drives remain above50GiB; no cleanup retried after the prior policy block,
 recovered0GiB C:/D:. Installed player remains open.
+
+---
+# November 13 - Marker-save watch-cache invalidation
+
+Independent upstream4448e401 marker increment: accepted edits/redetection publish
+the existing context-scoped metadata invalidation, retiring pre-save /watch
+prefetches.44 related units and the actual marker-cache native fixture passed;
+Release publish/native build passed. See
+[scope and evidence](parity/2026-11-13-upstream-4448-markers.md).
+Base6f9f87f7; version1.2.1017-beta.1 /1.2.1016.1 unchanged. At submission, ranking was separately
+submitted in PR148; metered quality and library scan refresh remained pending.
+Output reuses the same sub-1.3GiB payload; free C:192.84GiB, D:480.83GiB.
+Cleanup remains unattempted after the prior policy rejection; recovered0GiB on
+both drives. Installed player remains open and PR145 is untouched.
 
 ---
 # November 13 - Edition-scoped detail Auto verified locally
