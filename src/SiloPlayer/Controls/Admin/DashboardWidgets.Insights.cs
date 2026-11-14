@@ -366,7 +366,7 @@ internal sealed class ApiClientsWidget(DashboardWidgetContext c) : DashboardWidg
         chevron.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
         chevron.RenderTransform = new Microsoft.UI.Xaml.Media.RotateTransform { Angle = open ? 90 : 0 };
         Add(chevron, 1);
-        var label = new TextBlock { FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = B(Foreground) };
+        var label = new TextBlock { FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = B(Foreground) };
         label.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = ClientLabel(client) });
         label.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
         {
@@ -384,6 +384,7 @@ internal sealed class ApiClientsWidget(DashboardWidgetContext c) : DashboardWidg
         var button = new Button
         {
             Content = row,
+            MinHeight = 0, MinWidth = 0,
             Padding = new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,

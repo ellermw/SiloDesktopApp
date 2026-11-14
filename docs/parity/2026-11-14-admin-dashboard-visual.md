@@ -1,0 +1,5 @@
+# Dashboard visual correction group
+
+Follow-up to PR #156, pinned to official WebUI `1a99f7be`. Corrects chart bars/geometry, icon paths, pills, health borders, widget/header/legend wrapping, viewport composition, fixed-row stat budgets, rich-run sentence gaps, Users identity/owner layout, Scan Activity content-based columns and provider-error alignment. Keeps the owner's no-slide navigation preference.
+
+Native evidence includes all 28 populated widget bodies at five widths, loading/error/zero state captures, geometry assertions, authority/drop regressions and independent pixel comparisons. The integrated group passes. Narrow Users now retains its owner badge; Storage at 1024 retains its label/value/caption. Residual text metrics and unlisted interaction/range/theme/DPI states remain partial, as recorded in `2026-11-14-admin-visual-followups.md` and the local 162-row ledger. No complete visual-parity claim.

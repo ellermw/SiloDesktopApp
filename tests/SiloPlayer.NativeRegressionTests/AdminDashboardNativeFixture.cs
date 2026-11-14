@@ -31,6 +31,11 @@ using Windows.Storage;
 internal static class AdminDashboardNativeFixture
 {
     private static readonly List<string> Failures = [];
+    private static readonly DateTimeOffset CaptureNow = DateTimeOffset.Parse("2026-11-14T12:00:00Z");
+    private sealed class CaptureClock : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => CaptureNow;
+    }
 
     private static void Check(bool condition, string label)
     {
@@ -74,12 +79,13 @@ internal static class AdminDashboardNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         public int Sessions;
+        public string VisualPreset = "populated";
         public bool RejectSaves;
         public readonly List<string> Writes = [];
         public readonly List<string> Reads = [];
         public string LayoutETag = "\"L1\"";
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
             if (request.Method != HttpMethod.Get)
@@ -87,20 +93,47 @@ internal static class AdminDashboardNativeFixture
                 lock (Writes) Writes.Add($"{request.Method} {path} If-Match={string.Join(",", request.Headers.IfMatch)}");
                 if (path == "/api/v2/admin/dashboard/layout" && request.Method == HttpMethod.Put)
                 {
-                    if (RejectSaves) return Task.FromResult(Json("""{"title":"Stale","status":412}""", HttpStatusCode.PreconditionFailed));
+                    if (RejectSaves) return Json("""{"title":"Stale","status":412}""", HttpStatusCode.PreconditionFailed);
                     LayoutETag = "\"L" + (Writes.Count + 1) + "\"";
                     var saved = new HttpResponseMessage(HttpStatusCode.NoContent);
                     saved.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(LayoutETag);
-                    return Task.FromResult(saved);
+                    return saved;
                 }
-                return Task.FromResult(new HttpResponseMessage(path.EndsWith("/layout") ? HttpStatusCode.NoContent : HttpStatusCode.OK)
-                    { Content = new StringContent("{}", Encoding.UTF8, "application/json") });
+                return new HttpResponseMessage(path.EndsWith("/layout") ? HttpStatusCode.NoContent : HttpStatusCode.OK)
+                    { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             }
             Reads.Add(request.RequestUri!.PathAndQuery);
-            var response = Json(Body(path));
+            var widgetQuery = path.StartsWith("/api/v2/admin/stats", StringComparison.Ordinal)
+                || path is "/api/v2/admin/nodes" or "/api/v2/libraries" or "/api/v2/admin/users"
+                    or "/api/v2/admin/system/resources" or "/api/v2/admin/autoscan/status" or "/api/v2/admin/autoscan/scans" or "/api/v2/admin/logs/app";
+            if (widgetQuery && VisualPreset == "loading") await Task.Delay(Timeout.Infinite, cancellationToken);
+            if (widgetQuery && VisualPreset == "error") return Json("{\"title\":\"Synthetic read failed\",\"status\":500}", HttpStatusCode.InternalServerError);
+            var body = Body(path);
+            if (widgetQuery && VisualPreset == "zero") body = ZeroBody(body);
+            var response = Json(body);
             if (path is "/api/v2/admin/dashboard/layout" or "/api/v2/admin/settings/effective")
                 response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(path.EndsWith("layout") ? LayoutETag : "\"S1\"");
-            return Task.FromResult(response);
+            return response;
+        }
+
+        // Zero/empty fixture keeps the endpoint schema and availability flags;
+        // collection rows empty, scalar counts zero. It is not a claim that
+        // every widget has an empty-state branch (Health/resources do not).
+        private static string ZeroBody(string body)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(body)!;
+            void Clear(System.Text.Json.Nodes.JsonNode? value)
+            {
+                if (value is System.Text.Json.Nodes.JsonArray array) { array.Clear(); return; }
+                if (value is not System.Text.Json.Nodes.JsonObject obj) return;
+                foreach (var key in obj.Select(pair => pair.Key).ToArray())
+                {
+                    if (obj[key] is System.Text.Json.Nodes.JsonValue scalar && scalar.TryGetValue<double>(out _)) obj[key] = 0;
+                    else Clear(obj[key]);
+                }
+            }
+            Clear(node);
+            return node.ToJsonString();
         }
 
         private static HttpResponseMessage Json(string body, HttpStatusCode status = HttpStatusCode.OK)
@@ -108,7 +141,7 @@ internal static class AdminDashboardNativeFixture
 
         private string Body(string path)
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = CaptureNow;
             string Iso(DateTimeOffset value) => value.ToString("O");
             string Points(int count) => string.Join(",", Enumerable.Range(0, count).Select(i =>
                 $$$$"""{"t":"{{{{Iso(now.AddMinutes(i - count + 1))}}}}","streams":{{{{i % 5}}}},"direct":1,"remux":0,"transcode":{{{{i % 3}}}},"egress_kbps":{{{{12_000 + i * 300}}}},"download_egress_kbps":{{{{i % 4 * 500}}}},"egress_by_source":{"api":4000,"node:2":{{{{6000 + i * 200}}}}}}"""));
@@ -128,7 +161,7 @@ internal static class AdminDashboardNativeFixture
                 "/api/v2/admin/system/resources" => $$$$"""{"available":true,"stale":false,"sampled_at":"{{{{Iso(now)}}}}","system":{"cpu_pct":37,"cores":8,"load1":1.25,"mem_used_mb":6144,"mem_total_mb":16384,"disks":[]},"gpu":[{"device":"gpu0","source":"nvml","video_busy_pct":22,"sessions":1}],"attribution":{"instance_id":"0123456789abcdef","sample_interval_seconds":5,"cpu":{"available":true,"scope":"host"},"memory":{"available":true,"scope":"host"},"network":{"available":true},"load":{"available":true},"process":{"resident_bytes":734003200,"heap_live_bytes":104857600}}}""",
                 "/api/v2/admin/nodes" => $$$$"""{"items":[{"id":"2","name":"edge-2","type":"proxy","group":"prod-east","enabled":true,"healthy":true,"active_jobs":3,"max_jobs":10,"egress_kbps":6000,"max_bandwidth_kbps":100000,"drain_requested":false,"drain_state":"none","last_health_check":"{{{{Iso(now)}}}}"},{"id":"3","name":"gpu-transcoder-3","type":"transcode","group":"prod-east","enabled":true,"healthy":false,"active_jobs":0,"egress_kbps":0,"drain_requested":false,"drain_state":"none","last_health_check":"{{{{Iso(now.AddMinutes(-3))}}}}"}],"page":{"has_more":false}}""",
                 "/api/v2/libraries" => """{"items":[{"id":"1","name":"Movies","type":"movies","enabled":true,"paths":["/media/movies"],"sort_order":0},{"id":"2","name":"Shows","type":"series","enabled":false,"paths":["/a","/b"],"sort_order":1}]}""",
-                "/api/v2/admin/users" => $$$$"""{"items":[{"id":"1","username":"synthetic-admin","email":"admin@example.invalid","role":"admin","is_owner":true,"enabled":true,"last_active_at":"{{{{Iso(now.AddMinutes(-2))}}}}"},{"id":"7","username":"viewer","email":"viewer@example.invalid","role":"user","is_owner":false,"enabled":false,"last_active_at":null}],"page":{"has_more":false}}""",
+                "/api/v2/admin/users" => $$$$"""{"items":[{"id":"1","username":"synthetic-admin","email":"admin@example.invalid","role":"admin","is_owner":true,"enabled":true,"library_ids":null,"access_group_id":null,"permissions":[],"effective_policy":{"library_ids":[],"max_playback_quality":"","max_streams":0,"max_transcodes":0,"transcode_allowed":true,"audio_transcode_allowed":false,"download_allowed":true,"download_transcode_allowed":false,"requests_allowed":false,"permissions":[]},"last_active_at":"{{{{Iso(now.AddMinutes(-2))}}}}"},{"id":"7","username":"viewer","email":"viewer@example.invalid","role":"user","is_owner":false,"enabled":false,"library_ids":null,"access_group_id":null,"permissions":[],"effective_policy":{"library_ids":[],"max_playback_quality":"","max_streams":0,"max_transcodes":0,"transcode_allowed":true,"audio_transcode_allowed":false,"download_allowed":true,"download_transcode_allowed":false,"requests_allowed":false,"permissions":[]},"last_active_at":null}],"page":{"has_more":false}}""",
                 "/api/v2/admin/autoscan/status" => $$$$"""{"enabled":true,"running_scans":1,"accepted_scans":2,"active_scans":3,"latest_event_at":"{{{{Iso(now.AddMinutes(-7))}}}}","running_polls":[{}],"sources":[]}""",
                 "/api/v2/admin/autoscan/scans" => $$$$"""{"items":[{"id":"h1","library_id":"1","mode":"library","trigger":"autoscan","status":"completed","started_at":"{{{{Iso(now.AddMinutes(-62))}}}}","completed_at":"{{{{Iso(now.AddMinutes(-60))}}}}"},{"id":"h2","library_id":"2","mode":"file","trigger":"manual","status":"failed","started_at":"{{{{Iso(now.AddMinutes(-5))}}}}","completed_at":"{{{{Iso(now.AddMinutes(-4))}}}}"}],"page":{"has_more":false},"total":2}""",
                 "/api/v2/admin/logs/app" => $$$$"""{"items":[{"id":"1","timestamp":"{{{{Iso(now.AddMinutes(-1))}}}}","level":"error","component":"scan","message":"Synthetic error line"},{"id":"2","timestamp":"{{{{Iso(now.AddMinutes(-3))}}}}","level":"warn","component":"","message":"Synthetic warning line"}],"page":{"has_more":false}}""",
@@ -144,7 +177,7 @@ internal static class AdminDashboardNativeFixture
             "{\"session_id\":\"synthetic-" + i + "\",\"user_id\":\"" + (7 + i) + "\",\"username\":\"viewer" + i + "\",\"profile_id\":\"p" + i + "\",\"profile_name\":\"Profile " + i + "\"," +
             "\"media_file_id\":\"" + (40 + i) + "\",\"requested_media_file_id\":\"" + (40 + i) + "\",\"media_title\":\"Synthetic Title " + i + "\",\"media_type\":\"movie\"," +
             "\"play_method\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"video_decision\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"audio_decision\":\"direct\"," +
-            "\"reporting_node\":\"local\",\"file_duration\":7200,\"started_at\":\"" + DateTimeOffset.UtcNow.AddMinutes(-5 - i).ToString("O") + "\",\"updated_at\":\"2026-11-14T10:00:00Z\",\"position_seconds\":600," +
+            "\"reporting_node\":\"local\",\"file_duration\":7200,\"started_at\":\"" + CaptureNow.AddMinutes(-5 - i).ToString("O") + "\",\"updated_at\":\"2026-11-14T10:00:00Z\",\"position_seconds\":600," +
             "\"is_paused\":" + (i == 1 ? "true" : "false") + ",\"has_playback_control\":true,\"stream_location\":\"local\",\"audio_track_index\":0,\"transcode_audio\":false," +
             "\"stream_bitrate_kbps\":8000,\"target_bitrate_kbps\":null,\"source_bitrate_kbps\":null,\"source_audio_channels\":6,\"client_label\":\"Synthetic Client 1.0\"," +
             "\"routing_workload\":\"video_transcode\",\"routing_execution\":\"" + (i == 0 ? "api" : "transcode") + "\",\"routing_execution_node_name\":\"gpu-1\",\"routing_egress\":\"api\",\"routing_network_provider\":\"\"}";
@@ -168,6 +201,7 @@ internal static class AdminDashboardNativeFixture
         var cache = new DashboardMemoryLayoutCache();
         await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
+            .AddSingleton<TimeProvider>(new CaptureClock())
             .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache)
             .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -177,6 +211,8 @@ internal static class AdminDashboardNativeFixture
         try
         {
             await DashboardAsync(window, server, auth, realtime);
+            if (Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_STATES") == "1")
+                await CaptureQueryStatesAsync(window, server, auth);
         }
         finally
         {
@@ -246,14 +282,57 @@ internal static class AdminDashboardNativeFixture
         nowPlaying = page.PlacedWidgets().Single(w => w.Id == "now-playing");
         Check(nowPlaying.Height > 300, "active Now Playing returns to its placed rows");
 
-        foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900) })
+        apiView.GetType().GetMethod("SetRange")!.Invoke(apiView, [DashboardWidgetRange.Day]);
+        await Task.Delay(150);
+        var resizeStep = 0;
+        foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (899, 900), (900, 900), (899, 900), (1023, 768), (800, 900), (1024, 768), (1440, 900) })
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
             page.ViewportWidthOverride = width;
             await Task.Delay(400);
             var expected = DashboardGridPlacement.ModeFor(width);
             Check(page.GridMode == expected, $"{width}px uses {expected}");
-            await CaptureAsync(frame, $"admin-dashboard-{width}x{height}.png");
+            var heading = Descendants(frame).OfType<TextBlock>().Single(text => Microsoft.UI.Xaml.Automation.AutomationProperties.GetHeadingLevel(text) == Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level1);
+            var natural = new TextBlock { Text = heading.Text, FontFamily = heading.FontFamily, FontSize = heading.FontSize, FontWeight = heading.FontWeight, CharacterSpacing = heading.CharacterSpacing };
+            natural.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            Check(heading.ActualWidth >= natural.DesiredSize.Width - 2, $"{width}px step{resizeStep} retains the full Dashboard title");
+            var subtitle = Descendants(frame).OfType<TextBlock>().Single(text => text.Text == DashboardText.T("web.admin.dashboard.page.subtitle"));
+            Check(subtitle.ActualWidth >= 300 && subtitle.ActualHeight <= 50, $"{width}px step{resizeStep} keeps a readable subtitle");
+            await CaptureAsync(frame, $"admin-dashboard-{width}x{height}-step{resizeStep++}.png");
+            if (resizeStep <= 5 && Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_WIDGETS") == "1")
+            {
+                var widgets = Descendants(page).OfType<FrameworkElement>().Where(element => element.GetType().Name == "DashboardWidgetFrame").ToArray();
+                Check(widgets.Length == 28, $"{width}px body capture includes all 28 widgets");
+                foreach (var widget in widgets)
+                {
+                    var id = (string)widget.GetType().GetProperty("Id")!.GetValue(widget)!;
+                    widget.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+                    await Task.Delay(80);
+                    if (id == "playback-24h")
+                    {
+                        var chart = Descendants(widget).Single(element => element.GetType().Name == "DashboardStackedColumnChart");
+                        var bars = (Grid)chart.GetType().GetField("_bars", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chart)!;
+                        var segments = Descendants(bars).OfType<Border>().Where(border => border.Height > 10 && double.IsFinite(border.Height)).ToArray();
+                        Check(segments.Length > 0 && segments.All(segment => segment.ActualWidth > 1), $"{width}px populated playback columns have visible width");
+                    }
+                    foreach (var path in Descendants(widget).OfType<Microsoft.UI.Xaml.Shapes.Path>())
+                    {
+                        if (path.Parent is not Canvas { Width: 24, Height: 24 }) continue;
+                        var bounds = path.Data.Bounds;
+                        Check(bounds.Left >= -0.1 && bounds.Top >= -0.1 && bounds.Right <= 24.1 && bounds.Bottom <= 24.1, $"{id} icon geometry stays inside its 24px viewport");
+                    }
+                    if (width == 1024 && id == "stat-storage")
+                        foreach (var text in Descendants(widget).OfType<TextBlock>())
+                        {
+                            var origin = text.TransformToVisual(widget).TransformPoint(new Windows.Foundation.Point(0, 0));
+                            Program.Log($"TRACE stat-storage text={text.Text}, bounds={origin.X},{origin.Y},{text.ActualWidth},{text.ActualHeight}, desired={text.DesiredSize}");
+                        }
+                    await CaptureAsync(widget, $"widget-{id}-{width}x{height}.png");
+                }
+                var pageScroll = (ScrollViewer)typeof(AdminDashboardPage).GetField("_scroll", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+                pageScroll.ChangeView(null, 0, null, disableAnimation: true);
+                await Task.Delay(100);
+            }
         }
         page.ViewportWidthOverride = 1440;
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
@@ -312,6 +391,45 @@ internal static class AdminDashboardNativeFixture
         await lateDrop;
         Check(page.PlacedWidgets().Count == 15, "held old-authority drop cannot add to the replacement layout");
         window.Content = null;
+    }
+
+
+    private static async Task CaptureQueryStatesAsync(Window window, Server server, AuthService auth)
+    {
+        foreach (var preset in new[] { "loading", "error", "zero" })
+        {
+            auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
+            server.VisualPreset = preset;
+            server.Sessions = preset == "zero" ? 0 : 3;
+            auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
+            var frame = new Frame(); window.Content = frame;
+            frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Dashboard));
+            var inner = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(frame.Content)!;
+            var page = (AdminDashboardPage)inner.Content;
+            page.SetHostActivity(visible: true, focused: true);
+            await Until(() => page.LayoutSync?.IsLoaded == true);
+            Check(page.LayoutSync?.IsLoaded == true, preset + " capture owns a loaded layout");
+            foreach (var widget in page.LayoutSync!.HiddenWidgets.ToList()) page.LayoutSync.AddWidget(widget.Id);
+            await Task.Delay(200);
+            foreach (var width in new[] { 1440, 800 })
+            {
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
+                page.ViewportWidthOverride = width;
+                await Task.Delay(200);
+                var widgets = Descendants(page).Where(element => element.GetType().Name == "DashboardWidgetFrame").ToArray();
+                Check(widgets.Length == 28, $"{preset} {width}px captures all 28 frames");
+                foreach (var widget in widgets)
+                {
+                    var id = (string)widget.GetType().GetProperty("Id")!.GetValue(widget)!;
+                    widget.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+                    await Task.Delay(40);
+                    await CaptureAsync(widget, $"state-{preset}--{id}-{width}.png");
+                }
+            }
+            window.Content = null;
+            await Task.Delay(100);
+        }
+        server.VisualPreset = "populated";
     }
 
     private static IEnumerable<FrameworkElement> Descendants(DependencyObject root)
