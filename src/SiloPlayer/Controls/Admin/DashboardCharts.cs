@@ -20,7 +20,7 @@ internal static class DashboardChartChrome
     public static FrameworkElement? Legend(IReadOnlyList<DashboardLegendEntry> entries, bool lineShape, Thickness margin)
     {
         if (entries.Count < 2) return null;
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Margin = margin };
+        var panel = new DashboardWrapPanel { Spacing = 12, RowSpacing = 4, Margin = margin };
         foreach (var entry in entries)
         {
             var swatch = new Border
@@ -70,7 +70,7 @@ internal static class DashboardChartChrome
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         if (swatch is { } color)
-            grid.Children.Add(new Border { Width = 12, Height = 2, CornerRadius = new CornerRadius(999), Background = B(color), VerticalAlignment = VerticalAlignment.Center });
+            grid.Children.Add(new Border { Width = 12, Height = 2, CornerRadius = new CornerRadius(1.5), Background = B(color), VerticalAlignment = VerticalAlignment.Center });
         var labelText = Text(label, 11, color: MutedForeground);
         Grid.SetColumn(labelText, 1);
         grid.Children.Add(labelText);
@@ -484,7 +484,7 @@ internal sealed class DashboardStackedColumnChart : Grid
             {
                 IsTabStop = true,
                 UseSystemFocusVisuals = true,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 VerticalContentAlignment = VerticalAlignment.Stretch,
                 Content = new Border { CornerRadius = new CornerRadius(4), Background = B(_active == index ? Alpha(Foreground, 0.05) : Colors.Transparent), Child = stack },
             };
@@ -580,8 +580,8 @@ internal static class DashboardLoadMeter
     {
         var slot = new Grid { Height = 3, Width = width, VerticalAlignment = VerticalAlignment.Center };
         if (fill is not { } value) return slot;
-        var track = new Border { Background = B(BorderColor, 0.7), CornerRadius = new CornerRadius(999) };
-        var bar = new Border { Background = warning ? B(DashboardUi.Warning) : B(Foreground, 0.55), CornerRadius = new CornerRadius(999), HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 3 };
+        var track = new Border { Background = B(BorderColor, 0.7), CornerRadius = new CornerRadius(1.5) };
+        var bar = new Border { Background = warning ? B(DashboardUi.Warning) : B(Foreground, 0.55), CornerRadius = new CornerRadius(1.5), HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 3 };
         slot.Children.Add(track);
         slot.Children.Add(bar);
         slot.SizeChanged += (_, e) => bar.Width = Math.Max(3, Math.Clamp(value, 0, 100) / 100.0 * e.NewSize.Width);

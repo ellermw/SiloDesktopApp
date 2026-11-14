@@ -308,12 +308,13 @@ public sealed partial class AdminDashboardPage : Page
         if (width <= 0) width = ActualWidth;
         if (width <= 0) return;
         var changedMode = DashboardGridPlacement.ModeFor(width) != DashboardGridPlacement.ModeFor(_viewportWidth);
+        var changedScanColumns = (width >= 768) != (_viewportWidth >= 768);
         _viewportWidth = width;
         _content.Spacing = width >= DashboardGridPlacement.LargeBreakpoint ? 32 : 24;
         // AdminShellPage supplies the gutters, top/bottom padding, 240px sidebar offset and 1560px frame.
         var mode = DashboardGridPlacement.ModeFor(width);
         _grid.SetMode(mode);
-        if (changedMode)
+        if (changedMode || changedScanColumns)
         {
             foreach (var frame in _frames.Values)
             {
@@ -340,16 +341,6 @@ public sealed partial class AdminDashboardPage : Page
         var store = _store;
         var sync = _sync;
         var small = _viewportWidth < DashboardGridPlacement.SmallBreakpoint;
-        var titleBlock = new StackPanel { Spacing = 8 };
-        var title = Text(DashboardText.T("web.admin.dashboard.page.title"), small ? 28 : 32, Bold, lineHeight: (small ? 28 : 32) * 1.15);
-        title.CharacterSpacing = -35;
-        title.TextWrapping = TextWrapping.WrapWholeWords;
-        AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1);
-        titleBlock.Children.Add(title);
-        var subtitle = Text(DashboardText.T("web.admin.dashboard.page.subtitle"), 14, color: MutedForeground, wrap: true, lineHeight: 22.75);
-        subtitle.MaxWidth = 72 * 7.5;
-        titleBlock.Children.Add(subtitle);
-
         var attention = store?.Attention();
         var hiddenCount = attention?.HiddenCount ?? 0;
         var group = new StackPanel { Orientation = small ? Orientation.Vertical : Orientation.Horizontal, Spacing = 8 };
@@ -415,24 +406,7 @@ public sealed partial class AdminDashboardPage : Page
         actions.HorizontalAlignment = small ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
         if (small) scanAll.HorizontalAlignment = HorizontalAlignment.Stretch;
 
-        var header = new Grid { ColumnSpacing = 24, RowSpacing = 12, Margin = new Thickness(0, 0, 0, 8) };
-        if (small || _viewportWidth < 900)
-        {
-            header.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            header.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            header.Children.Add(titleBlock);
-            Microsoft.UI.Xaml.Controls.Grid.SetRow(actions, 1);
-            if (!small) actions.HorizontalAlignment = HorizontalAlignment.Right;
-        }
-        else
-        {
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            header.Children.Add(titleBlock);
-            actions.VerticalAlignment = VerticalAlignment.Top;
-            Microsoft.UI.Xaml.Controls.Grid.SetColumn(actions, 1);
-        }
-        header.Children.Add(actions);
+        var header = new LogsPageHeader(DashboardText.T("web.admin.dashboard.page.title"), DashboardText.T("web.admin.dashboard.page.subtitle"), actions);
         _header.Content = header;
     }
 
@@ -562,6 +536,7 @@ public sealed partial class AdminDashboardPage : Page
                     SetRange = range => _sync?.SetWidgetRange(entry.Id, range),
                     SetCollapsed = collapsed => created?.SetCollapsed(collapsed),
                     Mode = () => _grid.Mode,
+                    ViewportWidth = () => _viewportWidth,
                     Navigate = NavigateFor,
                     SessionActions = SessionActionsFactory ?? BuildSessionActions,
                     ResolveImage = url => string.IsNullOrWhiteSpace(url) ? null : _client?.ResolveServerUrl(url),

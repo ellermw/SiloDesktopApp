@@ -50,7 +50,7 @@ internal static class DashboardSessionBadges
         var provider = session.RoutingNetworkProvider;
         var networkName = !string.IsNullOrEmpty(provider) ? provider
             : provider == "" ? DashboardText.T("web.player.routeBadge.defaultNetwork") : DashboardText.T("web.player.routeBadge.unknownNetwork");
-        var network = Pill(DashboardText.T("web.player.routeBadge.network") + " · " + networkName, Alpha(Primary, 0.1), Primary, Alpha(Primary, 0.2));
+        var network = RoutePill(DashboardText.T("web.player.routeBadge.network"), networkName, Alpha(Primary, 0.1), Primary, Alpha(Primary, 0.2));
         ToolTipService.SetToolTip(network, !string.IsNullOrEmpty(provider) ? DashboardText.T("web.player.routeBadge.networkTitle", ("name", provider))
             : provider == "" ? DashboardText.T("web.player.routeBadge.defaultNetworkTitle") : DashboardText.T("web.player.routeBadge.unknownNetworkTitle"));
         AutomationProperties.SetName(network, DashboardText.T("web.player.routeBadge.networkAria", ("name", networkName)));
@@ -64,7 +64,7 @@ internal static class DashboardSessionBadges
                 _ => (Alpha(Primary, 0.05), Primary, Alpha(Primary, 0.1)),
             };
             var text = node.Kind is "transcode" or "proxy" ? $"{node.Label} · {node.Name}" : node.Kind == "server" ? DashboardText.T("web.player.routeBadge.apiServer") : node.Name;
-            var badge = Pill(text, nbg, nfg, nborder);
+            var badge = node.Kind is "transcode" or "proxy" ? RoutePill(node.Label, node.Name, nbg, nfg, nborder) : Pill(text, nbg, nfg, nborder);
             var serves = session.RoutingEgress == "api" ? "yes" : "no";
             ToolTipService.SetToolTip(badge, node.Kind != "server"
                 ? DashboardText.T("web.player.routeBadge.nodeTitle", ("label", node.Label), ("name", node.Name))
@@ -77,7 +77,30 @@ internal static class DashboardSessionBadges
         if (!string.IsNullOrEmpty(profile)) yield return ProfilePill(profile);
     }
 
-    public static Border ProfilePill(string label) => Pill(label, Alpha(Primary, 0.15), Primary, Alpha(Primary, 0.3));
+    private static Border RoutePill(string label, string name, Color background, Color foreground, Color border)
+    {
+        var pill = Pill(label + " · " + name, background, foreground, border);
+        var row = new Grid { ColumnSpacing = 4 };
+        row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var prefix = Text(label, 9, Semibold, foreground, lineHeight: 13.5);
+        prefix.Opacity = 0.7;
+        row.Children.Add(prefix);
+        var separator = Text("·", 9, Semibold, foreground, lineHeight: 13.5);
+        Grid.SetColumn(separator, 1); row.Children.Add(separator);
+        var value = Text(name, 9, Semibold, foreground, trim: true, lineHeight: 13.5);
+        Grid.SetColumn(value, 2); row.Children.Add(value);
+        pill.Child = row;
+        return pill;
+    }
+
+    public static Border ProfilePill(string label)
+    {
+        var pill = Pill(label, Alpha(Primary, 0.15), Primary, Alpha(Primary, 0.3));
+        ((TextBlock)pill.Child).LineHeight = 9.9;
+        return pill;
+    }
 }
 
 /// <summary>
@@ -264,7 +287,15 @@ internal sealed class NowPlayingWidget(DashboardWidgetContext c) : DashboardWidg
                 Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                 Child = Row(4, Icon("pause", 12, Foreground), Text(T("web.admin.dashboard.widgets.nowPlaying.paused"), 10, Semibold)),
             };
-            poster.Children.Add(paused);
+            Stadium(paused);
+            // A 60px poster can host a wider centered badge; measure outside
+            // the poster's slot so WinUI does not crop the trailing letter.
+            paused.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            var overlay = new Canvas { Width = 60, Height = 90, IsHitTestVisible = false };
+            Canvas.SetLeft(paused, (60 - paused.DesiredSize.Width) / 2);
+            Canvas.SetTop(paused, (90 - paused.DesiredSize.Height) / 2);
+            overlay.Children.Add(paused);
+            poster.Children.Add(overlay);
         }
         var info = new Grid();
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -336,18 +367,24 @@ internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : Dashboard
         var revision = Store.Get(DashboardDataStore.Build).As<DashboardBuildInfo>()?.Revision;
         if (string.IsNullOrEmpty(revision)) revision = null;
         var nodes = state.As<IReadOnlyList<DashboardNode>>() ?? [];
-        var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        var title = new Grid { ColumnSpacing = 10 };
+        title.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        title.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         title.Children.Add(Text(T("web.admin.dashboard.widgets.transcodeNodes.title"), 14, Bold));
         if (nodes.Count > 0)
         {
             var summary = Text(DashboardPresentation.FleetSummary(nodes), 11, color: MutedForeground, trim: true);
             summary.VerticalAlignment = VerticalAlignment.Bottom;
+            Grid.SetColumn(summary, 1);
             title.Children.Add(summary);
         }
-        var header = new Grid();
+        var header = new Grid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.Children.Add(title);
         var manage = Link(T("web.admin.dashboard.widgets.transcodeNodes.manage"), null);
         manage.HorizontalAlignment = HorizontalAlignment.Right;
+        Grid.SetColumn(manage, 1);
         header.Children.Add(manage);
         FrameworkElement body;
         if (state.IsLoading) body = Column(6, Skeleton(24, 6), Skeleton(24, 6), Skeleton(24, 6));
@@ -726,6 +763,7 @@ internal sealed class LibrariesWidget(DashboardWidgetContext c) : DashboardWidge
                 Destructive, Alpha(Destructive, 0.9), async (_, _) => await Store.CancelLibraryScansAsync(library.Id), 10)
             : IconButton("scan-line", 28, 12, T("web.admin.dashboard.widgets.libraries.scanLabel", ("name", library.Name)), Foreground, Res("ThemeAccentForegroundColor", "#E8E8EC"),
                 Microsoft.UI.Colors.Transparent, Accent, async (_, _) => await Store.StartLibraryScanAsync(library.Id), 10);
+        if (hasActive) button.Content = Icon("square", 12, Microsoft.UI.Colors.White, fill: true);
         ToolTipService.SetToolTip(button, hasActive ? T("web.admin.dashboard.widgets.libraries.stopScansTitle") : T("web.admin.dashboard.widgets.libraries.scanTitle"));
         button.IsEnabled = hasActive ? !cancelling : !starting;
         controls.Children.Add(button);
@@ -753,8 +791,9 @@ internal sealed class LibrariesWidget(DashboardWidgetContext c) : DashboardWidge
 internal abstract class DashboardTableWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
     /// <summary>shadcn Table: 40px muted header row with bottom border, padded cells, bordered rows.</summary>
-    protected static Grid Table(IReadOnlyList<(string Header, GridLength Width, bool End)> columns, IReadOnlyList<FrameworkElement[]> rows)
+    protected Grid Table(IReadOnlyList<(string Header, GridLength Width, bool End)> columns, IReadOnlyList<FrameworkElement[]> rows, bool contentWidths = false)
     {
+        var padding = C.ViewportWidth() >= 640 ? 12 : 8;
         var grid = new Grid();
         foreach (var column in columns) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = column.Width });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
@@ -764,7 +803,7 @@ internal abstract class DashboardTableWidget(DashboardWidgetContext c) : Dashboa
         for (var i = 0; i < columns.Count; i++)
         {
             var head = Text(columns[i].Header, 14, Medium, Foreground);
-            head.Margin = new Thickness(8, 0, 8, 0);
+            head.Margin = new Thickness(padding, 0, padding, 0);
             head.VerticalAlignment = VerticalAlignment.Center;
             head.HorizontalAlignment = columns[i].End ? HorizontalAlignment.Right : HorizontalAlignment.Left;
             Grid.SetColumn(head, i);
@@ -783,12 +822,27 @@ internal abstract class DashboardTableWidget(DashboardWidgetContext c) : Dashboa
             for (var i = 0; i < rows[r].Length && i < columns.Count; i++)
             {
                 var cell = rows[r][i];
-                cell.Margin = new Thickness(8);
+                cell.Margin = new Thickness(padding, 8, padding, 8);
                 cell.VerticalAlignment = VerticalAlignment.Center;
                 if (columns[i].End) cell.HorizontalAlignment = HorizontalAlignment.Right;
                 Grid.SetRow(cell, r + 1);
                 Grid.SetColumn(cell, i);
                 grid.Children.Add(cell);
+            }
+        }
+        if (contentWidths)
+        {
+            // HTML's automatic table layout shares spare width in proportion to
+            // the columns' preferred content widths rather than equally.
+            for (var column = 0; column < columns.Count; column++)
+            {
+                var preferred = 1d;
+                foreach (var child in grid.Children.OfType<FrameworkElement>().Where(child => Grid.GetColumn(child) == column && Grid.GetColumnSpan(child) == 1))
+                {
+                    child.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                    preferred = Math.Max(preferred, child.DesiredSize.Width);
+                }
+                grid.ColumnDefinitions[column].Width = new GridLength(preferred, GridUnitType.Star);
             }
         }
         return grid;
@@ -819,13 +873,24 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
             columns.Add((T("web.admin.dashboard.widgets.users.status"), GridLength.Auto, false));
             var rows = users.Take(8).Select(user =>
             {
-                var nameLine = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                var nameLine = new Grid { ColumnSpacing = 6 };
+                nameLine.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                nameLine.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 nameLine.Children.Add(Text(user.Username, 13, Semibold, trim: true));
                 if (user.Role == "admin")
-                    nameLine.Children.Add(Pill(DashboardPresentation.AccountRole(user), Primary, PrimaryForeground, Microsoft.UI.Colors.Transparent, 9, 10, Medium, new Thickness(6, 0, 6, 0)));
+                {
+                    var role = Pill(DashboardPresentation.AccountRole(user), Primary, PrimaryForeground, Microsoft.UI.Colors.Transparent, 9, 10, Medium, new Thickness(6, 0, 6, 0));
+                    Grid.SetColumn(role, 1);
+                    nameLine.Children.Add(role);
+                }
                 var identity = Column(0, nameLine);
                 if (!small) identity.Children.Add(Text(user.Email, 10, color: MutedForeground, trim: true));
-                var who = Row(10, NowPlayingWidget.Avatar(user.Username, 28, 10), identity);
+                var who = new Grid { ColumnSpacing = 10 };
+                who.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                who.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                who.Children.Add(NowPlayingWidget.Avatar(user.Username, 28, 10));
+                Grid.SetColumn(identity, 1);
+                who.Children.Add(identity);
                 var cells = new List<FrameworkElement> { who };
                 if (!small) cells.Add(Text(DashboardFormat.RelativeTime(user.LastActiveAt, Now, floor: true, T("web.admin.dashboard.widgets.users.justNow")) ?? DashboardFormat.Dash, 12, color: MutedForeground));
                 cells.Add(user.Enabled
@@ -858,22 +923,23 @@ internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTa
         {
             var mode = C.Mode();
             var columns = new List<(string, GridLength, bool)> { (T("web.admin.dashboard.widgets.scanActivity.library"), new GridLength(1, GridUnitType.Star), false) };
-            if (mode != DashboardGridMode.Single) columns.Add((T("web.admin.dashboard.widgets.scanActivity.mode"), GridLength.Auto, false));
-            if (mode != DashboardGridMode.Single) columns.Add((T("web.admin.dashboard.widgets.scanActivity.trigger"), GridLength.Auto, false));
-            columns.Add((T("web.admin.dashboard.widgets.scanActivity.status"), GridLength.Auto, false));
-            columns.Add((T("web.admin.dashboard.widgets.scanActivity.duration"), GridLength.Auto, true));
+            if (mode != DashboardGridMode.Single) columns.Add((T("web.admin.dashboard.widgets.scanActivity.mode"), new GridLength(1, GridUnitType.Star), false));
+            if (C.ViewportWidth() >= 768) columns.Add((T("web.admin.dashboard.widgets.scanActivity.trigger"), new GridLength(1, GridUnitType.Star), false));
+            columns.Add((T("web.admin.dashboard.widgets.scanActivity.status"), new GridLength(1, GridUnitType.Star), false));
+            columns.Add((T("web.admin.dashboard.widgets.scanActivity.duration"), new GridLength(1, GridUnitType.Star), true));
             var rows = scans.Take(8).Select(scan =>
             {
                 var library = Text(names.TryGetValue(scan.LibraryId, out var name) ? name : T("web.admin.dashboard.widgets.scanActivity.libraryFallback", ("id", scan.LibraryId)), 13, Semibold, trim: true);
                 library.MaxWidth = 224;
+                library.HorizontalAlignment = HorizontalAlignment.Left;
                 var cells = new List<FrameworkElement> { library };
                 if (mode != DashboardGridMode.Single) cells.Add(Muted11(DashboardPresentation.ScanMode(scan.Mode)));
-                if (mode != DashboardGridMode.Single) cells.Add(Muted11(DashboardPresentation.ScanTrigger(scan.Trigger)));
+                if (C.ViewportWidth() >= 768) cells.Add(Muted11(DashboardPresentation.ScanTrigger(scan.Trigger)));
                 cells.Add(Status(scan.Status));
                 cells.Add(Muted11(DashboardFormat.ScanDuration(scan.StartedAt, scan.CompletedAt, Now)));
                 return cells.ToArray();
             }).ToList();
-            body = Table(columns, rows);
+            body = Table(columns, rows, contentWidths: true);
         }
         return Card(header, body);
     }
@@ -984,11 +1050,19 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
         var runs = DashboardText.Rich(profile != "" ? "web.admin.dashboard.widgets.recentActivity.startedWatchingWithProfile" : "web.admin.dashboard.widgets.recentActivity.startedWatching",
             ("username", user), ("profile", profile), ("title", title));
         var sentence = new WrapPanel { HorizontalSpacing = 0, VerticalSpacing = 2 };
+        var pendingSpace = false;
         foreach (var run in runs)
         {
-            if (run.Tag == "pill") { sentence.Children.Add(DashboardSessionBadges.ProfilePill(run.Text)); continue; }
-            // "<link>" is admin history in the WebUI, outside the Monitor scope: emphasised text.
-            sentence.Children.Add(Text(run.Text, 12, run.Tag is "user" or "link" ? Semibold : null, run.Tag is "user" or "link" ? Foreground : MutedForeground));
+            var runText = run.Text.Trim();
+            if (runText.Length == 0) { pendingSpace |= run.Text.Length > 0; continue; }
+            FrameworkElement part = run.Tag == "pill"
+                ? DashboardSessionBadges.ProfilePill(runText)
+                : Text(runText, 12, run.Tag is "user" or "link" ? Semibold : null, run.Tag is "user" or "link" ? Foreground : MutedForeground, lineHeight: 19.5);
+            // Inline whitespace is measured explicitly: TextBlock discards trailing spaces.
+            if (sentence.Children.Count > 0 && (pendingSpace || char.IsWhiteSpace(run.Text[0])))
+                part.Margin = new Thickness(3, 0, 0, 0);
+            sentence.Children.Add(part);
+            pendingSpace = char.IsWhiteSpace(run.Text[^1]);
         }
         var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 10, 0, 10) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });

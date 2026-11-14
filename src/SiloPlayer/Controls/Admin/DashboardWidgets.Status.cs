@@ -25,11 +25,14 @@ internal abstract class StatTileWidget(DashboardWidgetContext context) : Dashboa
             return skeleton;
         }
         var head = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-        var label = Text(Label, 11, Medium, MutedForeground, lineHeight: 11);
+        head.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var label = Text(Label, 11, Medium, MutedForeground, wrap: true, lineHeight: 11);
+        label.VerticalAlignment = VerticalAlignment.Center;
         head.Children.Add(label);
         var icon = Icon(IconName, 16, MutedForeground);
         icon.HorizontalAlignment = HorizontalAlignment.Right;
-        head.Children.Add(icon);
+        Grid.SetColumn(icon, 1); head.Children.Add(icon);
         var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         stack.Children.Add(head);
         if (error != null)
@@ -38,17 +41,18 @@ internal abstract class StatTileWidget(DashboardWidgetContext context) : Dashboa
         }
         else
         {
-            var big = Text(value, 28, ExtraBold, lineHeight: 28);
+            var big = Text(value, 28, ExtraBold, wrap: true, lineHeight: 28);
             big.CharacterSpacing = -25;
             big.Margin = new Thickness(0, 0, 0, 2);
             stack.Children.Add(big);
-            stack.Children.Add(Text(sub, 11, color: MutedForeground, trim: true));
+            stack.Children.Add(Text(sub, 11, color: MutedForeground, wrap: true));
         }
         return new Border
         {
             Background = SurfacePanel,
             CornerRadius = new CornerRadius(20),
-            Padding = new Thickness(16),
+            // CSS clips at the outer tile, not at a padded content viewport.
+            Padding = new Thickness(16, Fixed ? 0 : 16, 16, Fixed ? 0 : 16),
             MinHeight = Fixed ? 0 : 96,
             Child = stack,
         };
@@ -227,7 +231,7 @@ internal sealed class HealthStripWidget(DashboardWidgetContext c) : DashboardWid
             Grid.SetRow(cells[i], i / columns);
             grid.Children.Add(cells[i]);
         }
-        var shell = CardShell(new Border { Padding = new Thickness(24, 0, 24, 0), Child = grid }, new Thickness(0, 12, 0, 12));
+        var shell = CardShell(new Border { Padding = new Thickness(24, 0, 24, 0), Child = grid }, new Thickness(0, Fixed ? 0 : 12, 0, Fixed ? 0 : 12));
         shell.VerticalAlignment = Fixed ? VerticalAlignment.Stretch : VerticalAlignment.Top;
         return shell;
     }
@@ -244,7 +248,7 @@ internal sealed class HealthStripWidget(DashboardWidgetContext c) : DashboardWid
     {
         var stack = new StackPanel();
         stack.Children.Add(Row(6, Icon(icon, 14, MutedForeground), Text(label, 11, Medium, MutedForeground)));
-        var valueText = Text(value, 15, Bold, tone ?? Foreground, trim: true);
+        var valueText = Text(value, 15, Bold, tone ?? Foreground, trim: true, lineHeight: 18.75);
         valueText.Margin = new Thickness(0, 4, 0, 0);
         stack.Children.Add(valueText);
         if (detail != null)
@@ -398,7 +402,7 @@ internal sealed class WatchProvidersWidget(DashboardWidgetContext c) : Dashboard
         }
         Border Panel(UIElement child) => new() { Background = SurfacePanel, CornerRadius = new CornerRadius(20), MinHeight = 56, Child = child, VerticalAlignment = Fixed ? VerticalAlignment.Stretch : VerticalAlignment.Top };
         if (state.Error != null)
-            return Panel(new Border { Padding = new Thickness(16, 0, 16, 0), VerticalAlignment = VerticalAlignment.Center, Child = SectionError(T("web.admin.dashboard.widgets.watchProviders.loadFailed")) });
+            return Panel(new Border { Padding = new Thickness(16, 0, 16, 0), VerticalAlignment = VerticalAlignment.Center, Child = Text(T("web.admin.dashboard.widgets.watchProviders.loadFailed"), 14, color: Destructive, wrap: true) });
         var providers = state.As<DashboardStats>()?.WatchProviders ?? [];
         if (providers.Count == 0)
             return Panel(new Border { Padding = new Thickness(16, 12, 16, 12), VerticalAlignment = VerticalAlignment.Center, Child = Text(T("web.admin.dashboard.widgets.watchProviders.empty"), 14, color: MutedForeground) });
