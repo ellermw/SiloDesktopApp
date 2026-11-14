@@ -60,6 +60,19 @@ internal static class UpstreamShellNativeFixture
             mainProperty.SetValue(null, window);
             var root = (FrameworkElement)window.Content;
             T Named<T>(string name) => (T)root.FindName(name);
+            // A resize can land while NavigationView is still settling a pane change. The shell then
+            // retries its pane layout 120 ms later, and WinUI refuses tree reads until it settles, so a
+            // fixed 140 ms wait raced it (PR 145). Poll the same check instead; it still fails if never true.
+            async Task Settled(Func<bool> ready, string failure)
+            {
+                for (var i = 0; i < 160; i++)
+                {
+                    try { if (ready()) return; }
+                    catch (System.Runtime.InteropServices.COMException) { }
+                    await Task.Delay(25);
+                }
+                Check(ready(), failure);
+            }
             var nav = Named<NavigationView>("NavView");
             var loaded = (RoutedEventHandler)typeof(MainWindow).GetMethod("NavView_Loaded", instance)!.CreateDelegate(typeof(RoutedEventHandler), window);
             nav.Loaded -= loaded; // Never run the installed-account startup path in this fixture.
@@ -93,11 +106,11 @@ internal static class UpstreamShellNativeFixture
                 "Settings search lost control keywords");
             Check(window.FocusSettingsSidebarSearch(), "Ctrl K could not target hosted search");
             Named<TextBox>("SettingsSidebarSearch").Text = "";
-            window.AppWindow.ResizeClient(new(1080, 1080)); await Task.Delay(140);
-            Check(Named<FrameworkElement>("SettingsSidebarHeader").Visibility == Visibility.Visible, "1080 viewport incorrectly used narrow Settings");
+            window.AppWindow.ResizeClient(new(1080, 1080));
+            await Settled(() => Named<FrameworkElement>("SettingsSidebarHeader").Visibility == Visibility.Visible, "1080 viewport incorrectly used narrow Settings");
             await MediaParityNativeFixture.CaptureAsync(root, "shell-title-pages-1080.png");
-            window.AppWindow.ResizeClient(new(600, 900)); await Task.Delay(140);
-            Check(Named<FrameworkElement>("SettingsSidebarHeader").Visibility == Visibility.Collapsed, "Narrow Settings did not restore app sidebar");
+            window.AppWindow.ResizeClient(new(600, 900));
+            await Settled(() => Named<FrameworkElement>("SettingsSidebarHeader").Visibility == Visibility.Collapsed, "Narrow Settings did not restore app sidebar");
             Check(nav.MenuItems.Contains(originalRows[0]), "Original app navigation row identity was lost");
             await MediaParityNativeFixture.CaptureAsync(root, "shell-settings-600.png");
             window.AppWindow.ResizeClient(new(1920, 1080)); await Task.Delay(140);

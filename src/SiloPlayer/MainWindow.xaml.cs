@@ -222,12 +222,36 @@ public sealed partial class MainWindow : Window
     private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
     {
         _currentWindowWidth = e.Size.Width;
-        ApplyResponsiveShellLayout();
+        QueueResponsiveShellLayout();
         var livePostRoll = PlayingNextOverlay.Visibility == Visibility.Visible;
         if (!livePostRoll) _playerService.HandleWindowResize();
-        SynchronizeSettingsSidebar();
         if (livePostRoll) QueuePlayingNextResize();
         else UpdatePlayingNextLayout(e.Size.Width, e.Size.Height);
+    }
+
+    private bool _responsiveShellLayoutQueued;
+
+    // NavigationView adapts its own visual state in the same layout pass as the
+    // window size change. Switching PaneDisplayMode or IsPaneOpen inside that pass
+    // made WinUI refuse the switch (0x80004005) and then fail natively, closing the
+    // app (native shell-navigation, PR 145). Apply the shell layout once that pass
+    // completes; a burst of resizes applies once with the latest width. The
+    // Settings sidebar is restored or hosted first: switching the pane mode while
+    // the outgoing sidebar's rows are still in the pane was refused as well.
+    private void QueueResponsiveShellLayout()
+    {
+        if (_responsiveShellLayoutQueued) return;
+        _responsiveShellLayoutQueued = true;
+        if (DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            _responsiveShellLayoutQueued = false;
+            if (_windowClosed) return;
+            SynchronizeSettingsSidebar();
+            ApplyResponsiveShellLayout();
+        })) return;
+        _responsiveShellLayoutQueued = false;
+        SynchronizeSettingsSidebar();
+        ApplyResponsiveShellLayout();
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
@@ -248,6 +272,7 @@ public sealed partial class MainWindow : Window
         _isNarrowShell = isNarrow;
         if (!isNarrow)
         {
+            _narrowPaneClosePending = false;
             SetMobileHeaderHidden(false);
         }
 
@@ -271,6 +296,7 @@ public sealed partial class MainWindow : Window
         // route changes the desktop mode, so reconcile it after the callback,
         // as PaneOpening does.
         var deferDesktopPane = duringFrameNavigation && !isNarrow && NavView.PaneDisplayMode != desiredPaneDisplayMode;
+        var paneModeRefused = false;
         if (deferDesktopPane)
             ScheduleDesktopPaneSynchronization();
         else if (NavView.PaneDisplayMode != desiredPaneDisplayMode)
@@ -287,6 +313,7 @@ public sealed partial class MainWindow : Window
                 // run unguarded on the UI thread, so log it and reconcile shortly,
                 // leaving IsPaneOpen to the retry as the deferred path does.
                 LocalLog.AppendException("navigation_errors.txt", ex, "responsive_pane_mode");
+                paneModeRefused = true;
                 deferDesktopPane = !isNarrow;
                 if (++_desktopPaneSynchronizationFailures <= 8)
                     _ = isNarrow ? RetryResponsiveShellLayoutAsync() : RetryDesktopPaneSynchronizationAsync();
@@ -315,8 +342,23 @@ public sealed partial class MainWindow : Window
         {
             // Entering the overlay-style mobile shell closes the desktop pane
             // once, without overwriting the user's desktop preference.
-            if (!wasNarrow && NavView.IsPaneOpen)
-                NavView.IsPaneOpen = false;
+            if (!wasNarrow) _narrowPaneClosePending = true;
+            // While WinUI refuses the LeftMinimal switch it refuses IsPaneOpen too
+            // (native shell-navigation, PR 145): the retry closes the pane after it.
+            if (_narrowPaneClosePending && !paneModeRefused)
+            {
+                try
+                {
+                    if (NavView.IsPaneOpen) NavView.IsPaneOpen = false;
+                    _narrowPaneClosePending = false;
+                }
+                catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x80004005))
+                {
+                    LocalLog.AppendException("navigation_errors.txt", ex, "responsive_pane_open");
+                    if (++_desktopPaneSynchronizationFailures <= 8)
+                        _ = RetryResponsiveShellLayoutAsync();
+                }
+            }
         }
         else if (!deferDesktopPane)
         {
@@ -324,8 +366,18 @@ public sealed partial class MainWindow : Window
             // LeftCompact is the WinUI mode designed for a persistent icon rail.
             // Reassigning IsPaneOpen on every page load restarts NavigationView's
             // pane transition, so only change it when the real state differs.
-            if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
-                NavView.IsPaneOpen = DesktopSidebarIsOpen;
+            try
+            {
+                if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
+                    NavView.IsPaneOpen = DesktopSidebarIsOpen;
+            }
+            catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x80004005))
+            {
+                // Settling like the mode switch above: the retry sets mode and IsPaneOpen together.
+                LocalLog.AppendException("navigation_errors.txt", ex, "responsive_pane_open");
+                if (++_desktopPaneSynchronizationFailures <= 8)
+                    _ = RetryDesktopPaneSynchronizationAsync();
+            }
         }
 
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
@@ -2861,6 +2913,9 @@ public sealed partial class MainWindow : Window
     }
 
     private int _desktopPaneSynchronizationFailures;
+    // Entering the narrow shell closes the pane once. A close WinUI refused stays
+    // pending, so the retry still closes it even though the shell is already narrow.
+    private bool _narrowPaneClosePending;
     private async Task RetryDesktopPaneSynchronizationAsync()
     {
         await Task.Delay(120);
