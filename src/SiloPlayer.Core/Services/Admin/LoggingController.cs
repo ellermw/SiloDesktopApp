@@ -57,7 +57,7 @@ public sealed class LoggingController : IDisposable
             var settings = await _api.LoggingGetSettingsAsync(owner).ConfigureAwait(false);
             Update(owner, () => { _draft.Load(settings); _state = _state with { Loading = false, Error = null }; });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (Exception error) { Update(owner, () => _state = _state with { Loading = false, Error = error is InvalidDataException ? error.Message : LogsText.T("logs.native.logging.loadFailed") }); }
     }
 
@@ -68,7 +68,7 @@ public sealed class LoggingController : IDisposable
             var keys = await _api.LoggingGetRestartKeysAsync(owner).ConfigureAwait(false);
             Update(owner, () => { _draft.SetRestartKeys(keys); _state = _state with { RestartKeys = keys }; });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (Exception) { Update(owner, () => { _draft.SetRestartKeys(new()); _state = _state with { RestartKeys = new() }; }); }
     }
 
@@ -102,7 +102,7 @@ public sealed class LoggingController : IDisposable
             var result = await _api.LoggingSaveAsync(action, intent).ConfigureAwait(false);
             Update(action, () => { _draft.Acknowledge(intent, result); _state = _state with { Saving = false, Notice = LogsText.T("logs.native.logging.saved") }; });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!action.IsCurrent) { }
         catch (LoggingSettingsConflictException error) { Update(action, () => _state = _state with { Saving = false, Conflict = true, Error = error.Message }); }
         catch (Exception error) { Update(action, () => _state = _state with { Saving = false, Error = error is ApiException ? error.Message : LogsText.T("logs.native.logging.saveFailed") }); }
     }
@@ -115,7 +115,7 @@ public sealed class LoggingController : IDisposable
             var latest = await _api.LoggingGetSettingsAsync(action).ConfigureAwait(false);
             lock (_gate) { if (_disposed || !_lifetime.IsCurrent(action)) return null; _reconciliation = latest; return latest; }
         }
-        catch (OperationCanceledException) { return null; }
+        catch (OperationCanceledException) when (!action.IsCurrent) { return null; }
         catch (Exception) { Update(action, () => _state = _state with { Error = LogsText.T("logs.native.logging.reloadFailed") }); return null; }
     }
 

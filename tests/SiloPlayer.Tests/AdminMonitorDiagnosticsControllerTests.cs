@@ -10,6 +10,62 @@ namespace SiloPlayer.Tests;
 public sealed class AdminMonitorDiagnosticsControllerTests
 {
     [Fact]
+    public async Task ReadTimeoutsSettleLoadingAndAllowRetry()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (_, _) => Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException()));
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        Assert.False(controller.State.Loading);
+        Assert.False(controller.State.StatusLoading);
+        Assert.NotNull(controller.State.Error);
+        Assert.NotNull(controller.State.StatusError);
+        kit.Http.Respond = (request, _) => Task.FromResult(Reply(request.RequestUri!.AbsolutePath));
+        await controller.RefreshAsync();
+        Assert.Null(controller.State.Error);
+        Assert.Null(controller.State.StatusError);
+        Assert.True(controller.State.CanToggle);
+
+        kit.Http.Respond = (_, _) => Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException()));
+        await controller.SelectAsync("1");
+        Assert.False(controller.State.DetailLoading);
+        Assert.NotNull(controller.State.DetailError);
+    }
+
+    [Theory]
+    [InlineData("toggle")]
+    [InlineData("delete")]
+    [InlineData("download")]
+    public async Task ActionTimeoutsClearBusyFlagsAndReportFailure(string operation)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (request, _) => Task.FromResult(Reply(request.RequestUri!.AbsolutePath));
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        await controller.SelectAsync("1");
+        using var action = controller.CaptureAction();
+        kit.Http.Respond = (_, _) => Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException()));
+        if (operation == "toggle") await controller.SetUploadsEnabledAsync(action, false);
+        else if (operation == "delete") await controller.DeleteAsync(action, "1");
+        else
+        {
+            using var destination = new MemoryStream();
+            Assert.False(await controller.DownloadAsync(action, new() { Id = "1", State = "ready" }, destination));
+        }
+        Assert.False(controller.State.ToggleBusy);
+        Assert.False(controller.State.Deleting);
+        Assert.False(controller.State.Downloading);
+        Assert.NotNull(controller.State.ActionError);
+        Assert.True(action.IsCurrent);
+        kit.Http.Respond = (request, _) => Task.FromResult(Reply(request.RequestUri!.AbsolutePath));
+        await controller.RefreshAsync();
+        Assert.False(controller.State.StatusLoading);
+        Assert.True(controller.State.CanToggle);
+    }
+
+    [Fact]
     public async Task ManualRetryAfterStaleCursorStartsAtTheFirstPageWithoutReplayingActions()
     {
         using var kit = AdminMonitorKit.Create();

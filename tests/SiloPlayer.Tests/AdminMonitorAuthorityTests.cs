@@ -83,8 +83,8 @@ public sealed class AdminMonitorAuthorityTests
         authority.AvailabilityChanged += () => raised++;
         var lease = authority.Capture();
 
-        // EventChannelClient's access_changed/4001 and transport catch-up both go through
-        // SiloApiClient.TryInvalidateAccessContext, which raises ContextInvalidated.
+        // EventChannelClient's access_changed/4001 invalidates access authority,
+        // unlike transport-only catch-up.
         kit.Client.InvalidateAccessContext();
 
         Assert.False(lease.IsCurrent);
@@ -93,6 +93,51 @@ public sealed class AdminMonitorAuthorityTests
         Assert.True(authority.IsAvailable);
         using var next = authority.Capture();
         Assert.True(next.IsCurrent);
+    }
+
+    [Fact]
+    public void TransportCatchUpRebindsRequestsWithoutRetiringPageOwnership()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var epoch = authority.Epoch;
+        var raised = 0;
+        authority.AvailabilityChanged += () => raised++;
+        var before = lease.Context;
+
+        Assert.True(kit.Client.TryInvalidateAccessContext(before, out var updated, transportCatchUp: true));
+
+        Assert.NotEqual(before, updated);
+        Assert.True(lease.IsCurrent);
+        Assert.False(lease.Token.IsCancellationRequested);
+        Assert.Equal(updated, lease.Context);
+        Assert.Equal(epoch, authority.Epoch);
+        Assert.Equal(0, raised);
+        using var action = authority.Capture();
+        Assert.Equal(lease.Epoch, action.Epoch);
+        Assert.Equal(lease.Context, action.Context);
+
+        Assert.True(kit.Client.TryInvalidateAccessContext(updated, out _));
+        Assert.False(lease.IsCurrent);
+        Assert.False(action.IsCurrent);
+        Assert.True(lease.Token.IsCancellationRequested);
+        Assert.Equal(1, raised);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SameProfileRebindAndProofChangesStillRetireAfterCatchUp(bool proofOnly)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        Assert.True(kit.Client.TryInvalidateAccessContext(lease.Context, out var updated, transportCatchUp: true));
+        if (proofOnly) kit.Client.AdoptProfileProof(updated, "synthetic-proof");
+        else kit.Client.SetProfile("p1");
+        Assert.False(lease.IsCurrent);
+        Assert.Throws<MonitorAuthorityRetiredException>(lease.ThrowIfRetired);
     }
 
     [Fact]

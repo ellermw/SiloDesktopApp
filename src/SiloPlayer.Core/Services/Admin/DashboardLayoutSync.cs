@@ -135,6 +135,7 @@ public sealed class DashboardLayoutSync : IDisposable
     private bool _disposed;
     private bool _departing;
     private long _editSequence;
+    private long _resetSequence;
     private string? _baseline;
     private SaveIntent? _pending;
     private SaveIntent? _inFlight;
@@ -236,10 +237,12 @@ public sealed class DashboardLayoutSync : IDisposable
     public void ResetLayout()
     {
         if (_disposed || _departing || !_lease.IsCurrent) return;
+        long sequence, reset;
         lock (_gate)
         {
             CancelPending_NoLock();
-            _editSequence++;
+            sequence = ++_editSequence;
+            reset = ++_resetSequence;
             _baseline = null;
             _blocked = true;
             _edited = true;
@@ -255,6 +258,22 @@ public sealed class DashboardLayoutSync : IDisposable
             try
             {
                 await _server.ResetAsync(_lease, _lease.Token);
+                // DELETE has no validator. Read one before allowing another PUT,
+                // without adopting over edits made while the reset was in flight.
+                var read = await _server.ReadAsync(_lease, _lease.Token);
+                if (read.Value == null || string.IsNullOrEmpty(read.Value.ETag))
+                    throw new InvalidDataException("The reset layout has no validator.");
+                lock (_gate)
+                {
+                    if (_disposed || !_lease.IsCurrent || reset != _resetSequence) return;
+                    _baseline = read.Value.ETag;
+                    _blocked = false;
+                    _resetPending = false;
+                    ServerSaveBlocked = false;
+                    if (_editSequence != sequence) ScheduleSave(Entries);
+                }
+                if (_departing) Flush();
+                RaiseChanged();
             }
             catch (Exception)
             {
@@ -262,7 +281,7 @@ public sealed class DashboardLayoutSync : IDisposable
             }
             finally
             {
-                lock (_gate) _resetPending = false;
+                lock (_gate) { if (reset == _resetSequence) _resetPending = false; }
             }
         });
     }

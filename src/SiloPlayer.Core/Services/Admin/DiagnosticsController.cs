@@ -103,14 +103,14 @@ public sealed class DiagnosticsController : IDisposable
                 _state = _state with { Capabilities = capabilities, UploadsEnabled = capabilities.Status != "disabled", StatusLoading = false };
             });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (Exception) { Update(owner, () => { if (sequence == _statusSequence) _state = _state with { StatusLoading = false, StatusError = LogsText.T("logs.native.diagnostics.statusFailed") }; }); }
         try
         {
             var settings = await _api.LoggingGetSettingsAsync(owner).ConfigureAwait(false);
             Update(owner, () => { if (sequence == _statusSequence) _state = _state with { SettingsRevision = settings.ETag }; });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (Exception) { Update(owner, () => { if (sequence == _statusSequence) _state = _state with { SettingsRevision = null, StatusError = LogsText.T("logs.native.diagnostics.revisionFailed") }; }); }
     }
 
@@ -171,7 +171,7 @@ public sealed class DiagnosticsController : IDisposable
                 _state = _state with { Reports = page.Items, NextCursor = page.Page!.NextCursor, Loading = false };
             });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (token.IsCancellationRequested || !owner.IsCurrent) { }
         catch (Exception error)
         {
             Update(owner, () =>
@@ -201,7 +201,7 @@ public sealed class DiagnosticsController : IDisposable
             var detail = await _api.DiagnosticsGetReportAsync(owner, id, token).ConfigureAwait(false);
             Update(owner, () => { if (sequence == _detailSequence && _state.SelectedId == id) _state = _state with { Detail = detail, DetailLoading = false }; });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (token.IsCancellationRequested || !owner.IsCurrent) { }
         catch (Exception) { Update(owner, () => { if (sequence == _detailSequence) _state = _state with { DetailLoading = false, DetailError = LogsText.T("logs.native.diagnostics.detailFailed") }; }); }
     }
     public void CloseDetail()
@@ -233,7 +233,7 @@ public sealed class DiagnosticsController : IDisposable
             var settings = await _api.LoggingGetSettingsAsync(action).ConfigureAwait(false);
             Update(action, () => { _statusReadAt = Stopwatch.GetTimestamp(); _state = _state with { Capabilities = capabilities, UploadsEnabled = capabilities.Status != "disabled", SettingsRevision = settings.ETag, ToggleBusy = false, Notice = enabled ? LogsText.T("logs.native.diagnostics.uploadsEnabled") : LogsText.T("logs.native.diagnostics.uploadsDisabled") }; });
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!action.IsCurrent) { }
         catch (LoggingSettingsConflictException) { Update(action, () => _state = _state with { ToggleBusy = false, SettingsRevision = null, ActionError = LogsText.T("logs.native.diagnostics.toggleConflict") }); }
         catch (Exception) { Update(action, () => _state = _state with { ToggleBusy = false, ActionError = LogsText.T("logs.native.diagnostics.toggleFailed") }); }
     }
@@ -252,7 +252,7 @@ public sealed class DiagnosticsController : IDisposable
             Update(action, () => { if (_state.SelectedId == id) CloseDetailCore(); _state = _state with { Deleting = false, Reports = _state.Reports.Where(report => report.Id != id).ToArray(), Notice = LogsText.T("logs.native.diagnostics.deleted") }; });
             if (_lifetime.IsCurrent(action)) await LoadReportsAsync(action).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!action.IsCurrent) { }
         catch (Exception) { Update(action, () => _state = _state with { Deleting = false, ActionError = LogsText.T("logs.native.diagnostics.deleteFailed") }); }
     }
 
@@ -272,7 +272,7 @@ public sealed class DiagnosticsController : IDisposable
             action.ThrowIfRetired();
             return _lifetime.IsCurrent(action);
         }
-        catch (OperationCanceledException) { return false; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || !action.IsCurrent) { return false; }
         catch (Exception error)
         {
             Update(action, () => _state = _state with { ActionError = error is ApiException apiError ? apiError.StatusCode switch { 409 => LogsText.T("logs.native.diagnostics.downloadNotReady"), 404 => LogsText.T("logs.native.diagnostics.reportMissing"), 503 => LogsText.T("logs.native.diagnostics.storageUnavailable"), _ => LogsText.T("logs.native.diagnostics.downloadFailed") } : error is InvalidDataException ? error.Message : LogsText.T("logs.native.diagnostics.downloadFailed") });

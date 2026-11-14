@@ -28,14 +28,14 @@ internal sealed class LogsAuthorityLifetime : IDisposable
         var action = _authority.Capture(owner.Token);
         lock (_gate)
         {
-            if (!_disposed && ReferenceEquals(owner, _owner) && owner.IsCurrent && action.IsCurrent && action.Epoch == owner.Epoch && action.Context == owner.Context) return action;
+            if (!_disposed && ReferenceEquals(owner, _owner) && owner.IsCurrent && action.IsCurrent && action.Epoch == owner.Epoch) return action;
             action.Dispose();
             throw new MonitorAuthorityRetiredException();
         }
     }
     public bool IsCurrent(MonitorAuthorityLease? lease)
     {
-        lock (_gate) return !_disposed && lease is { IsCurrent: true } && _owner is { IsCurrent: true } owner && owner.Epoch == lease.Epoch && owner.Context == lease.Context;
+        lock (_gate) return !_disposed && lease is { IsCurrent: true } && ReferenceEquals(lease.Owner, _authority) && _owner is { IsCurrent: true } owner && owner.Epoch == lease.Epoch;
     }
     private void Retire()
     {

@@ -8,6 +8,32 @@ namespace SiloPlayer.Tests;
 
 public sealed class AdminMonitorLogsStreamTests
 {
+    [Theory]
+    [InlineData("app")]
+    [InlineData("audit")]
+    public async Task HistoryTimeoutSettlesLoadingAndAllowsRetry(string stream)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (_, _) => Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException()));
+        var api = new AdminMonitorApi(kit.Client);
+        using var controller = new LogsPageController(api, authority);
+        await controller.OpenAsync(stream, new(), false);
+        var tickets = kit.Http.Requests.Count(request => request.StartsWith("POST"));
+        Assert.False(controller.State.Loading);
+        Assert.NotNull(controller.State.Error);
+        await controller.BrowseHistoryAsync();
+        Assert.True(controller.State.History);
+        Assert.False(controller.State.Loading);
+        Assert.NotNull(controller.State.Error);
+        Assert.True(controller.State.Owner!.IsCurrent);
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"items":[],"page":{"has_more":false}}"""));
+        await controller.RetryHistoryAsync();
+        Assert.False(controller.State.Loading);
+        Assert.Null(controller.State.Error);
+        Assert.Equal(tickets, kit.Http.Requests.Count(request => request.StartsWith("POST")));
+    }
+
     [Fact]
     public async Task HistoryInvalidCursorWaitsForManualFreshPageAndNeverRemintsTheLiveTicket()
     {

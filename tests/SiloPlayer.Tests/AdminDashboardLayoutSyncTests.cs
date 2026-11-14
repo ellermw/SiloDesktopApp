@@ -170,15 +170,56 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
         Assert.Equal(DashboardRegistry.DefaultLayout, sync.Entries);
         Assert.Null(_cache.Read(DashboardLayoutSync.Scope(Origin, "1")));
         Assert.Equal(0, _server.Resets);
+        _server.OnRead = _ => Task.FromResult(DashboardFakeLayoutServer.Layout("\"C\"", null));
         held.SetResult("\"B\"");
         await sync.PendingWrites;
         Assert.Equal(1, _server.Resets);
         Assert.Single(_server.Saves);
+        Assert.False(sync.ServerSaveBlocked);
+        sync.RemoveWidget("users");
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Equal(2, _server.Saves.Count);
+        Assert.Equal("\"C\"", _server.Saves[1].ETag);
+        Assert.Equal(DashboardLayoutDocument.Serialize(sync.Entries), _server.Saves[1].Document);
+    }
+
+    [Fact]
+    public async Task ResetValidatorReadPreservesAndSavesEditsMadeWhileItWaits()
+    {
+        var (sync, _) = await Loaded();
+        var read = new TaskCompletionSource<DashboardLayoutRead>();
+        _server.OnRead = _ => read.Task;
+        sync.ResetLayout();
+        sync.RemoveWidget("users");
+        Assert.True(sync.ServerSaveBlocked);
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"reset\"", null));
+        await sync.PendingWrites;
+        Assert.False(sync.ServerSaveBlocked);
+        Assert.DoesNotContain(sync.Entries, entry => entry.Id == "users");
+        Debounce();
+        await sync.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal("\"reset\"", save.ETag);
+        Assert.Equal(DashboardLayoutDocument.Serialize(sync.Entries), save.Document);
+    }
+
+    [Fact]
+    public async Task FailedResetValidatorReadKeepsSubsequentEditsLocal()
+    {
+        var (sync, _) = await Loaded();
+        var unconfirmed = 0;
+        sync.ResetUnconfirmed += () => unconfirmed++;
+        _server.OnRead = _ => Task.FromException<DashboardLayoutRead>(new HttpRequestException("lost"));
+        sync.ResetLayout();
+        await sync.PendingWrites;
+        Assert.Equal(1, _server.Resets);
+        Assert.Equal(1, unconfirmed);
         Assert.True(sync.ServerSaveBlocked);
         sync.RemoveWidget("users");
         Debounce();
         await sync.PendingWrites;
-        Assert.Single(_server.Saves);
+        Assert.Empty(_server.Saves);
     }
 
     [Fact]
@@ -204,6 +245,22 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
         Assert.Equal(2, _server.Saves.Count);
         Assert.Equal("\"B\"", _server.Saves[1].ETag);
         Assert.Contains("\"span\":7", _server.Saves[1].Document);
+    }
+
+    [Fact]
+    public async Task TransportCatchUpKeepsThePendingLayoutEditAndItsSave()
+    {
+        var (sync, lease) = await Loaded();
+        sync.ResizeWidget("users", 7, null);
+        Assert.True(_kit.Client.TryInvalidateAccessContext(lease.Context, out var updated, transportCatchUp: true));
+        Assert.True(lease.IsCurrent);
+        Assert.Equal(updated, lease.Context);
+        Assert.Equal(7, sync.Entries[0].Span);
+        Debounce();
+        await sync.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal("\"A\"", save.ETag);
+        Assert.Equal(DashboardLayoutDocument.Serialize(sync.Entries), save.Document);
     }
 
     [Fact]

@@ -17,8 +17,9 @@ namespace SiloPlayer.Core.Services;
 /// All leases retire together (their epoch ends and their token cancels) when
 /// the account, role, acting-admin state, selected profile, profile proof, server
 /// or API request context changes, including the event channel's
-/// <c>access_changed</c>/4001 and transport catch-up, which reach this owner
-/// through <see cref="SiloApiClient.ContextInvalidated"/>. Losing and regaining
+/// <c>access_changed</c>/4001, which reach this owner through
+/// <see cref="SiloApiClient.ContextInvalidated"/>. Transport-only catch-up
+/// rebinds requests without retiring page ownership or user edits. Losing and regaining
 /// admin on the same account still retires, so work from before the loss can
 /// never revive. An access-token refresh changes none of these and is benign.
 /// </para>
@@ -83,7 +84,7 @@ public sealed class AdminMonitorAuthority : IDisposable
             var current = ReadFingerprint();
             if (current is not { ActingAdmin: true } || current != _fingerprint)
                 throw new MonitorAuthorityRetiredException();
-            lease = new MonitorAuthorityLease(this, current.Context, current.AccountId, _epoch, ct);
+            lease = new MonitorAuthorityLease(this, current.AccountId, _epoch, ct);
             _leases.Add(lease);
         }
         return lease;
@@ -102,8 +103,23 @@ public sealed class AdminMonitorAuthority : IDisposable
         {
             return !_disposed && !lease.IsDisposed && lease.Epoch == _epoch &&
                    current == _fingerprint && current is { ActingAdmin: true } &&
-                   current.Context == lease.Context &&
                    string.Equals(current.AccountId, lease.AccountId, StringComparison.Ordinal);
+        }
+    }
+
+    // Resolve a fresh transport context only while the captured authority is
+    // still current. Never re-author a retired lease or replay an old request.
+    internal ApiRequestContext GetRequestContext(MonitorAuthorityLease lease)
+    {
+        lock (_gate)
+        {
+            var contexts = _client.CaptureMonitorContext();
+            var current = ReadFingerprint(contexts.Authority);
+            if (_disposed || lease.IsDisposed || lease.Token.IsCancellationRequested ||
+                lease.Epoch != _epoch || current != _fingerprint || current is not { ActingAdmin: true } ||
+                !string.Equals(current.AccountId, lease.AccountId, StringComparison.Ordinal))
+                throw new MonitorAuthorityRetiredException(lease.Token);
+            return contexts.Request;
         }
     }
 
@@ -148,11 +164,11 @@ public sealed class AdminMonitorAuthority : IDisposable
         }
     }
 
-    private Fingerprint? ReadFingerprint()
+    private Fingerprint? ReadFingerprint(ApiRequestContext? authorityContext = null)
     {
         var user = _auth.CurrentUser;
         if (user == null) return null;
-        var context = _client.CaptureContext();
+        var context = authorityContext ?? _client.CaptureMonitorContext().Authority;
         if (string.IsNullOrWhiteSpace(context.BaseUrl)) return null;
         var profile = _auth.SelectedProfile;
         return new Fingerprint(
@@ -205,11 +221,10 @@ public sealed class MonitorAuthorityLease : IDisposable
     private readonly CancellationTokenSource _cts;
     private int _disposed;
 
-    internal MonitorAuthorityLease(AdminMonitorAuthority owner, ApiRequestContext context, string accountId, long epoch,
+    internal MonitorAuthorityLease(AdminMonitorAuthority owner, string accountId, long epoch,
         CancellationToken linked)
     {
         Owner = owner;
-        Context = context;
         AccountId = accountId;
         Epoch = epoch;
         _cts = linked.CanBeCanceled ? CancellationTokenSource.CreateLinkedTokenSource(linked) : new CancellationTokenSource();
@@ -217,7 +232,8 @@ public sealed class MonitorAuthorityLease : IDisposable
     }
 
     internal AdminMonitorAuthority Owner { get; }
-    public ApiRequestContext Context { get; }
+    /// <summary>Current transport context under this lease's unchanged authority.</summary>
+    public ApiRequestContext Context => Owner.GetRequestContext(this);
     public string AccountId { get; }
     public long Epoch { get; }
     /// <summary>Cancels on retirement, on dispose, or with the token passed to capture.</summary>

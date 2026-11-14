@@ -96,7 +96,7 @@ public sealed class LogsPageController : IDisposable
             }, token).ConfigureAwait(false);
             Update(owner, attempt, state => state with { Connection = "disconnected", Loading = false });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested || owner?.IsCurrent != true)
         {
             if (owner != null) Update(owner, attempt, state => state with { Connection = "disconnected", Loading = false });
         }
@@ -172,7 +172,7 @@ public sealed class LogsPageController : IDisposable
                 Update(owner!, attempt, state => state with { Loading = false, AuditRows = page.Items, NextCursor = page.Page!.NextCursor });
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (token.IsCancellationRequested || owner?.IsCurrent != true) { }
         catch (ApiException error) when (error.StatusCode == 409 || (error.StatusCode == 400 && error.ErrorCode == "invalid_cursor"))
         {
             Update(owner!, attempt, state => state with { Loading = false, HistoryStale = true, Error = LogsText.T("logs.native.logs.cursorStale") });
