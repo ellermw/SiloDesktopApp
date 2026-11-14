@@ -468,6 +468,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await HomeDismissalNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-continue-duplicate")
+            {
+                await HomeReconcileNativeFixture.ContinueWatchingDuplicateAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-reconcile-data")
+            {
+                await HomeReconcileNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-reconcile")
             {
                 // This opt-in group runs the strict checks: activate the

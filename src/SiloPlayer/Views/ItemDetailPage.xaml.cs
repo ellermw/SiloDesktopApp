@@ -3637,7 +3637,7 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
-        if (item.UserData is { PositionSeconds: > 0, Played: false })
+        if ((_watchDetail?.UserData != null ? _watchDetail.UserData.PositionSeconds : item.UserData?.PositionSeconds) is > 0)
         {
             var restart = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem
             {
@@ -5212,16 +5212,20 @@ public sealed partial class ItemDetailPage : Page
         // belong to the displayed leaf, never to a container's new play target.
         var selectionsMatchContent = string.Equals(
             _watchDetail?.ContentId ?? ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal);
+        var playbackIntent = DetailPlaybackIntent.Create(_selectedVersion,
+            _watchDetail?.PlaybackVariants ?? ViewModel.Item?.PlaybackVariants,
+            _detailVersions.Quality, fromStart, _selectedAudioTrackIndex, _selectedSubtitleIndex, _selectedSubtitleSignature);
+        if (selectionsMatchContent && fromStart) fileId = playbackIntent.File?.FileId ?? fileId;
         _ = playerService.PlayAsync(
             contentId,
             fromStart: fromStart,
             fileId: selectionsMatchContent ? fileId : null,
-            audioTrackIndex: selectionsMatchContent ? _selectedAudioTrackIndex : null,
-            subtitleSelection: selectionsMatchContent ? _selectedSubtitleIndex : null,
+            audioTrackIndex: selectionsMatchContent ? playbackIntent.AudioTrackIndex : null,
+            subtitleSelection: selectionsMatchContent ? playbackIntent.SubtitleIndex : null,
             prefetchedWatchDetail: string.Equals(_watchDetail?.ContentId, contentId, StringComparison.Ordinal)
                 ? _watchDetail
                 : null,
-            subtitleTrackSignature: selectionsMatchContent ? _selectedSubtitleSignature : null, libraryId: ViewModel.LibraryId,
+            subtitleTrackSignature: selectionsMatchContent ? playbackIntent.SubtitleSignature : null, libraryId: ViewModel.LibraryId,
             sourceVersionPinned: selectionsMatchContent && IsSelectedVersionPinned);
     }
 

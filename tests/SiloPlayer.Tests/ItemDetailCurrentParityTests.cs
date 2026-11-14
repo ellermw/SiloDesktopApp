@@ -722,6 +722,24 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
+    public void MultipartRewatchOffersRestartInMoreEvenWithoutAVersionDropdown()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var start = page.IndexOf("private void BuildMoreFlyout()", StringComparison.Ordinal);
+        var end = page.IndexOf("if (MediaItemActionPolicy.CanResetProgress(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var more = page[start..end];
+
+        // One file per part hides the version dropdown and bypasses the resume
+        // dialog. More must still offer restart for Played=true and position>0,
+        // preferring watch history over stale catalog data, just like Resume.
+        Assert.Contains("if ((_watchDetail?.UserData != null ? _watchDetail.UserData.PositionSeconds : item.UserData?.PositionSeconds) is > 0)", more);
+        Assert.Contains("Text = \"Play from Beginning\"", more);
+        Assert.Contains("restart.Click += (_, _) => PlayFromStart_Click(restart, new RoutedEventArgs());", more);
+        Assert.Contains("MoreFlyout.Items.Add(restart);", more);
+    }
+
+    [Fact]
     public void PlaybackSelectionsAreScopedToTheResolvedContentAtThePlayerBoundary()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
@@ -735,9 +753,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("var selectionsMatchContent = string.Equals(", playback);
         Assert.Contains("_watchDetail?.ContentId ?? ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal)", playback);
         Assert.Contains("fileId: selectionsMatchContent ? fileId : null", playback);
-        Assert.Contains("audioTrackIndex: selectionsMatchContent ? _selectedAudioTrackIndex : null", playback);
-        Assert.Contains("subtitleSelection: selectionsMatchContent ? _selectedSubtitleIndex : null", playback);
-        Assert.Contains("subtitleTrackSignature: selectionsMatchContent ? _selectedSubtitleSignature : null", playback);
+        Assert.Contains("audioTrackIndex: selectionsMatchContent ? playbackIntent.AudioTrackIndex : null", playback);
+        Assert.Contains("subtitleSelection: selectionsMatchContent ? playbackIntent.SubtitleIndex : null", playback);
+        Assert.Contains("subtitleTrackSignature: selectionsMatchContent ? playbackIntent.SubtitleSignature : null", playback);
         Assert.Contains("sourceVersionPinned: selectionsMatchContent && IsSelectedVersionPinned", playback);
     }
 

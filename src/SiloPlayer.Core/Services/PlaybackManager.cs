@@ -94,6 +94,8 @@ public partial class PlaybackManager : IDisposable
                 quality.BitrateKbps < ceiling);
     }
 
+    public Func<bool> IsMeteredConnection { get; set; } = static () => false;
+
     public async Task<PlaybackQualityPreferences> ResolveQualityPreferencesAsync(CancellationToken ct = default, ApiRequestContext? expectedContext = null)
     {
         if (expectedContext is { } expected && !_apiClient.IsCurrentContext(expected)) throw new OperationCanceledException("Playback owner changed.", ct);
@@ -101,10 +103,15 @@ public partial class PlaybackManager : IDisposable
         if (expectedContext is { } initial && !_apiClient.IsCurrentContext(initial)) throw new OperationCanceledException("Playback owner changed.", ct);
         var capability = await _playbackApi.GetConnectionCapabilityAsync(owner, ct).ConfigureAwait(false);
         if (expectedContext is { } captured && !_apiClient.IsCurrentContext(captured)) throw new OperationCanceledException("Playback owner changed.", ct);
-        var preferences = await PlaybackQualityPreferences.ReadAsync(_apiClient, _authService.SelectedProfile?.QualityPreference,
-            ct, capability.Features.Contains("buffering_quality_v1"), expectedContext).ConfigureAwait(false);
-        if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
-        return preferences with { CapabilitySnapshot = (owner, capability) };
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var metered = IsMeteredConnection();
+            var preferences = await PlaybackQualityPreferences.ReadAsync(_apiClient, _authService.SelectedProfile?.QualityPreference,
+                ct, capability.Features.Contains("buffering_quality_v1"), expectedContext, metered).ConfigureAwait(false);
+            if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
+            if (metered == IsMeteredConnection()) return preferences with { CapabilitySnapshot = (owner, capability) };
+        }
+        throw new OperationCanceledException("Connection changed while resolving playback quality.", ct);
     }
 
     public async Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, CancellationToken ct = default)

@@ -154,7 +154,8 @@ public partial class SettingsViewModel
         ConnectionMetered = metered;
         if (metered) ConnectionReading = transport == "cellular"
             ? AppStrings.Get("web.settings.playbackConnection.skippedCellular")
-            : AppStrings.Get("web.settings.playbackConnection.skippedMetered");
+            : AppStrings.Get("web.settings.playbackConnection.skippedMetered") + " " +
+                AppStrings.Get("web.settings.playbackConnection.meteredQualityApplies", fallback: "Metered quality and bitrate settings apply to playback.");
     }
 
     /// <summary>Re-reads the connection summary in the current interface language (retained settings view).</summary>
