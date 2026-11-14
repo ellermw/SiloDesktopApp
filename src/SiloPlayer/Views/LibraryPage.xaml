@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.LibraryPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
@@ -116,7 +117,7 @@
                         <TextBlock x:Name="LibraryEyebrowPrefix" Text="LIBRARY" FontSize="11" FontWeight="SemiBold"
                                    CharacterSpacing="200"
                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                   VerticalAlignment="Center" />
+                                   VerticalAlignment="Center"  loc:Localized.Text="web.library.header.eyebrow" loc:Localized.Uppercase="True"/>
                         <TextBlock x:Name="LibraryEyebrowDivider" Text="/" FontSize="11"
                                    Foreground="{StaticResource TertiaryTextBrush}"
                                    VerticalAlignment="Center" />
@@ -140,7 +141,7 @@
 
                 <StackPanel x:Name="LibraryHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <Button x:Name="LibraryShuffleButton" Click="LibraryShuffle_Click" Content="Shuffle"
-                        Style="{StaticResource PillTabButtonStyle}" Visibility="Collapsed" ToolTipService.ToolTip="Shuffle" />
+                        Style="{StaticResource PillTabButtonStyle}" Visibility="Collapsed" ToolTipService.ToolTip="Shuffle"  loc:Localized.Name="web.library.header.shuffle" loc:Localized.ToolTip="web.library.header.shuffle"/>
                 <!-- Pill tab bar (web: surface-panel-subtle rounded-[1.2rem] gap-1 p-1) -->
                 <Border
                     x:Name="TabBarBorder"
@@ -158,19 +159,19 @@
                             Content="Recommended"
                             Style="{StaticResource PillTabButtonActiveStyle}"
                             Click="Tab_Click"
-                            Tag="Recommended" />
+                            Tag="Recommended" loc:Localized.Content="web.library.header.recommendedTab" />
                         <Button
                             x:Name="LibraryTab"
                             Content="Library"
                             Style="{StaticResource PillTabButtonStyle}"
                             Click="Tab_Click"
-                            Tag="Library" />
+                            Tag="Library"  loc:Localized.Content="web.library.header.eyebrow"/>
                         <Button
                             x:Name="CollectionsTab"
                             Content="Collections"
                             Style="{StaticResource PillTabButtonStyle}"
                             Click="Tab_Click"
-                            Tag="Collections" />
+                            Tag="Collections"  loc:Localized.Content="web.library.collections.title"/>
                     </StackPanel>
                 </Border>
                 </StackPanel>
@@ -195,20 +196,20 @@
                         Orientation="Horizontal" Spacing="4" Margin="0,0,0,12"
                         Visibility="Collapsed">
                 <Button x:Name="AudiobookBooksButton" Content="Books" Tag="books"
-                        Style="{StaticResource PillTabButtonActiveStyle}" Click="AudiobookAxis_Click" />
+                        Style="{StaticResource PillTabButtonActiveStyle}" Click="AudiobookAxis_Click"  loc:Localized.Content="web.library.browse.axisBooks"/>
                 <Button x:Name="AudiobookSeriesButton" Content="Series" Tag="series"
-                        Style="{StaticResource PillTabButtonStyle}" Click="AudiobookAxis_Click" />
+                        Style="{StaticResource PillTabButtonStyle}" Click="AudiobookAxis_Click"  loc:Localized.Content="web.library.browse.axisSeries"/>
                 <Button x:Name="AudiobookAuthorsButton" Content="Authors" Tag="author"
-                        Style="{StaticResource PillTabButtonStyle}" Click="AudiobookAxis_Click" />
+                        Style="{StaticResource PillTabButtonStyle}" Click="AudiobookAxis_Click"  loc:Localized.Content="web.library.browse.axisAuthors"/>
                 <Button x:Name="AudiobookNarratorsButton" Content="Narrators" Tag="narrator"
-                        Style="{StaticResource PillTabButtonStyle}" Click="AudiobookAxis_Click" />
+                        Style="{StaticResource PillTabButtonStyle}" Click="AudiobookAxis_Click"  loc:Localized.Content="web.library.browse.axisNarrators"/>
             </StackPanel>
 
             <StackPanel x:Name="BrowseTypePanel" Grid.Row="1" Grid.Column="0" Orientation="Horizontal"
                         Spacing="10" VerticalAlignment="Center" Visibility="Collapsed">
                 <TextBlock Text="Type" FontSize="13" FontWeight="SemiBold"
                            Foreground="{StaticResource SecondaryTextBrush}"
-                           VerticalAlignment="Center" />
+                           VerticalAlignment="Center"  loc:Localized.Text="web.library.browse.typeLabel"/>
                 <ComboBox x:Name="BrowseTypeComboBox" Style="{StaticResource PillComboBoxStyle}"
                           Width="180" SelectionChanged="BrowseTypeComboBox_SelectionChanged" />
             </StackPanel>
@@ -228,8 +229,8 @@
                 Style="{StaticResource PillComboBoxStyle}"
                 MinWidth="128"
                 SelectionChanged="OrderComboBox_SelectionChanged">
-                <ComboBoxItem Content="Descending" Tag="desc" />
-                <ComboBoxItem Content="Ascending" Tag="asc" IsSelected="True" />
+                <ComboBoxItem Content="Descending" Tag="desc"  loc:Localized.Content="web.catalog.sort.descending"/>
+                <ComboBoxItem Content="Ascending" Tag="asc" IsSelected="True"  loc:Localized.Content="web.catalog.sort.ascending"/>
             </ComboBox>
 
             <Button
@@ -243,7 +244,7 @@
                 Click="OpenFilters_Click">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <FontIcon Glyph="&#xE71C;" FontSize="14" />
-                    <TextBlock Text="Filters" FontSize="13" />
+                    <TextBlock Text="Filters" FontSize="13"  loc:Localized.Text="web.catalog.filters.heading"/>
                     <Border x:Name="FilterCountBadge"
                             MinWidth="18" Height="18" Padding="5,0"
                             Background="{StaticResource AccentBrush}"
@@ -301,7 +302,7 @@
                 Foreground="{StaticResource AccentBrush}"
                 Padding="8,4"
                 Click="ClearAllFilters_Click"
-                Visibility="Collapsed" />
+                Visibility="Collapsed"  loc:Localized.Content="web.catalog.filters.clearAll"/>
         </controls:WrapPanel>
 
         <!-- Pixel scrolling with a bounded set of cards for 100k-scale libraries. -->
@@ -345,7 +346,7 @@
                     VerticalAlignment="Center" Margin="0,8,8,64" Padding="4,6"
                     Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                    CornerRadius="18" AutomationProperties.Name="Jump to letter">
+                    CornerRadius="18" AutomationProperties.Name="Jump to letter" loc:Localized.Name="web.catalog.letters.toolbar">
                 <!-- Shown greyed while the index loads; a failed index keeps the rail with a Retry. -->
                 <Grid RowSpacing="4">
                     <Grid.RowDefinitions>
@@ -372,7 +373,7 @@
                 <TextBlock x:Name="LibraryLetterStatus" VerticalAlignment="Center"
                            AutomationProperties.LiveSetting="Polite" />
                 <Button x:Name="LibraryLetterRetry" Content="Retry" Visibility="Collapsed"
-                        Command="{x:Bind ViewModel.RetryLetterJumpCommand}" AutomationProperties.Name="Retry letter jump" />
+                        Command="{x:Bind ViewModel.RetryLetterJumpCommand}" AutomationProperties.Name="Retry letter jump"  loc:Localized.Content="common.retry"/>
             </StackPanel>
 
             <!-- Loading indicator overlaid at bottom of viewport -->
@@ -390,7 +391,7 @@
                        HorizontalAlignment="Center" VerticalAlignment="Top"
                        Margin="0,48,0,0" FontSize="14"
                        Foreground="{StaticResource SecondaryTextBrush}"
-                       Visibility="Collapsed" />
+                       Visibility="Collapsed"  loc:Localized.Text="web.catalog.grid.noItems"/>
 
             <!-- Scroll-to-top button (webui: floating bottom-right) -->
             <Button x:Name="ScrollToTopButton"
@@ -435,9 +436,9 @@
                              TextChanged="AudiobookGroupSearch_TextChanged" />
                     <ComboBox x:Name="AudiobookGroupSortComboBox" Grid.Column="1" Width="160"
                               SelectionChanged="AudiobookGroupSort_SelectionChanged">
-                        <ComboBoxItem Content="Name" Tag="name" IsSelected="True" />
-                        <ComboBoxItem Content="Most books" Tag="count" />
-                        <ComboBoxItem Content="Longest" Tag="duration" />
+                        <ComboBoxItem Content="Name" Tag="name" IsSelected="True"  loc:Localized.Content="web.audiobooks.groups.sortName"/>
+                        <ComboBoxItem Content="Most books" Tag="count"  loc:Localized.Content="web.audiobooks.groups.sortCount"/>
+                        <ComboBoxItem Content="Longest" Tag="duration"  loc:Localized.Content="web.audiobooks.groups.sortDuration"/>
                     </ComboBox>
                     <TextBlock x:Name="AudiobookGroupCountText" Grid.Column="2"
                                VerticalAlignment="Center" FontSize="13"
@@ -498,7 +499,7 @@
                         Content="Retry"
                         Style="{StaticResource OutlineButtonStyle}"
                         HorizontalAlignment="Center"
-                        Click="RecommendedRetry_Click" />
+                        Click="RecommendedRetry_Click"  loc:Localized.Content="common.retry"/>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>
@@ -519,13 +520,13 @@
                         FontSize="48"
                         FontWeight="ExtraBold" CharacterSpacing="-50"
                         LineHeight="45.6" LineStackingStrategy="BlockLineHeight"
-                        Foreground="{StaticResource PrimaryTextBrush}" />
+                        Foreground="{StaticResource PrimaryTextBrush}"  loc:Localized.Text="web.library.collections.title"/>
                     <TextBlock
                         x:Name="CollectionsSubtitle"
                         Text="Browse hand-picked shelves and smart lists created for this library."
                         FontSize="14"
                         LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
+                        Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.library.collections.subtitle"/>
                 </StackPanel>
 
                 <!-- Empty state card (web: surface-panel rounded-[2rem] border-0) -->
@@ -541,7 +542,7 @@
                             FontSize="18"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
-                            HorizontalAlignment="Center" />
+                            HorizontalAlignment="Center"  loc:Localized.Text="web.library.collections.emptyTitle"/>
                         <TextBlock
                             Text="Create library collections from the admin area to feature curated shelves here."
                             FontSize="14"
@@ -576,7 +577,7 @@
             x:Name="FiltersSheet"
             Grid.RowSpan="4"
             Canvas.ZIndex="100"
-            Title="Filters">
+            Title="Filters" TitleKey="web.catalog.filters.heading">
             <controls:SlideSheet.SheetContent>
                 <Grid RowSpacing="16">
                     <Grid.RowDefinitions>
@@ -587,50 +588,50 @@
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
                         <Button x:Name="GuidedFilterModeButton" Content="Guided"
                                 Style="{StaticResource AccentButtonStyle}"
-                                MinWidth="0" Padding="12,5" Click="GuidedFilterMode_Click" />
+                                MinWidth="0" Padding="12,5" Click="GuidedFilterMode_Click"  loc:Localized.Content="web.catalog.filters.guided"/>
                         <Button x:Name="AdvancedFilterModeButton" Content="Advanced"
                                 Style="{StaticResource OutlineButtonStyle}"
-                                MinWidth="0" Padding="12,5" Click="AdvancedFilterMode_Click" />
+                                MinWidth="0" Padding="12,5" Click="AdvancedFilterMode_Click"  loc:Localized.Content="web.catalog.filters.advanced"/>
                     </StackPanel>
 
                     <ScrollViewer x:Name="GuidedFiltersScroll" Grid.Row="0" VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="14" Padding="0,4,8,12">
                             <StackPanel x:Name="MediaTypeFilterField" Spacing="6">
                                 <TextBlock Text="Media Type" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.mediaType"/>
                                 <ComboBox x:Name="MediaTypeComboBox" HorizontalAlignment="Stretch"
                                           SelectionChanged="MediaTypeComboBox_SelectionChanged">
-                                    <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
-                                    <ComboBoxItem Content="Movies &amp; Series" Tag="video" />
-                                    <ComboBoxItem Content="Movies" Tag="movie" />
-                                    <ComboBoxItem Content="Series" Tag="series" />
-                                    <ComboBoxItem Content="Episodes" Tag="episode" />
-                                    <ComboBoxItem Content="Audiobooks" Tag="audiobook" />
-                                    <ComboBoxItem Content="Ebooks" Tag="ebook" />
-                                    <ComboBoxItem Content="Manga" Tag="manga" />
+                                    <ComboBoxItem Content="All Media" Tag="" IsSelected="True"  loc:Localized.Content="web.catalog.mediaType.allMedia"/>
+                                    <ComboBoxItem Content="Movies &amp; Series" Tag="video"  loc:Localized.Content="web.catalog.mediaType.moviesAndSeries"/>
+                                    <ComboBoxItem Content="Movies" Tag="movie"  loc:Localized.Content="web.catalog.mediaType.movies"/>
+                                    <ComboBoxItem Content="Series" Tag="series"  loc:Localized.Content="web.library.browse.axisSeries"/>
+                                    <ComboBoxItem Content="Episodes" Tag="episode"  loc:Localized.Content="web.catalog.mediaType.episodes"/>
+                                    <ComboBoxItem Content="Audiobooks" Tag="audiobook"  loc:Localized.Content="web.catalog.mediaType.audiobooks"/>
+                                    <ComboBoxItem Content="Ebooks" Tag="ebook"  loc:Localized.Content="web.catalog.mediaType.ebooks"/>
+                                    <ComboBoxItem Content="Manga" Tag="manga"  loc:Localized.Content="web.catalog.mediaType.manga"/>
                                 </ComboBox>
                             </StackPanel>
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Genres" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.item.editMetadata.genres"/>
                                 <Button x:Name="GenreMultiSelectButton" HorizontalAlignment="Stretch"
                                         HorizontalContentAlignment="Left" Click="GenreMultiSelect_Click">
                                     <TextBlock x:Name="GenreMultiSelectText" Text="Select genres..."
-                                               TextTrimming="CharacterEllipsis" />
+                                               TextTrimming="CharacterEllipsis"  loc:Localized.Text="web.collections.guidedRules.selectGenres"/>
                                 </Button>
                                 <ComboBox x:Name="GenreComboBox" Visibility="Collapsed"
                                           SelectionChanged="GenreComboBox_SelectionChanged" />
                                 <TextBlock Text="Items must match all selected genres." FontSize="11"
-                                           Foreground="{StaticResource TertiaryTextBrush}" />
+                                           Foreground="{StaticResource TertiaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.genresHelp"/>
                             </StackPanel>
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Decade" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.decade"/>
                                 <ComboBox x:Name="DecadeComboBox" HorizontalAlignment="Stretch"
                                           SelectionChanged="DecadeComboBox_SelectionChanged">
-                                    <ComboBoxItem Content="Custom" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="Custom" Tag="" IsSelected="True"  loc:Localized.Content="web.collections.guidedRules.custom"/>
                                     <ComboBoxItem Content="2030s" Tag="2030" />
                                     <ComboBoxItem Content="2020s" Tag="2020" />
                                     <ComboBoxItem Content="2010s" Tag="2010" />
@@ -650,41 +651,41 @@
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Year From" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.yearFrom"/>
                                 <TextBox x:Name="YearMinBox" PlaceholderText="e.g. 2000"
-                                         TextChanged="YearFilter_TextChanged" InputScope="Number" />
+                                         TextChanged="YearFilter_TextChanged" InputScope="Number"  loc:Localized.Placeholder="web.collections.guidedRules.yearFromPlaceholder"/>
                             </StackPanel>
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Year To" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.yearTo"/>
                                 <TextBox x:Name="YearMaxBox" PlaceholderText="e.g. 2025"
-                                         TextChanged="YearFilter_TextChanged" InputScope="Number" />
+                                         TextChanged="YearFilter_TextChanged" InputScope="Number"  loc:Localized.Placeholder="web.collections.guidedRules.yearToPlaceholder"/>
                             </StackPanel>
 
                             <StackPanel x:Name="VideoRatingFilters" Spacing="14">
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Minimum IMDb Rating" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.minRating"/>
                                     <TextBox x:Name="MinimumRatingBox" PlaceholderText="0.0 - 10.0"
                                              InputScope="Number" TextChanged="AdvancedTextFilter_TextChanged" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.common.sort.contentRating"/>
                                     <ComboBox x:Name="ContentRatingComboBox" HorizontalAlignment="Stretch"
                                               SelectionChanged="ContentRatingComboBox_SelectionChanged"
-                                              PlaceholderText="Select rating..." />
+                                              PlaceholderText="Select rating..."  loc:Localized.Placeholder="web.collections.guidedRules.selectRating"/>
                                 </StackPanel>
                             </StackPanel>
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Original Language" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.originalLanguage"/>
                                 <Button x:Name="OriginalLanguageMultiSelectButton" HorizontalAlignment="Stretch"
                                         HorizontalContentAlignment="Left" Click="OriginalLanguageMultiSelect_Click">
                                     <TextBlock x:Name="OriginalLanguageMultiSelectText" Text="Select languages..."
-                                               TextTrimming="CharacterEllipsis" />
+                                               TextTrimming="CharacterEllipsis"  loc:Localized.Text="web.collections.guidedRules.selectLanguages"/>
                                 </Button>
                                 <ComboBox x:Name="OriginalLanguageComboBox" Visibility="Collapsed"
                                           SelectionChanged="AdvancedComboFilter_SelectionChanged" />
@@ -693,38 +694,38 @@
                             <StackPanel x:Name="VideoPeopleFilters" Spacing="14">
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Actor" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.actor"/>
                                     <AutoSuggestBox x:Name="ActorBox" PlaceholderText="Any actor"
                                              TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Director" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.detail.castCrew.director"/>
                                     <AutoSuggestBox x:Name="DirectorBox" PlaceholderText="Any director"
                                              TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Writer" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.detail.castCrew.writer"/>
                                     <AutoSuggestBox x:Name="WriterBox" PlaceholderText="Any writer"
                                              TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Producer" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.producer"/>
                                     <AutoSuggestBox x:Name="ProducerBox" PlaceholderText="Any producer"
                                              TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Studio" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.requests.browse.studio"/>
                                     <ComboBox x:Name="StudioComboBox" HorizontalAlignment="Stretch"
                                               SelectionChanged="StudioComboBox_SelectionChanged"
-                                              PlaceholderText="Select studio..." />
+                                              PlaceholderText="Select studio..."  loc:Localized.Placeholder="web.collections.guidedRules.selectStudio"/>
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Network" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.requests.browse.network"/>
                                     <ComboBox x:Name="NetworkComboBox" HorizontalAlignment="Stretch"
                                               PlaceholderText="All Networks"
                                               SelectionChanged="AdvancedComboFilter_SelectionChanged" />
@@ -734,19 +735,19 @@
                             <StackPanel x:Name="BookMetadataFilters" Spacing="14" Visibility="Collapsed">
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Author" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="catalog.sort.author"/>
                                     <AutoSuggestBox x:Name="AuthorBox" PlaceholderText="Any author"
                                              TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel x:Name="NarratorFilterField" Spacing="6">
                                     <TextBlock Text="Narrator" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="catalog.sort.narrator"/>
                                     <AutoSuggestBox x:Name="NarratorBox" PlaceholderText="Any narrator"
                                              TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Series" FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                               Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.library.browse.axisSeries"/>
                                     <AutoSuggestBox x:Name="SeriesBox" PlaceholderText="Any series"
                                              TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
@@ -754,10 +755,10 @@
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.country"/>
                                 <ComboBox x:Name="CountryComboBox" HorizontalAlignment="Stretch"
                                           SelectionChanged="CountryComboBox_SelectionChanged"
-                                          PlaceholderText="Select country..." />
+                                          PlaceholderText="Select country..."  loc:Localized.Placeholder="web.collections.guidedRules.selectCountry"/>
                             </StackPanel>
 
                             <!-- Kept for restoring older desktop-only saved filters. Current WebUI exposes these through Advanced rules. -->
@@ -768,14 +769,14 @@
 
                             <StackPanel x:Name="MatchStatusFilterField" Spacing="6">
                                 <TextBlock Text="Match Status" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.matchStatus"/>
                                 <ComboBox x:Name="MatchStatusComboBox" HorizontalAlignment="Stretch"
                                           SelectionChanged="AdvancedComboFilter_SelectionChanged">
                                     <ComboBoxItem Content="Any Status" Tag="" IsSelected="True" />
-                                    <ComboBoxItem Content="Matched" Tag="matched" />
-                                    <ComboBoxItem Content="Pending" Tag="pending" />
-                                    <ComboBoxItem Content="Unmatched" Tag="unmatched" />
-                                    <ComboBoxItem Content="Ambiguous" Tag="ambiguous" />
+                                    <ComboBoxItem Content="Matched" Tag="matched"  loc:Localized.Content="web.collections.guidedRules.matched"/>
+                                    <ComboBoxItem Content="Pending" Tag="pending"  loc:Localized.Content="web.requests.status.pending"/>
+                                    <ComboBoxItem Content="Unmatched" Tag="unmatched"  loc:Localized.Content="web.item.card.statusUnmatched"/>
+                                    <ComboBoxItem Content="Ambiguous" Tag="ambiguous"  loc:Localized.Content="web.item.card.statusAmbiguous"/>
                                 </ComboBox>
                             </StackPanel>
 
@@ -785,20 +786,20 @@
                                 <ComboBox x:Name="WatchStatusComboBox" HorizontalAlignment="Stretch"
                                           SelectionChanged="AdvancedComboFilter_SelectionChanged">
                                     <ComboBoxItem Content="Any Status" Tag="" IsSelected="True" />
-                                    <ComboBoxItem Content="Watched" Tag="watched" />
-                                    <ComboBoxItem Content="In Progress" Tag="in_progress" />
-                                    <ComboBoxItem Content="Unwatched" Tag="unwatched" />
+                                    <ComboBoxItem Content="Watched" Tag="watched"  loc:Localized.Content="web.common.overlays.watched"/>
+                                    <ComboBoxItem Content="In Progress" Tag="in_progress"  loc:Localized.Content="web.collections.guidedRules.inProgress"/>
+                                    <ComboBoxItem Content="Unwatched" Tag="unwatched"  loc:Localized.Content="web.collections.guidedRules.unwatched"/>
                                 </ComboBox>
                             </StackPanel>
 
                             <StackPanel x:Name="VideoQualityToggles" Spacing="8">
                                 <TextBlock Text="Video Quality" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,2" />
+                                           Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,2"  loc:Localized.Text="web.collections.guidedRules.videoQuality"/>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <ToggleButton x:Name="FourKToggle" Content="4K" Height="32" Padding="12,0"
-                                                  Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled" />
+                                                  Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled"  loc:Localized.Content="web.home.rows.variants.options.fourK"/>
                                     <ToggleButton x:Name="HdrToggle" Content="HDR" Height="32" Padding="12,0"
-                                                  Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled" />
+                                                  Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled"  loc:Localized.Content="web.collections.builder.fieldHdr"/>
                                     <ToggleButton x:Name="DolbyVisionToggle" Content="DOVI" Height="32" Padding="12,0"
                                                   Checked="AdvancedToggle_Toggled" Unchecked="AdvancedToggle_Toggled" />
                                 </StackPanel>
@@ -806,14 +807,14 @@
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Added in the Last" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.addedInLast"/>
                                 <TextBox x:Name="AddedInLastBox" PlaceholderText="Example: 30 days"
                                          TextChanged="AdvancedTextFilter_TextChanged" />
                             </StackPanel>
 
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Released in the Last" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.releasedInLast"/>
                                 <TextBox x:Name="ReleasedInLastBox" PlaceholderText="Example: 1 year"
                                          TextChanged="AdvancedTextFilter_TextChanged" />
                             </StackPanel>
@@ -835,7 +836,7 @@
                             </StackPanel>
                             <StackPanel x:Name="AdvancedRulesHost" Spacing="10" />
                             <Button Content="Add Group" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed"
-                                    HorizontalAlignment="Left" Click="AddAdvancedGroup_Click" />
+                                    HorizontalAlignment="Left" Click="AddAdvancedGroup_Click"  loc:Localized.Content="web.catalog.rules.addGroup"/>
                         </StackPanel>
                     </ScrollViewer>
 
@@ -843,9 +844,9 @@
                             BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
                         <Grid ColumnDefinitions="*,Auto">
                             <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}"
-                                    Height="32" MinHeight="32" FontSize="14" HorizontalAlignment="Left" Click="ClearAllFilters_Click" />
+                                    Height="32" MinHeight="32" FontSize="14" HorizontalAlignment="Left" Click="ClearAllFilters_Click"  loc:Localized.Content="web.catalog.filters.clearAll"/>
                             <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}"
-                                    Height="32" MinHeight="32" FontSize="14" Click="CloseFilters_Click" />
+                                    Height="32" MinHeight="32" FontSize="14" Click="CloseFilters_Click"  loc:Localized.Content="common.done"/>
                         </Grid>
                     </Border>
                 </Grid>
@@ -869,13 +870,13 @@
                 Foreground="{StaticResource SecondaryTextBrush}"
                 FontSize="14"
                 TextAlignment="Center"
-                TextWrapping="Wrap" />
+                TextWrapping="Wrap"  loc:Localized.Text="web.library.page.unavailable"/>
             <Button
                 Content="Manage library visibility in Settings"
                 Style="{StaticResource GhostButtonStyle}"
                 Foreground="{StaticResource AccentBrush}"
                 HorizontalAlignment="Center"
-                Click="ManageLibraryVisibility_Click" />
+                Click="ManageLibraryVisibility_Click"  loc:Localized.Content="web.library.page.manageVisibility"/>
         </StackPanel>
     </Grid>
 </Page>

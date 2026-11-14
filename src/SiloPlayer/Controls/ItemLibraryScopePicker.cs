@@ -34,6 +34,8 @@ internal sealed class ItemLibraryScopePicker : StackPanel
         State = new(libraryId, split, inventory); _available = !inventory;
         Spacing = 8; Visibility = inventory ? Visibility.Visible : Visibility.Collapsed;
         Children.Add(_label); Children.Add(_libraries); Children.Add(_refresh); Children.Add(_status);
+        MediaItemCardActions.Localize(_label, text: "web.item.libraryPicker.label");
+        MediaItemCardActions.Localize(_libraries, placeholder: "web.item.libraryPicker.placeholder");
         AutomationProperties.SetName(_libraries, "Identity search library"); AutomationProperties.SetName(_refresh, "Refresh item libraries");
         _libraries.SelectionChanged += (_, _) =>
         {
@@ -72,7 +74,7 @@ internal sealed class ItemLibraryScopePicker : StackPanel
     {
         _changing = true;
         _libraries.Items.Clear();
-        foreach (var id in State.LibraryIds) _libraries.Items.Add(new ComboBoxItem { Content = $"Library {id}", Tag = id });
+        foreach (var id in State.LibraryIds) _libraries.Items.Add(MediaItemCardActions.BindText(new ComboBoxItem { Tag = id }, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.item.libraryPicker.fallbackName", new Dictionary<string, object?> { ["id"] = id })));
         _libraries.SelectedItem = _libraries.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (int)item.Tag == State.LibraryId);
         _label.Visibility = _libraries.Visibility = State.AllowsChoice ? Visibility.Visible : Visibility.Collapsed;
         _status.Text = !State.Loaded ? "Loading item libraries…" : State.NeedsChoice ? "Choose the library whose identity settings should be used." : !State.CanSearch ? "No readable item library is available in this scope." : State.LibraryIds.Count == 0 ? State.LibraryId is {} pageLibrary ? $"No inventory library is assigned. Page library {pageLibrary} will be used." : "No library is assigned. Server defaults will be used." : "";

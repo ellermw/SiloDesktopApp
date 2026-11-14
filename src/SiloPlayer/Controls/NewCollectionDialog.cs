@@ -16,22 +16,26 @@ public sealed class NewCollectionDialog : ContentDialog
     private readonly CollectionsApi _collections;
     private readonly SiloApiClient _client;
     private bool _checking;
-    private readonly TextBlock _footer = new() { Text = "Next: name it and fill it in, on its own page.", FontSize = 13, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _footer = new() { FontSize = 13, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _heading = new() { FontSize = 20, LineHeight = 28, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold, CharacterSpacing = -20 };
+    private readonly TextBlock _intro = new() { FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap };
+    // What the Synced list card shows, so a language change can draw it again in the same state.
+    private enum SyncedState { Checking, Available, Off, Failed }
+    private SyncedState _syncedState = SyncedState.Checking;
     private readonly Button _cornerClose;
     public string? SelectedKind { get; private set; }
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
     public NewCollectionDialog(CollectionsApi collections, SiloApiClient client)
     {
         _collections = collections; _client = client;
-        Title = new TextBlock { Text = "New collection", FontSize = 20, LineHeight = 28, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold, CharacterSpacing = -20 }; CloseButtonText = "Cancel";
+        Title = _heading;
         _cornerClose = EditorDialogPresentation.CornerClose(this); _cornerClose.Content = WebUiIcon.Create("x", 18, Brush("SecondaryTextBrush"));
         DefaultButton = ContentDialogButton.None;
         var body = new StackPanel { Spacing = 20 };
-        body.Children.Add(new TextBlock { Text = "What decides what's in it? Only you can change it. Next you'll name it, fill it and choose who sees it.",
-            FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        _intro.Foreground = Brush("SecondaryTextBrush"); body.Children.Add(_intro);
         _choices.ColumnDefinitions.Add(new()); _choices.ColumnDefinitions.Add(new()); _choices.ColumnDefinitions.Add(new());
         _choices.RowDefinitions.Add(new() { Height = GridLength.Auto }); _choices.RowDefinitions.Add(new() { Height = GridLength.Auto }); _choices.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        _choices.Children.Add(Choice("manual")); var smart = Choice("smart"); Grid.SetColumn(smart, 1); _choices.Children.Add(smart);
+        _choices.Children.Add(new Border()); _choices.Children.Add(new Border());
         Grid.SetColumn(_synced, 2); _choices.Children.Add(_synced); body.Children.Add(_choices);
         _footer.Foreground = Brush("SecondaryTextBrush");
         Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -42,6 +46,37 @@ public sealed class NewCollectionDialog : ContentDialog
         Closed += (_, _) => _lifetime.Cancel();
         SizeChanged += (_, _) => Reflow();
         Checking();
+        // Text in the interface language now, again when it opens in a newer one, and live while it is open.
+        CollectionText.Dialog(this, Localize);
+    }
+    private void Localize()
+    {
+        _heading.Text = CollectionText.Get("web.collections.copy.newCollection", "New collection");
+        CloseButtonText = CollectionText.Get("common.cancel", "Cancel");
+        _intro.Text = CollectionText.Get("web.collections.copy.newCollectionHelpPersonal", "What decides what's in it? Only you can change it. Next you'll name it, fill it and choose who sees it.");
+        _footer.Text = CollectionText.Get("web.collections.copy.newCollectionNext", "Next: name it and fill it in, on its own page.");
+        _stages.Clear(); _cardBodies.Clear();
+        _choices.Children[0] = Choice("manual"); _choices.Children[1] = Choice("smart");
+        ShowSynced();
+        Reflow();
+    }
+    private void ShowSynced()
+    {
+        switch (_syncedState)
+        {
+            case SyncedState.Checking: Checking(); break;
+            case SyncedState.Available: _synced.Child = Choice("synced"); break;
+            case SyncedState.Off: _synced.Child = Choice("synced", CollectionText.Get("web.collections.copy.syncedOff", "Synced lists are off on this server.")); break;
+            default: SyncedFailed(); break;
+        }
+    }
+    private void SyncedFailed()
+    {
+        var error = new StackPanel { Spacing = 12, Padding = new Thickness(20) };
+        error.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.copy.syncedCheckFailed", "Couldn't check whether Synced lists are on."), FontSize = 14, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") });
+        var retry = new Button { Content = CollectionText.Get("common.retry", "Retry"), HorizontalAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
+        retry.Height = 32; retry.MinHeight = 0;
+        retry.Click += async (_, _) => await CheckSyncedAsync(); error.Children.Add(retry); _synced.Child = StateCard(error);
     }
     private void Reflow()
     {
@@ -82,36 +117,48 @@ public sealed class NewCollectionDialog : ContentDialog
         var picture = new Border { Height = 128, CornerRadius = new(16), Background = Brush("SurfaceRaisedBrush") }; _stages.Add(picture); loading.Children.Add(picture);
         loading.Children.Add(new SkeletonText { Width = 128, Height = 24, HorizontalAlignment = HorizontalAlignment.Left });
         loading.Children.Add(new SkeletonText { Height = 16 });
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(loading, "Checking Synced lists…"); _synced.Child = StateCard(loading);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(loading, CollectionText.Get("web.collections.copy.syncedChecking", "Checking Synced lists…")); _synced.Child = StateCard(loading);
     }
     private async Task CheckSyncedAsync()
     {
         if (_checking || _lifetime.IsCancellationRequested) return;
-        _checking = true; Checking(); var context = _client.CaptureContext();
+        _checking = true; _syncedState = SyncedState.Checking; Checking(); var context = _client.CaptureContext();
         try
         {
             var capabilities = await _collections.GetCollectionCapabilitiesAsync(_lifetime.Token);
             if (_lifetime.IsCancellationRequested || !_client.IsCurrentContext(context)) return;
-            _synced.Child = capabilities.ImportSources?.Count > 0 ? Choice("synced") : Choice("synced", "Synced lists are off on this server."); Reflow();
+            _syncedState = capabilities.ImportSources?.Count > 0 ? SyncedState.Available : SyncedState.Off; ShowSynced(); Reflow();
         }
         catch (OperationCanceledException) { }
         catch
         {
             if (_lifetime.IsCancellationRequested || !_client.IsCurrentContext(context)) return;
-            var error = new StackPanel { Spacing = 12, Padding = new Thickness(20) };
-            error.Children.Add(new TextBlock { Text = "Couldn't check whether Synced lists are on.", FontSize = 14, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") });
-            var retry = new Button { Content = "Retry", HorizontalAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["OutlineButtonStyle"] };
-            retry.Height = 32; retry.MinHeight = 0;
-            retry.Click += async (_, _) => await CheckSyncedAsync(); error.Children.Add(retry); _synced.Child = StateCard(error);
+            _syncedState = SyncedState.Failed; SyncedFailed();
         }
         finally { _checking = false; }
     }
     private static Border StateCard(FrameworkElement content) => new() { Child = content, CornerRadius = new(18), BorderThickness = new(1), BorderBrush = TintBrush("BorderBrush", .9), Background = TintBrush("SurfaceBrush", .6) };
     private FrameworkElement Choice(string kind, string? unavailable = null)
     {
-        var label = kind switch { "manual" => "Manual", "smart" => "Smart", _ => "Synced list" };
-        var description = kind switch { "manual" => "You pick the titles and put them in order.", "smart" => "Titles that match your rules. It fills itself and keeps up as titles are added.", _ => "Follows a list from MDBList or TMDB and updates on a schedule." };
-        var examples = kind switch { "manual" => "a director's best, movie night, a watch order.", "smart" => "90s comedies, unwatched 4K, Christmas movies.", _ => "IMDb Top 250, Netflix Originals, trending this week." };
+        var label = kind switch
+        {
+            "manual" => CollectionText.Get("web.collections.types.kindManual", "Manual"),
+            "smart" => CollectionText.Get("web.collections.types.kindSmart", "Smart"),
+            _ => CollectionText.Get("web.collections.types.kindSynced", "Synced list"),
+        };
+        var description = kind switch
+        {
+            "manual" => CollectionText.Get("web.collections.copy.kindSentenceManual", "You pick the titles and put them in order."),
+            "smart" => CollectionText.Get("web.collections.copy.kindSentenceSmart", "Titles that match your rules. It fills itself and keeps up as titles are added."),
+            _ => CollectionText.Get("web.collections.copy.kindSentenceSynced", "Follows a list from MDBList or TMDB and updates on a schedule."),
+        };
+        var examples = kind switch
+        {
+            "manual" => CollectionText.Get("web.collections.copy.goodForManualPersonal", "a director's best, movie night, a watch order."),
+            "smart" => CollectionText.Get("web.collections.copy.goodForSmart", "90s comedies, unwatched 4K, Christmas movies."),
+            _ => CollectionText.Get("web.collections.copy.goodForSynced", "IMDb Top 250, Netflix Originals, trending this week."),
+        };
+        var goodFor = CollectionText.Get("web.collections.newPicker.goodFor", "Good for") + " ";
         var stack = new StackPanel(); var stage = Stage(kind); _stages.Add(stage); stack.Children.Add(stage);
         var copy = new StackPanel { Padding = new Thickness(20, 18, 20, 20), Spacing = 6 };
         var tint = kind switch { "manual" => Windows.UI.Color.FromArgb(255, 95, 116, 238), "smart" => Windows.UI.Color.FromArgb(255, 22, 158, 136), _ => Windows.UI.Color.FromArgb(255, 191, 127, 34) };
@@ -121,7 +168,7 @@ public sealed class NewCollectionDialog : ContentDialog
         copy.Children.Add(new TextBlock { Text = description, FontSize = 13.5, LineHeight = 20.25, TextWrapping = TextWrapping.Wrap, Foreground = TintBrush("PrimaryTextBrush", .75) });
         var note = new TextBlock { FontSize = 12.5, LineHeight = 18.75, TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush"), Margin = new Thickness(0, 6, 0, 0) };
         if (unavailable != null) note.Text = unavailable;
-        else { note.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "Good for ", FontWeight = FontWeights.Medium, Foreground = TintBrush("PrimaryTextBrush", .7) }); note.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = examples }); }
+        else { note.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = goodFor, FontWeight = FontWeights.Medium, Foreground = TintBrush("PrimaryTextBrush", .7) }); note.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = examples }); }
         copy.Children.Add(note);
         stack.Children.Add(copy);
         var content = new Grid(); content.Children.Add(stack);
@@ -139,7 +186,7 @@ public sealed class NewCollectionDialog : ContentDialog
             Background = TintBrush("SurfaceBrush", .6), HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch,
             IsEnabled = unavailable == null, Opacity = unavailable == null ? 1 : .6 };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(button, description + " " + (unavailable ?? "Good for " + examples));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(button, description + " " + (unavailable ?? goodFor + examples));
         button.Resources["ButtonBackgroundPointerOver"] = Brush("AccentBackgroundBrush");
         button.Resources["ButtonBorderBrushPointerOver"] = TintBrush("PrimaryTextBrush", .35);
         if (unavailable == null)
@@ -174,17 +221,22 @@ public sealed class NewCollectionDialog : ContentDialog
             if (kind == "smart")
             {
                 var rules = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                foreach (var label in new[] { "Genre is Comedy", "Year 1990–1999", "+1 rule" })
-                    rules.Children.Add(new Border { Height = 24, Padding = new(9, 0, 9, 0), CornerRadius = new(7), Background = label == "+1 rule" ? new SolidColorBrush(Windows.UI.Color.FromArgb(13, 255, 255, 255)) : new SolidColorBrush(tint),
+                // Sample rule chips are interface text (the WebUI's picker samples), not data.
+                var samples = new[] { CollectionText.Get("web.collections.newPicker.sampleRuleGenre", "Genre is Comedy"), CollectionText.Get("web.collections.newPicker.sampleRuleYear", "Year 1990–1999"), CollectionText.Get("web.collections.newPicker.sampleMoreRules", "+1 rule") };
+                for (var sample = 0; sample < samples.Length; sample++)
+                {
+                    var label = samples[sample];
+                    rules.Children.Add(new Border { Height = 24, Padding = new(9, 0, 9, 0), CornerRadius = new(7), Background = sample == samples.Length - 1 ? new SolidColorBrush(Windows.UI.Color.FromArgb(13, 255, 255, 255)) : new SolidColorBrush(tint),
                         Child = new TextBlock { Text = label, FontSize = 11.5, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center } });
+                }
                 copy.Children.Add(rules);
             }
-            else foreach (var (mark, color, title) in new[] { ("M", Windows.UI.Color.FromArgb(255, 31, 111, 235), "IMDb Top 250 Movies"), ("T", Windows.UI.Color.FromArgb(255, 13, 138, 106), "Trending this week") })
+            else foreach (var (mark, color, title) in new[] { ("M", Windows.UI.Color.FromArgb(255, 31, 111, 235), "IMDb Top 250 Movies"), ("T", Windows.UI.Color.FromArgb(255, 13, 138, 106), CollectionText.Get("web.collections.newPicker.sampleTrending", "Trending this week")) })
             {
                 var row = new Grid { ColumnSpacing = 10 }; row.ColumnDefinitions.Add(new() { Width = new(24) }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
                 row.Children.Add(new Border { Width = 24, Height = 24, CornerRadius = new(10), Background = new SolidColorBrush(color), Child = new TextBlock { Text = mark, FontSize = 10, FontWeight = FontWeights.ExtraBold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
                 var name = new TextBlock { Text = title, FontSize = 12.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }; Grid.SetColumn(name, 1); row.Children.Add(name);
-                var daily = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Children = { WebUiIcon.Create("refresh-cw", 12, Brush("SecondaryTextBrush")), new TextBlock { Text = "Daily", FontSize = 12.5, FontWeight = FontWeights.Medium, Foreground = Brush("SecondaryTextBrush") } } }; Grid.SetColumn(daily, 2); row.Children.Add(daily);
+                var daily = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Children = { WebUiIcon.Create("refresh-cw", 12, Brush("SecondaryTextBrush")), new TextBlock { Text = CollectionText.Get("web.collections.fields.scheduleDaily", "Daily"), FontSize = 12.5, FontWeight = FontWeights.Medium, Foreground = Brush("SecondaryTextBrush") } } }; Grid.SetColumn(daily, 2); row.Children.Add(daily);
                 copy.Children.Add(new Border { Height = 36, CornerRadius = new(11), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(13, 255, 255, 255)), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(20, 255, 255, 255)), BorderThickness = new(1), Padding = new(12, 0, 12, 0), Child = row });
             }
             var posters = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };

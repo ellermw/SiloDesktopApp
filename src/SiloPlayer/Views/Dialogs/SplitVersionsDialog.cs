@@ -11,6 +11,8 @@ using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using System.Text.Json;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -29,10 +31,14 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     private sealed record FileRow(string Id, string Path, string Caption, List<string>? GroupIds = null);
     private List<FileRow> _rows = [];
     private bool _editing;
-    private readonly TextBox _title = Input("Title", "Search title"), _year = Input("Year", "Search year"), _tmdb = Input("TMDB ID", "TMDB ID"), _imdb = Input("IMDb ID (tt…)", "IMDb ID"), _tvdb = Input("TVDB ID", "TVDB ID");
-    private readonly CheckBox _unmatched = new() { Content = "Detach as unmatched (identify later)", FontSize = 14 };
+    private readonly TextBox _title = Input("web.item.dialog.fieldTitle", "web.item.split.searchTitle"),
+        _year = Input("web.item.dialog.fieldYear", "web.item.split.searchYear"),
+        _tmdb = Input("web.item.dialog.tmdbId", "web.item.dialog.tmdbId"),
+        _imdb = Input("web.item.split.imdbPlaceholder", "web.item.dialog.imdbId"),
+        _tvdb = Input("web.item.dialog.tvdbId", "web.item.dialog.tvdbId");
+    private readonly CheckBox _unmatched = new() { Content = AppStrings.Get("web.item.split.detachUnmatched", fallback: "Detach as unmatched (identify later)"), FontSize = 14 };
     private readonly ComboBox _history = new() { HorizontalAlignment = HorizontalAlignment.Stretch, Height = 36, MinHeight = 0 };
-    private readonly Button _search = new() { Content = "Search", HorizontalAlignment = HorizontalAlignment.Stretch, Height = 36, MinHeight = 0 };
+    private readonly Button _search = new() { Content = AppStrings.Get("web.item.dialog.search", fallback: "Search"), HorizontalAlignment = HorizontalAlignment.Stretch, Height = 36, MinHeight = 0 };
     private readonly TextBlock _warning = Text("", 12), _previewText = Text("", 14, true);
     private readonly Border _previewBox;
     private readonly Dictionary<string, CheckBox> _checks = [];
@@ -47,6 +53,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
 
     public SplitVersionsDialog(MediaItemDetail item, int? libraryId) : base(item.ContentId, "Split Versions", "", 672, "Split", AuthorizationPolicy.IsActingAdmin, maxHeightRatio: .85)
     {
+        KeyHeading("web.item.split.title", primaryKey: "web.item.split.split");
         _api = new(Client); _seriesId = item.SeriesId; _session = Auth.SessionGeneration; _userId = Auth.CurrentUser?.Id; Body.Children.RemoveAt(0);
         _scope = new(Client, Context, ItemId, libraryId, split: true, inventory: true, () => ScopeOwner, Lifetime.Token);
         Body.Children.Insert(0, new Border { Background = Brush("SurfaceBrush"), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 8, 12, 8), Child = Text(item.Title + (item.Year > 0 ? $" ({item.Year})" : "") + "   " + item.Type) });
@@ -62,18 +69,18 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             }
         };
         var fileScroll = new ScrollViewer { Content = _files, MaxHeight = 256, Padding = new Thickness(12, 8, 12, 8), HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Disabled };
-        AutomationProperties.SetName(fileScroll, "Files to move");
-        Body.Children.Add(Text("Files to move")); Body.Children.Add(new Border { Child = fileScroll, CornerRadius = new CornerRadius(8), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) }); _warning.Foreground = Brush("ErrorBrush"); Body.Children.Add(_warning);
-        Body.Children.Add(_scope); Body.Children.Add(Text("Correct identity for the moved files"));
+        AutomationProperties.SetName(fileScroll, AppStrings.Get("web.item.split.filesToMove", fallback: "Files to move"));
+        Body.Children.Add(Text(AppStrings.Get("web.item.split.filesToMove", fallback: "Files to move"))); Body.Children.Add(new Border { Child = fileScroll, CornerRadius = new CornerRadius(8), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) }); _warning.Foreground = Brush("ErrorBrush"); Body.Children.Add(_warning);
+        Body.Children.Add(_scope); Body.Children.Add(Text(AppStrings.Get("web.item.split.identity", fallback: "Correct identity for the moved files")));
         var fields = new Grid { RowSpacing = 12, ColumnSpacing = 12 }; fields.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); fields.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         for (var row = 0; row < 3; row++) fields.RowDefinitions.Add(new() { Height = GridLength.Auto });
         Grid.SetColumnSpan(_title, 2); fields.Children.Add(_title);
         foreach (var (field, row, column) in new[] { (_year, 1, 0), (_tmdb, 1, 1), (_imdb, 2, 0), (_tvdb, 2, 1) }) { Grid.SetRow(field, row); Grid.SetColumn(field, column); fields.Children.Add(field); }
         Body.Children.Add(fields); Body.Children.Add(_search); Body.Children.Add(new ScrollViewer { Content = _candidates, MaxHeight = 224, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }); Body.Children.Add(_unmatched);
-        Body.Children.Add(Text("Watch history handling"));
-        foreach (var (mode, label) in new[] { ("evidence", "Follow play evidence (recommended)"), ("keep", "Keep all history on this item"), ("move_all", "Move everything to the new item") }) _history.Items.Add(new ComboBoxItem { Content = label, Tag = mode });
-        _history.SelectedIndex = 0; AutomationProperties.SetName(_history, "Watch history handling"); Body.Children.Add(_history);
-        Body.Children.Add(Text("Resume points and downloads tied to the moved files always follow them. This controls history rows without per-file evidence.", 12, true));
+        Body.Children.Add(Text(AppStrings.Get("web.item.split.historyHandling", fallback: "Watch history handling")));
+        foreach (var (mode, label) in new[] { ("evidence", AppStrings.Get("web.item.split.historyEvidence", fallback: "Follow play evidence (recommended)")), ("keep", AppStrings.Get("web.item.split.historyKeep", fallback: "Keep all history on this item")), ("move_all", AppStrings.Get("web.item.split.historyMoveAll", fallback: "Move everything to the new item")) }) _history.Items.Add(new ComboBoxItem { Content = label, Tag = mode });
+        _history.SelectedIndex = 0; AutomationProperties.SetName(_history, AppStrings.Get("web.item.split.historyHandling", fallback: "Watch history handling")); Body.Children.Add(_history);
+        Body.Children.Add(Text(AppStrings.Get("web.item.split.historyHelp", fallback: "Resume points and downloads tied to the moved files always follow them. This controls history rows without per-file evidence."), 12, true));
         _previewBox = new Border { Child = _previewText, CornerRadius = new CornerRadius(8), Background = Brush("SurfaceBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), Padding = new Thickness(12, 8, 12, 8), Visibility = Visibility.Collapsed }; Body.Children.Add(_previewBox);
         _unmatched.Checked += (_, _) => { _candidate = null; PlanChanged(); }; _unmatched.Unchecked += (_, _) => PlanChanged(); _history.SelectionChanged += (_, _) => PlanChanged();
         _scope.Changed += ScopeChanged;
@@ -81,8 +88,8 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         Opened += (_, _) => { Auth.UserChanged += AuthorityChanged; Auth.LoggedOut += AuthorityChanged; };
         Closed += (_, _) => { Auth.UserChanged -= AuthorityChanged; Auth.LoggedOut -= AuthorityChanged; _previewLifetime?.Cancel(); _previewLifetime?.Dispose(); };
     }
-    private static TextBox Input(string placeholder, string name)
-    { var input = new TextBox { PlaceholderText = placeholder, FontSize = 14, Height = 36, MinHeight = 0, MinWidth = 0, Padding = new Thickness(12, 6, 12, 6) }; AutomationProperties.SetName(input, name); return input; }
+    private static TextBox Input(string placeholderKey, string nameKey)
+    { var input = new TextBox { FontSize = 14, Height = 36, MinHeight = 0, MinWidth = 0, Padding = new Thickness(12, 6, 12, 6) }; return MediaItemCardActions.Localize(input, placeholder: placeholderKey, name: nameKey); }
     private static string Value(JsonElement value, string key) => value.TryGetProperty(key, out var property) ? property.ToString() : "";
     private bool ScopeOwner => !_authorityRetired && CanAct && Auth.SessionGeneration == _session && Auth.CurrentUser?.Id == _userId;
     private bool PlanValid => !_applyUnconfirmed && ScopeOwner && _scope.InventoryAvailable && _selected.Count > 0 && _selected.Count < _allFiles.Count && (_unmatched.IsChecked == true || _candidate != null && _scope.IsCurrent(_candidateScope));
@@ -90,7 +97,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     protected override async Task LoadAsync()
     {
         await _scope.RefreshAsync(); RequireAuthority();
-        if (_allFiles.Count < 2) { Body.Children.Insert(2, Text("This item has only one file; splitting needs at least two.", 14, true)); return; }
+        if (_allFiles.Count < 2) { Body.Children.Insert(2, Text(AppStrings.Get("web.item.split.oneFile", fallback: "This item has only one file; splitting needs at least two."), 14, true)); return; }
     }
     private void AuthorityChanged()
     {
@@ -173,7 +180,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             var response = await _api.SearchAsync(Context, ItemId, new ItemMatchSearchRequest { Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text, Year = int.TryParse(_year.Text, out var year) ? year : null, TmdbId = string.IsNullOrWhiteSpace(_tmdb.Text) ? null : _tmdb.Text, ImdbId = string.IsNullOrWhiteSpace(_imdb.Text) ? null : _imdb.Text, TvdbId = string.IsNullOrWhiteSpace(_tvdb.Text) ? null : _tvdb.Text, LibraryId = scope.LibraryId }, Lifetime.Token); RequireAuthority();
             await _scope.RefreshAsync();
             if (!ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision) return;
-            if (response.Candidates.Count == 0) _candidates.Children.Add(Text("No candidates found.", 14, true));
+            if (response.Candidates.Count == 0) _candidates.Children.Add(Text(AppStrings.Get("web.item.dialog.noCandidates", fallback: "No candidates found."), 14, true));
             foreach (var candidate in response.Candidates)
             {
                 var row = new Grid { ColumnSpacing = 12 }; row.ColumnDefinitions.Add(new() { Width = new GridLength(40) }); row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -187,7 +194,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
                     catch (OperationCanceledException) when (Lifetime.IsCancellationRequested) { return; }
                     catch (Exception error)
                     {
-                        if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.Message;
+                        if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.DisplayMessage();
                         return;
                     }
                     if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
@@ -198,7 +205,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         }
         catch (OperationCanceledException) when (Lifetime.IsCancellationRequested) { }
         // A failed refresh retires the search revision without changing its scope.
-        catch (Exception error) { if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.Message; }
+        catch (Exception error) { if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.DisplayMessage(); }
         finally { _searching = false; UpdateCommands(); }
     }
     private object BuildRequest(bool dryRun) => new
@@ -212,11 +219,11 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         _changing = true; _scope.SelectFiles(_selected); _changing = false;
         var revision = ++_planRevision; _acceptedRevision = -1; _previewing = false; _previewLifetime?.Cancel(); _previewLifetime?.Dispose(); _previewLifetime = null;
         _changing = true; foreach (var group in _groups) group.Root.IsChecked = group.Ids.All(_selected.Contains); _changing = false;
-        _warning.Text = _selected.Count > 0 && _selected.Count == _allFiles.Count ? "All files are selected — that is a re-match, not a split. Use “Match Item” instead, or deselect the files that are correct." : "";
+        _warning.Text = _selected.Count > 0 && _selected.Count == _allFiles.Count ? AppStrings.Get("web.item.split.allSelected", fallback: "All files are selected — that is a re-match, not a split. Use “Match Item” instead, or deselect the files that are correct.") : "";
         _previewBox.Visibility = PlanValid ? Visibility.Visible : Visibility.Collapsed; _previewText.Text = ""; Status.Text = ""; UpdateCommands();
         if (Busy) { _refreshPreviewAfterAction = true; return; }
         if (!PlanValid || !Ready || !CanAct) return;
-        _previewText.Text = "Previewing…";
+        _previewText.Text = AppStrings.Get("web.item.split.previewing", fallback: "Previewing…");
         var lifetime = _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(Lifetime.Token); var request = BuildRequest(true); _ = PreviewAsync(revision, _scope.State.Capture(), request, lifetime.Token);
     }
     private async Task PreviewAsync(int revision, ItemLibraryScope.Scope scope, object request, CancellationToken ct)
@@ -230,7 +237,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision || ct.IsCancellationRequested) return;
             if (!response.TryGetProperty("dry_run", out var dryRun) || dryRun.ValueKind != JsonValueKind.True) throw new InvalidOperationException("The server did not return a split preview. Close and reopen to try again.");
             var report = response.GetProperty("reattribution"); var count = Value(response, "files_moved");
-            _previewText.Text = $"Preview — {count} {(count == "1" ? "file" : "files")} → {Value(response, "target_content_id")}" + (Value(response, "target_created") == "True" ? "   new item" : "") + $"\n• {Value(report, "progress_moved")} resume points move\n• {Value(report, "history_moved")} history entries move, {Value(report, "history_ambiguous")} stay for lack of evidence\n• {Value(report, "downloads")} downloads move";
+            _previewText.Text = $"Preview — {count} {(count == "1" ? "file" : "files")} → {Value(response, "target_content_id")}" + (Value(response, "target_created") == "True" ? AppStrings.Get("web.item.split.newItem", fallback: "   new item") : "") + $"\n• {Value(report, "progress_moved")} resume points move\n• {Value(report, "history_moved")} history entries move, {Value(report, "history_ambiguous")} stay for lack of evidence\n• {Value(report, "downloads")} downloads move";
             if (response.TryGetProperty("episode_pairs", out var pairs) && pairs.TryGetInt32(out var episodes) && episodes > 0) _previewText.Text += $"\n• {episodes} episodes re-anchored";
             int Count(string key) => response.TryGetProperty(key, out var values) && values.ValueKind == JsonValueKind.Array ? values.GetArrayLength() : 0;
             if (Count("root_overrides") + Count("file_overrides") > 0) _previewText.Text += $"\n• {Count("root_overrides")} folder / {Count("file_overrides")} file identity override(s) pinned for future scans";
@@ -241,7 +248,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         {
             if (revision == _planRevision && ScopeOwner && _scope.State.IsInventoryCurrent(scope))
             {
-                Status.Text = error.Message;
+                Status.Text = error.DisplayMessage();
                 _previewBox.Visibility = Visibility.Visible;
                 _previewText.Text = _scope.InventoryAvailable
                     ? "Preview could not be loaded. Change the selection or target to try again."
@@ -253,7 +260,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             if (revision == _planRevision)
             {
                 _previewing = false;
-                if (_acceptedRevision != revision && _previewText.Text == "Previewing…")
+                if (_acceptedRevision != revision && _previewText.Text == AppStrings.Get("web.item.split.previewing", fallback: "Previewing…"))
                 { _previewText.Text = ""; _previewBox.Visibility = Visibility.Collapsed; }
                 UpdateCommands();
             }

@@ -6,6 +6,8 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Controls;
 
@@ -35,6 +37,9 @@ public sealed class QueryFilterEditor : UserControl
     private readonly Button _guidedButton = new() { Content = "Guided", Height = 24, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new(8, 0, 8, 0) };
     private readonly Button _advancedButton = new() { Content = "Advanced", Height = 24, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new(8, 0, 8, 0) };
     private readonly TextBlock _guidedUnavailable = new() { Text = GuidedQuerySupport.UnavailableMessage, FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    /// <summary>A guided choice: its wire value and what the interface shows for it.</summary>
+    private sealed record GuidedChoice(string Value, string Label) { public override string ToString() => Label; }
+    private static string G(string key, string english) => CollectionText.Get("web.collections.guidedRules." + key, english);
 
     public FrameworkElement DetachModeSelector()
     {
@@ -57,7 +62,12 @@ public sealed class QueryFilterEditor : UserControl
             _guided.Resources[key] = background;
         Loaded += (_, _) => ObserveViewport();
         Unloaded += (_, _) => { if (_observedRoot != null) _observedRoot.Changed -= ViewportChanged; _observedRoot = null; };
+        CollectionText.KeyedContent(_guidedButton, "web.catalog.filters.guided"); CollectionText.KeyedContent(_advancedButton, "web.catalog.filters.advanced");
+        CollectionText.Keyed(_guidedUnavailable, "web.common.collections.guidedUnavailable");
+        // A language change redraws Guided from the query; Advanced redraws itself.
+        AppLocalization.Register(this, () => { if (_guidedDrawn != null && !ReferenceEquals(_guidedDrawn, SiloPlayer.Core.Localization.AppStrings.Current)) BuildGuided(); });
     }
+    private SiloPlayer.Core.Localization.AppLocale? _guidedDrawn;
 
     public void Load(QueryDefinition query, string? scope = null, int? libraryId = null, CatalogFiltersResponse? filters = null)
     {
@@ -113,74 +123,82 @@ public sealed class QueryFilterEditor : UserControl
 
     private void BuildGuided()
     {
+        _guidedDrawn = SiloPlayer.Core.Localization.AppStrings.Current;
         _guidedRows.Clear();
         _guidedNumbers.Clear();
         _guided.Children.Clear();
         if (!GuidedQuerySupport.CanEdit(Query, _scope))
         {
+            // No catalog sentence explains this; it stays English.
             _guided.Children.Add(new TextBlock { Text = "This query uses rule groups. Open Advanced to edit them; switching modes keeps every rule.", TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
             return;
         }
         var book = _scope is "audiobook" or "audiobooks" or "ebook" or "ebooks" or "manga";
         var audiobook = _scope is "audiobook" or "audiobooks";
-        AddTextField("Genres", "genre", "Select genres...");
+        AddTextField(G("genres", "Genres"), "genre", G("selectGenres", "Select genres..."));
         var genreInput = _guided.Children[_guided.Children.Count - 1];
         _guided.Children.RemoveAt(_guided.Children.Count - 1);
         var genres = new StackPanel { Spacing = 8 };
         genres.Children.Add(genreInput);
-        genres.Children.Add(new TextBlock { Text = "Items must match all selected genres.", FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        genres.Children.Add(new TextBlock { Text = G("genresHelp", "Items must match all selected genres."), FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         _guided.Children.Add(genres);
-        var decades = new[] { "Custom" }.Concat(Enumerable.Range(190, 14).Reverse().Select(value => $"{value * 10}s")).ToArray();
+        // Each decade's value is its first year; the label is the interface's "1990s" wording.
+        var decades = new[] { new GuidedChoice("", G("custom", "Custom")) }.Concat(Enumerable.Range(190, 14).Reverse()
+            .Select(value => new GuidedChoice((value * 10).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                CollectionText.Get("web.collections.guidedRules.decadeOption", $"{value * 10}s", ("decade", (value * 10).ToString(System.Globalization.CultureInfo.InvariantCulture)))))).ToArray();
         var from = ReadYear("gte"); var to = ReadYear("lte");
-        var matchingDecade = int.TryParse(from, out var firstYear) && int.TryParse(to, out var lastYear) && firstYear % 10 == 0 && lastYear == firstYear + 9 ? Array.IndexOf(decades, $"{firstYear}s") : 0;
-        var decade = new ComboBox { Header = "Decade", HeaderTemplate = _guidedLabelTemplate, Height = 58, MinHeight = 0, ItemsSource = decades, SelectedIndex = Math.Max(0, matchingDecade), HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 0 };
+        var matchingDecade = int.TryParse(from, out var firstYear) && int.TryParse(to, out var lastYear) && firstYear % 10 == 0 && lastYear == firstYear + 9 ? Array.FindIndex(decades, choice => choice.Value == firstYear.ToString(System.Globalization.CultureInfo.InvariantCulture)) : 0;
+        var decade = new ComboBox { Header = G("decade", "Decade"), HeaderTemplate = _guidedLabelTemplate, Height = 58, MinHeight = 0, ItemsSource = decades, SelectedIndex = Math.Max(0, matchingDecade), HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 0 };
         StyleGuidedControl(decade);
         decade.SelectionChanged += (_, _) =>
         {
             if (decade.SelectedIndex <= 0) { SetRule("year", "gte", null); SetRule("year", "lte", null); }
-            else { var year = int.Parse(decade.SelectedItem.ToString()![..4]); SetRule("year", "gte", year); SetRule("year", "lte", year + 9); }
+            else { var year = int.Parse(((GuidedChoice)decade.SelectedItem).Value, System.Globalization.CultureInfo.InvariantCulture); SetRule("year", "gte", year); SetRule("year", "lte", year + 9); }
             BuildGuided();
         };
         _guided.Children.Add(decade);
-        AddNumber("Year From", "year", "gte", "e.g. 2000"); AddNumber("Year To", "year", "lte", "e.g. 2025");
+        AddNumber(G("yearFrom", "Year From"), "year", "gte", G("yearFromPlaceholder", "e.g. 2000")); AddNumber(G("yearTo", "Year To"), "year", "lte", G("yearToPlaceholder", "e.g. 2025"));
         GroupLastFields(3, 3);
-        if (!book) { AddNumber("Minimum IMDb Rating", "rating_imdb", "gte", "e.g. 7.0"); AddTextField("Content Rating", "content_rating", "Select rating..."); GroupLastFields(2, 2); }
-        AddTextField("Original Language", "original_language", "Select languages...");
+        if (!book) { AddNumber(G("minRating", "Minimum IMDb Rating"), "rating_imdb", "gte", G("minRatingPlaceholder", "e.g. 7.0")); AddTextField(G("contentRating", "Content Rating"), "content_rating", G("selectRating", "Select rating...")); GroupLastFields(2, 2); }
+        AddTextField(G("originalLanguage", "Original Language"), "original_language", G("selectLanguages", "Select languages..."));
         if (!book)
         {
             foreach (var pair in new[] { new[] { "actor", "director" }, new[] { "writer", "producer" } })
             {
-                foreach (var field in pair) AddTextField(QueryRulesEditor.Label(field), field, "Search people...");
+                foreach (var field in pair) AddTextField(G(field, QueryRulesEditor.Label(field)), field, CollectionText.Get("web.ui.personSearch.placeholder", "Search people..."));
                 GroupLastFields(2, 2);
             }
-            AddTextField("Studio", "studio", "Select studio..."); AddTextField("Network", "network", "Select network...");
+            AddTextField(G("studio", "Studio"), "studio", G("selectStudio", "Select studio...")); AddTextField(G("network", "Network"), "network", G("selectNetwork", "Select network..."));
             GroupLastFields(2, 2);
         }
         else
         {
-            AddTextField("Author", "author", "Search authors...");
-            if (audiobook) AddTextField("Narrator", "narrator", "Search narrators...");
+            AddTextField(G("author", "Author"), "author", G("searchAuthors", "Search authors..."));
+            if (audiobook) AddTextField(G("narrator", "Narrator"), "narrator", G("searchNarrators", "Search narrators..."));
             GroupLastFields(audiobook ? 2 : 1, 2);
-            AddTextField("Series", "series", "Search series...");
+            AddTextField(G("series", "Series"), "series", G("searchSeries", "Search series..."));
             GroupLastFields(1, 2);
         }
-        AddTextField("Country", "country", "Select country...");
+        AddTextField(G("country", "Country"), "country", G("selectCountry", "Select country..."));
         GroupLastFields(1, 2);
-        AddChoice("Match Status", new[] { "Any", "Matched", "Unmatched", "Pending" }, Current("status", "is"), value => SetRule("status", "is", value == "Any" ? null : value.ToLowerInvariant()));
-        var progressLabel = book ? audiobook ? "Listening Status" : "Read Status" : "Watch Status";
-        var completed = book ? audiobook ? "Listened" : "Read" : "Watched";
-        var unstarted = book ? audiobook ? "Unlistened" : "Unread" : "Unwatched";
-        var progress = Current("in_progress", "is") == "true" ? "In Progress" : Current("watched", "is") is var watched && watched == "true" ? completed : watched == "false" ? unstarted : "Any";
-        AddChoice(progressLabel, new[] { "Any", completed, unstarted, "In Progress" }, progress, value =>
+        var any = new GuidedChoice("any", G("any", "Any"));
+        // Status values are the wire's lower-case strings; only their labels are translated.
+        AddChoice(G("matchStatus", "Match Status"), [any, new("matched", G("matched", "Matched")), new("unmatched", G("unmatched", "Unmatched")), new("pending", G("pending", "Pending"))],
+            Current("status", "is"), value => SetRule("status", "is", value == "any" ? null : value));
+        var progressLabel = book ? audiobook ? G("listeningStatus", "Listening Status") : G("readStatus", "Read Status") : G("watchStatus", "Watch Status");
+        var completed = book ? audiobook ? G("listened", "Listened") : G("read", "Read") : G("watched", "Watched");
+        var unstarted = book ? audiobook ? G("unlistened", "Unlistened") : G("unread", "Unread") : G("unwatched", "Unwatched");
+        var progress = Current("in_progress", "is") == "true" ? "in_progress" : Current("watched", "is") is var watched && watched == "true" ? "completed" : watched == "false" ? "unstarted" : "any";
+        AddChoice(progressLabel, [any, new("completed", completed), new("unstarted", unstarted), new("in_progress", G("inProgress", "In Progress"))], progress, value =>
         {
-            SetRule("watched", "is", value == completed ? true : value == unstarted ? false : null);
-            SetRule("in_progress", "is", value == "In Progress" ? true : value == unstarted ? false : null);
+            SetRule("watched", "is", value == "completed" ? true : value == "unstarted" ? false : null);
+            SetRule("in_progress", "is", value == "in_progress" ? true : value == "unstarted" ? false : null);
         });
         GroupLastFields(2, 2);
         if (!book)
         {
             var quality = new StackPanel { Spacing = 8 };
-            quality.Children.Add(new TextBlock { Text = "Video Quality", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+            quality.Children.Add(new TextBlock { Text = G("videoQuality", "Video Quality"), FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; quality.Children.Add(buttons);
             foreach (var (label, field, value) in new (string, string, object)[] { ("4K", "resolution", "4k"), ("HDR", "hdr", true), ("DOVI", "dolby_vision", true) })
             {
@@ -189,7 +207,7 @@ public sealed class QueryFilterEditor : UserControl
             }
             _guided.Children.Add(quality);
         }
-        foreach (var (label, field, placeholder) in new[] { ("Added in the Last", "added_at", "e.g. 30d, 2w, 6m"), ("Released in the Last", "release_date", "e.g. 90d, 1y") })
+        foreach (var (label, field, placeholder) in new[] { (G("addedInLast", "Added in the Last"), "added_at", G("addedInLastPlaceholder", "e.g. 30d, 2w, 6m")), (G("releasedInLast", "Released in the Last"), "release_date", G("releasedInLastPlaceholder", "e.g. 90d, 1y")) })
         {
             var input = new TextBox { Header = label, HeaderTemplate = _guidedLabelTemplate, Height = 58, MinHeight = 0, PlaceholderText = placeholder, Text = Current(field, "in_last") };
             StyleGuidedControl(input);
@@ -257,12 +275,12 @@ public sealed class QueryFilterEditor : UserControl
         return between.Length == 2 ? between[op == "gte" ? 0 : 1] : "";
     }
 
-    private void AddChoice(string label, string[] values, string selected, Action<string> update)
+    private void AddChoice(string label, GuidedChoice[] values, string selected, Action<string> update)
     {
-        var index = Array.FindIndex(values, value => value.Equals(selected, StringComparison.OrdinalIgnoreCase));
+        var index = Array.FindIndex(values, value => value.Value.Equals(selected, StringComparison.OrdinalIgnoreCase));
         var input = new ComboBox { Header = label, HeaderTemplate = _guidedLabelTemplate, Height = 58, MinHeight = 0, MinWidth = 0, ItemsSource = values, SelectedIndex = Math.Max(0, index), HorizontalAlignment = HorizontalAlignment.Left };
         StyleGuidedControl(input);
-        input.SelectionChanged += (_, _) => update(input.SelectedItem?.ToString() ?? values[0]); _guided.Children.Add(input);
+        input.SelectionChanged += (_, _) => update((input.SelectedItem as GuidedChoice)?.Value ?? values[0].Value); _guided.Children.Add(input);
     }
 
     private void AddTextField(string label, string field, string placeholder)

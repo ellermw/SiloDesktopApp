@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
@@ -31,6 +33,7 @@ public sealed partial class ActivateDevicePage : Page
     {
         ViewModel = App.Services.GetRequiredService<ActivateDeviceViewModel>();
         this.InitializeComponent();
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); UpdateSignedInText(); });
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)

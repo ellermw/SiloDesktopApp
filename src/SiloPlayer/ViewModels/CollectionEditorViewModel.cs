@@ -13,6 +13,12 @@ namespace SiloPlayer.ViewModels;
 
 public partial class CollectionEditorViewModel : ObservableObject
 {
+    // Display messages: explicit catalog keys with the English text as fallback, and a request's Problem Details text.
+    // Callers branch only on state and error codes, never on this text.
+    private static string LocalText(string key, string english) => SiloPlayer.Core.Localization.AppStrings.Get(key, null, english);
+    private static string LocalProblem(Exception exception)
+        => exception is ApiException api ? SiloPlayer.Core.Localization.ApiProblemText.Display(api) : exception.Message;
+
     [ObservableProperty] private bool _isLoadUnavailable;
     [ObservableProperty] private bool _isNotFound;
     private readonly CollectionsApi _collectionsApi;
@@ -164,6 +170,9 @@ public partial class CollectionEditorViewModel : ObservableObject
     [ObservableProperty]
     private string _sourceItemCountText = "0";
 
+    /// <summary>The count behind <see cref="SourceItemCountText"/>, for plural display text.</summary>
+    public long SourceItemCount { get; private set; }
+
     [ObservableProperty]
     private string _createdDisplayText = "Unknown";
 
@@ -213,7 +222,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             AvailableProfiles.Clear();
             foreach (var profile in profilesTask.Result.Profiles) AvailableProfiles.Add(profile);
         }
-        catch (Exception ex) { if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context)) { IsLoadUnavailable = true; ErrorMessage = $"Failed to load collection options: {ex.Message}"; } }
+        catch (Exception ex) { if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context)) { IsLoadUnavailable = true; ErrorMessage = $"Failed to load collection options: {LocalProblem(ex)}"; } }
         finally { if (generation == _editorLoadGeneration) IsLoading = false; }
     }
 
@@ -275,7 +284,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             SourceProviderLabel = SourceKind switch { "tmdb_list" => "TMDB List", "tmdb" => "TMDB", "mdblist" => "MDBList", _ => SourceKind };
             SourceLastNote = collection.LastSyncMessage;
             SourcePresetSummary = BuildSourcePresetSummary(collection);
-            SourceItemCountText = collection.ItemCount.ToString("N0");
+            SourceItemCount = collection.ItemCount; SourceItemCountText = collection.ItemCount.ToString("N0");
             CreatedDisplayText = FormatCreatedAt(collection.CreatedAt);
 
             AvailableLibraries.Clear();
@@ -319,7 +328,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             if (generation != _editorLoadGeneration || !_catalogApi.IsCurrentContext(context)) return;
             IsNotFound = collectionTask?.Exception?.Flatten().InnerExceptions.OfType<ApiException>().Any(error => error.StatusCode == 404) == true;
             IsLoadUnavailable = !IsNotFound;
-            ErrorMessage = IsNotFound ? "Collection not found." : $"Failed to load collection: {ex.Message}";
+            ErrorMessage = IsNotFound ? "Collection not found." : $"Failed to load collection: {LocalProblem(ex)}";
         }
         finally
         {
@@ -340,7 +349,7 @@ public partial class CollectionEditorViewModel : ObservableObject
         // metadata edits; any server-side update validation is reported below.
         if (SmartNeedsRuleForSave)
         {
-            ErrorMessage = SmartRuleNeededMessage;
+            ErrorMessage = LocalText("web.collections.copy.addAtLeastOneRule", SmartRuleNeededMessage);
             return;
         }
 
@@ -385,9 +394,9 @@ public partial class CollectionEditorViewModel : ObservableObject
                     }
 
                     if (SourceKind == "tmdb_list" && !SiloPlayer.Core.Services.CollectionImportPolicy.IsTMDBListUrl(SourceUrl))
-                    { ErrorMessage = "Enter a public TMDB list URL or numeric list ID."; return; }
+                    { ErrorMessage = LocalText("web.collections.tmdbListUrl.invalid", "Enter a public TMDB list URL or numeric list ID."); return; }
                     if (SourceKind == "mdblist" && !SiloPlayer.Core.Services.CollectionImportPolicy.IsMDBListUrl(SourceUrl))
-                    { ErrorMessage = "Enter a valid MDBList list link."; return; }
+                    { ErrorMessage = LocalText("web.collections.copy.mdblistLinkInvalid", "Enter a valid MDBList list link."); return; }
                     if (HasEditableSourceUrl)
                         request.SourceUrl = SourceKind == "mdblist" ? SiloPlayer.Core.Services.CollectionImportPolicy.CleanMDBListLink(SourceUrl) : SourceUrl?.Trim();
                     if (CanEditSavedSyncSchedule && SyncSchedule != _initialSyncSchedule && SyncSchedule is "" or "daily" or "weekly" or "monthly")
@@ -489,7 +498,7 @@ public partial class CollectionEditorViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to save collection: {ex.Message}";
+            ErrorMessage = $"Failed to save collection: {LocalProblem(ex)}";
         }
         finally
         {
@@ -583,7 +592,7 @@ public partial class CollectionEditorViewModel : ObservableObject
                 collection.LastSyncStatus = result.Status;
                 collection.LastSyncMessage = result.Message;
                 collection.LastSyncAt = result.CompletedAt;
-                SourceItemCountText = result.ItemsMatched.ToString("N0");
+                SourceItemCount = result.ItemsMatched; SourceItemCountText = result.ItemsMatched.ToString("N0");
                 SyncSkippedTitles = result.ItemsUnmatched;
                 OnPropertyChanged(nameof(LoadedCollection));
             }
@@ -596,7 +605,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context))
             {
                 SyncSkippedTitles = null;
-                ErrorMessage = $"Sync failed: {ex.Message}";
+                ErrorMessage = $"{LocalText("web.collections.list.syncFailed", "Sync failed")}: {LocalProblem(ex)}";
                 // The server records a failed run (status, reason, kept members) on the collection,
                 // so read it back for the saved status instead of leaving the previous one showing.
                 await RefreshRecordedSyncStateAsync(id, generation, context);
@@ -620,7 +629,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             collection.LastSyncMessage = latest.LastSyncMessage;
             collection.LastSyncAt = latest.LastSyncAt;
             collection.NextSyncAt = latest.NextSyncAt;
-            SourceItemCountText = latest.ItemCount.ToString("N0");
+            SourceItemCount = latest.ItemCount; SourceItemCountText = latest.ItemCount.ToString("N0");
             SourceLastNote = latest.LastSyncMessage;
             LastSyncSummary = BuildLastSyncSummary(latest);
             OnPropertyChanged(nameof(LoadedCollection));
@@ -642,7 +651,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             await _collectionsApi.DeleteCollectionAsync(CollectionId);
             Deleted?.Invoke();
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to delete collection: {ex.Message}"; }
+        catch (Exception ex) { ErrorMessage = $"Failed to delete collection: {LocalProblem(ex)}"; }
         finally { IsSaving = false; }
     }
 
@@ -704,7 +713,7 @@ public partial class CollectionEditorViewModel : ObservableObject
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch
-        { if (generation == _itemSearchGeneration && context == _catalogApi.CaptureContext()) ItemSearchError = "The search didn't work."; }
+        { if (generation == _itemSearchGeneration && context == _catalogApi.CaptureContext()) ItemSearchError = LocalText("web.collections.manual.searchFailed", "The search didn't work."); }
         finally
         { if (generation == _itemSearchGeneration) IsSearchingItems = false; }
     }
@@ -730,7 +739,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             if (IsEditing) _originalManualItemIds.Add(item.ContentId);
             await RefreshManualOrderEligibilityAsync();
         }
-        catch (Exception ex) { ErrorMessage = $"Could not add item: {ex.Message}"; }
+        catch (Exception ex) { ErrorMessage = $"Could not add item: {LocalProblem(ex)}"; }
         finally { IsManualMutationPending = false; }
     }
 
@@ -746,7 +755,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             ManualItems.Remove(item); _originalManualItemIds.Remove(item.MediaItemId);
             await RefreshManualOrderEligibilityAsync();
         }
-        catch (Exception ex) { ErrorMessage = $"Could not remove item: {ex.Message}"; }
+        catch (Exception ex) { ErrorMessage = $"Could not remove item: {LocalProblem(ex)}"; }
         finally { IsManualMutationPending = false; }
     }
 
@@ -763,7 +772,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             LastRemovedItem = null;
             await RefreshManualOrderEligibilityAsync();
         }
-        catch (Exception ex) { ErrorMessage = $"Could not restore item: {ex.Message}"; }
+        catch (Exception ex) { ErrorMessage = $"Could not restore item: {LocalProblem(ex)}"; }
         finally { IsManualMutationPending = false; }
     }
 
@@ -792,7 +801,7 @@ public partial class CollectionEditorViewModel : ObservableObject
         var ordered = ManualItems.Select(item => item.MediaItemId).ToList();
         var id = ordered[oldIndex]; ordered.RemoveAt(oldIndex); ordered.Insert(newIndex, id);
         try { await _collectionsApi.ReorderCollectionItemsAsync(CollectionId, ordered); ManualItems.Move(oldIndex, newIndex); await RefreshManualOrderEligibilityAsync(); }
-        catch (Exception ex) { CanReorderManualItems = false; ErrorMessage = $"Could not reorder items. Reload the collection and try again: {ex.Message}"; }
+        catch (Exception ex) { CanReorderManualItems = false; ErrorMessage = $"Could not reorder items. Reload the collection and try again: {LocalProblem(ex)}"; }
         finally { IsManualMutationPending = false; }
     }
 

@@ -62,6 +62,285 @@ local config = {
 }
 
 --------------------------------------------------------------------------------
+-- Interface text
+--
+-- Every label the OSC draws is looked up by its shared silo-translations
+-- catalog key. These English values are the catalog's own English and keep
+-- the OSC usable before the host has sent anything. The host publishes the
+-- active interface language with "osc-set-locale" (ordinary script-message
+-- string arguments: generation, language, direction, then key/value pairs)
+-- and again whenever the language changes. Values are data: they are looked
+-- up, never executed, and placeholders are filled with plain substitution.
+-- Labels that only this desktop OSC has stay English literals (see the Task 5
+-- playback localization report for each reason).
+--------------------------------------------------------------------------------
+-- One table keeps the main chunk well under LuaJIT's 200-local limit.
+local i18n = {}
+i18n.text_default = {
+    ["web.player.exit"] = "Exit",
+    ["web.player.chaptersMenu.trigger"] = "Chapters",
+    ["web.player.chaptersMenu.heading"] = "Chapters",
+    ["web.player.audioMenu.trigger"] = "Audio tracks",
+    ["web.player.audioMenu.heading"] = "Audio",
+    ["web.player.audioMenu.defaultBadge"] = "Default",
+    ["web.player.audioMenu.trackFallback"] = "Track {number}",
+    ["web.audiobooks.chapter.fallbackTitle"] = "Chapter {number}",
+    ["web.subtitles.menu.off"] = "Off",
+    ["web.home.preferences.valueOn"] = "On",
+    ["web.player.quality.title"] = "Quality",
+    ["web.player.quality.auto"] = "Auto",
+    ["web.player.quality.version"] = "Version",
+    ["web.player.quality.versionPlaying"] = "Playing",
+    ["web.player.quality.versionRequested"] = "Requested",
+    ["settingsManifest.downloads.default_quality.option.original"] = "Original",
+    ["settingsManifest.player.video_gravity.option.fit"] = "Fit",
+    ["web.player.controls.fillScreen"] = "Fill screen",
+    ["web.player.controls.playbackInfo"] = "Playback info",
+    ["web.player.controls.pictureInPictureItem"] = "Picture in picture",
+    ["web.player.controls.nextEpisode"] = "Next episode",
+    ["web.common.format.channels.stereo"] = "stereo",
+    ["web.common.format.bitrate.mbps"] = "{rate} Mbps",
+    ["web.common.format.bitrate.kbps"] = "{rate} kbps",
+    ["web.common.format.sampleRate"] = "{rate} Hz",
+    ["web.common.format.size.bytes"] = "{size} B",
+    ["web.common.format.size.kib"] = "{size} KiB",
+    ["web.common.format.size.mib"] = "{size} MiB",
+    ["web.common.format.size.gib"] = "{size} GiB",
+    ["web.markers.kind.intro"] = "Intro",
+    ["web.markers.kind.recap"] = "Recap",
+    ["web.markers.kind.credits"] = "Credits / Outro",
+    ["web.markers.kind.preview"] = "Preview",
+    ["introSkip.pill.skip"] = "Skip Intro",
+    ["introSkip.pill.undo"] = "Watch Intro",
+    ["marker.skipRecap"] = "Skip Recap",
+    ["marker.skipCredits"] = "Skip Credits",
+    ["web.player.nextEpisode.seasonEpisode"] = "Season {season} · Episode {episode}",
+    ["web.player.nextEpisode.playNow"] = "Play now",
+    ["common.cancel"] = "Cancel",
+    ["common.retry"] = "Retry",
+    ["common.loading"] = "Loading",
+    ["web.player.volume.valueText"] = "Volume {percent}%",
+    ["web.player.subtitles.preparingTranslation"] = "Preparing {label} subtitles…",
+    ["web.player.subtitles.preparingTranslated"] = "Preparing translated subtitles…",
+    ["web.player.watchTogether.title"] = "Watch Party",
+    ["web.player.watchTogether.codePending"] = "...",
+    ["web.watchTogether.connection.connected"] = "Connected",
+    ["web.watchTogether.connection.connecting"] = "Connecting…",
+    ["web.player.connection.reconnecting"] = "Reconnecting…",
+    ["watchParty.connection.disconnected"] = "Disconnected",
+    ["web.player.watchTogether.policy.guestsCanPause"] = "Guests can pause & resume",
+    ["web.player.watchTogether.policy.hostOnly"] = "Only you control playback",
+    ["web.player.watchTogether.policy.youCanPause"] = "You can pause & resume",
+    ["web.player.watchTogether.policy.hostControls"] = "Host controls playback",
+    ["web.player.watchTogether.invite"] = "Invite",
+    ["web.player.watchTogether.setHostOnly"] = "Host Only",
+    ["web.player.watchTogether.allowPause"] = "Allow Pause",
+    ["web.player.watchTogether.end"] = "End",
+    ["web.player.watchTogether.member.syncing"] = "Syncing",
+    ["web.player.room.lowerQuality"] = "Lower quality",
+    ["web.player.room.catchingUp"] = "Catching up to the party",
+    ["web.player.room.syncing"] = "Syncing playback",
+    ["web.watchTogether.endDialog.title"] = "End watch party?",
+    ["web.watchTogether.endDialog.description"] = "End the watch party for everyone?",
+    ["watchParty.end.confirm"] = "End Party",
+    ["web.player.info.title"] = "Playback Info",
+    ["web.player.info.section.player"] = "Player",
+    ["web.player.info.section.video"] = "Video Info",
+    ["web.player.info.section.stream"] = "Playback Stream Info",
+    ["web.player.info.section.source"] = "Current Source File",
+    ["web.player.info.player"] = "Player",
+    ["web.player.info.playMethod"] = "Play method",
+    ["web.player.info.protocol"] = "Protocol",
+    ["web.player.info.streamType"] = "Stream type",
+    ["web.player.info.autoSwitchedFrom"] = "Auto-switched from",
+    ["web.player.info.droppedFrames"] = "Dropped frames",
+    ["web.player.info.corruptedFrames"] = "Corrupted frames",
+    ["web.player.info.videoCodec"] = "Video codec",
+    ["web.player.info.audioCodec"] = "Audio codec",
+    ["web.player.info.container"] = "Container",
+    ["web.player.info.size"] = "Size",
+    ["web.player.info.bitrate"] = "Bitrate",
+    ["web.player.info.videoBitrate"] = "Video bitrate",
+    ["web.player.info.videoRangeType"] = "Video range type",
+    ["web.player.info.colorRange"] = "Color range",
+    ["web.player.info.colorRangeFull"] = "Full (pc)",
+    ["web.player.info.colorRangeLimited"] = "Limited (tv)",
+    ["web.player.info.colorRangeUnknown"] = "Unknown",
+    ["web.languageName.unknown"] = "Unknown",
+    ["web.player.info.audioBitrate"] = "Audio bitrate",
+    ["web.player.info.audioChannels"] = "Audio channels",
+    ["web.player.info.audioSampleRate"] = "Audio sample rate",
+    ["web.subtitles.menu.source.embedded"] = "Embedded",
+    ["web.subtitles.menu.source.external"] = "External",
+    ["web.subtitles.menu.source.downloaded"] = "Downloaded",
+    ["web.subtitles.menu.syncing"] = "Syncing…",
+    ["web.subtitles.menu.syncToAudio"] = "Sync to audio",
+    ["web.subtitles.menu.resetTiming"] = "Reset timing",
+    ["web.subtitles.menu.delay"] = "Delay",
+    ["web.subtitles.menu.delayValue"] = "{delay} ms",
+    ["web.subtitles.menu.resetDelay"] = "Reset",
+    ["web.subtitles.menu.addSubtitles"] = "Add Subtitles…",
+    ["web.subtitles.menu.translateWithAi"] = "Translate with AI…",
+    ["web.subtitles.menu.appearance"] = "Appearance…",
+    ["bufferingQuality.prompt.title"] = "Playback keeps buffering",
+    ["bufferingQuality.cantLower"] = "Can't lower quality for this video",
+    ["bufferingQuality.lowered"] = "Quality lowered to stop buffering",
+    ["bufferingQuality.prompt.lower"] = "Lower quality",
+    ["bufferingQuality.prompt.keep"] = "Keep quality",
+    ["bufferingQuality.restore"] = "Restore quality",
+}
+-- Count-dependent messages. The host sends one rendered value per count
+-- ("key#N") because plural rules belong to the catalog, not to this script.
+i18n.plural_default = {
+    ["web.player.nextEpisode.upNextIn"] = { max = 120, english = function(n) return "Up next in " .. n .. "s" end },
+    ["web.player.watchTogether.viewerCount"] = { max = 99,
+        english = function(n) return n .. (n == 1 and " viewer" or " viewers") end },
+    ["web.common.format.channels.count"] = { max = 32, english = function(n) return n .. " ch" end },
+}
+i18n.language_default = {
+    ar = "Arabic", cs = "Czech", da = "Danish", de = "German", el = "Greek", en = "English", es = "Spanish",
+    fa = "Persian", fi = "Finnish", fr = "French", he = "Hebrew", hi = "Hindi", hu = "Hungarian",
+    id = "Indonesian", is = "Icelandic", it = "Italian", ja = "Japanese", ko = "Korean", nl = "Dutch",
+    no = "Norwegian", pl = "Polish", pt = "Portuguese", ro = "Romanian", ru = "Russian", sv = "Swedish",
+    ta = "Tamil", te = "Telugu", th = "Thai", tr = "Turkish", uk = "Ukrainian", vi = "Vietnamese", zh = "Chinese",
+}
+-- Number punctuation and clock designators for the display culture.
+i18n.format_default = { decimal = ".", group = ",", am = "AM", pm = "PM" }
+local osc_locale = { generation = -1, language = "en", rtl = false, text = {}, format = {} }
+
+local function T(key)
+    local value = osc_locale.text[key]
+    if value == nil then value = i18n.text_default[key] end
+    return value or key
+end
+
+-- Fills "{name}" placeholders. Replacement values are inserted literally
+-- (a function replacement is never reinterpreted as a pattern).
+function i18n.fill(template, args)
+    return (tostring(template):gsub("{([%w_]+)}", function(name)
+        local value = args and args[name]
+        if value == nil then return nil end
+        return tostring(value)
+    end))
+end
+
+local function TF(key, args) return i18n.fill(T(key), args) end
+
+local function TN(key, count)
+    local n = math.floor(tonumber(count) or 0)
+    local value = osc_locale.text[key .. "#" .. tostring(n)]
+    if value ~= nil then return value end
+    local plural = i18n.plural_default[key]
+    return plural and plural.english(n) or tostring(n)
+end
+
+-- Approximate rendered width in Latin-glyph units: wide CJK/kana glyphs
+-- count about double, and multi-byte Latin letters count once.
+function i18n.units(value)
+    local units = 0
+    for char in tostring(value or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        units = units + ((#char >= 3 and char:byte(1) >= 0xE3) and 1.8 or (#char == 4 and 2 or 1))
+    end
+    return units
+end
+
+-- state.skip_label stays the internal marker-action identity; this is what
+-- the button shows for it.
+i18n.skip_keys = {
+    ["Skip Intro"] = "introSkip.pill.skip", ["Watch Intro"] = "introSkip.pill.undo",
+    ["Skip Recap"] = "marker.skipRecap", ["Skip Credits"] = "marker.skipCredits",
+}
+function i18n.skip_text(label)
+    local key = i18n.skip_keys[label]
+    return key and T(key) or tostring(label or "")
+end
+
+function i18n.format(name)
+    return osc_locale.format[name] or i18n.format_default[name]
+end
+
+-- "%.<places>f" with the display culture's decimal separator.
+function i18n.decimal(value, places)
+    local text = string.format("%." .. tostring(places or 0) .. "f", tonumber(value) or 0)
+    local decimal = i18n.format("decimal")
+    if decimal ~= "." then text = text:gsub("%.", function() return decimal end) end
+    return text
+end
+
+function i18n.grouped(value)
+    local digits = tostring(math.floor((tonumber(value) or 0) + 0.5))
+    local group = i18n.format("group")
+    local formatted = digits
+    while true do
+        local replaced, count = formatted:gsub("^(-?%d+)(%d%d%d)", "%1\1%2")
+        formatted = replaced
+        if count == 0 then break end
+    end
+    return (formatted:gsub("\1", function() return group end))
+end
+
+-- Interface language name for a media language code, or nil.
+function i18n.language_name(code)
+    local base = tostring(code or ""):lower():match("^([^%-_]+)") or ""
+    if base == "" then return nil end
+    base = i18n.language_aliases and i18n.language_aliases[base] or base
+    local value = osc_locale.text["language." .. base]
+    if value ~= nil then return value end
+    return i18n.language_default[base]
+end
+
+-- The host performs Unicode casing in the interface culture; Lua upper is ASCII-only.
+function i18n.upper(key, count)
+    local lookup = count ~= nil and key .. "#" .. tostring(math.floor(tonumber(count) or 0)) or key
+    return osc_locale.text["upper:" .. lookup] or string.upper(count ~= nil and TN(key, count) or T(key))
+end
+
+i18n.language_aliases = {
+    ara="ar", ces="cs", cze="cs", dan="da", deu="de", ger="de", ell="el", gre="el", eng="en", spa="es",
+    fas="fa", per="fa", fin="fi", fra="fr", fre="fr", heb="he", hin="hi", hun="hu", ind="id", isl="is", ice="is", ita="it",
+    jpn="ja", kor="ko", nld="nl", dut="nl", nor="no", pol="pl", por="pt", ron="ro", rum="ro", rus="ru", swe="sv",
+    tam="ta", tel="te", tha="th", tur="tr", ukr="uk", vie="vi", zho="zh", chi="zh",
+}
+
+function i18n.apply(args)
+    local generation = tonumber(args[1])
+    if not generation or generation < osc_locale.generation then return false end
+    local text, format, accepted, ignored = {}, {}, 0, 0
+    local i = 4
+    while i + 1 <= #args do
+        local key, value = tostring(args[i]), args[i + 1]
+        local allowed_key = key:match("^upper:(.+)$") or key
+        local base, count = allowed_key:match("^(.-)#(%d+)$")
+        local valid = type(value) == "string" and #value <= 600
+        if valid and key:sub(1, 1) == "@" and i18n.format_default[key:sub(2)] ~= nil then
+            format[key:sub(2)] = value
+        elseif valid and i18n.text_default[allowed_key] ~= nil then
+            text[key] = value
+        elseif valid and base and i18n.plural_default[base] and tonumber(count) <= i18n.plural_default[base].max then
+            text[key] = value
+        elseif valid and key:match("^language%.[a-z][a-z]$") and i18n.language_default[key:sub(10)] ~= nil then
+            text[key] = value
+        else
+            valid = false
+        end
+        if valid then accepted = accepted + 1 else ignored = ignored + 1 end
+        i = i + 2
+    end
+    osc_locale.generation = generation
+    osc_locale.language = tostring(args[2] or "en")
+    osc_locale.rtl = args[3] == "rtl"
+    osc_locale.text = text
+    osc_locale.format = format
+    local missing = 0
+    for key in pairs(i18n.text_default) do
+        if text[key] == nil then missing = missing + 1 end
+    end
+    mp.commandv("script-message", "silo-locale-applied", tostring(generation), tostring(accepted),
+        tostring(ignored), tostring(missing))
+    return true
+end
+
+--------------------------------------------------------------------------------
 -- State
 --------------------------------------------------------------------------------
 local state = {
@@ -345,16 +624,32 @@ local function credits_marker_is_plausible()
     return (dur - state.credits_start) <= allowed_window
 end
 
+-- Fallback ladder labels are resolution identifiers (not translated); the
+-- named entries and units follow the interface language.
 local quality_tiers = {
-    { id = "original",   label = "Original" },
-    { id = "auto",       label = "Auto" },
-    { id = "1080p-high", label = "1080p High",  sublabel = "~10 Mbps" },
-    { id = "1080p",      label = "1080p",        sublabel = "~6 Mbps" },
-    { id = "720p-high",  label = "720p High",    sublabel = "~4 Mbps" },
-    { id = "720p",       label = "720p",          sublabel = "~2 Mbps" },
-    { id = "480p",       label = "480p",          sublabel = "~1.5 Mbps" },
-    { id = "420p",       label = "420p",          sublabel = "~720 kbps" },
+    { id = "original",   key = "settingsManifest.downloads.default_quality.option.original" },
+    { id = "auto",       key = "web.player.quality.auto" },
+    { id = "1080p-high", label = "1080p High",  mbps = 10 },
+    { id = "1080p",      label = "1080p",        mbps = 6 },
+    { id = "720p-high",  label = "720p High",    mbps = 4 },
+    { id = "720p",       label = "720p",          mbps = 2 },
+    { id = "480p",       label = "480p",          mbps = 1.5 },
+    { id = "420p",       label = "420p",          kbps = 720 },
 }
+
+function i18n.rate_kbps(kbps)
+    kbps = tonumber(kbps) or 0
+    if kbps >= 1000 then
+        local mbps = kbps / 1000
+        return TF("web.common.format.bitrate.mbps", { rate = i18n.decimal(mbps, mbps % 1 == 0 and 0 or 1) })
+    end
+    return TF("web.common.format.bitrate.kbps", { rate = i18n.decimal(kbps, 0) })
+end
+
+function i18n.original_quality(resolution)
+    return T("settingsManifest.downloads.default_quality.option.original") ..
+        " (" .. (resolution == "2160p" and "4K" or resolution) .. ")"
+end
 
 local quality_resolution_height = {
     ["2160p"] = 2160, ["1440p"] = 1440, ["1080p"] = 1080,
@@ -372,20 +667,11 @@ local function visible_quality_tiers()
             if id ~= "" then
                 local label = quality.label or id
                 if id == "original" and resolution ~= "" then
-                    label = "Original (" .. (resolution == "2160p" and "4K" or resolution) .. ")"
+                    label = i18n.original_quality(resolution)
                 end
                 local details = {}
                 local bitrate = tonumber(quality.bitrate_kbps) or 0
-                if bitrate > 0 then
-                    if bitrate >= 1000 then
-                        local mbps = bitrate / 1000
-                        table.insert(details, mbps % 1 == 0
-                            and string.format("%d Mbps", mbps)
-                            or string.format("%.1f Mbps", mbps))
-                    else
-                        table.insert(details, string.format("%d kbps", bitrate))
-                    end
-                end
+                if bitrate > 0 then table.insert(details, i18n.rate_kbps(bitrate)) end
                 if id == "original" and state.play_method_str and state.play_method_str ~= "" then
                     table.insert(details, 1, state.play_method_str)
                 end
@@ -399,24 +685,17 @@ local function visible_quality_tiers()
         return result
     end
     for _, tier in ipairs(quality_tiers) do
-        local copy = { id = tier.id, label = tier.label, sublabel = tier.sublabel }
+        local copy = { id = tier.id, label = tier.key and T(tier.key) or tier.label,
+            sublabel = tier.mbps and ("~" .. i18n.rate_kbps(tier.mbps * 1000))
+                or tier.kbps and ("~" .. i18n.rate_kbps(tier.kbps)) or nil }
         if tier.id == "original" and resolution ~= "" then
-            copy.label = "Original (" .. (resolution == "2160p" and "4K" or resolution) .. ")"
+            copy.label = i18n.original_quality(resolution)
             local details = {}
             if state.play_method_str and state.play_method_str ~= "" then
                 table.insert(details, state.play_method_str)
             end
             local bitrate = state.media_info and state.media_info.bitrate or 0
-            if bitrate > 0 then
-                if bitrate >= 1000 then
-                    local mbps = bitrate / 1000
-                    table.insert(details, mbps % 1 == 0
-                        and string.format("%d Mbps", mbps)
-                        or string.format("%.1f Mbps", mbps))
-                else
-                    table.insert(details, string.format("%d kbps", bitrate))
-                end
-            end
+            if bitrate > 0 then table.insert(details, i18n.rate_kbps(bitrate)) end
             copy.sublabel = table.concat(details, " · ")
         end
         local tier_resolution = string.match(tier.id, "^(%d+p)")
@@ -433,7 +712,7 @@ local function active_quality_label()
     for _, tier in ipairs(visible_quality_tiers()) do
         if tier.id == state.active_quality then return tier.label end
     end
-    return "Quality"
+    return T("web.player.quality.title")
 end
 
 local function quality_choices_available()
@@ -537,7 +816,7 @@ local function end_time_label(position)
     else
         local hour = finish.hour % 12
         if hour == 0 then hour = 12 end
-        text = string.format("%d:%02d %s", hour, finish.min, finish.hour < 12 and "AM" or "PM")
+        text = string.format("%d:%02d %s", hour, finish.min, finish.hour < 12 and i18n.format("am") or i18n.format("pm"))
     end
     return (state.end_time_template:gsub("{time}", function() return text end))
 end
@@ -990,6 +1269,7 @@ local function marker_at_time(seconds)
             if not match or (marker_end - marker_start) < (match.finish - match.start) then
                 match = {
                     label = marker.label,
+                    key = marker.key,
                     color = marker.color,
                     start = marker_start,
                     finish = marker_end,
@@ -1270,13 +1550,13 @@ local function channel_label(channels)
     channels = tonumber(channels) or 0
     if channels == 8 then return "7.1" end
     if channels == 6 then return "5.1" end
-    if channels == 2 then return "Stereo" end
+    if channels == 2 then return T("web.common.format.channels.stereo") end
     if channels == 1 then return "Mono" end
-    return channels > 0 and (tostring(channels) .. " ch") or ""
+    return channels > 0 and TN("web.common.format.channels.count", channels) or ""
 end
 
 local function language_label(track)
-    local name = track and (track.language_name or track.language) or ""
+    local name = track and (i18n.language_name(track.language) or track.language_name or track.language) or ""
     name = tostring(name or "")
     if name == "" or name == "und" then return "" end
     return name
@@ -1296,9 +1576,9 @@ local function rail_labels()
             break
         end
     end
-    local subtitle = "Off"
+    local subtitle = T("web.subtitles.menu.off")
     if (tonumber(state.active_subtitle) or -1) >= 0 then
-        subtitle = "On"
+        subtitle = T("web.home.preferences.valueOn")
         for _, track in ipairs(state.subtitle_tracks or {}) do
             if track.index == state.active_subtitle then
                 local language = language_label(track)
@@ -1307,7 +1587,7 @@ local function rail_labels()
             end
         end
     end
-    return { btn_audio = audio, btn_cc = subtitle, btn_chapters = "Chapters" }
+    return { btn_audio = audio, btn_cc = subtitle, btn_chapters = T("web.player.chaptersMenu.trigger") }
 end
 
 local function compute_layout()
@@ -1316,7 +1596,7 @@ local function compute_layout()
     local H = state.osd_height
     local has_native_party = state.native_party_scope ~= nil and state.watch_party ~= nil and state.watch_party.visible == true
     local labels = rail_labels()
-    local label_signature = labels.btn_audio .. "\0" .. labels.btn_cc
+    local label_signature = labels.btn_audio .. "\0" .. labels.btn_cc .. "\0" .. tostring(osc_locale.generation)
     -- Skip recomputation if dimensions unchanged
     if W == _layout_w and H == _layout_h and _layout_next_ep == state.next_ep_available
         and _layout_prev_ep == state.prev_ep_available
@@ -1407,7 +1687,8 @@ local function compute_layout()
     local top_button_size = math.floor(44 * sc)
     L.btn_minimize = { x = top, y = top, w = top_button_size, h = top_button_size,
         cx = top + top_button_size / 2, cy = top + top_button_size / 2 }
-    local exit_w = math.floor(82 * sc)
+    -- Fits the interface-language Exit label; English keeps the WebUI 82px.
+    local exit_w = math.max(math.floor(82 * sc), math.floor((50 + i18n.units(T("web.player.exit")) * 14 * 0.56) * sc))
     L.btn_exit = { x = top + top_button_size + math.floor(12 * sc), y = top, w = exit_w, h = top_button_size,
         cx = top + top_button_size + math.floor(12 * sc) + exit_w / 2, cy = top + top_button_size / 2 }
     if has_native_party then
@@ -1457,7 +1738,7 @@ local function compute_layout()
             if not tier.labels then return utility_size end
             local label = labels[name] or ""
             if label == "" then return utility_size end
-            local text_w = math.min(math.floor(144 * sc), math.floor(#label * label_font * 0.58))
+            local text_w = math.min(math.floor(144 * sc), math.floor(i18n.units(label) * label_font * 0.58))
             return utility_size + text_w + math.floor(10 * sc)
         end
         L.btn_fill, L.btn_pip, L.btn_stats = nil, nil, nil
@@ -1770,7 +2051,7 @@ local function render_osc()
     draw_hud_surface(ass, "btn_exit", be, ma, true)
     draw_exit_icon(ass, be.x + math.floor(20 * sc), be.cy,
         math.floor(22 * sc), config.text_color, "00", ma)
-    draw_text(ass, be.x + math.floor(36 * sc), be.cy, "Exit",
+    draw_text(ass, be.x + math.floor(36 * sc), be.cy, ass_escape_text(T("web.player.exit")),
         math.floor(14 * sc), config.text_color, "00", ma, 4, nil, false)
 
     -- 1b. Exact player-hud CSS stops: transparent at the top, 56% black at
@@ -1916,6 +2197,8 @@ local function render_osc()
                 draw_rect(ass, image_x, tooltip_top,
                     image_x + tooltip_w, tooltip_top + image_h,
                     "242424", "08", ma)
+                -- Native-only placeholder caption: the catalog has no
+                -- desktop chapter-preview placeholder text.
                 draw_text(ass, tooltip_x, tooltip_top + image_h / 2,
                     "CHAPTER", math.floor(10 * sc), config.text_color, "D6", ma,
                     5, nil, true)
@@ -1930,7 +2213,7 @@ local function render_osc()
             draw_circle(ass, text_left + math.floor(3 * sc), cursor_y,
                 math.max(2, math.floor(3 * sc)), hover_marker.color, "00", ma)
             draw_text(ass, text_left + math.floor(11 * sc), cursor_y,
-                ass_escape_text(hover_marker.label), math.floor(11 * sc),
+                ass_escape_text(T("web.markers.kind." .. tostring(hover_marker.key))), math.floor(11 * sc),
                 config.text_color, "00", ma, 4, nil, true)
             draw_text(ass, tooltip_x + tooltip_w / 2 - math.floor(10 * sc), cursor_y,
                 format_time(hover_marker.start) .. "-" .. format_time(hover_marker.finish),
@@ -1942,7 +2225,7 @@ local function render_osc()
             math.floor(12 * sc), config.text_color, "00", ma, 4, "Consolas", true)
         if hover_chapter then
             draw_text(ass, text_left, cursor_y + math.floor(16 * sc),
-                ass_escape_text(hover_chapter.title or ("Chapter " .. tostring(hover_chapter.index or ""))),
+                ass_escape_text(hover_chapter.title or TF("web.audiobooks.chapter.fallbackTitle", { number = tostring(hover_chapter.index or "") })),
                 math.floor(11 * sc), config.text_color, "73", ma, 4, nil, false)
         end
 
@@ -2226,7 +2509,8 @@ local function render_osc()
     local fill = L.btn_fill
     if fill then
         draw_utility_state("btn_fill", fill, mp.get_property_number("panscan", 0) > 0)
-        draw_text(ass, fill.cx, fill.cy, "Fit", math.floor(11 * sc), config.text_color, "20", ma, 5)
+        draw_text(ass, fill.cx, fill.cy, ass_escape_text(truncate_display_text(T("settingsManifest.player.video_gravity.option.fit"), fill.w, math.floor(11 * sc))),
+            math.floor(11 * sc), config.text_color, "20", ma, 5)
     end
     local more = L.btn_more
     if more then
@@ -2280,33 +2564,35 @@ local function render_osc()
             math.floor(12 * sc), "000000", "33", ma)
 
         local connection = tostring(party.connection_state or "disconnected")
-        local connection_label = connection == "connected" and "Connected"
-            or connection == "connecting" and "Connecting"
-            or connection == "reconnecting" and "Reconnecting"
-            or "Disconnected"
+        local connection_label = connection == "connected" and T("web.watchTogether.connection.connected")
+            or connection == "connecting" and T("web.watchTogether.connection.connecting")
+            or connection == "reconnecting" and T("web.player.connection.reconnecting")
+            or T("watchParty.connection.disconnected")
         local dot_color = connection == "connected" and "55C878"
             or (connection == "connecting" or connection == "reconnecting") and "3FC5F0"
             or "8A8A8A"
         draw_text(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(17 * sc),
-            "WATCH PARTY", math.floor(10 * sc), config.text_color, "66", ma, 4, nil, true)
+            ass_escape_text(truncate_display_text(i18n.upper("web.player.watchTogether.title"), math.floor(86 * sc), math.floor(10 * sc))),
+            math.floor(10 * sc), config.text_color, "66", ma, 4, nil, true)
         draw_circle(ass, panel_x + math.floor(105 * sc), panel_y + math.floor(17 * sc),
             math.max(2, math.floor(3 * sc)), dot_color, "00", ma)
         draw_text(ass, panel_x + math.floor(113 * sc), panel_y + math.floor(17 * sc),
-            connection_label, math.floor(10 * sc), config.text_color, "66", ma, 4, nil, false)
+            ass_escape_text(truncate_display_text(connection_label, panel_w - math.floor(125 * sc), math.floor(10 * sc))),
+            math.floor(10 * sc), config.text_color, "66", ma, 4, nil, false)
 
         draw_text(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(43 * sc),
-            ass_escape_text(party.code or "..."), math.floor(18 * sc),
+            ass_escape_text(party.code or T("web.player.watchTogether.codePending")), math.floor(18 * sc),
             config.text_color, "00", ma, 4, "Consolas", true)
         local viewers = tonumber(party.member_count) or 0
         draw_text(ass, panel_x + math.floor(92 * sc), panel_y + math.floor(43 * sc),
-            tostring(viewers) .. (viewers == 1 and " viewer" or " viewers"),
+            ass_escape_text(truncate_display_text(TN("web.player.watchTogether.viewerCount", viewers), panel_w - math.floor(100 * sc), math.floor(11 * sc))),
             math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
 
-        local policy_label = party.is_host
+        local policy_label = T(party.is_host
             and (party.guest_control_policy == "guest_play_pause"
-                and "Guests can pause & resume" or "Only you control playback")
+                and "web.player.watchTogether.policy.guestsCanPause" or "web.player.watchTogether.policy.hostOnly")
             or (party.can_control_transport
-                and "You can pause & resume" or "Host controls playback")
+                and "web.player.watchTogether.policy.youCanPause" or "web.player.watchTogether.policy.hostControls"))
         if native_party then
             local rect = L.btn_party
             table.insert(state.watch_party_actions, {x=rect.x,y=rect.y,w=rect.w,h=rect.h,action='native-party'})
@@ -2316,7 +2602,8 @@ local function render_osc()
             end
         end
         draw_text(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(64 * sc),
-            policy_label, math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
+            ass_escape_text(truncate_display_text(policy_label, panel_w - math.floor(24 * sc), math.floor(11 * sc))),
+            math.floor(11 * sc), config.text_color, "80", ma, 4, nil, false)
 
         if party.is_host and not native_party then
             draw_rect(ass, panel_x + math.floor(12 * sc), panel_y + math.floor(82 * sc),
@@ -2328,18 +2615,20 @@ local function render_osc()
                 draw_rounded_rect(ass, x, y, x + width, y + h, math.floor(6 * sc),
                     danger and "3434EF" or config.text_color,
                     danger and "B8" or "DE", ma)
-                draw_text(ass, x + width / 2, y + h / 2, label,
+                draw_text(ass, x + width / 2, y + h / 2,
+                    ass_escape_text(truncate_display_text(label, width - math.floor(6 * sc), math.floor(11 * sc))),
                     math.floor(11 * sc), danger and "D8D8FF" or config.text_color,
                     danger and "10" or "28", ma, 5, nil, true)
                 table.insert(state.watch_party_actions,
                     { x = x, y = y, w = width, h = h, action = action })
             end
             local invite_x = panel_x + math.floor(12 * sc)
-            party_button("invite", "Invite", invite_x, math.floor(50 * sc), false)
+            party_button("invite", T("web.player.watchTogether.invite"), invite_x, math.floor(50 * sc), false)
             party_button("toggle-policy",
-                party.guest_control_policy == "guest_play_pause" and "Host Only" or "Allow Pause",
+                T(party.guest_control_policy == "guest_play_pause" and "web.player.watchTogether.setHostOnly"
+                    or "web.player.watchTogether.allowPause"),
                 invite_x + math.floor(56 * sc), math.floor(82 * sc), false)
-            party_button("end", "End", panel_x + panel_w - math.floor(52 * sc),
+            party_button("end", T("web.player.watchTogether.end"), panel_x + panel_w - math.floor(52 * sc),
                 math.floor(40 * sc), true)
         end
 
@@ -2348,7 +2637,8 @@ local function render_osc()
             local x = panel_x + math.floor(12 * sc)
             local width = panel_w - math.floor(24 * sc)
             draw_rounded_rect(ass, x, y, x + width, y + math.floor(26 * sc), math.floor(6 * sc), config.text_color, "DE", ma)
-            draw_text(ass, x + width / 2, y + math.floor(13 * sc), "Lower quality", math.floor(11 * sc), config.text_color, "00", ma, 5, nil, true)
+            draw_text(ass, x + width / 2, y + math.floor(13 * sc), ass_escape_text(truncate_display_text(T("web.player.room.lowerQuality"), width, math.floor(11 * sc))),
+                math.floor(11 * sc), config.text_color, "00", ma, 5, nil, true)
             table.insert(state.watch_party_actions, { x = x, y = y, w = width, h = math.floor(26 * sc), action = "lower-quality" })
         end
 
@@ -2363,9 +2653,10 @@ local function render_osc()
             draw_rounded_rect(ass, sync_x, sync_y,
                 sync_x + sync_w, sync_y + sync_h,
                 math.floor(8 * sc), "000000", "4C", ma)
-            draw_text(ass, W / 2, H / 2 - math.floor(9 * sc), "SYNCING",
+            draw_text(ass, W / 2, H / 2 - math.floor(9 * sc), ass_escape_text(i18n.upper("web.player.watchTogether.member.syncing")),
                 math.floor(10 * sc), config.text_color, "68", ma, 5, nil, true)
-            draw_text(ass, W / 2, H / 2 + math.floor(13 * sc), (party.catching_up and "Catching up to the party" or "Syncing playback"),
+            draw_text(ass, W / 2, H / 2 + math.floor(13 * sc), ass_escape_text(truncate_display_text(
+                T(party.catching_up and "web.player.room.catchingUp" or "web.player.room.syncing"), sync_w - math.floor(12 * sc), math.floor(14 * sc))),
                 math.floor(14 * sc), config.text_color, "00", ma, 5, nil, true)
         end
 
@@ -2381,9 +2672,11 @@ local function render_osc()
                 confirm_x + confirm_w, confirm_y + confirm_h,
                 math.floor(10 * sc), "101010", "0C", ma)
             draw_text(ass, confirm_x + math.floor(18 * sc), confirm_y + math.floor(28 * sc),
-                "End watch party?", math.floor(17 * sc), config.text_color, "00", ma, 4, nil, true)
+                ass_escape_text(truncate_display_text(T("web.watchTogether.endDialog.title"), confirm_w - math.floor(36 * sc), math.floor(17 * sc))),
+                math.floor(17 * sc), config.text_color, "00", ma, 4, nil, true)
             draw_text(ass, confirm_x + math.floor(18 * sc), confirm_y + math.floor(57 * sc),
-                "End the watch party for everyone?", math.floor(12 * sc),
+                ass_escape_text(truncate_display_text(T("web.watchTogether.endDialog.description"), confirm_w - math.floor(36 * sc), math.floor(12 * sc))),
+                math.floor(12 * sc),
                 config.text_color, "72", ma, 4, nil, false)
             local button_y = confirm_y + math.floor(92 * sc)
             local button_h = math.floor(32 * sc)
@@ -2391,11 +2684,13 @@ local function render_osc()
             local end_x = confirm_x + confirm_w - math.floor(92 * sc)
             draw_rounded_rect(ass, cancel_x, button_y, cancel_x + math.floor(72 * sc), button_y + button_h,
                 math.floor(6 * sc), config.text_color, "DE", ma)
-            draw_text(ass, cancel_x + math.floor(36 * sc), button_y + button_h / 2, "Cancel",
+            draw_text(ass, cancel_x + math.floor(36 * sc), button_y + button_h / 2,
+                ass_escape_text(truncate_display_text(T("common.cancel"), math.floor(68 * sc), math.floor(12 * sc))),
                 math.floor(12 * sc), config.text_color, "28", ma, 5, nil, true)
             draw_rounded_rect(ass, end_x, button_y, end_x + math.floor(74 * sc), button_y + button_h,
                 math.floor(6 * sc), "3434EF", "86", ma)
-            draw_text(ass, end_x + math.floor(37 * sc), button_y + button_h / 2, "End Party",
+            draw_text(ass, end_x + math.floor(37 * sc), button_y + button_h / 2,
+                ass_escape_text(truncate_display_text(T("watchParty.end.confirm"), math.floor(70 * sc), math.floor(12 * sc))),
                 math.floor(12 * sc), "D8D8FF", "08", ma, 5, nil, true)
             table.insert(state.watch_party_actions,
                 { x = cancel_x, y = button_y, w = math.floor(72 * sc), h = button_h, action = "cancel-end" })
@@ -2409,11 +2704,12 @@ local function render_osc()
         local entries = {}
         -- Full rails keep audio and chapters on the rail, and the mute button
         -- with or without its slider. Compact rails keep everything here.
-        if L.compact and #state.audio_tracks > 1 then table.insert(entries, {name="btn_audio", label="Audio tracks"}) end
-        if L.compact and #state.chapters > 0 then table.insert(entries, {name="btn_chapters", label="Chapters"}) end
+        if L.compact and #state.audio_tracks > 1 then table.insert(entries, {name="btn_audio", label=T("web.player.audioMenu.trigger")}) end
+        if L.compact and #state.chapters > 0 then table.insert(entries, {name="btn_chapters", label=T("web.player.chaptersMenu.trigger")}) end
         for _, entry in ipairs({
-            {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
-            {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"}}) do
+            {name="btn_stats", label=T("web.player.controls.playbackInfo")}, {name="btn_pip", label=T("web.player.controls.pictureInPictureItem")},
+            -- "Contain video" is native-only (the web has no fill toggle-back label).
+            {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or T("web.player.controls.fillScreen")}}) do
             table.insert(entries, entry)
         end
         if not L.volume_bar then
@@ -2435,7 +2731,8 @@ local function render_osc()
             if enabled and (state.controller_focus_name == "overflow_" .. entry.name or point_in_rect(state.mouse_x, state.mouse_y, rect)) then
                 draw_rect(ass, x, rect.y, x+width, rect.y+row_h, config.text_color, "DC", ma)
             end
-            draw_text(ass, x+16*sc, rect.y+row_h/2, entry.label, math.floor(13*sc), config.text_color, enabled and "00" or "A0", ma, 4)
+            draw_text(ass, x+16*sc, rect.y+row_h/2, ass_escape_text(truncate_display_text(entry.label, width - 32 * sc, math.floor(13*sc))),
+                math.floor(13*sc), config.text_color, enabled and "00" or "A0", ma, 4)
         end
     end
 
@@ -2453,11 +2750,11 @@ end
 
 -- Format bytes to human-readable size
 local function format_file_size(bytes)
-    if not bytes or bytes <= 0 then return "0 B" end
-    if bytes >= 1073741824 then return string.format("%.1f GiB", bytes / 1073741824) end
-    if bytes >= 1048576 then return string.format("%.1f MiB", bytes / 1048576) end
-    if bytes >= 1024 then return string.format("%.1f KiB", bytes / 1024) end
-    return string.format("%d B", bytes)
+    if not bytes or bytes <= 0 then return TF("web.common.format.size.bytes", { size = "0" }) end
+    if bytes >= 1073741824 then return TF("web.common.format.size.gib", { size = i18n.decimal(bytes / 1073741824, 1) }) end
+    if bytes >= 1048576 then return TF("web.common.format.size.mib", { size = i18n.decimal(bytes / 1048576, 1) }) end
+    if bytes >= 1024 then return TF("web.common.format.size.kib", { size = i18n.decimal(bytes / 1024, 1) }) end
+    return TF("web.common.format.size.bytes", { size = string.format("%d", bytes) })
 end
 
 -- The Silo API reports source bitrates in kbps. Keep the two WebUI
@@ -2465,31 +2762,24 @@ end
 -- decimal, while the selected audio-track bitrate stays in whole kbps.
 local function format_mbps_from_kbps(kbps)
     if not kbps or kbps <= 0 then return "" end
-    return string.format("%.1f Mbps", kbps / 1000)
+    return TF("web.common.format.bitrate.mbps", { rate = i18n.decimal(kbps / 1000, 1) })
 end
 
 local function format_kbps(kbps)
     if not kbps or kbps <= 0 then return "" end
-    return string.format("%.0f kbps", kbps)
+    return TF("web.common.format.bitrate.kbps", { rate = i18n.decimal(kbps, 0) })
 end
 
 local function format_sample_rate(hz)
     if not hz or hz <= 0 then return "" end
-    local digits = tostring(math.floor(hz + 0.5))
-    local formatted = digits
-    while true do
-        local replaced, count = formatted:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
-        formatted = replaced
-        if count == 0 then break end
-    end
-    return formatted .. " Hz"
+    return TF("web.common.format.sampleRate", { rate = i18n.grouped(hz) })
 end
 
 local function format_color_range(value)
     local normalized = string.lower(tostring(value or ""))
-    if normalized == "tv" then return "Limited (tv)" end
-    if normalized == "pc" then return "Full (pc)" end
-    if normalized == "unknown" then return "Unknown" end
+    if normalized == "tv" then return T("web.player.info.colorRangeLimited") end
+    if normalized == "pc" then return T("web.player.info.colorRangeFull") end
+    if normalized == "unknown" then return T("web.player.info.colorRangeUnknown") end
     return ""
 end
 
@@ -2561,22 +2851,26 @@ local function render_stats()
     local sections = {}
 
     -- Section 1: Player
-    local s1 = { header = "PLAYER", rows = {} }
-    table.insert(s1.rows, { label = "Player", value = "libmpv (GPU)" })
-    table.insert(s1.rows, { label = "Play method", value = shown(state.play_method_str) })
-    table.insert(s1.rows, { label = "Protocol", value = shown(state.protocol_str) })
-    table.insert(s1.rows, { label = "Stream type", value = shown(state.stream_type_str) })
+    -- Section headers and catalog labels follow the interface language. The
+    -- desktop-only diagnostics below (display area, scaling, upscaler,
+    -- measured rates and their status words) have no catalog equivalent and
+    -- remain English.
+    local s1 = { header = i18n.upper("web.player.info.section.player"), rows = {} }
+    table.insert(s1.rows, { id = "player.player", label = T("web.player.info.player"), value = "libmpv (GPU)" })
+    table.insert(s1.rows, { id = "player.playMethod", label = T("web.player.info.playMethod"), value = shown(state.play_method_str) })
+    table.insert(s1.rows, { id = "player.protocol", label = T("web.player.info.protocol"), value = shown(state.protocol_str) })
+    table.insert(s1.rows, { id = "player.streamType", label = T("web.player.info.streamType"), value = shown(state.stream_type_str) })
     if state.media_info and state.media_info.requested_source and state.media_info.requested_source ~= "" then
-        table.insert(s1.rows, { label = "Auto-switched from", value = state.media_info.requested_source })
+        table.insert(s1.rows, { id = "player.autoSwitchedFrom", label = T("web.player.info.autoSwitchedFrom"), value = state.media_info.requested_source })
     end
     if state.media_info and state.media_info.buffering_limit and state.media_info.buffering_limit ~= "" then
-        table.insert(s1.rows, { label = "Auto quality limit", value = state.media_info.buffering_limit })
+        table.insert(s1.rows, { id = "player.auto-quality-limit", label = "Auto quality limit", value = state.media_info.buffering_limit })
     end
     table.insert(sections, s1)
 
     -- Section 2: Video Info (live)
-    local s2 = { header = "VIDEO INFO", rows = {} }
-    table.insert(s2.rows, { label = "Display area", value = string.format("%dx%d", W, H) })
+    local s2 = { header = i18n.upper("web.player.info.section.video"), rows = {} }
+    table.insert(s2.rows, { id = "video.display-area", label = "Display area", value = string.format("%dx%d", W, H) })
     local vw = mp.get_property_number("video-params/w")
     local vh = mp.get_property_number("video-params/h")
     -- These are real frames after video filters, before the renderer fits
@@ -2589,9 +2883,9 @@ local function render_stats()
     if output_known and (ow == 3840 or ow == 4096) and oh == 2160 then
         processed = processed .. " (4K)"
     end
-    table.insert(s2.rows, { label = "Source video", value =
+    table.insert(s2.rows, { id = "video.source", label = "Source video", value =
         source_known and string.format("%dx%d", vw, vh) or fallback })
-    table.insert(s2.rows, { label = "Processed video", value = processed })
+    table.insert(s2.rows, { id = "video.processed", label = "Processed video", value = processed })
     local factor = fallback
     local pixel_factor = fallback
     local enlarged = source_known and output_known and ow > vw and oh > vh
@@ -2620,78 +2914,78 @@ local function render_stats()
             neural_requested = true
         end
     end
-    table.insert(s2.rows, { label = "Scale per dimension", value = factor })
-    table.insert(s2.rows, { label = "Pixel count", value = pixel_factor })
-    table.insert(s2.rows, { label = "Upscaler", value = driver_upscaler or (neural_requested and "FSRCNNX AI (requested)")
+    table.insert(s2.rows, { id = "video.scale", label = "Scale per dimension", value = factor })
+    table.insert(s2.rows, { id = "video.pixel-count", label = "Pixel count", value = pixel_factor })
+    table.insert(s2.rows, { id = "video.upscaler", label = "Upscaler", value = driver_upscaler or (neural_requested and "FSRCNNX AI (requested)")
         or (enlarged and "Other video filter" or "Normal renderer") })
     if neural_requested and source_known then
         -- GLSL hooks run after video-out-params. Their requested reconstruction
         -- must not be presented as a measured video-filter output resolution.
-        table.insert(s2.rows, { label = "AI luma reconstruction (requested)",
+        table.insert(s2.rows, { id = "video.ai-luma-reconstruction", label = "AI luma reconstruction (requested)",
             value = string.format("%dx%d (2x)", vw * 2, vh * 2) })
     end
     local enhancement_status = mp.get_property_native("user-data/silo-upscaling-status", "")
     if enhancement_status ~= "" then
-        table.insert(s2.rows, { label = "Enhancement status", value = enhancement_status })
+        table.insert(s2.rows, { id = "video.enhancement-status", label = "Enhancement status", value = enhancement_status })
     end
     local dropped = (mp.get_property_number("frame-drop-count") or 0)
                   + (mp.get_property_number("decoder-frame-drop-count") or 0)
-    table.insert(s2.rows, { label = "Dropped frames", value = tostring(dropped) })
-    table.insert(s2.rows, { label = "Corrupted frames", value = "0" })
+    table.insert(s2.rows, { id = "video.droppedFrames", label = T("web.player.info.droppedFrames"), value = tostring(dropped) })
+    table.insert(s2.rows, { id = "video.corruptedFrames", label = T("web.player.info.corruptedFrames"), value = "0" })
     table.insert(sections, s2)
 
     -- Section 3: Playback Stream Info
-    local s3 = { header = "PLAYBACK STREAM INFO", rows = {} }
-    table.insert(s3.rows, { label = "Video codec", value = shown(state.stream_codec_video) })
-    table.insert(s3.rows, { label = "Audio codec", value = shown(state.stream_codec_audio) })
+    local s3 = { header = i18n.upper("web.player.info.section.stream"), rows = {} }
+    table.insert(s3.rows, { id = "stream.videoCodec", label = T("web.player.info.videoCodec"), value = shown(state.stream_codec_video) })
+    table.insert(s3.rows, { id = "stream.audioCodec", label = T("web.player.info.audioCodec"), value = shown(state.stream_codec_audio) })
     local target = state.stream_target_video_kbps or 0
-    table.insert(s3.rows, { label = "Target video bitrate", value = target > 0 and
-        format_mbps_from_kbps(target) or (state.play_method_str == "Transcode" and "Unavailable" or "Not applicable") })
+    table.insert(s3.rows, { id = "stream.target-video-bitrate", label = "Target video bitrate", value = target > 0 and
+        format_mbps_from_kbps(target) or ((state.play_method_id or (state.play_method_str == "Transcode" and "transcode")) == "transcode" and "Unavailable" or "Not applicable") })
     -- mpv measures compressed packets in bits/second, before video processing.
     -- These are media rates, not download speed (which includes buffering).
     local video_bps = mp.get_property_number("video-bitrate") or 0
     local audio_bps = mp.get_property_number("audio-bitrate") or 0
-    table.insert(s3.rows, { label = "Video bitrate (measured)", value = video_bps > 0 and
+    table.insert(s3.rows, { id = "stream.video-bitrate-measured", label = "Video bitrate (measured)", value = video_bps > 0 and
         format_mbps_from_kbps(video_bps / 1000) or "Unavailable" })
-    table.insert(s3.rows, { label = "Audio bitrate (measured)", value = audio_bps > 0 and
+    table.insert(s3.rows, { id = "stream.audio-bitrate-measured", label = "Audio bitrate (measured)", value = audio_bps > 0 and
         format_kbps(audio_bps / 1000) or "Unavailable" })
     table.insert(sections, s3)
 
     -- Section 4: current source file, matching playback-info.ts.
-    local s4 = { header = "CURRENT SOURCE FILE", rows = {} }
+    local s4 = { header = i18n.upper("web.player.info.section.source"), rows = {} }
     local mi = state.media_info
     if mi then
-        table.insert(s4.rows, { label = "Container", value = shown(mi.container) })
-        table.insert(s4.rows, { label = "Size", value = mi.file_size and mi.file_size > 0 and
+        table.insert(s4.rows, { id = "source.container", label = T("web.player.info.container"), value = shown(mi.container) })
+        table.insert(s4.rows, { id = "source.size", label = T("web.player.info.size"), value = mi.file_size and mi.file_size > 0 and
             format_file_size(mi.file_size) or fallback })
-        table.insert(s4.rows, { label = "Bitrate", value = mi.bitrate and mi.bitrate > 0 and
+        table.insert(s4.rows, { id = "source.bitrate", label = T("web.player.info.bitrate"), value = mi.bitrate and mi.bitrate > 0 and
             format_mbps_from_kbps(mi.bitrate) or fallback })
         local video_codec = mi.codec_video and string.upper(mi.codec_video) or ""
         if video_codec ~= "" and mi.video_profile and mi.video_profile ~= "" then
             video_codec = video_codec .. " " .. mi.video_profile
         end
-        table.insert(s4.rows, { label = "Video codec", value = shown(video_codec) })
-        table.insert(s4.rows, { label = "Video bitrate", value = mi.video_bitrate and mi.video_bitrate > 0 and
+        table.insert(s4.rows, { id = "source.videoCodec", label = T("web.player.info.videoCodec"), value = shown(video_codec) })
+        table.insert(s4.rows, { id = "source.videoBitrate", label = T("web.player.info.videoBitrate"), value = mi.video_bitrate and mi.video_bitrate > 0 and
             format_mbps_from_kbps(mi.video_bitrate) or "Not supplied" })
-        table.insert(s4.rows, { label = "Video range type", value = shown(mi.video_range) })
-        table.insert(s4.rows, { label = "Color range", value = shown(format_color_range(mi.color_range)) })
+        table.insert(s4.rows, { id = "source.videoRangeType", label = T("web.player.info.videoRangeType"), value = shown(mi.video_range) })
+        table.insert(s4.rows, { id = "source.colorRange", label = T("web.player.info.colorRange"), value = shown(format_color_range(mi.color_range)) })
         local audio_codec = mi.audio_title and mi.audio_title ~= "" and mi.audio_title or
             (mi.codec_audio and string.upper(mi.codec_audio) or "")
-        table.insert(s4.rows, { label = "Audio codec", value = shown(audio_codec) })
-        table.insert(s4.rows, { label = "Audio bitrate", value = mi.audio_bitrate and mi.audio_bitrate > 0 and
+        table.insert(s4.rows, { id = "source.audioCodec", label = T("web.player.info.audioCodec"), value = shown(audio_codec) })
+        table.insert(s4.rows, { id = "source.audioBitrate", label = T("web.player.info.audioBitrate"), value = mi.audio_bitrate and mi.audio_bitrate > 0 and
             format_kbps(mi.audio_bitrate) or "Not supplied" })
-        table.insert(s4.rows, { label = "Audio channels", value = mi.audio_channels and mi.audio_channels > 0 and
+        table.insert(s4.rows, { id = "source.audioChannels", label = T("web.player.info.audioChannels"), value = mi.audio_channels and mi.audio_channels > 0 and
             tostring(mi.audio_channels) or fallback })
         local sample_rate = fallback
         if mi.audio_sample_rate and mi.audio_sample_rate > 0 then
             sample_rate = format_sample_rate(mi.audio_sample_rate)
         end
-        table.insert(s4.rows, { label = "Audio sample rate", value = sample_rate })
+        table.insert(s4.rows, { id = "source.audioSampleRate", label = T("web.player.info.audioSampleRate"), value = sample_rate })
     else
-        for _, label in ipairs({ "Container", "Size", "Bitrate", "Video codec", "Video bitrate",
-            "Video range type", "Color range", "Audio codec", "Audio bitrate",
-            "Audio channels", "Audio sample rate" }) do
-            table.insert(s4.rows, { label = label, value = fallback })
+        for _, key in ipairs({ "container", "size", "bitrate", "videoCodec", "videoBitrate",
+            "videoRangeType", "colorRange", "audioCodec", "audioBitrate",
+            "audioChannels", "audioSampleRate" }) do
+            table.insert(s4.rows, { id = "source." .. key, label = T("web.player.info." .. key), value = fallback })
         end
     end
     table.insert(sections, s4)
@@ -2700,7 +2994,8 @@ local function render_stats()
     -- sections when the panel opens and again whenever a displayed value
     -- changes, so the spoken text follows the live panel instead of freezing
     -- at its first paint. The host decides which changes are worth speaking.
-    -- Only these explicit displayed fields cross; no URL/header/property dump.
+    -- Stable row ids are independent of the translated headers and labels.
+    -- Only these explicit fields cross; no URL/header/property dump.
     local rows_json = require("mp.utils").format_json(sections)
     if rows_json and rows_json ~= state.stats_rows_sent then
         local reason = state.stats_rows_sent and "update" or "open"
@@ -2784,7 +3079,7 @@ local function render_stats()
     local cy = box_y + padding
 
     -- Header: "Playback Info"
-    draw_text(ass, box_x + padding, cy + line_h / 2, "Playback Info",
+    draw_text(ass, box_x + padding, cy + line_h / 2, ass_escape_text(T("web.player.info.title")),
         fs + 1, config.text_color, "00", 1.0, 4, nil, true)
     -- Close X button (top-right)
     draw_text(ass, box_x + box_w - padding - 10, cy + line_h / 2, "✕",
@@ -3117,7 +3412,9 @@ end
 
 -- Map language codes to display names
 local function lang_name(code)
-    if not code or code == "" then return "Unknown" end
+    if not code or code == "" then return T("web.languageName.unknown") end
+    local localized = i18n.language_name(code)
+    if localized then return localized end
     local normalized = tostring(code):lower()
     local base = normalized:match("^([^%-_]+)") or normalized
     local map = {
@@ -3328,11 +3625,14 @@ local function render_subtitle_menu()
         draw_text(ass, menu_x + padding + math.floor(24 * sc), text_y, ass_escape_text(display),
             fs, text_color, "00", 1.0, 4)
 
+        -- Raw source ids select catalog badges; "AI GENERATED" is native-only.
         local source_labels = {
-            embedded = "EMBEDDED", external = "EXTERNAL", downloaded = "DOWNLOADED",
-            ai_generated = "AI GENERATED", generated = "AI GENERATED",
+            embedded = "web.subtitles.menu.source.embedded", external = "web.subtitles.menu.source.external",
+            downloaded = "web.subtitles.menu.source.downloaded",
         }
-        local source_badge = source_labels[track.source or "embedded"]
+        local source_key = source_labels[track.source or "embedded"]
+        local source_badge = source_key and i18n.upper(source_key)
+            or (track.source == "ai_generated" or track.source == "generated") and "AI GENERATED"
             or string.upper(capitalize(track.source or "embedded"))
         local codec_badge = string.upper(track.codec or "")
         local badge = codec_badge ~= "" and (codec_badge .. "  " .. source_badge) or source_badge
@@ -3366,8 +3666,8 @@ local function render_subtitle_menu()
             cy = cy + item_h * 2
         end
         for _, action in ipairs({
-            { name = "sync", show = selected_sync.sync, label = selected_sync.busy and "Syncing…" or "Sync to audio" },
-            { name = "reset_timing", show = selected_sync.reset, label = "Reset timing" },
+            { name = "sync", show = selected_sync.sync, label = T(selected_sync.busy and "web.subtitles.menu.syncing" or "web.subtitles.menu.syncToAudio") },
+            { name = "reset_timing", show = selected_sync.reset, label = T("web.subtitles.menu.resetTiming") },
             { name = "sync_reload", show = selected_sync.reload, label = "Reload sync status" },
         }) do
             if action.show then
@@ -3375,7 +3675,7 @@ local function render_subtitle_menu()
                 if state.keyboard_menu_kind == "subtitles" and state.keyboard_menu_index == keyboard_row then
                     draw_rounded_rect(ass, menu_x + 2, cy, menu_x + menu_w - 2, cy + item_h, 4, config.text_color, "E6", 1.0)
                 end
-                draw_text(ass, menu_x + padding, cy + item_h / 2, action.label,
+                draw_text(ass, menu_x + padding, cy + item_h / 2, ass_escape_text(action.label),
                     fs_small, config.text_color, selected_sync.busy and action.name ~= "sync_reload" and "A0" or "00", 1.0, 4)
                 table.insert(state.subtitle_menu_items, { x = menu_x, y = cy, w = menu_w, h = item_h,
                     action = action.name, key = selected_sync.key, disabled = selected_sync.busy and action.name ~= "sync_reload" })
@@ -3387,17 +3687,19 @@ local function render_subtitle_menu()
     -- WebUI delay rail: label, minus, current value, plus, and reset in one row.
     local delay_ms = math.floor((mp.get_property_number("sub-delay") or 0) * 1000 + 0.5)
     local delay_alpha = state.active_subtitle >= 0 and state.subtitle_preferences_loaded and "38" or "A0"
-    draw_text(ass, menu_x + padding, cy + item_h / 2, not state.subtitle_preferences_loaded and "LOADING" or state.subtitle_preferences_pending and "SAVING" or "DELAY",
+    -- "SAVING" is native-only: the catalog has no saving-state word for this rail.
+    draw_text(ass, menu_x + padding, cy + item_h / 2, not state.subtitle_preferences_loaded and ass_escape_text(i18n.upper("common.loading"))
+        or state.subtitle_preferences_pending and "SAVING" or ass_escape_text(i18n.upper("web.subtitles.menu.delay")),
         fs_small, config.dim_text_color, "58", 1.0, 4, nil, true)
     local minus_x = menu_x + menu_w - math.floor(196 * sc)
     local value_x = menu_x + menu_w - math.floor(139 * sc)
     local plus_x = menu_x + menu_w - math.floor(94 * sc)
     local reset_x = menu_x + menu_w - math.floor(52 * sc)
     draw_text(ass, minus_x, cy + item_h / 2, "−", fs, config.text_color, delay_alpha, 1.0, 5)
-    draw_text(ass, value_x, cy + item_h / 2, string.format("%+d ms", delay_ms),
+    draw_text(ass, value_x, cy + item_h / 2, ass_escape_text(TF("web.subtitles.menu.delayValue", { delay = string.format("%+d", delay_ms) })),
         fs_small, config.text_color, delay_alpha, 1.0, 5, "Consolas", false)
     draw_text(ass, plus_x, cy + item_h / 2, "+", fs, config.text_color, delay_alpha, 1.0, 5)
-    draw_text(ass, reset_x, cy + item_h / 2, "Reset", fs_small,
+    draw_text(ass, reset_x, cy + item_h / 2, ass_escape_text(truncate_display_text(T("web.subtitles.menu.resetDelay"), math.floor(52 * sc), fs_small)), fs_small,
         config.dim_text_color, delay_ms ~= 0 and delay_alpha or "A0", 1.0, 5)
     if state.active_subtitle >= 0 and state.subtitle_preferences_loaded then
         keyboard_row = keyboard_row + 1
@@ -3444,7 +3746,7 @@ local function render_subtitle_menu()
         draw_rounded_rect(ass, menu_x + 2, cy, menu_x + menu_w - 2,
             cy + item_h, 4, config.text_color, "E6", 1.0)
     end
-    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Search Online…",
+    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, ass_escape_text(T("web.subtitles.menu.addSubtitles")),
         fs, config.dim_text_color, "00", 1.0, 4)
     table.insert(state.subtitle_menu_items, {
         x = menu_x, y = cy, w = menu_w, h = item_h, action = "search"
@@ -3459,7 +3761,7 @@ local function render_subtitle_menu()
                 cy + item_h, 4, config.text_color, "E6", 1.0)
         end
         draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2,
-            "Translate with AI…", fs, config.dim_text_color, "00", 1.0, 4)
+            ass_escape_text(T("web.subtitles.menu.translateWithAi")), fs, config.dim_text_color, "00", 1.0, 4)
         table.insert(state.subtitle_menu_items, {
             x = menu_x, y = cy, w = menu_w, h = item_h, action = "ai"
         })
@@ -3472,7 +3774,7 @@ local function render_subtitle_menu()
         draw_rounded_rect(ass, menu_x + 2, cy, menu_x + menu_w - 2,
             cy + item_h, 4, config.text_color, "E6", 1.0)
     end
-    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, "Appearance…",
+    draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, ass_escape_text(T("web.subtitles.menu.appearance")),
         fs, config.dim_text_color, "00", 1.0, 4)
     table.insert(state.subtitle_menu_items, {
         x = menu_x, y = cy, w = menu_w, h = item_h, action = "appearance"
@@ -3552,7 +3854,7 @@ local function render_quality_menu()
 
     -- Versions section
     if has_versions then
-        draw_text(ass, menu_x + padding, cy + heading_h / 2, "VERSION",
+        draw_text(ass, menu_x + padding, cy + heading_h / 2, ass_escape_text(i18n.upper("web.player.quality.version")),
             fs_small, config.dim_text_color, "58", 1.0, 4, nil, true)
         cy = cy + heading_h
         for _, ver in ipairs(versions) do
@@ -3575,9 +3877,10 @@ local function render_quality_menu()
             draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, ass_escape_text(label),
                 fs, text_color, "00", 1.0, 4)
 
-            local status = is_active and "Playing" or (is_requested and "Requested" or "")
+            local status = is_active and T("web.player.quality.versionPlaying")
+                or (is_requested and T("web.player.quality.versionRequested") or "")
             if status ~= "" then
-                draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, status,
+                draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, ass_escape_text(status),
                     fs_small, config.dim_text_color, "40", 1.0, 6)
             end
 
@@ -3594,7 +3897,7 @@ local function render_quality_menu()
             config.dim_text_color, "60", 1.0)
         cy = cy + 4
 
-        draw_text(ass, menu_x + padding, cy + heading_h / 2, "QUALITY",
+        draw_text(ass, menu_x + padding, cy + heading_h / 2, ass_escape_text(i18n.upper("web.player.quality.title")),
             fs_small, config.dim_text_color, "58", 1.0, 4, nil, true)
         cy = cy + heading_h
     end
@@ -3689,7 +3992,7 @@ render_buffering_quality = function()
         state.buffering_obscured = obscured
         mp.commandv("script-message", "silo-buffering-obscured", tostring(obscured))
     end
-    local render_key = tostring(state.buffering_quality_pill) .. ":" .. tostring(state.osc_disabled)
+    local render_key = tostring(osc_locale.generation) .. ":" .. tostring(state.buffering_quality_pill) .. ":" .. tostring(state.osc_disabled)
         .. ":" .. tostring(obscured) .. ":" .. tostring(state.buffering_quality_focus)
         .. ":" .. tostring(state.osd_width) .. ":" .. tostring(state.osd_height)
     if state.buffering_quality_render_key == render_key then return end
@@ -3710,25 +4013,27 @@ render_buffering_quality = function()
     local x, y = W - width - math.floor(12 * sc), H - height - math.floor(105 * sc)
     local ass = assdraw.ass_new()
     draw_rounded_rect(ass, x, y, x + width, y + height, math.floor(10 * sc), "171717", "10", 1.0)
-    local title = pill == "prompt" and "Playback keeps buffering"
-        or pill == "cant_lower" and "Can't lower quality for this video"
-        or "Quality lowered to stop buffering"
-    draw_text(ass, x + math.floor(16 * sc), y + math.floor(24 * sc), title,
+    local title = T(pill == "prompt" and "bufferingQuality.prompt.title"
+        or pill == "cant_lower" and "bufferingQuality.cantLower"
+        or "bufferingQuality.lowered")
+    draw_text(ass, x + math.floor(16 * sc), y + math.floor(24 * sc),
+        ass_escape_text(truncate_display_text(title, width - math.floor(32 * sc), math.floor(16 * sc))),
         math.floor(16 * sc), config.text_color, "00", 1.0, 4, nil, true)
     local function action(name, text, left, button_width)
         local top, h = y + math.floor(54 * sc), math.floor(36 * sc)
         local focused = (state.buffering_quality_focus or 1) == #state.buffering_quality_actions + 1
         draw_rounded_rect(ass, left, top, left + button_width, top + h, math.floor(6 * sc),
             focused and config.accent_color or "404040", "10", 1.0)
-        draw_text(ass, left + button_width / 2, top + h / 2, text, math.floor(14 * sc), config.text_color, "00", 1.0, 5)
+        draw_text(ass, left + button_width / 2, top + h / 2, ass_escape_text(truncate_display_text(text, button_width - math.floor(8 * sc), math.floor(14 * sc))),
+            math.floor(14 * sc), config.text_color, "00", 1.0, 5)
         table.insert(state.buffering_quality_actions, {x = left, y = top, w = button_width, h = h, action = name})
     end
     if pill == "prompt" then
         local bw = math.floor((width - 44 * sc) / 2)
-        action("lower", "Lower quality", x + math.floor(16 * sc), bw)
-        action("keep", "Keep quality", x + math.floor(28 * sc) + bw, bw)
+        action("lower", T("bufferingQuality.prompt.lower"), x + math.floor(16 * sc), bw)
+        action("keep", T("bufferingQuality.prompt.keep"), x + math.floor(28 * sc) + bw, bw)
     elseif pill == "undo" then
-        action("restore", "Restore quality", x + math.floor(16 * sc), math.min(width - 32 * sc, 190 * sc))
+        action("restore", T("bufferingQuality.restore"), x + math.floor(16 * sc), math.min(width - 32 * sc, 190 * sc))
     end
     state.buffering_quality_overlay = state.buffering_quality_overlay or mp.create_osd_overlay("ass-events")
     local overlay = state.buffering_quality_overlay
@@ -3895,14 +4200,15 @@ local function render_playback_failure()
         draw_rounded_rect(ass, x, button_y, x + button_w, button_y + button_h,
             math.floor(8 * sc), focused and config.accent_color or "333333", focused and "10" or "20", 1.0)
         draw_text(ass, x + button_w / 2, button_y + button_h / 2,
-            label, body_fs, config.text_color, "00", 1.0, 5, nil, true)
+            ass_escape_text(truncate_display_text(label, button_w - math.floor(8 * sc), body_fs)), body_fs, config.text_color, "00", 1.0, 5, nil, true)
         table.insert(actions, { x = x, y = button_y, w = button_w, h = button_h, action = name })
     end
 
     if state.playback_failure_can_retry then
-        draw_action("retry", "Retry", button_x)
+        draw_action("retry", T("common.retry"), button_x)
         button_x = button_x + button_w + button_gap
     end
+    -- "Exit player" is native-only: the web's failure screen has no exit action.
     draw_action("exit", "Exit player", button_x)
     state.playback_failure_actions = actions
 
@@ -3954,7 +4260,7 @@ local function update_skip_button_rect()
     local H = state.osd_height
     local sc = ui_scale()
     -- IntroSkipButton.tsx: px-6, py-2, text-sm, right-6, bottom-24.
-    local label_width = #tostring(state.skip_label or "") * 7.5
+    local label_width = math.min(i18n.units(i18n.skip_text(state.skip_label)), 32) * 7.5
     local btn_w = math.floor(math.max(118, label_width + 48) * sc)
     local btn_h = math.floor(36 * sc)
     local btn_x = W - btn_w - math.floor(24 * sc)
@@ -4019,7 +4325,7 @@ local function render_audio_menu()
 
     draw_rounded_rect(ass, menu_x, menu_y, menu_x + menu_w, menu_y + menu_h,
         math.floor(8 * sc), "101010", "1A", 1.0)
-    draw_text(ass, menu_x + padding, menu_y + padding + header_h / 2, "AUDIO",
+    draw_text(ass, menu_x + padding, menu_y + padding + header_h / 2, ass_escape_text(i18n.upper("web.player.audioMenu.heading")),
         math.floor(12 * sc), config.text_color, "70", 1.0, 4, nil, true)
 
     local cy = menu_y + padding + header_h
@@ -4049,8 +4355,8 @@ local function render_audio_menu()
         local channel_label = ""
         if channels == 8 then channel_label = "7.1"
         elseif channels == 6 then channel_label = "5.1"
-        elseif channels == 2 then channel_label = "STEREO"
-        elseif channels > 0 then channel_label = tostring(channels) .. " CH" end
+        elseif channels == 2 then channel_label = i18n.upper("web.common.format.channels.stereo")
+        elseif channels > 0 then channel_label = i18n.upper("web.common.format.channels.count", channels) end
 
         local codec_label = tostring(track.codec or "")
         local codec_lower = codec_label:lower()
@@ -4066,7 +4372,8 @@ local function render_audio_menu()
             if track.language and track.language ~= "" then table.insert(title_parts, lang_name(track.language)) end
             if codec_label ~= "" then table.insert(title_parts, codec_label) end
             if channel_label ~= "" then table.insert(title_parts, channel_label:lower()) end
-            title = #title_parts > 0 and table.concat(title_parts, " ") or ("Track " .. tostring(index + 1))
+            title = #title_parts > 0 and table.concat(title_parts, " ")
+                or TF("web.player.audioMenu.trackFallback", { number = tostring(index + 1) })
         end
         draw_text(ass, text_x, cy + math.floor(18 * sc),
             ass_escape_text(title), math.floor(14 * sc), config.text_color,
@@ -4077,17 +4384,18 @@ local function render_audio_menu()
         local badges = {}
         if codec_label ~= "" then table.insert(badges, codec_label) end
         if channel_label ~= "" then table.insert(badges, channel_label) end
-        if track.default then table.insert(badges, "DEFAULT") end
+        local default_badge = track.default and i18n.upper("web.player.audioMenu.defaultBadge") or nil
+        if default_badge then table.insert(badges, default_badge) end
         local badge_right = menu_x + menu_w - padding
         for badge_index = #badges, 1, -1 do
             local badge = badges[badge_index]
-            local badge_w = math.floor((#badge * 5.6 + 13) * sc)
+            local badge_w = math.floor((i18n.units(badge) * 5.6 + 13) * sc)
             local badge_h = math.floor(16 * sc)
             local badge_x = badge_right - badge_w
             local badge_y = cy + math.floor(9 * sc)
             draw_rounded_rect(ass, badge_x, badge_y, badge_right, badge_y + badge_h,
                 math.floor(3 * sc), config.text_color,
-                badge == "DEFAULT" and "C8" or "DC", 1.0)
+                (default_badge and badge_index == #badges) and "C8" or "DC", 1.0)
             draw_text(ass, badge_x + badge_w / 2, badge_y + badge_h / 2,
                 ass_escape_text(badge), math.floor(9.5 * sc), config.text_color, "48", 1.0, 5, nil, true)
             badge_right = badge_x - math.floor(6 * sc)
@@ -4162,7 +4470,7 @@ local function render_chapter_menu()
 
     draw_rounded_rect(ass, menu_x, menu_y, menu_x + menu_w, menu_y + menu_h,
         math.floor(8 * sc), "101010", "1A", 1.0)
-    draw_text(ass, menu_x + padding, menu_y + padding + header_h / 2, "CHAPTERS",
+    draw_text(ass, menu_x + padding, menu_y + padding + header_h / 2, ass_escape_text(i18n.upper("web.player.chaptersMenu.heading")),
         math.floor(12 * sc), config.text_color, "70", 1.0, 4, nil, true)
 
     local cy = menu_y + padding + header_h
@@ -4201,7 +4509,7 @@ local function render_chapter_menu()
 
         local text_x = thumb_x + thumb_w + math.floor(12 * sc)
         draw_text(ass, text_x, cy + math.floor(25 * sc),
-            ass_escape_text(chapter.title or ("Chapter " .. tostring(i))), math.floor(14 * sc),
+            ass_escape_text(chapter.title or TF("web.audiobooks.chapter.fallbackTitle", { number = tostring(i) })), math.floor(14 * sc),
             config.text_color, active and "00" or "28", 1.0, 4, nil, active)
         draw_text(ass, text_x, cy + math.floor(44 * sc),
             format_time(start_seconds), math.floor(11 * sc), config.text_color, "78", 1.0, 4, "Consolas", false)
@@ -4304,7 +4612,8 @@ render_skip_button = function()
         state.skip_hovered and "CC" or "4D", 1.0)
 
     -- Text
-    draw_text(ass, r.x + r.w / 2, r.y + r.h / 2, state.skip_label,
+    draw_text(ass, r.x + r.w / 2, r.y + r.h / 2,
+        ass_escape_text(truncate_display_text(i18n.skip_text(state.skip_label), r.w - math.floor(16 * sc), fs)),
         fs, config.text_color, "00", 1.0, 5, nil, true)
 
     local kind = state.skip_label == "Skip Recap" and "recap"
@@ -4663,16 +4972,21 @@ render_next_episode_countdown = function()
             state.next_ep_still_rect = {x=image_x,y=image_y,w=image_w,h=image_h}
         end
     else remove_next_episode_still() end
+    -- "Up next in Ns" from the catalog, with its count in the accent.
     local remaining = tostring(state.next_ep_countdown_remaining)
-    local lead = "Up next in "
     local label_size = math.floor(12 * sc)
+    local lead_text = truncate_display_text(TN("web.player.nextEpisode.upNextIn", state.next_ep_countdown_remaining), text_w, label_size)
+    local count_at, count_end = lead_text:find(remaining, 1, true)
+    local lead = count_at and (ass_escape_text(lead_text:sub(1, count_at - 1)) .. "{" .. ass_color(config.accent_color) .. "}" ..
+        remaining .. "{" .. ass_color("B3BABD") .. "}" .. ass_escape_text(lead_text:sub(count_end + 1)))
+        or ass_escape_text(lead_text)
     draw_text(ass, text_x, card_y + pad + math.floor(8 * sc), lead,
         label_size, "B3BABD", "00", 1.0, 4, nil, true)
-    draw_text(ass, text_x + math.floor(#lead * label_size * 0.44), card_y + pad + math.floor(8 * sc), remaining,
-        label_size, config.accent_color, "00", 1.0, 4, nil, true)
 
     draw_text(ass, text_x, card_y + pad + math.floor(26 * sc),
-        "S" .. tostring(detail.season_number or "?") .. " E" .. tostring(detail.episode_number or "?"),
+        ass_escape_text(truncate_display_text(TF("web.player.nextEpisode.seasonEpisode", {
+            season = tostring(detail.season_number or "?"), episode = tostring(detail.episode_number or "?") }),
+            text_w, math.floor(12 * sc))),
         math.floor(12 * sc), "B3BABD", "00", 1.0, 4, nil, false)
     local title = truncate_display_text(tostring(detail.title or ""), text_w, math.floor(16 * sc))
     if title ~= "" then
@@ -4684,12 +4998,14 @@ render_next_episode_countdown = function()
         button_h / 2, "EFF3F5", "00", 1.0)
     draw_play_icon(ass, play_x + play_w / 2 - math.floor(36 * sc), buttons_y + button_h / 2,
         math.floor(14 * sc), "110E0E", "00", 1.0)
-    draw_text(ass, play_x + play_w / 2 + math.floor(8 * sc), buttons_y + button_h / 2, "Play Now",
+    draw_text(ass, play_x + play_w / 2 + math.floor(8 * sc), buttons_y + button_h / 2,
+        ass_escape_text(truncate_display_text(T("web.player.nextEpisode.playNow"), play_w - math.floor(56 * sc), math.floor(13 * sc))),
         math.floor(13 * sc), "110E0E", "00", 1.0, 5, nil, true)
 
     draw_rounded_rect(ass, cancel_x, buttons_y, cancel_x + cancel_w, buttons_y + button_h,
         button_h / 2, "FFFFFF", "E6", 1.0)
-    draw_text(ass, cancel_x + cancel_w / 2, buttons_y + button_h / 2, "Cancel",
+    draw_text(ass, cancel_x + cancel_w / 2, buttons_y + button_h / 2,
+        ass_escape_text(truncate_display_text(T("common.cancel"), cancel_w - math.floor(8 * sc), math.floor(13 * sc))),
         math.floor(13 * sc), "EFF3F5", "00", 1.0, 5, nil, true)
 
     local bar_y = card_y + card_h - bar_h
@@ -4853,9 +5169,12 @@ render_translation_buffering = function()
     local W = state.osd_width
     local H = state.osd_height
     local sc = ui_scale()
-    local label = "Preparing " .. tostring(state.translation_buffering_label or "translated") ..
-        " subtitles\xe2\x80\xa6"
-    local panel_w = math.floor(math.min(520, math.max(330, 150 + #label * 7)) * sc)
+    local named = state.translation_buffering_label
+    local label = (named and named ~= "" and named ~= "translated")
+        and TF("web.player.subtitles.preparingTranslation", { label = named })
+        or T("web.player.subtitles.preparingTranslated")
+    local panel_w = math.floor(math.min(520, math.max(330, 150 + i18n.units(label) * 7)) * sc)
+    label = truncate_display_text(label, panel_w - math.floor(60 * sc), math.floor(14 * sc))
     local panel_h = math.floor(48 * sc)
     local panel_x = (W - panel_w) / 2
     local panel_y = (H - panel_h) / 2
@@ -4911,7 +5230,8 @@ render_next_episode_button = function()
         0, "FFFFFF", "60", 1.0)
 
     -- Label: "Next Episode ▶"
-    draw_text(ass, r.x + r.w / 2, r.y + r.h / 2, "Next Episode \xe2\x96\xb6",
+    draw_text(ass, r.x + r.w / 2, r.y + r.h / 2,
+        ass_escape_text(truncate_display_text(T("web.player.controls.nextEpisode"), r.w - math.floor(36 * sc), fs)) .. " \xe2\x96\xb6",
         fs, config.text_color, "00", 1.0, 5, nil, true)
 
     if not state.next_ep_overlay then
@@ -6053,7 +6373,7 @@ local function handle_wheel_up()
     end
     local new_vol = math.min((state.volume or 100) + 5, 100)
     mp.commandv("set", "volume", tostring(new_vol))
-    mp.osd_message(string.format("Volume: %d%%", new_vol), 1)
+    mp.osd_message(TF("web.player.volume.valueText", { percent = tostring(new_vol) }), 1)
     mp.commandv("script-message", "silo-volume-changed", tostring(new_vol))
     show_osc()
 end
@@ -6085,7 +6405,7 @@ local function handle_wheel_down()
     end
     local new_vol = math.max((state.volume or 100) - 5, 0)
     mp.commandv("set", "volume", tostring(new_vol))
-    mp.osd_message(string.format("Volume: %d%%", new_vol), 1)
+    mp.osd_message(TF("web.player.volume.valueText", { percent = tostring(new_vol) }), 1)
     mp.commandv("script-message", "silo-volume-changed", tostring(new_vol))
     show_osc()
 end
@@ -6483,6 +6803,17 @@ local function observe_properties()
         render_playback_failure()
     end)
 
+    -- Text-only refresh of a visible failure (interface language change); focus,
+    -- actions and retry ability stay as they are.
+    mp.register_script_message("osc-update-playback-failure", function(json_str)
+        if not state.playback_failure_visible then return end
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if not ok or not data then return end
+        if type(data.title) == "string" then state.playback_failure_title = data.title end
+        if type(data.message) == "string" then state.playback_failure_message = data.message end
+        render_playback_failure()
+    end)
+
     mp.register_script_message("osc-clear-playback-failure", function()
         state.playback_failure_visible = false
         state.playback_failure_actions = {}
@@ -6568,6 +6899,25 @@ local function observe_properties()
     mp.register_script_message("osc-set-connection-outage", function(value)
         state.connection_outage = value == "true"
         if state.playback_buffering or state.playback_loading then render_playback_wait() end
+    end)
+
+    -- The interface language, refreshed in place: open menus, panels and
+    -- prompts keep their state and only redraw their labels.
+    mp.register_script_message("osc-set-locale", function(...)
+        if not i18n.apply({...}) then return end
+        render_osc()
+        if state.stats_visible then render_stats() end
+        if state.subtitle_menu_visible then render_subtitle_menu() end
+        if state.quality_menu_visible then render_quality_menu() end
+        if state.audio_menu_visible then render_audio_menu() end
+        if state.chapter_menu_visible then render_chapter_menu() end
+        if state.skip_visible then render_skip_button() end
+        if state.next_ep_visible then render_next_episode_button() end
+        if state.next_ep_countdown_active then render_next_episode_countdown() end
+        if state.translation_buffering then render_translation_buffering() end
+        if state.playback_failure_visible then render_playback_failure() end
+        if state.playback_loading or state.playback_buffering or state.transport_reloading then render_playback_wait() end
+        render_buffering_quality()
     end)
 
     mp.register_script_message("osc-set-hud-wait-labels", function(reconnecting, catching_up)
@@ -6682,7 +7032,9 @@ local function observe_properties()
         end
     end)
 
-    mp.register_script_message("osc-set-stream-info", function(play_method, stream_type, protocol, video_codec, audio_codec, target_video_kbps)
+    -- play_method is display text; play_method_id is the raw wire method.
+    mp.register_script_message("osc-set-stream-info", function(play_method, stream_type, protocol, video_codec, audio_codec, target_video_kbps, play_method_id)
+        state.play_method_id = play_method_id ~= "" and play_method_id or nil
         state.play_method_str = play_method or ""
         state.stream_type_str = stream_type or ""
         state.protocol_str = protocol or ""

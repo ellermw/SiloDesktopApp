@@ -26,7 +26,7 @@ public sealed partial class MpvOscRuntimeTests
                 osc_test_check_next()
                 osc_test_render_next()
                 local button, seek = state.next_ep_rect, state.layout.seek_bar
-                assert(button and state.next_ep_overlay.data:find('Next Episode', 1, true), 'Next Episode was not rendered')
+                assert(button and state.next_ep_overlay.data:find('Next episode', 1, true), 'Next Episode was not rendered')
                 assert(button.y + button.h + 8 <= seek.y, 'Next Episode overlaps the timeline seek target')
                 assert(button.x >= 0 and button.y >= 0 and button.x + button.w <= dimensions.w, 'Next Episode left the viewport')
                 state.mouse_x, state.mouse_y = button.x + button.w / 2, seek.y + 1

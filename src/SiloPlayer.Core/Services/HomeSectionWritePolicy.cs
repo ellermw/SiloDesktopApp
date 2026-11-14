@@ -71,6 +71,9 @@ public static class HomeSectionWritePolicy
     public static SettingsSectionEntry Snapshot(SettingsSectionEntry row) => new()
     {
         Id = row.Id, SectionType = row.SectionType, Title = row.Title, DefaultTitle = row.DefaultTitle,
+        TitleKey = row.TitleKey, TitleArgs = Localization.SectionTitles.CopyArguments(row.TitleArgs), KeyedTitle = row.KeyedTitle,
+        DefaultTitleKey = row.DefaultTitleKey, DefaultTitleArgs = Localization.SectionTitles.CopyArguments(row.DefaultTitleArgs),
+        KeyedDefaultTitle = row.KeyedDefaultTitle,
         Featured = row.Featured, ItemLimit = row.ItemLimit, Hidden = row.Hidden, IsCustom = row.IsCustom,
         Customized = row.Customized, Position = row.Position,
         Config = row.Config == null ? null : JsonSerializer.Deserialize<Dictionary<string, object>>(JsonSerializer.Serialize(row.Config))

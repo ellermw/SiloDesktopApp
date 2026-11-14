@@ -67,7 +67,7 @@ public class SubtitleTrackInfo
 }
 
 /// <summary>
-/// Body for <c>PUT /api/v1/subtitle-prefs/{series_id}</c>. Mirrors upstream
+/// Body for <c>PUT /api/v2/subtitle-prefs/{series_id}</c>. Mirrors upstream
 /// <c>setSubtitlePrefRequest</c> in <c>internal/api/handlers/subtitle_prefs.go</c>.
 /// </summary>
 public class SubtitlePreferenceRequest

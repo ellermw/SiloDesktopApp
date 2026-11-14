@@ -37,7 +37,7 @@ public partial class DownloadsViewModel : ObservableObject
         // the entire page with a spinner on every visit creates a visible
         // reload even when the cached data is already usable.
         IsLoading = Downloads.Count == 0;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -50,7 +50,7 @@ public partial class DownloadsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load downloads: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load downloads: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {
@@ -62,7 +62,7 @@ public partial class DownloadsViewModel : ObservableObject
     [RelayCommand]
     private async Task DeleteDownloadAsync(string id, CancellationToken cancellationToken)
     {
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         try
         {
             await _downloadsApi.DeleteDownloadAsync(id, cancellationToken);
@@ -89,9 +89,9 @@ public partial class DownloadsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex is ApiException { StatusCode: 403 }
+            SetLocalizedMessage(nameof(ErrorMessage), () => ex is ApiException { StatusCode: 403 }
                 ? "You do not have permission to delete this download. It is still listed. Check your profile permissions and try again."
-                : "Could not delete the download from the server. It is still listed; check your connection and try again.";
+                : "Could not delete the download from the server. It is still listed; check your connection and try again.", value => ErrorMessage = value);
         }
     }
 }

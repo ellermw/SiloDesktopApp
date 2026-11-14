@@ -34,12 +34,12 @@ public sealed partial class ItemDetailPage
         var content = new StackPanel { MaxWidth = 420, Spacing = 12 };
         var status = new TextBlock { Text = "Preparing downloads…", TextWrapping = TextWrapping.Wrap };
         content.Children.Add(status);
-        var dialog = new ContentDialog
+        var dialog = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = seasonNumber.HasValue ? $"Download: {title} — {(seasonNumber == 0 ? "Specials" : $"Season {seasonNumber}")}" : $"Download: {title} — All Seasons",
             CloseButtonText = "Cancel", Content = content,
-        };
+        }, closeButton: "common.cancel");
         void Retire() { if (!Current()) DispatcherQueue.TryEnqueue(() => { if (!owner.IsCancellationRequested) owner.Cancel(); dialog.Hide(); }); }
         var auth = App.Services.GetRequiredService<AuthService>();
         auth.UserChanged += Retire; auth.ProfileChanged += Retire; auth.LoggedOut += Retire;
@@ -144,7 +144,7 @@ public sealed partial class ItemDetailPage
                         {
                             if (!Current()) { Abandon(); return; }
                             // A previous page may be accepted, also when a retired request stops the cursor. A new attempt requires an explicit reconciliation.
-                            status.Text = (Sentence(ex is OperationCanceledException ? "The connection changed while registering downloads." : ex.Message)
+                            status.Text = (Sentence(ex is OperationCanceledException ? "The connection changed while registering downloads." : SiloPlayer.Controls.MediaItemCardActions.Problem(ex))
                                 + " " + reconcile).TrimStart();
                             dialog.CloseButtonText = "Close";
                             var inspect = new Button { Content = "View Downloads" };
@@ -155,7 +155,7 @@ public sealed partial class ItemDetailPage
                     content.Children.Add(start);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-                catch (Exception ex) { if (Current()) status.Text = ex is OperationCanceledException ? "The connection changed while preparing downloads. Close this dialog and try again." : ex.Message; }
+                catch (Exception ex) { if (Current()) status.Text = ex is OperationCanceledException ? "The connection changed while preparing downloads. Close this dialog and try again." : SiloPlayer.Controls.MediaItemCardActions.Problem(ex); }
                 finally { if (!Current()) dialog.Hide(); }
             }
             var population = Populate();

@@ -17,7 +17,7 @@ internal static class OverlayBadgeRenderer
 {
     private static readonly SemaphoreSlim ImageDecodes = new(2, 2);
     internal static Border Build(string text, string id, OverlayItemConfig config, string preset, double scale,
-        OverlayStyle? style = null, string? valueKey = null, CardOverlayService? images = null)
+        OverlayStyle? style = null, string? valueKey = null, CardOverlayService? images = null, Func<string>? display = null)
     {
         scale = double.IsFinite(scale) && scale > 0 ? Math.Clamp(scale, .1, 8) : 1;
         var accent = config.AccentColor ?? DefaultAccent(id);
@@ -54,6 +54,27 @@ internal static class OverlayBadgeRenderer
             TextTrimming = score ? TextTrimming.None : TextTrimming.CharacterEllipsis,
             Foreground = foreground, VerticalAlignment = VerticalAlignment.Center,
         };
+        string DisplayText()
+        {
+            if (display != null) return display();
+            var key = (id, valueKey) switch
+            {
+                ("status", "pending") => "web.item.card.statusScanning",
+                ("status", "unmatched") => "web.item.card.statusUnmatched",
+                ("status", "ambiguous") => "web.item.card.statusAmbiguous",
+                ("show_status", "returning") => "web.settings.overlays.badge.showStatus.value.returning",
+                ("show_status", "ended") => "web.settings.overlays.badge.showStatus.value.ended",
+                ("show_status", "cancelled") => "web.settings.overlays.badge.showStatus.value.cancelled",
+                ("show_status", "upcoming") => "web.settings.overlays.badge.showStatus.value.upcoming",
+                ("upcoming_event", "series_premiere") => "web.calendar.event.badge.seriesPremiere",
+                ("upcoming_event", "season_premiere") => "web.calendar.event.badge.seasonPremiere",
+                ("upcoming_event", "finale") => "web.calendar.event.badge.finale",
+                ("upcoming_event", "digital") => "web.calendar.event.badge.digital",
+                ("upcoming_event", "physical") => "web.calendar.event.badge.physical",
+                _ => null
+            };
+            return key == null ? text : SiloPlayer.Core.Localization.AppStrings.Get(key, fallback: text);
+        }
         var source = SourceMark(id);
         var score = source is not null ? BareScore(text, source) : null;
         void Plain()
@@ -67,10 +88,13 @@ internal static class OverlayBadgeRenderer
             }
             else if (source is null && (config.ShowIcon ?? look.PreferIcon) && Glyph(id) is { } glyph)
                 content.Children.Add(new FontIcon { Glyph = glyph, FontSize = look.IconSize * scale, Width = look.IconSize * scale, Height = look.IconSize * scale, Foreground = foreground });
-            content.Children.Add(Label(source is not null ? look.SourceChips ? score! : source + " " + score : text, look.SourceChips && score is not null));
+            content.Children.Add(Label(source is not null ? look.SourceChips ? score! : source + " " + score : DisplayText(), look.SourceChips && score is not null));
         }
-        Plain();
-        AutomationProperties.SetName(badge, source is null ? text : source + " " + score);
+        MediaItemCardActions.BindText(badge, "Caption", element =>
+        {
+            Plain();
+            AutomationProperties.SetName(element, source is null ? DisplayText() : source + " " + score);
+        });
         if (look.BoxShadow || look.TextShadow)
         {
             badge.Shadow = new ThemeShadow();
@@ -114,7 +138,7 @@ internal static class OverlayBadgeRenderer
             if (owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return;
             if (bitmap is not null)
             {
-                badge.Child = new Image { Source = bitmap, Height = (look.FontSize + 2 * look.PaddingBlock) * scale * 1.6, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left };
+                badge.Child = new Image { FlowDirection = FlowDirection.LeftToRight, Source = bitmap, Height = (look.FontSize + 2 * look.PaddingBlock) * scale * 1.6, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left };
                 badge.Background = null; badge.BorderThickness = new(0); badge.Padding = new(0); badge.Shadow = null;
                 RoundedBadge.SetRadius(badge, 0); badge.CornerRadius = new(0);
                 return;
@@ -122,7 +146,7 @@ internal static class OverlayBadgeRenderer
             bitmap = await DecodeAsync(config.Image, owner, context);
             if (bitmap is null || owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return;
             content.Children.Clear();
-            content.Children.Add(new Image { Source = bitmap, Height = look.IconSize * scale, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new Image { FlowDirection = FlowDirection.LeftToRight, Source = bitmap, Height = look.IconSize * scale, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center });
             content.Children.Add(Label(score ?? text, score is not null));
             badge.InvalidateMeasure();
         }

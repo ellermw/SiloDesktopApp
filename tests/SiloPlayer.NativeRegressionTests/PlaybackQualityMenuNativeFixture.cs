@@ -770,7 +770,7 @@ internal static class PlaybackQualityMenuNativeFixture
 
             menu = await Open(); list = (ListView)Get(menu, "_list")!;
             Require(list.Items.OfType<ListViewItem>().Any(row => row.Tag is "quality:720p" &&
-                Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(row).Contains("Current", StringComparison.Ordinal)),
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(row).Contains("Selected", StringComparison.Ordinal)),
                 "Reopening Quality lost the accepted checkmark.");
             Call(menu, "Input", "home"); Call(menu, "Input", "down");
             Require(list.SelectedItem is ListViewItem { Tag: "file:71" }, "Version source ID was replaced by its row index.");

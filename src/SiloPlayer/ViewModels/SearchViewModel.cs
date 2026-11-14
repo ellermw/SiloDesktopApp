@@ -75,14 +75,14 @@ public partial class SearchViewModel : ObservableObject
         var query = Query.Trim(); var generation = _queryGeneration;
         var key = BuildSearchKey(query); var owner = new CancellationTokenSource();
         Interlocked.Exchange(ref _peopleRetryCts, owner)?.Cancel();
-        IsPeopleLoading = true; PeopleError = null;
+        IsPeopleLoading = true; SetLocalizedMessage(nameof(PeopleError), () => null, value => PeopleError = value);
         try
         {
             var people = await SearchPeopleAsync(query, owner.Token);
             if (_peopleRetryCts == owner && !owner.IsCancellationRequested && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) ReplacePeopleResults(people);
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
-        catch (Exception ex) { if (_peopleRetryCts == owner && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) PeopleError = $"Could not load people: {ex.Message}"; }
+        catch (Exception ex) { if (_peopleRetryCts == owner && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) SetLocalizedMessage(nameof(PeopleError), () => $"Could not load people: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => PeopleError = value); }
         finally { if (_peopleRetryCts == owner) { _peopleRetryCts = null; IsPeopleLoading = false; } owner.Dispose(); }
     }
 
@@ -291,14 +291,14 @@ public partial class SearchViewModel : ObservableObject
 
         CancelPendingFilters();
         IsLoading = true;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         var shouldResetVisibleResults = !string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal);
         if (shouldResetVisibleResults)
         {
             Results.Clear();
             PeopleResults.Clear();
             OutsideLibraryResults.Clear();
-            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0; OutsideError = null;
+            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0; SetLocalizedMessage(nameof(OutsideError), () => null, value => OutsideError = value);
             TotalCount = 0;
         }
 
@@ -342,7 +342,7 @@ public partial class SearchViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
-            ErrorMessage = $"Search failed: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"Search failed: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
             LocalLog.AppendLine(
                 "search_timing.txt",
                 $"catalog_failed | query_length={querySnapshot.Length} | type={ex.GetType().Name} | message={ex.Message}");
@@ -361,7 +361,7 @@ public partial class SearchViewModel : ObservableObject
         var previousActions = _externalActionsCts; _externalActionsCts = new(); previousActions.Cancel(); previousActions.Dispose(); _externalPending.Clear();
         OutsideWatchlistTitlesSupported = false;
         Interlocked.Exchange(ref _peopleRetryCts, null)?.Cancel();
-        IsPeopleLoading = false; PeopleError = null;
+        IsPeopleLoading = false; SetLocalizedMessage(nameof(PeopleError), () => null, value => PeopleError = value);
         _queryGeneration++;
         Interlocked.Exchange(ref _outsideCts, null)?.Cancel();
         IsOutsideLoading = false;
@@ -411,7 +411,7 @@ public partial class SearchViewModel : ObservableObject
         catch (Exception ex)
         {
             if (generation != _queryGeneration || ct.IsCancellationRequested) return;
-            ErrorMessage = $"Could not load more search results: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not load more search results: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {
@@ -509,9 +509,9 @@ public partial class SearchViewModel : ObservableObject
 
     private async Task PublishPeopleAsync(Task<List<Person>> task, string query, CancellationTokenSource owner)
     {
-        try { var people = await task; if (IsCurrentSearchOwner(owner, query)) { ReplacePeopleResults(people); PeopleError = null; } }
+        try { var people = await task; if (IsCurrentSearchOwner(owner, query)) { ReplacePeopleResults(people); SetLocalizedMessage(nameof(PeopleError), () => null, value => PeopleError = value); } }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (IsCurrentSearchOwner(owner, query)) PeopleError = $"Could not load people: {ex.Message}"; }
+        catch (Exception ex) { if (IsCurrentSearchOwner(owner, query)) SetLocalizedMessage(nameof(PeopleError), () => $"Could not load people: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => PeopleError = value); }
     }
 
     public async Task SetOutsidePageAsync(int page)
@@ -523,7 +523,7 @@ public partial class SearchViewModel : ObservableObject
         var query = Query.Trim(); var key = BuildSearchKey(query); var generation = _queryGeneration;
         var selectedPage = Math.Clamp(page, 1, OutsideTotalPages > 0 ? OutsideTotalPages : 500);
         OutsideRequestedPage = selectedPage;
-        IsOutsideLoading = true; OutsideError = null;
+        IsOutsideLoading = true; SetLocalizedMessage(nameof(OutsideError), () => null, value => OutsideError = value);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(6));
         try
@@ -544,7 +544,7 @@ public partial class SearchViewModel : ObservableObject
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
         catch (Exception)
         {
-            if (_outsideCts == owner && generation == _queryGeneration) OutsideError = $"Couldn't load page {selectedPage} of titles outside your library. Try this page again.";
+            if (_outsideCts == owner && generation == _queryGeneration) SetLocalizedMessage(nameof(OutsideError), () => $"Couldn't load page {selectedPage} of titles outside your library. Try this page again.", value => OutsideError = value);
         }
         finally { if (_outsideCts == owner) { _outsideCts = null; IsOutsideLoading = false; } owner.Dispose(); }
     }

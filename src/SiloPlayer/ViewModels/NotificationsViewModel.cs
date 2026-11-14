@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -137,7 +138,7 @@ public partial class NotificationsViewModel : ObservableObject
         // First visits and explicit filter swaps still get the WebUI skeleton.
         IsLoading = Notifications.Count == 0 || _lastLoadedFilter != StatusFilter;
         ErrorMessage = null;
-        StatusMessage = "Loading notifications...";
+        StatusMessage = ShellText(nameof(StatusMessage), () => "Loading notifications...");
 
         try
         {
@@ -178,7 +179,7 @@ public partial class NotificationsViewModel : ObservableObject
         catch (Exception ex)
         {
             if (generation != Volatile.Read(ref _loadGeneration) || !IsCurrentContext) return;
-            ErrorMessage = $"Failed to load notifications: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to load notifications: {ShellProblem(ex, ex.Message)}");
             StatusMessage = "";
         }
         finally
@@ -297,7 +298,7 @@ public partial class NotificationsViewModel : ObservableObject
             if (context != _notificationsApi.RequestContext) return;
             _lastLoadedAt = DateTime.MinValue;
             await LoadPageAsync(reset: true);
-            ErrorMessage = $"Failed to mark notification read: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"{AppStrings.Get("web.notifications.queries.markReadFailed", fallback: "Failed to mark notification read")}: {ShellProblem(ex, ex.Message)}");
         }
     }
 
@@ -318,7 +319,7 @@ public partial class NotificationsViewModel : ObservableObject
         catch (Exception ex)
         {
             if (context != _notificationsApi.RequestContext) return;
-            ErrorMessage = $"Failed to mark notifications read: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"{AppStrings.Get("web.notifications.queries.markAllReadFailed", fallback: "Failed to mark notifications read")}: {ShellProblem(ex, ex.Message)}");
             _lastLoadedAt = DateTime.MinValue;
         }
         finally { IsMarkingAllRead = false; }
@@ -338,14 +339,14 @@ public partial class NotificationsViewModel : ObservableObject
             if (version == Volatile.Read(ref _preferencesSaveVersion) && context == _notificationsApi.RequestContext)
             {
                 Preferences = saved;
-                StatusMessage = "Notification preferences saved.";
+                StatusMessage = ShellText(nameof(StatusMessage), () => "Notification preferences saved.");
             }
         }
         catch (Exception ex)
         {
             if (version != Volatile.Read(ref _preferencesSaveVersion) || context != _notificationsApi.RequestContext) return;
 
-            PreferencesErrorMessage = $"Failed to save notification preferences: {ex.Message}";
+            PreferencesErrorMessage = ShellText(nameof(PreferencesErrorMessage), () => $"{AppStrings.Get("web.notifications.queries.savePreferencesFailed", fallback: "Failed to save notification preferences")}: {ShellProblem(ex, ex.Message)}");
             try
             {
                 // A previous overlapping mutation may already have reached the
@@ -372,4 +373,33 @@ public partial class NotificationsViewModel : ObservableObject
         NotifyContinueWatching = source.NotifyContinueWatching,
         NotifyNextUp = source.NotifyNextUp,
     };
+}
+
+public partial class NotificationsViewModel
+{
+    private readonly Dictionary<string, (Func<string> Render, string Last)> _shellText = [];
+
+    private string ShellText(string property, Func<string> render)
+    {
+        var text = render();
+        _shellText[property] = (render, text);
+        return text;
+    }
+
+    private static string ShellProblem(Exception exception, string english)
+        => exception is ApiException problem ? ApiProblemText.Display(problem, english) : english;
+
+    public void RefreshLocalizedText()
+    {
+        foreach (var (property, text) in _shellText.ToArray())
+        {
+            switch (property)
+            {
+                case nameof(ErrorMessage) when ErrorMessage == text.Last: ErrorMessage = ShellText(property, text.Render); break;
+                case nameof(PreferencesErrorMessage) when PreferencesErrorMessage == text.Last: PreferencesErrorMessage = ShellText(property, text.Render); break;
+                case nameof(StatusMessage) when StatusMessage == text.Last: StatusMessage = ShellText(property, text.Render); break;
+                default: _shellText.Remove(property); break;
+            }
+        }
+    }
 }

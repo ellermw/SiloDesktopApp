@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 
@@ -250,7 +251,7 @@ public partial class PlayerService
         var job = state.Sync;
         var watched = job != null && job.Id == entry.WatchedJobId;
         if (watched && SubtitleSyncPolicy.InProgress(job))
-            SendSubtitleSyncNotice("Syncing " + (state.Language.Length > 0 ? state.Language : "selected") + " subtitles",
+            SendSubtitleSyncNotice(SyncText("web.subtitles.syncNotice.trackSyncing", "Syncing {name} subtitles", SyncTrackName(state)),
                 SubtitleSyncPolicy.Phase(job!), "progress", (int)Math.Round(Math.Clamp(job!.Progress ?? 0, 0, 1) * 100));
         else if (watched && entry.AnnouncedJobId != job!.Id)
         {
@@ -258,7 +259,7 @@ public partial class PlayerService
             if (job.Status == "synced" && IsActiveSyncKey(state.Key))
             {
                 _subtitleSyncApplyingKey = state.Key; _subtitleSyncApplyingJob = job.Id;
-                SendSubtitleSyncNotice("Applying new timing…", "", "progress", 100, applying: true);
+                SendSubtitleSyncNotice(AppStrings.Get("web.subtitles.syncNotice.applying", fallback: "Applying new timing…"), "", "progress", 100, applying: true);
                 _ = FinishSubtitleApplyingAfterBoundAsync(state.Key, job.Id, ct);
                 _ = ReloadCorrectedSubtitleAsync(entry, ct, own: true);
             }
@@ -367,8 +368,8 @@ public partial class PlayerService
             {
                 if (!SyncCurrent(ct)) return;
                 if (ex.StatusCode == 403) target.Forbidden = true;
-                else if (ex.StatusCode == 422) { target.Unsupported = true; target.Error = "This format can't be synced."; }
-                else target.Error = ex.StatusCode == 412 ? "The subtitle changed. Try again." : "Couldn't update subtitle timing. Try again.";
+                else if (ex.StatusCode == 422) { target.Unsupported = true; target.Error = AppStrings.Get("web.subtitles.sync.error.unsupportedFormat", fallback: "This format can't be synced."); }
+                else target.Error = ex.StatusCode == 412 ? AppStrings.Get("web.subtitles.sync.error.changed", fallback: "The subtitle changed. Try again.") : "Couldn't update subtitle timing. Try again.";
             }
         }
         catch { lock (_subtitleSyncGate) if (SyncCurrent(ct)) target.Error = "Couldn't update subtitle timing. Try again."; }
@@ -511,7 +512,7 @@ public partial class PlayerService
                 entry.LastAppliedTiming = timing;
                 if (IsApplyingOwnedTiming(entry, timing)) SendSubtitleSyncOutcome(entry.State);
                 else if (!own && !(entry.State.Sync is { Trigger: "auto", Status: "synced" } job && job.Result == timing))
-                    SendSubtitleSyncNotice("Subtitle timing updated", "", "info");
+                    SendSubtitleSyncNotice(AppStrings.Get("web.subtitles.syncNotice.timingUpdated", fallback: "Subtitle timing updated"), "", "info");
             }
         }
         catch (Exception) when (SyncCurrent(ct))
@@ -537,11 +538,11 @@ public partial class PlayerService
                 _subtitleSyncEntries.TryGetValue(key ?? "", out var entry);
                 var running = SubtitleSyncPolicy.InProgress(entry?.State.Sync);
                 return new Dictionary<string, object?> { ["index"] = track.Index, ["key"] = key,
-                    ["status"] = entry?.Forbidden == true ? "This server doesn't allow changing subtitle timing." : entry?.Error ??
+                    ["status"] = entry?.Forbidden == true ? AppStrings.Get("web.subtitles.menu.timingForbidden", fallback: "This server doesn't allow changing subtitle timing.") : entry?.Error ??
                         (entry == null ? "" : entry.State.Sync?.Status == "failed" ? SubtitleSyncPolicy.Failure(entry.State.Sync.Failure) :
-                            entry.State.Sync?.Status == "no_match" ? "Doesn't match this video's audio; probably for another release." :
+                            entry.State.Sync?.Status == "no_match" ? AppStrings.Get("web.subtitles.menu.noMatch", fallback: "Doesn't match this video's audio; probably for another release.") :
                             entry.State.Sync == null && entry.State.Timing.IsIdentity && _subtitleSyncCapability?.State == "available"
-                                ? "Matches the timing to the audio for everyone watching." : SubtitleSyncPolicy.Status(entry.State)),
+                                ? AppStrings.Get("web.subtitles.menu.syncHint", fallback: "Matches the timing to the audio for everyone watching.") : SubtitleSyncPolicy.Status(entry.State)),
                     ["sync"] = entry != null && !entry.Forbidden && !entry.Unsupported && _subtitleSyncCapability?.State == "available" &&
                         (entry.State.Source != "external" || _subtitleSyncCapability.External),
                     ["reset"] = entry != null && !entry.Forbidden && !entry.State.Timing.IsIdentity,
@@ -553,15 +554,26 @@ public partial class PlayerService
 
     private void SendSubtitleSyncOutcome(SubtitleSyncState state)
     {
-        var name = state.Language.Length > 0 ? state.Language + " subtitles" : "Subtitles";
+        // useSubtitleSyncFeedback.ts: the track's language name, else its label, else "Subtitles".
+        var name = SyncTrackName(state);
         switch (state.Sync?.Status)
         {
-            case "synced": SendSubtitleSyncNotice(IsActiveSyncKey(state.Key) ? "Subtitles synced" : name + " synced", SubtitleSyncPolicy.Describe(state.Timing), "success"); break;
-            case "already_synced": SendSubtitleSyncNotice(name + " already match the audio", "", "info"); break;
-            case "no_match": SendSubtitleSyncNotice(name + " don't match the audio", "They're probably for another release. The timing wasn't changed.", "warning"); break;
-            case "failed": SendSubtitleSyncNotice("Couldn't sync " + name, SubtitleSyncPolicy.Failure(state.Sync.Failure), "warning"); break;
+            case "synced": SendSubtitleSyncNotice(IsActiveSyncKey(state.Key) ? AppStrings.Get("web.subtitles.syncNotice.synced", fallback: "Subtitles synced")
+                : SyncText("web.subtitles.syncNotice.trackSynced", "{name} subtitles synced", name), SubtitleSyncPolicy.Describe(state.Timing), "success"); break;
+            case "already_synced": SendSubtitleSyncNotice(SyncText("web.subtitles.syncNotice.trackAlreadyMatches", "{name} subtitles already match the audio", name), "", "info"); break;
+            case "no_match": SendSubtitleSyncNotice(SyncText("web.subtitles.syncNotice.trackNoMatch", "{name} subtitles don't match the audio", name),
+                AppStrings.Get("web.subtitles.syncNotice.noMatchDetail", fallback: "They're probably for another release. The timing wasn't changed."), "warning"); break;
+            case "failed": SendSubtitleSyncNotice(SyncText("web.subtitles.syncNotice.trackFailed", "Couldn't sync {name} subtitles", name), SubtitleSyncPolicy.Failure(state.Sync.Failure), "warning"); break;
         }
     }
+
+    private static string SyncTrackName(SubtitleSyncState state)
+        => state.Language.Length > 0 ? LanguageCodeToName(state.Language)
+            : state.Label.Length > 0 ? state.Label
+            : AppStrings.Get("web.subtitles.syncNotice.fallbackName", fallback: "Subtitles");
+
+    private static string SyncText(string key, string english, string name)
+        => AppStrings.Get(key, new Dictionary<string, object?> { ["name"] = name }, fallback: english.Replace("{name}", name, StringComparison.Ordinal));
     private bool IsApplyingOwnedTiming(SyncEntry entry, SubtitleTiming? loadedTiming)
         => _subtitleSyncApplyingKey == entry.State.Key && _subtitleSyncApplyingJob == entry.State.Sync?.Id &&
             SubtitleSyncPolicy.ShouldAnnounceAppliedTiming(entry.State, entry.WatchedJobId, entry.AnnouncedJobId, loadedTiming);

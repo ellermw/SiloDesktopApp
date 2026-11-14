@@ -28,8 +28,9 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
     public bool CanSubmit => SelectedCount >= MinimumPicks && !IsSaving;
     public bool HasReachedEnd => HasItems && !HasMore && !IsLoadingMore;
     public string SelectionSummary => SelectedCount == 0
-        ? $"Select at least {MinimumPicks} titles to personalize your recommendations"
-        : $"{SelectedCount} selected{(SelectedCount < MinimumPicks ? $" — {MinimumPicks - SelectedCount} more to continue" : "")}";
+        ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.minPicks", new Dictionary<string, object?> { ["count"] = MinimumPicks })
+        : SiloPlayer.Core.Localization.AppStrings.Get(SelectedCount < MinimumPicks ? "web.home.tasteSeed.selectedCountMore" : "web.home.tasteSeed.selectedCount",
+            new Dictionary<string, object?> { ["count"] = SelectedCount, ["remaining"] = MinimumPicks - SelectedCount });
 
     partial void OnSelectedCountChanged(int value)
     {
@@ -51,8 +52,8 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
         previous?.Dispose();
         CancelLoadMore();
         IsLoading = true;
-        ErrorMessage = null;
-        StatusMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        SetLocalizedMessage(nameof(StatusMessage), () => null, value => StatusMessage = value ?? "");
         ShowEmptyState = false;
         try
         {
@@ -75,7 +76,7 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
         {
             if (ReferenceEquals(_loadCts, ownerCts))
             {
-                ErrorMessage = ex.Message;
+                SetLocalizedMessage(nameof(ErrorMessage), () => (ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message), value => ErrorMessage = value);
                 ShowEmptyState = false;
             }
         }
@@ -113,7 +114,7 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (ReferenceEquals(_loadMoreCts, ownerCts)) ErrorMessage = ex.Message;
+            if (ReferenceEquals(_loadMoreCts, ownerCts)) SetLocalizedMessage(nameof(ErrorMessage), () => (ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message), value => ErrorMessage = value);
         }
         finally
         {
@@ -137,18 +138,16 @@ public partial class TasteSeedViewModel(RecommendationsApi recommendationsApi) :
         if (newPicks.Length == 0) return true;
 
         IsSaving = true;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         try
         {
             var result = await recommendationsApi.SubmitTasteSeedAsync(newPicks);
-            StatusMessage = result.Added == 1
-                ? "Added 1 favorite — personalizing your home"
-                : $"Added {result.Added} favorites — personalizing your home";
+            SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.added", new Dictionary<string, object?> { ["count"] = result.Added }), value => StatusMessage = value ?? "");
             return true;
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            SetLocalizedMessage(nameof(ErrorMessage), () => (ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message), value => ErrorMessage = value);
             return false;
         }
         finally
@@ -183,7 +182,8 @@ public partial class TasteSeedItemViewModel(MediaItem item, bool selected) : Obs
     public string Title => Item.Title;
     public bool WasFavorite { get; } = item.UserState?.IsFavorite == true;
     [ObservableProperty] private bool _isSelected = selected;
-    public string AccessibleName => $"{(IsSelected ? "Deselect" : "Select")} {Title}";
+    public string AccessibleName => SiloPlayer.Core.Localization.AppStrings.Get(IsSelected ? "web.home.tasteSeed.deselectTitle" : "web.home.tasteSeed.selectTitle", new Dictionary<string, object?> { ["title"] = Title });
+    internal void RefreshLocalization() => OnPropertyChanged(nameof(AccessibleName));
 
     partial void OnIsSelectedChanged(bool value) => OnPropertyChanged(nameof(AccessibleName));
 }

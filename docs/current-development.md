@@ -16,6 +16,43 @@ recovered0GiB C:/D:. Installed player remains open.
 
 ---
 
+# November 14 - In-place page changes (no navigation slide)
+
+Branch t3/remove-sidebar-slide starts at Beta cbafac58; version 1.2.1017-beta.1
+unchanged. Per the owner, sidebar route changes and Back no longer rise/slide:
+`PageTransitionHelper.ForPageChange()` is now `SuppressNavigationTransitionInfo`
+for every route and reduced-motion setting, and eight direct Frame calls that fell
+back to the Frame's default theme transition now name it (Taste Seed, detail retry,
+collection Back, Watch Party). Retained pages, scroll and soft state, the in-place
+refresh, skeletons and artwork reveal are unchanged; no whole-page opacity was
+added. A new source guard rejects any app Frame navigation without it.
+
+New tests were red on Beta (2 failures, 8 offending call sites) and green after;
+the implementation run passed all 6,108 units. The Debug x64 app and native host
+compiled against a worktree-local build. Lead verification passed 14 focused
+source tests and the `upstream-shell` fixture with `SILO_SHELL_NAVIGATION_ONLY=1`:
+three navigation/Back rounds retained the same page instance and marker; every
+observed navigation and current-entry refresh used the suppressed transition,
+refresh preserved history length, and the incoming root had identity transform
+and opacity 1. The broader upstream-shell run passed the transition check but
+failed later with COMException 0x80004005 during responsive pane resize; no full
+shell or visual parity pass is claimed. Windows animation settings were not
+toggled; the transition has no animation-setting branch.
+
+No navigation-speed claim is made. Background page-data warmup was not added:
+top-level view models are transient per page with private freshness windows, so
+warmup needs a shared context-scoped, strictly bounded store first. A follow-up
+should measure cold navigation, reuse only lightweight first-page JSON, bound
+memory and concurrency, retire on server/profile/access/language changes, and
+skip playback, full Library catalogs, cursor enumeration and artwork crawling.
+
+Evidence: `D:/SiloPlayer-build/no-slide-lead-focused.log`,
+`no-slide-native-build.log`, and `results/no-slide-navigation-verified/results.txt`.
+The installed player and version stamps are unchanged. Worktree-local output is
+about 0.69 GiB; earlier automatic approval review blocked generated cleanup, so
+no deletion was retried and 0 GiB was recovered on C: and D:.
+
+---
 # November 13 - Finishing artwork on the ended screen
 
 Owner report: after the last Cops episode ended, "You've finished Cops" and On
@@ -136,6 +173,587 @@ previous automatic approval block; recovered 0 GiB on each drive. Installed
 player PID38020 remains open.
 
 ---
+
+# November 13 - PR #145 section titles and retained dialog review fixes
+
+The seven findings on 6b02f142 are corrected on top of pipeline commit
+8868311cb2bd04939dc767835807be5e4bbe3f3d. Requests section/window titles
+share the translated heading and retired pages cannot overwrite a replacement
+window title. Failed Home heroes use DisplayTitle and refresh their failure
+heading without rebuilding the mounted carousel. Metadata close accessibility
+and tooltip keys refresh through the dialog lifetime. Image tabs, notices,
+current/empty/error labels, provider warnings and idle/pending Apply text refresh
+without refetching cards or losing selection/drafts. Collection saving status,
+history loading/retry/recovery and Home-row add/edit commands retain their
+localized state. Home-row callers supply title/action callbacks.
+
+Release publish and native host build passed. All 6,231 unit tests passed,
+zero failed/skipped (2.4310 minutes), including the pipeline Playback Info row-ID
+fix. Full settings-localization, media-localization and shell-localization
+native groups passed on the same published DLL. Tests cover en/de/ar/ja, actual
+Home-row forms, held writes, gallery selection/apply failure and history retry.
+All 1,995 recorded source/test inputs match. Product DLL SHA-256:
+62C26003B58414D7EF4014C6C91A20C7FD963F261236CDCCF8B87F0EC2BADD4A.
+Receipt: D:/SiloPlayer-build/review-thirteenth-receipt.json. Manifest:
+D:/SiloPlayer-build/review-thirteenth-source-inputs.json
+(EEF314294E8DA58AC14BBAF38995C0B474FAFF9C52EEC57D0FC12C9EC917D1E4).
+
+Native verification reproduced child refresh subscriptions lost during modal
+template relocation. Dialog-owned callbacks now retain image Apply/provider
+text, and keyed descendant refresh includes tooltips. Fixture corrections wait
+for actual popup fields and preserve the established English server-text
+fallback; assertions remain language/state specific. Original failure text is
+retained in the reused results directory. Product/unit-test inputs covered by
+the unit project did not change during the later native-only corrections.
+
+The independent contracts/hero PR #143 and HUD/autoplay PR #144 are merged.
+These changes are review corrections to the existing localization PR #145;
+new independent work belongs in a separate Beta PR. Pipeline owns versioning,
+QA, merge and release. Earlier VM subtitle-timeout and live/visual-parity limits
+remain unverified. Source stamps stay 1.2.1015-beta.1 / 1.2.1014.1.
+
+Task output is 1.247 GiB; measured free C: 189.46 GiB, D: 481.26 GiB.
+Installed player PID 38020 remains open. Owner AGENTS.md changes stay uncommitted.
+No cleanup deletion was retried after the earlier automatic approval rejection;
+recovered space is 0 GiB on C: and D:. Final delivery cleanup remains pending.
+
+# November 13 - PR #145 recency, Favorites, seek units and language badges
+
+The four findings on 64c7edba are addressed. Added/Released recency selectors
+refresh the remaining 90d/1y/5y options and their closed selection using shipped
+day/year unit labels with culture-formatted counts. Unit-first labels avoid
+assuming English singular/plural grammar; API tags and selections stay unchanged.
+Favorites formats its full failure prefix with the translated Favorites title;
+structured problem text still translates and English preserves raw server detail.
+Original-language badges resolve language.<code>, preserving unknown raw codes.
+All four seek selectors render translated seconds while retaining integer values.
+Their template also refreshes on DataContextChanged, so recycled selection text
+cannot keep the previous interval.
+
+Release publish and native host build passed. All 6,227 unit tests passed,
+zero failures/skips (2.4150 minutes). Full settings-localization,
+media-localization, shell-localization and subtitle-sidecar-ownership groups
+passed against the same published product DLL. Native checks cover en/de/ar/ja,
+unopened recency choices/retained selection, real rejected Favorites requests,
+known/unknown language badges, all seven seek options and unchanged wire values.
+All 1,994 frozen source/test inputs match. Product DLL SHA-256:
+C45E83BCDFBB08D200A0D2D7F2EECDBBD0761E7515EF58A313DBAB90DBF325E7.
+Receipt: D:/SiloPlayer-build/review-twelfth-receipt.json. Source manifest:
+D:/SiloPlayer-build/review-twelfth-source-inputs.json (95C08174FBE58516E9482BA0B7BC072D72A17D2BB73870FF3B20850CB2C9E9F8).
+
+VM QA on 64c7edba again timed out in subtitle ownership after 76 checks; the
+fixer made no changes. Test-only scenario-start and applied-preference phase
+traces now identify session setup, native initialization, selection/save and
+cleanup boundaries without changing assertions, deadlines or playback behavior.
+The local ownership pass does not establish the VM cause or certify that run.
+
+Initial native verification exposed recycled seek-template text and now covers
+that correction. Fixture-only followups preserve English raw API detail, drain
+Settings unload before service disposal and apply closed recency templates before
+inspecting presentation. Original native failure result text remains archived.
+The unit-tested product and unit-test sources did not change during those
+native-fixture-only corrections.
+
+Task output is 1.233 GiB; free C: 190.39 GiB, D: 481.27 GiB. The installed
+player (PID 38020) stays open and the owner's AGENTS.md edit stays uncommitted.
+Earlier automatic approval rejection still blocks delivery cleanup; no deletion
+was retried and recovered space is 0 GiB on C: and D:. Pipeline QA, merge and
+Beta publication remain pending, with earlier evidence limits preserved below.
+
+# November 13 - PR #145 collection allowances and cache failure resilience
+
+The four findings on 6f584a4a are addressed. Collection allowance headings use
+web.profiles.allow.title with the raw name and retain the Done command through
+open-dialog language changes. Collection menu retries resolve common.retry and
+retain state-aware text/accessibility through the menu-item lifetime. A successful
+retry restores the localized allowance action. Watch Tonight binds both close
+accessibility and tooltip to web.ui.close.
+
+The locale coordinator treats IOException/UnauthorizedAccessException from its
+launch-cache write as best-effort persistence. It still applies the authoritative
+server locale, updates the loaded owner/support state and emits Loaded. Other
+failures are not swallowed. Six unit cases use real locked/denied writes for an
+explicit language, Match device and an unsupported server, then verify restored
+persistence after the blocker is removed. Native checks open actual collection
+allowances and Watch Tonight, change en/de/ar/ja, fail/retry actual allowance
+availability and preserve raw collection names/identifiers.
+
+Release publish and native host build passed. All 6,227 unit tests passed with
+zero failures/skips (2m24s). Seven native groups passed on the same payload:
+settings-localization, media-localization, shell-localization, app-language,
+app-language-catch-up, profile-menu-navigation and subtitle-sidecar-ownership.
+All 1,993 frozen source/test inputs match. Product DLL SHA-256:
+38BDC71277B53EE5FE28DA79868EB4C5BC60B92C76B0624D37DA4BA7F5F3E7E1.
+Receipt: D:/SiloPlayer-build/review-eleventh-receipt.json. Source manifest:
+D:/SiloPlayer-build/review-eleventh-source-inputs.json (A5FD9DDC2894A0A130F8629A41BB85CF0DB15E2ED68DB762932925B0359B3A02).
+Task output: 1.224 GiB; measured free C: 190.48 GiB, D: 481.29 GiB.
+
+VM QA on earlier head 6f584a4a failed profile-menu with COMException 0x8000FFFF
+and no actionable stack, plus subtitle-sidecar timeout after 76 checks. The
+fixer made no changes. The local passes above use this new source/payload and
+do not establish the cause or certify the earlier VM runs.
+
+The existing Watch Tonight source contract now requires the retained localized
+close name/tooltip instead of a literal English accessibility string. Actual
+translated values are independently checked in the native dialog.
+
+A detailed unit run exposed the existing Library reconnect test asserting its
+rail position after HTTP idle but before the view model applied the response.
+It now joins the existing letter-index task and asserts no extra request, while
+retaining the original position/grid assertions. The earlier navigation/write
+ownership assertion passed isolated and in the detailed full run; its original
+intermittent cause remains unestablished. Failure logs are retained.
+
+The first full native attempt exposed a fixture lookup before the Watch Tonight
+visual template had materialized. The fixture now waits for the actual keyed
+close control before inspecting it; the original failing result text is retained.
+
+The installed player remained open and the owner's AGENTS.md edit stays outside
+the commit. The same build/publish/native payload directories are reused.
+Earlier automatic approval rejection still blocks delivery cleanup; no deletion
+was retried and recovered space is 0 GiB on C: and D:. Pipeline QA, merge and
+Beta publication remain pending. Earlier VM timeout, live interoperability and
+visual-parity limitations keep their original scope in the records below.
+
+# November 13 - PR #145 retained dialog metadata and command labels
+
+The five findings on 45f26756 are addressed. Match Item keeps dialog-owned
+refresh callbacks for generated native/original/alias and score labels, clearing
+callbacks when results retire. Candidate rows and selection stay in place.
+Edit Person commands retain Save/Cancel keys and change the primary key for
+pending save and failure recovery. Title allowances format the full
+heading through web.profiles.allow.title with the raw name argument. Generated
+profile hints, More options (including its accessible name), and upload-disabled
+copy refresh through the dialog owner. Metadata AI controls refresh their
+language header/placeholder, force label/accessibility and state-aware Translate
+command without changing selected language, force choice or a running job.
+
+Release publish and native host build passed. Targeted tenth-review checks and
+full settings-localization, media-localization and shell-localization native
+groups passed on the same payload. All 6,221 unit tests passed, zero failures or
+skips (2m23s). Native tests keep generated candidate rows/selection, profile and
+person drafts, mixed-script allowance arguments and AI language/force selections
+through en/de/ar/ja. Actual pending/failed person writes and running/completed
+translation jobs verify localized busy and recovery states. All 1,992 frozen
+source/test inputs match. Product DLL SHA-256:
+0DAC795F51D07D9A8444D54709BF976E420EC378949C2FFD0A0B003D4A0035C8.
+Receipt: D:/SiloPlayer-build/review-tenth-receipt.json; source manifest:
+D:/SiloPlayer-build/review-tenth-source-inputs.json (CA63BB1A10AD83E86E0395DEF0F00F6B34AEDE4C3977368446E7DACC74587B81).
+Task output: 1.197 GiB; measured free C: 190.80 GiB, D: 481.32 GiB.
+
+The installed player remained open. One reusable payload is retained under
+D:/SiloPlayer-build. Earlier cleanup was rejected by automatic approval review;
+no filesystem deletion was retried and recovered space remains 0 GiB on C: and
+0 GiB on D:. Pipeline QA, merge and Beta installer/release delivery remain pending.
+Earlier VM timeout and interoperability/visual-parity limits remain scoped to
+the records below; these dialog checks do not establish their cause or outcome.
+
+# November 13 - PR #145 episode context, status counts and metadata labels
+
+The five findings on f1902cff are addressed. Continue Watching/Next Up uses the
+label without a separator when the episode title is missing or whitespace.
+Loaded Requests uses the shipped pluralized result-count message, including
+culture-formatted numbers, instead of an English request(s) suffix. The generated
+Match Item heading and both allowance-list retry buttons retain catalog keys.
+A death date with no usable positive age uses the translated Death Date label
+and culturally formatted date (or the raw unparseable date), without inventing
+an age. Known positive ages retain the original catalog sentence. Generated
+catalogs and raw request/person/media values remain unchanged.
+
+Release publish and native host build passed. Targeted and full native
+settings-localization, media-localization and shell-localization passed. New
+checks exercise empty/whitespace/raw episode titles, real Requests loads with
+0/1/2/5/11/23 rows, an open Match Item heading, both actual allowance-read failures
+and retry actions, and missing/invalid/zero/known-age birth/death data through
+en/de/ar/ja. All 6,221 unit tests passed with zero failures/skips (2m24s).
+All 1,991 frozen source/test inputs match. App DLL SHA-256:
+49F0A62EF71D911891CC0EE806D8891E9FFFC092538F9490781C56FDB2D3D5EB.
+Evidence: D:/SiloPlayer-build/review-ninth-{receipt,source-inputs}.json,
+review-ninth-{publish,native-build,units}.log and native result text.
+Pipeline QA, merge and Beta publication remain pending. Version stamps stay
+pipeline-owned; the installed player stays open. Earlier verification limits
+and the cleanup approval blocker remain; shared output is 1.185 GiB, with
+C: 190.00 GiB and D: 481.32 GiB free. No cleanup was retried and zero GiB
+was reclaimed on either drive.
+
+# November 13 - PR #145 picker recovery and retained confirmations
+
+Addresses the seven findings on 56965f64. Initial language capabilities or
+profile-value read failures keep the group visible with a translated error and
+read-only retry; the picker stays disabled until the read succeeds. Unsupported
+servers still hide the group. Request cancellation and download headings retain
+raw title arguments. The party chooser, guest-pause label and Create Watch Party
+action refresh without clearing selections; the create key accurately describes
+the native flow, which does not copy an invite. Discord unlink, Home/library row
+reset and Your Data PIN confirmations retain localized headings, bodies and
+actions. Discord uses the existing translated disconnect heading and account-wide
+DM explanation because the shipped catalog has no dedicated unlink description.
+PIN drafts, raw names, request identifiers and server mutations remain intact.
+
+Release publish and native host build passed. All 6,221 unit tests passed with
+zero failures/skips (2m23s). Full settings-localization, media-localization and
+shell-localization native groups passed. Added native checks open all six actual
+dialogs and change de/ar/ja in place, verify party choices before opening their
+dropdown and preserve PIN/party drafts and raw titles. Both initial language read
+failures recover with zero writes. The first native attempt exposed a stale PIN
+child description; owning child refresh from the dialog lifetime fixed it before
+the passing targeted and full runs. Original failing result text is retained.
+All 1,990 frozen source/test inputs match. App DLL SHA-256:
+D95DA89728E63BDFB4154FD3BE4BDB9982F59341C7A695745C934398A48F28EA.
+
+Evidence: D:/SiloPlayer-build/review-eighth-{receipt,source-inputs}.json,
+review-eighth-{publish,native-build,units}.log and native result text.
+The pipeline stopped its prior head after a native-subtitle-sidecar-ownership
+timeout; its fixer made no changes because the diagnostics did not identify
+the blocked operation. These verified review fixes are submitted on a new head.
+Pipeline QA, merge and Beta publication remain pending.
+Version stamps remain pipeline-owned. Installed player stays open. Shared output
+is 1.157 GiB; C: 190.10 GiB free, D: 481.36 GiB free. No cleanup was retried;
+zero GiB reclaimed on either drive. Prior cleanup approval rejection and all
+previous live-server, visual and broader suite limitations remain applicable.
+
+# November 13 - PR #145 retained rows, filters and password outcomes
+
+Integrated review fix 1e7ccbc3 with pipeline attempt 6, a4d67a8d, through
+merge 9fefb061. The pipeline playback correction retains outgoing direct-stream
+relays until the replacement input reports FILE_LOADED, preventing obsolete
+relay errors from affecting the accepted replacement plan. It is preserved.
+
+All four new GitHub findings are addressed. Continue Watching/Listening/Reading
+and Next Up dismissal menus and success notifications resolve their specific
+catalog keys. Subtitle results refresh labels, localized language, download
+counts/actions, score metadata and accessible names in place. Expanded release
+variants, raw release names and disabled download controls remain intact.
+Generated advanced-filter fields/operators resolve catalog text at creation
+and refresh under event guards; raw field/operator values and text/boolean
+drafts survive without rebuilding rule controls. Required-password failures
+resolve validation or change/settlement messages from transition state, retain
+their catalog key for later refresh, and offer a translated retry after a saved
+password fails to finish sign-in. Raw exception messages are not shown for
+non-API transition failures.
+
+Verification on the integrated source: Release publish and native host build
+passed; all 6,221 unit tests passed with zero failures/skips (2m23s). Four native
+groups passed: relay-load-ownership, settings-localization, media-localization
+and shell-localization. Actual checks cover retained subtitle results and
+variant expansion, disabled download state, all advanced field/operator choices
+before opening dropdowns, text/boolean filter drafts, retained dismissal menus,
+invalid password inputs and a real successful password write followed by failed
+sign-in refresh. Locale checks exercise de/ar/ja; raw names and identifiers stay
+unchanged. The relay fixture retained plan B and pause intent with zero playback
+errors or recovery attempts. All 1,989 frozen source/test inputs match.
+App DLL SHA-256: 5FEA2E2C242AE1DF048EC8087EAF40CA2C0CE1D28CC1117B3853E8B801982620.
+
+The initial media run exposed unopened generated choices starting in English,
+including Year instead of Jahr; visible-sheet reproduction confirmed it.
+Construction-time catalog resolution corrected that gap before the final pass.
+Original failing result text is retained. Pre-integration verification passed
+three localization groups and five targeted required-password transition tests;
+its receipt keeps its own payload/source scope.
+
+Evidence: D:/SiloPlayer-build/review-seventh-receipt.json,
+review-seventh-integrated-source-inputs.json,
+review-seventh-integrated-{publish,native-build,units}.log,
+review-seventh-preintegration-receipt.json and native result text.
+QA, merge and Beta publication remain pending; version stamps remain pipeline-owned.
+The installed player remains open. Generated output is 1.138 GiB; free space is
+C: 189.77 GiB and D: 481.37 GiB. Prior automatic approval review denied cleanup;
+no deletion was retried and 0 GiB reclaimed on either drive. Earlier live-server,
+visual and broad personal-lists/default-suite limitations remain.
+
+# November 13 - PR #145 language recovery and subtitle review fixes
+
+Follow-up to ae3a28c6 addresses all five new review findings. Player-mode
+subtitle search now uses the catalog empty-state message; external-watchlist
+load errors re-evaluate both the translated prefix and Problem Details text.
+Subtitle color keys append the parenthesized switch result, restoring translated
+tooltips and accessible names for all 14 font/background colors.
+
+After a successful language save, a failed effective-setting read now shows a
+translated load error with an owner-scoped refresh-only retry. Retry reads and
+applies the saved locale without repeating the profile write or device deletion.
+Pending device clears retain their existing recovery priority. Unloading the
+cached picker invalidates its owner/load generation so returning reloads the
+current profile value even after a same-profile update while detached.
+
+Verification: both picker failures reproduced on the prior published task
+payload before the product fix; red result text is preserved. Release publish,
+native host build and the full settings-localization native group passed on the
+new source. Checks include read-only refresh recovery, a detached same-owner
+update, both actual subtitle-search modes returning no results, every color
+swatch tooltip/accessibility name in the open dialog, and a retained external
+watchlist network error with localized Problem Details through de/ar/ja.
+All 1,989 frozen source/test inputs match. Product DLL SHA-256:
+E640E861FF211266B2A0F64EB8197842E92AF09FA6B073FF3A3C9FFE7993F38C.
+No unit-suite rerun for this UI-only follow-up; previous unit counts retain their
+source scope and retry qualification. Initial fixture compilation errors were
+corrected before the passing native build; they were not product regressions.
+
+Evidence: D:/SiloPlayer-build/review-sixth-receipt.json,
+review-sixth-source-inputs.json, review-sixth-publish.log,
+review-sixth-native-build-final.log and native results (red text archived).
+QA, merge and Beta delivery remain pending; version stamps remain pipeline-owned.
+The installed player remains open. Generated output is 1.127 GiB; C: has
+189.80 GiB free and D: 481.39 GiB. Prior automatic approval review denied cleanup;
+no deletion was retried and 0 GiB reclaimed on either drive. Earlier live-server,
+visual and broad personal-lists/default-suite limitations remain.
+
+# November 13 - PR #145 history, invitation and missing-state review fixes
+
+Follow-up to reviewed head d2047c1c. Webhook deletion uses the catalog title
+with the raw name argument and refreshes title, body and command text while
+open. Invitation pages have a localized document-title mapping. Completed
+History cards use the catalog Play action; incomplete cards retain Resume.
+The Play History dialog uses the translated View Play History heading and
+refreshes while open. Request browse 404 and invalid navigation states use
+the catalog Not found message. Unsupported external watchlists use the
+translated server-capability message. Existing generated catalogs remain intact.
+
+Verification: Release publish and native host build passed. Full Settings and
+shell localization native groups passed, including actual completed/incomplete
+history cards, a 404 browse session, unsupported external watchlist, open
+play-history and webhook delete dialogs, and the invitation title map. Follow-up
+cases switch through German, Arabic and Japanese where applicable, preserve raw
+titles/names, and cancel the deletion. All 1,989 frozen source/test inputs match.
+App DLL SHA-256: 1B0A4175848946A453BB9748D1BEE06433540F7E70A149E4DA39E6C673B00B2A.
+The unit suite was not rerun for these UI text bindings; earlier unit results
+below retain their source scope and initial failure qualification.
+
+Evidence: D:/SiloPlayer-build/review-fifth-receipt.json,
+review-fifth-source-inputs.json, review-fifth-publish-final.log,
+review-fifth-native-build.log and native results (older result text retained).
+The initial publish caught a missing helper import, corrected before the passing
+publish. QA, merge and Beta publication remain pending. Version stamps remain
+pipeline-owned. The installed player remains open. Generated output is 1.126 GiB;
+C: has 189.69 GiB free and D: 481.39 GiB. The earlier automatic approval review
+rejected cleanup; no deletion was retried and 0 GiB reclaimed on either drive.
+Earlier default-suite, personal-lists, live-server and visual limitations remain.
+
+# November 13 - PR #145 remaining dialog and reader review fixes
+
+Candidate integrates local review commit `a7bd6f2c` with pipeline attempt 5, `5f8abf06`, through merge `76380c46`. The pipeline fix transfers localized toggle headers into retained Settings row labels and accessible names; its new full Settings native cases pass on the integrated payload.
+The Add to Collection primary action is keyed. Split Versions fields carry
+placeholder/accessibility keys. A native test reproduced placeholders and
+accessible names remaining German after switching to Arabic despite the fields
+being loaded: modal template relocation detached child subscriptions, and the
+existing dialog-level fallback refreshed only text/content. That fallback now
+also refreshes keyed TextBox placeholders/headers and accessible names without
+changing editable values. The same draft-preserving test passes after the fix.
+Settings resolves its generic subtitle on both detail navigation and live locale
+changes. Reader cached-settings/server-sync warnings use the shared catalog;
+local disk-save failure uses the existing generic translated save-failure text
+and never claims settings were saved. Inactive audiobook interval buttons omit
+redundant unselected help; active buttons retain translated Selected help.
+
+Release publish and native host build succeeded. Three native groups pass on the
+final payload: settings-localization (full group), reader-party-language and
+playback-localization. New checks cover real open Add/Split dialogs across
+de/ar/ja, raw split-title drafts, Settings detail subtitles, an actual forced
+reader-config failure with a local cache, an obstructed local-save directory,
+and audiobook interval accessibility text. Reader fixtures write only beneath
+the task result directory. The installed player remains open.
+App DLL SHA-256: `818A0300A957877D565947F1379F3B1A2B5E9A48F078F7A6A4C391B28DB16349`.
+The first full unit run had 6,220 passes and one failure in unchanged
+RealtimeReadOwnershipTests.CurrentViewerWritePublishesItsCapturedItemAndContext
+(watchlist removal). All six cases passed in isolation without changing any
+assertion. The full pre-integration retry passed 6,221/6,221 (2m25s), and the final integrated suite also passed 6,221/6,221 (2m24s), both with zero failures/skips; the initial failure
+log is retained and its cause is not established.
+
+Evidence: `D:/SiloPlayer-build/review-fourth-receipt.json`,
+`review-fourth-integrated-source-inputs.json`, `review-fourth-integrated-{publish,native-build,units}.log`,
+`review-fourth-units{,-isolated,-retry}.log` and native result text, including
+archived Split-dialog red results. Earlier receipts retain their original
+source/payload scope and limits. Pipeline review, QA, merge and Beta publication
+remain required, and version stamps remain pipeline-owned. No installer was run.
+Generated output remains in the reusable task directory. Cleanup is still blocked
+by the earlier automatic approval review rejection; no deletion was retried and
+0 GiB was reclaimed on C: or D: during this follow-up.
+
+# November 12 ? PR #145 retained locale review follow-ups
+
+Candidate based on pipeline head `787456b0822a697d86f226e392f663572661ded9`;
+this preserves pipeline attempts 3 and 4. Nine outstanding GitHub review findings
+are addressed together: region-only Settings changes refresh culture-sensitive
+text; non-player subtitle empty results resolve their catalog key; person-editor
+and Refresh Metadata labels refresh while open; Allowed Titles uses attached
+keys and retained result-button bindings; Requests restores eight Auto rows;
+Calendar resolves the active empty-state variant; global search retains its
+request-discovery hint; Playing Next refreshes its finished description and scope.
+No playback transition, query, draft, saved language tag or API identifier is
+rewritten by these text refreshes.
+
+Verification: Release publish and native host build succeeded. Three native
+groups passed on the new payload: settings-localization (including the full
+existing group), media-localization and shell-localization. Follow-up cases
+exercise de/ar/ja on actual open dialogs, an actual empty subtitle-search response,
+region-only de-DE to de-CH Settings refresh, Calendar variants, request-guide row
+structure, and visible Playing Next text. Person-editor drafts are preserved.
+The full unit suite passed 6,221/6,221, with zero failures or skips (2m23s).
+App DLL SHA-256: `7CE95E6D21AAADEA097617EE6528421A527B9CD40066CA11063E227C0055C3D3`.
+All 1,989 captured source/test inputs match. Native test setup corrections were
+required because German ?Name? equals English and the status guide is retained
+outside the page namescope; neither correction relaxed the product expectations.
+
+Evidence: `D:/SiloPlayer-build/review-ui-receipt.json`,
+`review-ui-source-inputs.json`, `review-ui-{publish,units,native-build}.log`
+and the three native results. Earlier receipts below retain their original
+source/payload scope and limitations. This remains a candidate awaiting pipeline
+review, QA, merge and Beta publication. Version stamps remain pipeline-owned;
+no installer was installed and the owner's running player remains open.
+The personal-lists/default-suite and live/visual limitations below remain.
+Generated output is reused in the existing directory. Cleanup is still blocked
+by the earlier automatic approval review rejection; no deletion was retried,
+and 0 GiB has been reclaimed on either drive during this follow-up.
+
+# November 12 — PR #145 regional picker and dialog follow-up
+
+Based on integrated review head `159f31654a7400f761e594b4d6efe25cf0fab2c6`.
+Supported regional profile tags now select their shipped language option without
+adding a duplicate or rewriting storage: de-DE→de, es-MX→es, pt-PT→pt-BR.
+Unsupported zh-TW retains its separate option and warning. Activate Device uses
+its bundled document-title key. The webhook editor resolves its title with the
+raw name argument and refreshes it while open without discarding drafts.
+
+Native testing also reproduced a real Settings → Notifications construction
+failure: NotificationSettingsControl required SettingsGroupStyle from the
+SettingsPage-only scope. The control now owns that style and border brush with
+the same five setter values as SettingsPage. The normal Settings entry point
+failed before the fix and passes after it; no test-only style is injected.
+The carousel review finding identified redundant English assignments that were
+immediately overwritten by ConfigureEpisodeCarouselText. Removed those dead
+assignments; the actual numbered episode and runtime path was already localized
+and is now covered through German, Arabic and Japanese refreshes with raw media
+titles preserved.
+
+Current verification: fresh Release publish, **6,220/6,220 units**, no failed or
+skipped tests, and **three passing native groups**: settings-localization,
+shell-localization and media-localization. All 2,008 frozen implementation/test
+inputs match. Final app SHA-256:
+`BC96921E802897F8A451B25BDB55A55CA6E6884347B0730FAC53B34A103B92CB`.
+Evidence: `D:/SiloPlayer-build/review-third-receipt.json`,
+`review-third-source-inputs.json`, `review-third-{publish,units,native-build}.log`
+and native result text. Earlier seven-/23-group receipts below retain their
+original source/payload scope, with superseded text results timestamp-archived.
+The broader personal-lists overlay limitation and live/visual verification
+limits below remain unchanged. This is still a candidate awaiting pipeline
+review, QA, merge and Beta delivery; inherited version stamps remain pipeline
+owned. The installed player stays open. Cleanup remains blocked by the earlier
+automatic approval rejection; no deletion was retried and recovered space is
+still 0 GiB on both C: and D:. Generated output is about 1.1 GiB.
+
+# November 12 — PR #145 integrated review corrections
+
+The candidate integrates pipeline `c8f5fb28b9652c220be521eba6031ccaa855c5e6`
+with the local section-navigation and legacy-series corrections. All **35**
+XAML-defined ComboBoxes with localized inline items now have explicit owner
+refreshes under selection-event guards, including notification-series filters,
+Catalog, Search, Settings, library, personal lists and Requests browse. No locale
+refresh treats relabeling as a user option change.
+
+Ordinary unloads retain localization generations, preserving cached pages.
+Only changed keys on detached controls invalidate their registration. The new
+unchanged-reload regression failed before this correction and passes after it;
+the existing detached-key and open-dialog regressions still pass.
+
+Current verification: successful Release publish; **6,220/6,220 units**, no
+failures/skips; **seven passing native groups**: localized-properties,
+media-localization, media-catalog-localization, oct20-home-rows,
+settings-localization, calendar-culture and notification-series. App SHA-256:
+`5D94A9FF697A2C178269C0AFF3570F325189C1576F573DD30EBB3F373B79633E`.
+All 2,008 frozen implementation/verification inputs match. Receipts and logs:
+`D:/SiloPlayer-build/combined-review-receipt.json`,
+`combined-review-source-inputs.json`, `inline-choice-owner-audit.json`,
+`combined-review-{units,publish,native-build}.log` and `results/`.
+
+The broader personal-lists fixture did not pass: its standalone overlay setup
+omits the capability revision required to offer request-status badges. A
+separate diagnostic supplied revision 26, then exposed an inner-badge alignment
+expectation; that experiment was restored without changing product geometry or
+relaxing assertions. Original/diagnostic failures remain in results. Direct
+Favorites/Watchlist dropdown checks pass within media-localization. This is not
+a passing full personal-lists or default-native-suite claim. Earlier 23-group
+results below remain historical baselines. Live interoperability and full visual
+or physical DPI parity remain unverified.
+
+Version stamps remain inherited **1.2.1015-beta.1 / 1.2.1014.1**; pipeline owns
+the candidate's next release. The already published 1015 is the earlier source,
+not this localization candidate. PR #145 still requires review, QA, merge and
+Beta publication. The installed player (PID 38020) remains open.
+
+Cleanup remains blocked by the prior automatic approval rejection. No deletion
+was retried; recovered space remains **0 GiB C: / 0 GiB D:**. Reused generated
+output is about **1.08 GiB**, with approximately **192 GiB free C:** and
+**481 GiB free D:**. Source, receipts and owner AGENTS.md edits are preserved.
+
+# November 12 — PR #145 subtitle appearance review correction
+
+PR #145 remains the localization delivery candidate. Its review found that
+`Localized.Header` did not support Slider, which prevented the subtitle
+appearance dialog from opening during XAML construction. The attached property
+now maps Slider to `Slider.HeaderProperty`. The native regression reproduced
+`Localized.Header is not supported on Slider` before the fix, then passed with
+German and detached/reloaded Japanese headers while preserving the slider value.
+The subtitle-preferences fixture now registers the language and PlaybackApi
+services required by the current Settings page.
+
+The earlier 23-group verification below belongs to the pre-review candidate.
+The correction has a new successful 6,219/6,219 unit run, with no failed/skipped
+tests. Targeted native checks cover localized properties, subtitle preferences
+(including the real dialog and contract revisions 18/19), and playback
+localization. Final payload hashes and source binding are recorded separately
+in `D:/SiloPlayer-build/slider-review-receipt.json`; earlier receipts are retained.
+
+Beta **1.2.1015-beta.1** was published at **2026-11-13 01:18:24 UTC** from
+`a82fc9e50ce0e17b4b81caa1c552497c74620ed9`. It includes #144, while #145
+still requires pipeline review, merge and its own Beta release. Version stamps
+remain pipeline owned. This record does not certify release delivery for #145.
+
+Cleanup remains blocked by the previously reported automatic approval rejection;
+no deletion was retried in this review correction. Recovered space remains
+**0 GiB on C: and 0 GiB on D:**. One reusable build/publish payload is retained.
+The installed player remains running. Existing live-interoperability and visual
+verification limits below still apply.
+
+# November 12 — Interface localization candidate on Beta 1015
+
+The server-alignment branch integrates Beta `a82fc9e5` with the reviewed shell,
+Settings, Collections, Reader/Watch Party, media and playback localization.
+Source stamps are inherited **1.2.1015-beta.1 / 1.2.1014.1**; 1015 is not yet
+a published release. Latest observed published tags are Stable **1.2.1007**
+and Beta **1.2.1007-beta.1**. #143 and #144 are included dependencies.
+
+Final product verification: **6,219/6,219 units**, no failures/skips; successful
+Release publish; **23 native groups completed** on app SHA-256
+`A10DB7A2769098DDC0572EEC6D46CBB477C7E59091DDBF671986AA2E514CB687`.
+The Collections scope-label assertion failed in the combined batch and passed
+an isolated rerun with unchanged assertions. Its cause remains unestablished;
+this is retry-passing evidence, not an all-first-pass result. The new detached
+message-key regression failed before the localization reload correction and
+passes after it. The metadata translation row also uses stored layout ownership
+instead of depending on WinUI assigning visual parents first.
+
+All 2,009 frozen authored inputs were checked. Only extra failure diagnostics
+in the Collections native fixture changed after the full run; no product input
+changed. Evidence: `D:/SiloPlayer-build/verification-receipt.json`,
+`verified-source-inputs.json`, `verified-units.log`, `detached-publish.log` and
+`results/`. Engine remains pinned to `04E4D27D…`.
+
+Official GitHub main was fetched directly at
+`fb165fa931ea0f9e99b9a3a6f339af3322bc5524`; subsequent scanner/matching and
+contributor-guidance changes add no Desktop viewer/API work. See
+[scope, corrections and limits](research/2026-11-12-localization-delivery.md).
+Synthetic native checks do not certify live accounts/room/phone interoperability
+or exhaustive visual/DPI parity. The installed player remains open.
+
+Cleanup is **blocked**: automatic approval review rejected both the validated
+batch and the narrower deletion of `D:/SiloPlayer-build/artifacts`, without a
+detailed reason. No cleanup command executed, so recovered space from this
+delivery cleanup is **0 GiB on C: and 0 GiB on D:**. About 1.1 GiB of generated
+task output remains, below the session's 4 GiB limit. Source, receipts and
+screenshots remain intact. No installer or installed-player action ran.
+
+---
+
 # November 13 - Edition-scoped detail Auto verified locally
 
 Branch codex/edition-auto-nov13 starts at Beta e438c30d. Official upstream
@@ -206,6 +824,31 @@ Independent Task2 approval applies to c28705ac (no P0–P2); the refreshed deliv
 
 ---
 
+# November 12 — Beta 1007 and localization integration in progress
+
+Published Beta **1.2.1007-beta.1** (`1a341042bb2e64ee37f6a065726776af08acf285`) includes household contracts and Featured hero PR **#143**, merged as `f22764d957e7e07401a06a9dc60311d838942c5c` and published November 12 at 17:00:32 UTC. The pipeline's final PR head was `420a43cc568e66babb912b96f320074fa276fcdf`. Its corrections preserve committed webhook/reset results through transport-only catch-up and keep reset confirmation usable while capability reloads. The earlier updater fix (#141) remains included. This publication was observed through authenticated GitHub PR/ref/release reads; no local installer or installed-player action ran.
+
+The working integration merges that exact Beta into local head `5feed4841dd50cf120a49885ada57a87edd67fec` and applies shell candidate `874eeb805f5d17ffe6960442a6044a9059038eb2` plus lead review corrections. The merge is resolved and deliberately uncommitted pending final combined verification. Pipeline-owned source version is **1.2.1007-beta.1**, numeric **1.2.1006.1**. The staged updater and continuing playback controls are preserved. Remaining media, settings, collections, reader and playback localization work is still being integrated; retained Favorites/Watchlist/History titles remain an explicit open integration item.
+
+Historical checkpoint `5feed484` passed **6,149/6,149 units**, a fresh Release publish, five transport/HUD native groups and the actual post-roll case. All 1,564 recorded inputs matched after the T3 restart. Those receipts remain frozen under `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-parent-integration/`; they do **not** verify the newer working source. Six remaining HUD completion cases will run on the final combined build instead of another intermediate build. The cancelled recovery was stopped only between cases, with no native child interrupted.
+
+Shell review regressions reproduced typed-problem summary loss, uppercase-label loss and regional-culture casing. Lead correction `128f7ab12586e0a80ced7c8507d3c03e54750655` on shell candidate `874eeb80` passes **12/12 focused units**, a fresh Release publish and both `shell-localization` and `localized-properties` native groups. All 1,564 frozen inputs match, with published app SHA-256 `E6E126B81682AF58264AEFC2F4EFFCF992EDAAFFFE4958E52D7B103CB6D4EE65`. Evidence is `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-5-shell/lead-review-r2/`; original failures remain in r1/r2. Header text now follows interface-language casing and refreshes from the retained shell root. Those receipts verify the isolated shell correction, not this combined integration. The password-session native fixture adds only its two required localization-service registrations; its original missing-service failures remain preserved, and its final native pass is still required.
+
+Settings `6b0df091`, Collections `ff578688` and Reader/Watch Party `60ff09fb` candidates have been applied to this working integration. Their independent source reviews are pending. Test selectors are composed so each original group remains reachable. The owner clarified that server-update passes cover all customer-facing WebUI/API additions, changes and removals while preserving Desktop soft navigation, retained state and native improvements. The remaining parity work is active under that scope. No complete localization, visual parity, live interoperability or final delivery claim is made by this checkpoint.
+
+# November 12 — Current Beta integrated with server-alignment foundation
+
+Integrated Beta `47d5da976cc23797272b779b5519fb20315c4f92` into the local server-alignment branch after `5a056300`, preserving the staged updater from PR #141 and continuing transport controls from PR #138 alongside the reviewed household/hero/localization foundation and original HUD work. Pipeline-owned source version remains **1.2.1003-beta.1** (numeric **1.2.1002.1**). This is a local integration checkpoint; the remaining localization rollout and HUD completion are still separate work.
+
+Verification on the combined product source: **6,135/6,135 full unit tests**, a fresh self-contained Release publish, the native `transport-reload-controls` group, all **23** `transport-reload-actual` scenarios, and the `hud-nov12` group including the real Settings threshold UI and production libmpv/Lua loading/transport pixels. All completed with exit 0 and pass sentinels. Final manifest rechecked **1,557** source inputs with zero mismatches. Published app SHA-256: `4813C49647532FA80D6D2BC8097FBF77E746B522480A4782B96E621117E137EE`; pinned engine SHA-256: `04E4D27DC385DC18DDD93FBE69C75E635B864F3C6EC53A9122DF54C2F7842F4A`.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-align-nov12/beta-refresh/final-native-r1/final-manifest.json` links the full-unit, Release, controls, 23-case actual transport and HUD logs. Original failures remain in the earlier `beta-refresh` evidence directories. The actual-recovery fixture now releases its real HTTP source as 503 instead of double-reporting a failure through private injection and native disposal; its pause/intent assertions are retained. The HUD Settings fixture adds only the two localization service registrations needed by the real SettingsPage. These two native-fixture-only corrections were checked on the same published app and do not change the verified product/unit inputs. The prior spinner assertion was narrowed to a fullscreen black rectangle and actual native video/disc/ring pixels, retaining the intended rebuffer disc.
+
+Focused delivery **PR #143** (`codex/server-contracts-hero-nov12`, head `b90c3f69d136b1b596a372498277f8a0c0364365`) is open/non-draft to Beta for the reviewed household contracts and Featured hero. Its separate delivery record has 5,992 units and 15 native groups. A live read confirmed both GitHub automated reviews complete and no code-review findings; pipeline acknowledgement/merge/release was not observed. That PR excludes unfinished localization and HUD completion.
+
+Official server recheck: newest successful Docker build **2212**, `d9a6cbb9f53cb7a0b444d70a12f526fba70c9254`, completed November 12, 2026 at 15:14:02 UTC. The only change beyond the previously checked `5327ba36` is WebUI seek-bar marker-region colors (#4033); no API drift. The runtime/API audit remains pinned to `0b579aa6`. Exact marker palette alignment is with the focused HUD delivery. Receipts for builds 2211 and 2212 are preserved under `.codex-tmp/upstream-review-2026-11-12/`.
+
+Compiler/analyzer warnings and known historical fixture limitations remain recorded. This checkpoint does not certify live accounts/server playback, SiloCast phone or Watch Party interoperability, OS text scaling/high DPI, complete visual parity, installers, or installed-app behavior. The installed player and real settings remain untouched.
 # November 12 — Focused household contracts and Featured hero Beta submission
 
 Selected Beta base `47d5da976cc23797272b779b5519fb20315c4f92`; verified product-source snapshot `1fd6db5e30cc93fcd4acee29e683db389b3e90dc` on `codex/server-contracts-hero-nov12`. Integrated commits `bd45bebc7a1f5c904cede5d85058328c568ddce6`, `e50337d0abe7c335fcbe90d29ed327723abc47b2`, and `1fd6db5e30cc93fcd4acee29e683db389b3e90dc` reproduce reviewed workers `7caf93e7`, `47b4f6f8`, and `d7369cee`. The 17-file source/test diff matches reviewed worker blobs except for the two native Program selector integrations. Existing product `1.2.1003-beta.1` and file/assembly `1.2.1002.1` stamps are unchanged. The documentation commit adds this receipt without changing tested product source. Official reference remains the supplied, unmodified `0b579aa6192d49d7e8e0921dde5e955ac29ce302`.
@@ -224,7 +867,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -240,7 +883,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -256,7 +899,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -274,7 +917,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -290,7 +933,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -308,7 +951,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -508,7 +1151,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -516,7 +1159,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -524,7 +1167,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -554,7 +1197,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1017-beta.1`; numeric version: `1.2.1016.1`.
+Source version: `1.2.1022-beta.1`; numeric version: `1.2.1021.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

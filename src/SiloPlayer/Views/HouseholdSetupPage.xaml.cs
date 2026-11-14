@@ -1,3 +1,5 @@
+using SiloPlayer.Services;
+using SiloPlayer.Core.Localization;
 using System.Collections.ObjectModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -22,6 +24,7 @@ public sealed partial class HouseholdSetupPage : Page
     private readonly SettingsService _settingsService;
     private CancellationTokenSource? _lifetime;
     private int? _maxProfiles;
+    private Func<string>? _localizedHouseholdError;
 
     public ObservableCollection<Profile> Profiles { get; } = [];
     public ObservableCollection<HouseholdProfileTile> ProfileTiles { get; } = [];
@@ -35,6 +38,13 @@ public sealed partial class HouseholdSetupPage : Page
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         _settingsService = App.Services.GetRequiredService<SettingsService>();
         ProfilesRepeater.ItemsSource = ProfileTiles;
+        AppLocalization.Register(this, () =>
+        {
+            AppLocalization.ApplyDirection(this);
+            SkipButton.Content = Profiles.Count > 1 ? AppStrings.Get("web.ui.skipForNow") : AppStrings.Get("web.onboarding.householdSetup.justMe");
+            foreach (var tile in ProfileTiles) tile.RefreshLocalizedText();
+            if (_localizedHouseholdError != null) ErrorText.Text = _localizedHouseholdError();
+        });
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -72,7 +82,7 @@ public sealed partial class HouseholdSetupPage : Page
             Profiles.Clear();
             foreach (var profile in response.Profiles) Profiles.Add(profile);
             RebuildProfileTiles();
-            SkipButton.Content = Profiles.Count > 1 ? "Skip for now" : "Just me for now";
+            SkipButton.Content = Profiles.Count > 1 ? AppStrings.Get("web.ui.skipForNow", fallback: "Skip for now") : AppStrings.Get("web.onboarding.householdSetup.justMe", fallback: "Just me for now");
 
             try
             {
@@ -94,9 +104,10 @@ public sealed partial class HouseholdSetupPage : Page
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
         catch (Exception ex)
         {
-            ErrorText.Text = ex is HttpRequestException
+            _localizedHouseholdError = () => ex is ApiException problem ? ApiProblemText.Display(problem) : ex is HttpRequestException
                 ? "Unable to load household profiles. Check your connection and try again."
                 : ex.Message;
+            ErrorText.Text = _localizedHouseholdError();
             ErrorPanel.Visibility = Visibility.Visible;
         }
         finally
@@ -140,7 +151,7 @@ public sealed partial class HouseholdSetupPage : Page
         Profiles.Clear();
         foreach (var profile in response.Profiles) Profiles.Add(profile);
         RebuildProfileTiles();
-        SkipButton.Content = Profiles.Count > 1 ? "Skip for now" : "Just me for now";
+        SkipButton.Content = Profiles.Count > 1 ? AppStrings.Get("web.ui.skipForNow", fallback: "Skip for now") : AppStrings.Get("web.onboarding.householdSetup.justMe", fallback: "Just me for now");
     }
 
     private void RebuildProfileTiles()
@@ -171,21 +182,25 @@ public sealed partial class HouseholdSetupPage : Page
 
     private void ShowError(string message)
     {
+        _localizedHouseholdError = null;
         ErrorText.Text = message;
         ErrorPanel.Visibility = Visibility.Visible;
     }
 }
 
-public sealed class HouseholdProfileTile
+public sealed class HouseholdProfileTile : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {
     public static HouseholdProfileTile AddProfile { get; } = new(null);
 
     public HouseholdProfileTile(Profile? profile) => Profile = profile;
 
+    public void RefreshLocalizedText() { OnPropertyChanged(nameof(DisplayName)); OnPropertyChanged(nameof(AccessibleName)); }
     public Profile? Profile { get; }
     public bool IsAdd => Profile == null;
-    public string DisplayName => Profile?.Name ?? "Add profile";
-    public string AccessibleName => Profile?.EditProfileAccessibleName ?? "Add profile";
+    public string DisplayName => Profile?.Name ?? AppStrings.Get("web.onboarding.householdSetup.addProfile");
+    public string AccessibleName => Profile is { } profile
+        ? AppStrings.Get("web.onboarding.householdSetup.editProfile") + " " + profile.Name
+        : AppStrings.Get("web.onboarding.householdSetup.addProfile");
     public Windows.UI.Text.FontWeight LabelWeight => IsAdd
         ? Microsoft.UI.Text.FontWeights.Medium
         : Microsoft.UI.Text.FontWeights.SemiBold;

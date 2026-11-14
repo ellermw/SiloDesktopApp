@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<UserControl
+<UserControl loc:Localized.Direction="True"
     x:Class="SiloPlayer.Controls.HeroCarousel"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
@@ -14,7 +15,7 @@
     LostFocus="OnHeroLostFocus"
     SizeChanged="Hero_SizeChanged"
     Loaded="OnLoaded"
-    Unloaded="OnUnloaded">
+    Unloaded="OnUnloaded" loc:Localized.Name="web.home.hero.carouselLabel">
 
     <!-- Content measures naturally above the Home/Library viewport minimum. -->
     <Grid
@@ -150,8 +151,8 @@
                 LineStackingStrategy="BlockLineHeight"
                 Margin="0,0,0,28" />
 
-            <TextBlock x:Name="HeroTranslationLabel" Text="AI-translated overview" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" Visibility="Collapsed" Margin="0,0,0,8" />
-            <Button x:Name="HeroTranslateButton" Content="Translate description" Style="{StaticResource SecondaryButtonStyle}" Click="HeroTranslateButton_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,12" />
+            <TextBlock x:Name="HeroTranslationLabel" Text="AI-translated overview" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" Visibility="Collapsed" Margin="0,0,0,8" loc:Localized.Text="web.detail.translation.machineTranslated" />
+            <Button x:Name="HeroTranslateButton" Content="Translate description" Style="{StaticResource SecondaryButtonStyle}" Click="HeroTranslateButton_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,12" loc:Localized.Content="web.detail.translation.translate" />
             <controls:WrapPanel HorizontalSpacing="12" VerticalSpacing="12">
                 <!-- Primary CTA: Play (pill-primary) -->
                 <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="22.4,12.48" BorderThickness="0" UseLayoutRounding="False"
@@ -172,7 +173,7 @@
                     <Grid ColumnSpacing="8" UseLayoutRounding="False">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <Grid x:Name="MoreInfoIcon" Width="16" Height="16" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1" Text="More Info" TextWrapping="Wrap" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" Foreground="White" VerticalAlignment="Center" UseLayoutRounding="False" />
+                        <TextBlock Grid.Column="1" Text="More Info" TextWrapping="Wrap" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" Foreground="White" VerticalAlignment="Center" UseLayoutRounding="False" loc:Localized.Text="web.home.hero.moreInfo" />
                     </Grid>
                 </Button>
             </controls:WrapPanel>
@@ -184,14 +185,14 @@
             AutomationProperties.Name="Previous slide"
             VerticalAlignment="Center" HorizontalAlignment="Left"
             Margin="8,0,0,0" Width="40" Height="40"
-            Click="PrevButton_Click" Opacity="0">
+            Click="PrevButton_Click" Opacity="0" loc:Localized.Name="web.home.hero.previousSlide">
             <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
         <Button x:Name="NextButton" Style="{StaticResource GhostButtonStyle}"
             AutomationProperties.Name="Next slide"
             VerticalAlignment="Center" HorizontalAlignment="Right"
             Margin="0,0,8,0" Width="40" Height="40"
-            Click="NextButton_Click" Opacity="0">
+            Click="NextButton_Click" Opacity="0" loc:Localized.Name="web.home.hero.nextSlide">
             <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
         </Button>
 
@@ -247,7 +248,7 @@
                 BorderThickness="0"
                 ToolTipService.ToolTip="Pause slideshow"
                 AutomationProperties.Name="Pause slideshow"
-                Click="PauseCarouselButton_Click">
+                Click="PauseCarouselButton_Click" loc:Localized.ToolTip="web.home.hero.pauseSlideshow" loc:Localized.Name="web.home.hero.pauseSlideshow">
                 <FontIcon x:Name="PauseCarouselIcon" Glyph="&#xE769;" FontSize="12" Foreground="#CCFFFFFF" />
             </Button>
         </StackPanel>

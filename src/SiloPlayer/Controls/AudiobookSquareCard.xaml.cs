@@ -68,12 +68,13 @@ public sealed partial class AudiobookSquareCard : UserControl
         ArtworkFallback.Visibility = string.IsNullOrWhiteSpace(item.PosterUrl) ? Visibility.Visible : Visibility.Collapsed;
         TitleText.Text = item.Title;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, item.Title);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(MoreButton, $"More actions for {item.Title}");
+        MediaItemCardActions.BindText(MoreButton, "Name", element => Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.moreActions") + " · " + item.Title));
         var position = Math.Max(0, item.PositionSeconds ?? 0);
         var duration = Math.Max(0, item.DurationSeconds ?? 0);
         ProgressFill.Width = duration > 0 ? 168 * Math.Clamp(position / duration, 0, 1) : 0;
         var remaining = Math.Max(0, duration - position);
-        TimeLeftText.Text = remaining > 0 ? $"{FormatDuration(remaining)} left" : "";
+        MediaItemCardActions.BindText(TimeLeftText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) && remaining > 0
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.minutesLeft", new Dictionary<string, object?> { ["minutes"] = Math.Max(1, (int)Math.Ceiling(remaining / 60)) }) : "");
         if (!string.IsNullOrWhiteSpace(item.PosterUrl)) _ = LoadPosterAsync(item, generation);
         else _ = ArtworkFallback.ShowThumbhashAsync();
     }

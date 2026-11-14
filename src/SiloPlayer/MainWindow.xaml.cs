@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -187,6 +188,7 @@ public sealed partial class MainWindow : Window
         _eventChannel.ReadCatchUpRequested += OnReadCatchUpRequested;
         _apiClient.LocalizedReads.Invalidated += OnLocalizedReadsInvalidated;
         InitializeInheritedPreferenceRefresh();
+        InitializeAppLanguage();
         App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed += OnEpisodeSpoilerPreferencesChanged;
 
         // Playing Next cinematic overlay — enters during the final 30 seconds
@@ -222,12 +224,36 @@ public sealed partial class MainWindow : Window
     private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
     {
         _currentWindowWidth = e.Size.Width;
-        ApplyResponsiveShellLayout();
+        QueueResponsiveShellLayout();
         var livePostRoll = PlayingNextOverlay.Visibility == Visibility.Visible;
         if (!livePostRoll) _playerService.HandleWindowResize();
-        SynchronizeSettingsSidebar();
         if (livePostRoll) QueuePlayingNextResize();
         else UpdatePlayingNextLayout(e.Size.Width, e.Size.Height);
+    }
+
+    private bool _responsiveShellLayoutQueued;
+
+    // NavigationView adapts its own visual state in the same layout pass as the
+    // window size change. Switching PaneDisplayMode or IsPaneOpen inside that pass
+    // made WinUI refuse the switch (0x80004005) and then fail natively, closing the
+    // app (native shell-navigation, PR 145). Apply the shell layout once that pass
+    // completes; a burst of resizes applies once with the latest width. The
+    // Settings sidebar is restored or hosted first: switching the pane mode while
+    // the outgoing sidebar's rows are still in the pane was refused as well.
+    private void QueueResponsiveShellLayout()
+    {
+        if (_responsiveShellLayoutQueued) return;
+        _responsiveShellLayoutQueued = true;
+        if (DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            _responsiveShellLayoutQueued = false;
+            if (_windowClosed) return;
+            SynchronizeSettingsSidebar();
+            ApplyResponsiveShellLayout();
+        })) return;
+        _responsiveShellLayoutQueued = false;
+        SynchronizeSettingsSidebar();
+        ApplyResponsiveShellLayout();
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
@@ -248,6 +274,7 @@ public sealed partial class MainWindow : Window
         _isNarrowShell = isNarrow;
         if (!isNarrow)
         {
+            _narrowPaneClosePending = false;
             SetMobileHeaderHidden(false);
         }
 
@@ -271,6 +298,7 @@ public sealed partial class MainWindow : Window
         // route changes the desktop mode, so reconcile it after the callback,
         // as PaneOpening does.
         var deferDesktopPane = duringFrameNavigation && !isNarrow && NavView.PaneDisplayMode != desiredPaneDisplayMode;
+        var paneModeRefused = false;
         if (deferDesktopPane)
             ScheduleDesktopPaneSynchronization();
         else if (NavView.PaneDisplayMode != desiredPaneDisplayMode)
@@ -287,6 +315,7 @@ public sealed partial class MainWindow : Window
                 // run unguarded on the UI thread, so log it and reconcile shortly,
                 // leaving IsPaneOpen to the retry as the deferred path does.
                 LocalLog.AppendException("navigation_errors.txt", ex, "responsive_pane_mode");
+                paneModeRefused = true;
                 deferDesktopPane = !isNarrow;
                 if (++_desktopPaneSynchronizationFailures <= 8)
                     _ = isNarrow ? RetryResponsiveShellLayoutAsync() : RetryDesktopPaneSynchronizationAsync();
@@ -315,8 +344,23 @@ public sealed partial class MainWindow : Window
         {
             // Entering the overlay-style mobile shell closes the desktop pane
             // once, without overwriting the user's desktop preference.
-            if (!wasNarrow && NavView.IsPaneOpen)
-                NavView.IsPaneOpen = false;
+            if (!wasNarrow) _narrowPaneClosePending = true;
+            // While WinUI refuses the LeftMinimal switch it refuses IsPaneOpen too
+            // (native shell-navigation, PR 145): the retry closes the pane after it.
+            if (_narrowPaneClosePending && !paneModeRefused)
+            {
+                try
+                {
+                    if (NavView.IsPaneOpen) NavView.IsPaneOpen = false;
+                    _narrowPaneClosePending = false;
+                }
+                catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x80004005))
+                {
+                    LocalLog.AppendException("navigation_errors.txt", ex, "responsive_pane_open");
+                    if (++_desktopPaneSynchronizationFailures <= 8)
+                        _ = RetryResponsiveShellLayoutAsync();
+                }
+            }
         }
         else if (!deferDesktopPane)
         {
@@ -324,8 +368,18 @@ public sealed partial class MainWindow : Window
             // LeftCompact is the WinUI mode designed for a persistent icon rail.
             // Reassigning IsPaneOpen on every page load restarts NavigationView's
             // pane transition, so only change it when the real state differs.
-            if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
-                NavView.IsPaneOpen = DesktopSidebarIsOpen;
+            try
+            {
+                if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
+                    NavView.IsPaneOpen = DesktopSidebarIsOpen;
+            }
+            catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x80004005))
+            {
+                // Settling like the mode switch above: the retry sets mode and IsPaneOpen together.
+                LocalLog.AppendException("navigation_errors.txt", ex, "responsive_pane_open");
+                if (++_desktopPaneSynchronizationFailures <= 8)
+                    _ = RetryDesktopPaneSynchronizationAsync();
+            }
         }
 
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
@@ -509,6 +563,7 @@ public sealed partial class MainWindow : Window
         _eventChannel.ReadCatchUpRequested -= OnReadCatchUpRequested;
         _apiClient.LocalizedReads.Invalidated -= OnLocalizedReadsInvalidated;
         ReleaseInheritedPreferenceRefresh();
+        ReleaseAppLanguage();
         App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed -= OnEpisodeSpoilerPreferencesChanged;
         _localizedRefreshCts?.Cancel();
         _localizedRefreshCts?.Dispose();
@@ -605,12 +660,11 @@ public sealed partial class MainWindow : Window
             var series = _playerService.NextEpisodeSeriesTitle;
             var overview = _playerService.NextEpisodeOverview ?? "";
 
-            PlayingNextLabelText.Text = hasNextEpisode ? "PLAYING NEXT" : "FINISHED";
+            EnsurePlayingNextTextKeys();
+            PlayingNextLabelText.Text = PlayingNextLabel(hasNextEpisode);
             PlayingNextEpisodePanel.Visibility = hasNextEpisode ? Visibility.Visible : Visibility.Collapsed;
             PlayingNextFinishedPanel.Visibility = hasNextEpisode ? Visibility.Collapsed : Visibility.Visible;
-            PlayingNextFinishedHeading.Text = !string.IsNullOrWhiteSpace(_playerService.WatchDetail?.SeriesTitle)
-                ? $"You've finished {_playerService.WatchDetail.SeriesTitle}"
-                : "End of playback";
+            PlayingNextFinishedHeading.Text = PlayingNextFinishedHeadingText(_playerService.WatchDetail?.SeriesTitle);
 
             PlayingNextTitleText.Text = title;
             PlayingNextSeriesText.Text = series ?? "";
@@ -634,9 +688,8 @@ public sealed partial class MainWindow : Window
 
             var playbackHasEnded = videoEnded || _playerService.IsPostRollVideoEnded;
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextCountdownRing.Value = _playingNextRemaining;
-            PlayingNextPlayNowText.Text = "Play Now";
             UpdatePlayingNextAutoPlayVisuals();
 
             // The native mpv popup is an owned HWND above the WinUI content.
@@ -764,7 +817,7 @@ public sealed partial class MainWindow : Window
             if (!_playerService.CanAdvanceAutomatically)
             {
                 _playingNextRemaining = PlayingNextCountdownSeconds;
-                PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+                PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
                 PlayingNextCountdownRing.Value = _playingNextRemaining;
                 UpdatePlayingNextAutoPlayVisuals();
                 return;
@@ -781,7 +834,7 @@ public sealed partial class MainWindow : Window
             }
             return;
         }
-        PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+        PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
         PlayingNextCountdownRing.Value = _playingNextRemaining;
     }
 
@@ -815,7 +868,7 @@ public sealed partial class MainWindow : Window
         {
             StopPlayingNextCountdown();
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextCountdownRing.Value = _playingNextRemaining;
         }
         UpdatePlayingNextAutoPlayVisuals();
@@ -825,7 +878,7 @@ public sealed partial class MainWindow : Window
             _playingNextTimer == null)
         {
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextCountdownRing.Value = _playingNextRemaining;
             StartPlayingNextCountdown();
         }
@@ -847,7 +900,7 @@ public sealed partial class MainWindow : Window
 
         StopPlayingNextCountdown();
         _playingNextRemaining = PlayingNextCountdownSeconds;
-        PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+        PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
         PlayingNextCountdownRing.Value = _playingNextRemaining;
 
         if (PlayingNextCountdownAllowed &&
@@ -865,9 +918,7 @@ public sealed partial class MainWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         PlayingNextAutoplayToggle.Visibility = hasNextEpisode ? Visibility.Visible : Visibility.Collapsed;
-        PlayingNextAutoplayToggleText.Text = _playingNextAutoPlay
-            ? "Auto-play is on"
-            : "Auto-play is off";
+        PlayingNextAutoplayToggleText.Text = PlayingNextAutoplayText(_playingNextAutoPlay);
     }
 
     private async void PlayingNextPlayNow_Click(object sender, RoutedEventArgs e)
@@ -1126,6 +1177,7 @@ public sealed partial class MainWindow : Window
     private void OnNavigated_UpdateWindowTitle(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         if (AppWindow == null) return;
+        _dynamicShellTitle = false;
         var pageType = e.SourcePageType;
         if (pageType == null)
         {
@@ -1183,6 +1235,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public void SetDynamicTitle(string label)
     {
+        _dynamicShellTitle = true;
         if (AppWindow != null)
             AppWindow.Title = DocumentTitle.FromLabel(label);
     }
@@ -1267,7 +1320,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (await NativeOAuthCallbacks.TryHandleAsync(callback)) return;
-            App.Services.GetRequiredService<ToastService>().Error("This sign-in attempt has expired. Start sign-in again from Silo.");
+            App.Services.GetRequiredService<ToastService>().Error(AppStrings.Get("web.auth.oauthFailure.sessionExpired", fallback: "This sign-in attempt has expired. Start sign-in again from Silo."));
             if (ContentFrame.Content == null && !_authService.IsLoggedIn)
                 _navigationService.Navigate<ServerSelectPage>();
         }
@@ -1611,6 +1664,7 @@ public sealed partial class MainWindow : Window
         void Refresh()
         {
             if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            RefreshAppLanguageForOwner(catchUp: true);
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();
@@ -1631,6 +1685,7 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_windowClosed || !_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            RefreshAppLanguageForOwner(catchUp: true);
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();
@@ -1719,6 +1774,7 @@ public sealed partial class MainWindow : Window
     {
         void Refresh()
         {
+            RefreshAppLanguageForOwner();
             // Finishing artwork loaded for one profile is not shown to the next.
             UpdatePlayingNextFinishingArt();
             if (_hydratedShellKey != null &&
@@ -1795,6 +1851,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        _mainNavigationHidePending = false; // a hide still waiting to apply must not hide the shown shell
+        // Restored sessions reach the shell without a later profile event; the same owner is a no-op.
+        RefreshAppLanguageForOwner();
         var shellKey = GetAuthenticatedShellKey();
         var shouldHydrateShell = !string.Equals(_hydratedShellKey, shellKey, StringComparison.Ordinal);
         if (shouldHydrateShell)
@@ -1985,6 +2044,7 @@ public sealed partial class MainWindow : Window
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
             NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
             NotifyInheritedPreferenceFromRealtime(channel, eventName, data);
+            NotifyAppLanguageFromRealtime(channel, eventName, data);
             if (channel == "user_settings" && eventName == "user_settings.changed"
                 && data.ValueKind == System.Text.Json.JsonValueKind.Object
                 && (!data.TryGetProperty("profile_id", out var changedProfile) || changedProfile.ValueKind == System.Text.Json.JsonValueKind.String && changedProfile.GetString() == _authService.SelectedProfileId)
@@ -2606,6 +2666,8 @@ public sealed partial class MainWindow : Window
                     ProfileSwitchButton.Visibility = canSwitch ? Visibility.Visible : Visibility.Collapsed;
                     // Profile management remains available even when there is nobody to switch to.
                     SettingsSidebarProfile.IsEnabled = true;
+                    Localized.SetText(ProfileNameText, null);
+                    Localized.SetText(ProfileDropdownName, null);
                     ProfileNameText.Text = profile.Name;
                     ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
                         ? profile.Name[0].ToString().ToUpperInvariant()
@@ -2692,10 +2754,7 @@ public sealed partial class MainWindow : Window
     public void HideMainNavigation()
     {
         RestoreAppSidebar();
-        // Hide the pane before closing it so the authenticated-pane guard does
-        // not treat login/profile transitions as an accidental collapse.
-        NavView.IsPaneVisible = false;
-        NavView.IsPaneOpen = false;
+        ApplyMainNavigationHidden();
         RetireSidebarNavigation();
         BuildPluginApps([]);
         _hydratedShellKey = null;
@@ -2861,6 +2920,9 @@ public sealed partial class MainWindow : Window
     }
 
     private int _desktopPaneSynchronizationFailures;
+    // Entering the narrow shell closes the pane once. A close WinUI refused stays
+    // pending, so the retry still closes it even though the shell is already narrow.
+    private bool _narrowPaneClosePending;
     private async Task RetryDesktopPaneSynchronizationAsync()
     {
         await Task.Delay(120);
@@ -2873,6 +2935,42 @@ public sealed partial class MainWindow : Window
         if (!_windowClosed) ApplyResponsiveShellLayout();
     }
 
+    // A hide WinUI refused stays pending until it applies or the shell is shown again.
+    private bool _mainNavigationHidePending;
+    private int _mainNavigationHideFailures;
+
+    // Hide the pane before closing it so the authenticated-pane guard does not
+    // treat login/profile transitions as an accidental collapse. NavigationView
+    // refuses pane changes (0x80004005, or 0x8000FFFF) while its own pane state
+    // is still settling, here right after the profile flyout closes (native
+    // profile-menu, PR 145: Switch Profile threw from IsPaneVisible and the app
+    // closed). A refused hide is logged and retried after the layout pass; the
+    // close waits for it, since the guard would cancel a close of a visible pane.
+    private void ApplyMainNavigationHidden()
+    {
+        try
+        {
+            NavView.IsPaneVisible = false;
+            NavView.IsPaneOpen = false;
+            _mainNavigationHidePending = false;
+            _mainNavigationHideFailures = 0;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+            when (ex.HResult is unchecked((int)0x80004005) or unchecked((int)0x8000FFFF))
+        {
+            LocalLog.AppendException("navigation_errors.txt", ex, "hide_main_navigation");
+            _mainNavigationHidePending = true;
+            if (++_mainNavigationHideFailures <= 8)
+                _ = RetryMainNavigationHideAsync();
+        }
+    }
+
+    private async Task RetryMainNavigationHideAsync()
+    {
+        await Task.Delay(120);
+        if (!_windowClosed && _mainNavigationHidePending) ApplyMainNavigationHidden();
+    }
+
     public void RestoreMainPane()
     {
         if (!CanExposeAuthenticatedNavigation)
@@ -2881,6 +2979,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        _mainNavigationHidePending = false;
         NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout();
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
@@ -3201,9 +3300,9 @@ public sealed partial class MainWindow : Window
         {
             (label, icon) = source.Destination switch
             {
-                "home" => ("Home", "house"),
-                "for_you" => ("For You", "sparkles"),
-                "calendar" => ("Calendar", "calendar-days"),
+                "home" => (AppStrings.Get("web.shell.sidebar.home"), "house"),
+                "for_you" => (AppStrings.Get("web.shell.sidebar.forYou"), "sparkles"),
+                "calendar" => (AppStrings.Get("web.shell.sidebar.calendar"), "calendar-days"),
                 // Global media-family routes are not available yet. Match the
                 // WebUI by omitting them instead of silently choosing a library.
                 _ => ("", ""),
@@ -3312,7 +3411,8 @@ public sealed partial class MainWindow : Window
         };
         Grid.SetColumn(unpinButton, 1);
         ToolTipService.SetToolTip(unpinButton, "Unpin");
-        AutomationProperties.SetName(unpinButton, $"Unpin {pin.Label}");
+        Localized.SetToolTip(unpinButton, "web.shell.sidebar.unpin");
+        AppLocalization.Register(unpinButton, () => AutomationProperties.SetName(unpinButton, AppStrings.Get("web.shell.sidebar.unpin") + " " + pin.Label));
         content.Children.Add(unpinButton);
 
         void ShowUnpin() => unpinButton.Opacity = 1;
@@ -3726,7 +3826,9 @@ public sealed partial class MainWindow : Window
         LibrariesChevron.Source = new Microsoft.UI.Xaml.Media.Imaging.SvgImageSource(new Uri($"ms-appx:///Assets/Icons/{(_librariesExpanded ? "chevron-down" : "chevron-right")}.svg"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(
             LibrariesHeader,
-            _librariesExpanded ? "Collapse libraries" : "Expand libraries");
+            AppStrings.Get(_librariesExpanded ? "web.shell.sidebar.collapse" : "web.shell.sidebar.expand",
+                new Dictionary<string, object?> { ["name"] = AppStrings.Get("web.shell.sidebar.libraries") },
+                _librariesExpanded ? "Collapse libraries" : "Expand libraries"));
         UpdateLibraryNavigationVisibility(isOpen: true);
     }
 
@@ -3758,8 +3860,27 @@ public sealed partial class MainWindow : Window
     }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        DismissProfileFlyout();
-        _navigationService.Navigate<SettingsPage>();
+        var origin = ContentFrame.Content;
+        var identity = _apiClient.CaptureIdentityContext();
+        void OpenSettings(object? closedSender, object args)
+        {
+            ProfileFooterFlyout.Closed -= OpenSettings;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_windowClosed && CanExposeAuthenticatedNavigation &&
+                    _apiClient.IsCurrentIdentityContext(identity) && ReferenceEquals(origin, ContentFrame.Content))
+                    _navigationService.Navigate<SettingsPage>();
+            });
+        }
+        // Settings replaces the sidebar containing the popup's anchor. Wait
+        // for the presenter to close, then leave its native callback before
+        // navigating. A newer route or profile must not inherit this click.
+        if (ProfileFooterFlyout.IsOpen)
+        {
+            ProfileFooterFlyout.Closed += OpenSettings;
+            ProfileFooterFlyout.Hide();
+        }
+        else OpenSettings(null, EventArgs.Empty);
     }
 
     private void DismissProfileFlyout()
@@ -3808,25 +3929,16 @@ public sealed partial class MainWindow : Window
                         _navigationService.Navigate<NotificationsPage>();
                         break;
                     case "Favorites":
-                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                            "favorites",
-                            "Favorites",
-                            "Movies and shows you've marked as favorites."));
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation("favorites"));
                         break;
                     case "Watchlist":
-                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                            "watchlist",
-                            "Watchlist",
-                            "Things you've saved to watch later."));
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation("watchlist"));
                         break;
                     case "WatchParty":
                         _navigationService.Navigate<WatchTogetherJoinPage>();
                         break;
                     case "History":
-                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
-                            "history",
-                            "History",
-                            "Everything you've recently watched."));
+                        _navigationService.Navigate<CatalogPage>(new CatalogNavigation("history"));
                         break;
                     case "Collections":
                         _navigationService.Navigate<CollectionsPage>();
@@ -3957,6 +4069,7 @@ public sealed partial class MainWindow : Window
     {
         if (_savedRestoreInProgress) return; // Restore owns its retry/login route and preserves the selected server.
         _pendingAccessRefresh = false;
+        RetireAppLanguageOwner();
         DispatcherQueue.TryEnqueue(async () =>
         {
             TryShellAction("shared_appearance_logout", _themeService.ResetSharedAppearance);

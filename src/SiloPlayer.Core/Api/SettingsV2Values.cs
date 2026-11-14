@@ -43,6 +43,7 @@ internal static class SettingsV2Values
         ["playback.auto_play_next_preview"] = "boolean",
         ["playback.next_up_prompt_seconds"] = "integer",
         ["catalog.metadata_language"] = "language_tag",
+        ["ui.app_language"] = "language_tag",
         ["catalog.metadata_language_overrides"] = "object",
         ["player.hdr_enabled"] = "boolean",
         ["player.dolby_vision_enabled"] = "boolean",

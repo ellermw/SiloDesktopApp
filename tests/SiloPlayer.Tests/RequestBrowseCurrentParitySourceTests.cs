@@ -28,7 +28,7 @@ public sealed class RequestBrowseCurrentParitySourceTests
         var sharedCard = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");
         Assert.Contains("ExternalTitleCard.Build", page);
         Assert.Contains("if (pending) return", sharedCard);
-        Assert.Contains("finally { pending = false; button.IsEnabled = true; button.Content = NormalContent(); AutomationProperties.SetName(button, $\"Request {item.Title}\"); UpdateReveal(); }", sharedCard);
+        Assert.Contains("finally { pending = false; button.IsEnabled = true; button.Content = NormalContent(); MediaItemCardActions.BindText(button, \"Name\"", sharedCard);
         Assert.Contains("ToastService>().Error", sharedCard);
     }
 
@@ -39,15 +39,15 @@ public sealed class RequestBrowseCurrentParitySourceTests
         var markup = ReadRepoFile("src", "SiloPlayer", "Views", "RequestBrowsePage.xaml");
 
         var sharedCard = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");
-        Assert.Contains("StatusBadge(label, overlay: true)", sharedCard);
-        Assert.Contains("Open {item.Title} in library", sharedCard);
+        Assert.Contains("StatusBadge(label, overlay: true, display:", sharedCard);
+        Assert.Contains("web.requests.hub.openInLibraryFor", sharedCard);
         Assert.Contains("action.Button.GotFocus", sharedCard);
-        Assert.Contains("Open {item.Title} request details", sharedCard);
+        Assert.Contains("web.item.menu.viewDetails", sharedCard);
         Assert.Contains("Could not load this browse page. Try a different sort or media type.", page);
         Assert.Contains("Click=\"RetryBrowse_Click\"", markup);
         Assert.Contains("_browse.Error != null && !missing ? Visibility.Visible : Visibility.Collapsed", page);
         Assert.Contains("MoreErrorText.Visibility = _browse.MoreError != null", page);
-        Assert.Contains("LoadMoreButton.Content = _browse.MoreError != null ? \"Try again\" : \"Load more\"", page);
+        Assert.Contains("web.common.ui.loadMore.button", page);
         Assert.DoesNotContain("catch (Exception ex) { Fail(ex.Message); }", page);
     }
 

@@ -34,7 +34,7 @@ public partial class PlayerService
             if (_nativeMenuDispatcher?.HasThreadAccess == true) Refresh();
             else _nativeMenuDispatcher?.TryEnqueue(Refresh);
         }
-        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.speed.heading", "Playback speed"), Choices(), Current,
+        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.speed.heading", "Speed"), Choices(), Current,
             id =>
             {
                 var option = Options().FirstOrDefault(row => row.Id == id && row.IsEnabled);
@@ -42,6 +42,7 @@ public partial class PlayerService
             }, reason => { VideoPlaybackRateChanged -= Changed; finish(reason); },
             root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer: error, allowDisabledTraversal: true, segmented: true);
         VideoPlaybackRateChanged += Changed;
+        menu.Localize(() => HudText("web.player.speed.heading", "Speed"), () => { Refresh(); return Choices(); });
         Refresh();
         return menu;
     }

@@ -2,6 +2,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using System.Text.Json;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -16,10 +17,11 @@ public sealed class SeekPreviewsDialog : ItemScopedDialog
     private string? _rendered;
     public SeekPreviewsDialog(string id, IReadOnlyDictionary<string, string> fileNames) : base(id, "Seek Previews", "The thumbnails players show while seeking, for each of this item's files.", 512, "Make Again", AuthorizationPolicy.IsActingAdmin)
     {
-        _api = new(Client); _fileNames = fileNames; CloseButtonText = "Close";
+        KeyHeading("web.detail.actions.seekPreviews");
+        _api = new(Client); _fileNames = fileNames; CloseButtonText = AppStrings.Get("web.ui.close"); this.KeyedDialog(close: "web.ui.close");
         Body.Children.Add(new ScrollViewer { Content = _files, MaxHeight = 320, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         _off = Text("Turn on Generate seek previews in the library's settings to make them.", 12, true); _off.Visibility = Visibility.Collapsed; Body.Children.Add(_off);
-        _poll.Tick += async (_, _) => { if (_reading || Busy || !CanAct) return; _reading = true; try { await LoadAsync(); } catch (OperationCanceledException) { _poll.Stop(); } catch (Exception error) { Status.Text = error.Message; Ready = false; _poll.Stop(); } finally { _reading = false; UpdateCommands(); } };
+        _poll.Tick += async (_, _) => { if (_reading || Busy || !CanAct) return; _reading = true; try { await LoadAsync(); } catch (OperationCanceledException) { _poll.Stop(); } catch (Exception error) { Status.Text = error.DisplayMessage(); Ready = false; _poll.Stop(); } finally { _reading = false; UpdateCommands(); } };
         Closed += (_, _) => _poll.Stop();
     }
     protected override async Task LoadAsync()

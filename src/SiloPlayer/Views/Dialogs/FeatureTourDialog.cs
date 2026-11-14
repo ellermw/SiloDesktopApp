@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
@@ -15,7 +16,7 @@ namespace SiloPlayer.Views.Dialogs;
 /// Native rendering of the server-driven WebUI feature tour. Unknown step
 /// kinds are skipped so newer server manifests remain forward compatible.
 /// </summary>
-public sealed class FeatureTourDialog : ContentDialog
+public sealed partial class FeatureTourDialog : ContentDialog
 {
     private static readonly HashSet<string> KnownKinds =
         ["welcome", "feature_card", "setting_choice", "handoff"];
@@ -49,8 +50,8 @@ public sealed class FeatureTourDialog : ContentDialog
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = _body,
         };
-        CloseButtonText = "Skip tour";
-        PrimaryButtonText = "Show me";
+        CloseButtonText = AppStrings.Get("web.onboarding.tour.skip");
+        PrimaryButtonText = AppStrings.Get("web.onboarding.tour.showMe");
         DefaultButton = ContentDialogButton.Primary;
         PrimaryButtonClick += PrimaryButton_Click;
         SecondaryButtonClick += SecondaryButton_Click;
@@ -61,6 +62,8 @@ public sealed class FeatureTourDialog : ContentDialog
         Closed += (_, _) => { if (XamlRoot != null) XamlRoot.Changed -= Reflow; };
         Closing += (_, args) => { if (!_finished && (_progress.IsSaving || _settingBusy)) args.Cancel = true; };
         AutomationProperties.SetName(this, "Feature tour");
+        Localized.SetName(this, "web.onboarding.tour.label");
+        AppLocalization.Register(this, RefreshTourLanguage);
     }
 
     private void RenderStep()
@@ -69,7 +72,7 @@ public sealed class FeatureTourDialog : ContentDialog
         _stepHeading = null;
         if (_steps.Count == 0)
         {
-            PrimaryButtonText = "Done";
+            PrimaryButtonText = AppStrings.Get("common.done");
             _body.Children.Add(_saveError);
             return;
         }
@@ -145,11 +148,11 @@ public sealed class FeatureTourDialog : ContentDialog
 
         _body.Children.Add(_saveError);
         _saveError.Visibility = string.IsNullOrEmpty(_saveError.Text) ? Visibility.Collapsed : Visibility.Visible;
-        SecondaryButtonText = _index > 0 ? "Back" : "";
+        SecondaryButtonText = _index > 0 ? AppStrings.Get("common.back") : "";
         IsSecondaryButtonEnabled = _index > 0;
         PrimaryButtonText = step.Kind == "handoff"
-            ? step.Title ?? "Finish"
-            : _index == _steps.Count - 1 ? "Done" : _index == 0 ? "Show me" : "Next";
+            ? step.Title ?? AppStrings.Get("web.onboarding.tour.finish")
+            : _index == _steps.Count - 1 ? AppStrings.Get("common.done") : _index == 0 ? AppStrings.Get("web.onboarding.tour.showMe") : AppStrings.Get("web.onboarding.tour.next");
         ReflowPresentation();
     }
 
@@ -242,7 +245,7 @@ public sealed class FeatureTourDialog : ContentDialog
                 {
                     _selectedSettingValue = prior;
                     RenderStep();
-                    App.Services.GetRequiredService<ToastService>().Error(ex);
+                    App.Services.GetRequiredService<ToastService>().Error(ex, ex is ApiException problem ? ApiProblemText.Display(problem) : ex.Message);
                 }
                 finally
                 {
@@ -362,7 +365,7 @@ public sealed class FeatureTourDialog : ContentDialog
         var skip = EditorDialogPresentation.Descendants<Button>(this).FirstOrDefault(button => button.Name == "CloseButton");
         if (skip != null) skip.IsEnabled = false;
         var saved = await _progress.SaveAsync(() => _settingsApi.ReportOnboardingProgressAsync(tourId, stepId, completed, skipped));
-        _saveError.Text = saved ? "" : $"Could not save tour progress. Try again. {_progress.Error}";
+        _saveError.Text = saved ? "" : AppStrings.Get("web.onboarding.tour.saveFailed") + " " + _progress.Error;
         _saveError.Visibility = saved ? Visibility.Collapsed : Visibility.Visible;
         IsPrimaryButtonEnabled = true;
         IsSecondaryButtonEnabled = _index > 0;

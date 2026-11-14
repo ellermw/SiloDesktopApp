@@ -5,15 +5,18 @@ using Microsoft.UI.Xaml.Media;
 namespace SiloPlayer.Controls;
 
 /// <summary>The secondary badge and separate remove action used by catalog filters.</summary>
-public static class CatalogFilterBadgeView
+public static partial class CatalogFilterBadgeView
 {
     public static Border Build(string label, Action remove)
+        => Build(() => label, remove);
+
+    public static Border Build(Func<string> label, Action remove)
     {
         var foreground = (Brush)Application.Current.Resources["SecondaryForegroundBrush"];
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         content.Children.Add(new TextBlock
         {
-            Text = label, FontFamily = new FontFamily("Outfit"), FontSize = 12,
+            Text = label(), FontFamily = new FontFamily("Outfit"), FontSize = 12,
             FontWeight = Microsoft.UI.Text.FontWeights.Medium, LineHeight = 16,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             Foreground = foreground, VerticalAlignment = VerticalAlignment.Center,
@@ -27,14 +30,15 @@ public static class CatalogFilterBadgeView
             Content = icon, BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        AutomationProperties.SetName(button, $"Remove {label}");
+        MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.removeBadge", new Dictionary<string, object?> { ["filter"] = label() })));
+        MediaItemCardActions.BindText((TextBlock)content.Children[0], "Text", element => element.Text = label());
         button.Click += (_, _) => remove();
         button.PointerEntered += (_, _) => button.Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"];
         button.PointerExited += (_, _) => button.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         content.Children.Add(button);
         return new Border
         {
-            Child = content, Tag = label, Background = (Brush)Application.Current.Resources["SecondaryBackgroundBrush"],
+            Child = content, Tag = label(), Background = (Brush)Application.Current.Resources["SecondaryBackgroundBrush"],
             Padding = new Thickness(8, 2, 4, 2), CornerRadius = new CornerRadius(10),
             BorderThickness = new Thickness(2d / 3), BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             UseLayoutRounding = false, VerticalAlignment = VerticalAlignment.Center,

@@ -71,7 +71,7 @@ public sealed partial class ItemDetailPage
             ReferenceEquals(ViewModel.Item, owner) && generation == _extraCardsGeneration && api.IsCurrentContext(context);
 
         var fallback = new DefaultArtwork { MediaType = "movie", Thumbhash = extra.StillThumbhash };
-        var image = new Image { Name = "ExtraStillImage", Stretch = Stretch.UniformToFill };
+        var image = new Image { FlowDirection = FlowDirection.LeftToRight, Name = "ExtraStillImage", Stretch = Stretch.UniformToFill };
         var placeholder = new FontIcon { Glyph = "\uE768", FontSize = 28, Opacity = .4,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };

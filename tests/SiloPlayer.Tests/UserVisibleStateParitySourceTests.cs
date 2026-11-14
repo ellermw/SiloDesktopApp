@@ -42,7 +42,7 @@ public sealed class UserVisibleStateParitySourceTests
         Assert.Contains("Content=\"Sign in to approve\"", activate);
         Assert.Contains("x:Name=\"DrillDownSubtitle\"", roomMarkup);
         Assert.Contains("DrillDownSubtitle.Text = \"Pick a season\"", roomCode);
-        Assert.Contains("ErrorMessage = \"Person not found.\"", person);
+        Assert.Contains("web.person.notFoundTitle", person);
     }
 
     private static string ReadRepoFile(params string[] parts)

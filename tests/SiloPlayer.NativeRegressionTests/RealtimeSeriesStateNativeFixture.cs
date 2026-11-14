@@ -863,7 +863,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
             wire.Count = 1;
             await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(["loaded"]),
                 new HashSet<string>(["series"])));
-            await UntilAsync(() => ((TextBlock)page.FindName("PlayButtonText")).Text == "Play Latest");
+            await UntilAsync(() => ((TextBlock)page.FindName("PlayButtonText")).Text == SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.playNext"));
             Check(!vm.Item.HasAuthoritativePlayTarget && ((Button)page.FindName("PrimaryPlayButton")).IsEnabled,
                 "A legacy realtime response disabled the seasons-derived series action.");
             Check(await (Task<string?>)resolve.Invoke(page, null)! == "loaded",

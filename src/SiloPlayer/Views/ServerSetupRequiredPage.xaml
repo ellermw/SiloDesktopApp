@@ -1,7 +1,7 @@
-<Page
+<Page xmlns:loc="using:SiloPlayer.Services"
     x:Class="SiloPlayer.Views.ServerSetupRequiredPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" loc:Localized.Direction="True">
 
     <Grid Background="{StaticResource AppBackgroundBrush}" Padding="32">
         <Border
@@ -47,11 +47,11 @@
                         Click="OpenWebUi_Click" />
                     <Button
                         x:Name="RetryButton"
-                        Content="Retry"
+                        Content="Retry" loc:Localized.Content="common.retry"
                         Style="{StaticResource SecondaryButtonStyle}"
                         Click="Retry_Click" />
                     <Button
-                        Content="Choose another server"
+                        Content="Choose another server" loc:Localized.Content="common.changeServer"
                         Style="{StaticResource SecondaryButtonStyle}"
                         Click="ChooseServer_Click" />
                 </StackPanel>

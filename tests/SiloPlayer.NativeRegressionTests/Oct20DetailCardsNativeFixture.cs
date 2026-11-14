@@ -148,7 +148,7 @@ internal static class Oct20DetailCardsNativeFixture
             parent.Children.Insert(0, siblingPanel); detached.Add(siblingPanel);
             foreach (var button in Find<Button>(siblingPanel)) button.ApplyTemplate();
             await Task.Delay(60); siblingPanel.UpdateLayout();
-            var quick = Find<Button>(siblingPanel.Children[1]).Single(button => AutomationProperties.GetName(button) == "Mark Episode Watched");
+            var quick = Find<Button>(siblingPanel.Children[1]).Single(button => AutomationProperties.GetName(button) == MediaItemCardActions.GetWatchedActionLabel("episode", false));
             ((IInvokeProvider)new ButtonAutomationPeer(quick).GetPattern(PatternInterface.Invoke)).Invoke();
             await Until(() => wire.WatchedWrites == 1 && other.UserData?.Played == true);
             await page.ViewModel.ToggleWatchedCommand.ExecuteAsync(null); // Same command as the current episode's header.
@@ -158,7 +158,7 @@ internal static class Oct20DetailCardsNativeFixture
             await Task.Delay(60); siblingPanel.UpdateLayout();
             var retained = Find<EpisodeCardCaption>(siblingPanel.Children[1]).Single();
             if (retained.WatchedIndicator.Visibility != Visibility.Visible || retained.OverviewText.Visibility != Visibility.Visible ||
-                !Find<Button>(siblingPanel.Children[1]).Any(button => AutomationProperties.GetName(button) == "Mark Episode Unwatched"))
+                !Find<Button>(siblingPanel.Children[1]).Any(button => AutomationProperties.GetName(button) == MediaItemCardActions.GetWatchedActionLabel("episode", true)))
                 throw new InvalidOperationException("Sibling watched/spoiler/action state reverted after a different episode/header repaint.");
 
             page.ViewModel.Item = new() { ContentId = "series", Type = "series", EpisodeCount = 2,
@@ -179,7 +179,7 @@ internal static class Oct20DetailCardsNativeFixture
             foreach (var button in Find<Button>(episodesGrid)) button.ApplyTemplate();
             await Task.Delay(60); episodesGrid.UpdateLayout();
             wire.HoldWatched = true;
-            var childQuick = Find<Button>(episodesGrid.Children[0]).Single(button => AutomationProperties.GetName(button) == "Mark Episode Watched");
+            var childQuick = Find<Button>(episodesGrid.Children[0]).Single(button => AutomationProperties.GetName(button) == MediaItemCardActions.GetWatchedActionLabel("episode", false));
             pendingQuick = childQuick;
             ((IInvokeProvider)new ButtonAutomationPeer(childQuick).GetPattern(PatternInterface.Invoke)).Invoke();
             await wire.WatchedEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));

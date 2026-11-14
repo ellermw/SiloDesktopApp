@@ -664,6 +664,12 @@ public sealed class LibraryBackgroundRefreshTests
             // A scroll must refresh held rows before loading an uncached range.
             await model.LoadWindowAsync(700, 60);
             await wire.Idle();
+            // Handler completion does not mean the view model has applied the
+            // asynchronous rail response. Join the existing read, without asking
+            // for a second request or relying on a fixed post-network delay.
+            var completedLetterReads = wire.LetterReads;
+            await model.EnsureLetterIndexAsync();
+            Assert.Equal(completedLetterReads, wire.LetterReads);
             Assert.DoesNotContain(0, totals);
             Assert.Equal(1001, model.TotalCount);
             Assert.Equal("item-499", model.GetWindowItem(500)?.ContentId);
@@ -869,7 +875,17 @@ public sealed class LibraryBackgroundRefreshTests
             Reconnect(wire);
             Assert.True(model.RequiresCatalogRefresh);
             Assert.Null(model.GetRenderableWindowItem(500));
+            // The count is an independent background read. HTTP idleness does
+            // not mean its continuation has published the count under suite load.
+            var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            System.ComponentModel.PropertyChangedEventHandler onCount = (_, args) =>
+            {
+                if (args.PropertyName == nameof(model.TotalCount) && model.TotalCount == 0) counted.TrySetResult();
+            };
+            model.PropertyChanged += onCount;
             var result = await model.RefreshInPlaceAsync(500, 60);
+            try { if (!failRefresh) await counted.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+            finally { model.PropertyChanged -= onCount; }
             await wire.Idle();
             Assert.Equal(failRefresh ? LibraryViewModel.CatalogRefreshResult.Failed :
                 LibraryViewModel.CatalogRefreshResult.Completed, result);

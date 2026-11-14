@@ -92,7 +92,7 @@ internal static class PlaybackSpeedMenuNativeFixture
             wire.ReadRelease.TrySetResult();
             await Until(() => player.DesiredVideoPlaybackRate == 1.35 && list.Items.Cast<ListViewItem>().Any(row => row.Tag is "rate:1.35"),
                 "Valid stored custom speed is not represented by the actual native controls.");
-            Require(AutomationProperties.GetName(Row("rate:1.35")).Contains("Current") && player.NativePlaybackRate == 1.35,
+            Require(AutomationProperties.GetName(Row("rate:1.35")).Contains("Selected") && player.NativePlaybackRate == 1.35,
                 "Native custom speed checkmark differs from accepted viewer desire.");
             Require(list.ItemsPanelRoot is ItemsWrapGrid { Orientation: Orientation.Horizontal }, "Speed picker is still a tall list instead of compact segments.");
             await PlaybackAudioMenuNativeFixture.Capture(menu, "speed-custom");

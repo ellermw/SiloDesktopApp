@@ -24,6 +24,7 @@ using SiloPlayer.ViewModels;
 using SiloPlayer.Views.Dialogs;
 using Windows.Storage.Pickers;
 using Windows.ApplicationModel.DataTransfer;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Views;
 
@@ -86,53 +87,54 @@ public sealed partial class SettingsPage : Page
     // Set back to false after the page finishes loading.
     private bool _suppressEvents = true;
 
-    // Language options for preferred audio language.
+    // Option labels are read when a list is built, so a rebuilt list uses the current
+    // interface language. Tags and hex values are the stored values and never change.
     private static readonly SiloPlayer.Converters.UrlToImageSourceConverter AvatarImages = new();
-    private static readonly (string Tag, string Label)[] AudioLanguageOptions =
-        [("", "Profile default"), ("original", "Original Language"),
+    private static (string Tag, string Label)[] AudioLanguageOptions =>
+        [("", L("web.settings.library.profileDefault", "Profile default")), ("original", L("web.settings.metadataLanguage.originalLanguage", "Original Language")),
          .. MediaLanguageCatalog.All.Select(language => (language.Code, language.Label))];
 
     // Language options for subtitles (includes "None")
-    private static readonly (string Tag, string Label)[] SubtitleLanguageOptions =
-        [("", "Profile default"), ("none", "None"),
+    private static (string Tag, string Label)[] SubtitleLanguageOptions =>
+        [("", L("web.settings.library.profileDefault", "Profile default")), ("none", L("settingsManifest.playback.subtitle_language.unsetLabel", "None")),
          .. MediaLanguageCatalog.All.Select(language => (language.Code, language.Label))];
 
-    private static readonly (string Tag, string Label)[] SubtitleModeOptions =
+    private static (string Tag, string Label)[] SubtitleModeOptions =>
     [
-        ("", "Profile default"),
-        ("auto", "Auto"),
-        ("always", "Always"),
-        ("off", "Off"),
+        ("", L("web.settings.library.profileDefault", "Profile default")),
+        ("auto", L("settingsManifest.playback.subtitle_mode.option.auto", "Auto")),
+        ("always", L("settingsManifest.playback.subtitle_mode.option.always", "Always")),
+        ("off", L("settingsManifest.playback.subtitle_mode.option.off", "Off")),
     ];
 
-    private static readonly (string Tag, string Label)[] ForcedSubtitleOptions =
+    private static (string Tag, string Label)[] ForcedSubtitleOptions =>
     [
-        ("", "Profile default"),
-        ("on", "On"),
-        ("off", "Off"),
+        ("", L("web.settings.library.profileDefault", "Profile default")),
+        ("on", L("web.settings.library.on", "On")),
+        ("off", L("web.settings.library.off", "Off")),
     ];
 
     // Subtitle font color options
-    private static readonly (string Hex, string Label)[] SubtitleColorOptions =
+    private static (string Hex, string Label)[] SubtitleColorOptions =>
     [
-        ("#ffffff", "White"),
-        ("#facc15", "Yellow"),
-        ("#22c55e", "Green"),
-        ("#06b6d4", "Cyan"),
-        ("#d946ef", "Magenta"),
-        ("#ef4444", "Red"),
-        ("#3b82f6", "Blue"),
-        ("#9ca3af", "Gray"),
-        ("#000000", "Black"),
+        ("#ffffff", L("web.settings.subtitleOptions.fontColor.white", "White")),
+        ("#facc15", L("web.settings.subtitleOptions.fontColor.yellow", "Yellow")),
+        ("#22c55e", L("web.settings.subtitleOptions.fontColor.green", "Green")),
+        ("#06b6d4", L("web.settings.subtitleOptions.fontColor.cyan", "Cyan")),
+        ("#d946ef", L("web.settings.subtitleOptions.fontColor.magenta", "Magenta")),
+        ("#ef4444", L("web.settings.subtitleOptions.fontColor.red", "Red")),
+        ("#3b82f6", L("web.settings.subtitleOptions.fontColor.blue", "Blue")),
+        ("#9ca3af", L("web.settings.subtitleOptions.fontColor.gray", "Gray")),
+        ("#000000", L("web.settings.subtitleOptions.fontColor.black", "Black")),
     ];
 
-    private static readonly (string Hex, string Label)[] SubtitleBackgroundColorOptions =
+    private static (string Hex, string Label)[] SubtitleBackgroundColorOptions =>
     [
-        ("#000000", "Black"),
-        ("#374151", "Dark Gray"),
-        ("#1e3a5f", "Navy"),
-        ("#7f1d1d", "Dark Red"),
-        ("#14532d", "Dark Green"),
+        ("#000000", L("web.settings.subtitleOptions.backgroundColor.black", "Black")),
+        ("#374151", L("web.settings.subtitleOptions.backgroundColor.darkGray", "Dark Gray")),
+        ("#1e3a5f", L("web.settings.subtitleOptions.backgroundColor.navy", "Navy")),
+        ("#7f1d1d", L("web.settings.subtitleOptions.backgroundColor.darkRed", "Dark Red")),
+        ("#14532d", L("web.settings.subtitleOptions.backgroundColor.darkGreen", "Dark Green")),
     ];
 
     public SettingsPage()
@@ -143,6 +145,8 @@ public sealed partial class SettingsPage : Page
         this.InitializeComponent();
         InitializeWebhookOwnership();
         InitializeSettingsPresentation();
+        InitializeAppLanguageSettings();
+        InitializeSettingsLocalization();
         Loaded += (_, _) => InitializeAppUpdateSettings();
         Unloaded += (_, _) => ReleaseAppUpdateSettings();
         InitializeAppUpdateSettings();
@@ -151,11 +155,12 @@ public sealed partial class SettingsPage : Page
         PersonalizeFavoritesRow.Children.RemoveAt(0);
         PersonalizeFavoritesRow.Children.Insert(0, WebUiIcon.Create("heart", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]));
         PersonalizePickerButton.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4,
-            Children = { new TextBlock { Text = "Open the picker", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"] }, WebUiIcon.Create("arrow-right", 16, (Brush)Application.Current.Resources["AccentForegroundBrush"]) } };
+            Children = { new TextBlock { Text = "Open the picker", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"] }.Keyed("web.settings.personalize.openPicker"), WebUiIcon.Create("arrow-right", 16, (Brush)Application.Current.Resources["AccentForegroundBrush"]) } };
         InitializeAccountPassword();
         InitializeAccountSignIn();
         SettingsAllSettingsButton.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children =
-            { WebUiIcon.Create("back", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]), new TextBlock { Text = "All settings", FontSize = 14, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } } };
+            { WebUiIcon.Create("back", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]), new TextBlock { Text = "All settings", FontSize = 14, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] }.Keyed("web.settings.layout.allSettings") } };
+        AutomationProperties.SetName(SettingsAllSettingsButton, "All settings"); SettingsAllSettingsButton.KeyedName("web.settings.layout.allSettings");
         NavigationCacheMode = NavigationCacheMode.Required;
         PopulateProfileLanguageChoices();
 
@@ -436,16 +441,16 @@ public sealed partial class SettingsPage : Page
 
     private void PopulateProfileLanguageChoices()
     {
-        PopulateLanguageCombo(SpokenLanguageComboBox, "No preference");
+        PopulateLanguageCombo(SpokenLanguageComboBox, L("settingsManifest.playback.audio_language.unsetLabel", "No preference"));
         PopulateMetadataLanguageCombo();
-        PopulateLanguageCombo(SubtitleLanguageComboBox, "None");
+        PopulateLanguageCombo(SubtitleLanguageComboBox, L("settingsManifest.playback.subtitle_language.unsetLabel", "None"));
     }
 
     private void PopulateMetadataLanguageCombo()
     {
         MetadataLanguageComboBox.Items.Clear();
-        MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = "Library default", Tag = "" });
-        MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = "Original language", Tag = "original" });
+        MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = L("web.settings.metadataLanguage.libraryDefault", "Library default"), Tag = "" });
+        MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = L("web.settings.metadataLanguage.originalLanguage", "Original language"), Tag = "original" });
         foreach (var language in MediaLanguageCatalog.All)
             MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
         MetadataLanguageComboBox.SelectedIndex = 0;
@@ -474,7 +479,7 @@ public sealed partial class SettingsPage : Page
             var tag = args.Text.Trim();
             if (!System.Text.RegularExpressions.Regex.IsMatch(tag, "^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|[xXiI](?:-[A-Za-z0-9]{1,8})+)$"))
             {
-                App.Services.GetRequiredService<ToastService>().Error("Enter a valid language tag, such as pt-BR or zh-Hant.");
+                App.Services.GetRequiredService<ToastService>().Error("Enter a valid language tag, such as pt-BR or zh-Hant."); // desktop-only free-form tag input: no catalog key
                 if (combo.SelectedItem is ComboBoxItem selected) combo.Text = selected.Content?.ToString() ?? "";
                 return;
             }
@@ -630,7 +635,7 @@ _webhookPlexAuthCts?.Cancel();
                 Height = 36,
                 Tag = pair.Key,
             };
-            ToolTipService.SetToolTip(remove, $"Remove {MediaLanguageCatalog.Label(pair.Key)} exception");
+            ToolTipService.SetToolTip(remove, L("web.settings.metadataLanguage.removeException", $"Remove {MediaLanguageCatalog.Label(pair.Key)} exception", Args(("language", MediaLanguageCatalog.Label(pair.Key)))));
             remove.Click += RemoveMetadataLanguageException_Click;
             Grid.SetColumn(source, 0);
             Grid.SetColumn(target, 1);
@@ -659,7 +664,7 @@ _webhookPlexAuthCts?.Cancel();
     private ComboBox CreateMetadataTargetCombo(string sourceLanguage, string selectedValue)
     {
         var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Tag = sourceLanguage };
-        combo.Items.Add(new ComboBoxItem { Content = "Original language", Tag = "original" });
+        combo.Items.Add(new ComboBoxItem { Content = L("web.settings.metadataLanguage.originalLanguage", "Original language"), Tag = "original" });
         foreach (var language in MediaLanguageCatalog.All)
             combo.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
         SelectComboBoxByTag(combo, selectedValue);
@@ -806,14 +811,14 @@ _webhookPlexAuthCts?.Cancel();
                 await api.DeleteDeviceSettingAsync("ui.library_page_state");
                 await api.PutDeviceSettingAsync("ui.remember_library_page_state", "false");
             }
-            App.Services.GetRequiredService<ToastService>().Success("Library page preference saved");
+            App.Services.GetRequiredService<ToastService>().Success(L("web.settings.library.rememberPages.saved", "Library page preference saved"));
         }
         catch (Exception ex)
         {
             _suppressEvents = true;
             RememberLibraryPagesToggle.IsOn = !RememberLibraryPagesToggle.IsOn;
             _suppressEvents = false;
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Failed to save library page preference: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Failed to save library page preference: {ex.DisplayMessage()}");
         }
         finally
         {
@@ -824,15 +829,15 @@ _webhookPlexAuthCts?.Cancel();
     private void BuildAccessibilityControls()
     {
         BuildAccessibilityOptions(TextSizeButtons,
-            [("default", "Default"), ("large", "Large"), ("x-large", "Extra Large")],
+            [("default", L("settingsManifest.ui.text_scale.option.default", "Default")), ("large", L("web.settings.accessibility.textSizeLarge", "Large")), ("x-large", L("web.settings.accessibility.textSizeExtraLarge", "Extra Large"))],
             ViewModel.TextScale,
             async value => await ViewModel.SetAccessibilityAsync(textScale: value));
         BuildAccessibilityOptions(TextWeightButtons,
-            [("default", "Default"), ("strong", "Bolder")],
+            [("default", L("settingsManifest.ui.text_weight.option.default", "Default")), ("strong", L("web.settings.accessibility.textWeightBolder", "Bolder"))],
             ViewModel.TextWeight,
             async value => await ViewModel.SetAccessibilityAsync(textWeight: value));
         BuildAccessibilityOptions(ContrastButtons,
-            [("false", "Standard"), ("true", "High Contrast")],
+            [("false", L("web.settings.accessibility.contrastStandard", "Standard")), ("true", L("web.settings.accessibility.contrastHigh", "High Contrast"))],
             ViewModel.HighContrast ? "true" : "false",
             async value => await ViewModel.SetAccessibilityAsync(highContrast: value == "true"));
         App.Services.GetRequiredService<AccessibilityService>().ApplySaved(this);
@@ -881,7 +886,8 @@ _webhookPlexAuthCts?.Cancel();
         SubtitleOffsetResetButton.IsEnabled = enabled && ViewModel.SubtitleOffsetMs != 0;
         SubtitleReloadButton.IsEnabled = !ViewModel.IsSavingSubtitlePreferences;
         SubtitleReloadButton.Visibility = ViewModel.SubtitlePreferencesLoaded ? Visibility.Collapsed : Visibility.Visible;
-        SubtitleOffsetLabel.Text = ViewModel.SubtitleOffsetMs == 0 ? "0 ms" : $"{ViewModel.SubtitleOffsetMs:+#;-#} ms";
+        SubtitleOffsetLabel.Text = L("web.settings.subtitleAppearance.timing.offsetValue", ViewModel.SubtitleOffsetMs == 0 ? "0 ms" : $"{ViewModel.SubtitleOffsetMs:+#;-#} ms",
+            Args(("offset", ViewModel.SubtitleOffsetMs == 0 ? "0" : ViewModel.SubtitleOffsetMs.ToString("+#;-#", System.Globalization.CultureInfo.InvariantCulture))));
         SubtitleTimingDescription.Text = ViewModel.SubtitleTimingDescription;
         SubtitleResetButton.Visibility = ViewModel.HasSubtitleAppearanceDeviceOverride ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -935,7 +941,7 @@ _webhookPlexAuthCts?.Cancel();
 
         var auth = App.Services.GetRequiredService<AuthService>();
         var profile = auth.SelectedProfile;
-        var profileName = string.IsNullOrWhiteSpace(profile?.Name) ? "Your profile" : profile.Name;
+        var profileName = string.IsNullOrWhiteSpace(profile?.Name) ? AppStrings.Get("web.settings.currentProfileLink.fallbackName") : profile.Name;
         var avatarHost = new Border
         {
             Width = 32,
@@ -965,7 +971,7 @@ _webhookPlexAuthCts?.Cancel();
         var profileText = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         profileText.Children.Add(new TextBlock
         {
-            Text = "Current profile",
+            Text = AppStrings.Get("web.settings.currentProfileLink.caption"),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
         });
@@ -993,7 +999,7 @@ _webhookPlexAuthCts?.Cancel();
         Grid.SetColumn(profileChevron, 2);
         profileContent.Children.Add(profileChevron);
         SettingsCurrentProfileButton.Content = profileContent;
-        AutomationProperties.SetName(SettingsCurrentProfileButton, $"Current profile: {profileName}");
+        AutomationProperties.SetName(SettingsCurrentProfileButton, $"{AppStrings.Get("web.settings.currentProfileLink.caption")}: {profileName}");
 
         _canManageProfiles = AuthorizationPolicy.IsActingAdmin(auth) || profile?.IsPrimary == true;
         WebhookSyncTab.Visibility = WebhookAvailable ? Visibility.Visible : Visibility.Collapsed;
@@ -1001,45 +1007,46 @@ _webhookPlexAuthCts?.Cancel();
         RequestsTab.Visibility = _requestsAvailable ? Visibility.Visible : Visibility.Collapsed;
         var groups = new (string Label, (string Tag, string Label, string Description, string Glyph, string Search)[] Items)[]
         {
-            ("Playback",
+            (L("web.settings.nav.group.playback", "Playback"),
             [
-                ("Playback", "Playback", "Quality, skipping, and what plays next.", "\uE768", "video quality bitrate bandwidth auto skip intros credits recaps preview auto play seek rewind fast forward fast-forward skip interval audiobook controls"),
-                ("Subtitles", "Language & Subtitles", "Spoken and metadata languages, subtitles, and their appearance.", "\uED1E", "spoken audio track metadata language translation add exception subtitle behavior forced captions font size family color text opacity outline background style opacity position preview save appearance discard changes"),
-                ("Devices", "Your Devices", "Per-device quality, HDR, sync, and the profile this app opens.", "\uE7F4", "devices tv phone tablet browser hdr dolby vision sound delay lip sync who's watching profile picker remember profile launch"),
+                ("Playback", L("web.settings.playback.title", "Playback"), L("web.settings.nav.playback.description", "Quality, skipping, and what plays next."), "\uE768", "video quality bitrate bandwidth auto skip intros credits recaps preview auto play seek rewind fast forward fast-forward skip interval audiobook controls"),
+                ("Subtitles", L("web.settings.subtitleAppearance.title", "Language & Subtitles"), L("web.settings.nav.subtitleAppearance.description", "Spoken and metadata languages, subtitles, and their appearance."), "\uED1E", "spoken audio track metadata language translation add exception subtitle behavior forced captions font size family color text opacity outline background style opacity position preview save appearance discard changes"),
+                // The catalog description names "this browser"; the desktop wording stays an English fallback.
+                ("Devices", L("web.settings.device.title", "Your Devices"), "Per-device quality, HDR, sync, and the profile this app opens.", "\uE7F4", "devices tv phone tablet browser hdr dolby vision sound delay lip sync who's watching profile picker remember profile launch"),
             ]),
-            ("Appearance",
+            (L("web.settings.nav.group.appearance", "Appearance"),
             [
-                ("Interface", "Navigation & Cards", "Poster size, shortcuts and badges on posters, and your menu.", "\uE7F8", "navigation menu poster size card title year artwork badges overlay accent color corner position quick actions favorite watched server defaults add link reset"),
-                ("TitlePages", "Title Pages", "Title art, theme music, spoilers, and age guidance.", "\uE8B2", "title art logo clearlogo theme music loop spoilers blur unwatched descriptions advisory age"),
-                ("Accessibility", "Accessibility", "Text size, weight, contrast, and date and time formats.", "\uE7F3", "contrast readability motion transparency text size weight date time clock"),
+                ("Interface", L("web.settings.interface.title", "Navigation & Cards"), L("web.settings.nav.interface.description", "Poster size, shortcuts and badges on posters, and your menu."), "\uE7F8", "navigation menu poster size card title year artwork badges overlay accent color corner position quick actions favorite watched server defaults add link reset"),
+                ("TitlePages", L("web.settings.titlePages.title", "Title Pages"), L("web.settings.nav.titlePages.description", "Title art, theme music, spoilers, and age guidance."), "\uE8B2", "title art logo clearlogo theme music loop spoilers blur unwatched descriptions advisory age"),
+                ("Accessibility", L("web.settings.accessibility.title", "Accessibility"), L("web.settings.nav.accessibility.description", "Text size, weight, contrast, and date and time formats."), "\uE7F3", "contrast readability motion transparency text size weight date time clock"),
             ]),
-            ("Home & Discovery",
+            (L("web.settings.nav.group.homeDiscovery", "Home & Discovery"),
             [
-                ("HomeScreen", "Home Screen", "Which rows appear on Home, and in what order.", "\uECA5", "sections rows continue watching next up episodes hide watched items recently added library pages export import layout reset home"),
-                ("Libraries", "Libraries", "Which libraries you see, their order, and per-library audio.", "\uE8F1", "library visibility access disabled order playback spoken subtitle"),
-                ("Personalize", "Personalize", "Re-tune the taste profile behind your recommendations.", "\uE735", "taste profile recommendations ratings likes dislikes"),
-                ("Requests", "Requests", "Choose whether watchlist additions also request titles.", "\uE710", "watchlist automatic request preference"),
+                ("HomeScreen", L("web.settings.homeScreen.title", "Home Screen"), L("web.settings.nav.homeScreen.description", "Which rows appear on Home, and in what order."), "\uECA5", "sections rows continue watching next up episodes hide watched items recently added library pages export import layout reset home"),
+                ("Libraries", L("web.settings.library.title", "Libraries"), L("web.settings.nav.libraries.description", "Which libraries you see, their order, and per-library audio."), "\uE8F1", "library visibility access disabled order playback spoken subtitle"),
+                ("Personalize", L("web.settings.personalize.title", "Personalize"), L("web.settings.nav.personalize.description", "Re-tune the taste profile behind your recommendations."), "\uE735", "taste profile recommendations ratings likes dislikes"),
+                ("Requests", L("web.settings.requests.title", "Requests"), L("web.settings.nav.requests.description", "Choose whether watchlist additions also request titles."), "\uE710", "watchlist automatic request preference"),
             ]),
-            ("Connections",
+            (L("web.settings.nav.group.connections", "Connections"),
             [
-                ("ConnectApps", "Connect Apps", "Sign-in details for Silo and Jellyfin-compatible apps.", "\uE839", "jellyfin infuse swiftfin jellycon findroid sign in login server username password pin"),
-                ("WatchProviders", "Watch Providers", "Sync watch history, ratings, and watchlists with services like Simkl.", "\uE823", "simkl import export scrobble favorites watch history"),
-                ("WebhookSync", "Webhook Sync", "Take progress from Plex, Emby, and Jellyfin webhooks.", "\uE968", "plex emby jellyfin webhook progress watched"),
-                ("HistoryImport", "History Import", "Bring an existing Emby watch history into Silo.", "\uE8B5", "emby watched history import mapping sync"),
+                ("ConnectApps", L("web.settings.connectApps.title", "Connect Apps"), L("web.settings.nav.connectApps.description", "Sign-in details for Silo and Jellyfin-compatible apps."), "\uE839", "jellyfin infuse swiftfin jellycon findroid sign in login server username password pin"),
+                ("WatchProviders", L("web.settings.watchProviders.title", "Watch Providers"), L("web.settings.nav.watchProviders.description", "Sync watch history, ratings, and watchlists with services like Simkl."), "\uE823", "simkl import export scrobble favorites watch history"),
+                ("WebhookSync", L("web.settings.webhooks.title", "Webhook Sync"), L("web.settings.nav.webhookSync.description", "Take progress from Plex, Emby, and Jellyfin webhooks."), "\uE968", "plex emby jellyfin webhook progress watched"),
+                ("HistoryImport", L("web.settings.historyImport.title", "History Import"), L("web.settings.nav.historyImport.description", "Bring an existing Emby watch history into Silo."), "\uE8B5", "emby watched history import mapping sync"),
             ]),
-            ("Account",
+            (L("web.settings.nav.group.account", "Account"),
             [
-                ("NotificationsSettings", "Notifications", "New-episode alerts by email, Discord, push, or webhook.", "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
-                ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
-                ("Account", "Account", "Manage the shared account password.", "\uE72E", "account password credential sign in security"),
-                ("YourData", "Your Data", "Export and import this profile's data.", "\uEBC3", "export import profile data backup transfer history ratings favorites"),
-                ("Sessions", "Signed-in sessions", "See active sign-ins and sign out a browser or app.", "\uE7F4", "sessions active client device last seen sign out revoke security"),
+                ("NotificationsSettings", L("web.settings.notifications.title", "Notifications"), L("web.settings.notifications.subtitle", "New-episode alerts by email, Discord, push, or webhook."), "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
+                ("Profiles", L("web.settings.profiles.title", "Profiles"), L("web.settings.nav.profiles.description", "Household profile names, PINs, and library access."), "\uE77B", "profile name pin access primary household library create delete"),
+                ("Account", L("web.settings.account.title", "Account"), L("web.settings.nav.account.description", "Manage the shared account password."), "\uE72E", "account password credential sign in security"),
+                ("YourData", L("web.settings.yourData.title", "Your Data"), L("web.settings.yourData.subtitle", "Export and import this profile's data."), "\uEBC3", "export import profile data backup transfer history ratings favorites"),
+                ("Sessions", L("web.settings.nav.sessions.label", "Signed-in sessions"), L("web.settings.nav.sessions.description", "See active sign-ins and sign out a browser or app."), "\uE7F4", "sessions active client device last seen sign out revoke security"),
             ]),
         };
 
         SidebarEntries = groups.SelectMany(group => group.Items
             .Where(entry => !((entry.Tag is "Profiles" or "Account" or "Sessions") && !_canManageProfiles) && !(entry.Tag == "Requests" && !_requestsAvailable) && !(entry.Tag == "WebhookSync" && !WebhookAvailable))
-            .Select(entry => new SettingsNavigationEntry(group.Label, entry.Tag, entry.Label, $"{entry.Label} {entry.Description} {entry.Search}"))).ToArray();
+            .Select(entry => new SettingsNavigationEntry(group.Label, entry.Tag, entry.Label, SettingsSearchText(entry.Tag, entry.Label, entry.Description, entry.Search)))).ToArray();
         SidebarEntriesChanged?.Invoke();
         foreach (var group in groups)
         {
@@ -1062,7 +1069,7 @@ _webhookPlexAuthCts?.Cancel();
                 _settingsOverviewCards.Add(new SettingsOverviewCard(
                     card,
                     section,
-                    $"{entry.Label} {entry.Description} {entry.Search}"));
+                    SettingsSearchText(entry.Tag, entry.Label, entry.Description, entry.Search)));
             }
             if (cards.Children.Count > 0)
                 SettingsOverviewGroups.Children.Add(section);
@@ -1177,7 +1184,7 @@ _webhookPlexAuthCts?.Cancel();
         _showingSettingsOverview = true;
         ActiveSettingsSection = null;
         SettingsSectionChanged?.Invoke("");
-        SettingsHeaderSubtitle.Text = "Make Silo work the way you like.";
+        SettingsHeaderSubtitle.Text = AppStrings.Get("web.settings.layout.subtitle");
         SettingsOverviewPanel.Visibility = Visibility.Visible;
         SettingsLayoutGrid.Visibility = Visibility.Collapsed;
         SettingsHeaderGrid.Visibility = Visibility.Visible;
@@ -1191,7 +1198,7 @@ _webhookPlexAuthCts?.Cancel();
         if (button.Tag is "WebhookSync" && !WebhookAvailable) { ShowSettingsOverview(); return; }
         if ((button.Tag is "Account" or "Profiles" or "Sessions") && !_canManageProfiles || button.Tag is "Requests" && !_requestsAvailable) { ShowSettingsOverview(); return; }
         _showingSettingsOverview = false;
-        SettingsHeaderSubtitle.Text = "Manage your playback preferences, libraries, and display options.";
+        SettingsHeaderSubtitle.Text = AppStrings.Get("web.settings.layout.subtitle");
         SettingsOverviewPanel.Visibility = Visibility.Collapsed;
         SettingsLayoutGrid.Visibility = Visibility.Visible;
         SettingsAllSettingsButton.Visibility = SettingsViewportWidth < 1024
@@ -1238,7 +1245,7 @@ _webhookPlexAuthCts?.Cancel();
             var overviewMatches = _settingsOverviewCards.Count(entry => entry.Button.Visibility == Visibility.Visible);
             SettingsSearchStatus.Text = tokens.Length == 0
                 ? "Press Ctrl+K to search"
-                : overviewMatches == 0 ? "No matching settings" : $"{overviewMatches} {(overviewMatches == 1 ? "match" : "matches")}";
+                : overviewMatches == 0 ? AppStrings.Get("web.settings.search.noMatches") : SettingsMatchCount(overviewMatches);
             return;
         }
         var entries = new (Button Button, string SearchText)[]
@@ -1273,8 +1280,10 @@ _webhookPlexAuthCts?.Cancel();
                 entry.Button.Visibility = Visibility.Collapsed;
                 continue;
             }
+            // The tab's displayed (localized) label joins its stable English terms.
+            var searchText = (entry.Button.Content is Panel { Children: var parts } ? string.Join(" ", parts.OfType<TextBlock>().Select(part => part.Text)) : "") + " " + entry.SearchText;
             var visible = tokens.Length == 0 || tokens.All(token =>
-                entry.SearchText.Contains(token, StringComparison.OrdinalIgnoreCase));
+                searchText.Contains(token, StringComparison.OrdinalIgnoreCase));
             entry.Button.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             if (visible) matches++;
         }
@@ -1296,7 +1305,7 @@ _webhookPlexAuthCts?.Cancel();
         var availableSettingsCount = _canManageProfiles ? entries.Length : entries.Length - 1;
         SettingsSearchStatus.Text = tokens.Length == 0
             ? "Press Ctrl+K to search"
-            : matches == 0 ? "No matching settings" : $"{matches} {(matches == 1 ? "match" : "matches")}";
+            : matches == 0 ? AppStrings.Get("web.settings.search.noMatches") : SettingsMatchCount(matches);
     }
 
     private sealed record SettingsOverviewCard(Button Button, FrameworkElement Section, string SearchText);
@@ -1342,6 +1351,7 @@ _webhookPlexAuthCts?.Cancel();
         if (tag != "Devices") DeactivateDevices();
         ConnectAppsPanel.Visibility = tag == "ConnectApps" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag == "Accessibility") ActivateAppLanguageSettings();
         YourDataPanel.Visibility = tag == "YourData" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "YourData") DeactivateYourData();
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
@@ -1460,7 +1470,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             if (loadGeneration != _interfaceLoadGeneration || !ownerApi.IsCurrentContext(ownerContext)) return;
-            ShowInterfaceUnavailable("Customization unavailable", ex.Message);
+            ShowInterfaceUnavailable("Customization unavailable", ex.DisplayMessage());
         }
         finally
         {
@@ -1519,6 +1529,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void InterfaceCardOption_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressInterfaceEvents ||
             InterfacePosterSizeCombo.SelectedItem is not ComboBoxItem { Tag: string posterSize })
             return;
@@ -1545,7 +1556,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             if (!IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save card layout: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save card layout: {ex.DisplayMessage()}");
         }
         finally
         {
@@ -1568,7 +1579,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             if (!IsLoaded || !ownerApi.IsCurrentContext(ownerContext)) return;
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset card layout: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset card layout: {ex.DisplayMessage()}");
         }
     }
 
@@ -1604,7 +1615,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             if (!ownerApi.IsCurrentContext(ownerContext)) return;
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not clear {label.ToLowerInvariant()}: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not clear {label.ToLowerInvariant()}: {ex.DisplayMessage()}");
         }
     }
 
@@ -1647,10 +1658,10 @@ _webhookPlexAuthCts?.Cancel();
             row.Children.Add(label);
 
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-            actions.Children.Add(CreateInterfaceMenuAction("\uE74A", $"Move {label.Text} up", index, -1, index == 0));
-            actions.Children.Add(CreateInterfaceMenuAction("\uE74B", $"Move {label.Text} down", index, 1, index == _interfaceMenuDraft.Count - 1));
+            actions.Children.Add(CreateInterfaceMenuAction("\uE74A", L("web.settings.interface.moveUp", $"Move {label.Text} up", Args(("label", label.Text))), index, -1, index == 0));
+            actions.Children.Add(CreateInterfaceMenuAction("\uE74B", L("web.settings.interface.moveDown", $"Move {label.Text} down", Args(("label", label.Text))), index, 1, index == _interfaceMenuDraft.Count - 1));
             var home = item.Type == "builtin" && item.Destination == "home";
-            actions.Children.Add(CreateInterfaceMenuAction("\uE74D", home ? "Home cannot be removed" : $"Remove {label.Text}", index, 0, home));
+            actions.Children.Add(CreateInterfaceMenuAction("\uE74D", home ? L("web.settings.interface.homeNotRemovable", "Home cannot be removed") : L("web.settings.interface.remove", $"Remove {label.Text}", Args(("label", label.Text))), index, 0, home));
             Grid.SetColumn(actions, 2);
             row.Children.Add(actions);
 
@@ -1755,7 +1766,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             if (!ownerApi.IsCurrentContext(ownerContext)) return;
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save navigation: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save navigation: {ex.DisplayMessage()}");
         }
     }
 
@@ -1776,19 +1787,19 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             if (!ownerApi.IsCurrentContext(ownerContext)) return;
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset navigation: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset navigation: {ex.DisplayMessage()}");
         }
     }
 
     private static string InterfaceMenuLabel(PrimaryMenuItem item) => item.Type switch
     {
-        "builtin" when item.Destination == "home" => "Home",
-        "builtin" when item.Destination == "for_you" => "For You",
-        "builtin" when item.Destination == "calendar" => "Calendar",
+        "builtin" when item.Destination == "home" => L("web.settings.interface.builtin.home", "Home"),
+        "builtin" when item.Destination == "for_you" => L("web.settings.interface.builtin.forYou", "For You"),
+        "builtin" when item.Destination == "calendar" => L("web.settings.interface.builtin.calendar", "Calendar"),
         "builtin" => item.Destination ?? "Destination",
-        "library" => $"{item.Label} · Library",
-        "section" => $"{item.Label} · Section",
-        "collection" => $"{item.Label} · Collection",
+        "library" => L("web.settings.interface.menuLibrary", $"{item.Label} · Library", Args(("name", item.Label))),
+        "section" => L("web.settings.interface.menuSection", $"{item.Label} · Section", Args(("name", item.Label))),
+        "collection" => L("web.settings.interface.menuCollection", $"{item.Label} · Collection", Args(("name", item.Label))),
         _ => item.Label ?? "Destination",
     };
 
@@ -1801,9 +1812,9 @@ _webhookPlexAuthCts?.Cancel();
             var count = favorites.Items.Count;
             PersonalizeFavoritesText.Text = count switch
             {
-                0 => "You haven't favorited anything yet.",
-                1 => "1 favorite is shaping your recommendations.",
-                _ => $"{count:N0} favorites are shaping your recommendations.",
+                0 => L("web.settings.personalize.noFavorites", "You haven't favorited anything yet."),
+                _ => L("web.settings.personalize.favoriteCount", count == 1 ? "1 favorite is shaping your recommendations." : $"{count:N0} favorites are shaping your recommendations.",
+                    Args(("count", count), ("count_text", Count(count)))),
             };
         }
         catch
@@ -1838,9 +1849,9 @@ _webhookPlexAuthCts?.Cancel();
             WatchlistAutoRequestToggle.IsEnabled = true;
             var show = RequestViewerPolicy.ShowAutoRequestControl(status, value);
             WatchlistAutoRequestToggle.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-            WatchlistRequestSettingStatus.Text = show ? "" : status.RequestsEnabled ? "Automatic watchlist requests are unavailable for this profile or server." : "Requests are turned off on this server.";
+            WatchlistRequestSettingStatus.Text = show ? "" : status.RequestsEnabled ? "Automatic watchlist requests are unavailable for this profile or server." : L("web.settings.requests.disabledOnServer", "Requests are turned off on this server.");
         }
-        catch (Exception ex) { if (generation == _requestSettingGeneration && client.IsCurrentContext(context)) WatchlistRequestSettingStatus.Text = $"Couldn't load request preference: {ex.Message}"; }
+        catch (Exception ex) { if (generation == _requestSettingGeneration && client.IsCurrentContext(context)) WatchlistRequestSettingStatus.Text = $"Couldn't load request preference: {ex.DisplayMessage()}"; }
     }
 
     private async void WatchlistAutoRequestToggle_Toggled(object sender, RoutedEventArgs e)
@@ -1866,12 +1877,12 @@ _webhookPlexAuthCts?.Cancel();
         {
             if (!client.IsCurrentContext(context)) return;
             _suppressRequestSetting = true; WatchlistAutoRequestToggle.IsOn = !enabled; _suppressRequestSetting = false;
-            WatchlistAutoRequestToggle.IsEnabled = true; WatchlistRequestSettingStatus.Text = $"Couldn't save request preference: {ex.Message}";
+            WatchlistAutoRequestToggle.IsEnabled = true; WatchlistRequestSettingStatus.Text = $"Couldn't save request preference: {ex.DisplayMessage()}";
         }
     }
 
     private void OpenTasteSeed_Click(object sender, RoutedEventArgs e)
-        => Frame.Navigate(typeof(TasteSeedPage), true);
+        => Frame.Navigate(typeof(TasteSeedPage), true, PageTransitionHelper.ForPageChange());
 
     private async void StartFeatureTour_Click(object sender, RoutedEventArgs e)
     {
@@ -1886,7 +1897,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             App.Services.GetRequiredService<ToastService>()
-                .Error(ex, $"Couldn’t start the feature tour: {ex.Message}");
+                .Error(ex, $"Couldn’t start the feature tour: {ex.DisplayMessage()}");
         }
         finally
         {
@@ -1937,7 +1948,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            if (generation == _overlayLoadGeneration && client.IsCurrentContext(context)) ViewModel.ErrorMessage = $"Failed to load card overlays: {ex.Message}";
+            if (generation == _overlayLoadGeneration && client.IsCurrentContext(context)) ViewModel.ErrorMessage = $"Failed to load card overlays: {ex.DisplayMessage()}";
         }
     }
 
@@ -1947,7 +1958,7 @@ _webhookPlexAuthCts?.Cancel();
         var general = CreateSettingsGroup("General", "Override the server defaults for this profile.");
         var body = (StackPanel)general.Child;
         var api = App.Services.GetRequiredService<SettingsApi>();
-        var actionRow = SettingsRow("Card quick actions", "Choose the favorite and watched shortcuts shown for this profile.", out var actions);
+        var actionRow = SettingsRow(L("settingsManifest.ui.card_quick_actions.label", "Card quick actions"), "Choose the favorite and watched shortcuts shown for this profile.", out var actions);
         var mode = new ComboBox { Width = 190, IsEnabled = _cardOverlayService.QuickActionsEnabled };
         foreach (var (value, label) in new[] { ("both", "Favorite and watched"), ("favorites", "Favorite only"), ("watched", "Watched only") }) mode.Items.Add(new ComboBoxItem { Content = label, Tag = value });
         SelectComboBoxByTag(mode, _cardOverlayService.QuickActionMode);
@@ -1957,7 +1968,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             SetSettingsEnabled(general, false);
             try { await api.SetContractSettingValueAsync(key, "profile", value); await _cardOverlayService.RefreshPreferencesAsync(); }
-            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            catch (Exception ex) { ViewModel.ErrorMessage = ex.DisplayMessage(); }
             await LoadCardOverlaySettingsAsync();
         }
         mode.SelectionChanged += async (_, _) => { if (mode.SelectedItem is ComboBoxItem { Tag: string value }) await SaveAsync("ui.card_quick_actions", value); };
@@ -1974,7 +1985,7 @@ _webhookPlexAuthCts?.Cancel();
                 if (!await ConfirmAsync("Restore default server settings", "Discard your badge customizations and follow the server defaults again, including later administrator changes?")) return;
                 restore.IsEnabled = false;
                 try { await _cardOverlayService.RestoreServerDefaultsAsync(); await LoadCardOverlaySettingsAsync(); }
-                catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; restore.IsEnabled = true; }
+                catch (Exception ex) { ViewModel.ErrorMessage = ex.DisplayMessage(); restore.IsEnabled = true; }
             };
             body.Children.Add(restore);
         }
@@ -1998,12 +2009,12 @@ _webhookPlexAuthCts?.Cancel();
             ["show_status", "request_status"]),
     ];
 
-    private static readonly (string Label, string? Value)[] OverlayAccentOptions =
+    private static (string Label, string? Value)[] OverlayAccentOptions =>
     [
-        ("Default", null), ("Gold", "#f5c518"), ("Tomato", "#fa320a"),
-        ("Orange", "#f97316"), ("Amber", "#f59e0b"), ("Emerald", "#10b981"),
-        ("Cyan", "#06b6d4"), ("Blue", "#3b82f6"), ("Indigo", "#6366f1"),
-        ("Violet", "#8b5cf6"), ("Pink", "#ec4899"), ("Slate", "#64748b"), ("White", "#ffffff"),
+        ("Default", null), (L("web.settings.overlays.accent.gold", "Gold"), "#f5c518"), (L("web.settings.overlays.accent.tomato", "Tomato"), "#fa320a"),
+        (L("web.settings.overlays.accent.orange", "Orange"), "#f97316"), (L("web.settings.overlays.accent.amber", "Amber"), "#f59e0b"), (L("web.settings.overlays.accent.emerald", "Emerald"), "#10b981"),
+        (L("web.settings.overlays.accent.cyan", "Cyan"), "#06b6d4"), (L("web.settings.overlays.accent.blue", "Blue"), "#3b82f6"), (L("web.settings.overlays.accent.indigo", "Indigo"), "#6366f1"),
+        (L("web.settings.overlays.accent.violet", "Violet"), "#8b5cf6"), (L("web.settings.overlays.accent.pink", "Pink"), "#ec4899"), (L("web.settings.overlays.accent.slate", "Slate"), "#64748b"), (L("web.settings.overlays.accent.white", "White"), "#ffffff"),
     ];
 
     private void BuildCardOverlayControls()
@@ -2103,7 +2114,7 @@ _webhookPlexAuthCts?.Cancel();
             IsEnabled = initial.Enabled,
             Visibility = OverlaySupportsIcon(definition.Id) ? Visibility.Visible : Visibility.Collapsed,
         };
-        ToolTipService.SetToolTip(iconButton, iconVisible ? "Hide icon" : "Show icon");
+        ToolTipService.SetToolTip(iconButton, iconVisible ? "Hide icon" : L("web.settings.cardOverlay.showIcon", "Show icon"));
 
         var selectedAccent = initial.AccentColor;
         var accentButton = new Button
@@ -2123,13 +2134,13 @@ _webhookPlexAuthCts?.Cancel();
         var position = new ComboBox { Width = 130 };
         var positions = _cardOverlayService.ManifestRevision >= 25 ? new[]
         {
-            (OverlayPosition.TopLeft, "Top left"),
-            (OverlayPosition.LeftEdge, "Left edge"), (OverlayPosition.RightEdge, "Right edge"),
-            (OverlayPosition.BottomLeft, "Bottom left"), (OverlayPosition.BottomRight, "Bottom right"),
+            (OverlayPosition.TopLeft, L("web.settings.overlays.position.topLeft", "Top left")),
+            (OverlayPosition.LeftEdge, L("web.settings.overlays.position.leftEdge", "Left edge")), (OverlayPosition.RightEdge, L("web.settings.overlays.position.rightEdge", "Right edge")),
+            (OverlayPosition.BottomLeft, L("web.settings.overlays.position.bottomLeft", "Bottom left")), (OverlayPosition.BottomRight, L("web.settings.overlays.position.bottomRight", "Bottom right")),
         } : new[]
         {
-            (OverlayPosition.TopLeft, "Top left"), (OverlayPosition.TopRight, "Top right"),
-            (OverlayPosition.BottomLeft, "Bottom left"), (OverlayPosition.BottomRight, "Bottom right"),
+            (OverlayPosition.TopLeft, L("web.settings.overlays.position.topLeft", "Top left")), (OverlayPosition.TopRight, "Top right"),
+            (OverlayPosition.BottomLeft, L("web.settings.overlays.position.bottomLeft", "Bottom left")), (OverlayPosition.BottomRight, L("web.settings.overlays.position.bottomRight", "Bottom right")),
         };
         foreach (var option in positions)
             position.Items.Add(new ComboBoxItem { Content = option.Item2, Tag = option.Item1 });
@@ -2149,7 +2160,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             iconVisible = !iconVisible;
             iconButton.Content = new FontIcon { Glyph = iconVisible ? "\uE91B" : "\uEB9F", FontSize = 15 };
-            ToolTipService.SetToolTip(iconButton, iconVisible ? "Hide icon" : "Show icon");
+            ToolTipService.SetToolTip(iconButton, iconVisible ? "Hide icon" : L("web.settings.cardOverlay.showIcon", "Show icon"));
             Apply();
         };
         accentButton.Flyout = BuildCardOverlayAccentFlyout(
@@ -2260,7 +2271,7 @@ _webhookPlexAuthCts?.Cancel();
                 Children =
                 {
                     new FontIcon { Glyph = "\uE711", FontSize = 12 },
-                    new TextBlock { Text = "Reset to default", FontSize = 12 },
+                    new TextBlock { Text = L("web.settings.pathSettingField.reset", "Reset to default"), FontSize = 12 },
                 },
             },
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -2291,13 +2302,13 @@ _webhookPlexAuthCts?.Cancel();
 
     private static readonly (string Id, string Label, string Description)[] CardOverlayPresets =
     [
-        ("minimal", "Minimal", "Near-invisible. Tiny text, no background."),
-        ("classic", "Classic", "Semi-transparent dark pill with a white border. The default."),
-        ("vibrant", "Vibrant", "Opaque, accent-colored badges. High contrast."),
-        ("pill", "Pill", "Larger pill with more padding. Works well with icons."),
-        ("square", "Square", "Blocky, high-density. Plex-inspired."),
-        ("plate", "Plate", "Large plates with rating source chips."),
-        ("band", "Edge band", "Whole marks on a shared edge scrim."),
+        ("minimal", L("web.settings.overlays.preset.minimal.label", "Minimal"), L("web.settings.overlays.preset.minimal.description", "Near-invisible. Tiny text, no background.")),
+        ("classic", L("web.settings.overlays.preset.classic.label", "Classic"), L("web.settings.overlays.preset.classic.description", "Semi-transparent dark pill with a white border. The default.")),
+        ("vibrant", L("web.settings.overlays.preset.vibrant.label", "Vibrant"), L("web.settings.overlays.preset.vibrant.description", "Opaque, accent-colored badges. High contrast.")),
+        ("pill", L("web.settings.overlays.preset.pill.label", "Pill"), L("web.settings.overlays.preset.pill.description", "Larger pill with more padding. Works well with icons.")),
+        ("square", L("web.settings.overlays.preset.square.label", "Square"), L("web.settings.overlays.preset.square.description", "Blocky, high-density. Plex-inspired.")),
+        ("plate", L("web.settings.overlays.preset.plate.label", "Plate"), L("web.settings.overlays.preset.plate.description", "Large plates with rating source chips.")),
+        ("band", L("web.settings.overlays.preset.band.label", "Edge band"), L("web.settings.overlays.preset.band.description", "Whole marks on a shared edge scrim.")),
     ];
 
     private void BuildCardOverlayPresetCards()
@@ -2392,7 +2403,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (ReferenceEquals(_overlaySaveCts, ownerCts)) ViewModel.ErrorMessage = ex.Message;
+            if (ReferenceEquals(_overlaySaveCts, ownerCts)) ViewModel.ErrorMessage = ex.DisplayMessage();
         }
         finally
         {
@@ -2431,35 +2442,35 @@ _webhookPlexAuthCts?.Cancel();
 
     private static string OverlayDescription(string id) => id switch
     {
-        "resolution" => "Video resolution (4K, 1080p, 720p, etc.)",
-        "hdr" => "Dynamic range format (HDR10, DV, HLG)",
+        "resolution" => L("web.settings.overlays.badge.resolution.description", "Video resolution (4K, 1080p, 720p, etc.)"),
+        "hdr" => L("web.settings.overlays.badge.hdr.description", "Dynamic range format (HDR10, DV, HLG)"),
         "resolution_hdr" => "Single badge combining resolution and dynamic range (e.g. \"4K DV\", \"1080p HDR\")",
         "resolution_hdr_audio" => "Single badge combining resolution, dynamic range, and audio (e.g. \"4K DV Atmos\")",
-        "audio" => "Audio codec (Atmos, DTS-HD, TrueHD, etc.)",
-        "audio_channels" => "Channel layout (Stereo, 5.1, 7.1)",
-        "video_codec" => "Video codec (H.264, H.265, AV1)",
-        "container" => "File container (MKV, MP4, etc.)",
-        "aspect_ratio" => "Display aspect ratio (16:9, 2.39:1, etc.)",
-        "release_type" => "Source format (REMUX, BluRay, WEB-DL, etc.)",
-        "edition" => "Edition label from the best available media version",
-        "multi_audio" => "Shown when the file has audio in 2+ languages",
-        "multi_sub" => "Shown when the file has any subtitle track",
-        "rating_imdb" => "IMDb score out of 10",
-        "rating_tmdb" => "TMDB score out of 10",
+        "audio" => L("web.settings.overlays.badge.audio.description", "Audio codec (Atmos, DTS-HD, TrueHD, etc.)"),
+        "audio_channels" => L("web.settings.overlays.badge.audioChannels.description", "Channel layout (Stereo, 5.1, 7.1)"),
+        "video_codec" => L("web.settings.overlays.badge.videoCodec.description", "Video codec (H.264, H.265, AV1)"),
+        "container" => L("web.settings.overlays.badge.container.description", "File container (MKV, MP4, etc.)"),
+        "aspect_ratio" => L("web.settings.overlays.badge.aspectRatio.description", "Display aspect ratio (16:9, 2.39:1, etc.)"),
+        "release_type" => L("web.settings.overlays.badge.releaseType.description", "Source format (REMUX, BluRay, WEB-DL, etc.)"),
+        "edition" => L("web.settings.overlays.badge.edition.description", "Edition label from the best available media version"),
+        "multi_audio" => L("web.settings.overlays.badge.multiAudio.description", "Shown when the file has audio in 2+ languages"),
+        "multi_sub" => L("web.settings.overlays.badge.multiSub.description", "Shown when the file has any subtitle track"),
+        "rating_imdb" => L("web.settings.overlays.badge.ratingImdb.description", "IMDb score out of 10"),
+        "rating_tmdb" => L("web.settings.overlays.badge.ratingTmdb.description", "TMDB score out of 10"),
         "rating_rt" => "Rotten Tomatoes critic score",
         "rating_rt_audience" => "Rotten Tomatoes audience score",
-        "content_rating" => "Content rating (PG-13, TV-MA, R, etc.)",
-        "year" => "Release year",
-        "runtime" => "Item runtime in hours and minutes",
-        "original_language" => "Original language of the content",
-        "studio" => "Primary production studio (movies)",
-        "network" => "Primary network (series)",
-        "show_status" => "Series lifecycle: Returning, Ended, Cancelled",
+        "content_rating" => L("web.settings.overlays.badge.contentRating.description", "Content rating (PG-13, TV-MA, R, etc.)"),
+        "year" => L("web.settings.overlays.badge.year.description", "Release year"),
+        "runtime" => L("web.settings.overlays.badge.runtime.description", "Item runtime in hours and minutes"),
+        "original_language" => L("web.settings.overlays.badge.originalLanguage.description", "Original language of the content"),
+        "studio" => L("web.settings.overlays.badge.studio.description", "Primary production studio (movies)"),
+        "network" => L("web.settings.overlays.badge.network.description", "Primary network (series)"),
+        "show_status" => L("web.settings.overlays.badge.showStatus.description", "Series lifecycle: Returning, Ended, Cancelled"),
         _ => "Poster card badge.",
     };
 
     private static string? OverlayAvailabilityNote(string id) => id == "show_status"
-        ? "Populated by metadata plugins (TMDB/TVDB updates pending)"
+        ? L("web.settings.overlays.badge.showStatus.availabilityNote", "Populated by metadata plugins (TMDB/TVDB updates pending)")
         : null;
 
     private void BuildDateTimeFormatControls()
@@ -2501,7 +2512,8 @@ _webhookPlexAuthCts?.Cancel();
     private void UpdateDateTimePreview()
     {
         var now = DateTimeOffset.Now;
-        DateTimePreviewText.Text = $"Preview: {DateTimeDisplay.FormatDate(now)} · {DateTimeDisplay.FormatDate(now, medium: true)} · {DateTimeDisplay.FormatTime(now)}";
+        DateTimePreviewText.Text = L("web.settings.accessibility.dateTimePreview", $"Preview: {DateTimeDisplay.FormatDate(now)} · {DateTimeDisplay.FormatDate(now, medium: true)} · {DateTimeDisplay.FormatTime(now)}",
+            Args(("short", DateTimeDisplay.FormatDate(now)), ("medium", DateTimeDisplay.FormatDate(now, medium: true)), ("time", DateTimeDisplay.FormatTime(now))));
     }
 
     // ===== Library cards =====
@@ -2523,6 +2535,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void HomeScopeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (HomeScopeComboBox.SelectedItem is not ComboBoxItem { Tag: string scope } || scope == ViewModel.SelectedScope) return;
         if (ViewModel.IsSavingHomeSections)
         {
@@ -2541,7 +2554,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             var emptyText = new TextBlock
             {
-                Text = "No libraries are available for this account right now.",
+                Text = L("web.settings.library.empty", "No libraries are available for this account right now."),
                 Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
                 Margin = new Thickness(0, 8, 0, 0),
             };
@@ -2554,7 +2567,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             LibraryCardsContainer.Children.Add(new TextBlock
             {
-                Text = "Choose a profile to manage libraries.",
+                Text = L("web.settings.library.noProfile", "Choose a profile to manage libraries."),
                 Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
                 Margin = new Thickness(0, 8, 0, 0),
             });
@@ -2576,7 +2589,7 @@ _webhookPlexAuthCts?.Cancel();
         LibraryCardsContainer.Children.Clear();
         LibraryCardsContainer.Children.Add(new TextBlock
         {
-            Text = "Loading libraries...",
+            Text = L("web.settings.library.loading", "Loading libraries..."),
             Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
             Margin = new Thickness(0, 8, 0, 0),
         });
@@ -2609,7 +2622,7 @@ _webhookPlexAuthCts?.Cancel();
             CanDrag = true,
         };
         AutomationProperties.SetName(dragHandle, $"Drag to reorder {vm.LibraryName}");
-        ToolTipService.SetToolTip(dragHandle, "Drag to reorder");
+        ToolTipService.SetToolTip(dragHandle, L("web.settings.library.dragToReorder", "Drag to reorder"));
         dragHandle.DragStarting += (_, args) =>
         {
             args.Data.SetText(vm.LibraryId.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -2707,7 +2720,7 @@ _webhookPlexAuthCts?.Cancel();
 
         var visibilityLabel = new TextBlock
         {
-            Text = "Visible in navigation",
+            Text = L("web.settings.library.visibleInNavigation", "Visible in navigation"),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
@@ -2725,7 +2738,7 @@ _webhookPlexAuthCts?.Cancel();
         visibilityToggle.Toggled += (s, e) =>
         {
             vm.IsEnabled = visibilityToggle.IsOn;
-            visibilityLabel.Text = "Visible in navigation";
+            visibilityLabel.Text = L("web.settings.library.visibleInNavigation", "Visible in navigation");
         };
         togglePanel.Children.Add(visibilityToggle);
 
@@ -2770,7 +2783,7 @@ _webhookPlexAuthCts?.Cancel();
         };
         expandPanel.Children.Add(new TextBlock
         {
-            Text = "Override your profile's playback defaults for this library. Changes save automatically.",
+            Text = L("web.settings.library.overridesIntro", "Override your profile's playback defaults for this library. Changes save automatically."),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
@@ -2787,28 +2800,28 @@ _webhookPlexAuthCts?.Cancel();
 
         // --- Spoken language dropdown ---
         expandPanel.Children.Add(BuildDropdownRow(
-            "Spoken language", AudioLanguageOptions, vm.AudioLanguage,
-            (tag) => vm.AudioLanguage = tag));
+            L("web.settings.library.spokenLanguage", "Spoken language"), AudioLanguageOptions, vm.AudioLanguage,
+            (tag) => vm.AudioLanguage = tag, languages: true));
 
         // --- Subtitle language dropdown ---
         expandPanel.Children.Add(BuildDropdownRow(
-            "Subtitle language", SubtitleLanguageOptions, vm.SubtitleLanguage,
-            (tag) => vm.SubtitleLanguage = tag));
+            L("web.settings.library.subtitleLanguage", "Subtitle language"), SubtitleLanguageOptions, vm.SubtitleLanguage,
+            (tag) => vm.SubtitleLanguage = tag, languages: true));
 
         // --- Subtitle behavior dropdown ---
         expandPanel.Children.Add(BuildDropdownRow(
-            "Subtitle behavior", SubtitleModeOptions, vm.SubtitleMode,
+            L("web.settings.library.subtitleBehavior", "Subtitle behavior"), SubtitleModeOptions, vm.SubtitleMode,
             (tag) => vm.SubtitleMode = tag));
 
         // --- Forced subtitles dropdown ---
         expandPanel.Children.Add(BuildDropdownRow(
-            "Forced subtitles", ForcedSubtitleOptions, vm.ForcedSubtitles,
+            L("web.settings.library.forcedSubtitles", "Forced subtitles"), ForcedSubtitleOptions, vm.ForcedSubtitles,
             (tag) => vm.ForcedSubtitles = tag));
 
         // --- Reset button ---
         var resetButton = new Button
         {
-            Content = "Reset to profile defaults",
+            Content = L("web.settings.library.resetToProfileDefaults", "Reset to profile defaults"),
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             FontSize = 12,
@@ -2836,10 +2849,10 @@ _webhookPlexAuthCts?.Cancel();
 
     private static void UpdateEditButtonText(TextBlock textBlock, bool isExpanded)
     {
-        textBlock.Text = isExpanded ? "\u25BC Hide playback overrides" : "\u25B6 Edit playback overrides";
+        textBlock.Text = isExpanded ? "\u25BC " + L("web.settings.library.hideOverrides", "Hide playback overrides") : "\u25B6 " + L("web.settings.library.editOverrides", "Edit playback overrides");
     }
 
-    private StackPanel BuildDropdownRow(string label, (string Tag, string Label)[] options, string currentValue, Action<string> onChanged)
+    private StackPanel BuildDropdownRow(string label, (string Tag, string Label)[] options, string currentValue, Action<string> onChanged, bool languages = false)
     {
         var row = new StackPanel { Spacing = 4 };
         row.Children.Add(new TextBlock
@@ -2851,7 +2864,7 @@ _webhookPlexAuthCts?.Cancel();
         });
 
         var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MaxWidth = 300 };
-        if (label is "Spoken language" or "Subtitle language") ConfigureLanguageCombo(combo);
+        if (languages) ConfigureLanguageCombo(combo);
         foreach (var (tag, lbl) in options)
         {
             combo.Items.Add(new ComboBoxItem { Content = lbl, Tag = tag });
@@ -2899,6 +2912,7 @@ _webhookPlexAuthCts?.Cancel();
     // ===== ComboBox change handlers =====
     private void QualityComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (QualityComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -2909,6 +2923,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void MaxBitrateComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (MaxBitrateComboBox.SelectedItem is ComboBoxItem item && item.Tag is string value)
         {
@@ -2968,6 +2983,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleModeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -2978,6 +2994,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void NextUpModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (NextUpModeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3061,6 +3078,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleFontSize_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleFontSizeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3071,6 +3089,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleFontFamily_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleFontFamilyComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3081,6 +3100,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitleBgStyle_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitleBgStyleComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3116,6 +3136,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void SubtitlePosition_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (_suppressEvents) return;
         if (SubtitlePositionComboBox.SelectedItem is ComboBoxItem item && item.Tag is string val)
         {
@@ -3269,7 +3290,7 @@ _webhookPlexAuthCts?.Cancel();
             Content = new FontIcon { Glyph = "\uE700", FontSize = 14 }, Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Padding = new Thickness(4), CanDrag = ViewModel.CanEditHomeSections, IsEnabled = ViewModel.CanEditHomeSections
         };
-        AutomationProperties.SetName(grip, $"Drag {section.Title}");
+        AutomationProperties.SetName(grip, L("web.home.rows.sections.drag", $"Drag {section.DisplayTitle}", Args(("section", section.DisplayTitle))));
         grip.DragStarting += (_, args) => { args.Data.SetText(section.Id); args.Data.RequestedOperation = DataPackageOperation.Move; };
         grid.Children.Add(grip);
         var art = new Grid { Width = 72, Height = 60, Visibility = section.Hidden ? Visibility.Collapsed : Visibility.Visible };
@@ -3278,9 +3299,9 @@ _webhookPlexAuthCts?.Cancel();
         if (!section.Hidden) AttachHomeRowPeek(art, section);
         var info = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
         var title = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 4 };
-        title.Children.Add(new TextBlock { Text = section.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-        if (section.Featured) title.Children.Add(BuildHomeSectionBadge("Hero banner", true));
-        if (section.IsCustom) title.Children.Add(BuildHomeSectionBadge("Yours", false));
+        title.Children.Add(new TextBlock { Text = section.DisplayTitle, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        if (section.Featured) title.Children.Add(BuildHomeSectionBadge(L("web.home.rows.line.heroBanner", "Hero banner"), true));
+        if (section.IsCustom) title.Children.Add(BuildHomeSectionBadge(L("web.home.rows.line.yours", "Yours"), false));
         info.Children.Add(title);
         info.Children.Add(new TextBlock
         {
@@ -3289,10 +3310,10 @@ _webhookPlexAuthCts?.Cancel();
         });
         var open = new Button { Content = info, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch,
             Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(0), IsEnabled = ViewModel.CanEditHomeSections };
-        AutomationProperties.SetName(open, $"Edit {section.Title}"); open.Click += async (_, _) => await EditHomeSectionAsync(section);
+        AutomationProperties.SetName(open, L("web.home.rows.sections.edit", $"Edit {section.DisplayTitle}", Args(("section", section.DisplayTitle)))); open.Click += async (_, _) => await EditHomeSectionAsync(section);
         Grid.SetColumn(open, 2); grid.Children.Add(open);
         var shown = new ToggleSwitch { IsOn = !section.Hidden, OnContent = "", OffContent = "", MinWidth = 0, IsEnabled = ViewModel.CanEditHomeSections, VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetName(shown, $"Show {section.Title} on this page");
+        AutomationProperties.SetName(shown, $"Show {section.DisplayTitle} on this page");
         shown.Toggled += async (_, _) =>
         {
             if (!ViewModel.CanEditHomeSections || shown.IsOn == !section.Hidden) return;
@@ -3305,17 +3326,17 @@ _webhookPlexAuthCts?.Cancel();
             var item = new MenuFlyoutItem { Text = label, IsEnabled = ViewModel.CanEditHomeSections && enabled };
             item.Click += async (_, _) => { if (ViewModel.CanEditHomeSections) await act(); }; menu.Items.Add(item);
         }
-        Action("Edit row…", () => EditHomeSectionAsync(section));
+        Action(L("web.settings.homeScreen.editRow", "Edit row…"), () => EditHomeSectionAsync(section));
         if (!section.IsCustom && !string.IsNullOrEmpty(section.DefaultTitle) && section.Title != section.DefaultTitle)
-            Action("Use the original name", async () => { section.Title = section.DefaultTitle; RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
-        Action(section.Featured ? "Stop using as hero banner" : "Use as hero banner", async () =>
+            Action(L("web.settings.homeScreen.useOriginalName", "Use the original name"), async () => { RestoreDefaultTitle(section); RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
+        Action(section.Featured ? L("web.settings.homeScreen.stopHero", "Stop using as hero banner") : L("web.settings.homeScreen.useHero", "Use as hero banner"), async () =>
         { section.Featured = !section.Featured; RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
-        Action("Move to top", async () => { ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(section), 0); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); }, ViewModel.HomeSections.FirstOrDefault() != section);
-        Action("Move to bottom", async () => { ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(section), ViewModel.HomeSections.Count - 1); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); }, ViewModel.HomeSections.LastOrDefault() != section);
+        Action(L("web.home.rows.page.moveToTop", "Move to top"), async () => { ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(section), 0); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); }, ViewModel.HomeSections.FirstOrDefault() != section);
+        Action(L("web.home.rows.page.moveToBottom", "Move to bottom"), async () => { ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(section), ViewModel.HomeSections.Count - 1); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); }, ViewModel.HomeSections.LastOrDefault() != section);
         menu.Items.Add(new MenuFlyoutSeparator());
-        Action(section.IsCustom ? "Delete row…" : "Remove from my page…", () => RemoveHomeRowAsync(section));
+        Action(section.IsCustom ? L("web.settings.homeScreen.deleteRow", "Delete row…") : "Remove from my page…", () => RemoveHomeRowAsync(section));
         var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 16 }, Flyout = menu, Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(5) };
-        AutomationProperties.SetName(more, $"More actions for {section.Title}"); Grid.SetColumn(more, 4); grid.Children.Add(more);
+        AutomationProperties.SetName(more, $"More actions for {section.DisplayTitle}"); Grid.SetColumn(more, 4); grid.Children.Add(more);
         row.Child = grid;
         row.SizeChanged += (_, args) =>
         {
@@ -3325,7 +3346,7 @@ _webhookPlexAuthCts?.Cancel();
         row.DragOver += (_, args) =>
         {
             if (!ViewModel.CanEditHomeSections || !args.DataView.Contains(StandardDataFormats.Text)) return;
-            args.AcceptedOperation = DataPackageOperation.Move; args.DragUIOverride.Caption = $"Move before {section.Title}";
+            args.AcceptedOperation = DataPackageOperation.Move; args.DragUIOverride.Caption = $"Move before {section.DisplayTitle}";
         };
         row.Drop += async (_, args) =>
         {
@@ -3357,21 +3378,21 @@ _webhookPlexAuthCts?.Cancel();
 
     private static string HomeSectionTypeLabel(string type) => type switch
     {
-        "recently_added" => "Recently Added",
-        "recently_released" => "Recently Released",
+        "recently_added" => L("web.home.rows.kinds.recentlyAdded", "Recently Added"),
+        "recently_released" => L("web.home.rows.kinds.recentlyReleased", "Recently Released"),
         "genre" => "Genre",
-        "custom_filter" => "Custom Filter",
-        "random" => "Random",
-        "continue_watching" => "Continue Watching",
-        "recommended_for_you" => "Recommended For You",
-        "because_you_watched" => "Because You Watched",
-        "similar_users_liked" => "Profiles Like You Enjoyed",
-        "taste_match" => "Top Picks Today",
-        "next_up" => "Next Up",
-        "next_in_series" => "Next in Series",
-        "watchlist" => "Watchlist",
-        "favorites" => "Favorites",
-        "collection" => "Collection",
+        "custom_filter" => L("web.home.rows.kinds.customFilter", "Custom Filter"),
+        "random" => L("web.home.rows.kinds.random", "Random"),
+        "continue_watching" => L("web.home.rows.kinds.continueWatching", "Continue Watching"),
+        "recommended_for_you" => L("web.home.rows.kinds.recommendedForYou", "Recommended For You"),
+        "because_you_watched" => L("web.home.rows.kinds.becauseYouWatched", "Because You Watched"),
+        "similar_users_liked" => L("web.home.rows.kinds.similarUsersLiked", "Profiles Like You Enjoyed"),
+        "taste_match" => L("web.home.rows.kinds.tasteMatch", "Top Picks Today"),
+        "next_up" => L("web.home.rows.kinds.nextUp", "Next Up"),
+        "next_in_series" => L("web.home.rows.kinds.nextInSeries", "Next in Series"),
+        "watchlist" => L("web.home.rows.kinds.watchlist", "Watchlist"),
+        "favorites" => L("web.home.rows.kinds.favorites", "Favorites"),
+        "collection" => L("web.home.rows.kinds.collection", "Collection"),
         _ => type.Replace('_', ' '),
     };
 
@@ -3392,7 +3413,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not load section recipes: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not load section recipes: {ex.DisplayMessage()}");
             return;
         }
 
@@ -3432,7 +3453,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not load section editor: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not load section editor: {ex.DisplayMessage()}");
             return;
         }
         var configured = await RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, section, CurrentHomePageLabel());
@@ -3459,12 +3480,23 @@ _webhookPlexAuthCts?.Cancel();
         {
             Title = "Reset this page to the server's rows?",
             Content = "Brings back hidden rows and original names, and removes rows you added. Only this profile changes.",
-            PrimaryButtonText = "Reset",
-            CloseButtonText = "Cancel",
+            PrimaryButtonText = L("web.home.rows.reset.confirm", "Reset"),
+            CloseButtonText = L("common.cancel", "Cancel"),
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close,
         };
 
+        SiloPlayer.Controls.MediaItemCardActions.Localize(dialog, primaryButton: "web.home.rows.reset.confirm", closeButton: "common.cancel");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(dialog, "Reset", element =>
+        {
+            var arguments = Args(("page_kind", scope.StartsWith("library:", StringComparison.OrdinalIgnoreCase) ? "library" : "home"), ("page", CurrentHomePageLabel()));
+            element.Title = L("web.home.rows.profilePage.resetTitle", "Reset this page to the server's rows?", arguments);
+            element.Content = L("web.home.rows.profilePage.resetDescription", "This page goes back to the server's rows.", arguments)
+                + "\n\n" + L("web.home.rows.reset.hidden", "Rows you hid come back.")
+                + "\n" + L("web.home.rows.reset.changed", "Rows you changed go back to their original settings.")
+                + "\n" + L("web.home.rows.reset.added", "Rows you added are deleted.", Args(("rows", ViewModel.HomeSections.Count(row => row.IsCustom))))
+                + "\n\n" + L("web.home.rows.reset.otherPages", "Your other pages and profiles don't change.");
+        });
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary && _layoutTransferActive && api.IsCurrentContext(context) && scope == ViewModel.SelectedScope)
         {
@@ -3562,7 +3594,7 @@ _webhookPlexAuthCts?.Cancel();
 
         // Plex OAuth sub-states
         PlexAuthPendingPanel.Visibility = ViewModel.PlexAuthPending ? Visibility.Visible : Visibility.Collapsed;
-        PlexAuthPendingText.Text = "Finishing Plex sign-in…";
+        PlexAuthPendingText.Text = L("web.settings.historyImport.finishingPlexSignIn", "Finishing Plex sign-in…");
         PlexAuthErrorPanel.Visibility = !string.IsNullOrEmpty(ViewModel.PlexAuthError) ? Visibility.Visible : Visibility.Collapsed;
         PlexAuthErrorText.Text = ViewModel.PlexAuthError ?? "";
 
@@ -3729,7 +3761,7 @@ _webhookPlexAuthCts?.Cancel();
                 Padding = new Thickness(14, 12, 14, 12),
                 Child = new TextBlock
                 {
-                    Text = "No imports have been started yet.",
+                    Text = L("web.settings.historyImport.history.empty", "No imports have been started yet."),
                     FontSize = 13,
                     Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 },
@@ -3794,7 +3826,7 @@ _webhookPlexAuthCts?.Cancel();
         var textStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         textStack.Children.Add(new TextBlock
         {
-            Text = $"{CapitalizeSource(run.SourceType)} import",
+            Text = L("web.settings.historyImport.runTitle", $"{CapitalizeSource(run.SourceType)} import", Args(("source", CapitalizeSource(run.SourceType)))),
             FontSize = 14,
             FontWeight = FontWeights.Medium,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
@@ -3840,11 +3872,11 @@ _webhookPlexAuthCts?.Cancel();
     {
         var (label, glyph, fg, bg) = status switch
         {
-            "queued"    => ("Queued",    "\uE916", "#78AEFC", "#143056"),
-            "running"   => ("Running",   "\uE895", "#FBBF24", "#3B2A0E"),
-            "completed" => ("Completed", "\uE73E", "#4ADE80", "#0E2E18"),
-            "failed"    => ("Failed",    "\uE711", "#F87171", "#3A1313"),
-            "cancelled" => ("Cancelled", "\uE7A7", "#9CA3AF", "#1F2126"),
+            "queued"    => (L("web.settings.historyImport.status.queued", "Queued"),    "\uE916", "#78AEFC", "#143056"),
+            "running"   => (L("web.settings.historyImport.status.running", "Running"),   "\uE895", "#FBBF24", "#3B2A0E"),
+            "completed" => (L("web.settings.historyImport.status.completed", "Completed"), "\uE73E", "#4ADE80", "#0E2E18"),
+            "failed"    => (L("web.settings.historyImport.status.failed", "Failed"),    "\uE711", "#F87171", "#3A1313"),
+            "cancelled" => (L("web.settings.historyImport.status.cancelled", "Cancelled"), "\uE7A7", "#9CA3AF", "#1F2126"),
             _           => (status,      "\uE916", "#9CA3AF", "#1F2126"),
         };
         var badge = new Border
@@ -3878,16 +3910,16 @@ _webhookPlexAuthCts?.Cancel();
         var run = ViewModel.DisplayRun;
 
         // Title/subtitle state
-        RunSummaryTitle.Text = ViewModel.SelectedRunId != null ? "Selected import" : "Latest import";
+        RunSummaryTitle.Text = ViewModel.SelectedRunId != null ? L("web.settings.historyImport.selectedImport.title", "Selected import") : L("web.settings.historyImport.latestImport.title", "Latest import");
         RunSummarySubtitle.Text = ViewModel.SelectedRunId != null
-            ? "Details from the selected import run."
-            : "Results from the most recent import run.";
+            ? L("web.settings.historyImport.selectedImport.description", "Details from the selected import run.")
+            : L("web.settings.historyImport.latestImport.description", "Results from the most recent import run.");
 
         if (run == null)
         {
             RunSummaryContainer.Children.Add(new TextBlock
             {
-                Text = "Import summaries will appear here after you start a run.",
+                Text = L("web.settings.historyImport.summary.empty", "Import summaries will appear here after you start a run."),
                 FontSize = 13,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             });
@@ -3979,14 +4011,14 @@ _webhookPlexAuthCts?.Cancel();
             Grid.SetRow(box, index / 7);
             metricsGrid.Children.Add(box);
         }
-        AddMetric(0, "Fetched",  run.Fetched);
-        AddMetric(1, "Matched",  run.Matched,         "#4ADE80");
-        AddMetric(2, "Unmatched",run.Unmatched,       "#FBBF24");
-        AddMetric(3, "Progress", run.ProgressUpdated, "#4ADE80");
-        AddMetric(4, "History",  run.HistoryCreated,  "#4ADE80");
-        AddMetric(5, "Watchlist", run.WatchlistAdded,   "#4ADE80");
-        AddMetric(6, "Favorites", run.FavoritesImported, "#4ADE80");
-        AddMetric(7, "Skipped",   run.Skipped);
+        AddMetric(0, L("web.settings.historyImport.metric.fetched", "Fetched"),  run.Fetched);
+        AddMetric(1, L("web.settings.historyImport.metric.matched", "Matched"),  run.Matched,         "#4ADE80");
+        AddMetric(2, L("web.settings.historyImport.metric.unmatched", "Unmatched"), run.Unmatched,       "#FBBF24");
+        AddMetric(3, L("web.settings.historyImport.metric.progress", "Progress"), run.ProgressUpdated, "#4ADE80");
+        AddMetric(4, L("web.settings.historyImport.metric.history", "History"),  run.HistoryCreated,  "#4ADE80");
+        AddMetric(5, L("web.settings.historyImport.metric.watchlist", "Watchlist"), run.WatchlistAdded,   "#4ADE80");
+        AddMetric(6, L("web.settings.historyImport.metric.favorites", "Favorites"), run.FavoritesImported, "#4ADE80");
+        AddMetric(7, L("web.settings.historyImport.metric.skipped", "Skipped"),   run.Skipped);
         RunSummaryContainer.Children.Add(metricsGrid);
 
         // Error box
@@ -4019,7 +4051,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             RunSummaryContainer.Children.Add(new TextBlock
             {
-                Text = "Warnings",
+                Text = L("web.settings.historyImport.warnings", "Warnings"),
                 FontSize = 13,
                 FontWeight = FontWeights.Medium,
                 Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
@@ -4046,7 +4078,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             RunSummaryContainer.Children.Add(new TextBlock
             {
-                Text = "Unmatched examples",
+                Text = L("web.settings.historyImport.unmatchedExamples", "Unmatched examples"),
                 FontSize = 13,
                 FontWeight = FontWeights.Medium,
                 Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
@@ -4196,10 +4228,10 @@ _webhookPlexAuthCts?.Cancel();
     {
         if (!DateTime.TryParse(iso, out var dt)) return "";
         var diff = DateTimeOffset.UtcNow - dt.ToUniversalTime();
-        if (diff.TotalSeconds < 60) return "just now";
-        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
-        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
-        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+        if (diff.TotalSeconds < 60) return L("web.settings.webhooks.justNow", "just now");
+        if (diff.TotalMinutes < 60) return L("web.settings.webhooks.minutesAgo", $"{(int)diff.TotalMinutes}m ago", Args(("minutes", Count((int)diff.TotalMinutes))));
+        if (diff.TotalHours < 24) return L("web.settings.webhooks.hoursAgo", $"{(int)diff.TotalHours}h ago", Args(("hours", Count((int)diff.TotalHours))));
+        if (diff.TotalDays < 7) return L("web.settings.webhooks.daysAgo", $"{(int)diff.TotalDays}d ago", Args(("days", Count((int)diff.TotalDays))));
         return DateTimeDisplay.FormatDate(dt, medium: true);
     }
 
@@ -4391,7 +4423,7 @@ _webhookPlexAuthCts?.Cancel();
         // Save button
         var saveBtn = new Button
         {
-            Content = "Save",
+            Content = L("common.save", "Save"),
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             Padding = new Thickness(16, 8, 16, 8),
         };
@@ -4476,7 +4508,7 @@ _webhookPlexAuthCts?.Cancel();
         var showAuth = vm.AuthSession != null && !vm.Connected;
         var showApiKey = vm.ApiKeyPromptVisible && vm.UsesApiKey && !vm.Connected;
         var hasError = !string.IsNullOrWhiteSpace(latestRun?.Error) || !string.IsNullOrWhiteSpace(connection?.LastError);
-        var statusText = showAuth ? "Activation pending" : showApiKey ? "API key required" : vm.Connected ? hasError ? "Sync error" : "Connected" : "Not connected";
+        var statusText = showAuth ? L("web.settings.watchProviders.status.activationPending", "Activation pending") : showApiKey ? L("web.settings.watchProviders.status.apiKeyRequired", "API key required") : vm.Connected ? hasError ? L("web.settings.watchProviders.status.syncError", "Sync error") : L("web.settings.watchProviders.status.connected", "Connected") : L("web.settings.watchProviders.status.notConnected", "Not connected");
         var statusKind = showAuth || showApiKey ? "pending" : vm.Connected ? hasError ? "error" : "connected" : "muted";
 
         var card = new Border
@@ -4525,7 +4557,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             var syncButton = new Button
             {
-                Content = IsWatchProviderRunActive(latestRun) ? "Syncing..." : "Sync now",
+                Content = IsWatchProviderRunActive(latestRun) ? L("web.settings.watchProviders.syncing", "Syncing...") : L("web.settings.watchProviders.syncNow", "Sync now"),
                 Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
                 Padding = new Thickness(12, 7, 12, 7),
                 FontSize = 13,
@@ -4540,7 +4572,7 @@ _webhookPlexAuthCts?.Cancel();
 
             var disconnectButton = new Button
             {
-                Content = "Disconnect",
+                Content = L("web.settings.watchProviders.disconnect", "Disconnect"),
                 Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
                 Padding = new Thickness(12, 7, 12, 7),
                 FontSize = 13,
@@ -4550,10 +4582,10 @@ _webhookPlexAuthCts?.Cancel();
             {
                 var dialog = new ContentDialog
                 {
-                    Title = $"Disconnect {displayName}?",
-                    PrimaryButtonText = "Disconnect",
+                    Title = L("web.settings.watchProviders.disconnectConfirm", $"Disconnect {displayName}?", Args(("provider", displayName))),
+                    PrimaryButtonText = L("web.settings.watchProviders.disconnect", "Disconnect"),
                     PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-                    CloseButtonText = "Cancel",
+                    CloseButtonText = L("common.cancel", "Cancel"),
                     XamlRoot = XamlRoot,
                     DefaultButton = ContentDialogButton.Close,
                 };
@@ -4569,7 +4601,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             var connect = new Button
             {
-                Content = vm.CredentialsConfigured ? "Connect" : "Credentials required",
+                Content = vm.CredentialsConfigured ? L("web.settings.watchProviders.connect", "Connect") : "Credentials required",
                 Style = (Style)Application.Current.Resources["AccentButtonStyle"],
                 Padding = new Thickness(12, 7, 12, 7),
                 FontSize = 13,
@@ -4603,15 +4635,15 @@ _webhookPlexAuthCts?.Cancel();
         {
             outer.Children.Add(BuildWatchProviderStats(connection, latestRun));
             var toggles = new StackPanel { Spacing = 8 };
-            toggles.Children.Add(BuildWatchProviderToggle(vm, "import_watched_enabled", "Import watched history", $"Bring completed {displayName} plays into this profile.", connection.ImportWatchedEnabled));
-            toggles.Children.Add(BuildWatchProviderToggle(vm, "import_progress_enabled", "Import paused progress", $"Use newer {displayName} resume points when local progress is older.", connection.ImportProgressEnabled));
-            toggles.Children.Add(BuildWatchProviderToggle(vm, "export_watched_enabled", "Send watched changes", "Send local watched marks and completed plays to this provider.", connection.ExportWatchedEnabled));
+            toggles.Children.Add(BuildWatchProviderToggle(vm, "import_watched_enabled", L("web.settings.watchProviders.toggle.importWatched.label", "Import watched history"), L("web.settings.watchProviders.toggle.importWatched.description", $"Bring completed {displayName} plays into this profile.", Args(("provider", displayName))), connection.ImportWatchedEnabled));
+            toggles.Children.Add(BuildWatchProviderToggle(vm, "import_progress_enabled", L("web.settings.watchProviders.toggle.importProgress.label", "Import paused progress"), L("web.settings.watchProviders.toggle.importProgress.description", $"Use newer {displayName} resume points when local progress is older.", Args(("provider", displayName))), connection.ImportProgressEnabled));
+            toggles.Children.Add(BuildWatchProviderToggle(vm, "export_watched_enabled", L("web.settings.watchProviders.toggle.exportWatched.label", "Send watched changes"), L("web.settings.watchProviders.toggle.exportWatched.description", "Send local watched marks and completed plays to this provider."), connection.ExportWatchedEnabled));
 
             var favoritesSupported = connection.Capabilities.ImportFavorites || connection.Capabilities.ExportFavorites;
             if (favoritesSupported)
             {
                 var favoritesEnabled = connection.ImportFavoritesEnabled || connection.ExportFavoritesEnabled;
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "favorites_sync", "Sync favorites", $"Import {displayName} favorites and send local favorite adds.", favoritesEnabled, async isOn =>
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "favorites_sync", L("web.settings.watchProviders.toggle.favorites.label", "Sync favorites"), $"Import {displayName} favorites and send local favorite adds.", favoritesEnabled, async isOn =>
                 {
                     await ViewModel.UpdateWatchProviderConnectionAsync(vm, new Dictionary<string, object?>
                     {
@@ -4625,27 +4657,27 @@ _webhookPlexAuthCts?.Cancel();
             if (connection.Capabilities.RemoveFavorites)
             {
                 var favoritesEnabled = connection.ImportFavoritesEnabled || connection.ExportFavoritesEnabled;
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_favorite_removals_enabled", "Sync favorite removals", "Remove provider-synced favorites on the other side when explicitly unfavorited.", connection.SyncFavoriteRemovalsEnabled, isEnabled: favoritesEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_favorite_removals_enabled", L("web.settings.watchProviders.toggle.favoriteRemovals.label", "Sync favorite removals"), "Remove provider-synced favorites on the other side when explicitly unfavorited.", connection.SyncFavoriteRemovalsEnabled, isEnabled: favoritesEnabled));
             }
 
             if (connection.Capabilities.ScrobblePlayback)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "scrobble_enabled", "Scrobble playback", "Report starts, pauses, resumes, and stops live during playback.", connection.ScrobbleEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "scrobble_enabled", L("web.settings.watchProviders.toggle.scrobble.label", "Scrobble playback"), L("web.settings.watchProviders.toggle.scrobble.description", "Report starts, pauses, resumes, and stops live during playback."), connection.ScrobbleEnabled));
 
             if (connection.Capabilities.ImportWatchlist)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "import_watchlist_enabled", "Import watchlist", $"Bring your {displayName} watchlist into this profile.", connection.ImportWatchlistEnabled));
             if (connection.Capabilities.ExportWatchlist)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "export_watchlist_enabled", "Send watchlist", "Send local watchlist additions to this provider.", connection.ExportWatchlistEnabled));
             if (connection.Capabilities.RemoveWatchlist)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_removals_enabled", "Sync watchlist removals", "Remove items on the other side when removed locally.", connection.SyncWatchlistRemovalsEnabled,
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_removals_enabled", L("web.settings.watchProviders.toggle.watchlistRemovals.label", "Sync watchlist removals"), "Remove items on the other side when removed locally.", connection.SyncWatchlistRemovalsEnabled,
                     isEnabled: connection.ImportWatchlistEnabled || connection.ExportWatchlistEnabled));
             if (connection.Capabilities.ProvidesWatchlistOrder)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_order_enabled", "Mirror watchlist order", $"Match the {displayName} watchlist order.", connection.SyncWatchlistOrderEnabled, isEnabled: connection.ImportWatchlistEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_order_enabled", L("web.settings.watchProviders.toggle.watchlistOrder.label", "Mirror watchlist order"), $"Match the {displayName} watchlist order.", connection.SyncWatchlistOrderEnabled, isEnabled: connection.ImportWatchlistEnabled));
             if (connection.Capabilities.ImportRatings)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_ratings_enabled", "Import ratings", "Import ratings as stars; 7/10 becomes 4 stars.", connection.ImportRatingsEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_ratings_enabled", L("web.settings.watchProviders.toggle.importRatings.label", "Import ratings"), "Import ratings as stars; 7/10 becomes 4 stars.", connection.ImportRatingsEnabled));
             if (connection.Capabilities.ExportRatings)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_ratings_enabled", "Send ratings", "Send star ratings and clear ratings removed locally; 4 stars becomes 8/10.", connection.ExportRatingsEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_ratings_enabled", L("web.settings.watchProviders.toggle.exportRatings.label", "Send ratings"), "Send star ratings and clear ratings removed locally; 4 stars becomes 8/10.", connection.ExportRatingsEnabled));
             if (connection.Capabilities.SyncDropped)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_dropped_enabled", "Sync dropped shows", "Dropped shows leave Continue Watching and Next Up. Watching again restores them.", connection.SyncDroppedEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_dropped_enabled", L("web.settings.watchProviders.toggle.syncDropped.label", "Sync dropped shows"), "Dropped shows leave Continue Watching and Next Up. Watching again restores them.", connection.SyncDroppedEnabled));
 
             if (!string.IsNullOrWhiteSpace(vm.SettingsError)) toggles.Children.Insert(0, ErrorText(vm.SettingsError));
             var expansion = new Expander { Header = "Sync settings", Content = toggles, IsExpanded = vm.SettingsExpanded, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -4678,14 +4710,14 @@ _webhookPlexAuthCts?.Cancel();
         var headingCopy = new StackPanel { Spacing = 2 };
         headingCopy.Children.Add(new TextBlock
         {
-            Text = "Copy this code first",
+            Text = L("web.settings.watchProviders.auth.copyCodeFirst", "Copy this code first"),
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
         });
         headingCopy.Children.Add(new TextBlock
         {
-            Text = $"{vm.DisplayName} will ask for it after the activation page opens.",
+            Text = L("web.settings.watchProviders.auth.copyCodeHint", $"{vm.DisplayName} will ask for it after the activation page opens.", Args(("provider", vm.DisplayName))),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
@@ -4698,7 +4730,7 @@ _webhookPlexAuthCts?.Cancel();
             Padding = new Thickness(6),
             IsEnabled = !vm.IsBusy,
         };
-        AutomationProperties.SetName(cancel, "Cancel activation");
+        AutomationProperties.SetName(cancel, L("web.settings.watchProviders.auth.cancel", "Cancel activation"));
         cancel.Click += (_, _) =>
         {
             vm.AuthSession = null;
@@ -4738,8 +4770,8 @@ _webhookPlexAuthCts?.Cancel();
             Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
             Padding = new Thickness(10),
         };
-        AutomationProperties.SetName(copy, "Copy code");
-        ToolTipService.SetToolTip(copy, "Copy code");
+        AutomationProperties.SetName(copy, L("web.settings.watchProviders.auth.copyCode", "Copy code"));
+        ToolTipService.SetToolTip(copy, L("web.settings.watchProviders.auth.copyCode", "Copy code"));
         copy.Click += (_, _) =>
         {
             var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
@@ -4753,7 +4785,7 @@ _webhookPlexAuthCts?.Cancel();
         var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var open = new Button
         {
-            Content = $"Open {vm.DisplayName} activation",
+            Content = L("web.settings.watchProviders.auth.openActivation", $"Open {vm.DisplayName} activation", Args(("provider", vm.DisplayName))),
             Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
             Padding = new Thickness(12, 8, 12, 8),
             FontSize = 13,
@@ -4777,14 +4809,14 @@ _webhookPlexAuthCts?.Cancel();
             }
             catch (Exception ex)
             {
-                toast.Error(ex, $"Could not open the activation page: {ex.Message}");
+                toast.Error(ex, $"Could not open the activation page: {ex.DisplayMessage()}");
             }
         };
         actionRow.Children.Add(open);
 
         var poll = new Button
         {
-            Content = "I've entered it",
+            Content = L("web.settings.watchProviders.auth.entered", "I've entered it"),
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             Padding = new Thickness(12, 8, 12, 8),
             FontSize = 13,
@@ -4821,14 +4853,14 @@ _webhookPlexAuthCts?.Cancel();
         var headingCopy = new StackPanel { Spacing = 2 };
         headingCopy.Children.Add(new TextBlock
         {
-            Text = $"Paste your {vm.DisplayName} API key",
+            Text = L("web.settings.watchProviders.apiKey.title", $"Paste your {vm.DisplayName} API key", Args(("provider", vm.DisplayName))),
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
         });
         headingCopy.Children.Add(new TextBlock
         {
-            Text = $"Find it under your account settings on the {vm.DisplayName} site.",
+            Text = L("web.settings.watchProviders.apiKey.hint", $"Find it under your account settings on the {vm.DisplayName} site.", Args(("provider", vm.DisplayName))),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
@@ -4841,7 +4873,7 @@ _webhookPlexAuthCts?.Cancel();
             Padding = new Thickness(6),
             IsEnabled = !vm.IsBusy,
         };
-        AutomationProperties.SetName(cancel, "Cancel connection");
+        AutomationProperties.SetName(cancel, L("web.settings.watchProviders.apiKey.cancel", "Cancel connection"));
         cancel.Click += (_, _) =>
         {
             vm.ApiKey = "";
@@ -4858,7 +4890,7 @@ _webhookPlexAuthCts?.Cancel();
 
         var keyBox = new PasswordBox
         {
-            PlaceholderText = "API key",
+            PlaceholderText = L("web.settings.watchProviders.apiKey.placeholder", "API key"),
             Password = vm.ApiKey,
             FontFamily = new FontFamily("Consolas"),
             FontSize = 13,
@@ -4869,7 +4901,7 @@ _webhookPlexAuthCts?.Cancel();
 
         var connect = new Button
         {
-            Content = vm.IsBusy ? "Connecting..." : "Connect",
+            Content = vm.IsBusy ? L("web.settings.accountSignIn.connecting", "Connecting...") : L("web.settings.watchProviders.connect", "Connect"),
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             Padding = new Thickness(12, 8, 12, 8),
             FontSize = 13,
@@ -4902,7 +4934,7 @@ _webhookPlexAuthCts?.Cancel();
             // submitted snapshot is pending; only the submit action is disabled.
             connect.IsEnabled = false;
             connect.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8,
-                Children = { new ProgressRing { IsActive = true, Width = 16, Height = 16 }, new TextBlock { Text = "Connect" } } };
+                Children = { new ProgressRing { IsActive = true, Width = 16, Height = 16 }, new TextBlock { Text = L("web.settings.watchProviders.connect", "Connect") } } };
             try { await ViewModel.ConnectWatchProviderApiKeyAsync(vm); }
             finally { RebuildWatchProviderCards(); }
         };
@@ -4942,8 +4974,9 @@ _webhookPlexAuthCts?.Cancel();
 
         AddWatchProviderStat(grid, 0, "Last sync", FormatWatchProviderLastSync(connection, latestRun));
         AddWatchProviderStat(grid, 1, "Watched / ratings", $"{latestRun?.InboundWatchedImported ?? 0:N0} watched · {latestRun?.InboundRatingsImported ?? 0:N0} ratings");
-        AddWatchProviderStat(grid, 2, "Progress", $"{latestRun?.InboundProgressImported ?? 0:N0} resumed");
-        AddWatchProviderStat(grid, 3, "Exported", $"{((latestRun?.OutboundSent ?? 0) + (latestRun?.OutboundFavoritesSent ?? 0) + (latestRun?.OutboundRatingsSent ?? 0)):N0} sent");
+        AddWatchProviderStat(grid, 2, L("web.settings.watchProviders.stats.progress", "Progress"), L("web.settings.watchProviders.stats.resumed", $"{latestRun?.InboundProgressImported ?? 0:N0} resumed", Args(("count", Count(latestRun?.InboundProgressImported ?? 0)))));
+        var exported = (latestRun?.OutboundSent ?? 0) + (latestRun?.OutboundFavoritesSent ?? 0) + (latestRun?.OutboundRatingsSent ?? 0);
+        AddWatchProviderStat(grid, 3, L("web.settings.watchProviders.stats.exported", "Exported"), L("web.settings.watchProviders.stats.sent", $"{exported:N0} sent", Args(("count", Count(exported)))));
         shell.Child = grid;
         return shell;
     }
@@ -5055,10 +5088,10 @@ _webhookPlexAuthCts?.Cancel();
     private static string GetWatchProviderSubtitle(WatchProviderCardViewModel vm)
     {
         if (vm.AuthSession != null && !vm.Connected)
-            return "Waiting for you to enter the code below.";
+            return L("web.settings.watchProviders.subtitle.waitingForCode", "Waiting for you to enter the code below.");
 
         if (vm.ApiKeyPromptVisible && vm.UsesApiKey && !vm.Connected)
-            return $"Paste your {vm.DisplayName} API key to finish connecting.";
+            return L("web.settings.watchProviders.subtitle.pasteApiKey", $"Paste your {vm.DisplayName} API key to finish connecting.", Args(("provider", vm.DisplayName)));
 
         var connection = vm.Connection;
         if (connection?.Connected == true)
@@ -5071,9 +5104,9 @@ _webhookPlexAuthCts?.Cancel();
             return "Server credentials required.";
 
         if (vm.UsesApiKey)
-            return $"Connect with your {vm.DisplayName} API key to import watch history and scrobble playback.";
+            return L("web.settings.watchProviders.subtitle.connectApiKey", $"Connect with your {vm.DisplayName} API key to import watch history and scrobble playback.", Args(("provider", vm.DisplayName)));
 
-        return "Connect to start importing watch history and scrobbling playback.";
+        return L("web.settings.watchProviders.subtitle.connect", "Connect to start importing watch history and scrobbling playback.");
     }
 
     private static string FormatWatchProviderLastSync(WatchProviderConnection connection, WatchProviderSyncRun? latestRun)
@@ -5095,18 +5128,18 @@ _webhookPlexAuthCts?.Cancel();
             .OrderByDescending(value => value)
             .FirstOrDefault();
 
-        return newest == default ? "Never synced" : $"Synced {FormatWatchProviderRelativeTime(newest)}";
+        return newest == default ? L("web.settings.watchProviders.neverSynced", "Never synced") : L("web.settings.watchProviders.synced", $"Synced {FormatWatchProviderRelativeTime(newest)}", Args(("time", FormatWatchProviderRelativeTime(newest))));
     }
 
     private static string FormatWatchProviderRelativeTime(DateTimeOffset timestamp)
     {
         var seconds = Math.Max(0, (int)(DateTimeOffset.Now - timestamp.ToLocalTime()).TotalSeconds);
-        if (seconds < 60) return "just now";
+        if (seconds < 60) return L("web.settings.watchProviders.justNow", "just now");
         var minutes = seconds / 60;
-        if (minutes < 60) return $"{minutes}m ago";
+        if (minutes < 60) return L("web.settings.webhooks.minutesAgo", $"{minutes}m ago", Args(("minutes", Count(minutes))));
         var hours = minutes / 60;
-        if (hours < 24) return $"{hours}h ago";
-        return $"{hours / 24}d ago";
+        if (hours < 24) return L("web.settings.webhooks.hoursAgo", $"{hours}h ago", Args(("hours", Count(hours))));
+        return L("web.settings.webhooks.daysAgo", $"{hours / 24}d ago", Args(("days", Count(hours / 24))));
     }
 
     // ===== Webhook Sync Tab =====
@@ -5134,7 +5167,7 @@ _webhookPlexAuthCts?.Cancel();
         if (CaptureWebhookOwner() is not { } owner) return;
         WebhookConnectionsPanel.Children.Clear();
         _webhookConnectionCards.Clear();
-        NoConnectionsText.Text = "Loading connections...";
+        NoConnectionsText.Text = L("web.settings.webhooks.servers.loading", "Loading connections...");
         NoConnectionsText.HorizontalAlignment = HorizontalAlignment.Left;
         NoConnectionsText.Visibility = Visibility.Visible;
         try
@@ -5156,7 +5189,7 @@ _webhookPlexAuthCts?.Cancel();
             var api = App.Services.GetRequiredService<WebhookSyncApi>();
             var connections = await api.GetConnectionsAsync(owner.Context, owner.Token);
             if (!CurrentWebhook(owner)) return;
-            NoConnectionsText.Text = "No webhook connections yet. Create one above to generate a provider-specific endpoint.";
+            NoConnectionsText.Text = L("web.settings.webhooks.servers.empty", "No webhook connections yet. Create one above to generate a provider-specific endpoint.");
             NoConnectionsText.HorizontalAlignment = HorizontalAlignment.Left;
             NoConnectionsText.Visibility = connections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             if (connections.Count == 0) WebhookConnectionDetail.Visibility = Visibility.Collapsed;
@@ -5236,6 +5269,14 @@ _webhookPlexAuthCts?.Cancel();
         return "Waiting for first delivery";
     }
 
+    /// <summary>Display text for a <see cref="WebhookHealth"/> state; the state itself stays the stable English value.</summary>
+    private static string WebhookHealthText(string health) => health switch
+    {
+        "Healthy" => L("web.settings.webhooks.health.healthy", "Healthy"),
+        "Needs attention" => L("web.settings.webhooks.health.error", "Needs attention"),
+        _ => L("web.settings.webhooks.health.waiting", "Waiting for first delivery"),
+    };
+
     private void EnsureWebhookRefreshTimer()
     {
         if (_webhookRefreshTimer == null)
@@ -5284,7 +5325,7 @@ _webhookPlexAuthCts?.Cancel();
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(8, 3, 8, 3),
             VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock { Text = health, FontSize = 10, Foreground = foreground },
+            Child = new TextBlock { Text = WebhookHealthText(health), FontSize = 10, Foreground = foreground },
         };
     }
 
@@ -5295,7 +5336,7 @@ _webhookPlexAuthCts?.Cancel();
         var isPlex = provider == "plex";
         WebhookPlexAuthPanel.Visibility = isPlex ? Visibility.Visible : Visibility.Collapsed;
         WebhookManualServerPanel.Visibility = isPlex ? Visibility.Collapsed : Visibility.Visible;
-        WebhookManualServerName.PlaceholderText = provider == "emby" ? "My Emby Server" : "My Jellyfin Server";
+        WebhookManualServerName.PlaceholderText = provider == "emby" ? L("web.settings.webhooks.add.embyNamePlaceholder", "My Emby Server") : L("web.settings.webhooks.add.jellyfinNamePlaceholder", "My Jellyfin Server");
         UpdateWebhookCreateButtonState();
     }
 
@@ -5354,7 +5395,7 @@ _webhookPlexAuthCts?.Cancel();
             WebhookPlexAuthStatus.Text = _webhookPlexServers.Count == 0
                 ? "Plex sign-in succeeded, but no media servers were found."
                 : $"{_webhookPlexServers.Count} server{(_webhookPlexServers.Count == 1 ? "" : "s")} available";
-            WebhookPlexSignInButton.Content = "Re-authenticate";
+            WebhookPlexSignInButton.Content = L("web.settings.webhooks.add.reauthenticate", "Re-authenticate");
             UpdateWebhookCreateButtonState();
         }
         catch (OperationCanceledException)
@@ -5363,7 +5404,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            if (CurrentWebhook(owner)) WebhookPlexAuthStatus.Text = $"Plex sign-in failed: {ex.Message}";
+            if (CurrentWebhook(owner)) WebhookPlexAuthStatus.Text = $"Plex sign-in failed: {ex.DisplayMessage()}";
         }
         finally
         {
@@ -5401,8 +5442,8 @@ _webhookPlexAuthCts?.Cancel();
         }
 
         WebhookCreateConnectionButton.IsEnabled = false;
-        var oldContent = WebhookCreateConnectionButton.Content;
-        WebhookCreateConnectionButton.Content = "Creating…";
+        _webhookCreating = true;
+        WebhookCreateConnectionButton.Content = L("web.watchTogether.hub.creating", "Creating…");
         try
         {
             var created = await App.Services.GetRequiredService<WebhookSyncApi>().CreateConnectionAsync(owner.Context, body, owner.Token);
@@ -5414,7 +5455,7 @@ _webhookPlexAuthCts?.Cancel();
             if (!CurrentWebhook(owner)) return;
             WebhookUrlBox.Text = created.WebhookUrl;
             WebhookManualServerName.Text = "";
-            ViewModel.StatusMessage = "Webhook connection created";
+            ViewModel.StatusMessage = L("web.common.toast.webhookSync.created", "Webhook connection created");
         }
         catch (Exception ex)
         {
@@ -5422,7 +5463,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         finally
         {
-            if (CurrentWebhook(owner)) { WebhookCreateConnectionButton.Content = oldContent; UpdateWebhookCreateButtonState(); }
+            if (CurrentWebhook(owner)) { _webhookCreating = false; WebhookCreateConnectionButton.Content = L("web.settings.webhooks.add.create", "Create connection"); UpdateWebhookCreateButtonState(); }
         }
     }
 
@@ -5436,14 +5477,14 @@ _webhookPlexAuthCts?.Cancel();
                 pair.Key == connection.Id ? "SidebarAccentBrush" : "SurfaceBrush"];
         WebhookConnectionDetail.Visibility = Visibility.Visible;
         WebhookDetailName.Text = connection.ServerName;
-        WebhookDetailHealth.Text = $"{FormatWebhookProvider(connection.Provider)} webhook endpoint";
+        WebhookDetailHealth.Text = L("web.settings.webhooks.detail.description", $"{FormatWebhookProvider(connection.Provider)} webhook endpoint", Args(("provider", FormatWebhookProvider(connection.Provider))));
         WebhookDetailStatus.Text = !string.IsNullOrWhiteSpace(connection.LastWebhookErrorMessage) && WebhookHealth(connection) == "Needs attention"
             ? connection.LastWebhookErrorMessage
-            : "Ready to receive webhook traffic";
+            : L("web.settings.webhooks.detail.ready", "Ready to receive webhook traffic");
         WebhookUrlBox.Text = connection.WebhookUrl ?? "";
         WebhookConnectionNameBox.Text = connection.ServerName;
         WebhookConnectionProfileCombo.Items.Clear();
-        WebhookConnectionProfileCombo.Items.Add(new ComboBoxItem { Content = "No default profile", Tag = "" });
+        WebhookConnectionProfileCombo.Items.Add(new ComboBoxItem { Content = L("web.settings.webhooks.detail.noDefaultProfile", "No default profile"), Tag = "" });
         foreach (var profile in _webhookProfiles)
             WebhookConnectionProfileCombo.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = profile.Id });
         SelectComboBoxByTag(WebhookConnectionProfileCombo, connection.DefaultProfileId);
@@ -5452,13 +5493,13 @@ _webhookPlexAuthCts?.Cancel();
         WebhookEventsHost.Children.Clear();
         WebhookActorsHost.Children.Add(new TextBlock
         {
-            Text = "Loading users...",
+            Text = L("web.settings.webhooks.mapping.loading", "Loading users..."),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
         });
         WebhookEventsHost.Children.Add(new TextBlock
         {
-            Text = "Loading deliveries...",
+            Text = L("web.settings.webhooks.deliveries.loading", "Loading deliveries..."),
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
         });
@@ -5504,7 +5545,7 @@ _webhookPlexAuthCts?.Cancel();
         WebhookSaveActorsButton.Visibility = actors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (actors.Count == 0)
         {
-            WebhookActorsHost.Children.Add(new TextBlock { Text = "No users discovered yet. Send a webhook event first, then map them here.", FontSize = 12 });
+            WebhookActorsHost.Children.Add(new TextBlock { Text = L("web.settings.webhooks.mapping.empty", "No users discovered yet. Send a webhook event first, then map them here."), FontSize = 12 });
             return;
         }
         foreach (var actor in actors)
@@ -5514,7 +5555,7 @@ _webhookPlexAuthCts?.Cancel();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
             row.Children.Add(new TextBlock { Text = actor.ExternalActorName, VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
             var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            combo.Items.Add(new ComboBoxItem { Content = "Ignore this user", Tag = "" });
+            combo.Items.Add(new ComboBoxItem { Content = L("web.settings.webhooks.mapping.ignore", "Ignore this user"), Tag = "" });
             foreach (var profile in _webhookProfiles) combo.Items.Add(new ComboBoxItem { Content = profile.Name, Tag = profile.Id });
             SelectComboBoxByTag(combo, actor.ProfileId ?? "");
             Grid.SetColumn(combo, 1); row.Children.Add(combo);
@@ -5542,7 +5583,8 @@ _webhookPlexAuthCts?.Cancel();
         _webhookEventsPage = Math.Clamp(_webhookEventsPage, 0, pageCount - 1);
         var rangeStart = filtered.Count == 0 ? 0 : (_webhookEventsPage * pageSize) + 1;
         var rangeEnd = Math.Min((_webhookEventsPage + 1) * pageSize, filtered.Count);
-        WebhookEventsPageLabel.Text = $"{rangeStart}–{rangeEnd} of {filtered.Count}";
+        WebhookEventsPageLabel.Text = L("web.settings.webhooks.deliveries.range", $"{rangeStart}–{rangeEnd} of {filtered.Count}",
+            Args(("start", Count(rangeStart)), ("end", Count(rangeEnd)), ("total", Count(filtered.Count))));
         WebhookEventsPrevious.IsEnabled = _webhookEventsPage > 0;
         WebhookEventsNext.IsEnabled = _webhookEventsPage + 1 < pageCount;
         WebhookEventsFirst.IsEnabled = _webhookEventsPage > 0;
@@ -5552,8 +5594,8 @@ _webhookPlexAuthCts?.Cancel();
             WebhookEventsHost.Children.Add(new TextBlock
             {
                 Text = _webhookEvents.Count == 0
-                    ? "No deliveries yet. Send a test event from the provider to confirm the connection."
-                    : "No deliveries match the current filters.",
+                    ? L("web.settings.webhooks.deliveries.empty", "No deliveries yet. Send a test event from the provider to confirm the connection.")
+                    : L("web.settings.webhooks.deliveries.noMatches", "No deliveries match the current filters."),
                 FontSize = 12,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -5606,6 +5648,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void WebhookEventFilter_Changed(object sender, RoutedEventArgs e)
     {
+        if (_refreshingInlineChoices) return;
         if (WebhookEventsHost == null) return;
         _webhookEventsPage = 0;
         BuildWebhookEvents();
@@ -5656,24 +5699,24 @@ _webhookPlexAuthCts?.Cancel();
         var id = WebhookEventAttribute(item, "external_user_id");
         return !string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id)
             ? $"{name} ({id})"
-            : name ?? id ?? "Unknown user";
+            : name ?? id ?? L("web.settings.webhooks.unknownUser", "Unknown user");
     }
 
     private static string WebhookEventAttributeLabel(string key) => key switch
     {
-        "event_kind" => "Event kind",
-        "action" => "Action",
-        "external_user_id" => "External user ID",
-        "external_user_name" => "External user",
-        "external_item_id" => "External item ID",
-        "media_kind" => "Media kind",
-        "matched_media_item_id" => "Matched item ID",
-        "matched_media_item_title" => "Matched item",
-        "profile_id" => "Profile ID",
-        "client_ip" => "Client IP",
-        "content_type" => "Content type",
-        "user_agent" => "User agent",
-        "path_pattern" => "Path pattern",
+        "event_kind" => L("web.settings.webhooks.attr.eventKind", "Event kind"),
+        "action" => L("web.settings.webhooks.attr.action", "Action"),
+        "external_user_id" => L("web.settings.webhooks.attr.externalUserId", "External user ID"),
+        "external_user_name" => L("web.settings.webhooks.attr.externalUserName", "External user"),
+        "external_item_id" => L("web.settings.webhooks.attr.externalItemId", "External item ID"),
+        "media_kind" => L("web.settings.webhooks.attr.mediaKind", "Media kind"),
+        "matched_media_item_id" => L("web.settings.webhooks.attr.matchedMediaItemId", "Matched item ID"),
+        "matched_media_item_title" => L("web.settings.webhooks.attr.matchedMediaItemTitle", "Matched item"),
+        "profile_id" => L("web.settings.webhooks.attr.profileId", "Profile ID"),
+        "client_ip" => L("web.settings.webhooks.attr.clientIp", "Client IP"),
+        "content_type" => L("web.settings.webhooks.attr.contentType", "Content type"),
+        "user_agent" => L("web.settings.webhooks.attr.userAgent", "User agent"),
+        "path_pattern" => L("web.settings.webhooks.attr.pathPattern", "Path pattern"),
         _ => key.Replace('_', ' '),
     };
 
@@ -5711,12 +5754,12 @@ _webhookPlexAuthCts?.Cancel();
             AddStep("1. In the Emby dashboard, open Notifications and add a Webhooks notification.");
             AddStep("2. Paste the URL above into Url, and set Request content type to application/json.");
             AddStep("3. Enable the events listed below, then save.");
-            AddStep("REQUIRED");
+            AddStep(AppStrings.Uppercase(L("web.settings.webhooks.setup.events.required", "Required")));
             AddStep("Playback → Stop — Records watch progress and completion.");
-            AddStep("RECOMMENDED");
+            AddStep(AppStrings.Uppercase(L("web.settings.webhooks.setup.events.recommended", "Recommended")));
             AddStep("Users → Add to Favorites, Remove from Favorites — Syncs favorites to the mapped Silo profile.");
             AddStep("Users → Mark Played, Mark Unplayed — Needed only if your household manually marks items watched without playing them. Mark Played will duplicate Stop for normal completions, but the result is the same.");
-            AddStep("SKIP");
+            AddStep(AppStrings.Uppercase(L("web.settings.webhooks.setup.events.skip", "Skip")));
             AddStep("Playback → Start, Pause, Unpause — Silo only records completion, not in-progress state.");
         }
         else
@@ -5751,7 +5794,7 @@ _webhookPlexAuthCts?.Cancel();
             """;
             instructions.Children.Add(new TextBox
             {
-                Header = "Webhook payload template",
+                Header = L("web.settings.webhooks.setup.jellyfin.template", "Webhook payload template"),
                 Text = template,
                 IsReadOnly = true,
                 AcceptsReturn = true,
@@ -5761,7 +5804,7 @@ _webhookPlexAuthCts?.Cancel();
                 FontFamily = new FontFamily("Consolas"),
                 FontSize = 11,
             });
-            var copy = new Button { Content = "Copy template", HorizontalAlignment = HorizontalAlignment.Left };
+            var copy = new Button { Content = L("web.settings.webhooks.setup.jellyfin.copyTemplate", "Copy template"), HorizontalAlignment = HorizontalAlignment.Left };
             copy.Click += (_, _) =>
             {
                 var package = new DataPackage();
@@ -5774,7 +5817,7 @@ _webhookPlexAuthCts?.Cancel();
 
         WebhookSetupInstructionsHost.Children.Add(new Expander
         {
-            Header = "Setup instructions",
+            Header = L("web.settings.webhooks.setup.title", "Setup instructions"),
             Content = instructions,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         });
@@ -5788,7 +5831,8 @@ _webhookPlexAuthCts?.Cancel();
 
         content.Children.Add(new TextBlock
         {
-            Text = $"{DateTimeDisplay.FormatDateTime(item.ReceivedAt)} · HTTP {item.HttpStatus}",
+            Text = L("web.settings.webhooks.event.receivedHttp", $"{DateTimeDisplay.FormatDateTime(item.ReceivedAt)} · HTTP {item.HttpStatus}",
+                Args(("time", DateTimeDisplay.FormatDateTime(item.ReceivedAt)), ("status", item.HttpStatus.ToString(System.Globalization.CultureInfo.InvariantCulture)))),
             FontSize = 12,
             Foreground = secondaryBrush,
         });
@@ -5838,7 +5882,7 @@ _webhookPlexAuthCts?.Cancel();
                 var attrsSection = new StackPanel { Spacing = 6 };
                 attrsSection.Children.Add(new TextBlock
                 {
-                    Text = "Attributes",
+                    Text = L("web.settings.webhooks.event.attributes", "Attributes"),
                     FontSize = 12,
                     Foreground = secondaryBrush,
                 });
@@ -5879,7 +5923,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             content.Children.Add(new TextBox
             {
-                Header = "Body excerpt",
+                Header = L("web.settings.webhooks.event.bodyExcerpt", "Body excerpt"),
                 Text = item.BodyExcerpt,
                 IsReadOnly = true,
                 AcceptsReturn = true,
@@ -5893,7 +5937,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             content.Children.Add(new TextBlock
             {
-                Text = $"Request ID: {item.RequestId}",
+                Text = L("web.settings.webhooks.event.requestId", $"Request ID: {item.RequestId}", Args(("id", item.RequestId))),
                 FontSize = 11,
                 Foreground = secondaryBrush,
                 TextWrapping = TextWrapping.Wrap,
@@ -5904,7 +5948,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             Title = item.Summary,
             Content = new ScrollViewer { Content = content, MaxHeight = 560 },
-            CloseButtonText = "Close",
+            CloseButtonText = L("web.ui.close", "Close"),
             XamlRoot = XamlRoot,
         };
         if (!CurrentWebhook(owner)) return;
@@ -5949,7 +5993,7 @@ _webhookPlexAuthCts?.Cancel();
             _selectedWebhookConnection = updated;
             WebhookDetailName.Text = updated.ServerName;
             await LoadWebhookConnectionsAsync();
-            if (CurrentWebhook(owner)) ViewModel.StatusMessage = "Webhook connection updated";
+            if (CurrentWebhook(owner)) ViewModel.StatusMessage = L("web.common.toast.webhookSync.updated", "Webhook connection updated");
         }
         catch (Exception ex)
         {
@@ -5981,7 +6025,7 @@ _webhookPlexAuthCts?.Cancel();
             if (!CurrentWebhook(owner) || _selectedWebhookConnection?.Id != connection.Id) return;
             WebhookUrlBox.Text = rotated.WebhookUrl;
             _selectedWebhookConnection.WebhookUrl = rotated.WebhookUrl;
-            ViewModel.StatusMessage = "Webhook URL rotated";
+            ViewModel.StatusMessage = L("web.common.toast.webhookSync.urlRotated", "Webhook URL rotated");
         }
         catch (Exception ex) { WebhookFailure(owner, ex); }
     }
@@ -5992,7 +6036,7 @@ _webhookPlexAuthCts?.Cancel();
         if (_selectedWebhookConnection == null) return;
         var connection = _selectedWebhookConnection;
         WebhookDeleteConnectionButton.IsEnabled = false;
-        var previousContent = WebhookDeleteConnectionButton.Content;
+        _webhookDeleting = true;
         WebhookDeleteConnectionButton.Content = "Deleting…";
         try
         {
@@ -6001,12 +6045,12 @@ _webhookPlexAuthCts?.Cancel();
             _selectedWebhookConnection = null;
             WebhookConnectionDetail.Visibility = Visibility.Collapsed;
             await LoadWebhookConnectionsAsync();
-            if (CurrentWebhook(owner)) ViewModel.StatusMessage = "Webhook connection deleted";
+            if (CurrentWebhook(owner)) ViewModel.StatusMessage = L("web.common.toast.webhookSync.deleted", "Webhook connection deleted");
         }
         catch (Exception ex) { WebhookFailure(owner, ex); }
         finally
         {
-            if (CurrentWebhook(owner)) { WebhookDeleteConnectionButton.Content = previousContent; WebhookDeleteConnectionButton.IsEnabled = true; }
+            if (CurrentWebhook(owner)) { _webhookDeleting = false; WebhookDeleteConnectionButton.Content = L("web.settings.webhooks.detail.delete", "Delete connection"); WebhookDeleteConnectionButton.IsEnabled = true; }
         }
     }
 
@@ -6025,7 +6069,7 @@ _webhookPlexAuthCts?.Cancel();
             await App.Services.GetRequiredService<WebhookSyncApi>().UpdateProfileMappingsAsync(owner.Context, _selectedWebhookConnection.Id,
                 new Dictionary<string, object?> { ["mappings"] = mappings }, owner.Token);
             if (!CurrentWebhook(owner)) return;
-            ViewModel.StatusMessage = "Profile mappings saved";
+            ViewModel.StatusMessage = L("web.common.toast.webhookSync.mappingsSaved", "Profile mappings saved");
         }
         catch (Exception ex) { WebhookFailure(owner, ex); }
     }
@@ -6046,11 +6090,13 @@ _webhookPlexAuthCts?.Cancel();
             var canAdd = ProfileLimits.CanAdd(profiles.Count, response.MaxProfiles);
             AddProfileButton.Visibility = canAdd ? Visibility.Visible : Visibility.Collapsed;
             ProfileLimitText.Visibility = canAdd ? Visibility.Collapsed : Visibility.Visible;
-            ProfileLimitText.Text = !canAdd && response.MaxProfiles is {} maximum ? ProfileLimits.Message(maximum) : "";
+            ProfileLimitText.Text = !canAdd && response.MaxProfiles is {} maximum ? L("web.settings.profiles.limitReached", ProfileLimits.Message(maximum), Args(("count", maximum))) : "";
             ProfileCardsPanel.Children.Clear();
 
             if (profiles.Count == 0)
             {
+                NoProfilesText.Text = L("web.settings.profiles.empty.title", "No profiles yet") + "\n"
+                    + L("web.settings.profiles.empty.body", "Create a profile to manage access and playback identity.");
                 NoProfilesText.Visibility = Visibility.Visible;
                 return;
             }
@@ -6117,7 +6163,7 @@ _webhookPlexAuthCts?.Cancel();
                         VerticalAlignment = VerticalAlignment.Center,
                         Child = new TextBlock
                         {
-                            Text = "Current", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                            Text = L("web.settings.profiles.badge.current", "Current"), FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                             Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBrush"],
                         }
                     });
@@ -6133,15 +6179,15 @@ _webhookPlexAuthCts?.Cancel();
                         VerticalAlignment = VerticalAlignment.Center,
                         Child = new TextBlock
                         {
-                            Text = "Primary", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                            Text = L("web.settings.profiles.badge.primary", "Primary"), FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                             Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                         }
                     });
                 }
                 if (profile.IsChild)
-                    nameRow.Children.Add(ProfileBadge("Kids"));
+                    nameRow.Children.Add(ProfileBadge(L("web.settings.profiles.badge.kids", "Kids")));
                 if (profile.HasPin)
-                    nameRow.Children.Add(ProfileBadge("PIN"));
+                    nameRow.Children.Add(ProfileBadge(L("web.settings.profiles.badge.pin", "PIN")));
                 info.Children.Add(nameRow);
                 info.Children.Add(new TextBlock
                 {
@@ -6161,7 +6207,7 @@ _webhookPlexAuthCts?.Cancel();
                         Children =
                         {
                             new FontIcon { Glyph = "\uE77B", FontSize = 12 },
-                            new TextBlock { Text = "Use" },
+                            new TextBlock { Text = L("web.settings.profiles.use", "Use") },
                         },
                     },
                     Padding = new Thickness(11, 5, 11, 5),
@@ -6184,11 +6230,11 @@ _webhookPlexAuthCts?.Cancel();
                         Children =
                         {
                             new FontIcon { Glyph = "\uE70F", FontSize = 12 },
-                            new TextBlock { Text = "Edit" },
+                            new TextBlock { Text = L("web.settings.profiles.edit", "Edit") },
                         },
                     },
                 };
-                ToolTipService.SetToolTip(editBtn, "Edit profile");
+                ToolTipService.SetToolTip(editBtn, L("web.profiles.editor.titleEdit", "Edit profile"));
                 var profileForEdit = profile;
                 editBtn.Click += async (_, _) => await ShowEditProfileDialogAsync(profileForEdit);
 
@@ -6196,9 +6242,9 @@ _webhookPlexAuthCts?.Cancel();
                 // Upstream c3f2da5: primary profiles can only be removed by
                 // deleting the account.
                 var deleteBlocked = profiles.Count <= 1 || isActive || profile.IsPrimary;
-                var deleteGuardReason = profiles.Count <= 1 ? "At least one profile is required."
-                    : profile.IsPrimary ? "The primary profile can only be removed by deleting the account."
-                    : isActive ? "Switch to another profile before deleting this one."
+                var deleteGuardReason = profiles.Count <= 1 ? L("web.settings.profiles.deleteGuard.lastProfile", "At least one profile is required.")
+                    : profile.IsPrimary ? L("web.settings.profiles.deleteGuard.primary", "The primary profile can only be removed by deleting the account.")
+                    : isActive ? L("web.settings.profiles.deleteGuard.active", "Switch to another profile before deleting this one.")
                     : null;
                 var deleteBtn = new Button
                 {
@@ -6211,13 +6257,13 @@ _webhookPlexAuthCts?.Cancel();
                         Children =
                         {
                             new FontIcon { Glyph = "\uE74D", FontSize = 12 },
-                            new TextBlock { Text = "Delete" },
+                            new TextBlock { Text = L("web.settings.profiles.delete", "Delete") },
                         },
                     },
                     IsEnabled = !deleteBlocked,
                     Opacity = deleteBlocked ? 0.3 : 1.0,
                 };
-                ToolTipService.SetToolTip(deleteBtn, deleteGuardReason ?? "Delete profile");
+                ToolTipService.SetToolTip(deleteBtn, deleteGuardReason ?? L("web.settings.profiles.deleteTitle", "Delete profile"));
                 var capturedProfile = profile;
                 deleteBtn.Click += async (_, _) =>
                 {
@@ -6243,10 +6289,10 @@ _webhookPlexAuthCts?.Cancel();
                     };
                     var dialog = new ContentDialog
                     {
-                        Title = "Delete profile",
+                        Title = L("web.settings.profiles.deleteTitle", "Delete profile"),
                         Content = dialogContent,
-                        PrimaryButtonText = "Delete", PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-                        CloseButtonText = "Cancel", XamlRoot = this.XamlRoot, DefaultButton = ContentDialogButton.Close
+                        PrimaryButtonText = L("web.settings.profiles.delete", "Delete"), PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+                        CloseButtonText = L("common.cancel", "Cancel"), XamlRoot = this.XamlRoot, DefaultButton = ContentDialogButton.Close
                     };
 
                     dialog.PrimaryButtonClick += async (_, args) =>
@@ -6264,9 +6310,9 @@ _webhookPlexAuthCts?.Cancel();
                         }
                         catch (Exception ex)
                         {
-                            error.Text = $"Couldn't delete profile: {ex.Message}";
+                            error.Text = $"Couldn't delete profile: {ex.DisplayMessage()}";
                             error.Visibility = Visibility.Visible;
-                            dialog.PrimaryButtonText = "Delete";
+                            dialog.PrimaryButtonText = L("web.settings.profiles.delete", "Delete");
                             dialog.IsPrimaryButtonEnabled = true;
                         }
                         finally
@@ -6318,7 +6364,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (OperationCanceledException) when (authApi.CaptureContext() != owner) { }
         catch (Exception ex)
         {
-            NoProfilesText.Text = $"Failed to load profiles: {ex.Message}";
+            NoProfilesText.Text = $"Failed to load profiles: {ex.DisplayMessage()}";
             NoProfilesText.Visibility = Visibility.Visible;
         }
     }
@@ -6335,17 +6381,17 @@ _webhookPlexAuthCts?.Cancel();
     private static string BuildProfileAccessSummary(SiloPlayer.Core.Models.Auth.Profile profile)
     {
         var rating = string.IsNullOrWhiteSpace(profile.MaxContentRating)
-            ? "Any content"
-            : $"{profile.MaxContentRating} max";
+            ? L("web.profiles.helpers.contentRating.any", "Any content")
+            : L("web.profiles.helpers.contentRating.max", $"{profile.MaxContentRating} max", Args(("rating", profile.MaxContentRating)));
         var libraryCount = profile.AllowedLibraryIds?.Distinct().Count() ?? 0;
         var libraries = profile.LibraryRestrictionsEnabled
             ? $"{libraryCount} {(libraryCount == 1 ? "library" : "libraries")}"
-            : "All libraries";
+            : L("web.profiles.helpers.access.allLibraries", "All libraries");
         var quality = (profile.MaxPlaybackQuality ?? "").Trim().ToLowerInvariant() switch
         {
             "2160p" or "4k" or "uhd" or "4320p" => "4K quality",
             "1080p" or "720p" or "480p" or "standard" => "Standard quality",
-            _ => "Any quality",
+            _ => L("web.profiles.helpers.access.anyQuality", "Any quality"),
         };
         var age = profile.MaxAdvisoryAge.HasValue ? $"Advisory age {profile.MaxAdvisoryAge} and under{(profile.RequireAdvisoryAge ? "; rated titles only" : "")}" : null;
         return string.Join(" · ", new[] { rating, age, libraries, quality }.Where(value => value != null));
@@ -6358,7 +6404,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             var pin = new PasswordBox
             {
-                PlaceholderText = "Enter 4-digit PIN",
+                PlaceholderText = L("web.profiles.pin.placeholder", "Enter 4-digit PIN"),
                 MaxLength = 4,
                 PasswordRevealMode = PasswordRevealMode.Hidden,
                 InputScope = new InputScope
@@ -6379,17 +6425,17 @@ _webhookPlexAuthCts?.Cancel();
                 Spacing = 8,
                 Children =
                 {
-                    new TextBlock { Text = "PIN", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                    new TextBlock { Text = L("web.profiles.pin.label", "PIN"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
                     pin,
                     error,
                 },
             };
             var dialog = new ContentDialog
             {
-                Title = $"Enter PIN for {profile.Name}",
+                Title = L("web.profiles.pin.title", $"Enter PIN for {profile.Name}", Args(("name", profile.Name))),
                 Content = content,
-                PrimaryButtonText = "Confirm",
-                CloseButtonText = "Cancel",
+                PrimaryButtonText = L("web.profiles.pin.confirm", "Confirm"),
+                CloseButtonText = L("common.cancel", "Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
                 IsPrimaryButtonEnabled = false,
                 XamlRoot = XamlRoot,
@@ -6405,7 +6451,7 @@ _webhookPlexAuthCts?.Cancel();
                 try
                 {
                     sender.IsPrimaryButtonEnabled = false;
-                    sender.PrimaryButtonText = "Verifying...";
+                    sender.PrimaryButtonText = L("web.profiles.pin.verifying", "Verifying...");
                     error.Visibility = Visibility.Collapsed;
                     var result = await App.Services.GetRequiredService<AuthApi>()
                         .VerifyPinAsync(profile.Id, pin.Password);
@@ -6417,21 +6463,21 @@ _webhookPlexAuthCts?.Cancel();
                         return;
                     }
 
-                    error.Text = "Incorrect PIN";
+                    error.Text = L("web.profiles.pin.incorrect", "Incorrect PIN");
                     error.Visibility = Visibility.Visible;
                     pin.Password = "";
                     pin.Focus(FocusState.Programmatic);
                 }
                 catch (Exception ex)
                 {
-                    error.Text = ProfilePinFeedback.Lockout(ex) ?? "Verification failed";
+                    error.Text = ProfilePinFeedback.Lockout(ex) ?? L("web.profiles.pin.verifyFailed", "Verification failed");
                     if (ProfilePinFeedback.Lockout(ex) != null) pin.Password = "";
                     error.Visibility = Visibility.Visible;
                     pin.Focus(FocusState.Programmatic);
                 }
                 finally
                 {
-                    sender.PrimaryButtonText = "Confirm";
+                    sender.PrimaryButtonText = L("web.profiles.pin.confirm", "Confirm");
                     sender.IsPrimaryButtonEnabled = pin.Password.Length > 0;
                     deferral.Complete();
                 }
@@ -6540,7 +6586,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             stack.Children.Add(new TextBlock
             {
-                Text = "No one is streaming right now.",
+                Text = L("web.profiles.streams.empty", "No one is streaming right now."),
                 FontSize = 13,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             });
@@ -6574,7 +6620,7 @@ _webhookPlexAuthCts?.Cancel();
         var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         titleRow.Children.Add(new TextBlock
         {
-            Text = "Active streams",
+            Text = L("web.profiles.streams.heading", "Active streams"),
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
@@ -6596,7 +6642,7 @@ _webhookPlexAuthCts?.Cancel();
         titleStack.Children.Add(titleRow);
         titleStack.Children.Add(new TextBlock
         {
-            Text = "Playback happening on any profile in this account.",
+            Text = L("web.profiles.streams.hint", "Playback happening on any profile in this account."),
             FontSize = 13,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
@@ -6639,14 +6685,14 @@ _webhookPlexAuthCts?.Cancel();
 
         var content = new StackPanel { Spacing = 6 };
         var badgeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        badgeRow.Children.Add(ProfileBadge(string.IsNullOrWhiteSpace(session.ProfileName) ? "Profile" : session.ProfileName.Trim()));
+        badgeRow.Children.Add(ProfileBadge(string.IsNullOrWhiteSpace(session.ProfileName) ? L("web.profiles.streams.profileFallback", "Profile") : session.ProfileName.Trim()));
         badgeRow.Children.Add(ProfileBadge(session.IsPaused ? "\u23F8  Paused" : "\u25B6  Playing"));
         var method = session.PlayMethod?.Trim().ToLowerInvariant() switch
         {
-            "direct" => "Direct play",
-            "remux" => "Remux",
-            "transcode" or "hls" => "Transcode",
-            _ => "Unknown",
+            "direct" => L("web.player.info.delivery.directPlay", "Direct play"),
+            "remux" => L("web.common.activity.method.remux.label", "Remux"),
+            "transcode" or "hls" => L("web.common.activity.method.transcode.label", "Transcode"),
+            _ => L("web.common.activity.method.unknown.label", "Unknown"),
         };
         var bitrate = SessionDisplayText.FormatBitrate(session.StreamBitrateKbps);
         badgeRow.Children.Add(new TextBlock
@@ -6716,10 +6762,11 @@ _webhookPlexAuthCts?.Cancel();
     {
         if (!DateTimeOffset.TryParse(startedAt, out var started)) return "";
         var minutes = Math.Max(0, (int)Math.Floor((DateTimeOffset.UtcNow - started.ToUniversalTime()).TotalMinutes));
-        if (minutes < 60) return $"{minutes}m";
+        if (minutes < 60) return L("web.profiles.streams.elapsedMinutes", $"{minutes}m", Args(("minutes", Count(minutes))));
         var hours = minutes / 60;
         var remainder = minutes % 60;
-        return remainder > 0 ? $"{hours}h {remainder}m" : $"{hours}h";
+        return remainder > 0 ? L("web.common.format.runtime.hoursMinutes", $"{hours}h {remainder}m", Args(("hours", Count(hours)), ("minutes", Count(remainder))))
+            : L("web.profiles.streams.elapsedHours", $"{hours}h", Args(("hours", Count(hours))));
     }
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
@@ -6731,7 +6778,7 @@ _webhookPlexAuthCts?.Cancel();
             // has filled. Refresh even then so the limit replaces the stale action.
             await LoadProfilesAsync();
         }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Couldn't open the new profile form: {ex.Message}"; }
+        catch (Exception ex) { ViewModel.ErrorMessage = $"Couldn't open the new profile form: {ex.DisplayMessage()}"; }
     }
 
     /// <summary>
@@ -6765,7 +6812,7 @@ _webhookPlexAuthCts?.Cancel();
                         else
                         {
                             App.Services.GetRequiredService<SiloPlayer.Services.ToastService>()
-                                .Error("Profile saved, but PIN verification failed");
+                                .Error(L("web.settings.profiles.savedPinFailed", "Profile saved, but PIN verification failed"));
                             await LoadProfilesAsync();
                             return;
                         }
@@ -6774,7 +6821,7 @@ _webhookPlexAuthCts?.Cancel();
                     {
                         App.Services.GetRequiredService<SiloPlayer.Services.ToastService>()
                             .Error(ProfilePinFeedback.Lockout(ex) is { } lockout
-                                ? $"Profile saved. {lockout}" : "Profile saved, but PIN verification failed");
+                                ? L("web.settings.profiles.savedWithLockout", $"Profile saved. {lockout}", Args(("lockout", lockout))) : L("web.settings.profiles.savedPinFailed", "Profile saved, but PIN verification failed"));
                         await LoadProfilesAsync();
                         return;
                     }
@@ -6789,7 +6836,7 @@ _webhookPlexAuthCts?.Cancel();
             var errDialog = new ContentDialog
             {
                 Title = "Couldn't update profile",
-                Content = ex.Message,
+                Content = ex.DisplayMessage(),
                 CloseButtonText = "OK",
                 XamlRoot = this.XamlRoot,
             };

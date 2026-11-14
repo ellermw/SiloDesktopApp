@@ -13,7 +13,9 @@ public static class PlaybackHistoryPresentation
         int? Number(string name) => row.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : null;
         var series = Text("series_title"); var media = Text("media_title");
         var title = series.Length > 0 ? series : media.Length > 0 ? media : Text("media_item_id");
-        if (title.Length == 0) title = "File #" + Text("media_file_id");
+        // Display fallback only; the row data is unchanged.
+        if (title.Length == 0) title = SiloPlayer.Core.Localization.AppStrings.Get("web.common.activity.title.file",
+            new Dictionary<string, object?> { ["id"] = Text("media_file_id") }, fallback: "File #" + Text("media_file_id"));
         var detail = "";
         if (series.Length > 0)
         {

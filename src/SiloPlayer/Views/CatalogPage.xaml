@@ -1,7 +1,8 @@
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.CatalogPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:helpers="using:SiloPlayer.Helpers"
     xmlns:controls="using:SiloPlayer.Controls"
     xmlns:models="using:SiloPlayer.Core.Models.Home"
@@ -23,7 +24,7 @@
                 <TextBlock x:Name="PageTitleText" Text="Catalog" FontSize="56" FontWeight="ExtraBold" CharacterSpacing="-50" LineHeight="53.2" LineStackingStrategy="BlockLineHeight"
                            Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock x:Name="PageSubtitleText" Text="Refine the archive by type, era, rating, or genre."
-                           FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" />
+                           FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}"/>
             </StackPanel>
             <StackPanel x:Name="CountPanel" Grid.Column="1" VerticalAlignment="Bottom" Orientation="Horizontal" Spacing="6">
                 <Border Width="1" Height="32" Background="{StaticResource BorderBrush}" Margin="0,0,12,0" />
@@ -36,10 +37,10 @@
         <Border x:Name="WatchlistTabs" Grid.Row="1" Visibility="Collapsed" Margin="40,0,40,24" Height="36"
                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal" Spacing="4" Margin="3,0" VerticalAlignment="Center">
-                <Button x:Name="LibraryWatchlistTab" Style="{StaticResource WebUiLineTabStyle}" Content="In your library" Click="LibraryWatchlistTab_Click" KeyDown="WatchlistTab_KeyDown" />
+                <Button x:Name="LibraryWatchlistTab" Style="{StaticResource WebUiLineTabStyle}" Content="In your library" Click="LibraryWatchlistTab_Click" KeyDown="WatchlistTab_KeyDown"  loc:Localized.Content="web.library.watchlist.inLibraryTab"/>
                 <Button x:Name="ExternalWatchlistTab" Style="{StaticResource WebUiLineTabStyle}" Click="ExternalWatchlistTab_Click" KeyDown="WatchlistTab_KeyDown">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock x:Name="ExternalWatchlistTabLabel" Text="Not in your library yet" />
+                        <TextBlock x:Name="ExternalWatchlistTabLabel" Text="Not in your library yet" loc:Localized.Text="web.library.watchlist.notInLibraryTab" />
                         <Border x:Name="ExternalTitleCountBadge" Background="{StaticResource SurfaceBrush}" CornerRadius="999" helpers:RoundedBadge.Radius="999" MinWidth="20" Height="20" Padding="6,0" Visibility="Collapsed">
                             <TextBlock x:Name="ExternalTitleCountText" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center" />
                         </Border>
@@ -51,45 +52,45 @@
         <controls:WrapPanel x:Name="FilterPanel" Grid.Row="2" Margin="40,0,40,18" HorizontalSpacing="10" VerticalSpacing="10">
             <TextBox x:Name="QueryBox" Visibility="Collapsed" TextChanged="Filter_Changed" />
             <ComboBox x:Name="TypeCombo" Width="190" SelectionChanged="Filter_Changed">
-                <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
-                <ComboBoxItem Content="Movies &amp; Series" Tag="video" />
-                <ComboBoxItem Content="Movies" Tag="movie" />
-                <ComboBoxItem Content="Series" Tag="series" />
-                <ComboBoxItem Content="Episodes" Tag="episode" />
-                <ComboBoxItem Content="Audiobooks" Tag="audiobook" />
-                <ComboBoxItem Content="Ebooks" Tag="ebook" />
-                <ComboBoxItem Content="Manga" Tag="manga" />
+                <ComboBoxItem Content="All Media" Tag="" IsSelected="True"  loc:Localized.Content="web.catalog.mediaType.allMedia"/>
+                <ComboBoxItem Content="Movies &amp; Series" Tag="video"  loc:Localized.Content="web.catalog.mediaType.moviesAndSeries"/>
+                <ComboBoxItem Content="Movies" Tag="movie"  loc:Localized.Content="web.catalog.mediaType.movies"/>
+                <ComboBoxItem Content="Series" Tag="series"  loc:Localized.Content="web.catalog.mediaType.series"/>
+                <ComboBoxItem Content="Episodes" Tag="episode"  loc:Localized.Content="web.catalog.mediaType.episodes"/>
+                <ComboBoxItem Content="Audiobooks" Tag="audiobook"  loc:Localized.Content="web.catalog.mediaType.audiobooks"/>
+                <ComboBoxItem Content="Ebooks" Tag="ebook"  loc:Localized.Content="web.catalog.mediaType.ebooks"/>
+                <ComboBoxItem Content="Manga" Tag="manga"  loc:Localized.Content="web.catalog.mediaType.manga"/>
             </ComboBox>
             <ComboBox x:Name="SortCombo" Width="190" SelectionChanged="Sort_Changed">
-                <ComboBoxItem Content="Title" Tag="title" IsSelected="True" />
-                <ComboBoxItem Content="Date Added" Tag="added_at" />
-                <ComboBoxItem Content="Release Date" Tag="release_date" />
-                <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date" />
-                <ComboBoxItem Content="Latest Episode Added" Tag="latest_episode_added" />
-                <ComboBoxItem Content="Year" Tag="year" />
-                <ComboBoxItem Content="Content Rating" Tag="content_rating" />
-                <ComboBoxItem Content="Duration" Tag="runtime" />
-                <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb" />
-                <ComboBoxItem Content="TMDB Rating" Tag="rating_tmdb" />
+                <ComboBoxItem Content="Title" Tag="title" IsSelected="True"  loc:Localized.Content="catalog.sort.title"/>
+                <ComboBoxItem Content="Date Added" Tag="added_at"  loc:Localized.Content="catalog.sort.added"/>
+                <ComboBoxItem Content="Release Date" Tag="release_date"  loc:Localized.Content="catalog.sort.released"/>
+                <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date"  loc:Localized.Content="web.common.sort.latestEpisodeAirDate"/>
+                <ComboBoxItem Content="Latest Episode Added" Tag="latest_episode_added"  loc:Localized.Content="web.common.sort.latestEpisodeAdded"/>
+                <ComboBoxItem Content="Year" Tag="year"  loc:Localized.Content="catalog.sort.year"/>
+                <ComboBoxItem Content="Content Rating" Tag="content_rating"  loc:Localized.Content="web.common.sort.contentRating"/>
+                <ComboBoxItem Content="Duration" Tag="runtime"  loc:Localized.Content="web.common.sort.duration"/>
+                <ComboBoxItem Content="IMDb Rating" Tag="rating_imdb"  loc:Localized.Content="catalog.sort.imdbRating"/>
+                <ComboBoxItem Content="TMDB Rating" Tag="rating_tmdb"  loc:Localized.Content="web.common.sort.tmdbRating"/>
                 <ComboBoxItem Content="Rotten Tomatoes Critics" Tag="rating_rt_critic" />
                 <ComboBoxItem Content="Rotten Tomatoes Audience" Tag="rating_rt_audience" />
-                <ComboBoxItem Content="Resolution" Tag="resolution" />
-                <ComboBoxItem Content="Bitrate" Tag="bitrate" />
+                <ComboBoxItem Content="Resolution" Tag="resolution"  loc:Localized.Content="catalog.sort.resolution"/>
+                <ComboBoxItem Content="Bitrate" Tag="bitrate"  loc:Localized.Content="web.common.sort.bitrate"/>
                 <ComboBoxItem Content="Watch Progress" Tag="progress" />
-                <ComboBoxItem Content="Date Viewed" Tag="date_viewed" />
+                <ComboBoxItem Content="Date Viewed" Tag="date_viewed"  loc:Localized.Content="web.common.sort.dateViewed"/>
                 <ComboBoxItem Content="Play Count" Tag="plays" />
-                <ComboBoxItem Content="Author" Tag="author" />
-                <ComboBoxItem Content="Narrator" Tag="narrator" />
-                <ComboBoxItem Content="Series" Tag="series" />
+                <ComboBoxItem Content="Author" Tag="author"  loc:Localized.Content="catalog.sort.author"/>
+                <ComboBoxItem Content="Narrator" Tag="narrator"  loc:Localized.Content="catalog.sort.narrator"/>
+                <ComboBoxItem Content="Series" Tag="series"  loc:Localized.Content="web.catalog.mediaType.series"/>
             </ComboBox>
             <ComboBox x:Name="OrderCombo" Width="140" SelectionChanged="Filter_Changed">
-                <ComboBoxItem Content="Descending" Tag="desc" />
-                <ComboBoxItem Content="Ascending" Tag="asc" IsSelected="True" />
+                <ComboBoxItem Content="Descending" Tag="desc"  loc:Localized.Content="web.catalog.sort.descending"/>
+                <ComboBoxItem Content="Ascending" Tag="asc" IsSelected="True"  loc:Localized.Content="web.catalog.sort.ascending"/>
             </ComboBox>
             <Button Style="{StaticResource OutlineButtonStyle}" Click="OpenFilters_Click">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <FontIcon Glyph="&#xE71C;" FontSize="14" />
-                    <TextBlock Text="Filters" />
+                    <TextBlock Text="Filters"  loc:Localized.Text="web.catalog.filters.heading"/>
                     <Border x:Name="FilterCountBadge" Visibility="Collapsed" MinWidth="18" Height="18"
                             CornerRadius="9" Background="{StaticResource AccentBrush}">
                         <TextBlock x:Name="FilterCountText" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -101,8 +102,8 @@
         <Border x:Name="LockedFiltersPanel" Grid.Row="2" Margin="40,0,40,18" Padding="16"
                 CornerRadius="8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Visibility="Collapsed">
             <StackPanel Spacing="4">
-                <TextBlock Text="Filters" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock Text="Filters are locked to this source." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                <TextBlock Text="Filters" FontSize="14" FontWeight="SemiBold"  loc:Localized.Text="web.catalog.filters.heading"/>
+                <TextBlock Text="Filters are locked to this source." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.filters.locked"/>
             </StackPanel>
         </Border>
 
@@ -111,16 +112,16 @@
             <Grid x:Name="HistoryActionsGrid" ColumnSpacing="16" RowSpacing="12" ColumnDefinitions="*,Auto">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <StackPanel VerticalAlignment="Center" Spacing="3">
-                    <TextBlock Text="Watch History" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Text="Watch History" FontSize="15" FontWeight="SemiBold"  loc:Localized.Text="web.catalog.page.historyHeading"/>
                     <TextBlock Text="Removing items clears watch history, watched status, and resume progress for this profile."
-                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.page.historyBody"/>
                 </StackPanel>
                 <controls:WrapPanel x:Name="HistoryButtonsPanel" Grid.Column="1" HorizontalSpacing="8" VerticalSpacing="8" VerticalAlignment="Center">
                     <TextBlock x:Name="SelectedCountText" Text="0 selected" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
-                    <Button x:Name="SelectLoadedButton" Content="Select Loaded" Click="SelectLoaded_Click" Visibility="Collapsed" />
-                    <Button x:Name="ClearSelectionButton" Content="Clear" Click="ClearSelection_Click" Visibility="Collapsed" />
-                    <Button x:Name="RemoveSelectedButton" Content="Remove Selected" Click="RemoveSelected_Click" Visibility="Collapsed" />
-                    <Button x:Name="SelectionModeButton" Content="Select" Click="SelectionMode_Click" />
+                    <Button x:Name="SelectLoadedButton" Content="Select Loaded" Click="SelectLoaded_Click" Visibility="Collapsed"  loc:Localized.Content="web.catalog.page.selectLoaded"/>
+                    <Button x:Name="ClearSelectionButton" Content="Clear" Click="ClearSelection_Click" Visibility="Collapsed"  loc:Localized.Content="web.catalog.page.clearSelection"/>
+                    <Button x:Name="RemoveSelectedButton" Content="Remove Selected" Click="RemoveSelected_Click" Visibility="Collapsed"  loc:Localized.Content="web.catalog.page.removeSelected"/>
+                    <Button x:Name="SelectionModeButton" Content="Select" Click="SelectionMode_Click" loc:Localized.Content="web.catalog.page.select" />
                 </controls:WrapPanel>
             </Grid>
         </Border>
@@ -130,7 +131,7 @@
                 <Border x:Name="ExternalWatchlistHintPanel" Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="16">
                     <Grid x:Name="ExternalWatchlistHintGrid" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                         <TextBlock x:Name="ExternalWatchlistHint" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                        <HyperlinkButton x:Name="ExternalWatchlistDiscoverLink" Content="Find more in Discover" FontSize="14" FontWeight="Medium" Padding="0" Height="20" MinHeight="20" HorizontalAlignment="Left" Click="WatchlistDiscover_Click" />
+                        <HyperlinkButton x:Name="ExternalWatchlistDiscoverLink" Content="Find more in Discover" FontSize="14" FontWeight="Medium" Padding="0" Height="20" MinHeight="20" HorizontalAlignment="Left" Click="WatchlistDiscover_Click"  loc:Localized.Content="web.library.watchlist.findMore"/>
                     </Grid>
                 </Border>
                 <ItemsRepeater x:Name="ExternalTitlesRepeater" ElementPrepared="ExternalTitlesRepeater_ElementPrepared">
@@ -147,9 +148,9 @@
                   <StackPanel x:Name="ExternalTitlesState" HorizontalAlignment="Center" Spacing="12" Padding="16,64">
                     <ContentControl x:Name="ExternalTitlesStateIcon" HorizontalAlignment="Center" />
                     <TextBlock x:Name="ExternalTitlesStateText" TextAlignment="Center" TextWrapping="Wrap" FontSize="16" FontWeight="Medium" LineHeight="24" LineStackingStrategy="BlockLineHeight" />
-                    <TextBlock x:Name="ExternalTitlesStateDescription" Text="Add movies and series from Discover to your watchlist. The ones the library doesn’t have yet wait here until they arrive." Foreground="{StaticResource SecondaryTextBrush}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="448" />
-                    <Button x:Name="ExternalTitlesRetry" Content="Retry" Click="ExternalTitlesRetry_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
-                    <Button x:Name="ExternalTitlesDiscover" Click="WatchlistDiscover_Click" HorizontalAlignment="Center" Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="32" Padding="12,0"><StackPanel Orientation="Horizontal" Spacing="8"><ContentControl x:Name="ExternalTitlesDiscoverIcon" /><TextBlock Text="Browse Discover" FontSize="14" FontWeight="Medium" /></StackPanel></Button>
+                    <TextBlock x:Name="ExternalTitlesStateDescription" Text="Add movies and series from Discover to your watchlist. The ones the library doesn’t have yet wait here until they arrive." Foreground="{StaticResource SecondaryTextBrush}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="448"  loc:Localized.Text="web.library.watchlist.emptyBody"/>
+                    <Button x:Name="ExternalTitlesRetry" Content="Retry" Click="ExternalTitlesRetry_Click" HorizontalAlignment="Center" Visibility="Collapsed"  loc:Localized.Content="common.retry"/>
+                    <Button x:Name="ExternalTitlesDiscover" Click="WatchlistDiscover_Click" HorizontalAlignment="Center" Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="32" Padding="12,0"><StackPanel Orientation="Horizontal" Spacing="8"><ContentControl x:Name="ExternalTitlesDiscoverIcon" /><TextBlock Text="Browse Discover" FontSize="14" FontWeight="Medium" loc:Localized.Text="web.library.watchlist.browseDiscover" /></StackPanel></Button>
                   </StackPanel>
                 </Grid>
             </StackPanel>
@@ -159,17 +160,17 @@
                 <Border x:Name="CatalogErrorPanel" Visibility="Collapsed" Padding="16,64" CornerRadius="{StaticResource Radius2XL}"
                         Background="{StaticResource AppBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                   <StackPanel Spacing="12" HorizontalAlignment="Center">
-                    <TextBlock x:Name="CatalogErrorTitle" Text="Could not load catalog results." FontSize="16" FontWeight="Medium" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" TextAlignment="Center"/>
+                    <TextBlock x:Name="CatalogErrorTitle" Text="Could not load catalog results." FontSize="16" FontWeight="Medium" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" TextAlignment="Center" loc:Localized.Text="web.catalog.page.catalogFailed"/>
                     <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" FontSize="14"
                                LineHeight="20" LineStackingStrategy="BlockLineHeight" MaxWidth="448" TextWrapping="Wrap" TextAlignment="Center" />
                     <Button x:Name="CatalogRetryButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="10,0" FontSize="14" FontWeight="Medium"
-                            Click="CatalogRetry_Click" HorizontalAlignment="Center" AutomationProperties.Name="Retry catalog">
+                            Click="CatalogRetry_Click" HorizontalAlignment="Center" AutomationProperties.Name="Retry catalog" loc:Localized.Name="web.catalog.page.retryCatalog">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <ContentControl x:Name="CatalogRetryIcon" IsHitTestVisible="False" />
-                            <TextBlock Text="Retry catalog" LineHeight="20" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center" />
+                            <TextBlock Text="Retry catalog" LineHeight="20" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center"  loc:Localized.Text="web.catalog.page.retryCatalog"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="CatalogCollectionsButton" Content="All collections" Click="CatalogCollections_Click" Visibility="Collapsed" HorizontalAlignment="Center"/>
+                    <Button x:Name="CatalogCollectionsButton" Content="All collections" Click="CatalogCollections_Click" Visibility="Collapsed" HorizontalAlignment="Center" loc:Localized.Content="web.catalog.page.allCollections"/>
                   </StackPanel>
                 </Border>
                 <ItemsRepeater x:Name="CatalogLoadingRepeater"
@@ -205,8 +206,8 @@
                 </ItemsRepeater>
                 <ProgressRing x:Name="LoadingRing" Width="30" Height="30" HorizontalAlignment="Center" Visibility="Collapsed" />
                 <TextBlock x:Name="EmptyText" Text="No items found." HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,48" FontSize="16" LineHeight="24" LineStackingStrategy="BlockLineHeight"
-                           Foreground="{StaticResource SecondaryTextBrush}" />
-                <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
+                           Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.grid.noItems"/>
+                <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" HorizontalAlignment="Center" Visibility="Collapsed"  loc:Localized.Content="web.common.ui.loadMore.button"/>
             </StackPanel>
         </ScrollViewer>
 
@@ -238,7 +239,7 @@
                     FontSize="12"
                     Padding="12,6"
                     CornerRadius="8"
-                    Click="UndoButton_Click" />
+                    Click="UndoButton_Click"  loc:Localized.Content="web.common.toast.notInterested.undo"/>
             </StackPanel>
         </Border>
 
@@ -265,54 +266,54 @@
                       Data="M8,2 L13.6,7.6 L12.4,8.8 L8.9,5.3 L8.9,14 L7.1,14 L7.1,5.3 L3.6,8.8 L2.4,7.6 Z" />
         </Button>
 
-        <controls:SlideSheet x:Name="FiltersSheet" Title="Filters">
+        <controls:SlideSheet x:Name="FiltersSheet" Title="Filters" TitleKey="web.catalog.filters.heading">
             <controls:SlideSheet.SheetContent>
                 <Grid RowDefinitions="Auto,*,Auto" RowSpacing="12">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                         <StackPanel Spacing="2">
-                            <TextBlock Text="Filters" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="Refine your catalog results" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Filters" FontSize="18" FontWeight="SemiBold"  loc:Localized.Text="web.catalog.filters.heading"/>
+                            <TextBlock Text="Refine your catalog results" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.filters.subtitle"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                            <Button x:Name="GuidedModeButton" Content="Guided" Padding="10,5" Click="FilterMode_Click" Tag="guided" />
-                            <Button x:Name="AdvancedModeButton" Content="Advanced" Padding="10,5" Style="{StaticResource OutlineButtonStyle}" Click="FilterMode_Click" Tag="advanced" />
+                            <Button x:Name="GuidedModeButton" Content="Guided" Padding="10,5" Click="FilterMode_Click" Tag="guided"  loc:Localized.Content="web.catalog.filters.guided"/>
+                            <Button x:Name="AdvancedModeButton" Content="Advanced" Padding="10,5" Style="{StaticResource OutlineButtonStyle}" Click="FilterMode_Click" Tag="advanced"  loc:Localized.Content="web.catalog.filters.advanced"/>
                         </StackPanel>
                     </Grid>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <Grid Padding="0,4,8,12">
                         <StackPanel x:Name="GuidedFiltersPanel" Spacing="12">
-                            <TextBlock Text="Library" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Library" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.library.page.titleFallback"/>
                             <ComboBox x:Name="LibraryCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
-                            <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.builder.fieldGenre"/>
                             <ComboBox x:Name="GenreCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
                             <TextBlock Text="Year range" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                                <TextBox x:Name="YearFromBox" PlaceholderText="From" InputScope="Number" TextChanged="Filter_Changed" />
-                                <TextBox x:Name="YearToBox" Grid.Column="1" PlaceholderText="To" InputScope="Number" TextChanged="Filter_Changed" />
+                                <TextBox x:Name="YearFromBox" PlaceholderText="From" InputScope="Number" TextChanged="Filter_Changed"  loc:Localized.Placeholder="web.catalog.rules.rangeFrom"/>
+                                <TextBox x:Name="YearToBox" Grid.Column="1" PlaceholderText="To" InputScope="Number" TextChanged="Filter_Changed"  loc:Localized.Placeholder="web.catalog.rules.rangeTo"/>
                             </Grid>
-                            <TextBlock Text="Minimum IMDb rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Minimum IMDb rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.minRating"/>
                             <ComboBox x:Name="MinimumRatingCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
                                 <ComboBoxItem Content="Any rating" Tag="" IsSelected="True" />
                                 <ComboBoxItem Content="5+" Tag="5" /><ComboBoxItem Content="6+" Tag="6" />
                                 <ComboBoxItem Content="7+" Tag="7" /><ComboBoxItem Content="8+" Tag="8" /><ComboBoxItem Content="9+" Tag="9" />
                             </ComboBox>
-                            <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.common.sort.contentRating"/>
                             <ComboBox x:Name="RatingCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
-                            <TextBlock Text="Original Language" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Original Language" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.originalLanguage"/>
                             <ComboBox x:Name="OriginalLanguageCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
-                            <TextBlock Text="People" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBox x:Name="ActorBox" PlaceholderText="Actor" TextChanged="Filter_Changed" />
-                            <TextBox x:Name="DirectorBox" PlaceholderText="Director" TextChanged="Filter_Changed" />
-                            <TextBox x:Name="WriterBox" PlaceholderText="Writer" TextChanged="Filter_Changed" />
-                            <TextBox x:Name="ProducerBox" PlaceholderText="Producer" TextChanged="Filter_Changed" />
+                            <TextBlock Text="People" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.page.people"/>
+                            <TextBox x:Name="ActorBox" PlaceholderText="Actor" TextChanged="Filter_Changed"  loc:Localized.Placeholder="web.collections.guidedRules.actor"/>
+                            <TextBox x:Name="DirectorBox" PlaceholderText="Director" TextChanged="Filter_Changed"  loc:Localized.Placeholder="web.detail.castCrew.director"/>
+                            <TextBox x:Name="WriterBox" PlaceholderText="Writer" TextChanged="Filter_Changed"  loc:Localized.Placeholder="web.detail.castCrew.writer"/>
+                            <TextBox x:Name="ProducerBox" PlaceholderText="Producer" TextChanged="Filter_Changed"  loc:Localized.Placeholder="web.collections.guidedRules.producer"/>
                             <TextBlock Text="Studio and Network" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="StudioCombo" PlaceholderText="All studios" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
                             <ComboBox x:Name="NetworkCombo" PlaceholderText="All networks" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
-                            <TextBlock Text="Resolution" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Resolution" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="catalog.sort.resolution"/>
                             <ComboBox x:Name="ResolutionCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
-                            <TextBlock Text="Audio Language" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Audio Language" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.builder.fieldAudioLanguage"/>
                             <ComboBox x:Name="AudioLanguageCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
-                            <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.country"/>
                             <ComboBox x:Name="CountryCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
                             <TextBlock Text="Series status" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="StatusCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
@@ -320,19 +321,19 @@
                                 <ComboBoxItem Content="Ended" Tag="Ended" /><ComboBoxItem Content="Canceled" Tag="Canceled" />
                                 <ComboBoxItem Content="In Production" Tag="In Production" /><ComboBoxItem Content="Planned" Tag="Planned" />
                             </ComboBox>
-                            <TextBlock Text="Watch status" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Watch status" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.watchStatus"/>
                             <ComboBox x:Name="WatchStatusCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
-                                <ComboBoxItem Content="Any" Tag="" IsSelected="True" /><ComboBoxItem Content="Watched" Tag="watched" />
-                                <ComboBoxItem Content="In progress" Tag="in_progress" /><ComboBoxItem Content="Unwatched" Tag="unwatched" />
+                                <ComboBoxItem Content="Any" Tag="" IsSelected="True"  loc:Localized.Content="web.catalog.rules.matchAny"/><ComboBoxItem Content="Watched" Tag="watched"  loc:Localized.Content="web.common.overlays.watched"/>
+                                <ComboBoxItem Content="In progress" Tag="in_progress"  loc:Localized.Content="web.collections.guidedRules.inProgress"/><ComboBoxItem Content="Unwatched" Tag="unwatched"  loc:Localized.Content="web.collections.guidedRules.unwatched"/>
                             </ComboBox>
-                            <TextBlock Text="Added in the last" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Added in the last" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.addedInLast"/>
                             <ComboBox x:Name="AddedInLastCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
-                                <ComboBoxItem Content="Any time" Tag="" IsSelected="True" /><ComboBoxItem Content="7 days" Tag="7d" />
-                                <ComboBoxItem Content="30 days" Tag="30d" /><ComboBoxItem Content="90 days" Tag="90d" /><ComboBoxItem Content="1 year" Tag="1y" />
+                                <ComboBoxItem Content="Any time" Tag="" IsSelected="True"  loc:Localized.Content="web.common.ui.dateTimePicker.anyTime"/><ComboBoxItem Content="7 days" Tag="7d"  loc:Localized.Content="web.home.rows.variants.options.days7"/>
+                                <ComboBoxItem Content="30 days" Tag="30d"  loc:Localized.Content="web.home.rows.variants.options.days30"/><ComboBoxItem Content="90 days" Tag="90d" /><ComboBoxItem Content="1 year" Tag="1y" />
                             </ComboBox>
-                            <TextBlock Text="Released in the last" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="Released in the last" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.collections.guidedRules.releasedInLast"/>
                             <ComboBox x:Name="ReleasedInLastCombo" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed">
-                                <ComboBoxItem Content="Any time" Tag="" IsSelected="True" /><ComboBoxItem Content="30 days" Tag="30d" />
+                                <ComboBoxItem Content="Any time" Tag="" IsSelected="True"  loc:Localized.Content="web.common.ui.dateTimePicker.anyTime"/><ComboBoxItem Content="30 days" Tag="30d"  loc:Localized.Content="web.home.rows.variants.options.days30"/>
                                 <ComboBoxItem Content="90 days" Tag="90d" /><ComboBoxItem Content="1 year" Tag="1y" /><ComboBoxItem Content="5 years" Tag="5y" />
                             </ComboBox>
                             <TextBlock Text="Book and audiobook" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -341,8 +342,8 @@
                             <ComboBox x:Name="SeriesCombo" PlaceholderText="All series" HorizontalAlignment="Stretch" SelectionChanged="Filter_Changed" />
                             <TextBlock Text="Video features" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <controls:WrapPanel HorizontalSpacing="14" VerticalSpacing="8">
-                                <CheckBox x:Name="FourKCheckBox" Content="4K" Click="Filter_Changed" />
-                                <CheckBox x:Name="HdrCheckBox" Content="HDR" Click="Filter_Changed" />
+                                <CheckBox x:Name="FourKCheckBox" Content="4K" Click="Filter_Changed"  loc:Localized.Content="web.home.rows.variants.options.fourK"/>
+                                <CheckBox x:Name="HdrCheckBox" Content="HDR" Click="Filter_Changed"  loc:Localized.Content="web.collections.builder.fieldHdr"/>
                                 <CheckBox x:Name="DolbyVisionCheckBox" Content="Dolby Vision" Click="Filter_Changed" />
                             </controls:WrapPanel>
                         </StackPanel>
@@ -354,7 +355,7 @@
                             </ComboBox>
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Text="Rules" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Add Rule" Click="AddAdvancedRule_Click" />
+                                <Button Grid.Column="1" Content="Add Rule" Click="AddAdvancedRule_Click"  loc:Localized.Content="web.catalog.rules.addRule"/>
                             </Grid>
                             <StackPanel x:Name="AdvancedRulesPanel" Spacing="8" />
                             <TextBlock x:Name="NoAdvancedRulesText" Text="No rules defined. Add a rule to build an advanced query." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
@@ -362,8 +363,8 @@
                         </Grid>
                     </ScrollViewer>
                     <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
-                        <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearFilters_Click" />
-                        <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}" Click="CloseFilters_Click" />
+                        <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearFilters_Click"  loc:Localized.Content="web.catalog.filters.clearAll"/>
+                        <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}" Click="CloseFilters_Click"  loc:Localized.Content="web.catalog.page.doneSelecting"/>
                     </Grid>
                 </Grid>
             </controls:SlideSheet.SheetContent>

@@ -80,6 +80,7 @@ public sealed partial class CollectionBrowsePage : Page
         OrderCombo.IsEnabled = false;
         _suppressSortEvents = false;
         SizeChanged += CollectionBrowsePage_SizeChanged;
+        AttachLocalization();
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -142,7 +143,7 @@ public sealed partial class CollectionBrowsePage : Page
         }
         catch (Exception ex)
         {
-            if (loadCts == _loadCts && _apiClient.IsCurrentContext(context)) ShowError(ex.Message);
+            if (loadCts == _loadCts && _apiClient.IsCurrentContext(context)) ShowError(CollectionText.Problem(ex));
         }
     }
 
@@ -193,7 +194,7 @@ public sealed partial class CollectionBrowsePage : Page
         {
             if (ReferenceEquals(_loadCts, owner) && _apiClient.IsCurrentContext(context))
             {
-                ErrorText.Text = $"Could not load more items: {ex.Message}";
+                ErrorText.Text = $"Could not load more items: {CollectionText.Problem(ex)}";
                 ErrorText.Visibility = Visibility.Visible;
             }
         }
@@ -213,7 +214,7 @@ public sealed partial class CollectionBrowsePage : Page
         var count = _total > 0 ? _total : _items.Count;
         CollectionShuffleButton.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
         // The hero has no count of its own: the filter bar says "N titles" (the WebUI's collection count).
-        LoadedCountText.Text = $"{count:N0} {(count == 1 ? "title" : "titles")}";
+        LoadedCountText.Text = CollectionText.Titles(count);
         LoadedCountText.Visibility = _countKnown ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -225,7 +226,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private async void SortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressSortEvents || _currentArgs == null) return;
+        if (_suppressSortEvents || CollectionText.Relabeling || _currentArgs == null) return;
         _sort = SortCombo.SelectedItem is ComboBoxItem { Tag: string value } && !string.IsNullOrWhiteSpace(value)
             ? value
             : null;
@@ -241,7 +242,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private async void OrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressSortEvents || _sort == null || _currentArgs == null) return;
+        if (_suppressSortEvents || CollectionText.Relabeling || _sort == null || _currentArgs == null) return;
         _order = OrderCombo.SelectedItem is ComboBoxItem { Tag: string order } ? order : "desc";
         await RememberCollectionSortAsync();
         await LoadFirstPageAsync();
@@ -322,11 +323,12 @@ public sealed partial class CollectionBrowsePage : Page
             }
         }
         finally { _suppressSortEvents = suppressed; }
+        LocalizeSortChoices();
     }
 
     private async void MediaScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressSortEvents || _currentArgs == null) return;
+        if (_suppressSortEvents || CollectionText.Relabeling || _currentArgs == null) return;
         _mediaScope = MediaScopeCombo.SelectedItem is ComboBoxItem { Tag: string scope } && !string.IsNullOrWhiteSpace(scope)
             ? scope
             : null;
@@ -419,7 +421,7 @@ public sealed partial class CollectionBrowsePage : Page
             ActiveFiltersPanel.Children.Add(button);
         }
         var activeCount = SiloPlayer.Core.Services.CatalogFilterBadges.ActiveCount(_browseQuery, _mediaScope);
-        ActiveFilterCountText.Text = activeCount.ToString();
+        ActiveFilterCountText.Text = CollectionText.Number(activeCount);
         ActiveFilterCountBadge.Visibility = activeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         ActiveFiltersPanel.Visibility = ActiveFiltersPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -563,7 +565,7 @@ public sealed partial class CollectionBrowsePage : Page
         var nav = App.Services.GetRequiredService<NavigationService>();
         if (nav.Frame?.CanGoBack == true)
         {
-            nav.Frame.GoBack();
+            nav.Frame.GoBack(PageTransitionHelper.ForPageChange());
         }
         else
         {
@@ -668,14 +670,14 @@ public sealed partial class CollectionBrowsePage : Page
         // to keep the visual compact. Active state uses accent foreground.
         if (_isPinned)
         {
-            PinLabel.Text = "Pinned";
+            PinLabel.Text = CollectionText.Get("web.collections.copy.pinned", "Pinned");
             PinIcon.Glyph = "\uE841"; // Pinned (filled)
             PinIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
             PinLabel.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
         }
         else
         {
-            PinLabel.Text = "Pin to sidebar";
+            PinLabel.Text = CollectionText.Get("web.collections.posterCard.pinToSidebar", "Pin to sidebar");
             PinIcon.Glyph = "\uE840"; // Pinned (outline)
             PinIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
             PinLabel.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
