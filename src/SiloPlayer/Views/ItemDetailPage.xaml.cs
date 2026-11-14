@@ -148,6 +148,8 @@ public sealed partial class ItemDetailPage : Page
         UpdateThemeGradientColors();
 
         this.Loaded += OnPageLoaded;
+        Loaded += (_, _) => ObserveVersionSelection();
+        Unloaded += (_, _) => StopObservingVersionSelection();
         Loaded += (_, _) => StartOverviewScopeWatch();
         Unloaded += (_, _) => _overviewScopeTimer?.Stop();
         Unloaded += (_, _) => { if (!IsLoaded) RetireSiblingEpisodeScrollRequest(); };
@@ -1138,7 +1140,10 @@ public sealed partial class ItemDetailPage : Page
                 else if (ViewModel.Item?.Type is "season")
                     ApplySeasonAction();
                 else if (_playableContentId != null)
+                {
+                    RetirePrePlayTrackChoices();
                     _ = LoadWatchDetailAsync(_playableContentId);
+                }
                 _ = ViewModel.RefreshWatchedStateAsync(
                     _playerService?.PendingProgressSave ?? Task.CompletedTask,
                     _navigationCts.Token);
@@ -1243,6 +1248,9 @@ public sealed partial class ItemDetailPage : Page
         // pre-play selections influence the next item's actions while its
         // companion watch request is still loading.
         _watchDetail = null;
+        _detailVersions = new(); _detailVersionOwner = null;
+        _trackSelectionFileId = null; _trackSelectionOwner = null;
+        ++_versionQualityRevision;
         _siblingEpisodes.Clear();
         _selectedVersion = null;
         _selectedVersionWasExplicit = false;
@@ -1291,6 +1299,7 @@ public sealed partial class ItemDetailPage : Page
             // hold the entire page behind another network round trip.
             UpdateUI();
             AdvisoryAgeBadge.Visibility = Visibility.Collapsed;
+            _ = RefreshVersionQualityAsync();
             _ = LoadAdvisoryDisplayAsync(ViewModel.Item, navigationToken);
             _ = LoadMediaActionCapabilitiesAsync(ViewModel.Item, navigationToken);
             var music = App.Services.GetService<SiloPlayer.Services.ThemeMusicService>();
@@ -3077,8 +3086,7 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
-        var manager = App.Services.GetRequiredService<PlaybackManager>();
-        var best = _selectedVersion ?? manager.SelectBestVersion(_watchDetail.Versions, userData: _watchDetail.UserData);
+        var best = _selectedVersion ?? ResolveDetailVersion(_watchDetail.Versions, _watchDetail.PlaybackVariants, _watchDetail.UserData);
         if (best == null)
         {
             QualityBadgesPanel.Visibility = Visibility.Collapsed;
@@ -4215,10 +4223,11 @@ public sealed partial class ItemDetailPage : Page
         var item = ViewModel.Item;
         if (item == null || item.Versions.Count == 0 || !CanCurrentUserDownload()) return;
 
-        await ShowDownloadDialogAsync(item.Title, item.Versions);
+        var files = DetailVersionRanking.DownloadFiles(_selectedVersion, _watchDetail?.PlaybackVariants ?? item.PlaybackVariants, _detailVersions.Quality);
+        if (files.Count > 0) await ShowDownloadDialogAsync(item.Title, files, preserveOrder: true);
     }
 
-    private async Task ShowDownloadDialogAsync(string title, IReadOnlyCollection<FileVersion> versions)
+    private async Task ShowDownloadDialogAsync(string title, IReadOnlyCollection<FileVersion> versions, bool preserveOrder = false)
     {
         var dialog = new ContentDialog
         {
@@ -4236,9 +4245,8 @@ public sealed partial class ItemDetailPage : Page
         });
         var versionButtons = new List<Button>();
         var downloadInProgress = false;
-        foreach (var version in versions
-                     .OrderByDescending(version => ResolutionRank(version.Resolution))
-                     .ThenByDescending(version => version.Bitrate))
+        IEnumerable<FileVersion> choices = preserveOrder ? versions : versions.OrderByDescending(version => ResolutionRank(version.Resolution)).ThenByDescending(version => version.Bitrate);
+        foreach (var version in choices)
         {
             var quality = BuildQualitySummary(version);
             var versionButton = new Button
@@ -5267,17 +5275,15 @@ public sealed partial class ItemDetailPage : Page
             qualityParts.Add(item.OverlaySummary.Resolution);
         if (item.Versions?.Count > 0)
         {
-            var best = VersionRanking.SelectDefaultPlaybackVariantVersion(
+            var best = ResolveDetailVersion(
                 item.Versions,
                 item.PlaybackVariants,
-                ToWatchUserData(item.UserData),
-                qualityPreference: null,
-                preferredEditionKey: item.EffectiveVersionEditionKey)
+                ToWatchUserData(item.UserData))
                 ?? item.Versions[0];
             best = RetainExplicitVersion(item.Versions, best);
             _selectedVersion = best;
             UpdateSelectedVersionHeroSummary(best);
-            VersionSummaryText.Text = BuildQualitySummary(best);
+            VersionSummaryText.Text = DetailVersionSummary(best);
             if (qualityParts.Count == 0 && !string.IsNullOrEmpty(best.Resolution))
                 qualityParts.Add(best.Resolution);
             var rangeLabel = MediaVideoRange.Label(best);
@@ -5288,7 +5294,7 @@ public sealed partial class ItemDetailPage : Page
         if (qualityParts.Count > 0)
         {
             VersionSummaryText.Text = _selectedVersion != null
-                ? BuildQualitySummary(_selectedVersion)
+                ? DetailVersionSummary(_selectedVersion)
                 : string.Join(" ", qualityParts);
         }
 
@@ -5348,12 +5354,10 @@ public sealed partial class ItemDetailPage : Page
         QualityBadgesPanel.Children.Clear();
 
         var selectedVersion = _selectedVersion ?? (item.Versions?.Count > 0
-            ? VersionRanking.SelectDefaultPlaybackVariantVersion(
+            ? ResolveDetailVersion(
                 item.Versions,
                 item.PlaybackVariants,
-                ToWatchUserData(item.UserData),
-                qualityPreference: null,
-                preferredEditionKey: item.EffectiveVersionEditionKey)
+                ToWatchUserData(item.UserData))
             : null);
 
         // The current WebUI summarizes the selected version. It no longer
@@ -5424,13 +5428,16 @@ public sealed partial class ItemDetailPage : Page
     {
         try
         {
+            var navigation = _navigationCts;
+            var client = App.Services.GetRequiredService<SiloApiClient>();
+            var owner = client.CaptureContext();
             var playerService = App.Services.GetRequiredService<Services.PlayerService>();
             var watchDetail = await playerService.GetOrFetchWatchDetailAsync(contentId, libraryId: ViewModel.LibraryId);
-            if (!string.Equals(_playableContentId, contentId, StringComparison.Ordinal)) return;
-            _watchDetail = watchDetail;
-            _downloadedSubtitles = [];
-            UpdatePlayButton();
-            UpdateQualityBadges();
+            if (!ReferenceEquals(navigation, _navigationCts) || navigation?.IsCancellationRequested == true
+                || !client.IsCurrentContext(owner) || !string.Equals(_playableContentId, contentId, StringComparison.Ordinal)) return;
+            await RefreshWatchDetailPresentationAsync(watchDetail);
+            if (!ReferenceEquals(navigation, _navigationCts) || navigation?.IsCancellationRequested == true
+                || !client.IsCurrentContext(owner) || !ReferenceEquals(_watchDetail, watchDetail)) return;
 
             // The item-detail response can omit file paths while /watch has
             // the complete versions. Match the WebUI permission gate: media
@@ -5445,10 +5452,6 @@ public sealed partial class ItemDetailPage : Page
             DownloadButton.Visibility = Visibility.Collapsed;
             BuildMoreFlyout();
 
-            // Subtitle selection/search lives in the ActionBar in the current
-            // WebUI. Avoid a duplicate detail-page list and its extra request.
-            if (_selectedVersion != null)
-                await LoadDownloadedSubtitlesAsync(contentId, _selectedVersion.FileId);
         }
         catch (Exception ex)
         {
@@ -5577,12 +5580,7 @@ public sealed partial class ItemDetailPage : Page
         var versions = _watchDetail.Versions;
         if (versions.Count > 0)
         {
-            var manager = App.Services.GetRequiredService<PlaybackManager>();
-            var best = manager.SelectBestVariantVersion(
-                versions,
-                _watchDetail.PlaybackVariants,
-                userData: userData,
-                preferredEditionKey: _watchDetail.EffectiveVersionEditionKey);
+            var best = ResolveDetailVersion(versions, _watchDetail.PlaybackVariants, userData);
             best = RetainExplicitVersion(versions, best ?? versions[0]);
             _selectedVersion = best;
             BuildAudioTracksFlyout(best);
@@ -5592,7 +5590,7 @@ public sealed partial class ItemDetailPage : Page
 
             if (best != null)
             {
-                VersionSummaryText.Text = BuildQualitySummary(best);
+                VersionSummaryText.Text = DetailVersionSummary(best);
                 var qualityParts = new List<string>();
                 if (!string.IsNullOrEmpty(best.Resolution))
                     qualityParts.Add(best.Resolution);
@@ -5604,7 +5602,7 @@ public sealed partial class ItemDetailPage : Page
                 {
                     // Quality summary now lives beside the version dropdown chevron
                     // (webui commit a42f46b — removed from the Play button).
-                    VersionSummaryText.Text = BuildQualitySummary(best);
+                    VersionSummaryText.Text = DetailVersionSummary(best);
                 }
             }
 
@@ -5663,7 +5661,7 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private void BuildAudioTracksFlyout(FileVersion? version)
     {
-        _prePlayAudioSelection?.Clear();
+        PrepareVersionTracks(version);
         AudioTracksFlyoutContent.Children.Clear();
         var tracks = version?.AudioTracks;
         if (tracks == null || tracks.Count == 0)
@@ -5676,9 +5674,7 @@ public sealed partial class ItemDetailPage : Page
         // Show only when there's a real choice — one track = no point in showing.
         AudioTracksButton.Visibility = Visibility.Visible;
 
-        // Reset selection when we're on a new version so stale explicit indices
-        // from a previous version don't leak in.
-        _selectedAudioTrackIndex = null;
+        // PrepareVersionTracks resets choices only when the file or owner changes.
 
         // Auto index: prefer server's effective_audio_track_index, else first default, else 0.
         var autoIndex = version!.EffectiveAudioTrackIndex ?? -1;
@@ -5783,6 +5779,7 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private void BuildSubtitlesPopoverFlyout(FileVersion? version, bool resetSelection = true)
     {
+        resetSelection = PrepareVersionTracks(version);
         SubtitlesPopoverContent.Children.Clear();
         var subs = version?.SubtitleTracks ?? [];
         if (version == null)
@@ -6391,6 +6388,9 @@ public sealed partial class ItemDetailPage : Page
 
     private async Task LoadDownloadedSubtitlesAsync(string contentId, int fileId)
     {
+        var inventoryRevision = ++_subtitleInventoryRevision;
+        var inventoryClient = App.Services.GetRequiredService<SiloApiClient>();
+        var inventoryOwner = inventoryClient.CaptureIdentityContext();
         _downloadedSubtitles = [];
         _loadingDownloadedSubtitles = true;
         if (_selectedVersion?.FileId == fileId)
@@ -6400,7 +6400,7 @@ public sealed partial class ItemDetailPage : Page
         {
             var response = await App.Services.GetRequiredService<PlaybackApi>()
                 .GetSubtitlesAsync(fileId);
-            if (!string.Equals(_playableContentId, contentId, StringComparison.Ordinal) ||
+            if (inventoryRevision != _subtitleInventoryRevision || !inventoryClient.IsCurrentIdentityContext(inventoryOwner) || !string.Equals(_playableContentId, contentId, StringComparison.Ordinal) ||
                 _selectedVersion?.FileId != fileId)
                 return;
 
@@ -6414,7 +6414,7 @@ public sealed partial class ItemDetailPage : Page
         }
         finally
         {
-            if (string.Equals(_playableContentId, contentId, StringComparison.Ordinal) &&
+            if (inventoryRevision == _subtitleInventoryRevision && inventoryClient.IsCurrentIdentityContext(inventoryOwner) && string.Equals(_playableContentId, contentId, StringComparison.Ordinal) &&
                 _selectedVersion?.FileId == fileId)
             {
                 _loadingDownloadedSubtitles = false;
@@ -6524,64 +6524,31 @@ public sealed partial class ItemDetailPage : Page
         FileVersion? selected,
         bool isResuming)
     {
-        selected ??= versions.FirstOrDefault();
-        var orderedVariants = (variants ?? [])
-            .Select((variant, index) => new { Variant = variant, Index = index })
-            .OrderBy(entry => VersionRanking.PlaybackVariantEditionPreference(entry.Variant))
-            .ThenBy(entry => entry.Index)
-            .Select(entry => entry.Variant)
-            .ToList();
-        var hasNamedEdition = orderedVariants.Any(variant => !string.IsNullOrWhiteSpace(variant.EditionKey));
-        var labels = orderedVariants.Select(variant => BuildEditionLabel(variant, hasNamedEdition)).ToList();
-        var showEditions = orderedVariants.Count > 1
-                           && hasNamedEdition
-                           && labels.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1;
-
-        PlaybackVariant? activeVariant = null;
-        if (selected != null)
-        {
-            activeVariant = orderedVariants.FirstOrDefault(variant =>
-                variant.Parts.Any(part => part.Versions.Any(version => version.FileId == selected.FileId)));
-        }
-        activeVariant ??= orderedVariants.FirstOrDefault();
-
+        var editions = DetailVersionRanking.Editions(versions, variants);
+        var active = editions.FirstOrDefault(edition => edition.AllVersions.Any(file => file.FileId == selected?.FileId))
+            ?? editions.FirstOrDefault();
         EditionFlyout.Items.Clear();
-        EditionButton.Visibility = showEditions ? Visibility.Visible : Visibility.Collapsed;
-        if (showEditions && activeVariant != null)
+        EditionButton.Visibility = editions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        string Label(DetailVersionRanking.Edition edition) => !string.IsNullOrWhiteSpace(edition.Raw)
+            ? edition.Raw : string.IsNullOrWhiteSpace(edition.Key) ? "Standard" : BuildEditionLabel(new PlaybackVariant { EditionKey = edition.Key }, true);
+        if (active != null)
         {
-            EditionSummaryText.Text = BuildEditionLabel(activeVariant, hasNamedEdition);
-            foreach (var variant in orderedVariants)
+            EditionSummaryText.Text = Label(active);
+            foreach (var edition in editions)
             {
+                var picked = DetailVersionRanking.Rank(edition.Versions, _detailVersions.Quality);
                 var option = new MenuFlyoutItem
                 {
-                    Text = BuildEditionMenuLabel(variant, versions, hasNamedEdition),
+                    Text = Label(edition) + (picked == null ? "" : "  —  " + BuildQualitySummary(picked)),
+                    Tag = edition.Key,
+                    Icon = edition == active ? new SymbolIcon(Symbol.Accept) : null,
                 };
-                var selectedVariant = variant;
-                option.Click += (_, _) =>
-                {
-                    var defaultVersion = ResolveVariantDefaultVersion(selectedVariant, versions);
-                    if (defaultVersion == null) return;
-                    SelectExplicitVersion(defaultVersion);
-                    _downloadedSubtitles = [];
-                    UpdateSelectedVersionUi(defaultVersion);
-                    ConfigureVersionSelectors(versions, orderedVariants, defaultVersion, isResuming);
-                    if (_playableContentId != null)
-                        _ = LoadDownloadedSubtitlesAsync(_playableContentId, defaultVersion.FileId);
-                };
+                option.Click += (_, _) => ChooseDetailAuto(versions, variants, edition.Key);
                 EditionFlyout.Items.Add(option);
             }
         }
-
-        var activeVersions = activeVariant?.Parts
-            .OrderBy(part => part.PartIndex)
-            .FirstOrDefault()?.Versions;
-        BuildVersionFlyout(
-            activeVersions is { Count: > 0 } ? activeVersions : versions,
-            isResuming,
-            versions,
-            orderedVariants);
+        BuildVersionFlyout(active?.Versions ?? versions, isResuming, versions, variants);
     }
-
     private static string BuildEditionLabel(PlaybackVariant variant, bool hasNamedEditions)
     {
         if (!string.IsNullOrWhiteSpace(variant.EditionRaw)) return variant.EditionRaw.Trim();
@@ -6596,48 +6563,11 @@ public sealed partial class ItemDetailPage : Page
         return hasNamedEditions ? "Standard" : "Edition";
     }
 
-    private static string BuildEditionMenuLabel(
-        PlaybackVariant variant,
-        List<FileVersion> versions,
-        bool hasNamedEditions)
-    {
-        var label = BuildEditionLabel(variant, hasNamedEditions);
-        var firstPartVersions = variant.Parts.OrderBy(part => part.PartIndex).FirstOrDefault()?.Versions ?? [];
-        var selected = ResolveVariantDefaultVersion(variant, versions);
-        var detail = new List<string>();
-        if (firstPartVersions.Count > 1) detail.Add($"{firstPartVersions.Count} versions");
-        if (selected != null)
-        {
-            var summary = BuildQualitySummary(selected);
-            if (!string.IsNullOrEmpty(summary)) detail.Add(summary);
-        }
-        return detail.Count == 0 ? label : $"{label}  —  {string.Join(" · ", detail)}";
-    }
-
-    private static FileVersion? ResolveVariantDefaultVersion(
-        PlaybackVariant variant,
-        List<FileVersion> allVersions)
-    {
-        var firstPart = variant.Parts.OrderBy(part => part.PartIndex).FirstOrDefault();
-        if (firstPart == null) return null;
-        if (firstPart.DefaultFileId is int fileId)
-            return allVersions.FirstOrDefault(version => version.FileId == fileId)
-                   ?? firstPart.Versions.FirstOrDefault(version => version.FileId == fileId);
-        return firstPart.Versions
-            .OrderByDescending(version => VersionRanking.ResolutionScore(version.Resolution))
-            .ThenByDescending(version => version.Bitrate)
-            .FirstOrDefault();
-    }
-
     private void UpdateSelectedVersionUi(FileVersion version)
     {
         BuildAudioTracksFlyout(version);
         BuildSubtitlesPopoverFlyout(version);
-        VersionSummaryText.Text = string.Join(" ", new[]
-        {
-            version.Resolution,
-            MediaVideoRange.Label(version),
-        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        VersionSummaryText.Text = DetailVersionSummary(version);
         UpdateSelectedVersionHeroSummary(version);
         BuildMoreFlyout();
     }
@@ -6701,6 +6631,16 @@ public sealed partial class ItemDetailPage : Page
             }
         }
 
+        if (versions.Count > 1)
+        {
+            var automatic = new MenuFlyoutItem
+            {
+                Text = "Auto", Tag = "auto",
+                Icon = !IsSelectedVersionPinned ? new SymbolIcon(Symbol.Accept) : null,
+            };
+            automatic.Click += (_, _) => ChooseDetailAuto(allVersions ?? versions, variants);
+            VersionFlyout.Items.Add(automatic);
+        }
         // Version options (only show if multiple). Sort by resolution
         // descending (4K → 1080p → 720p → SD), matching webui
         // sortByResolution. Ties keep server order.
@@ -6731,17 +6671,14 @@ public sealed partial class ItemDetailPage : Page
                 if (subtitleParts.Count > 0)
                     label += "  \u2014  " + string.Join(" \u00B7 ", subtitleParts);
 
-                var item = new MenuFlyoutItem { Text = label };
+                var item = new MenuFlyoutItem { Text = label, Tag = version.FileId, Icon = IsSelectedVersionPinned && _selectedVersion?.FileId == version.FileId ? new SymbolIcon(Symbol.Accept) : null };
                 var fileVersion = version;
                 item.Click += (_, _) =>
                 {
                     SelectExplicitVersion(fileVersion);
-                    _downloadedSubtitles = [];
                     UpdateSelectedVersionUi(fileVersion);
-                    if (allVersions != null && variants != null)
-                        ConfigureVersionSelectors(allVersions, variants, fileVersion, isResuming);
-                    if (_playableContentId != null)
-                        _ = LoadDownloadedSubtitlesAsync(_playableContentId, fileVersion.FileId);
+                    ConfigureVersionSelectors(allVersions ?? versions, variants, fileVersion, isResuming);
+
                 };
                 VersionFlyout.Items.Add(item);
             }
@@ -6752,6 +6689,8 @@ public sealed partial class ItemDetailPage : Page
 
     private void SelectExplicitVersion(FileVersion version)
     {
+        EnsureDetailVersionOwner();
+        _detailVersions.SelectFile(version);
         _selectedVersion = version;
         _selectedVersionWasExplicit = true;
         _selectedVersionOwner = App.Services.GetRequiredService<SiloApiClient>().CaptureIdentityContext();
@@ -6873,6 +6812,7 @@ public sealed partial class ItemDetailPage : Page
         var r = resolution.ToLowerInvariant();
         return r switch
         {
+            "8k" or "4320p" => 4320,
             "2160p" or "4k" => 2160,
             "1440p" => 1440,
             "1080p" => 1080,

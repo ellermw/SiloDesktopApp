@@ -1,3 +1,24 @@
+# November 13 - Edition-scoped detail Auto verified locally
+
+Branch codex/edition-auto-nov13 starts at Beta e438c30d. Official upstream
+7edef3ddc4cdd5c12f26c23a895b41f31782f286 (#4053) is implemented through a detail-only
+Auto policy, retaining card/next-up Resume history. Edition changes clear pins,
+quality updates retain the edition, downloads follow the selected presentation,
+and file changes retire pre-play track choices. See
+[the parity record](parity/2026-11-13-edition-auto.md) for behavior and limits.
+
+Release publish/native build passed, all 6,103 units passed (2.3822 minutes),
+and actual oct24-track-choices/detail-action-hover native fixtures passed.
+Product DLL SHA256: 8033D5599A402C9B7175344475DD1712B9E94BAE2415B5FC2E3E1612C9293AAD.
+Independent review findings are corrected, including same-file subtitle inventory,
+playback-return track retirement and owned settings-response behavior. Pipeline-owned
+version remains 1.2.1016-beta.1 / 1.2.1015.1. PR #145 was untouched.
+
+Task output is 1.226 GiB; free C: 194.76 GiB, D: 480.98 GiB. Cleanup was not
+retried after automatic approval review blocked generated-test deletion;
+recovered 0 GiB on each drive. The installed player remains untouched.
+
+---
 # November 13 - Unavailable download row reconciliation for Beta
 
 New independent branch codex/download-delete-404-nov13 starts from Beta
