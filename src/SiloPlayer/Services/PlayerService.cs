@@ -2991,7 +2991,10 @@ public partial class PlayerService : IDisposable
                 }
                 : null;
             var progressIdentity = expectedOwner?.Identity ?? authority.ApiClient.CaptureIdentityContext();
-            _playbackManager = requestManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough);
+            _playbackManager = requestManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough)
+            {
+                IsMeteredConnection = () => PlaybackConnectionNetwork.CaptureForQuality().Metered,
+            };
             _playbackProgressOwner = new(_playbackManager, progressIdentity);
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
 

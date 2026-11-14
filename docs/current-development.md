@@ -23,6 +23,32 @@ payload; prior cleanup rejection was not retried, 0 GiB recovered on C: and D:.
 The installed player was not changed or restarted; pipeline owns packaging.
 
 ---
+# November 13 - Metered quality alignment verified for Beta
+
+Branch codex/metered-quality-4448-nov13 starts at Beta 6f9f87f7 with version
+1.2.1017-beta.1 / 1.2.1016.1 unchanged. Shared connection quality uses cellular
+limits on identified metered links. Detail observes network/settings changes,
+retaining edition/pin and request ownership. Native Settings exposes both limits.
+Unknown/offline links keep main quality; older-server 422 uses contract defaults.
+
+Final verification: 6,113 full units passed, zero failures/skips (2m23s).
+After review corrections, 60 focused quality/settings/connection tests passed.
+Release publish/native build and actual oct24-track-choices plus
+settings-visual-oct24 passed, including separate writes, No limit and responsive
+geometry at 600-3840 pixels. The P1/two P2 independent review findings were
+corrected by the lead; no second independent review is claimed.
+See [the complete parity/audit record](parity/2026-11-13-upstream-4448-metered.md).
+
+Official main was rechecked at 4448e401. All 43 commits since 7edef3dd were
+classified. Separate PRs #148 (ranking/multipart), #149 (marker cache), and
+#150 (scan refresh) are pipeline-owned; this metered increment is separate.
+No combined integration, physical-network or live-server certification is claimed.
+
+Output: 1.569 GiB. Free C: 192.290 GiB; D: 480.387 GiB. Earlier automatic
+cleanup rejection remains in force; no retry, 0 GiB recovered on each drive.
+The installed player was not installed, restarted or modified.
+---
+
 # November 13 - Marker-save watch-cache invalidation
 
 Independent upstream4448e401 marker increment: accepted edits/redetection publish
