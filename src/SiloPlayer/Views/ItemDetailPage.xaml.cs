@@ -3605,7 +3605,7 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
-        if ((_watchDetail?.UserData ?? item.UserData) is { PositionSeconds: > 0 })
+        if ((_watchDetail?.UserData != null ? _watchDetail.UserData.PositionSeconds : item.UserData?.PositionSeconds) is > 0)
         {
             var restart = new MenuFlyoutItem
             {

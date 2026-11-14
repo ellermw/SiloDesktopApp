@@ -733,7 +733,7 @@ public sealed class ItemDetailCurrentParityTests
         // One file per part hides the version dropdown and bypasses the resume
         // dialog. More must still offer restart for Played=true and position>0,
         // preferring watch history over stale catalog data, just like Resume.
-        Assert.Contains("if ((_watchDetail?.UserData ?? item.UserData) is { PositionSeconds: > 0 })", more);
+        Assert.Contains("if ((_watchDetail?.UserData != null ? _watchDetail.UserData.PositionSeconds : item.UserData?.PositionSeconds) is > 0)", more);
         Assert.Contains("Text = \"Play from Beginning\"", more);
         Assert.Contains("restart.Click += (_, _) => PlayFromStart_Click(restart, new RoutedEventArgs());", more);
         Assert.Contains("MoreFlyout.Items.Add(restart);", more);
