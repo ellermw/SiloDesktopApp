@@ -45,7 +45,9 @@ internal static partial class PlaybackHudCompletionNativeFixture
         Check(path != null && Variation(await File.ReadAllBytesAsync(path)) > 180, "Unhidden native still did not recover the original cached artwork.");
 
         wire.HoldStill = true;
-        service.SetNextEpisodeHint(service.ContentId!, "held-next", "Held", "Show", "https://hud-completion.fixture.invalid/held.png",
+        // A fresh URL per run: once a run's released download reached the fixture's image cache,
+        // a rerun in the same result directory read it from disk and never entered the held request.
+        service.SetNextEpisodeHint(service.ContentId!, "held-next", "Held", "Show", $"https://hud-completion.fixture.invalid/held-{Guid.NewGuid():N}.png",
             null, seasonNumber: 1, episodeNumber: 3, played: false, posterIsEpisodeStill: true);
         Call(service, "PublishCreditsEpisodeDetail", false);
         var held = (Task)Call(service, "LoadCreditsStillAsync", (string)Field(service, "_creditsStillKey")!)!;

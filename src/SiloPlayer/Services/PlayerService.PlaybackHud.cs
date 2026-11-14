@@ -104,6 +104,11 @@ public partial class PlayerService
     /// <summary>Owner, backdrop URL and thumbhash for the shell's plan-read cover.</summary>
     public event Action<PlaybackLoadingBackdrop>? LoadingBackdropChanged;
 
+    // One cached file serves the loading cover and the ended screen's finishing
+    // slot: the picture fetched when playback began needs no request at its end.
+    internal const string WatchBackdropImageType = "backdrop";
+    internal static string WatchBackdropCacheId(string contentId) => $"loading_{contentId}";
+
     private sealed class LoadingCoverOwner(string key, string contentId, CancellationTokenSource cts)
     {
         public string Key { get; } = key;
@@ -164,7 +169,7 @@ public partial class PlayerService
             if (url == null) return;
             var http = App.Services.GetRequiredService<HttpClient>();
             var path = await App.Services.GetRequiredService<ImageService>()
-                .GetImageDiskPathAsync($"loading_{owner.ContentId}", "backdrop", url, http, token).ConfigureAwait(false);
+                .GetImageDiskPathAsync(WatchBackdropCacheId(owner.ContentId), WatchBackdropImageType, url, http, token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(path)) return;
             token.ThrowIfCancellationRequested();
             var file = await StorageFile.GetFileFromPathAsync(path);
