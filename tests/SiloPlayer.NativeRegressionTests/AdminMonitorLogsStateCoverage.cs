@@ -225,8 +225,14 @@ internal static partial class AdminMonitorLogsNativeFixture
                         }
                         if (spec.Exercise == "download-error")
                         {
-                            reference.ApplyCapture(spec.Image); using var action = controller.CaptureAction(); using var output = new MemoryStream(); Require(!await controller.DownloadAsync(action, controller.State.Detail!, output), "error/malformed bundle rejected");
-                            Require(!controller.State.Downloading && controller.State.ActionError != null, "download failure clears busy and exposes feedback"); await Feedback(controller.State.ActionError!);
+                            using var action = controller.CaptureAction();
+                            await controller.SetUploadsEnabledAsync(action, !controller.State.UploadsEnabled);
+                            Require(controller.State.Notice != null, "upload toggle publishes success before download"); await Feedback(controller.State.Notice!);
+                            reference.ApplyCapture(spec.Image); using var output = new MemoryStream(); Require(!await controller.DownloadAsync(action, controller.State.Detail!, output), "error/malformed bundle rejected");
+                            Require(!controller.State.Downloading && controller.State.ActionError != null, "download failure clears busy and exposes feedback"); await Feedback(controller.State.ActionError!); await Snapshot("-download-error");
+                            var feedback = Find<ContentControl>(frame, "LogsActionFeedback"); await ExpireFeedback(feedback);
+                            Invoke(Find<Button>(frame, "LogsDetailClose")); await Wait(() => !SheetVisible(), "sheet closes after download failure");
+                            Require(feedback.Visibility == Visibility.Collapsed, "closing sheet does not replay earlier upload success");
                         }
                         if (spec.Exercise == "delete")
                         {
@@ -283,6 +289,16 @@ internal static partial class AdminMonitorLogsNativeFixture
                         controller.Set("opslog.retention_days", spec.Exercise == "logging-invalid" ? "-1" : "14");
                         if (spec.Exercise != "logging-invalid") reference.ApplyCapture(spec.Image);
                         Invoke(Find<Button>(page, "LoggingSave")); await Wait(() => controller.State.Error != null && !controller.State.Saving, "failed save preserves draft and exposes error"); Require(controller.State.DirtyKeys.Count > 0, "failed save remains dirty"); await Feedback(controller.State.Error!);
+                        if (spec.Exercise is "logging-invalid" or "logging-save-error")
+                        {
+                            await ExpireFeedback(Find<ContentControl>(frame, "LogsActionFeedback"));
+                            var error = controller.State.Error;
+                            var alerts = (StackPanel)typeof(AdminLoggingSettingsPage).GetField("_alerts", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+                            bool PersistentError() => alerts.Visibility == Visibility.Visible && All(alerts).OfType<TextBlock>().Any(text => text.Text == error);
+                            Require(PersistentError(), "save error remains visible after toast expires");
+                            var previous = controller.State; Invoke(Find<Button>(page, "LoggingSave"));
+                            await Wait(() => !ReferenceEquals(previous, controller.State) && !controller.State.Saving && controller.State.Error == error && PersistentError(), "identical Save failure retains persistent feedback");
+                        }
                         if (spec.Exercise == "logging-conflict")
                         {
                             Require(!controller.State.Conflict, "generic 409 retains draft without a stale-validator classification"); await Snapshot("-error-409");

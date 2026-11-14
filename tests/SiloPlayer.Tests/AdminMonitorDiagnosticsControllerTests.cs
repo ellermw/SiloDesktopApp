@@ -65,6 +65,40 @@ public sealed class AdminMonitorDiagnosticsControllerTests
         Assert.True(controller.State.CanToggle);
     }
 
+    [Theory]
+    [InlineData(404)]
+    [InlineData(409)]
+    [InlineData(503)]
+    public async Task FailedDownloadCannotRestoreAnEarlierUploadsNotice(int status)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (request, _) => Task.FromResult(request.Method == HttpMethod.Put
+            ? AdminMonitorKit.Json("{\"value\":\"false\"}") : Reply(request.RequestUri!.AbsolutePath));
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        using var action = controller.CaptureAction();
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.NotNull(controller.State.Notice);
+        await controller.SelectAsync("1");
+        var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        kit.Http.Respond = (request, _) => request.RequestUri!.AbsolutePath.EndsWith("/download")
+            ? pending.Task : Task.FromResult(Reply(request.RequestUri.AbsolutePath));
+        using var destination = new MemoryStream();
+        var download = controller.DownloadAsync(action, new() { Id = "1", State = "ready" }, destination);
+        Assert.True(controller.State.Downloading);
+        Assert.Null(controller.State.Notice);
+        pending.SetResult(AdminMonitorKit.Json("{}", (HttpStatusCode)status));
+        Assert.False(await download);
+        Assert.NotNull(controller.State.ActionError);
+        Assert.Null(controller.State.Notice);
+        controller.CloseDetail();
+        Assert.Null(controller.State.ActionError);
+        Assert.Null(controller.State.Notice);
+        await controller.SelectAsync("1");
+        Assert.Null(controller.State.Notice);
+    }
+
     [Fact]
     public async Task ManualRetryAfterStaleCursorStartsAtTheFirstPageWithoutReplayingActions()
     {

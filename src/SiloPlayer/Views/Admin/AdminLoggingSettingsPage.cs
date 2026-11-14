@@ -185,7 +185,7 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         _fields.Visibility = state.Loaded ? Visibility.Visible : Visibility.Collapsed;
         if (state.Owner == null) { _feedback.Clear(); _dialog?.Hide(); _saveBar.Visibility = Visibility.Collapsed; _saveScrim.Visibility = Visibility.Collapsed; _spacer.Visibility = Visibility.Collapsed; SetHealth(new(false, false, false, 0, false)); return; }
         _loading.Visibility = state.Loading ? Visibility.Visible : Visibility.Collapsed; _header.Visibility = state.Loading ? Visibility.Collapsed : Visibility.Visible;
-        if (state.Error != null && (!state.Loaded || state.Conflict)) _alerts.Children.Add(Banner(state.Error, true));
+        if (state.Error != null) _alerts.Children.Add(Banner(state.Error, true));
         _feedback.Present(state.Loaded ? state.Error : null, state.Notice);
         if (!state.Loading && (!state.Loaded || state.Conflict)) { var retry = Button(state.Conflict ? "Reload server changes" : "Retry", "LoggingReload"); retry.Click += async (_, _) => await ReconcileAsync(); _alerts.Children.Add(retry); }
         // Restart prompting belongs to the shared shell banner; fields retain their restart annotations.
