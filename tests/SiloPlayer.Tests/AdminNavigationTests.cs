@@ -66,6 +66,33 @@ public sealed class AdminNavigationTests
         Assert.Empty(AdminNavigation.Search("users"));
     }
 
+    [Theory]
+    [InlineData("back")]
+    [InlineData("logo")]
+    public void ReturnToAppConfirmsDirtyLoggingBeforeNavigationCanShowAnError(string button)
+    {
+        var sourceRoot = Path.Combine(TestRepository.Root, "src", "SiloPlayer");
+        var sidebar = File.ReadAllText(Path.Combine(sourceRoot, "Views", "Admin", "AdminShellPage.cs"));
+        Assert.Contains($"{button}.Click += (_, _) => App.MainWindowInstance?.NavigateToHome();", sidebar);
+
+        var window = File.ReadAllText(Path.Combine(sourceRoot, "MainWindow.xaml.cs"));
+        var start = window.IndexOf("public async void NavigateToHome()", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = window.IndexOf("public bool TryEnterAuthenticatedPage", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var home = window[start..end];
+        Assert.Contains("if (_adminNavigationPending) return;", home);
+        Assert.Contains("shell.RequiresLeaveConfirmation && _adminAuthority?.IsAvailable == true", home);
+        var confirmation = home.IndexOf("if (!await shell.CanLeaveAsync() || _windowClosed || !ReferenceEquals(ContentFrame.Content, shell)) return;", StringComparison.Ordinal);
+        var approved = home.IndexOf("_adminNavigationApproved = true;", StringComparison.Ordinal);
+        var navigate = home.IndexOf("_navigationService.Navigate<HomePage>()", StringComparison.Ordinal);
+        var error = home.IndexOf("ShowPlaybackError(", StringComparison.Ordinal);
+        Assert.True(confirmation >= 0 && approved > confirmation && navigate > approved && error > navigate,
+            "Cancel must return before Frame navigation and ErrorState; Discard must bypass the Frame guard's queued dirty health.");
+        Assert.Contains("NavView.SelectedItem = HomeNavItem;", home);
+        Assert.Contains("finally { _adminNavigationApproved = false; _adminNavigationPending = false; }", home);
+    }
+
     [Fact]
     public void IcuSubsetFormatsPluralsSelectsAndPound()
     {

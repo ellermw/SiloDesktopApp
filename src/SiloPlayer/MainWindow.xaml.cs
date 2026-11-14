@@ -3169,16 +3169,29 @@ public sealed partial class MainWindow : Window
     public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null, Func<bool>? isCurrent = null, bool activate = true, Func<ContentDialog, Task>? showDialog = null)
         => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot, isCurrent, activate, showDialog);
 
-    public void NavigateToHome()
+    public async void NavigateToHome()
     {
-        if (!_navigationService.Navigate<HomePage>())
+        if (_adminNavigationPending) return;
+        try
         {
-            var failure = new InvalidOperationException("The navigation frame rejected the Home page.");
-            LogNavigationFailure("navigate_home", failure);
-            ShowPlaybackError("Page failed to open", "Silo could not open Home. The current page is still available.");
-            return;
+            if (ContentFrame.Content is Views.Admin.AdminShellPage shell && shell.RequiresLeaveConfirmation && _adminAuthority?.IsAvailable == true)
+            {
+                // Confirm before Frame.Navigate: an intentional cancellation is not a page failure.
+                _adminNavigationPending = true;
+                if (!await shell.CanLeaveAsync() || _windowClosed || !ReferenceEquals(ContentFrame.Content, shell)) return;
+                // Discard's health render may still be queued when the Frame guard runs.
+                _adminNavigationApproved = true;
+            }
+            if (!_navigationService.Navigate<HomePage>())
+            {
+                var failure = new InvalidOperationException("The navigation frame rejected the Home page.");
+                LogNavigationFailure("navigate_home", failure);
+                ShowPlaybackError("Page failed to open", "Silo could not open Home. The current page is still available.");
+                return;
+            }
+            NavView.SelectedItem = HomeNavItem;
         }
-        NavView.SelectedItem = HomeNavItem;
+        finally { _adminNavigationApproved = false; _adminNavigationPending = false; }
     }
 
     public bool TryEnterAuthenticatedPage(Type pageType, object? parameter, out Exception? failure)
