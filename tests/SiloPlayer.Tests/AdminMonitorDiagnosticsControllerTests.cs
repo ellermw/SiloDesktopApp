@@ -210,6 +210,58 @@ public sealed class AdminMonitorDiagnosticsControllerTests
         Assert.Equal("\"one\"", controller.State.SettingsRevision);
     }
 
+    [Theory]
+    [InlineData("/capabilities", false)]
+    [InlineData("/capabilities", true)]
+    [InlineData("/effective", false)]
+    [InlineData("/effective", true)]
+    public async Task SuccessfulToggleWithFailedStatusRefreshOffersRetryWithoutReplayingWrite(string failedPath, bool timeout)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var saved = false;
+        var failRefresh = true;
+        var writes = 0;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Put)
+            {
+                saved = true;
+                writes++;
+                return Task.FromResult(AdminMonitorKit.Json("{\"value\":\"false\"}"));
+            }
+            var path = request.RequestUri!.AbsolutePath;
+            if (saved && failRefresh && path.EndsWith(failedPath))
+                return timeout
+                    ? Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException()))
+                    : Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.InternalServerError));
+            var response = Reply(path, saved ? "disabled" : "available");
+            if (saved && path.EndsWith("/effective")) response.Headers.ETag = new("\"two\"");
+            return Task.FromResult(response);
+        };
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        using var action = controller.CaptureAction();
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.True(saved);
+        Assert.False(controller.State.UploadsEnabled);
+        Assert.False(controller.State.ToggleBusy);
+        Assert.False(controller.State.StatusLoading);
+        Assert.False(controller.State.CanToggle);
+        Assert.Null(controller.State.ActionError);
+        Assert.NotNull(controller.State.Notice);
+        Assert.NotNull(controller.State.StatusError);
+
+        failRefresh = false;
+        await controller.RefreshAsync();
+        Assert.Null(controller.State.StatusError);
+        Assert.Null(controller.State.ActionError);
+        Assert.False(controller.State.UploadsEnabled);
+        Assert.Equal("\"two\"", controller.State.SettingsRevision);
+        Assert.True(controller.State.CanToggle);
+        Assert.Equal(1, writes);
+    }
+
     [Fact]
     public async Task FilterApplyClosesDetailAndStartsAtFreshCursor()
     {

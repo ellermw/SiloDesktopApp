@@ -228,14 +228,13 @@ public sealed class DiagnosticsController : IDisposable
         try
         {
             await _api.DiagnosticsSetUploadsEnabledAsync(action, enabled, etag).ConfigureAwait(false);
-            Update(action, () => _state = _state with { SettingsRevision = null });
-            var capabilities = await _api.DiagnosticsGetCapabilitiesAsync(action).ConfigureAwait(false);
-            var settings = await _api.LoggingGetSettingsAsync(action).ConfigureAwait(false);
-            Update(action, () => { _statusReadAt = Stopwatch.GetTimestamp(); _state = _state with { Capabilities = capabilities, UploadsEnabled = capabilities.Status != "disabled", SettingsRevision = settings.ETag, ToggleBusy = false, Notice = enabled ? LogsText.T("logs.native.diagnostics.uploadsEnabled") : LogsText.T("logs.native.diagnostics.uploadsDisabled") }; });
         }
-        catch (OperationCanceledException) when (!action.IsCurrent) { }
-        catch (LoggingSettingsConflictException) { Update(action, () => _state = _state with { ToggleBusy = false, SettingsRevision = null, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.toggleConflict") }); }
-        catch (Exception) { Update(action, () => _state = _state with { ToggleBusy = false, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.toggleFailed") }); }
+        catch (OperationCanceledException) when (!action.IsCurrent) { return; }
+        catch (LoggingSettingsConflictException) { Update(action, () => _state = _state with { ToggleBusy = false, SettingsRevision = null, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.toggleConflict") }); return; }
+        catch (Exception) { Update(action, () => _state = _state with { ToggleBusy = false, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.toggleFailed") }); return; }
+
+        Update(action, () => _state = _state with { SettingsRevision = null, UploadsEnabled = enabled, ToggleBusy = false, Notice = enabled ? LogsText.T("logs.native.diagnostics.uploadsEnabled") : LogsText.T("logs.native.diagnostics.uploadsDisabled") });
+        await LoadStatusAsync(action).ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(MonitorAuthorityLease action, string id)
