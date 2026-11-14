@@ -165,6 +165,56 @@ public sealed class LibraryBackgroundRefreshTests
         }
     }
 
+    [Theory]
+    [InlineData("completed")]
+    [InlineData("failed")]
+    [InlineData("churned")]
+    [InlineData("interrupted")]
+    public async Task ContentRefreshRestartsRequestedFilterFacets(string outcome)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await wire.Idle();
+            wire.HoldFilters = true;
+            var filters = model.EnsureFiltersLoadedAsync();
+            try
+            {
+                await wire.FiltersStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.DoesNotContain("Drama", model.Genres);
+                wire.HoldFilters = false;
+                if (outcome == "failed") wire.FailWindowAt = 560;
+                if (outcome == "churned") { wire.ChangeSnapshotAt = 560; wire.SnapshotChangesRemaining = 20; }
+                if (outcome == "interrupted") { wire.HoldWindowAt = 500; wire.LetterPosition = 700; }
+
+                var refresh = model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+                if (outcome == "interrupted")
+                {
+                    await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                    await model.JumpToLetterCommand.ExecuteAsync("M").WaitAsync(TimeSpan.FromSeconds(3));
+                    wire.ReleaseChunk.TrySetResult();
+                }
+                var result = await refresh.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Equal(outcome switch
+                {
+                    "completed" => LibraryViewModel.CatalogRefreshResult.Completed,
+                    "failed" => LibraryViewModel.CatalogRefreshResult.Failed,
+                    _ => LibraryViewModel.CatalogRefreshResult.Deferred,
+                }, result);
+                await filters.WaitAsync(TimeSpan.FromSeconds(3));
+                await wire.Idle();
+                Assert.Equal(2, wire.FilterReads);
+                Assert.Contains("Drama", model.Genres);
+                Assert.Contains("Studio", model.Studios);
+            }
+            finally
+            {
+                wire.ReleaseFilters.TrySetResult();
+                wire.ReleaseChunk.TrySetResult();
+            }
+        }
+    }
+
     [Fact]
     public async Task InterruptedRetainedRefreshRestartsCountEvenWhenLetterReadFails()
     {
@@ -1112,8 +1162,10 @@ public sealed class LibraryBackgroundRefreshTests
         internal readonly List<Dictionary<string, string>> Requests = [];
         private readonly Dictionary<string, List<(string Id, string Title)>> _snapshots = [];
         private int _inFlight;
-        internal int LetterReads, CountReads, LetterPosition = 500;
-        internal bool Fail, FailLetters, OmitWindowTotals, ZeroWindowTotal, HoldCount, HoldLetters, TimeoutWindow, HeldWindowCancelled;
+        internal int LetterReads, CountReads, FilterReads, LetterPosition = 500;
+        internal bool Fail, FailLetters, OmitWindowTotals, ZeroWindowTotal, HoldCount, HoldLetters, HoldFilters, TimeoutWindow, HeldWindowCancelled;
+        internal readonly TaskCompletionSource FiltersStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource ReleaseFilters = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource LettersStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseLetters = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource CountStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1142,6 +1194,16 @@ public sealed class LibraryBackgroundRefreshTests
                 await Task.Yield();
                 var path = request.RequestUri!.AbsolutePath;
                 if (path.EndsWith("/search/capabilities")) return Reply(new { letter_index = true });
+                if (path.EndsWith("/catalog/filters"))
+                {
+                    Interlocked.Increment(ref FilterReads);
+                    if (HoldFilters)
+                    {
+                        FiltersStarted.TrySetResult();
+                        await ReleaseFilters.Task.WaitAsync(ct);
+                    }
+                    return Reply(new { genres = new[] { "Drama" }, studios = new[] { "Studio" } });
+                }
                 if (path.EndsWith("/catalog/letters"))
                 {
                     Interlocked.Increment(ref LetterReads);

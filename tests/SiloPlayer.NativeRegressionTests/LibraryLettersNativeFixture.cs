@@ -43,7 +43,7 @@ internal static class LibraryLettersNativeFixture
         try
         {
             var runs = verifyScanRefresh
-                ? new[] { ("movie", 1280, 1000, "land"), ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "access"), ("movie", 1280, 1000, "visit"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "refresh-error"), ("movie", 1280, 1000, "extent") }
+                ? new[] { ("movie", 1280, 1000, "land"), ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "access"), ("movie", 1280, 1000, "visit"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "refresh-error"), ("movie", 1280, 1000, "refresh-retry-error"), ("movie", 1280, 1000, "interrupt"), ("movie", 1280, 1000, "extent") }
                 : verifySecondBoundary
                 ? new[] { ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "query"), ("movie", 1280, 1000, "manual"), ("movie", 1280, 1000, "visit") }
                 : verifyCursorRecovery ? new[] { ("movie", 1280, 1000, "success"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "manual") }
@@ -611,7 +611,8 @@ internal static class LibraryLettersNativeFixture
             });
         }
         page.ViewModel.LetterJumpRequested += OnTarget;
-        var refresh = wire.HoldNextWindow(fail: scenario == "refresh-error");
+        var refreshFailure = scenario is "refresh-error" or "refresh-retry-error";
+        var refresh = wire.HoldNextWindow(fail: refreshFailure);
         Wire.WindowReadGate? trailing = null;
         var freshReads = 0;
         try
@@ -639,6 +640,29 @@ internal static class LibraryLettersNativeFixture
                 freshReads = wire.FreshWindowSeeks.Count;
                 trailing = wire.HoldNextWindow(freshOnly: true);
             }
+            else if (refreshFailure)
+            {
+                freshReads = wire.FreshWindowSeeks.Count;
+                trailing = wire.HoldNextWindow(fail: scenario == "refresh-retry-error", freshOnly: true);
+            }
+            else if (scenario == "interrupt")
+            {
+                var jump = wire.HoldNextWindow();
+                try
+                {
+                    Invoke(letter("Z"));
+                    await jump.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    Check(refresh.Cancelled, "letter choice did not retire the running refresh");
+                    freshReads = wire.FreshWindowSeeks.Count;
+                    trailing = wire.HoldNextWindow(freshOnly: true);
+                    refresh.Release.TrySetResult();
+                    await Until(() => (long)Field("_catalogContentOwner")! == 0 && (bool)Field("_catalogContentDirty")!);
+                    Call("CatalogContentTimer_Tick", page, new object());
+                    Check(wire.FreshWindowSeeks.Count == freshReads && !jump.Cancelled,
+                        "retry interrupted the letter seek instead of waiting for its landing");
+                }
+                finally { jump.Release.TrySetResult(); }
+            }
         }
         finally
         {
@@ -651,12 +675,12 @@ internal static class LibraryLettersNativeFixture
             try
             {
                 await trailing.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                Check(wire.FreshWindowSeeks.Count == freshReads + 1, "storm did not coalesce into exactly one trailing snapshot");
+                Check(wire.FreshWindowSeeks.Count == freshReads + 1, "batch did not produce exactly one trailing snapshot");
             }
             finally { trailing.Release.TrySetResult(); }
         }
         await Until(() => (long)Field("_catalogContentOwner")! == 0);
-        if (scenario == "refresh-error")
+        if (refreshFailure)
             Check(page.ViewModel.ErrorMessage is null && page.CanPreserveOnReconnect &&
                 page.ViewModel.GetRenderableWindowItem(target)?.ContentId == "item-" + target && scroll.VerticalOffset > 0,
                 "failed content refresh lost its healthy viewport or reconnect preservation");

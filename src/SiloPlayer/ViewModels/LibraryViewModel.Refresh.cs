@@ -354,6 +354,8 @@ public partial class LibraryViewModel
         _exactCountQueryVersion = _queryVersion;
         _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
         RefreshLetterIndexInPlace();
+        if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
+            _ = EnsureFiltersLoadedAsync();
         WindowLoaded?.Invoke();
         return CatalogRefreshResult.Completed;
     }
@@ -470,6 +472,8 @@ public partial class LibraryViewModel
         if (LetterIndex is null && _letterIndexKey is null && !LetterIndexFailed && SelectedSort == "title")
             _ = EnsureLetterIndexAsync();
         EnsureExactCountRequested();
+        if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
+            _ = EnsureFiltersLoadedAsync();
     }
 
     private static bool SameLetterIndex(CatalogLettersResponse? current, CatalogLettersResponse? next) =>

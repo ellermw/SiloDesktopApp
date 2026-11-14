@@ -11,6 +11,7 @@ public sealed partial class LibraryPage
     // a fixed batch window and one dirty bit bound both storms and trailing work.
     private DispatcherTimer? _catalogContentTimer;
     private bool _catalogContentDirty, _catalogContentBatchReady;
+    private bool _catalogContentRetryUsed;
     private ApiRequestContext? _catalogContentContext;
     private int? _catalogContentLibrary;
     private long _catalogContentEpoch, _catalogContentOwner;
@@ -21,6 +22,7 @@ public sealed partial class LibraryPage
             libraryId is { } scoped && scoped != library.Id) return;
         _catalogContentContext = context;
         _catalogContentLibrary = library.Id;
+        _catalogContentRetryUsed = false;
         _catalogContentDirty = true;
         WakeCatalogContentRefresh();
     }
@@ -88,7 +90,16 @@ public sealed partial class LibraryPage
                 context != _stateSettings.CaptureContext() || library != ViewModel.Library?.Id) return;
             LocalLog.AppendLine("catalog_queries.txt", $"library_content_refresh result={result} first_row={_currentFirstRow}");
             QueueRenderVirtualGrid(force: true);
-            // Failed/churned reads do not dirty themselves or schedule a retry.
+            // Do not consume the final scan event just because a seek canceled
+            // its read or the server failed/churned. Allow one delayed retry per
+            // event batch; new events already own their own trailing batch.
+            if ((result is LibraryViewModel.CatalogRefreshResult.Deferred or LibraryViewModel.CatalogRefreshResult.Failed) &&
+                !_catalogContentDirty && !_catalogContentRetryUsed)
+            {
+                _catalogContentRetryUsed = true;
+                _catalogContentDirty = true;
+                _catalogContentBatchReady = false;
+            }
         }
         catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_content_refresh"); }
         finally
@@ -108,7 +119,11 @@ public sealed partial class LibraryPage
     {
         _catalogContentTimer?.Stop();
         if (retainDirty && _catalogContentOwner != 0) _catalogContentDirty = true;
-        if (!retainDirty) _catalogContentDirty = false;
+        if (!retainDirty)
+        {
+            _catalogContentDirty = false;
+            _catalogContentRetryUsed = false;
+        }
         _catalogContentBatchReady = false;
         ++_catalogContentEpoch;
         _catalogContentOwner = 0;
