@@ -234,7 +234,7 @@ public sealed partial class AdminDiagnosticsPage : Page
             action.ThrowIfRetired();
         }
         catch (OperationCanceledException) { }
-        catch (Exception) { if (action != null && ReferenceEquals(controller, _controller) && controller.IsActionCurrent(action)) _feedback.Present(D("detail.downloadFailed"), null); }
+        catch (Exception) { if (action != null && ReferenceEquals(controller, _controller) && controller.IsActionCurrent(action)) _feedback.Show(D("detail.downloadFailed"), null); }
         finally { if (ReferenceEquals(_download, cancellation)) _download = null; cancellation?.Dispose(); action?.Dispose(); }
     }
     private static void AddMetric(LogsMetricGrid panel, string key, string value) { var metric = Metric(D("detail." + key), value.Length == 0 ? "—" : value, key is "profile" or "reportId"); panel.Add(metric); }
