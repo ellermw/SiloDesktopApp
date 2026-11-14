@@ -23,8 +23,8 @@ namespace SiloPlayer.Views.Admin;
 /// </summary>
 public sealed partial class AdminActivityPage : Page
 {
-    /// <summary>977px of column minimums plus 4rem of gaps and padding.</summary>
-    public const double WideTableMinWidth = 977 + 64;
+    /// <summary>977px of column minimums plus 4rem of gaps/padding and the two table borders.</summary>
+    public const double WideTableMinWidth = 977 + 64 + 2;
     private static readonly TimeSpan RefreshSpinnerMinimum = TimeSpan.FromSeconds(1);
 
     private readonly ServerActivityStore? _store;
@@ -55,6 +55,8 @@ public sealed partial class AdminActivityPage : Page
     private bool _ipOpen;
     private bool _wasHidden;
     private double _tableWidth;
+    private int _viewportBand = -1;
+    private double ActivityViewportWidth => XamlRoot?.Size.Width ?? ActualWidth;
 
     public AdminActivityPage()
     {
@@ -86,6 +88,15 @@ public sealed partial class AdminActivityPage : Page
             var wasWide = _tableWidth >= WideTableMinWidth;
             _tableWidth = e.NewSize.Width;
             if (wasWide != _tableWidth >= WideTableMinWidth) RenderTable();
+        };
+        SizeChanged += (_, _) =>
+        {
+            var width = ActivityViewportWidth;
+            var band = width >= 1024 ? 2 : width >= 640 ? 1 : 0;
+            _page.Spacing = width >= 1024 ? 24 : 20;
+            if (_viewportBand == band) return;
+            _viewportBand = band;
+            if (_active) { RenderHeader(); RenderTable(); }
         };
         BuildFilterControls();
         Loaded += (_, _) => { if (_navigated) Activate(); };
@@ -269,24 +280,9 @@ public sealed partial class AdminActivityPage : Page
         _header.Children.Clear();
         if (!_snapshot.SessionsLoaded) return;
         var sessions = _snapshot.Sessions;
-        var grid = new Grid { ColumnSpacing = 24 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var titles = new StackPanel { Spacing = 8 };
-        titles.Children.Add(new TextBlock
-        {
-            Text = AdminText.T("web.admin.activity.page.title"), FontSize = ActualWidth >= 640 || ActualWidth == 0 ? 32 : 28,
-            FontWeight = FontWeights.Bold, CharacterSpacing = -35, Foreground = A.Solid(A.Foreground),
-        });
-        if (_snapshot.SessionsError == null)
-            titles.Children.Add(new TextBlock
-            {
-                Text = AdminActivityListState.Subtitle(sessions), FontSize = 14, Foreground = A.Solid(A.Muted), TextWrapping = TextWrapping.Wrap, MaxWidth = 640,
-            });
-        grid.Children.Add(titles);
-
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
+        var actions = new LogsWrapPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
         if (sessions.Count > 0 && _snapshot.SessionsError == null) actions.Children.Add(A.LiveBadge(AdminActivityListState.LiveCount(sessions.Count), withRadioIcon: true));
+
         var refreshContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
         refreshContent.Children.Add(_refreshing ? A.Spinner(14, A.Foreground) : A.Icon("refresh-cw", 14, A.Foreground));
         refreshContent.Children.Add(A.Text(AdminText.T(_refreshing ? "web.admin.activity.page.refreshing" : "web.admin.activity.page.refresh"), 12, A.Foreground, FontWeights.Medium));
@@ -310,9 +306,7 @@ public sealed partial class AdminActivityPage : Page
         state.HorizontalAlignment = HorizontalAlignment.Right;
         status.Children.Add(state);
         actions.Children.Add(status);
-        Grid.SetColumn(actions, 1);
-        grid.Children.Add(actions);
-        _header.Children.Add(grid);
+        _header.Children.Add(new LogsPageHeader(AdminText.T("web.admin.activity.page.title"), _snapshot.SessionsError == null ? AdminActivityListState.Subtitle(sessions) : "", actions) { Margin = new Thickness(0) });
         _header.Margin = new Thickness(0, 0, 0, 12);
     }
 
@@ -322,8 +316,9 @@ public sealed partial class AdminActivityPage : Page
     {
         _ipLookupHost.Children.Clear();
         if (!_snapshot.SessionsLoaded || (_snapshot.SessionsError != null && _snapshot.Sessions.Count == 0)) return;
-        var summary = A.Plain(A.Text(AdminText.T("web.admin.activity.ipLookup.heading"), 14, A.Foreground, FontWeights.Medium), null,
-            new Thickness(16, 12, 16, 12));
+        var summaryLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { A.Icon(_ipOpen ? "chevron-down" : "chevron-right", 12, A.Foreground), A.Text(AdminText.T("web.admin.activity.ipLookup.heading"), 14, A.Foreground, FontWeights.Medium) } };
+        var summary = A.Plain(summaryLabel, null, new Thickness(16, 12, 16, 12));
+
         summary.HorizontalAlignment = HorizontalAlignment.Stretch;
         summary.HorizontalContentAlignment = HorizontalAlignment.Left;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(summary, _ipOpen ? "expanded" : "collapsed");
