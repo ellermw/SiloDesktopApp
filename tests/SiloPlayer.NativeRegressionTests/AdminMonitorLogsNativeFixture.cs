@@ -60,13 +60,22 @@ internal static class AdminMonitorLogsNativeFixture
             Check(ReferenceEquals(((Grid)logging.Content).Children.OfType<ScrollViewer>().Single().Content, logging.MonitorScrollContent), "Logging restart insertion seam is in the main scroll body");
             await CaptureSizes(window, frame, "admin-logging-clean"); var days = Find<TextBox>(logging, "LoggingField_opslog.retention_days"); days.Text = "14"; await Task.Delay(100); Check(logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days"), "retention control registers dirty state"); Invoke(Find<Button>(logging, "LoggingAdvanced_server")); await Task.Delay(100); Find<TextBox>(logging, "LoggingField_server.log_quiet").Text = "metadata, scanner"; await Task.Delay(100); Check(logging.Controller.State.ServerAdvancedOpen, "dirty advanced fields remain discoverable"); await Capture(frame, "admin-logging-dirty.png");
             Invoke(Find<Button>(logging, "LoggingSave")); await Until(() => !logging.Controller.State.Saving && logging.Controller.State.DirtyKeys.Count == 0); Check(server.BatchWrites == 1, "Logging saves all dirty values in one batch");
-            days.Text = "21"; await Task.Delay(100); var leave = logging.CanLeaveAsync(); await Task.Delay(100); auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" }); Check(!await leave, "retired authority cannot accept unsaved confirmation"); await Task.Delay(100); Check(logging.Controller.State.Values.Count == 0, "admin loss clears every sensitive draft");
+            await Until(() => days.Text == "14" && logging.Controller!.State.DirtyKeys.Count == 0);
+            days.Text = "21"; await Until(() => logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days") && logging.Controller.State.Values["opslog.retention_days"] == "21"); var leave = logging.CanLeaveAsync(); await Task.Delay(100); auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" }); Check(!await leave, "retired authority cannot accept unsaved confirmation"); await Task.Delay(100); Check(logging.Controller.State.Values.Count == 0, "admin loss clears every sensitive draft");
             await Capture(frame, "admin-logging-retired.png");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
             foreach (var route in new[] { AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings })
             {
                 frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(route));
                 await Task.Delay(400);
+                if (route == AdminRoute.LoggingSettings)
+                {
+                    var clean = All(frame).OfType<AdminLoggingSettingsPage>().Single();
+                    Check(clean.Controller!.State.DirtyKeys.Count == 0, "fresh Logging values do not become unsaved edits");
+                    if (clean.Controller.State.ServerAdvancedOpen) Invoke(Find<Button>(clean, "LoggingAdvanced_server"));
+                    if (clean.Controller.State.RetentionAdvancedOpen) Invoke(Find<Button>(clean, "LoggingAdvanced_retention"));
+                    await Until(() => !clean.Controller.State.ServerAdvancedOpen && !clean.Controller.State.RetentionAdvancedOpen);
+                }
                 await CaptureSizes(window, frame, "admin-shell-" + route);
             }
             var shell = (AdminShellPage)frame.Content;

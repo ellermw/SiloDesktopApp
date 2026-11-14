@@ -158,7 +158,7 @@ internal static class AdminMonitorShellNativeFixture
         // One running task + one queued preparation are active, so both show; force idle by role-free data instead.
         Check(admin.IsTriggerShown, "admin shell indicator is always shown for an acting admin");
         var trigger = (Button)((Grid)admin.Content).Children[0];
-        Check(trigger.Background is SolidColorBrush { Color.A: 0 }, "activity trigger keeps a transparent normal background");
+        Check(trigger.Background is Microsoft.UI.Xaml.Media.SolidColorBrush { Color.A: 0 }, "activity trigger keeps a transparent normal background");
         Check(main.CurrentView.TotalActive == 2, $"total = sessions + running hidden-inclusive tasks + scans + active preparations ({main.CurrentView.TotalActive})");
         Check(AutomationProperties.GetName((UIElement)((Grid)main.Content).Children[0]) == "Server activity: 2 active", "accessible name carries the count without a tooltip");
 

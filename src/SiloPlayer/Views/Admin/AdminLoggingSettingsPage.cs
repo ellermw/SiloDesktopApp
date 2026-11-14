@@ -79,7 +79,7 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
     private FrameworkElement Field(string key, string label, string? description = null, bool numeric = false, string? unit = null, string? hint = null, IEnumerable<(string Value, string Label)>? options = null)
     {
         var row = new Grid { Padding = new(0, 14, 0, 14), ColumnSpacing = 24, RowSpacing = 12 }; row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var labels = Stack(5); var title = new LogsWrapPanel { Spacing = 6 }; var dot = new Border { Width = 6, Height = 6, Background = Violet, CornerRadius = new(3), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center }; _dots[key] = dot; title.Children.Add(dot); title.Children.Add(Text(label));
+        var labels = Stack(5); var title = new LogsWrapPanel { Spacing = 6 }; var dot = new Border { Width = 6, Height = 6, Background = Violet, CornerRadius = new(3), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center }; _dots[key] = dot; title.Children.Add(dot); var fieldLabel = Text(label); fieldLabel.FontWeight = FontWeights.SemiBold; title.Children.Add(fieldLabel);
         var restart = Panel(Text(T("web.settings.restartBadge.label"), 11), 4, 4, true); ToolTipService.SetToolTip(restart, T("web.settings.restartBadge.title")); restart.Visibility = Visibility.Collapsed; _restarts[key] = restart; title.Children.Add(restart); labels.Children.Add(title); if (description != null) labels.Children.Add(Text(description, 13, true)); row.Children.Add(labels);
         Control control;
         if (options != null)
@@ -89,19 +89,21 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         else
         {
             var input = Input(hint ?? "", "LoggingField_" + key, numeric ? 160 : 240); AutomationProperties.SetName(input, label);
-            input.TextChanged += (_, _) => { if (!_syncing) Set(key, input.Text); }; control = input;
+            // TextChanging is synchronous: rendering cannot queue a later draft edit,
+            // and a user edit retires older queued model renders immediately.
+            input.TextChanging += (_, _) => { if (!_syncing) Set(key, input.Text); }; control = input;
         }
         _controls[key] = control; var trailing = new Grid { ColumnSpacing = 12 }; trailing.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); trailing.ColumnDefinitions.Add(new() { Width = new(64) }); trailing.Children.Add(control); var units = Text(unit ?? "", 13, true); Grid.SetColumn(units, 1); trailing.Children.Add(units); Grid.SetColumn(trailing, 1); row.Children.Add(trailing);
-        row.SizeChanged += (_, args) => { var stacked = args.NewSize.Width < 560; Grid.SetColumn(trailing, stacked ? 0 : 1); Grid.SetRow(trailing, stacked ? 1 : 0); Grid.SetColumnSpan(labels, stacked ? 2 : 1); trailing.HorizontalAlignment = stacked ? HorizontalAlignment.Left : HorizontalAlignment.Right; };
+        row.SizeChanged += (_, args) => { var stacked = args.NewSize.Width < 560; row.RowSpacing = stacked ? 12 : 0; Grid.SetColumn(trailing, stacked ? 0 : 1); Grid.SetRow(trailing, stacked ? 1 : 0); Grid.SetColumnSpan(labels, stacked ? 2 : 1); trailing.HorizontalAlignment = stacked ? HorizontalAlignment.Left : HorizontalAlignment.Right; };
         return new Border { Child = row, BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 0, 0, 1) };
     }
     private FrameworkElement Group(string label, string? description, string[] keys, StackPanel fields)
     {
         var section = new Grid { ColumnSpacing = 48, RowSpacing = 20, Padding = new(0, 24, 0, 0), BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 1, 0, 0) }; section.ColumnDefinitions.Add(new() { Width = new(256) }); section.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); section.RowDefinitions.Add(new() { Height = GridLength.Auto }); section.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var heading = Stack(6); var title = Text(label, 15); title.FontWeight = FontWeights.SemiBold; heading.Children.Add(title); var subtitle = Text(description ?? "", 13, true); heading.Children.Add(subtitle); _groups.Add((keys, title, subtitle, description)); section.Children.Add(heading); section.Children.Add(fields);
+        var heading = Stack(6); var title = Text(label, 15); title.FontWeight = FontWeights.SemiBold; heading.Children.Add(title); var subtitle = Text(description ?? "", 13, true); subtitle.Visibility = string.IsNullOrEmpty(description) ? Visibility.Collapsed : Visibility.Visible; heading.Children.Add(subtitle); _groups.Add((keys, title, subtitle, description)); section.Children.Add(heading); section.Children.Add(fields);
         void Arrange()
         {
-            var wide = (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 && section.ActualWidth >= 832; section.ColumnDefinitions[0].Width = wide ? new(256) : new(1, GridUnitType.Star); Grid.SetColumn(fields, wide ? 1 : 0); Grid.SetRow(fields, wide ? 0 : 1); Grid.SetColumnSpan(fields, wide ? 1 : 2); Grid.SetColumnSpan(heading, wide ? 1 : 2); fields.Margin = wide ? new(0, -14, 0, 0) : new(0); section.Padding = new(0, (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 ? 28 : 24, 0, 24);
+            var wide = (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 && section.ActualWidth >= 832; section.RowSpacing = wide ? 0 : 20; section.ColumnDefinitions[0].Width = wide ? new(256) : new(1, GridUnitType.Star); Grid.SetColumn(fields, wide ? 1 : 0); Grid.SetRow(fields, wide ? 0 : 1); Grid.SetColumnSpan(fields, wide ? 1 : 2); Grid.SetColumnSpan(heading, wide ? 1 : 2); fields.Margin = wide ? new(0, -14, 0, 0) : new(0); section.Padding = new(0, (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 ? 28 : 24, 0, 24);
         }
         section.SizeChanged += (_, _) => Arrange(); section.Loaded += (_, _) => Arrange(); return section;
     }
@@ -112,7 +114,17 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         button.Click += (_, _) => { if (section == "server") _controller?.ToggleServerAdvanced(); else _controller?.ToggleRetentionAdvanced(); }; return button;
     }
     private static Border AdvancedRail(StackPanel content) => new() { Child = content, BorderBrush = VioletLine, BorderThickness = new(2, 0, 0, 0), Margin = new(6, 0, 0, 0), Padding = new(15, 0, 0, 0) };
-    private void Set(string key, string value) { try { _controller?.Set(key, value); } catch (OperationCanceledException) { } }
+    private void Set(string key, string value)
+    {
+        var controller = _controller;
+        var state = controller?.State;
+        if (state?.Loaded != true) return;
+        // Ignore model echoes, including the displayed default for an unset value.
+        var current = state.Values.GetValueOrDefault(key, "");
+        if (key == "policy.decision_log_verbosity" && current.Length == 0) current = "digest";
+        if (current == value) return;
+        try { controller!.Set(key, value); } catch (OperationCanceledException) { }
+    }
     private static readonly LoggingDisclosurePreferences DefaultDisclosurePreferences = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "monitor-ui"));
     private void Open() { Close(); _controller = new(_api, _authority, App.Services.GetService<LoggingDisclosurePreferences>() ?? DefaultDisclosurePreferences); _controller.Changed += QueueRender; _ = _controller.OpenAsync(); }
     internal void SuspendMonitor() => Close();
@@ -130,7 +142,7 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
     }
     private void Render(LoggingPageSnapshot state)
     {
-        _alerts.Children.Clear(); _syncing = true;
+        _alerts.Children.Clear(); _alerts.Visibility = Visibility.Collapsed; _syncing = true;
         try
         {
             foreach (var (key, control) in _controls)
@@ -155,6 +167,8 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
             var dirty = group.Keys.Any(state.DirtyKeys.Contains); group.Title.Text = group.Title.Text.TrimEnd(' ', '•') + (dirty ? "  •" : "");
             group.Description.Text = group.Keys.All(state.RestartKeys.Has) ? (group.Original == null ? T("web.admin.settings.fields.restartAll") : T("web.admin.settings.fields.restartAllWithDescription", ("description", group.Original))) : group.Original ?? "";
         }
+        _alerts.Visibility = _alerts.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var group in _groups) group.Description.Visibility = string.IsNullOrEmpty(group.Description.Text) ? Visibility.Collapsed : Visibility.Visible;
         _serverAdvanced.Visibility = state.ServerAdvancedOpen ? Visibility.Visible : Visibility.Collapsed; ((FrameworkElement)_serverAdvanced.Parent).Visibility = _serverAdvanced.Visibility;
         _retentionAdvanced.Visibility = state.RetentionAdvancedOpen ? Visibility.Visible : Visibility.Collapsed; ((FrameworkElement)_retentionAdvanced.Parent).Visibility = _retentionAdvanced.Visibility;
         _serverDisclosure.Content = DisclosureContent(state.ServerAdvancedOpen, 1); _retentionDisclosure.Content = DisclosureContent(state.RetentionAdvancedOpen, 3);

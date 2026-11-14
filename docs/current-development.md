@@ -1,3 +1,36 @@
+# November 14 — Admin Monitor implemented for Beta
+
+Native Admin Monitor adds an acting-admin-only footer entry above Profile,
+Dashboard (all 28 widgets), Activity, Server Log, Client Diagnostics and Logging
+Settings. The shared Server Activity indicator follows the official WebUI's
+visibility rules. Admin navigation swaps in place without slides.
+
+Official reference: 1a99f7beffcea3850f067df000c319f2704fd23b. Started from Beta
+8f080836 and integrated d96759b4. Version remains 1.2.1017-beta.1 / 1.2.1016.1;
+pipeline owns stamping. Branch codex/admin-monitor-nov14.
+
+Full integrated units: 6,367 passed, zero failed/skipped (2m22s); final focused
+Admin/source/architecture checks: 268 passed. Release publish
+and native build passed. Admin Monitor, all-widget Dashboard, Logs, profile-menu
+navigation and playback-scope native groups passed. Five-size synthetic WebUI
+and native captures informed layout corrections. Review findings and native
+chart, lifetime and false-draft defects were corrected.
+
+The adjacent upstream-shell fixture still fails on narrow pane resizing with
+COM 0x80004005. Exact Beta shell code with new Admin hooks disabled reproduces
+that failure; the source was restored and hash-checked. No full-suite native or
+live-server/pixel-equivalence certification is claimed. Admin text catalogs
+currently resolve English; the separate localization foundation is not imported.
+
+See [scope, evidence and limits](parity/2026-11-14-admin-monitor.md), the scoped
+[Monitor allowlist](parity/admin-monitor-surfaces.json), and the final local
+receipt D:/SiloPlayer-build/admin-monitor-final-receipt.json. The installed player
+and application settings remain untouched. Cleanup was not retried after the
+earlier automatic policy rejection: recovered 0 GiB on C: and D:. The receipt
+records final free space and reusable output size.
+
+---
+
 # November 13 - Finishing artwork on the ended screen
 
 Owner report: after the last Cops episode ended, "You've finished Cops" and On
