@@ -93,6 +93,44 @@ public sealed class MainWindowSourceTests
     }
 
     [Fact]
+    public void EndedPlayingNextShowsFinishingArtworkInsteadOfAnEmptySlot()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+        var art = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.PlayingNextFinishingArt.cs"));
+
+        // The slot the native preview leaves at true EOF has a picture of its own.
+        var slot = xaml[xaml.IndexOf("x:Name=\"PlayingNextFinishingSlot\"", StringComparison.Ordinal)..];
+        slot = slot[..slot.IndexOf("</Border>", StringComparison.Ordinal)];
+        Assert.Contains("x:Name=\"PlayingNextFinishingArt\"", slot);
+
+        // Early post-roll reaching EOF, and Playing Next opening at EOF, both hand the slot over.
+        var hidden = code.IndexOf("_playerService.FinishPostRollPreview();", StringComparison.Ordinal);
+        var shown = code.IndexOf("ShowPlayingNextFinishingArtAtEnd();", StringComparison.Ordinal);
+        Assert.True(hidden >= 0 && shown > hidden && shown < code.IndexOf("return;", hidden, StringComparison.Ordinal),
+            "True EOF under an open early post-roll must show the finishing artwork where the preview was hidden.");
+        var begun = code.IndexOf("BeginPlayingNextFinishingArt();", StringComparison.Ordinal);
+        var visible = code.IndexOf("PlayingNextOverlay.Visibility = Visibility.Visible;", StringComparison.Ordinal);
+        Assert.True(begun > shown && visible > begun &&
+            code.IndexOf("UpdatePlayingNextFinishingArt();", visible, StringComparison.Ordinal) < code.IndexOf("PositionPlayingNextVideo();", visible, StringComparison.Ordinal),
+            "A new presentation must settle its finishing slot in the frame it appears.");
+
+        // Closing Playing Next, a newer playback and another profile each retire the picture.
+        Assert.Contains("PlayingNextOverlay.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, OnPlayingNextOverlayVisibilityChanged);", code);
+        Assert.Contains("if (PlayingNextOverlay.Visibility != Visibility.Visible) RetirePlayingNextFinishingArt();", art);
+        Assert.Contains("if (generation != _finishingArtGeneration) return;", art);
+        Assert.Contains("_apiClient.IsCurrentIdentityContext(art.Owner)", art);
+        Assert.Contains("string.Equals(detail.ContentId, _playerService.ContentId, StringComparison.Ordinal)", art);
+
+        // Only the finished title's backdrop, only once it has ended; otherwise no rectangle.
+        Assert.Contains("detail.BackdropUrl", art);
+        Assert.DoesNotContain("NextEpisode", art);
+        Assert.Contains("if (!_playerService.IsPostRollVideoEnded)", art);
+        Assert.Contains("Visibility.Collapsed", art);
+    }
+
+    [Fact]
     public void PlayingNextOverlayShowsDedicatedCountdownBadge()
     {
         var root = FindRepositoryRoot();
