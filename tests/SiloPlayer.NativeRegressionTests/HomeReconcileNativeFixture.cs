@@ -16,6 +16,63 @@ using SiloPlayer.Helpers;
 /// </summary>
 internal static class HomeReconcileNativeFixture
 {
+    internal static async Task ContinueWatchingDuplicateAsync(StackPanel parent)
+    {
+        HomeSectionWithItems Episodes(bool refreshed) => new()
+        {
+            Id = "continue", SectionType = "continue_watching", Title = "Continue Watching", LoadCompleted = true,
+            Items = new((refreshed ? new[] { "goldbergs", "nocturne", "other" } : new[] { "nocturne", "goldbergs", "other" })
+                .Select(id => new MediaItem { ContentId = id, Type = "episode", Title = id + " episode",
+                    SeriesId = id + "-series", SeriesTitle = id, SeasonNumber = 6, EpisodeNumber = 20,
+                    PositionSeconds = refreshed && id == "goldbergs" ? 1500 : 900, DurationSeconds = 1800 })),
+        };
+        var mounted = Episodes(false);
+        var row = await MountAsync(parent, mounted);
+        try
+        {
+            for (var turn = 0; turn < 12; turn++)
+            {
+                Apply(mounted, Episodes(turn % 2 == 0));
+                await RequireCardsMatchAsync(row, mounted, "continue-watching-reorder");
+                for (var index = 0; index < mounted.Items.Count; index++)
+                {
+                    if (Repeater(row).TryGetElement(index) is not LandscapeCard card)
+                        throw new InvalidOperationException($"Continue Watching card {index} was not realized.");
+                    if (((TextBlock)card.FindName("TitleText")).Text != mounted.Items[index].SeriesTitle)
+                        throw new InvalidOperationException($"Continue Watching card {index} displays a stale title.");
+                }
+            }
+            // An accepted insertion before the Move must also join the final
+            // snapshot rather than leaving the guard one delta behind.
+            var inserted = Episodes(true);
+            inserted.Items.Insert(0, new MediaItem { ContentId = "inserted", Title = "Inserted", Type = "episode" });
+            Apply(mounted, inserted);
+            await RequireCardsMatchAsync(row, mounted, "continue-watching-insert-then-move");
+
+            // Make a real scrollable carousel, then reorder while away from
+            // its start. A data refresh must not jump back to the first card.
+            var longRow = Episodes(false);
+            foreach (var id in Enumerable.Range(0, 20))
+                longRow.Items.Add(new MediaItem { ContentId = $"tail-{id}", Title = $"Tail {id}", Type = "episode" });
+            Apply(mounted, longRow);
+            await RequireCardsMatchAsync(row, mounted, "continue-watching-long-row");
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            scroll.ChangeView(500, null, null, disableAnimation: true);
+            await Task.Delay(150);
+            var offset = scroll.HorizontalOffset;
+            if (offset < 100) throw new InvalidOperationException("Continue Watching scroll test did not move the viewport.");
+            var reordered = Episodes(true);
+            foreach (var item in longRow.Items.Skip(3)) reordered.Items.Add(item);
+            Apply(mounted, reordered);
+            await RequireCardsMatchAsync(row, mounted, "continue-watching-scrolled-reorder");
+            if (Math.Abs(scroll.HorizontalOffset - offset) > 1)
+                throw new InvalidOperationException("Continue Watching reorder reset the horizontal scroll position.");
+            Program.Log("PASS: Continue Watching reorders a changed episode without duplicating its card or title.");
+            Program.Log("PASS: accepted insertion followed by reorder converges, and a scrolled carousel retains its offset.");
+        }
+        finally { parent.Children.Remove(row); }
+    }
+
     /// <param name="strict">
     /// Requires keyboard focus and an actual mid-layout rejection. The default
     /// suite runs unactivated and against whatever WinUI build is installed,
@@ -23,6 +80,7 @@ internal static class HomeReconcileNativeFixture
     /// </param>
     internal static async Task RunAsync(StackPanel parent, bool strict = false)
     {
+        await ContinueWatchingDuplicateAsync(parent);
         await MountedSequenceAsync(parent);
         await BackToBackAsync(parent);
         await DetachedRowAsync(parent);
@@ -89,6 +147,16 @@ internal static class HomeReconcileNativeFixture
     /// <summary>Every realized card shows the item at its index, after layout settles.</summary>
     private static async Task RequireCardsMatchAsync(SectionRow row, HomeSectionWithItems mounted, string scenario, bool allowRejection = false)
     {
+        // Reattachment is completed by WinUI's Loaded event, not a dispatcher
+        // drain. Wait for the real lifecycle before judging its resumed guard.
+        if (!row.IsLoaded)
+        {
+            var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void Loaded(object sender, RoutedEventArgs args) => loaded.TrySetResult();
+            row.Loaded += Loaded;
+            try { if (!row.IsLoaded) await loaded.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+            finally { row.Loaded -= Loaded; }
+        }
         await DrainAsync();
         row.UpdateLayout();
         await DrainAsync();
@@ -272,7 +340,10 @@ internal static class HomeReconcileNativeFixture
         }
         var repeater = Repeater(row);
         var response = shrink
-            ? Movies(new[] { 2, 0, 1 }, versionOf: id => id == 0 ? 1 : 0)
+            // Start with Replace, not Move: Move intentionally defers without
+            // reaching WinUI. This still exercises rejection followed by shrink
+            // and preserves m2 for the focus-restoration assertion.
+            ? Movies(new[] { 99, 0, 1, 2 }, versionOf: id => id == 0 ? 1 : 0)
             : Movies(new[] { 9, 2, 0, 7, 8, 1, 6 }, versionOf: id => id == 0 ? 1 : 0);
         var applied = false;
         Exception? thrown = null;
