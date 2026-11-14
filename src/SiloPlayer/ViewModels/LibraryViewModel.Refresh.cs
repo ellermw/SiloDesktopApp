@@ -227,6 +227,12 @@ public partial class LibraryViewModel
                 // must not pair fresh positions with the pre-refresh cursor.
                 _snapshot = null;
                 _completedBoundaries.Clear();
+                // Keep the displayed extent provisionally, but reread its count
+                // without the retired snapshot's exact-total authority.
+                _hasExactTotal = false;
+                _exactCountQueryVersion = -1;
+                _observedCatalogEnd = 0;
+                _catalogEndTotal = null;
                 _catalogRefreshReleasedVersion = version;
                 // A joined viewport outside the held set can stay visible while
                 // its ordinary read starts. Never splice fresh positions into

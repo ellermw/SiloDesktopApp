@@ -43,7 +43,7 @@ internal static class LibraryLettersNativeFixture
         try
         {
             var runs = verifyScanRefresh
-                ? new[] { ("movie", 1280, 1000, "land"), ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "access"), ("movie", 1280, 1000, "visit"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "refresh-error"), ("movie", 1280, 1000, "refresh-retry-error"), ("movie", 1280, 1000, "interrupt"), ("movie", 1280, 1000, "extent") }
+                ? new[] { ("movie", 1280, 1000, "land"), ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "access"), ("movie", 1280, 1000, "visit"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "refresh-error"), ("movie", 1280, 1000, "refresh-retry-error"), ("movie", 1280, 1000, "interrupt"), ("movie", 1280, 1000, "extent"), ("movie", 1280, 1000, "empty") }
                 : verifySecondBoundary
                 ? new[] { ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "query"), ("movie", 1280, 1000, "manual"), ("movie", 1280, 1000, "visit") }
                 : verifyCursorRecovery ? new[] { ("movie", 1280, 1000, "success"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "manual") }
@@ -453,6 +453,26 @@ internal static class LibraryLettersNativeFixture
         async Task Drain() { await Task.Delay(120); }
 
         await Until(() => !page.ViewModel.IsLoading && Field("_pendingLibraryScroll") is null);
+        if (scenario == "empty")
+        {
+            // Keep the mounted page marked loaded, but give its query an exact
+            // empty snapshot, as on a new library or a zero-result filter.
+            wire.EmptyCatalog = true;
+            await page.ViewModel.LoadCommand.ExecuteAsync(null);
+            await page.ViewModel.EnsureLetterIndexAsync();
+            await Until(() => page.ViewModel.TotalCount == 0 && page.ViewModel.WindowStartIndex < 0 &&
+                (bool)Field("_libraryCatalogLoaded")!);
+            wire.EmptyCatalog = false;
+            var emptyFreshReads = wire.FreshWindowSeeks.Count;
+            Scan("library.item_added", new { library_id = wire.CurrentLibraryId });
+            await Until(() => page.ViewModel.GetRenderableWindowItem(0)?.ContentId == "item-0" &&
+                page.ViewModel.TotalCount == 1000 && (long)Field("_catalogContentOwner")! == 0);
+            await Until(() => ((Canvas)page.FindName("VirtualGridCanvas")).Children.OfType<LibraryGridCard>()
+                .Any(card => card.Visibility == Visibility.Visible));
+            Check(wire.FreshWindowSeeks.Count > emptyFreshReads, "empty query did not start a fresh window after the content event");
+            Program.Log("PASS: a content event populates an empty mounted catalog without navigation or reconnect.");
+            return;
+        }
         if (scenario == "extent")
         {
             // The requested final row can be clamped by the old native extent.
@@ -1146,7 +1166,7 @@ internal static class LibraryLettersNativeFixture
         internal int CatalogIndexShift;
         internal string CurrentType = "movie";
         internal string? LastOrder, LastGenre;
-        internal bool FailIndex, OmitWindowTotals, FailLibraries;
+        internal bool FailIndex, OmitWindowTotals, FailLibraries, EmptyCatalog;
         internal int LibraryReads;
         internal int ScopeVersion, MPosition = 600;
         internal bool RejectFresh;
@@ -1187,6 +1207,7 @@ internal static class LibraryLettersNativeFixture
             if (path == "/api/v2/catalog/search/capabilities") return Reply(new { letter_index = true });
             if (path == "/api/v2/catalog/letters")
             {
+                if (EmptyCatalog) return CompleteLetterIndexAsync(Reply(new { total = 0, letters = Array.Empty<object>(), runs = Array.Empty<object>() }), ct);
                 return CompleteLetterIndexAsync(Reply(new
             {
                 total = 1000,
@@ -1222,7 +1243,8 @@ internal static class LibraryLettersNativeFixture
                     if (!query.ContainsKey("seek")) offset = int.Parse(scope[2]);
                 }
                 else if (RejectFresh) return Reply(new { detail = "Synthetic failed fresh scope" }, HttpStatusCode.ServiceUnavailable);
-                var count = Math.Min(limit, 1000 - offset);
+                var total = EmptyCatalog ? 0 : 1000;
+                var count = Math.Max(0, Math.Min(limit, total - offset));
                 var skipTotal = query.ContainsKey("skip_total");
                 WindowReadGate? held = null;
                 if (skipTotal)
@@ -1235,8 +1257,8 @@ internal static class LibraryLettersNativeFixture
                 }
                 var cursorScope = query.GetValueOrDefault("group", "") + ":" + ScopeVersion;
                 var reply = Reply(new { items = Enumerable.Range(offset, count).Select(index => index + CatalogIndexShift).Select(index => new { content_id = "item-" + index, title = "Fixture " + index, type = ItemType == "mixed" ? "movie" : ItemType }),
-                    total = OmitWindowTotals && skipTotal ? 0 : 1000, total_exact = !skipTotal, window_cursor = query["library_id"] + ":" + limit + ":0:" + cursorScope,
-                    page = new { has_more = offset + count < 1000, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) + ":" + cursorScope } });
+                    total = OmitWindowTotals && skipTotal ? 0 : total, total_exact = !skipTotal || EmptyCatalog, window_cursor = query["library_id"] + ":" + limit + ":0:" + cursorScope,
+                    page = new { has_more = offset + count < total, next_cursor = query["library_id"] + ":" + limit + ":" + (offset + count) + ":" + cursorScope } });
                 return CompleteCatalogAsync(held is null ? reply : CompleteCatalogWindowAsync(reply, ct, held), skipTotal, ct);
             }
             if (path.EndsWith("/layout") || path.EndsWith("/sections")) return Reply(new { sections = Array.Empty<object>() });

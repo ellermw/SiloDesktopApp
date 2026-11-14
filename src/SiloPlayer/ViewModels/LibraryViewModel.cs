@@ -836,6 +836,7 @@ public partial class LibraryViewModel : ObservableObject
     /// </summary>
     public void SuspendCatalogLoads()
     {
+        var released = _catalogRefreshReleasedVersion == _queryVersion && _snapshot is null;
         if (_catalogRefreshRetainsRows)
         {
             _catalogRefreshPending = false;
@@ -847,6 +848,8 @@ public partial class LibraryViewModel : ObservableObject
         CancelCurrentCatalogQuery();
         _catalogQueryCts = new CancellationTokenSource();
         _queryVersion++;
+        // Held rows stay display-only across a cached-page departure/detach.
+        if (released) _catalogRefreshReleasedVersion = _queryVersion;
         _completedBoundaries.Clear();
         _loadingPages.Clear();
         IsLoading = false;

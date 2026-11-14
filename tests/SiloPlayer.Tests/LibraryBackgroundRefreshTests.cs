@@ -110,7 +110,10 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.Null(model.ErrorMessage);
             Assert.Equal("item-500", model.GetRenderableWindowItem(500)?.ContentId);
             Assert.Equal("item-0", model.GetRenderableWindowItem(0)?.ContentId);
-            Assert.InRange(wire.Requests.Count - reads, 2, 4);
+            await wire.Idle();
+            // Count recovery adds one read, not another refresh-window retry.
+            Assert.Single(wire.Requests.Skip(reads).Where(read => !read.ContainsKey("skip_total")));
+            Assert.InRange(wire.Requests.Skip(reads).Count(read => read.ContainsKey("skip_total")), 2, 4);
             var stopped = wire.Requests.Count;
             // Even a cached foreground range must establish a fresh snapshot,
             // rather than splice fresh positions into retained old-snapshot rows.
@@ -129,6 +132,77 @@ public sealed class LibraryBackgroundRefreshTests
             await model.LoadWindowAsync(500, 60);
             await wire.Idle();
             Assert.Equal(stopped, wire.Requests.Count);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetainedRefreshHandbackReplacesAnAlreadyExactCountAndAllowsJumpsPastTheOldExtent(bool churn)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await wire.Idle();
+            Assert.Equal(1000, model.TotalCount);
+            Assert.Equal(1000, model.DisplayTotalCount);
+            wire.Titles.InsertRange(450, Enumerable.Range(0, 10).Select(index => ("added-" + index, "A added " + index)));
+            wire.LetterPosition = 1009;
+            if (churn) { wire.ChangeSnapshotAt = 560; wire.SnapshotChangesRemaining = 20; }
+            else wire.FailWindowAt = 560;
+
+            // Include the page's one failed/churned retry, not just its first batch.
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var counts = wire.CountReads;
+                var result = await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+                Assert.Equal(churn ? LibraryViewModel.CatalogRefreshResult.Deferred : LibraryViewModel.CatalogRefreshResult.Failed, result);
+                await wire.Idle();
+                Assert.True(wire.CountReads > counts);
+                Assert.Equal(1010, model.TotalCount);
+                Assert.Equal(1010, model.DisplayTotalCount);
+            }
+
+            var landed = -1;
+            model.LetterJumpRequested += position => landed = position;
+            await model.JumpToLetterCommand.ExecuteAsync("M").WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(1009, landed);
+            Assert.Equal("item-999", model.GetRenderableWindowItem(landed)?.ContentId);
+            Assert.Null(model.LetterJumpError);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SuspendingRetainedRefreshHandbackKeepsOldRowsDisplayOnlyUntilAFreshWindowLands(bool churn)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await wire.Idle();
+            wire.Titles.Insert(450, ("new-title", "Brand New"));
+            if (churn) { wire.ChangeSnapshotAt = 560; wire.SnapshotChangesRemaining = 20; }
+            else wire.FailWindowAt = 560;
+            var result = await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+            Assert.Equal(churn ? LibraryViewModel.CatalogRefreshResult.Deferred : LibraryViewModel.CatalogRefreshResult.Failed, result);
+            await wire.Idle();
+
+            model.SuspendCatalogLoads();
+            Assert.Equal("item-599", model.GetRenderableWindowItem(599)?.ContentId);
+            Assert.Empty(await model.PrefetchAroundAsync(600, 659, forward: true));
+            var reads = wire.Requests.Count;
+            await model.LoadWindowAsync(600, 60);
+            var target = Assert.Single(wire.Requests.Skip(reads).Where(read => read.ContainsKey("skip_total")));
+            Assert.False(target.ContainsKey("cursor"));
+            Assert.Null(model.GetRenderableWindowItem(599));
+            Assert.Null(model.GetWindowItem(0));
+
+            // Fill back across the old seam using only the newly established snapshot.
+            await model.LoadWindowAsync(540, 120);
+            var ids = Enumerable.Range(540, 120).Select(index => model.GetRenderableWindowItem(index)?.ContentId).ToArray();
+            Assert.Equal(wire.Titles.Skip(540).Take(120).Select(title => title.Id), ids);
+            Assert.Equal(ids.Length, ids.Distinct().Count());
         }
     }
 
