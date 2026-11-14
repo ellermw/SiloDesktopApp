@@ -93,6 +93,8 @@ public sealed class AdminMonitorLogsStreamTests
         using var kit = AdminMonitorKit.Create();
         kit.Client.SetBaseUrl(baseUrl);
         kit.Auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+        // SetTokens starts a new session and clears the kit's authenticated user.
+        kit.Auth.SetCurrentUser(new SiloPlayer.Core.Models.Auth.UserInfo { Id = "1", Username = "synthetic", Role = "admin" });
         kit.Auth.SelectProfile("p1", null, new SiloPlayer.Core.Models.Auth.Profile { Id = "p1", Name = "Primary", IsPrimary = true });
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"ticket":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","protocol":"silo.admin-logs.v2","expires_in":30,"max_connection_seconds":300}"""));
