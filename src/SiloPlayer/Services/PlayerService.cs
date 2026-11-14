@@ -3269,6 +3269,13 @@ public partial class PlayerService : IDisposable
             SetState(PlayerState.Idle);
             App.MainWindowInstance?.ShowPlaybackError(errTitle, errDetail);
         }
+        finally
+        {
+            // Every exit retires this preparation's suppression, including
+            // cancellation, failure and early return. Owner matching preserves
+            // any successor's suppression; releasing does not show the window.
+            _videoWindow?.ReleaseVisibility(playbackCts);
+        }
     }
 
     // Mirrors webui describePlaybackSessionError (commit 8115bdb). Returns a

@@ -90,6 +90,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
             {
                 await Until(() => service.State == PlayerState.Idle && !service.IsLoading,
                     "Failed/canceled replacement did not retire playback.");
+                Check(Field(video, "_visibilityOwner") == null,
+                    "Failed/canceled preparation retained native visibility ownership.");
                 await QueueMiniPreparationCallbacks(service, window);
                 Check(!IsWindowVisible(video.Hwnd), "Failed/canceled preparation revived the old mini HWND.");
                 wire.FailStart = false;
@@ -125,6 +127,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 movedMini.Right - movedMini.Left == resumedMini.Right - resumedMini.Left &&
                 movedMini.Bottom - movedMini.Top == resumedMini.Bottom - resumedMini.Top,
                 "Resumed native mini playback did not follow the moved owner window.");
+            if (mode == "mini-prepare-newer")
+                await VerifyExpandedPreparationHandoff(service, wire, api, video);
             Program.Log("PASS: MINI_PREPARATION native visibility, queued callbacks, ownership and resumed positioning: " + mode);
         }
         finally
@@ -132,6 +136,47 @@ internal static partial class PlaybackHudCompletionNativeFixture
             pendingGate.Release.TrySetResult();
             successorGate.Release.TrySetResult();
             try { await pending; } catch (OperationCanceledException) { }
+        }
+    }
+
+    private static async Task VerifyExpandedPreparationHandoff(PlayerService service, Wire wire, SiloApiClient api,
+        MpvVideoWindow video)
+    {
+        var pendingGate = new PreparationGate();
+        var successorGate = new PreparationGate();
+        wire.HeldPreparations.Add("episode-4", pendingGate);
+        wire.HeldPreparations.Add("episode-5", successorGate);
+        var pending = service.PlayAsync("episode-4", fromStart: true);
+        Task successor = Task.CompletedTask;
+        try
+        {
+            await pendingGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(12));
+            Check(service.State == PlayerState.Minimized && !IsWindowVisible(video.Hwnd),
+                "Held mini preparation did not suppress the native surface.");
+            service.Expand();
+            Check(service.State == PlayerState.Expanded && !IsWindowVisible(video.Hwnd),
+                "Expanding a held preparation bypassed native visibility suppression.");
+            successor = service.PlayAsync("episode-5", fromStart: true,
+                expectedIdentityContext: api.CaptureIdentityContext());
+            pendingGate.Release.TrySetResult();
+            try { await pending; } catch (OperationCanceledException) { }
+            await successorGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(12));
+            Check(service.State == PlayerState.Expanded && Field(video, "_visibilityOwner") == null,
+                "Retired mini preparation retained visibility ownership across an expanded successor.");
+            successorGate.Release.TrySetResult();
+            await successor;
+            await Until(() => service.ContentId == "episode-5" && !service.IsLoading &&
+                service.Mpv?.GetPropertyFlag("idle-active") == false && (bool)Field(service, "_transportHasFirstOutput")!,
+                "Expanded successor did not resume native playback.");
+            Check(service.State == PlayerState.Expanded && IsWindowVisible(video.Hwnd),
+                "Retired mini preparation left the expanded successor's native surface hidden.");
+        }
+        finally
+        {
+            pendingGate.Release.TrySetResult();
+            successorGate.Release.TrySetResult();
+            try { await pending; } catch (OperationCanceledException) { }
+            try { await successor; } catch (OperationCanceledException) { }
         }
     }
 
