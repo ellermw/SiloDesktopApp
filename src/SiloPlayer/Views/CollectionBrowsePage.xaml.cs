@@ -563,7 +563,7 @@ public sealed partial class CollectionBrowsePage : Page
         var nav = App.Services.GetRequiredService<NavigationService>();
         if (nav.Frame?.CanGoBack == true)
         {
-            nav.Frame.GoBack();
+            nav.Frame.GoBack(PageTransitionHelper.ForPageChange());
         }
         else
         {

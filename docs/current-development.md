@@ -1,3 +1,40 @@
+# November 14 - In-place page changes (no navigation slide)
+
+Branch t3/remove-sidebar-slide starts at Beta cbafac58; version 1.2.1017-beta.1
+unchanged. Per the owner, sidebar route changes and Back no longer rise/slide:
+`PageTransitionHelper.ForPageChange()` is now `SuppressNavigationTransitionInfo`
+for every route and reduced-motion setting, and eight direct Frame calls that fell
+back to the Frame's default theme transition now name it (Taste Seed, detail retry,
+collection Back, Watch Party). Retained pages, scroll and soft state, the in-place
+refresh, skeletons and artwork reveal are unchanged; no whole-page opacity was
+added. A new source guard rejects any app Frame navigation without it.
+
+New tests were red on Beta (2 failures, 8 offending call sites) and green after;
+the implementation run passed all 6,108 units. The Debug x64 app and native host
+compiled against a worktree-local build. Lead verification passed 14 focused
+source tests and the `upstream-shell` fixture with `SILO_SHELL_NAVIGATION_ONLY=1`:
+three navigation/Back rounds retained the same page instance and marker; every
+observed navigation and current-entry refresh used the suppressed transition,
+refresh preserved history length, and the incoming root had identity transform
+and opacity 1. The broader upstream-shell run passed the transition check but
+failed later with COMException 0x80004005 during responsive pane resize; no full
+shell or visual parity pass is claimed. Windows animation settings were not
+toggled; the transition has no animation-setting branch.
+
+No navigation-speed claim is made. Background page-data warmup was not added:
+top-level view models are transient per page with private freshness windows, so
+warmup needs a shared context-scoped, strictly bounded store first. A follow-up
+should measure cold navigation, reuse only lightweight first-page JSON, bound
+memory and concurrency, retire on server/profile/access/language changes, and
+skip playback, full Library catalogs, cursor enumeration and artwork crawling.
+
+Evidence: `D:/SiloPlayer-build/no-slide-lead-focused.log`,
+`no-slide-native-build.log`, and `results/no-slide-navigation-verified/results.txt`.
+The installed player and version stamps are unchanged. Worktree-local output is
+about 0.69 GiB; earlier automatic approval review blocked generated cleanup, so
+no deletion was retried and 0 GiB was recovered on C: and D:.
+
+---
 # November 13 - Finishing artwork on the ended screen
 
 Owner report: after the last Cops episode ended, "You've finished Cops" and On

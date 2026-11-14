@@ -179,11 +179,12 @@ public sealed partial class WatchTogetherJoinPage : Page
             DispatcherQueue.TryEnqueue(() =>
             {
                 if (!_subscribed || !ReferenceEquals(Frame, frame) || !client.IsCurrentContext(authority)) return;
-                frame.Navigate(typeof(WatchTogetherRoomPage), new WatchTogetherRoomNavigationArgs
+                var roomArgs = new WatchTogetherRoomNavigationArgs
                 {
                     RoomId = resp.Room.RoomId,
                     RoomAccessToken = resp.RoomAccessToken,
-                });
+                };
+                frame.Navigate(typeof(WatchTogetherRoomPage), roomArgs, SiloPlayer.Helpers.PageTransitionHelper.ForPageChange());
             });
         }
         else if (e.PropertyName == nameof(ViewModel.SelectionMode))
@@ -235,7 +236,8 @@ public sealed partial class WatchTogetherJoinPage : Page
             row.Click += (_, _) =>
             {
                 if (!_subscribed || !client.IsCurrentContext(authority)) return;
-                Frame?.Navigate(typeof(WatchTogetherRoomPage), new WatchTogetherRoomNavigationArgs { RoomId = entry.RoomId, RoomAccessToken = entry.Token });
+                var roomArgs = new WatchTogetherRoomNavigationArgs { RoomId = entry.RoomId, RoomAccessToken = entry.Token };
+                Frame?.Navigate(typeof(WatchTogetherRoomPage), roomArgs, SiloPlayer.Helpers.PageTransitionHelper.ForPageChange());
             };
             RecentRoomsList.Children.Add(row);
             try

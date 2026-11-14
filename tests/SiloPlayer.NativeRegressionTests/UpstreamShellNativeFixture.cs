@@ -72,12 +72,46 @@ internal static class UpstreamShellNativeFixture
             var originalRows = nav.MenuItems.ToArray();
             navigation.Navigate<SettingsPage>(); await Task.Delay(300);
             var page = (SettingsPage)navigation.Frame!.Content;
-            // Page changes ease in like Granary's; Windows animation effects off keeps the instant swap.
+            // Page changes swap in place: no rise or slide, with or without Windows animation effects.
             var pageTransition = PageTransitionHelper.ForPageChange().GetType();
+            Check(pageTransition == typeof(Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo),
+                $"Page change transition {pageTransition.Name} moves the incoming page");
             var backStack = navigation.Frame.BackStack;
             Check(backStack.Count > 0 && backStack[backStack.Count - 1].NavigationTransitionInfo?.GetType() == pageTransition,
                 $"Page change did not use the shared {pageTransition.Name}");
             Program.Log($"PASS: shell page changes use {pageTransition.Name}.");
+            if (Environment.GetEnvironmentVariable("SILO_SHELL_NAVIGATION_ONLY") == "1")
+            {
+                page.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+                page.Tag = "retained-navigation-marker";
+                var observed = new List<Microsoft.UI.Xaml.Navigation.NavigationEventArgs>();
+                navigation.Frame.Navigated += (_, args) => observed.Add(args);
+                for (var round = 0; round < 3; round++)
+                {
+                    navigation.Navigate(typeof(Page));
+                    await Task.Delay(60);
+                    navigation.GoBack();
+                    await Task.Delay(60);
+                    Check(ReferenceEquals(navigation.Frame.Content, page), "Back replaced the retained Settings page");
+                    Check(Equals(page.Tag, "retained-navigation-marker"), "Back lost retained page state");
+                }
+                navigation.Navigate(typeof(Page));
+                await Task.Delay(60);
+                var historyCount = navigation.Frame.BackStack.Count;
+                Check(navigation.RefreshCurrentEntry(), "Current-entry refresh was rejected");
+                await Task.Delay(60);
+                Check(navigation.Frame.BackStack.Count == historyCount, "Refresh added a history entry");
+                Check(observed.Count >= 8, "Rapid navigation did not commit the expected routes");
+                Check(observed.All(args => args.NavigationTransitionInfo is Microsoft.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo),
+                    "Navigation, Back or refresh used a positional transition");
+                var current = (FrameworkElement)navigation.Frame.Content;
+                var origin = current.RenderTransform?.TransformPoint(new(0, 0)) ?? new Windows.Foundation.Point(0, 0);
+                var unit = current.RenderTransform?.TransformPoint(new(1, 1)) ?? new Windows.Foundation.Point(1, 1);
+                Check(origin.X == 0 && origin.Y == 0 && unit.X == 1 && unit.Y == 1 && current.Opacity == 1,
+                    $"Incoming page has offset ({origin.X},{origin.Y}), unit ({unit.X},{unit.Y}), opacity {current.Opacity}");
+                Program.Log("PASS: rapid navigation, retained-page Back and current-entry refresh stay in place.");
+                return;
+            }
             Check(Named<FrameworkElement>("SettingsSidebarHeader").Visibility == Visibility.Visible, "Wide Settings did not replace app sidebar");
             Check(page.ActiveSettingsSection == "Playback", "Wide Settings did not default to Playback");
             var search = Named<TextBox>("SettingsSidebarSearch");

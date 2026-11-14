@@ -70,7 +70,7 @@ public sealed partial class TasteSeedPage : Page
     {
         if (_returningFromSettings)
         {
-            Frame.Navigate(typeof(SettingsPage), "Playback");
+            Frame.Navigate(typeof(SettingsPage), "Playback", PageTransitionHelper.ForPageChange());
         }
         else
         {

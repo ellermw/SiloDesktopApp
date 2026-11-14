@@ -1871,7 +1871,7 @@ _webhookPlexAuthCts?.Cancel();
     }
 
     private void OpenTasteSeed_Click(object sender, RoutedEventArgs e)
-        => Frame.Navigate(typeof(TasteSeedPage), true);
+        => Frame.Navigate(typeof(TasteSeedPage), true, PageTransitionHelper.ForPageChange());
 
     private async void StartFeatureTour_Click(object sender, RoutedEventArgs e)
     {
