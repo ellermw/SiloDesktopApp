@@ -22,6 +22,42 @@ public sealed class DetailVersionAutoTests
         Assert.Equal(1, Select(files, null, new() { LastEditionKey = "extended", LastFileId = 2 }, "auto", "")?.FileId);
     }
 
+    [Theory]
+    [InlineData("imax", 2)]
+    [InlineData("", 1)]
+    public void EffectiveEditionInitializesAutoWithoutHistory(string effectiveEdition, int expected)
+    {
+        var files = new[] { File(1, "2160p"), File(2, "1080p", "imax") };
+        var variants = files.Select(file => new PlaybackVariant
+        {
+            EditionKey = file.EditionKey,
+            Parts = [new() { PartIndex = 0, Versions = [file] }],
+        }).ToList();
+        var state = new DetailVersionSelection();
+        Assert.Equal(expected, state.Resolve(files, variants, null, effectiveEdition)?.FileId);
+        Assert.Null(state.EditionKey);
+        state.SetQuality("auto", settled: true);
+        Assert.Equal(expected, state.Resolve(files, variants, null, effectiveEdition)?.FileId);
+        Assert.Equal(effectiveEdition, state.EditionKey);
+        state.SetQuality("720p", settled: true);
+        Assert.Equal(expected, state.Resolve(files, variants, null, effectiveEdition == "" ? "imax" : "")?.FileId);
+    }
+
+    [Fact]
+    public void EffectiveEditionOverridesHistoryButNotPageChoices()
+    {
+        var files = new[] { File(1, "2160p"), File(2, "1080p", "imax") };
+        var history = new WatchUserData { LastEditionKey = "", LastFileId = 1 };
+        var state = new DetailVersionSelection();
+        Assert.Equal(2, state.Resolve(files, null, history, "imax")?.FileId);
+        state.SelectEdition("");
+        Assert.Equal(1, state.Resolve(files, null, history, "imax")?.FileId);
+        state.SelectFile(files[1]);
+        Assert.Equal(2, state.Resolve(files, null, history, "")?.FileId);
+        state.SelectAuto();
+        Assert.Equal(2, state.Resolve(files, null, history, "")?.FileId);
+    }
+
     [Fact]
     public void ActualFilesAreRankedWithoutCombiningAttributesAcrossFiles()
     {

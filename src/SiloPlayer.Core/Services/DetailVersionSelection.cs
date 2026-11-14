@@ -20,12 +20,13 @@ public sealed class DetailVersionSelection
     public void SelectFile(FileVersion file) { EditionKey = file.EditionKey ?? EditionKey ?? ""; ManualFileId = file.FileId; }
     public void SelectAuto() => ManualFileId = null;
 
-    public FileVersion? Resolve(IReadOnlyList<FileVersion> versions, IReadOnlyList<PlaybackVariant>? variants, WatchUserData? history)
+    public FileVersion? Resolve(IReadOnlyList<FileVersion> versions, IReadOnlyList<PlaybackVariant>? variants,
+        WatchUserData? history, string? effectiveEditionKey = null)
     {
         if (ManualFileId is int id && versions.FirstOrDefault(file => file.FileId == id) is { } pinned)
             return pinned;
         ManualFileId = null;
-        var selected = DetailVersionRanking.Select(versions, variants, history, Quality, EditionKey);
+        var selected = DetailVersionRanking.Select(versions, variants, history, Quality, EditionKey, effectiveEditionKey);
         if (QualitySettled && selected != null)
             EditionKey = DetailVersionRanking.Editions(versions, variants)
                 .FirstOrDefault(edition => edition.AllVersions.Any(file => file.FileId == selected.FileId))?.Key
@@ -70,10 +71,11 @@ public static class DetailVersionRanking
     }
 
     public static FileVersion? Select(IReadOnlyList<FileVersion> files, IReadOnlyList<PlaybackVariant>? variants,
-        WatchUserData? history, string? quality, string? preferredEditionKey = null)
+        WatchUserData? history, string? quality, string? preferredEditionKey = null, string? effectiveEditionKey = null)
     {
         var editions = Editions(files, variants);
         var edition = (preferredEditionKey == null ? null : editions.FirstOrDefault(e => Same(e.Key, preferredEditionKey)))
+            ?? (effectiveEditionKey == null ? null : editions.FirstOrDefault(e => Same(e.Key, effectiveEditionKey)))
             ?? (history?.LastEditionKey == null ? null : editions.FirstOrDefault(e => Same(e.Key, history.LastEditionKey)))
             ?? editions.FirstOrDefault(e => e.AllVersions.Any(file => file.FileId == history?.LastFileId));
         return Rank(edition?.Versions ?? editions.SelectMany(e => e.Versions).ToList(), quality);

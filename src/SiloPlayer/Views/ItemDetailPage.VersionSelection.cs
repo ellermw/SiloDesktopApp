@@ -105,7 +105,8 @@ public sealed partial class ItemDetailPage
         IReadOnlyList<PlaybackVariant>? variants, WatchUserData? history)
     {
         EnsureDetailVersionOwner();
-        return _detailVersions.Resolve(versions, variants, history);
+        return _detailVersions.Resolve(versions, variants, history,
+            _watchDetail?.EffectiveVersionEditionKey ?? ViewModel.Item?.EffectiveVersionEditionKey);
     }
 
     private void RepaintDetailVersions()
