@@ -7,11 +7,13 @@ namespace SiloPlayer.ViewModels;
 public partial class LibraryViewModel
 {
     public enum CatalogRefreshResult { Completed, Deferred, Failed, NotLoaded }
+    public enum CatalogRefreshKind { TransportCatchUp, ContentChanged }
 
     // Bound catch-up work across the active window, recent windows and viewport.
     // Refresh the entire held set, not just a budgeted subset of its positions.
     internal const int MaxRefreshedItems = 2500;
     private bool _catalogRefreshPending;
+    private bool _catalogRefreshRetainsRows;
     private Task<CatalogRefreshResult>? _catalogRefreshTask;
     private int _catalogRefreshVersion = -1;
     private (int Start, CatalogResponse Response)? _confirmedRefreshViewport;
@@ -22,25 +24,32 @@ public partial class LibraryViewModel
     // The query whose catch-up handed the gate back without confirming its held rows.
     private int _catalogRefreshReleasedVersion = -1;
 
-    /// <summary>Only newly authorized rows may be rendered while held windows catch up.</summary>
+    /// <summary>Content rereads retain authorized rows; transport recovery paints only confirmed rows.</summary>
     public MediaItem? GetRenderableWindowItem(int index)
     {
         if (_catalogContext != _catalogApi.CaptureContext()) return null;
         if (_confirmedRefreshViewportVersion == _queryVersion && _confirmedRefreshViewport is { } viewport &&
-            (_catalogRefreshPending || _snapshot is null || _snapshot == viewport.Response.Snapshot))
+            (_catalogRefreshPending || _catalogRefreshReleasedVersion == _queryVersion || _snapshot is null || _snapshot == viewport.Response.Snapshot))
         {
             var relative = index - viewport.Start;
             if (relative >= 0 && relative < viewport.Response.Items.Count && index < TotalCount)
                 return viewport.Response.Items[relative];
         }
-        return _catalogRefreshPending ? null : GetWindowItem(index);
+        return RequiresCatalogConfirmation ? null : GetWindowItem(index);
     }
 
-    // Retained rows have not been authorized by a read under the new context yet.
+    // Content dirtiness and lost transport authority share a bounded reread, but
+    // only the latter must quarantine the previously rendered rows.
     public bool RequiresCatalogRefresh => _catalogRefreshPending ||
         (_catalogContext is not null && _catalogContext != _catalogApi.CaptureContext());
 
-    /// <summary>Only transport recovery may retain rows; an access change retires them.</summary>
+    public bool IsCatalogRefreshInProgress => _catalogRefreshTask is { IsCompleted: false } &&
+        _catalogRefreshVersion == _queryVersion;
+
+    public bool RequiresCatalogConfirmation => (_catalogRefreshPending && !_catalogRefreshRetainsRows) ||
+        (_catalogContext is not null && _catalogContext != _catalogApi.CaptureContext());
+
+    /// <summary>A transport generation may retain a catalog; access or identity changes retire it.</summary>
     private static bool IsSameCatalogIdentity(ApiRequestContext? previous, ApiRequestContext current) =>
         previous is { } before && before.AuthenticationGeneration == current.AuthenticationGeneration &&
         before.AccessGeneration == current.AccessGeneration &&
@@ -57,7 +66,7 @@ public partial class LibraryViewModel
     /// succeeds, or a failure retires the unconfirmed rows without losing the extent.
     /// Ordinary reads cannot mix snapshots while that refresh is pending.
     /// </summary>
-    private void RebaseCatalogQuery()
+    private void RebaseCatalogQuery(bool retainAuthorizedRows = false)
     {
         _catalogContext = _catalogApi.CaptureContext();
         _catalogLibraryScope = LibraryCatalogScope(Library);
@@ -68,6 +77,7 @@ public partial class LibraryViewModel
         _completedBoundaries.Clear();
         _loadingPages.Clear();
         _catalogRefreshPending = true;
+        _catalogRefreshRetainsRows = retainAuthorizedRows;
         _confirmedRefreshViewport = null;
         // Keep the displayed rail, but never label its old positions as current.
         // A jump/index request must await a fresh index under this query.
@@ -85,14 +95,25 @@ public partial class LibraryViewModel
     /// same positions, so new, removed and changed titles appear without resetting
     /// the scroll position, the loaded windows or the letter rail.
     /// </summary>
-    public async Task<CatalogRefreshResult> RefreshInPlaceAsync(int visibleStart, int visibleCount, CancellationToken ct = default)
+    public async Task<CatalogRefreshResult> RefreshInPlaceAsync(int visibleStart, int visibleCount, CancellationToken ct = default,
+        CatalogRefreshKind kind = CatalogRefreshKind.TransportCatchUp)
     {
         if (ct.IsCancellationRequested) return CatalogRefreshResult.Deferred;
         var task = _catalogRefreshTask;
         if (task is null || task.IsCompleted || _catalogRefreshVersion != _queryVersion ||
             _catalogContext != _catalogApi.CaptureContext())
-            task = _catalogRefreshTask = RefreshInPlaceCoreAsync(visibleStart, visibleCount);
-        else RequestRefreshViewport(visibleStart, visibleCount);
+            task = _catalogRefreshTask = RefreshInPlaceCoreAsync(visibleStart, visibleCount, kind);
+        else
+        {
+            // A transport confirmer may join a running content reread, but it
+            // must still quarantine rows that have not been confirmed by it.
+            if (kind == CatalogRefreshKind.TransportCatchUp && _catalogRefreshRetainsRows)
+            {
+                _catalogRefreshRetainsRows = false;
+                WindowLoaded?.Invoke();
+            }
+            RequestRefreshViewport(visibleStart, visibleCount);
+        }
         // Cancellation retires only this waiter. A speculative artwork caller must
         // not cancel the query-owned catch-up that foreground loaders have joined.
         try { return await task.WaitAsync(ct); }
@@ -132,15 +153,18 @@ public partial class LibraryViewModel
         WindowLoaded?.Invoke();
     }
 
-    private async Task<CatalogRefreshResult> RefreshInPlaceCoreAsync(int visibleStart, int visibleCount)
+    private async Task<CatalogRefreshResult> RefreshInPlaceCoreAsync(int visibleStart, int visibleCount, CatalogRefreshKind kind)
     {
-        if (!HasRetainableCatalog) return CatalogRefreshResult.NotLoaded;
+        // Access must retire the old scope even when a letter seek is held.
         if (!IsSameCatalogIdentity(_catalogContext, _catalogApi.CaptureContext()))
         {
             EnsureCatalogScope();
             return CatalogRefreshResult.NotLoaded;
         }
+        if (!HasRetainableCatalog) return CatalogRefreshResult.NotLoaded;
         if (IsLetterJumpInProgress) return CatalogRefreshResult.Deferred;
+        var retainRows = kind == CatalogRefreshKind.ContentChanged &&
+            _catalogContext == _catalogApi.CaptureContext() && !RequiresCatalogConfirmation;
         var chunks = PlanRefreshChunks(visibleStart, Math.Max(1, visibleCount));
         var original = (Start: chunks[0].Start,
             Count: Math.Clamp(Math.Max(1, visibleCount), 1, Math.Max(1, TotalCount - chunks[0].Start)));
@@ -154,7 +178,7 @@ public partial class LibraryViewModel
             RetireUnconfirmedHeldRows();
             return CatalogRefreshResult.Deferred;
         }
-        RebaseCatalogQuery();
+        RebaseCatalogQuery(retainRows);
         _refreshViewportTarget = original;
         _refreshRequestedViewport = null;
         var version = _catalogRefreshVersion = _queryVersion;
@@ -192,8 +216,38 @@ public partial class LibraryViewModel
         {
             if (!Current()) return CatalogRefreshResult.Deferred;
             // Continued churn (no message) hands back the same way, without an error.
-            if (message is not null) SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to refresh catalog: {message}", value => ErrorMessage = value);
-            RetireUnconfirmedHeldRows();
+            if (message is not null && !_catalogRefreshRetainsRows)
+                SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to refresh catalog: {message}", value => ErrorMessage = value);
+            if (_catalogRefreshRetainsRows)
+            {
+                // Healthy content dirtiness is not lost authority. Hand back to
+                // foreground reads without a self-retry or mixed snapshot rows.
+                _catalogRefreshPending = false;
+                _catalogRefreshRetainsRows = false;
+                // Held rows are display-only: the next index/foreground read
+                // must not pair fresh positions with the pre-refresh cursor.
+                _snapshot = null;
+                _completedBoundaries.Clear();
+                // Keep the displayed extent provisionally, but reread its count
+                // without the retired snapshot's exact-total authority.
+                _hasExactTotal = false;
+                _exactCountQueryVersion = -1;
+                _observedCatalogEnd = 0;
+                _catalogEndTotal = null;
+                _catalogRefreshReleasedVersion = version;
+                // A joined viewport outside the held set can stay visible while
+                // its ordinary read starts. Never splice fresh positions into
+                // overlapping retained windows from the old snapshot.
+                if (_confirmedRefreshViewport is { } confirmed &&
+                    Enumerable.Range(confirmed.Start, confirmed.Response.Items.Count).Any(index => GetWindowItem(index) is not null))
+                {
+                    _confirmedRefreshViewport = null;
+                    _confirmedRefreshViewportVersion = -1;
+                }
+                ResumeOptionalCatalogReads();
+                WindowLoaded?.Invoke();
+            }
+            else RetireUnconfirmedHeldRows();
             return message is null ? CatalogRefreshResult.Deferred : CatalogRefreshResult.Failed;
         }
         try
@@ -311,12 +365,15 @@ public partial class LibraryViewModel
             window.Response.Total = 0;
         }
         _catalogRefreshPending = false;
+        _catalogRefreshRetainsRows = false;
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         // These chunks used skip_total: omitted totals can deserialize as exact
         // zero. Keep the extent until the explicit count read in this snapshot.
         _exactCountQueryVersion = _queryVersion;
         _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
         RefreshLetterIndexInPlace();
+        if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
+            _ = EnsureFiltersLoadedAsync();
         WindowLoaded?.Invoke();
         return CatalogRefreshResult.Completed;
     }
@@ -340,6 +397,7 @@ public partial class LibraryViewModel
         _exactCountQueryVersion = -1;
         ResetLetterIndex();
         _catalogRefreshPending = false;
+        _catalogRefreshRetainsRows = false;
         _catalogRefreshReleasedVersion = _queryVersion;
         ClearActiveWindow(notify: true);
     }
@@ -423,6 +481,17 @@ public partial class LibraryViewModel
         if (unheld && _recentWindows.Count < 8 &&
             _recentWindows.Sum(window => window.Response.Items.Count) + replacement.Count <= 1200)
             RememberWindow(start, new CatalogResponse { Items = replacement.ToList(), Snapshot = _snapshot }, false);
+    }
+
+    // A retained handback must resume optional reads canceled by the rebase,
+    // even when cached cards mean no foreground window request is needed.
+    private void ResumeOptionalCatalogReads()
+    {
+        if (LetterIndex is null && _letterIndexKey is null && !LetterIndexFailed && SelectedSort == "title")
+            _ = EnsureLetterIndexAsync();
+        EnsureExactCountRequested();
+        if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
+            _ = EnsureFiltersLoadedAsync();
     }
 
     private static bool SameLetterIndex(CatalogLettersResponse? current, CatalogLettersResponse? next) =>
