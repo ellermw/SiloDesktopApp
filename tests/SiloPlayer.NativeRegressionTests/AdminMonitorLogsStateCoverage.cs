@@ -173,7 +173,15 @@ internal static partial class AdminMonitorLogsNativeFixture
                         reference.Fail(SettingsPath + "/diagnostics.uploads_enabled", 409, "PUT"); toggle.IsOn = !toggle.IsOn;
                         await Wait(() => !controller.State.ToggleBusy && controller.State.ActionError != null && toggle.IsEnabled, "generic 409 failure permits explicit retry with retained revision"); await Feedback(controller.State.ActionError!); await Snapshot("-error-409");
                         reference.Fail(SettingsPath + "/diagnostics.uploads_enabled", 412, "PUT"); toggle.IsOn = !toggle.IsOn;
-                        await Wait(() => !controller.State.ToggleBusy && controller.State.ActionError != null && controller.State.SettingsRevision == null && !toggle.IsEnabled, "412 disables toggle without fresh revision"); await Feedback(controller.State.ActionError!);
+                        await Wait(() => !controller.State.ToggleBusy && controller.State.ActionError != null && controller.State.StatusError != null && controller.State.SettingsRevision == null && !toggle.IsEnabled, "412 disables toggle until revision is refreshed"); await Feedback(controller.State.ActionError!);
+                        var conflict = controller.State.StatusError;
+                        await ExpireFeedback(Find<ContentControl>(frame, "LogsActionFeedback"));
+                        var banners = (StackPanel)typeof(AdminDiagnosticsPage).GetField("_banners", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+                        Require(banners.Visibility == Visibility.Visible && All(banners).OfType<TextBlock>().Any(text => text.Text == conflict), "upload conflict remains visible after toast expires");
+                        var retry = Find<Button>(banners, "DiagnosticsRetry");
+                        Require(retry.IsEnabled && retry.Visibility == Visibility.Visible, "upload conflict offers in-place Retry"); await Snapshot("-conflict-412");
+                        reference.Release(); Invoke(retry);
+                        await Wait(() => controller.State.StatusError == null && controller.State.SettingsRevision != null && toggle.IsEnabled, "Retry reloads revision and re-enables upload toggle");
                     }
                     if (spec.Exercise == "diagnostics-filters")
                     {

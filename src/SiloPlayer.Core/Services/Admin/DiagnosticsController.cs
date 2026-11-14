@@ -230,7 +230,7 @@ public sealed class DiagnosticsController : IDisposable
             await _api.DiagnosticsSetUploadsEnabledAsync(action, enabled, etag).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!action.IsCurrent) { return; }
-        catch (LoggingSettingsConflictException) { Update(action, () => _state = _state with { ToggleBusy = false, SettingsRevision = null, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.toggleConflict") }); return; }
+        catch (LoggingSettingsConflictException) { Update(action, () => _state = _state with { ToggleBusy = false, SettingsRevision = null, Notice = null, StatusError = LogsText.T("logs.native.diagnostics.toggleConflict"), ActionError = LogsText.T("logs.native.diagnostics.toggleConflict") }); return; }
         catch (Exception) { Update(action, () => _state = _state with { ToggleBusy = false, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.toggleFailed") }); return; }
 
         Update(action, () => _state = _state with { SettingsRevision = null, UploadsEnabled = enabled, ToggleBusy = false, Notice = enabled ? LogsText.T("logs.native.diagnostics.uploadsEnabled") : LogsText.T("logs.native.diagnostics.uploadsDisabled") });

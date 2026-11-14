@@ -210,6 +210,48 @@ public sealed class AdminMonitorDiagnosticsControllerTests
         Assert.Equal("\"one\"", controller.State.SettingsRevision);
     }
 
+    [Fact]
+    public async Task UploadsConflictPersistsUntilRefreshAndRecoversWithoutReplayingWrite()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var writes = 0;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Put)
+            {
+                writes++;
+                return Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.PreconditionFailed));
+            }
+            var path = request.RequestUri!.AbsolutePath;
+            var response = Reply(path, writes > 0 ? "disabled" : "available");
+            if (writes > 0 && path.EndsWith("/effective")) response.Headers.ETag = new("\"two\"");
+            return Task.FromResult(response);
+        };
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        using var action = controller.CaptureAction();
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.False(controller.State.ToggleBusy);
+        Assert.Null(controller.State.SettingsRevision);
+        Assert.Null(controller.State.Notice);
+        Assert.False(controller.State.CanToggle);
+        Assert.Equal(LogsText.T("logs.native.diagnostics.toggleConflict"), controller.State.StatusError);
+
+        controller.CloseDetail();
+        Assert.Null(controller.State.ActionError);
+        Assert.NotNull(controller.State.StatusError);
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.Equal(1, writes);
+
+        await controller.RefreshAsync();
+        Assert.Null(controller.State.StatusError);
+        Assert.Equal("\"two\"", controller.State.SettingsRevision);
+        Assert.False(controller.State.UploadsEnabled);
+        Assert.True(controller.State.CanToggle);
+        Assert.Equal(1, writes);
+    }
+
     [Theory]
     [InlineData("/capabilities", false)]
     [InlineData("/capabilities", true)]
