@@ -90,6 +90,7 @@ public sealed partial class LibraryPage
                     _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
                     ScheduleVisibleRangeLoad(force: true);
                 }
+                WakeCatalogContentRefresh();
             });
     }
 
@@ -228,7 +229,7 @@ public sealed partial class LibraryPage
             if (_queuedLetterJumpVersion != jump) return;
             _queuedLetterJumpVersion = 0;
             _pendingLibraryLetterCommit = null;
-            if (!IsCurrent()) return;
+            if (!IsCurrent()) { WakeCatalogContentRefresh(); return; }
             UpdateVirtualGridMetrics();
             var layout = GetGridLayout();
             var offset = (index / layout.Columns) * layout.RowHeight;

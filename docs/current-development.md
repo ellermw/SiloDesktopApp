@@ -1,3 +1,19 @@
+# November 13 - Mounted library scan-refresh increment
+
+Canonical/legacy catalog changes now coalesce in place, preserving authorized
+cards and both letter landing boundaries; reverse-order clicks and failed/churned
+refreshes hand back safely. Access hides old cards immediately. Final138 focused
+units, fresh publish/native build and library-scan-refresh/library-reconnect
+native groups passed. Initial full6115 preceded review corrections and remains
+historical only. See [scope/evidence](parity/2026-11-13-upstream-4448-library.md).
+
+Base6f9f87f7;1.2.1017-beta.1 /1.2.1016.1 unchanged. RankingPR148 and markerPR149
+are separate submissions. Metered quality remains an independent pending branch.
+PR145 remains pipeline-owned. Existing output area is reused within10GiB and
+both drives remain above50GiB; no cleanup retried after the prior policy block,
+recovered0GiB C:/D:. Installed player remains open.
+
+---
 # November 13 - Edition-scoped detail Auto verified locally
 
 Branch codex/edition-auto-nov13 starts at Beta e438c30d. Official upstream

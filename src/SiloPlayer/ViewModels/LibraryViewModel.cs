@@ -390,7 +390,8 @@ public partial class LibraryViewModel : ObservableObject
         // A changed library scope or access starts a new, empty query: nothing to prefetch.
         EnsureCatalogScope();
         if (TotalCount <= 0) return [];
-        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, endIndex - startIndex + 1, ct) != CatalogRefreshResult.Completed)
+        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, endIndex - startIndex + 1, ct,
+            kind: _catalogRefreshRetainsRows ? CatalogRefreshKind.ContentChanged : CatalogRefreshKind.TransportCatchUp) != CatalogRefreshResult.Completed)
             return [];
         // A failed catch-up keeps only the extent. Let a foreground window
         // establish its fresh snapshot before speculative reads populate caches.
@@ -548,11 +549,12 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (Library is null) return;
         EnsureCatalogScope();
-        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, itemCount) is var refresh &&
+        if (_catalogRefreshPending && await RefreshInPlaceAsync(startIndex, itemCount,
+            kind: _catalogRefreshRetainsRows ? CatalogRefreshKind.ContentChanged : CatalogRefreshKind.TransportCatchUp) is var refresh &&
             refresh != CatalogRefreshResult.Completed &&
             // A catch-up that handed back its gate (churn, oversized held set) under
             // this query leaves the viewport to the ordinary read, not to the next scroll.
-            !(refresh == CatalogRefreshResult.Deferred && !RequiresCatalogRefresh &&
+            !((refresh == CatalogRefreshResult.Deferred || refresh == CatalogRefreshResult.Failed) && !RequiresCatalogRefresh &&
               _catalogRefreshReleasedVersion == _queryVersion))
             return;
         if (letterLoad is { IsCurrent: false }) return;
@@ -696,6 +698,10 @@ public partial class LibraryViewModel : ObservableObject
                 if (_hasExactTotal && startIndex >= TotalCount)
                     return;
 
+                if (_catalogRefreshReleasedVersion == queryVersion)
+                {
+                    _confirmedRefreshViewport = null;
+                }
                 ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
                 RememberWindow(startIndex, response, includeTotal);
                 if (letterLoad is not null) letterLoad.Received = true;
@@ -773,6 +779,7 @@ public partial class LibraryViewModel : ObservableObject
         _recentWindows.Clear();
         _snapshot = null;
         _catalogRefreshPending = false;
+        _catalogRefreshRetainsRows = false;
         _estimatedTotalItems = 0;
         _observedCatalogEnd = 0;
         _catalogEndTotal = null;
@@ -794,6 +801,7 @@ public partial class LibraryViewModel : ObservableObject
     {
         _snapshot = null;
         _catalogRefreshPending = false;
+        _catalogRefreshRetainsRows = false;
         ResetLetterIndex();
         _loadedFiltersLibraryId = null;
         CancelWindowLoad();
@@ -815,6 +823,12 @@ public partial class LibraryViewModel : ObservableObject
     /// </summary>
     public void SuspendCatalogLoads()
     {
+        if (_catalogRefreshRetainsRows)
+        {
+            _catalogRefreshPending = false;
+            _catalogRefreshRetainsRows = false;
+            _confirmedRefreshViewport = null;
+        }
         ResetLetterIndex();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();

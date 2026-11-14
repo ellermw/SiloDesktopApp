@@ -70,7 +70,7 @@ public partial class LibraryViewModel
 
     public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync();
 
-    private async Task EnsureLetterIndexCoreAsync(bool force = false)
+    private async Task EnsureLetterIndexCoreAsync(bool force = false, bool preserveExisting = false)
     {
         if (Library is not null) EnsureCatalogScope();
         // The page's viewport owns catch-up priority, not the start of a held window.
@@ -83,11 +83,11 @@ public partial class LibraryViewModel
         }
         var key = LetterQueryKey();
         if (!force && _letterIndexKey == key) { await (_letterIndexTask ?? Task.CompletedTask); return; }
-        LetterIndex = null;
+        if (!preserveExisting) LetterIndex = null;
         _letterIndexKey = key;
         LetterIndexFailed = false;
         IsLetterIndexLoading = true;
-        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token));
+        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting));
     }
 
     private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting = false)
@@ -162,9 +162,20 @@ public partial class LibraryViewModel
         _letterJumpStartVersion++;
         // Reset an unobserved API-context change before capturing this jump's
         // owner; the window loader must not retire the seek it is about to read.
-        var contextChanged = _catalogRefreshPending ||
-            (_catalogContext is not null && _catalogContext != _catalogApi.CaptureContext());
+        var contextChanged = RequiresCatalogConfirmation;
+        var interruptedHealthyRefresh = !contextChanged && _catalogRefreshPending && _catalogRefreshRetainsRows;
         if (contextChanged) StartNewCatalogQuery();
+        else if (interruptedHealthyRefresh)
+        {
+            // A healthy reread is subordinate to the explicit seek. Retire its
+            // query work without discarding the still-authorized viewport or extent.
+            CancelCurrentCatalogQuery();
+            _catalogQueryCts = new CancellationTokenSource();
+            _catalogRefreshPending = false;
+            _catalogRefreshRetainsRows = false;
+            _catalogRefreshVersion = -1;
+            _confirmedRefreshViewport = null;
+        }
         var currentKey = LetterQueryKey();
         var knownIndex = (LetterIndex is not null && _letterIndexKey == currentKey) ||
             (_failedLetter is not null && _letterFeedbackKey == currentKey);
@@ -203,7 +214,12 @@ public partial class LibraryViewModel
             }
             for (var attempt = 0; attempt < 2 && EnsureJumpScope(); attempt++)
             {
-                await EnsureLetterIndexAsync();
+                await EnsureLetterIndexCoreAsync(preserveExisting: interruptedHealthyRefresh);
+                if (interruptedHealthyRefresh && _letterIndexKey != key)
+                {
+                    if (IsCurrent()) SetLetterJumpFailure(letter);
+                    return;
+                }
                 var index = LetterIndex;
                 if (!IsCurrent()) return;
                 if (index is null)
