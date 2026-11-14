@@ -31,7 +31,29 @@ public sealed partial class MiniPlayerBar : UserControl
         AudiobookSliderAppearance.Apply(AudiobookSeekSlider);
         AudiobookSliderAppearance.Apply(AudiobookVolumeSlider, volume: true);
         SizeChanged += (_, _) => UpdateResponsiveAudio();
+        // Retained bar: labels follow the interface language in place.
+        AppLocalization.Register(this, LocalizeText);
     }
+
+    private void LocalizeText()
+    {
+        if (!_active) return;
+        if (_playerService.IsAudiobook)
+        {
+            AudiobookSpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(_playbackRate);
+            UpdateAudiobookSkipButtonLabels(_settingsService.Load());
+            BuildAudiobookFlyouts();
+            UpdateAudiobookSleepLabel();
+        }
+        UpdatePlayPauseIcon();
+        UpdateVolumeIcon();
+    }
+
+    // The HUD episode line is re-rendered by the player service first.
+    private void OnPlaybackTextChanged() => DispatcherQueue?.TryEnqueue(() =>
+    {
+        if (_active && !_playerService.IsAudiobook) SubtitleText.Text = _playerService.Subtitle ?? "";
+    });
 
     private void UpdateResponsiveAudio()
     {
@@ -68,6 +90,7 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService.SeekPreferencesChanged += OnSeekPreferencesChanged;
         _playerService.AudiobookPresentationChanged += OnAudiobookPresentationChanged;
         _playerService.AudiobookPlaybackRateChanged += OnAudiobookPlaybackRateChanged;
+        _playerService.PlaybackTextChanged += OnPlaybackTextChanged;
 
         _suppressVolume = true;
         VolumeSlider.Value = AudiobookVolumeSlider.Value = _playerService.Volume;
@@ -77,7 +100,7 @@ public sealed partial class MiniPlayerBar : UserControl
         if (_playerService.IsAudiobook)
         {
             _playbackRate = _playerService.AudiobookPlaybackRate;
-            AudiobookSpeedButton.Content = $"{_playbackRate:0.##}×";
+            AudiobookSpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(_playbackRate);
             ActivateAudiobookMode();
         }
         else
@@ -99,6 +122,7 @@ public sealed partial class MiniPlayerBar : UserControl
         _playerService.SeekPreferencesChanged -= OnSeekPreferencesChanged;
         _playerService.AudiobookPresentationChanged -= OnAudiobookPresentationChanged;
         _playerService.AudiobookPlaybackRateChanged -= OnAudiobookPlaybackRateChanged;
+        _playerService.PlaybackTextChanged -= OnPlaybackTextChanged;
         if (_uiTimer != null) _uiTimer.Tick -= UiTimer_Tick;
         _uiTimer?.Stop();
         _uiTimer = null;
@@ -169,7 +193,7 @@ public sealed partial class MiniPlayerBar : UserControl
     private void OnAudiobookPlaybackRateChanged(double rate) => DispatcherQueue?.TryEnqueue(() =>
     {
         _playbackRate = rate;
-        AudiobookSpeedButton.Content = $"{rate:0.##}×";
+        AudiobookSpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(rate);
         BuildSpeedFlyout();
     });
 
@@ -178,11 +202,13 @@ public sealed partial class MiniPlayerBar : UserControl
         var glyph = _playerService.IsPaused ? "\uE768" : "\uE769";
         PlayPauseIcon.Glyph = glyph;
         AudiobookPlayPauseIcon.Glyph = glyph;
-        var label = _playerService.IsPaused ? "Play" : "Pause";
+        var label = _playerService.IsPaused
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.player.bar.play", fallback: "Play")
+            : SiloPlayer.Core.Localization.AppStrings.Get("web.player.bar.pause", fallback: "Pause");
         AutomationProperties.SetName(VideoPlayPauseButton, label);
-        AutomationProperties.SetName(AudiobookPlayPauseButton, label);
+        AutomationProperties.SetName(AudiobookPlayPauseButton, AudiobookTransportAppearance.Labels.PlayPause(_playerService.IsPaused, title: false));
         ToolTipService.SetToolTip(VideoPlayPauseButton, label);
-        ToolTipService.SetToolTip(AudiobookPlayPauseButton, $"{label} (space)");
+        ToolTipService.SetToolTip(AudiobookPlayPauseButton, AudiobookTransportAppearance.Labels.PlayPause(_playerService.IsPaused, title: true));
     }
 
     private void UpdateAudiobookPresentation()
@@ -197,7 +223,7 @@ public sealed partial class MiniPlayerBar : UserControl
         if (AudiobookBar.Visibility != Visibility.Visible)
         {
             _playbackRate = _playerService.AudiobookPlaybackRate;
-            AudiobookSpeedButton.Content = $"{_playbackRate:0.##}×";
+            AudiobookSpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(_playbackRate);
             ActivateAudiobookMode();
             return;
         }
@@ -257,13 +283,13 @@ public sealed partial class MiniPlayerBar : UserControl
         {
             var item = new ToggleMenuFlyoutItem
             {
-                Text = $"{rate:0.##}×",
+                Text = AudiobookTransportAppearance.Labels.Rate(rate),
                 IsChecked = Math.Abs(rate - _playbackRate) < 0.001,
             };
             item.Click += (_, _) =>
             {
                 _playbackRate = _playerService.SetAudiobookPlaybackRate(rate);
-                AudiobookSpeedButton.Content = $"{rate:0.##}×";
+                AudiobookSpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(rate);
                 BuildSpeedFlyout();
             };
             flyout.Items.Add(item);
@@ -291,16 +317,16 @@ public sealed partial class MiniPlayerBar : UserControl
     private void BuildSleepFlyout()
     {
         var flyout = new MenuFlyout();
-        var off = new MenuFlyoutItem { Text = "Off" };
+        var off = new MenuFlyoutItem { Text = AudiobookTransportAppearance.Labels.SleepOff };
         off.Click += (_, _) => _playerService.ClearAudiobookSleepTimer();
         flyout.Items.Add(off);
         foreach (var minutes in new[] { 5, 15, 30, 45, 60 })
         {
-            var item = new MenuFlyoutItem { Text = $"{minutes} minutes" };
+            var item = new MenuFlyoutItem { Text = AudiobookTransportAppearance.Labels.SleepMinutes(minutes) };
             item.Click += (_, _) => _playerService.SetAudiobookSleepTimer(TimeSpan.FromMinutes(minutes), null);
             flyout.Items.Add(item);
         }
-        var endChapter = new MenuFlyoutItem { Text = "End of chapter" };
+        var endChapter = new MenuFlyoutItem { Text = AudiobookTransportAppearance.Labels.SleepEndOfChapter };
         endChapter.Click += (_, _) => _playerService.SetAudiobookSleepTimer(null, _playerService.CurrentAudiobookChapter?.EndSeconds);
         flyout.Items.Add(endChapter);
         AudiobookSleepButton.Flyout = flyout;
@@ -309,9 +335,7 @@ public sealed partial class MiniPlayerBar : UserControl
     private void UpdateAudiobookSleepLabel()
     {
         var remaining = _playerService.GetAudiobookSleepRemaining();
-        AudiobookSleepText.Text = remaining.HasValue
-            ? $"Sleep {(int)remaining.Value.TotalMinutes}:{remaining.Value.Seconds:00}"
-            : "Sleep";
+        AudiobookSleepText.Text = AudiobookTransportAppearance.Labels.Sleep(remaining);
     }
 
     private void BuildSettingsFlyout()
@@ -324,7 +348,8 @@ public sealed partial class MiniPlayerBar : UserControl
         var submenu = new MenuFlyoutSubItem { Text = label };
         foreach (var seconds in new[] { 5, 10, 15, 30, 45, 60, 90 })
         {
-            var item = new ToggleMenuFlyoutItem { Text = $"{seconds} seconds", IsChecked = seconds == selected };
+            var item = new ToggleMenuFlyoutItem { Text = SiloPlayer.Core.Localization.AppStrings.Get("web.player.seekBar.positionSeconds",
+                new Dictionary<string, object?> { ["seconds"] = seconds }, fallback: $"{seconds} seconds"), IsChecked = seconds == selected };
             item.Click += async (_, _) =>
             {
                 var settings = _settingsService.Load();
@@ -410,7 +435,7 @@ public sealed partial class MiniPlayerBar : UserControl
         var glyph = _isMuted || value <= 0 ? "\uE74F" : value < 50 ? "\uE993" : "\uE767";
         VolumeIcon.Glyph = glyph;
         AudiobookVolumeIcon.Glyph = glyph;
-        var label = _isMuted || value <= 0 ? "Unmute" : "Mute";
+        var label = AudiobookTransportAppearance.Labels.Mute(_isMuted || value <= 0);
         AutomationProperties.SetName(VideoMuteButton, label);
         AutomationProperties.SetName(AudiobookMuteButton, label);
         ToolTipService.SetToolTip(VideoMuteButton, label);
@@ -430,10 +455,10 @@ public sealed partial class MiniPlayerBar : UserControl
     {
         var back = Math.Clamp(_playerService.SeekIntervals.AudiobookBack, 5, 120);
         var forward = Math.Clamp(_playerService.SeekIntervals.AudiobookForward, 5, 120);
-        AutomationProperties.SetName(AudiobookSkipBackButton, $"Back {back} seconds");
-        AutomationProperties.SetName(AudiobookSkipForwardButton, $"Forward {forward} seconds");
-        ToolTipService.SetToolTip(AudiobookSkipBackButton, $"Back {back} seconds (Left)");
-        ToolTipService.SetToolTip(AudiobookSkipForwardButton, $"Forward {forward} seconds (Right)");
+        AutomationProperties.SetName(AudiobookSkipBackButton, AudiobookTransportAppearance.Labels.Skip(true, back, title: false));
+        AutomationProperties.SetName(AudiobookSkipForwardButton, AudiobookTransportAppearance.Labels.Skip(false, forward, title: false));
+        ToolTipService.SetToolTip(AudiobookSkipBackButton, AudiobookTransportAppearance.Labels.Skip(true, back, title: true));
+        ToolTipService.SetToolTip(AudiobookSkipForwardButton, AudiobookTransportAppearance.Labels.Skip(false, forward, title: true));
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)

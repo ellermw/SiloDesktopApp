@@ -65,11 +65,21 @@ public sealed partial class CollectionsPage
         var stack = new StackPanel(); stack.Children.Add(posterLayer);
         stack.Children.Add(new TextBlock { Text = collection.Name, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(2, 10, 2, 0) });
         if (ownerName != null)
-            stack.Children.Add(new TextBlock { Text = "by " + ownerName, FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(2, 0, 2, 0) });
-        var type = collection.CollectionType switch { "manual" => "Manual", "smart" => "Smart", _ => "Synced list" };
-        var status = collection.LastSyncStatus switch { "running" => " · Syncing now", "failed" => " · Sync failed", _ => "" };
+            stack.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.posterCard.byOwner", "by " + ownerName, ("owner", ownerName)), FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(2, 0, 2, 0) });
+        var type = collection.CollectionType switch
+        {
+            "manual" => CollectionText.Get("web.collections.types.kindManual", "Manual"),
+            "smart" => CollectionText.Get("web.collections.types.kindSmart", "Smart"),
+            _ => CollectionText.Get("web.collections.types.kindSynced", "Synced list"),
+        };
+        var status = collection.LastSyncStatus switch
+        {
+            "running" => " · " + CollectionText.Get("web.collections.list.syncingNow", "Syncing now"),
+            "failed" => " · " + CollectionText.Get("web.collections.list.syncFailed", "Sync failed"),
+            _ => "",
+        };
         var metadata = new TextBlock { FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 0, 2, 0) };
-        metadata.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"{type} · {collection.ItemCount} title{(collection.ItemCount == 1 ? "" : "s")}" });
+        metadata.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = $"{type} · {CollectionText.Titles(collection.ItemCount)}" });
         if (status.Length > 0)
         {
             metadata.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = status, Foreground = collection.LastSyncStatus == "failed" ? Brush("ErrorBrush") : Brush("SecondaryTextBrush"), FontWeight = collection.LastSyncStatus == "failed" ? FontWeights.Medium : FontWeights.Normal });
@@ -79,7 +89,7 @@ public sealed partial class CollectionsPage
         var layer = new Grid();
         var open = new Button { Content = stack, Padding = new Thickness(0), Style = (Style)Application.Current.Resources["PosterHitTargetButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetName(open, "Open " + collection.Name);
+        AutomationProperties.SetName(open, CollectionText.Open(collection.Name));
         open.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
         { CollectionId = collection.Id, Title = collection.Name, Subtitle = collection.IsShared ? "Shared collection" : "Personal collection", IsUserCollection = true });
         layer.Children.Add(open); var card = new Border { Child = layer, Tag = collection }; ConfigurePosterImageHover(card, poster);
@@ -87,20 +97,23 @@ public sealed partial class CollectionsPage
         {
             var shared = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             shared.Children.Add(WebUiIcon.Create("users", 12, new SolidColorBrush(Windows.UI.Color.FromArgb(255, 125, 211, 252))));
-            shared.Children.Add(new TextBlock { Text = "Shared", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 125, 211, 252)) });
+            shared.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.tags.shared", "Shared"), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 125, 211, 252)) });
             stack.Children.Add(RoundedBadge.Apply(new Border { Child = shared, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(2, 6, 2, 0), Padding = new(8, 2, 8, 2), BorderThickness = new(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(102, 14, 165, 233)), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(38, 14, 165, 233)) }, 999));
         }
         card.SizeChanged += (_, _) => { if (card.ActualWidth > 0 && Math.Abs(poster.Width - card.ActualWidth) > .5) { poster.Width = card.ActualWidth; poster.Height = card.ActualWidth * 1.5; } };
         var profile = App.Services.GetRequiredService<AuthService>().SelectedProfileId;
         if (!PersonalCollectionOwnership.IsOwn(collection, profile)) { card.ContextFlyout = new MenuFlyout(); return card; }
-        var menu = new MenuFlyout();
+        var menu = CollectionText.Direct(new MenuFlyout());
         var allowanceVisit = _collectionsPageGeneration;
         CollectionAllowanceMenu.Attach(menu, card, collection, () => IsLoaded && allowanceVisit == _collectionsPageGeneration);
-        var edit = new MenuFlyoutItem { Text = "Edit collection" }; edit.Click += (_, _) => NavigateToCollectionEditor(collection); menu.Items.Add(edit);
+        MenuFlyoutItem? syncAction = null;
+        var shareHelp = CollectionText.Get("web.collections.copy.showToOtherProfilesShortHelp", "Every profile on this account sees it");
+        var edit = CollectionText.Key(new MenuFlyoutItem { Text = "Edit collection" }, "web.collections.admin.editCollection"); edit.Click += (_, _) => NavigateToCollectionEditor(collection); menu.Items.Add(edit);
         if (ViewModel.Capabilities?.Imports == true && CanSyncCollection(collection))
-        { var sync = new MenuFlyoutItem { Text = "Sync now" }; sync.Click += async (_, _) => await ViewModel.SyncCollectionCommand.ExecuteAsync(collection.Id); menu.Items.Add(sync); menu.Opened += (_, _) => { sync.IsEnabled = !ViewModel.IsCollectionMutationPending; sync.Text = ViewModel.SyncCollectionCommand.IsRunning ? "Syncing…" : "Sync now"; }; }
-        var home = new MenuFlyoutItem { Text = "Add to my Home…" };
-        AutomationProperties.SetHelpText(home, "A row on your Home"); ToolTipService.SetToolTip(home, "A row on your Home");
+        { var sync = new MenuFlyoutItem { Text = CollectionText.Get("web.collections.copy.syncNow", "Sync now") }; sync.Click += async (_, _) => await ViewModel.SyncCollectionCommand.ExecuteAsync(collection.Id); menu.Items.Add(sync); menu.Opened += (_, _) => { sync.IsEnabled = !ViewModel.IsCollectionMutationPending; sync.Text = ViewModel.SyncCollectionCommand.IsRunning ? CollectionText.Get("web.collections.actions.syncing", "Syncing…") : CollectionText.Get("web.collections.copy.syncNow", "Sync now"); }; syncAction = sync; }
+        var home = CollectionText.Key(new MenuFlyoutItem { Text = "Add to my Home…" }, "web.collections.copy.addToMyHomeItem");
+        var homeHelp = CollectionText.Get("web.collections.copy.addToMyHomeHelp", "A row on your Home");
+        AutomationProperties.SetHelpText(home, homeHelp); ToolTipService.SetToolTip(home, homeHelp);
         home.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<CustomizeHomePage>(new CustomizeHomeNavigationArgs(collection.Id, collection.Name)); menu.Items.Add(home);
         var move = new MenuFlyoutSubItem { Text = "Move to group", Icon = WebUiIcon.Navigation("folder", 16, Brush("SecondaryTextBrush")) };
         foreach (var group in ViewModel.Groups.Cast<CollectionGroup?>().Prepend(null))
@@ -115,8 +128,8 @@ public sealed partial class CollectionsPage
         if (ViewModel.Profiles.Any(profile => profile.Id != collection.CreatorProfileId))
         {
             menu.Items.Add(new MenuFlyoutSeparator());
-            var share = new ToggleMenuFlyoutItem { Text = "Show to other profiles", IsChecked = collection.IsShared, IsEnabled = !ViewModel.IsCollectionMutationPending };
-            AutomationProperties.SetHelpText(share, "Every profile on this account sees it"); ToolTipService.SetToolTip(share, "Every profile on this account sees it");
+            var share = CollectionText.Key(new ToggleMenuFlyoutItem { Text = "Show to other profiles", IsChecked = collection.IsShared, IsEnabled = !ViewModel.IsCollectionMutationPending }, "web.collections.copy.showToOtherProfilesLabel");
+            AutomationProperties.SetHelpText(share, shareHelp); ToolTipService.SetToolTip(share, shareHelp);
             menu.Opened += (_, _) => share.IsEnabled = !ViewModel.IsCollectionMutationPending;
             share.Click += async (_, _) =>
             {
@@ -124,8 +137,14 @@ public sealed partial class CollectionsPage
                 if (!desired)
                 {
                     var names = ViewModel.Profiles.Where(profile => profile.Id != collection.CreatorProfileId).Select(profile => profile.Name).ToArray();
-                    var who = names.Length == 0 ? "Other profiles" : names.Length == 1 ? names[0] : string.Join(", ", names[..^1]) + " and " + names[^1];
-                    var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = $"Stop sharing {collection.Name}?", Content = $"{who} {(names.Length == 1 ? "loses" : "lose")} it, including rows they made from it.", PrimaryButtonText = "Stop sharing", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+                    var dialog = new ContentDialog { XamlRoot = XamlRoot, DefaultButton = ContentDialogButton.Close };
+                    CollectionText.Dialog(dialog, () =>
+                    {
+                        dialog.Title = CollectionText.Get("web.collections.page.stopSharingTitle", $"Stop sharing {collection.Name}?", ("name", collection.Name));
+                        dialog.Content = UnshareConsequence(names);
+                        dialog.PrimaryButtonText = CollectionText.Get("web.collections.page.stopSharing", "Stop sharing");
+                        dialog.CloseButtonText = CollectionText.Get("common.cancel", "Cancel");
+                    });
                     if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
                 }
                 share.IsEnabled = false;
@@ -135,20 +154,21 @@ public sealed partial class CollectionsPage
             menu.Items.Add(share);
         }
         menu.Items.Add(new MenuFlyoutSeparator());
-        var delete = new MenuFlyoutItem { Text = "Delete…" }; delete.Click += async (_, _) => await ShowDeleteConfirmationAsync(collection); menu.Items.Add(delete);
+        var delete = CollectionText.Key(new MenuFlyoutItem { Text = "Delete…" }, "web.collections.actions.delete"); delete.Click += async (_, _) => await ShowDeleteConfirmationAsync(collection); menu.Items.Add(delete);
         CollectionActionMenuPresentation.Configure(menu);
         foreach (var entry in menu.Items)
         {
             if (entry is ToggleMenuFlyoutItem sharing)
             {
                 sharing.Icon = WebUiIcon.Navigation("users-round", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]);
-                CollectionActionMenuPresentation.Configure(sharing, "Every profile on this account sees it");
+                CollectionActionMenuPresentation.Configure(sharing, shareHelp);
             }
             else if (entry is MenuFlyoutItem action)
             {
-                var mark = action.Text switch { "Edit collection" => "pencil", "Sync now" => "refresh-cw", "Add to my Home…" => "house", "Delete…" => "trash-2", _ => "plus" };
+                // Icons follow the entry itself, never its (translated) text.
+                var mark = action == edit ? "pencil" : action == syncAction ? "refresh-cw" : action == home ? "house" : action == delete ? "trash-2" : "plus";
                 action.Icon = WebUiIcon.Navigation(mark, 16, (Brush)Application.Current.Resources[action == delete ? "ErrorBrush" : "SecondaryTextBrush"]);
-                CollectionActionMenuPresentation.Configure(action, action == home ? "A row on your Home" : null, action == delete);
+                CollectionActionMenuPresentation.Configure(action, action == home ? homeHelp : null, action == delete);
             }
         }
         card.ContextFlyout = menu;
@@ -157,7 +177,7 @@ public sealed partial class CollectionsPage
         var more = new Button { Content = WebUiIcon.Create("ellipsis", 16, new SolidColorBrush(Microsoft.UI.Colors.White)), Width = ActualWidth < 1024 ? 36 : 32, Height = ActualWidth < 1024 ? 36 : 32,
             MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 0, 0, 0)),
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8) };
-        AutomationProperties.SetName(more, "More for " + collection.Name); layer.Children.Add(more);
+        AutomationProperties.SetName(more, CollectionText.Get("web.collections.admin.moreFor", "More for " + collection.Name, ("name", collection.Name))); layer.Children.Add(more);
         more.Click += (_, _) => menu.ShowAt(more);
         more.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(Windows.UI.Color.FromArgb(179, 0, 0, 0));
         menu.Opened += (_, _) => more.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(204, 0, 0, 0));
@@ -167,7 +187,7 @@ public sealed partial class CollectionsPage
             ConfigureCollectionDrag(card, collection);
             var handle = new Button { Content = WebUiIcon.Create("grip-vertical", 16), Width = 32, Height = 32, MinWidth = 0, MinHeight = 0, Padding = new(0), CornerRadius = new(10),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new(8), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 0, 0, 0)) };
-            AutomationProperties.SetName(handle, "Move " + collection.Name);
+            AutomationProperties.SetName(handle, CollectionText.Get("web.ui.listRow.move", "Move " + collection.Name, ("title", collection.Name)));
             var picked = false; string? target = null;
             handle.KeyDown += async (_, args) =>
             {

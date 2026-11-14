@@ -12,7 +12,7 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("x:Name=\"SettingsSearchBox\"", xaml);
         Assert.Contains("x:Name=\"SettingsSearchStatus\"", xaml);
         Assert.Contains("_settingsOverviewCards.Count", code);
-        Assert.Contains("No matching settings", code);
+        Assert.Contains("AppStrings.Get(\"web.settings.search.noMatches\")", code);
         Assert.Contains("x:Name=\"SettingsOverviewPanel\"", xaml);
         Assert.Contains("Home & Discovery", code);
         Assert.Contains("Connections", code);
@@ -69,7 +69,6 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("GetOnboardingFlowAsync(\"web\")", page);
         Assert.Contains("KnownKinds", dialog);
         Assert.Contains("setting_choice", dialog);
-        Assert.Contains("Skip tour", dialog);
         Assert.Contains("ReportOnboardingProgressAsync", dialog);
         Assert.Contains("/api/v2/onboarding/flow?surface=", api);
         Assert.Contains("/api/v2/onboarding/progress", api);

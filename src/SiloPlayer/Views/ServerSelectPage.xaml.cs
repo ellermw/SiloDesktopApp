@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Models;
@@ -17,6 +18,7 @@ public sealed partial class ServerSelectPage : Page
     {
         ViewModel = App.Services.GetRequiredService<ServerSelectViewModel>();
         this.InitializeComponent();
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); });
 
         // Update empty state visibility when servers change
         ViewModel.Servers.CollectionChanged += (_, _) => UpdateEmptyState();
@@ -74,7 +76,7 @@ public sealed partial class ServerSelectPage : Page
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Couldn't connect to {server.Name}: {ex.Message}";
+            ViewModel.SetDisplayError(ex, $"Couldn't connect to {server.Name}: {ex.Message}");
         }
         finally
         {

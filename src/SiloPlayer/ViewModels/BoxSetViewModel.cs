@@ -4,7 +4,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 namespace SiloPlayer.ViewModels;
 
-public sealed class BoxSetViewModel(CatalogApi catalog) : ObservableObject
+public sealed partial class BoxSetViewModel(CatalogApi catalog) : ObservableObject
 {
     private CancellationTokenSource? _pending;
     private CancellationTokenSource? _playLifetime;

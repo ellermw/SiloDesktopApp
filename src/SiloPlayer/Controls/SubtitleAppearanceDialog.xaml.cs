@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Services;
@@ -126,6 +127,9 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         BuildPills(PositionPillsHost, PositionOptions, v => _state.Position = v, () => _state.Position);
         BuildColorSwatches(FontColorSwatchHost, FontColorPalette, hex => _state.FontColor = hex, () => _state.FontColor);
         BuildColorSwatches(BgColorSwatchHost, BgColorPalette, hex => _state.BackgroundColor = hex, () => _state.BackgroundColor);
+        // Labels follow the interface language in place; edits, pending saves and
+        // the owning playback/profile are untouched.
+        AppLocalization.Register(this, RefreshText);
 
         this.Opened += async (_, _) =>
         {
@@ -150,12 +154,65 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         DispatcherQueue.TryEnqueue(async () => { if (IsOwnerCurrent) { await LoadAsync(); SyncAllFromState(); } });
     }
 
-    private void UpdateSaveStatus(string text)
+    private Func<string> _saveStatus = () => "Loading…";
+
+    private void UpdateSaveStatus(string text) => UpdateSaveStatus(() => text, text.StartsWith("Failed", StringComparison.Ordinal));
+
+    private void UpdateSaveStatus(Func<string> text, bool failed = false)
     {
-        SaveStatusText.Text = text;
+        _saveStatus = text;
+        SaveStatusText.Text = text();
         AppearanceBody.IsEnabled = _loaded && !_saving && IsOwnerCurrent;
         ResetButton.IsEnabled = _loaded && !_saving && IsOwnerCurrent;
-        RetryButton.Visibility = text.StartsWith("Failed") ? Visibility.Visible : Visibility.Collapsed;
+        RetryButton.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static string T(string key, string english) => AppStrings.Get(key, fallback: english);
+
+    // Option values stay the stored setting values; only their labels are catalog text.
+    private static readonly Dictionary<string, string> OptionKeys = new(StringComparer.Ordinal)
+    {
+        ["small"] = "web.settings.subtitleOptions.fontSize.small", ["medium"] = "web.settings.subtitleOptions.fontSize.medium",
+        ["large"] = "web.settings.subtitleOptions.fontSize.large", ["xlarge"] = "web.settings.subtitleOptions.fontSize.xLarge",
+        ["xxlarge"] = "web.settings.subtitleOptions.fontSize.xxLarge",
+        ["sans-serif"] = "web.settings.subtitleOptions.fontFamily.sansSerif", ["serif"] = "web.settings.subtitleOptions.fontFamily.serif",
+        ["monospace"] = "web.settings.subtitleOptions.fontFamily.monospace",
+        ["box"] = "web.settings.subtitleOptions.backgroundStyle.box", ["shadow"] = "web.settings.subtitleOptions.backgroundStyle.dropShadow",
+        ["outline"] = "web.settings.subtitleOptions.backgroundStyle.outline", ["none"] = "web.settings.subtitleOptions.backgroundStyle.none",
+        ["bottom"] = "web.settings.subtitleOptions.position.bottom", ["lower-third"] = "web.settings.subtitleOptions.position.lowerThird",
+        ["top"] = "web.settings.subtitleOptions.position.top",
+    };
+
+    private static string ColorKey(Panel host, string label, bool background) =>
+        (background ? "web.settings.subtitleOptions.backgroundColor." : "web.settings.subtitleOptions.fontColor.") + (label switch
+        {
+            "Dark Gray" => "darkGray", "Dark Red" => "darkRed", "Dark Green" => "darkGreen",
+            _ => label.ToLowerInvariant(),
+        });
+
+    private void RefreshText()
+    {
+        AppLocalization.ApplyDirection(this);
+        EyebrowText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.eyebrowDefault", "Captions"));
+        TextSectionText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.text", "Text"));
+        BackgroundSectionText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.background", "Background"));
+        PositionSectionText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.position", "Position"));
+        foreach (var options in new[] { FontSizeOptions, FontFamilyOptions, BackgroundStyleOptions, PositionOptions })
+            foreach (var host in new[] { SizePillsHost, FontPillsHost, BgStylePillsHost, PositionPillsHost })
+                foreach (var button in host.Children.OfType<Button>())
+                    if (button.Tag is string value && options.FirstOrDefault(option => option.Value == value) is { Label: { } label } &&
+                        OptionKeys.TryGetValue(value, out var key))
+                        button.Content = T(key, label);
+        foreach (var (host, palette, background) in new[] { (FontColorSwatchHost, FontColorPalette, false), (BgColorSwatchHost, BgColorPalette, true) })
+            foreach (var button in host.Children.OfType<Button>())
+                if (button.Tag is string hex && palette.FirstOrDefault(entry => entry.Hex == hex) is { Label: { } label })
+                {
+                    var name = T(ColorKey(host, label, background), label);
+                    AutomationProperties.SetName(button, name); ToolTipService.SetToolTip(button, name);
+                }
+        SyncSwatches(FontColorSwatchHost, () => _state.FontColor);
+        SyncSwatches(BgColorSwatchHost, () => _state.BackgroundColor);
+        SaveStatusText.Text = _saveStatus();
     }
 
     private async void Retry_Click(object sender, RoutedEventArgs args)
@@ -223,7 +280,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
             if (!IsOwnerCurrent) return true;
             if (version == _editVersion) _savePending = false;
             CanReset = true; ResetButton.Visibility = Visibility.Visible;
-            UpdateSaveStatus("Saved");
+            UpdateSaveStatus(() => T("web.settings.subtitleAppearance.saved", "Subtitle appearance saved"));
             return true;
         }
         catch (OperationCanceledException) when (!IsOwnerCurrent) { return true; }
@@ -325,7 +382,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
                 e.Stroke = new SolidColorBrush(isActive
                     ? Color.FromArgb(0xEE, 0xFF, 0xFF, 0xFF)
                     : Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
-                AutomationProperties.SetHelpText(button, isActive ? "Selected" : "Not selected");
+                AutomationProperties.SetHelpText(button, isActive ? T("web.player.quality.selected", "Selected") : "Not selected");
             }
         }
     }

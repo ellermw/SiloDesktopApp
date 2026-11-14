@@ -72,15 +72,11 @@ public sealed partial class ItemDetailPage
         var curate = AuthorizationPolicy.CanCurateMetadata(auth);
         var currentCapabilities = _mediaActionCapabilitiesId == item.ContentId;
         var actions = MoreFlyout.Items.Where(entry => entry is not MenuFlyoutSeparator).ToList();
-        actions.RemoveAll(entry => entry is MenuFlyoutItem action && action.Text == "Media Info" && !curate);
-        foreach (var entry in actions.OfType<MenuFlyoutItem>())
+        actions.RemoveAll(entry => entry is MenuFlyoutItem action && SiloPlayer.Services.Localized.GetText(action) == "web.detail.mediaInfo.title" && !curate);
+        void Add(Func<string> label, string identity, string icon, Func<Task> execute, Func<AuthService, bool> authorized)
         {
-            if (entry.Text == "Request seasons") entry.Text = "Request Seasons";
-            if (entry.Text == "Start a party with this") entry.Text = "Start a Watch Party";
-        }
-        void Add(string label, string icon, Func<Task> execute, Func<AuthService, bool> authorized)
-        {
-            var action = new MenuFlyoutItem { Text = label, Icon = WebUiIcon.Navigation(icon, 16) };
+            var action = MediaItemCardActions.BindText(new MenuFlyoutItem { Icon = WebUiIcon.Navigation(icon, 16) }, "Text", element => element.Text = label());
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(action, identity);
             action.Click += async (_, _) =>
             {
                 if (!IsCurrentDetail(item.ContentId) || !authorized(auth)) return;
@@ -96,26 +92,26 @@ public sealed partial class ItemDetailPage
             && item.Type is "movie" or "series")
         {
             if (_titleAllowanceReadFailed)
-                Add("Retry title allowances", "refresh-cw", () => LoadTitleAllowanceActionsAsync(item, _navigationCts?.Token ?? default), _ => allowanceOwner.IsCurrent && ReferenceEquals(_titleAllowanceOwner, allowanceOwner));
+                Add(() => "Retry title allowances", "allowance", "refresh-cw", () => LoadTitleAllowanceActionsAsync(item, _navigationCts?.Token ?? default), _ => allowanceOwner.IsCurrent && ReferenceEquals(_titleAllowanceOwner, allowanceOwner));
             else if (allowanceOwner.Available && TitleAllowanceSession.HasAllowableProfile(_titleAllowanceProfiles))
             {
                 var names = _titleAllowanceProfiles.Where(profile => profile.State is "allowed" or "allowed_by_collection").Select(profile => profile.Name).ToArray();
-                Add(names.Length == 0 ? "Allow for…" : "Allowed for " + string.Join(", ", names), "users", async () =>
+                Add(() => names.Length == 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.allowFor") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.allowedFor", new Dictionary<string, object?> { ["profiles"] = string.Join(", ", names) }), "allowance", "users", async () =>
                 {
                     await new AllowTitleDialog(allowanceOwner, item.ContentId, item.Title) { XamlRoot = XamlRoot }.ShowAsync();
                     if (allowanceOwner.IsCurrent) await LoadTitleAllowanceActionsAsync(item, _navigationCts?.Token ?? default);
                 }, _ => allowanceOwner.IsCurrent && ReferenceEquals(_titleAllowanceOwner, allowanceOwner));
             }
         }
-        if (admin) Add("View Play History", "history", async () => await new PlayHistoryDialog(item.ContentId) { XamlRoot = XamlRoot }.ShowAsync(), AuthorizationPolicy.IsActingAdmin);
+        if (admin) Add(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.viewPlayHistory"), "history", "history", async () => await new PlayHistoryDialog(item.ContentId) { XamlRoot = XamlRoot }.ShowAsync(), AuthorizationPolicy.IsActingAdmin);
         if (item.Type is "movie" or "episode" && AuthorizationPolicy.CanEditMarkers(auth))
-            Add("Edit Markers", "tags", () => ShowItemActionAsync(item, new MarkerEditorDialog(item.ContentId)), AuthorizationPolicy.CanEditMarkers);
+            Add(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.editMarkers"), "edit-markers", "tags", () => ShowItemActionAsync(item, new MarkerEditorDialog(item.ContentId)), AuthorizationPolicy.CanEditMarkers);
         if (admin && (item.Type == "series" || item.Type == "movie" && item.Versions.Count > 1))
-            Add("Split Versions", "scissors", () => ShowItemActionAsync(item, new SplitVersionsDialog(item, ViewModel.LibraryId)), AuthorizationPolicy.IsActingAdmin);
+            Add(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.splitVersions"), "split", "scissors", () => ShowItemActionAsync(item, new SplitVersionsDialog(item, ViewModel.LibraryId)), AuthorizationPolicy.IsActingAdmin);
         if (admin && currentCapabilities && _offerSeekPreviews)
-            Add("Seek Previews", "gallery-horizontal", () => ShowItemActionAsync(item, new SeekPreviewsDialog(item.ContentId, item.Versions.ToDictionary(version => version.FileId.ToString(), version => string.IsNullOrWhiteSpace(version.FileName) ? "File " + version.FileId : version.FileName))), AuthorizationPolicy.IsActingAdmin);
+            Add(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.seekPreviews"), "previews", "gallery-horizontal", () => ShowItemActionAsync(item, new SeekPreviewsDialog(item.ContentId, item.Versions.ToDictionary(version => version.FileId.ToString(), version => string.IsNullOrWhiteSpace(version.FileName) ? "File " + version.FileId : version.FileName))), AuthorizationPolicy.IsActingAdmin);
         if (admin && (item.Type == "episode" || item.Type == "movie" && currentCapabilities && _offerMarkerDetection))
-            Add(item.Type == "movie" ? "Re-detect Credits" : currentCapabilities && _offerMarkerDetection ? "Re-detect Markers" : "Re-detect Intro Markers", "refresh-cw", async () =>
+            Add(() => item.Type == "movie" ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.redetectCredits") : currentCapabilities && _offerMarkerDetection ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.redetectMarkers") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.redetectIntro"), "redetect", "refresh-cw", async () =>
             {
                 if (item.Type == "episode" && currentCapabilities && _offerMarkerDetection)
                     await ShowItemActionAsync(item, new RedetectMarkersDialog(item.ContentId, _honorMarkerSettings));
@@ -128,26 +124,31 @@ public sealed partial class ItemDetailPage
             }, AuthorizationPolicy.IsActingAdmin);
         // Keep the existing action instances and handlers, including capability-hidden
         // actions that can become visible after the menu has been built.
-        static int Rank(MenuFlyoutItemBase entry) => (entry as MenuFlyoutItem)?.Text switch
+        static int Rank(MenuFlyoutItemBase entry)
         {
-            "Shuffle" => 10, "Play from Beginning" => 11, "Reset Progress" => 12,
-            "Add to Watchlist" or "Remove from Watchlist" => 20,
-            "Add to Collection" => 21, "Download" => 22, "Request Seasons" => 23,
-            "Not Interested" or "Show in Recommendations" => 24,
-            "Allow for…" or "Retry title allowances" => 25,
-            "Start a Watch Party" => 30, "Stage this in live room" or "Suggest this to live room" => 31, "Go to live room" => 32,
-            "Edit Metadata" => 100, "Match Item" => 101, "Refresh Metadata" => 102,
-            "Edit Markers" => 110, "Re-detect Markers" or "Re-detect Credits" or "Re-detect Intro Markers" => 111,
-            "Seek Previews" => 112, "Split Versions" => 113,
-            "Media Info" => 120, "View Play History" => 121, _ when (entry as MenuFlyoutItem)?.Text.StartsWith("Allowed for ") == true => 25, _ => 0,
-        };
+            var identity = Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(entry);
+            if (identity.Length > 0) return identity switch
+            { "watchlist" => 20, "not-interested" => 24, "allowance" => 25, "edit-markers" => 110,
+                "redetect" => 111, "previews" => 112, "split" => 113, "history" => 121, _ => 0 };
+            return SiloPlayer.Services.Localized.GetText(entry) switch
+            {
+                "web.detail.actions.shuffle" => 10, "web.detail.actions.playFromBeginning" => 11,
+                "web.detail.actions.addToCollection" => 21, "web.detail.actions.download" => 22,
+                "web.detail.actions.requestSeasons" => 23, "web.detail.actions.startWatchParty" => 30,
+                "web.detail.actions.editMetadata" => 100, "web.detail.actions.matchItem" => 101,
+                "web.detail.actions.refreshMetadata" => 102, "web.detail.mediaInfo.title" => 120,
+                _ => (entry as MenuFlyoutItem)?.Text switch
+                { "Reset Progress" => 12, "Stage this in live room" or "Suggest this to live room" => 31,
+                    "Go to live room" => 32, _ => 0 }
+            };
+        }
         var ordered = actions.OrderBy(Rank).ToList();
         var management = ordered.Where(entry => Rank(entry) >= 100).ToList();
         var main = ordered.Where(entry => Rank(entry) < 100).ToList();
         MoreFlyout.Items.Clear();
         if (management.Count(entry => entry.Visibility == Visibility.Visible) > 1)
         {
-            var manage = new MenuFlyoutSubItem { Text = "Manage", Icon = new FontIcon { Glyph = "\uE90F" } };
+            var manage = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutSubItem { Text = "Manage", Icon = new FontIcon { Glyph = "\uE90F" } }, text: "web.detail.actions.manage");
             AddGroups(manage.Items, management.GroupBy(entry => Rank(entry) / 10));
             AddGroups(MoreFlyout.Items, main.GroupBy(entry => Rank(entry) / 10).Select(group => group.AsEnumerable()).Append(new[] { manage }));
         }

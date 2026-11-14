@@ -58,6 +58,10 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     public LandscapeCard()
     {
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () =>
+        {
+            if (MediaItem is { } item) UpdateQuickWatchedState(item);
+        });
         _reveal = new ArtworkReveal(BackdropReveal, BackdropImage, ArtworkFallback);
         BackdropImage.ImageOpened += (_, _) =>
         {
@@ -210,102 +214,101 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
         HoverPlayIcon.Glyph = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
             ? "\uE736"
             : "\uE768";
-        var displayTitle = MediaItemDisplayText.BuildTitle(item);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, displayTitle);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            HoverPlayButton,
-            item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
-                ? $"Read {displayTitle}"
-                : $"Play {displayTitle}");
-        var isEpisodeCarousel = item.ItemSource == "episode_carousel";
-        HoverPlayButton.Visibility = isEpisodeCarousel ? Visibility.Collapsed : Visibility.Visible;
-        CurrentItemBadge.Visibility = isEpisodeCarousel &&
-            item.Badges?.Contains("now_viewing", StringComparer.OrdinalIgnoreCase) == true
+        void RefreshText()
+        {
+            if (!ReferenceEquals(MediaItem, item)) return;
+            var displayTitle = MediaItemDisplayText.BuildTitle(item);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, displayTitle);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                HoverPlayButton,
+                item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
+                    ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.readTitle", new Dictionary<string, object?> { ["title"] = displayTitle })
+                    : SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.playTitle", new Dictionary<string, object?> { ["title"] = displayTitle }));
+            var isEpisodeCarousel = item.ItemSource == "episode_carousel";
+            HoverPlayButton.Visibility = isEpisodeCarousel ? Visibility.Collapsed : Visibility.Visible;
+            CurrentItemBadge.Visibility = isEpisodeCarousel &&
+                item.Badges?.Contains("now_viewing", StringComparer.OrdinalIgnoreCase) == true
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            CurrentItemBorder.Visibility = CurrentItemBadge.Visibility;
+            EpisodeWatchedInline.Visibility = isEpisodeCarousel && item.UserState?.Played == true
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-        CurrentItemBorder.Visibility = CurrentItemBadge.Visibility;
-        EpisodeWatchedInline.Visibility = isEpisodeCarousel && item.UserState?.Played == true
-            ? Visibility.Visible
-            : Visibility.Collapsed;
 
-        // B31: Match the webui ContinueWatchingCard hierarchy. For episodes,
-        // the series title is the primary heading and the episode context
-        // ("Season 1 Episode 1 · Pilot") is the secondary line. Movies fall
-        // through to title-as-heading with no subtitle.
-        bool hasEpisodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue;
-        if (item.ItemSource == "episode_carousel")
-        {
-            TitleText.Text = item.Title;
-            var metadata = item.EpisodeNumber.HasValue ? $"Episode {item.EpisodeNumber}" : "Episode";
-            if (item.Runtime > 0) metadata += $" · {item.Runtime}m";
-            SubtitleText.Text = metadata;
+            // B31: Match the webui ContinueWatchingCard hierarchy. For episodes,
+            // the series title is the primary heading and the episode context
+            // ("Season 1 Episode 1 · Pilot") is the secondary line. Movies fall
+            // through to title-as-heading with no subtitle.
+            bool hasEpisodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue;
+            if (item.ItemSource == "episode_carousel")
+            {
+                ConfigureEpisodeCarouselText(item);
+            }
+            else if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))
+            {
+                ResetTextPresentation();
+                TitleText.Text = item.SeriesTitle!;
+                string epLine = SiloPlayer.Core.Localization.AppStrings.Get(string.IsNullOrWhiteSpace(item.Title) ? "web.home.continueWatching.episodeLabel" : "web.home.continueWatching.episodeLabelWithTitle", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber, ["title"] = item.Title });
+                SubtitleText.Text = epLine;
+                SubtitleText.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                ResetTextPresentation();
+                TitleText.Text = item.Title;
+                SubtitleText.Visibility = Visibility.Collapsed;
+            }
+
+            // Badge pill (e.g. "SEASON PREMIERE") — mirrors WebUI ContinueWatchingCard.
+            // Server attaches badge strings to section items; we render the first known one.
+            var badgeLabel = isEpisodeCarousel ? null : GetBadgeLabel(item);
+            if (badgeLabel != null)
+            {
+                BadgeText.Text = badgeLabel;
+                BadgeText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+                var primary = ((Microsoft.UI.Xaml.Media.SolidColorBrush)BadgeText.Foreground).Color;
+                BadgePill.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(51, primary.R, primary.G, primary.B));
+                BadgePill.BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(102, primary.R, primary.G, primary.B));
+                BadgePill.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                BadgePill.Visibility = Visibility.Collapsed;
+            }
+
+            var isNextUp = item.ItemSource == "next_up";
+            if (isNextUp)
+            {
+                TimeLeftText.Text = badgeLabel == null ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.nextEpisode") : "";
+                TimeLeftText.Visibility = badgeLabel == null ? Visibility.Visible : Visibility.Collapsed;
+            }
+            else if (!isEpisodeCarousel && item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
+            {
+                var remainingMinutes = Math.Max(0, (int)Math.Round(
+                    (item.DurationSeconds.Value - item.PositionSeconds.Value) / 60));
+                TimeLeftText.Text = item.Type == "ebook"
+                    ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.percentRead", new Dictionary<string, object?> { ["percent"] = Math.Round(Math.Clamp(item.PositionSeconds.Value / item.DurationSeconds.Value, 0, 1) * 100) })
+                    : SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.minutesLeft", new Dictionary<string, object?> { ["minutes"] = remainingMinutes });
+                TimeLeftText.Visibility = Visibility.Visible;
+            }
+            else if (!isEpisodeCarousel)
+            {
+                TimeLeftText.Visibility = Visibility.Collapsed;
+            }
+
+            UpdateProgressState(item);
+            RemainingBadge.Visibility = Visibility.Collapsed;
+
+            SubtitleButton.Visibility = SubtitleText.Visibility;
+            TimeLeftButton.Visibility = TimeLeftText.Visibility;
             SubtitleText.Visibility = Visibility.Visible;
-            ConfigureEpisodeCarouselText(item);
-        }
-        else if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))
-        {
-            ResetTextPresentation();
-            TitleText.Text = item.SeriesTitle!;
-            string epLine = $"Season {item.SeasonNumber} Episode {item.EpisodeNumber}";
-            if (!string.IsNullOrEmpty(item.Title))
-                epLine += $" \u2022 {item.Title}";
-            SubtitleText.Text = epLine;
-            SubtitleText.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            ResetTextPresentation();
-            TitleText.Text = item.Title;
-            SubtitleText.Visibility = Visibility.Collapsed;
-        }
-
-        // Badge pill (e.g. "SEASON PREMIERE") — mirrors WebUI ContinueWatchingCard.
-        // Server attaches badge strings to section items; we render the first known one.
-        var badgeLabel = isEpisodeCarousel ? null : GetBadgeLabel(item);
-        if (badgeLabel != null)
-        {
-            BadgeText.Text = badgeLabel;
-            BadgeText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
-            var primary = ((Microsoft.UI.Xaml.Media.SolidColorBrush)BadgeText.Foreground).Color;
-            BadgePill.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(51, primary.R, primary.G, primary.B));
-            BadgePill.BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(102, primary.R, primary.G, primary.B));
-            BadgePill.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            BadgePill.Visibility = Visibility.Collapsed;
-        }
-
-        var isNextUp = item.ItemSource == "next_up";
-        if (isNextUp)
-        {
-            TimeLeftText.Text = badgeLabel == null ? "Next Episode" : "";
-            TimeLeftText.Visibility = badgeLabel == null ? Visibility.Visible : Visibility.Collapsed;
-        }
-        else if (!isEpisodeCarousel && item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
-        {
-            var remainingMinutes = Math.Max(0, (int)Math.Round(
-                (item.DurationSeconds.Value - item.PositionSeconds.Value) / 60));
-            TimeLeftText.Text = item.Type == "ebook"
-                ? $"{Math.Round(Math.Clamp(item.PositionSeconds.Value / item.DurationSeconds.Value, 0, 1) * 100)}% read"
-                : $"{remainingMinutes} min left";
             TimeLeftText.Visibility = Visibility.Visible;
-        }
-        else if (!isEpisodeCarousel)
-        {
-            TimeLeftText.Visibility = Visibility.Collapsed;
-        }
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(HeadingButton, $"Open {TitleText.Text}");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SubtitleButton, $"Open {SubtitleText.Text}");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(TimeLeftButton, $"Open {TimeLeftText.Text}");
 
-        UpdateProgressState(item);
-        RemainingBadge.Visibility = Visibility.Collapsed;
-
-        SubtitleButton.Visibility = SubtitleText.Visibility;
-        TimeLeftButton.Visibility = TimeLeftText.Visibility;
-        SubtitleText.Visibility = Visibility.Visible;
-        TimeLeftText.Visibility = Visibility.Visible;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(HeadingButton, $"Open {TitleText.Text}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SubtitleButton, $"Open {SubtitleText.Text}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(TimeLeftButton, $"Open {TimeLeftText.Text}");
+            }
+        MediaItemCardActions.BindText(this, "CardText", _ => RefreshText());
 
         RefreshOverlayPreferences(item);
 
@@ -322,7 +325,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     private void ConfigureEpisodeCarouselText(MediaItem item)
     {
         var isCurrent = item.Badges?.Contains("now_viewing", StringComparer.OrdinalIgnoreCase) == true;
-        TitleText.Text = item.EpisodeNumber.HasValue ? $"Episode {item.EpisodeNumber}" : "Episode";
+        TitleText.Text = item.EpisodeNumber.HasValue ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = item.EpisodeNumber }) : SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeEpisode");
         TitleText.FontSize = 12;
         TitleText.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
         TitleText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
@@ -333,7 +336,7 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
             : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
         SubtitleText.Visibility = Visibility.Visible;
-        TimeLeftText.Text = item.Runtime > 0 ? $"{item.Runtime}m" : "";
+        TimeLeftText.Text = item.Runtime > 0 ? MediaItemCardActions.Runtime(item.Runtime) : "";
         TimeLeftText.Visibility = item.Runtime > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -835,9 +838,9 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             if (string.IsNullOrEmpty(badge)) continue;
             switch (badge)
             {
-                case "season_premiere": return "SEASON PREMIERE";
-                case "series_premiere": return "SERIES PREMIERE";
-                case "new_season":      return "NEW SEASON";
+                case "season_premiere": return SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.event.badge.seasonPremiere");
+                case "series_premiere": return SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.event.badge.seriesPremiere");
+                case "new_season":      return SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.event.badge.seasonPremiere");
                 case "new_episode":     return "NEW EPISODE";
                 // Unknown badge: render the server string in uppercase as a best-effort fallback.
                 default: return badge.Replace('_', ' ').ToUpperInvariant();

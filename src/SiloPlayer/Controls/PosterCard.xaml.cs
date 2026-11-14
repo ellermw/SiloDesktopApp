@@ -177,6 +177,10 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         ApplyOverlayGeometry();
         ApplyActionGeometry();
+        AppLocalization.Register(this, () =>
+        {
+            if (MediaItem is { } item) UpdateQuickActionState(item, refreshArtwork: false);
+        });
         SizeChanged += (_, _) => ApplyActionGeometry();
         this.Loaded += (_, _) =>
         {
@@ -410,7 +414,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         TitleText.Text = MediaItemDisplayText.BuildTitle(item);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, TitleText.Text);
         var secondaryTitle = item.UpcomingEvent is { } upcoming
-            ? MediaItemDisplayText.FormatUpcomingSubtitle(upcoming)
+            ? MediaItemCardActions.UpcomingSubtitle(upcoming)
             : MediaItemDisplayText.BuildEpisodeTitle(item);
         EpisodeTitleText.Text = secondaryTitle ?? "";
         EpisodeTitleText.Visibility = string.IsNullOrWhiteSpace(secondaryTitle)
@@ -420,9 +424,9 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         // Build subtitle line — sort-driven. When the hosting surface (Library,
         // Search, etc.) has sorted by a specific key, surface that key's value
         // so the meta line matches what the user is looking at.
-        SubtitleText.Text = item.UpcomingEvent is { } upcomingSchedule
-            ? MediaItemDisplayText.FormatUpcomingSchedule(upcomingSchedule)
-            : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SubtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (item.UpcomingEvent is { } upcomingSchedule
+            ? MediaItemCardActions.UpcomingSchedule(upcomingSchedule)
+            : MediaItemCardActions.CardSubtitle(item, CurrentSortKey)) : SubtitleText.Text);
         ApplyCardPresentation();
         ApplyActionGeometry(item);
         // This bind owns the artwork load below; action updates must not replace its token.
@@ -512,9 +516,9 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         RefreshSpoilerArtwork();
         if (MediaItem is not { } item) return;
         WatchStatus.Update(item.UserState, _overlayGeometry);
-        SubtitleText.Text = item.UpcomingEvent is { } upcoming
-            ? MediaItemDisplayText.FormatUpcomingSchedule(upcoming)
-            : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SubtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (item.UpcomingEvent is { } upcoming
+            ? MediaItemCardActions.UpcomingSchedule(upcoming)
+            : MediaItemCardActions.CardSubtitle(item, CurrentSortKey)) : SubtitleText.Text);
         if (!DeferOverlayLoading)
             UpdateBadges(item);
     }
@@ -899,7 +903,8 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
 
         var watchedLabel = MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched);
-        var favoriteLabel = isFavorite ? "Remove from favorites" : "Add to favorites";
+        var favoriteLabel = SiloPlayer.Core.Localization.AppStrings.Get(isFavorite
+            ? "web.detail.actions.removeFromFavorites" : "web.detail.actions.addToFavorites");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickWatchedButton, watchedLabel);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickFavoriteButton, favoriteLabel);
         ToolTipService.SetToolTip(QuickWatchedButton, watchedLabel);

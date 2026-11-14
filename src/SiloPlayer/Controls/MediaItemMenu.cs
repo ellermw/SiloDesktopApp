@@ -74,8 +74,7 @@ public static class MediaItemMenu
             bool OwnsRestart() => client.IsCurrentIdentityContext(restartIdentity)
                 && (owner == null || (owner.IsLoaded && MediaNavigationContext.LibraryId(owner) == restartLibrary
                     && (owner is not IMediaItemOwner itemOwner || OwnsContent(itemOwner.MediaItem, item))));
-            var restart = BuildItem(
-                item.Type == "audiobook" ? "Listen from Beginning" : "Play from Beginning",
+            var restart = BuildItem(() => item.Type == "audiobook" ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.listenFromBeginning", fallback: "Listen from Beginning") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.playFromBeginning", fallback: "Play from Beginning"),
                 "\uE768",
                 async () =>
                 {
@@ -89,7 +88,7 @@ public static class MediaItemMenu
                         await App.Services.GetRequiredService<PlayerService>()
                             .RestartAsync(item.ContentId, restartLibrary, restartIdentity);
                     }
-                    catch (Exception ex) { toast.Error(ex); }
+                    catch (Exception ex) { toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
                 });
             void RefreshRestartAction() => restart.Visibility = item.PositionSeconds is > 0 || item.UserState?.Played == true
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -101,8 +100,7 @@ public static class MediaItemMenu
         if (item.UserState != null)
         {
             MenuFlyoutItem watchedAction = null!;
-            watchedAction = BuildItem(
-                MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched),
+            watchedAction = BuildItem(() => MediaItemCardActions.GetWatchedActionLabel(item.Type, item.UserState?.Played == true),
                 isWatched ? "\uE711" : "\uE73E",
                 async () =>
                 {
@@ -112,7 +110,7 @@ public static class MediaItemMenu
                         stateChanged?.Invoke();
                         RefreshWatchedAction();
                     }
-                    catch (Exception ex) { toast.Error(ex); }
+                    catch (Exception ex) { toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
                 });
             void RefreshWatchedAction()
             {
@@ -128,8 +126,7 @@ public static class MediaItemMenu
             if (showCollectionActions)
             {
                 MenuFlyoutItem favoriteAction = null!;
-                favoriteAction = BuildItem(
-                    isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                favoriteAction = BuildItem(() => item.UserState?.IsFavorite == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.removeFromFavorites", fallback: "Remove from Favorites") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.addToFavorites", fallback: "Add to Favorites"),
                     "\uEB52",
                     async () =>
                     {
@@ -137,20 +134,19 @@ public static class MediaItemMenu
                     {
                         await MediaItemCardActions.ToggleFavoriteAsync(item);
                         stateChanged?.Invoke();
-                        favoriteAction.Text = item.UserState?.IsFavorite == true
-                                ? "Remove from Favorites"
-                                : "Add to Favorites";
+                        SiloPlayer.Controls.MediaItemCardActions.BindText(favoriteAction, "Text", element => element.Text = item.UserState?.IsFavorite == true
+                                ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.removeFromFavorites", fallback: "Remove from Favorites")
+                                : SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.addToFavorites", fallback: "Add to Favorites"));
                             favoriteAction.Visibility = MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || item.UserState?.IsFavorite == true ? Visibility.Visible : Visibility.Collapsed;
                             AutomationProperties.SetName(favoriteAction, favoriteAction.Text);
                         }
-                        catch (Exception ex) { toast.Error(ex); }
+                        catch (Exception ex) { toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
                     });
                 if (MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || isFavorite)
                     flyout.Items.Add(favoriteAction);
 
                 MenuFlyoutItem watchlistAction = null!;
-                watchlistAction = BuildItem(
-                    inWatchlist ? "Remove from Watchlist" : "Add to Watchlist",
+                watchlistAction = BuildItem(() => item.UserState?.InWatchlist == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.removeFromWatchlist", fallback: "Remove from Watchlist") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.addToWatchlist", fallback: "Add to Watchlist"),
                     inWatchlist ? "\uE73E" : "\uE710",
                     async () =>
                     {
@@ -164,7 +160,7 @@ public static class MediaItemMenu
                                 stateChanged?.Invoke();
                                 WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                                     MediaSurfaceChangeKind.WatchlistRemoved, item.ContentId, item.SeriesId));
-                                toast.Success("Removed from watchlist");
+                                toast.Success(SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.removed", fallback: "Removed from watchlist"));
                             }
                             else
                             {
@@ -173,17 +169,17 @@ public static class MediaItemMenu
                                 stateChanged?.Invoke();
                                 WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                                     MediaSurfaceChangeKind.WatchlistAdded, item.ContentId, item.SeriesId));
-                                toast.Success("Added to watchlist");
+                                toast.Success(SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.added", fallback: "Added to watchlist"));
                             }
                             var nowInWatchlist = item.UserState?.InWatchlist == true;
-                            watchlistAction.Text = nowInWatchlist
-                                ? "Remove from Watchlist"
-                                : "Add to Watchlist";
+                            SiloPlayer.Controls.MediaItemCardActions.BindText(watchlistAction, "Text", element => element.Text = nowInWatchlist
+                                ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.removeFromWatchlist", fallback: "Remove from Watchlist")
+                                : SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.addToWatchlist", fallback: "Add to Watchlist"));
                             watchlistAction.Icon = new FontIcon { Glyph = nowInWatchlist ? "\uE73E" : "\uE710" };
                             watchlistAction.Visibility = MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || nowInWatchlist ? Visibility.Visible : Visibility.Collapsed;
                             AutomationProperties.SetName(watchlistAction, watchlistAction.Text);
                         }
-                        catch (Exception ex) { toast.Error(ex); }
+                        catch (Exception ex) { toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
                     });
                 if (MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || inWatchlist)
                     flyout.Items.Add(watchlistAction);
@@ -200,7 +196,7 @@ public static class MediaItemMenu
         // Retained menus must also support a leaf gaining progress after construction.
         if (item.Type is "movie" or "episode")
         {
-            var reset = BuildItem("Reset Progress", "\uE777", async () =>
+            var reset = BuildItem(() => "Reset Progress", "\uE777", async () =>
             {
                 var context = catalog.CaptureContext();
                 if (!client.IsCurrentIdentityContext(menuOwner)) return;
@@ -230,7 +226,7 @@ public static class MediaItemMenu
 
         if (item.Type == "manga")
         {
-            flyout.Items.Add(BuildItem("View Details", "\uE946", async () =>
+            flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.viewDetails", fallback: "View Details"), "\uE946", async () =>
             {
                 var root = DialogRoot();
                 if (root == null) return;
@@ -245,19 +241,19 @@ public static class MediaItemMenu
 
             if (maintenance.CanRefreshMetadata)
             {
-                flyout.Items.Add(BuildItem("Refresh Metadata", "\uE72C", async () =>
+                flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.refreshMetadata", fallback: "Refresh Metadata"), "\uE72C", async () =>
                     await ShowRefreshMetadataDialogAsync(item, maintenanceApi, toast, DialogRoot())));
             }
 
             if (maintenance.CanMatch)
             {
-                flyout.Items.Add(BuildItem("Match Item", "\uE721", async () =>
+                flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.matchItem", fallback: "Match Item"), "\uE721", async () =>
                     await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged, DialogRoot(), owner)));
             }
         }
 
         if (canCurateMetadata && item.Type != "manga")
-            flyout.Items.Add(BuildItem("Edit Metadata", "\uE70F", async () =>
+            flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.editMetadata", fallback: "Edit Metadata"), "\uE70F", async () =>
             {
                 var root = DialogRoot();
                 if (root == null || !AuthorizationPolicy.CanCurateMetadata(authService)) return;
@@ -272,10 +268,10 @@ public static class MediaItemMenu
                     stateChanged?.Invoke();
                     // The editor publishes each successful mutation itself.
                 }
-                catch (Exception ex) { toast.Error(ex); }
+                catch (Exception ex) { toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
             }));
         if (AuthorizationPolicy.IsActingAdmin(authService))
-            flyout.Items.Add(BuildItem("Play History", "\uE81C", async () =>
+            flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.viewPlayHistory", fallback: "Play History"), "\uE81C", async () =>
             {
                 var root = DialogRoot();
                 if (root != null && AuthorizationPolicy.IsActingAdmin(authService)) await new SiloPlayer.Views.Dialogs.PlayHistoryDialog(item.ContentId) { XamlRoot = root }.ShowAsync();
@@ -292,14 +288,20 @@ public static class MediaItemMenu
 
             string surfaceKey = surface == Surface.ContinueWatching ? "continue_watching" : "next_up";
             var dropsShow = item.Type is "episode" or "series";
-            string label = surface == Surface.ContinueWatching
-                ? item.Type == "audiobook"
-                    ? "Remove from Continue Listening"
-                    : item.Type == "ebook"
-                        ? "Remove from Continue Reading"
-                        : "Remove from Continue Watching"
-                : "Remove from Next Up";
-            flyout.Items.Add(BuildItem(label, "\uE711", async () =>
+            var labelKey = surface == Surface.ContinueWatching
+                ? item.Type switch
+                {
+                    "audiobook" => "web.item.menu.removeFromContinueListening",
+                    "ebook" => "web.item.menu.removeFromContinueReading",
+                    _ => "web.item.menu.removeFromContinueWatching"
+                }
+                : "web.item.menu.removeFromNextUp";
+            var successKey = surface == Surface.NextUp ? "web.home.dismiss.removedNextUp"
+                : dropsShow ? "web.home.dismiss.removedContinueWatchingAndNextUp"
+                : item.Type == "audiobook" ? "web.home.dismiss.removedContinueListening"
+                : item.Type == "ebook" ? "web.home.dismiss.removedContinueReading"
+                : "web.home.dismiss.removedContinueWatching";
+            flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get(labelKey), "\uE711", async () =>
             {
                 var actionId = Guid.NewGuid().ToString("N");
                 using var operation = LocalLog.BeginOperation(actionId);
@@ -344,7 +346,7 @@ public static class MediaItemMenu
                         MediaSurfaceChangeKind.HomeDismissed, item.ContentId,
                         dismissalSeriesId, context: context));
                     stage = "success_toast";
-                    toast.Success(dropsShow ? "Removed from Continue Watching and Next Up" : label);
+                    toast.Success(SiloPlayer.Core.Localization.AppStrings.Get(successKey));
                     LocalLog.AppendLine("home_actions.txt",
                         $"dismissal action={actionId} surface={surfaceKey} stage=complete serverAccepted=true elapsedMs={elapsed.ElapsedMilliseconds}");
                 }
@@ -353,7 +355,7 @@ public static class MediaItemMenu
                     LocalLog.AppendLine("home_actions.txt",
                         $"dismissal action={actionId} surface={surfaceKey} stage={stage} serverAccepted={serverAccepted} elapsedMs={elapsed.ElapsedMilliseconds}");
                     LocalLog.AppendException("home_actions.txt", ex, $"home.dismissal stage={stage}", actionId);
-                    toast.Error(ex);
+                    toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
                 }
             }));
         }
@@ -449,7 +451,7 @@ public static class MediaItemMenu
         }
         catch (Exception ex)
         {
-            if (Current()) toast.Error(ex);
+            if (Current()) toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
         }
         finally
         {
@@ -458,26 +460,36 @@ public static class MediaItemMenu
         }
     }
 
-    private static MenuFlyoutItem BuildItem(string text, string glyph, Action onClick)
+    private static MenuFlyoutItem BuildItem(Func<string> text, string glyph, Action onClick)
     {
         var item = new MenuFlyoutItem
         {
-            Text = text,
+            Text = text(),
             Icon = new FontIcon { Glyph = glyph },
         };
-        AutomationProperties.SetName(item, text);
+        MediaItemCardActions.BindText(item, "menu-label", element =>
+        {
+            element.Text = text();
+            AutomationProperties.SetName(element, element.Text);
+            AppLocalization.ApplyDirection(element);
+        });
         item.Click += (_, _) => onClick();
         return item;
     }
 
-    private static MenuFlyoutItem BuildItem(string text, string glyph, Func<Task> onClickAsync)
+    private static MenuFlyoutItem BuildItem(Func<string> text, string glyph, Func<Task> onClickAsync)
     {
         var item = new MenuFlyoutItem
         {
-            Text = text,
+            Text = text(),
             Icon = new FontIcon { Glyph = glyph },
         };
-        AutomationProperties.SetName(item, text);
+        MediaItemCardActions.BindText(item, "menu-label", element =>
+        {
+            element.Text = text();
+            AutomationProperties.SetName(element, element.Text);
+            AppLocalization.ApplyDirection(element);
+        });
         item.Click += async (_, _) =>
         {
             if (!item.IsEnabled) return;

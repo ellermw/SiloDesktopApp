@@ -128,7 +128,7 @@ internal static class PlaybackChapterMenuNativeFixture
                 Require(list.SelectedIndex == 1, "More initially focuses an unavailable row instead of its first available action.");
                 var disabledAudio = (ListViewItem)list.Items[0];
                 Require(((FrameworkElement)disabledAudio.Content).Opacity < .8 &&
-                    Descendants<TextBlock>(disabledAudio).Any(text => text.Text == "No alternate audio tracks."),
+                    Descendants<TextBlock>(disabledAudio).Any(text => text.Text == "Only one audio track"),
                     "Unavailable More choices lack visible disabled treatment or reason.");
                 Require(mpv.IsPaused, "Opening More changed genuine pause.");
                 Call(menu, "Input", "end");

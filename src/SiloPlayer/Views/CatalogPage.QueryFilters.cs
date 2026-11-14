@@ -51,7 +51,7 @@ public sealed partial class CatalogPage
         _queryFilters = new QueryFilterEditor();
         _queryFilters.ConfigureSort(_source is not ("favorites" or "watchlist" or "history"), _source == "history" ? "date_viewed" : null);
         _queryFilters.Load(_catalogQuery, _scope, SelectedLibrary(), filters);
-        FiltersSheet.ConfigureFilterHeader(_queryFilters.DetachModeSelector(), "Refine your catalog results");
+        FiltersSheet.ConfigureFilterHeader(_queryFilters.DetachModeSelector(), "Refine your catalog results", "web.catalog.filters.subtitle");
         ConfigureCatalogFilterSheetBody();
         SizeChanged += (_, _) => SizeCatalogFilterSheet();
         SizeCatalogFilterSheet();
@@ -60,7 +60,7 @@ public sealed partial class CatalogPage
         AdvancedFiltersPanel.Visibility = Visibility.Collapsed;
         GuidedModeButton.Visibility = AdvancedModeButton.Visibility = Visibility.Collapsed;
         var shared = new StackPanel { Spacing = 16 };
-        shared.Children.Add(new TextBlock { Text = "Library", FontSize = 14, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        shared.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Library", FontSize = 14, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight }, text: "web.library.page.titleFallback"));
         shared.Children.Add(librarySelector);
         shared.Children.Add(_queryFilters);
         host.Children.Add(shared);
@@ -124,7 +124,7 @@ public sealed partial class CatalogPage
         var badges = CatalogFilterBadges.Create(_catalogQuery, _scope);
         foreach (var badge in badges)
         {
-            var chip = CatalogFilterBadgeView.Build(badge.Label, () => { badge.Remove(); _queryFilters?.Load(_catalogQuery, _scope, SelectedLibrary()); UpdateQueryFilterChips(); if (_queryFilters != null) Filter_Changed(_queryFilters, new RoutedEventArgs()); });
+            var chip = CatalogFilterBadgeView.Build(badge, _scope, () => { badge.Remove(); _queryFilters?.Load(_catalogQuery, _scope, SelectedLibrary()); UpdateQueryFilterChips(); if (_queryFilters != null) Filter_Changed(_queryFilters, new RoutedEventArgs()); });
             _queryChips.Children.Add(chip);
         }
         var count = CatalogFilterBadges.ActiveCount(_catalogQuery, _scope);

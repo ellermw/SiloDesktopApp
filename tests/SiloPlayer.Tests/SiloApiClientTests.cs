@@ -150,7 +150,7 @@ public sealed class SiloApiClientTests
 
         var client = CreateClient(handler);
 
-        var result = await client.GetAsync<TestDto>("/api/v1/test");
+        var result = await client.GetAsync<TestDto>("/api/v2/test");
 
         Assert.Equal("ok", result.Name);
         Assert.NotNull(response);
@@ -181,7 +181,7 @@ public sealed class SiloApiClientTests
         });
 
         var calls = Enumerable.Range(0, 8)
-            .Select(_ => client.GetAsync<TestDto>("/api/v1/test"))
+            .Select(_ => client.GetAsync<TestDto>("/api/v2/test"))
             .ToArray();
 
         var results = await Task.WhenAll(calls);
@@ -204,7 +204,7 @@ public sealed class SiloApiClientTests
 
         var client = CreateClient(handler);
 
-        await client.PostNoContentAsync("/api/v1/test", new Dictionary<string, object?>
+        await client.PostNoContentAsync("/api/v2/test", new Dictionary<string, object?>
         {
             ["audio_track_index"] = 2,
             ["is_paused"] = false,
@@ -229,7 +229,7 @@ public sealed class SiloApiClientTests
         var client = CreateClient(handler);
 
         var result = await client.PutJsonWithFileAsync<TestDto>(
-            "/api/v1/collections/one",
+            "/api/v2/collections/one",
             new Dictionary<string, object?> { ["allowed_profile_ids"] = new[] { "profile-1" } },
             "poster",
             "poster.png",
@@ -373,7 +373,7 @@ public sealed class SiloApiClientTests
         });
 
         await Assert.ThrowsAsync<ApiException>(() => client.PostUnauthenticatedAsync<TestDto>(
-            "/api/v1/auth/refresh",
+            "/api/v2/auth/refresh",
             new Dictionary<string, object?> { ["refresh_token"] = "bad" }));
 
         Assert.Null(authorization);
@@ -401,7 +401,7 @@ public sealed class SiloApiClientTests
             return Task.FromResult(true);
         });
 
-        await Assert.ThrowsAsync<ApiException>(() => client.GetAsync<TestDto>("/api/v1/test"));
+        await Assert.ThrowsAsync<ApiException>(() => client.GetAsync<TestDto>("/api/v2/test"));
 
         Assert.Equal(1, requestCount);
         Assert.Equal("new-user-token", client.AccessToken);
@@ -431,7 +431,7 @@ public sealed class SiloApiClientTests
             return Task.FromResult(true);
         });
 
-        await Assert.ThrowsAsync<ApiException>(() => client.GetAsync<TestDto>("/api/v1/test"));
+        await Assert.ThrowsAsync<ApiException>(() => client.GetAsync<TestDto>("/api/v2/test"));
 
         Assert.Equal(1, requestCount);
         Assert.Equal(0, refreshCount);
@@ -456,7 +456,7 @@ public sealed class SiloApiClientTests
             return Task.FromResult(true);
         });
 
-        var exception = await Assert.ThrowsAsync<ApiException>(() => client.GetAsync<TestDto>("/api/v1/test"));
+        var exception = await Assert.ThrowsAsync<ApiException>(() => client.GetAsync<TestDto>("/api/v2/test"));
 
         Assert.Equal("profile_unverified", exception.ErrorCode);
         Assert.Equal(1, profileEvents);

@@ -3,6 +3,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Automation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views;
 
@@ -34,7 +35,7 @@ public sealed partial class CollectionsPage
         var busy = _wallLoading || ViewModel.IsLoadingServerLibraryRest;
         CollectionsLoadMore.Visibility = show && (busy || ViewModel.NextServerLibrary != null || CollectionsLoadMore.FocusState != FocusState.Unfocused)
             ? Visibility.Visible : Visibility.Collapsed;
-        CollectionsLoadMore.Content = busy ? "Loading…" : ViewModel.NextServerLibrary == null ? "No more server collections to load" : "Load more server collections";
+        CollectionsLoadMore.Content = busy ? CollectionText.Get("web.settings.sessions.loadingMore", "Loading…") : ViewModel.NextServerLibrary == null ? "No more server collections to load" : "Load more server collections";
         AutomationProperties.SetItemStatus(CollectionsLoadMore, busy ? "Loading" : ViewModel.NextServerLibrary == null ? "Complete" : "");
         AutomationProperties.SetHelpText(CollectionsLoadMore, busy ? "Please wait while server collections load." : "");
         CollectionsLoadMore.Opacity = busy ? .5 : 1;
@@ -98,7 +99,7 @@ public sealed partial class CollectionsPage
             {
                 var added = ViewModel.GetServerCollectionCards().FirstOrDefault(card => !before.Contains(card.Collection.Id));
                 var target = added == null ? DescendantButtons(ServerCollectionsRows).FirstOrDefault()
-                    : DescendantButtons(CollectionsGrid).FirstOrDefault(button => AutomationProperties.GetName(button) == "Open " + added.Collection.Title);
+                    : DescendantButtons(CollectionsGrid).FirstOrDefault(button => AutomationProperties.GetName(button) == CollectionText.Open(added.Collection.Title));
                 (target ?? CollectionsLoadMore).Focus(FocusState.Programmatic);
             }
         }

@@ -467,11 +467,11 @@ public sealed class ServerContractSourceTests
 
         Assert.Contains("Spoken language", settingsXaml);
         Assert.Contains("Prefer a spoken language for this profile when multiple tracks are available.", settingsXaml);
-        Assert.Contains("PopulateLanguageCombo(SpokenLanguageComboBox, \"No preference\")", settingsCode);
+        Assert.Contains("PopulateLanguageCombo(SpokenLanguageComboBox, L(\"settingsManifest.playback.audio_language.unsetLabel\", \"No preference\"))", settingsCode);
         Assert.Contains("MediaLanguageCatalog.All", settingsCode);
         Assert.Contains("MediaLanguageCatalog.Label(code)", settingsViewModel);
         Assert.DoesNotContain("private static readonly Dictionary<string, string> LanguageNames", settingsViewModel);
-        Assert.Contains("(\"original\", \"Original Language\")", settingsCode);
+        Assert.Contains("(\"original\", L(\"web.settings.metadataLanguage.originalLanguage\", \"Original Language\"))", settingsCode);
         Assert.Contains("SaveAudioLanguageCommand", settingsCode);
         Assert.Contains("SaveContractProfileSettingAsync(PlaybackAudioLanguageSettingKey", settingsViewModel);
         Assert.Contains("catalog.metadata_language", settingsViewModel);

@@ -5,6 +5,8 @@ using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using System.Text.Json;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -15,8 +17,9 @@ public sealed class RedetectMarkersDialog : ItemScopedDialog
     private bool _intro = true, _credits = true;
     public RedetectMarkersDialog(string id, bool honorsSettings) : base(id, "Re-detect Markers", "Run local detection again on this server. Manual markers and markers from higher-priority sources stay as they are.", 512, "", AuthorizationPolicy.IsActingAdmin)
     {
+        KeyHeading("web.markers.redetect.title", "web.markers.redetect.description");
         _honorsSettings = honorsSettings; var choices = new StackPanel { Spacing = 12 }; Body.Children.Add(choices);
-        foreach (var (kind, label, description, icon) in new[] { ("intro", "Intro", "Find the opening again from chapters and the season's shared audio.", "skip-forward"), ("credits", "Credits", "Find the end credits again from chapters, audio, and the picture.", "list-end"), ("all", "Intro and credits", "Run both.", "refresh-cw") })
+        foreach (var (kind, label, description, icon) in new[] { ("intro", AppStrings.Get("web.markers.redetect.intro", fallback: "Intro"), AppStrings.Get("web.markers.redetect.introDescription", fallback: "Find the opening again from chapters and the season's shared audio."), "skip-forward"), ("credits", AppStrings.Get("web.markers.redetect.credits", fallback: "Credits"), AppStrings.Get("web.markers.redetect.creditsDescription", fallback: "Find the end credits again from chapters, audio, and the picture."), "list-end"), ("all", AppStrings.Get("web.markers.redetect.all", fallback: "Intro and credits"), AppStrings.Get("web.markers.redetect.allDescription", fallback: "Run both."), "refresh-cw") })
         {
             var copy = new StackPanel { Spacing = 4 }; var title = Text(label); title.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; var help = Text(description, 14, true); copy.Children.Add(title); copy.Children.Add(help);
             var content = new Grid { ColumnSpacing = 12 }; content.ColumnDefinitions.Add(new() { Width = new GridLength(20) }); content.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -47,12 +50,12 @@ public sealed class RedetectMarkersDialog : ItemScopedDialog
         foreach (var choice in _choices)
         {
             var introOff = !_intro && choice.Kind != "credits"; var creditsOff = !_credits && choice.Kind != "intro";
-            if (introOff || creditsOff) choice.Description.Text = introOff && creditsOff ? "Intro and credits detection are turned off in marker settings." : introOff ? "Intro detection is turned off in marker settings." : "Credits detection is turned off in marker settings.";
+            if (introOff || creditsOff) choice.Description.Text = introOff && creditsOff ? AppStrings.Get("web.markers.redetect.bothOff", fallback: "Intro and credits detection are turned off in marker settings.") : introOff ? AppStrings.Get("web.markers.redetect.introOff", fallback: "Intro detection is turned off in marker settings.") : AppStrings.Get("web.markers.redetect.creditsOff", fallback: "Credits detection is turned off in marker settings.");
         }
         if (!_intro || !_credits)
         {
-            var link = new HyperlinkButton { Content = "Change marker settings", HorizontalAlignment = HorizontalAlignment.Left };
-            link.Click += async (_, _) => { if (!CanAct || Busy) return; try { await Windows.System.Launcher.LaunchUriAsync(new Uri(new Uri(Client.BaseUrl.TrimEnd('/') + "/"), "admin/settings/library")); } catch (Exception error) { Status.Text = error.Message; } };
+            var link = new HyperlinkButton { Content = AppStrings.Get("web.markers.redetect.settingsLink", fallback: "Change marker settings"), HorizontalAlignment = HorizontalAlignment.Left };
+            link.Click += async (_, _) => { if (!CanAct || Busy) return; try { await Windows.System.Launcher.LaunchUriAsync(new Uri(new Uri(Client.BaseUrl.TrimEnd('/') + "/"), "admin/settings/library")); } catch (Exception error) { Status.Text = error.DisplayMessage(); } };
             Body.Children.Add(link);
         }
     }

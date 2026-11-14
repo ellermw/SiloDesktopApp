@@ -14,7 +14,16 @@ public sealed class PersonRecoveryBehaviorTests
         vm.Person = new Person { Id = "person-fixture", Name = "Cached person" };
         vm.Filmography.Add(new() { ContentId = "stale-film" });
         await vm.LoadCommand.ExecuteAsync("person-fixture");
-        Assert.Null(vm.Person); Assert.Empty(vm.Filmography); Assert.Equal("Person not found.", vm.ErrorMessage);
+        Assert.Null(vm.Person); Assert.Empty(vm.Filmography);
+        Assert.Equal(SiloPlayer.Core.Services.DetailFailureKind.NotFound, vm.Failure);
+        foreach (var language in new[] { "de", "ar", "ja" })
+        {
+            using var locale = SiloPlayer.Core.Localization.AppStrings.UseForCurrentFlow(new SiloPlayer.Core.Localization.LocaleService().Create(
+                SiloPlayer.Core.Localization.AppLocaleResolution.Resolve(language, [], "en-US")));
+            vm.RefreshLocalization();
+            Assert.Equal(SiloPlayer.Core.Localization.AppStrings.Get("web.person.notFoundTitle"), vm.ErrorMessage);
+            Assert.Equal(SiloPlayer.Core.Services.DetailFailureKind.NotFound, vm.Failure);
+        }
         vm.Cancel();
     }
 
@@ -24,7 +33,7 @@ public sealed class PersonRecoveryBehaviorTests
         using var wire = new Wire { FilmographyStatus = HttpStatusCode.NotFound }; var vm = wire.Model();
         await vm.LoadCommand.ExecuteAsync("person-fixture");
         Assert.Equal("Fixture person", vm.Person?.Name);
-        Assert.NotNull(vm.ErrorMessage); Assert.NotEqual("Person not found.", vm.ErrorMessage);
+        Assert.NotNull(vm.ErrorMessage); Assert.NotEqual(SiloPlayer.Core.Services.DetailFailureKind.NotFound, vm.Failure);
         Assert.False(vm.IsLoading); vm.Cancel();
     }
 

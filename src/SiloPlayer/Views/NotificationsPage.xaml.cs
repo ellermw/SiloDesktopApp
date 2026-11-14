@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
@@ -34,6 +36,7 @@ public sealed partial class NotificationsPage : Page
         _client = App.Services.GetService<SiloApiClient>();
         DataContext = ViewModel;
         InitializeComponent();
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); UpdateVisuals(); RefreshNotificationRows(); });
         ((StackPanel)HeaderGrid.Children[0]).Children[0] = WebUiIcon.Create("bell", 24);
         ((StackPanel)MarkAllButton.Content).Children[0] = WebUiIcon.Create("check-check", 16);
         ((StackPanel)PreferencesButton.Content).Children[0] = WebUiIcon.Create("settings-2", 16);
@@ -316,7 +319,7 @@ public sealed partial class NotificationsPage : Page
             NotificationsList.ItemsSource = rowSource;
         EmptyState.Visibility = !_showSeries && !ViewModel.IsLoading && ViewModel.IsEmpty && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
             ? Visibility.Visible : Visibility.Collapsed;
-        EmptyTitleText.Text = ViewModel.StatusFilter == "unread" ? "No unread notifications" : "No notifications yet";
+        EmptyTitleText.Text = ViewModel.StatusFilter == "unread" ? AppStrings.Get("web.notifications.inbox.emptyUnread", fallback: "No unread notifications") : AppStrings.Get("web.notifications.inbox.emptyAll", fallback: "No notifications yet");
         InboxStateHost.Visibility = LoadingSkeleton.Visibility == Visibility.Visible || EmptyState.Visibility == Visibility.Visible
             ? Visibility.Visible : Visibility.Collapsed;
         InboxErrorPanel.Visibility = _showSeries || string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? Visibility.Collapsed : Visibility.Visible;
@@ -325,7 +328,7 @@ public sealed partial class NotificationsPage : Page
         LoadMoreBusy.IsActive = ViewModel.IsLoadingMore;
         LoadMoreBusy.Visibility = ViewModel.IsLoadingMore ? Visibility.Visible : Visibility.Collapsed;
         MarkAllButton.Visibility = !_showSeries && ViewModel.UnreadCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-        UnreadButtonText.Text = ViewModel.UnreadCount > 0 ? $"Unread ({ViewModel.UnreadCount})" : "Unread";
+        UnreadButtonText.Text = ViewModel.UnreadCount > 0 ? AppStrings.Get("web.notifications.inbox.filterUnreadCount", new Dictionary<string, object?> { ["count"] = ViewModel.UnreadCount.ToString(AppStrings.FormatCulture) }, $"Unread ({ViewModel.UnreadCount})") : AppStrings.Get("web.notifications.inbox.unread", fallback: "Unread");
         MarkAllButton.IsEnabled = ViewModel.CanMarkAllRead;
         ErrorText.Text = ViewModel.ErrorMessage ?? "";
         ReloadButton.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? Visibility.Collapsed : Visibility.Visible;
@@ -339,7 +342,7 @@ public sealed partial class NotificationsPage : Page
 
     private void NotificationRow_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is Grid row) UpdateNotificationRow(row);
+        if (sender is Grid row) { RegisterNotificationRow(row); UpdateNotificationRow(row); }
     }
 
     private void NotificationRow_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
@@ -351,10 +354,13 @@ public sealed partial class NotificationsPage : Page
     {
         if (row.DataContext is not AppNotification notification) return;
         AutomationProperties.SetName(row,
-            string.Join(", ", new[] { notification.DisplayTitle, notification.Subtitle, notification.RelativeTime }
+            string.Join(", ", new[] { NotificationTitle(notification), NotificationSubtitle(notification), NotificationTime(notification) }
                 .Where(value => !string.IsNullOrWhiteSpace(value))));
         if (row.FindName("NotificationTitleText") is TextBlock title)
-            title.FontWeight = notification.IsUnread ? FontWeights.SemiBold : FontWeights.Medium;
+        { title.Text = NotificationTitle(notification); title.FontWeight = notification.IsUnread ? FontWeights.SemiBold : FontWeights.Medium; }
+        if (row.FindName("NotificationSubtitleText") is TextBlock subtitle) subtitle.Text = NotificationSubtitle(notification);
+        if (row.FindName("NotificationTimeText") is TextBlock time) time.Text = NotificationTime(notification);
+        if (row.FindName("NotificationReasons") is ItemsControl reasons) reasons.ItemsSource = NotificationReasons(notification);
         var hovered = row.Tag is true && NotificationNavigation.Resolve(notification) != null;
         if ((notification.IsUnread || hovered) && Application.Current.Resources["SurfaceBrush"] is SolidColorBrush surface)
             row.Background = new SolidColorBrush(surface.Color) { Opacity = hovered ? 0.6 : 0.3 };

@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
@@ -16,6 +18,7 @@ public sealed partial class SignupPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SignupViewModel>();
         this.InitializeComponent();
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); });
         PasswordReveal.WrapInParent(PasswordBox, SignupPasswordGroup);
         PasswordReveal.WrapInParent(ConfirmPasswordBox, SignupConfirmationGroup);
         SizeChanged += (_, e) => SignupLayout.Width = Math.Min(384, Math.Max(1, e.NewSize.Width - 48));

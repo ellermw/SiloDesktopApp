@@ -32,10 +32,10 @@
 
 **Interfaces:** Consume existing captured `ApiRequestContext`/authorization policy. Produce capability-aware `ResetToProviderAsync` without changing callers' completion contract, and reusable household-management availability used by every Webhook Sync entry point.
 
-- [ ] Add failing behavior cases for secondary-profile/deep-link/search refusal, owner retirement and locked-primary refusal guidance; capability-supported reset emits only refresh `mode:reset`, old-server path emits no unsupported mode, outage cannot be preceded by unlock.
-- [ ] Run focused tests and relevant native regression against base; record expected failures.
-- [ ] Implement gate/retirement and capability reset, updating all confirmation semantics without restoring locks after a job.
-- [ ] Run focused/full tests, Release publish and actual-control Webhook/metadata cases. Self-review, commit scoped files and write worker receipt.
+- [x] Add failing behavior cases for secondary-profile/deep-link/search refusal, owner retirement and locked-primary refusal guidance; capability-supported reset emits only refresh `mode:reset`, old-server path emits no unsupported mode, outage cannot be preceded by unlock.
+- [x] Run focused tests and relevant native regression against base; record expected failures.
+- [x] Implement gate/retirement and capability reset, updating all confirmation semantics without restoring locks after a job.
+- [x] Run focused/full tests, Release publish and actual-control Webhook/metadata cases. Self-review, commit scoped files and write worker receipt.
 
 ### Task 2: Autoplay protection and current native playback presentation
 
@@ -71,10 +71,10 @@
 
 **Interfaces:** Produce `AppStrings.Get(string key, IReadOnlyDictionary<string, object?>? arguments = null, string? fallback = null)` and a locale service with current culture/direction and change notification. Server text takes explicit optional key/args/raw fallback. Structured API exceptions retain field errors without changing machine code/status/retry contracts. Task 5 consumes these public seams; document exact additional signatures in worker report.
 
-- [ ] Pin authoritative catalog and add failing tests for effective language/device matching, null/unknown tags, plural/argument/fallback formatting, profile retirement, title args copying/raw persistence and structured field errors.
-- [ ] Implement offline generated resources for shipped native languages with reproducible import/provenance; do not hand-edit generated translations or invent a Windows upstream artifact.
-- [ ] Wire profile-owned effective locale/settings events and picker, RTL and display culture, DTO/reconciliation data and presentation-only problem resolution. Keep raw data unchanged and English detailed fallback.
-- [ ] Verify focused/full tests and native picker/switch/Arabic/unknown-tag behavior. Commit and document API/call-site examples plus exact remaining Task-5 coverage.
+- [x] Pin authoritative catalog and add failing tests for effective language/device matching, null/unknown tags, plural/argument/fallback formatting, profile retirement, title args copying/raw persistence and structured field errors.
+- [x] Implement offline generated resources for shipped native languages with reproducible import/provenance; do not hand-edit generated translations or invent a Windows upstream artifact.
+- [x] Wire profile-owned effective locale/settings events and picker, RTL and display culture, DTO/reconciliation data and presentation-only problem resolution. Keep raw data unchanged and English detailed fallback.
+- [x] Verify focused/full tests and native picker/switch/Arabic/unknown-tag behavior. Commit and document API/call-site examples plus exact remaining Task-5 coverage.
 
 ### Task 5: Complete native localization coverage and integrate all groups
 
@@ -86,3 +86,9 @@
 - [ ] Replace user-visible literals with explicit authoritative keys/fallbacks, wire retained views/dialogs/Lua messages to locale updates, format numbers/dates and mirror relevant navigation.
 - [ ] Check all shipped locale resources, long translated text, mixed-direction media titles, English fallback and unknown keys. Ensure new contract/playback/hero text participates.
 - [ ] Run final full suites, Release publish and all affected native routes against integrated bytes; independently review final source and fix findings, record receipts/handoff, submit qualifying Beta PR(s).
+
+#### Task 5 execution seams
+
+After Task4 correction review, the lead will add one native attached-property helper (`SiloPlayer.Services.Localized`) before dispatching coverage writers. Each supported target property is keyed explicitly in source: Text, Content, Header, Placeholder, ToolTip, Name, Help, Title, PrimaryButton, SecondaryButton and CloseButton. Existing literal values supply English fallback; a single registration per element refreshes keyed properties on load and locale changes. Dynamic values use explicit AppStrings calls and retained-view refresh methods. There is no English-text lookup or automatic translation of data.
+
+Coverage writers use separate managed worktrees on the same integrated foundation/helper commit. One writer owns shell/auth/API locale headers and cross-cutting native services; another settings/account/profile and dialogs; separate workers media browsing/requests/shared media controls and collections/editor/home-customization; playback/reader/Watch Party is based on completed Task2 to preserve its final HUD. The exact file boundaries and any exceptions are written into each brief. Core catalogs remain generated and immutable; workers document unmatched native-only phrases as explicit English fallbacks rather than inventing translations. Each worker adds real-control representative language-switch coverage and provides a per-area literal audit. The lead reviews integration and residual coverage, including the Task4 P3 metadata/plural observations.

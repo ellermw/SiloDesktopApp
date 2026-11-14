@@ -612,8 +612,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                         && (RemoteStateErrorMessage == null || !viewerOnlyLeaf || _remoteStateRetryViewerOnly))
                     {
                         _remoteStateRetryViewerOnly = refreshFailure != null && viewerOnlyLeaf;
-                        RemoteStateErrorMessage = refreshFailure == null ? null
-                            : "Silo couldn't refresh this item. Displayed information may be out of date.";
+                        SetLocalizedMessage(nameof(RemoteStateErrorMessage), () => refreshFailure == null ? null
+                            : "Silo couldn't refresh this item. Displayed information may be out of date.", value => RemoteStateErrorMessage = value);
                     }
                 }
                 lock (_remoteStateGate)
@@ -1141,10 +1141,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             && LibraryId == libraryId && _catalogApi.IsCurrentContext(loadContext);
 
         IsLoading = true;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         FailureKind = DetailFailureKind.None;
-        RemoteStateErrorMessage = null;
-        MetadataRefreshErrorMessage = null;
+        SetLocalizedMessage(nameof(RemoteStateErrorMessage), () => null, value => RemoteStateErrorMessage = value);
+        SetLocalizedMessage(nameof(MetadataRefreshErrorMessage), () => null, value => MetadataRefreshErrorMessage = value);
         Item = null;
         Interlocked.Increment(ref _similarLoadGeneration);
         Interlocked.Increment(ref _seasonsLoadGeneration);
@@ -1192,7 +1192,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                     // A corrective read must not turn a successful initial
                     // snapshot into a full-page failure. Keep it and offer retry.
                     LocalLog.AppendException("state_trace.txt", ex, "initial_detail_state_refresh");
-                    RemoteStateErrorMessage = "Silo couldn't refresh this item. Displayed information may be out of date.";
+                    SetLocalizedMessage(nameof(RemoteStateErrorMessage), () => "Silo couldn't refresh this item. Displayed information may be out of date.", value => RemoteStateErrorMessage = value);
                 }
                 ct.ThrowIfCancellationRequested();
                 if (!Current()) return;
@@ -1222,7 +1222,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 catch (Exception ex) when (Current())
                 {
                     LocalLog.AppendException("state_trace.txt", ex, "initial_final_progress_state_refresh");
-                    RemoteStateErrorMessage = "Silo couldn't refresh this item. Displayed information may be out of date.";
+                    SetLocalizedMessage(nameof(RemoteStateErrorMessage), () => "Silo couldn't refresh this item. Displayed information may be out of date.", value => RemoteStateErrorMessage = value);
                     break;
                 }
                 ct.ThrowIfCancellationRequested();
@@ -1302,7 +1302,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             System.Diagnostics.Debug.WriteLine($"Item detail load failed for {contentId}: {ex}");
             FailureKind = DetailFailurePolicy.Classify(ex);
             if (FailureKind == DetailFailureKind.NotFound) _detailPrefetchCache.Invalidate(contentId);
-            ErrorMessage = DetailFailurePolicy.Message(FailureKind);
+            SetLocalizedMessage(nameof(ErrorMessage), () => DetailFailurePolicy.Message(FailureKind), value => ErrorMessage = value);
         }
         finally
         {
@@ -1430,7 +1430,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (fresh.EpisodeNumber.HasValue) item.EpisodeNumber = fresh.EpisodeNumber;
             if (fresh.IsSpecials.HasValue) item.IsSpecials = fresh.IsSpecials;
             item.FolderPaths = fresh.FolderPaths;
-            MetadataRefreshErrorMessage = null;
+            SetLocalizedMessage(nameof(MetadataRefreshErrorMessage), () => null, value => MetadataRefreshErrorMessage = value);
             OnPropertyChanged(nameof(Item));
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
@@ -1442,7 +1442,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         {
             if (!Current()) return;
             LocalLog.AppendException("state_trace.txt", ex, "container_metadata_refresh");
-            MetadataRefreshErrorMessage = "Silo couldn't refresh this item's metadata. Displayed information may be out of date.";
+            SetLocalizedMessage(nameof(MetadataRefreshErrorMessage), () => "Silo couldn't refresh this item's metadata. Displayed information may be out of date.", value => MetadataRefreshErrorMessage = value);
         }
         finally
         {
@@ -1450,7 +1450,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 if (!completed && !owner.IsCancellationRequested && _stateRefreshActive
                     && ReferenceEquals(Item, item) && LibraryId == libraryId && _catalogApi.IsCurrentIdentityContext(identity))
-                    MetadataRefreshErrorMessage = "Silo couldn't refresh this item's metadata. Displayed information may be out of date.";
+                    SetLocalizedMessage(nameof(MetadataRefreshErrorMessage), () => "Silo couldn't refresh this item's metadata. Displayed information may be out of date.", value => MetadataRefreshErrorMessage = value);
                 _metadataLoadCts = null;
             }
         }

@@ -82,8 +82,8 @@ public partial class RequestsViewModel : ObservableObject
 
         _loadInProgress = true;
         IsLoading = DataVersion == 0 || _loadedContext != context;
-        ErrorMessage = null;
-        StatusMessage = "Loading requests...";
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("common.loading", fallback: "Loading requests..."), value => StatusMessage = value ?? "");
 
         try
         {
@@ -96,7 +96,7 @@ public partial class RequestsViewModel : ObservableObject
                 DiscoverySections.Clear();
                 DiscoveryRows.Clear(); Studios.Clear(); Networks.Clear(); Genres.Clear();
                 MyRequests.Clear();
-                StatusMessage = "Requests are disabled on this server.";
+                SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.status.reason.requestsDisabled", fallback: "Requests are disabled on this server."), value => StatusMessage = value ?? "");
                 _lastLoadedAt = DateTime.UtcNow;
                 _loadedContext = context;
                 DataVersion++;
@@ -115,7 +115,7 @@ public partial class RequestsViewModel : ObservableObject
             await Task.WhenAll(mineTask, discoveryTask, brandsTask);
             if (!isCurrentVisit() || revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
 
-            StatusMessage = MyRequests.Count > 0 ? $"{MyRequests.Count:N0} request(s) loaded." : "";
+            SetLocalizedMessage(nameof(StatusMessage), () => MyRequests.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultCount", new Dictionary<string, object?> { ["count"] = MyRequests.Count, ["shown"] = MyRequests.Count.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : "", value => StatusMessage = value ?? "");
             _lastLoadedAt = DateTime.UtcNow;
             _loadedContext = context;
             DataVersion++;
@@ -123,8 +123,8 @@ public partial class RequestsViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!isCurrentVisit() || revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
-            ErrorMessage = $"Failed to load requests: {ex.Message}";
-            StatusMessage = "";
+            SetLocalizedMessage(nameof(ErrorMessage), () => RequestProblem(ex, "web.requests.hub.loadFailed", "Failed to load requests"), value => ErrorMessage = value);
+            SetLocalizedMessage(nameof(StatusMessage), () => "", value => StatusMessage = value ?? "");
         }
         finally
         {
@@ -137,7 +137,7 @@ public partial class RequestsViewModel : ObservableObject
         var context = _requestsApi.CaptureContext();
         IsLoadingMine = true;
         var revision = ++_mineReadRevision;
-        MineError = null;
+        SetLocalizedMessage(nameof(MineError), () => null, value => MineError = value);
         try
         {
             var response = await _requestsApi.GetMineAsync(limit: 100);
@@ -147,7 +147,7 @@ public partial class RequestsViewModel : ObservableObject
         catch
         {
             if (revision != _mineReadRevision || !_requestsApi.IsCurrentContext(context)) return;
-            MineError = "Couldn't load your requests";
+            SetLocalizedMessage(nameof(MineError), () => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.loadFailed", fallback: "Couldn't load your requests"), value => MineError = value);
             MyRequests.Clear();
         }
         finally { if (revision == _mineReadRevision && _requestsApi.IsCurrentContext(context)) { IsLoadingMine = false; DataVersion++; } }
@@ -185,13 +185,20 @@ public partial class RequestsViewModel : ObservableObject
         var context = _requestsApi.CaptureContext();
         var revision = ++_discoveryRevision;
         IsLoadingDiscovery = true;
-        DiscoveryError = null;
+        SetLocalizedMessage(nameof(DiscoveryError), () => null, value => DiscoveryError = value);
         try
         {
             var response = await _requestsApi.GetDiscoveryAsync();
             if (revision != _discoveryRevision || !_requestsApi.IsCurrentContext(context)) return;
             if (response.RowOrder != null) _configuredDiscoveryContext = context;
             var rows = RequestDiscoveryLayout.VisibleRows(response);
+            if (response.RowOrder == null)
+                foreach (var row in rows)
+                    if (response.Sections.FirstOrDefault(section => section.Key == row.Key) is { } source)
+                    {
+                        row.TitleKey = source.TitleKey;
+                        row.TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(source.TitleArgs);
+                    }
             Replace(DiscoveryRows, rows);
             var keys = rows.Where(row => RequestDiscoveryLayout.BrandKind(row.Type) == null).Select(row => row.Key).ToHashSet(StringComparer.Ordinal);
             Replace(DiscoverySections, response.Sections.Where(section => keys.Contains(section.Key)));
@@ -206,7 +213,7 @@ public partial class RequestsViewModel : ObservableObject
         catch
         {
             if (revision != _discoveryRevision || !_requestsApi.IsCurrentContext(context)) return;
-            DiscoveryError = "Discovery is offline";
+            SetLocalizedMessage(nameof(DiscoveryError), () => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.discoverFailed", fallback: "Discovery is offline"), value => DiscoveryError = value);
             DiscoverySections.Clear();
             // A legacy title query is independent of its three fixed brand
             // queries. A configured layout has no safe default to invent.
@@ -258,7 +265,7 @@ public partial class RequestsViewModel : ObservableObject
         if (query.Length < 2)
         {
             SearchResults.Clear();
-            StatusMessage = "Enter at least 2 characters to search.";
+            SetLocalizedMessage(nameof(StatusMessage), () => "Enter at least 2 characters to search.", value => StatusMessage = value ?? "");
             return;
         }
 
@@ -269,8 +276,8 @@ public partial class RequestsViewModel : ObservableObject
         var requestedPage = SearchPage;
 
         IsSearching = true;
-        ErrorMessage = null;
-        StatusMessage = "Searching...";
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.search.searching", fallback: "Searching..."), value => StatusMessage = value ?? "");
 
         try
         {
@@ -284,7 +291,7 @@ public partial class RequestsViewModel : ObservableObject
 
             SearchTotalPages = response.TotalPages;
             SearchTotalResults = response.TotalResults;
-            StatusMessage = "";
+            SetLocalizedMessage(nameof(StatusMessage), () => "", value => StatusMessage = value ?? "");
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested)
         {
@@ -292,8 +299,8 @@ public partial class RequestsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Search failed: {ex.Message}";
-            StatusMessage = "";
+            SetLocalizedMessage(nameof(ErrorMessage), () => RequestProblem(ex, "web.catalog.page.searchFailed", "Search failed"), value => ErrorMessage = value);
+            SetLocalizedMessage(nameof(StatusMessage), () => "", value => StatusMessage = value ?? "");
         }
         finally
         {
@@ -317,8 +324,8 @@ public partial class RequestsViewModel : ObservableObject
         SearchTotalPages = 0;
         SearchTotalResults = 0;
         SearchResults.Clear();
-        ErrorMessage = null;
-        StatusMessage = "";
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        SetLocalizedMessage(nameof(StatusMessage), () => "", value => StatusMessage = value ?? "");
     }
 
     public void CancelSearch()
@@ -330,11 +337,11 @@ public partial class RequestsViewModel : ObservableObject
     [RelayCommand]
     private async Task SubmitRequestAsync(RequestMediaResult result)
     {
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         try
         {
             IsSubmitting = true;
-            StatusMessage = $"Submitting {result.Title}...";
+            SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.sendingFor", new Dictionary<string, object?> { ["title"] = result.Title }), value => StatusMessage = value ?? "");
             await _requestsApi.CreateAsync(new CreateMediaRequestInput
             {
                 MediaType = result.MediaType,
@@ -349,11 +356,11 @@ public partial class RequestsViewModel : ObservableObject
             await LoadAsync();
             if (!string.IsNullOrWhiteSpace(SearchQuery))
                 await SearchAsync();
-            StatusMessage = "Request submitted.";
+            SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.common.requests.toast.submitted"), value => StatusMessage = value ?? "");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to submit request: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to submit request: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {
@@ -370,11 +377,11 @@ public partial class RequestsViewModel : ObservableObject
             await _requestsApi.CancelAsync(request.Id);
             InvalidateCache();
             await LoadAsync();
-            StatusMessage = "Request cancelled.";
+            SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.common.requests.toast.cancelled"), value => StatusMessage = value ?? "");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to cancel request: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => RequestProblem(ex, "web.common.requests.toast.cancelFailed", "Failed to cancel request"), value => ErrorMessage = value);
         }
     }
 

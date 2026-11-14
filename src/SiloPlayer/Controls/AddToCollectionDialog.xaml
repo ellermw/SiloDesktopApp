@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ContentDialog
+<ContentDialog loc:Localized.Direction="True"
     x:Class="SiloPlayer.Controls.AddToCollectionDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     Title="Add to Collection"
-    PrimaryButtonText="Add"
+    PrimaryButtonText="Add" loc:Localized.PrimaryButton="web.collections.manual.add"
     CloseButtonText="Cancel"
     DefaultButton="Primary"
-    Background="{StaticResource CardBackgroundBrush}">
+    Background="{StaticResource CardBackgroundBrush}" loc:Localized.Title="web.collections.addToCollection.title" loc:Localized.CloseButton="common.cancel">
 
     <Grid Width="480" MaxHeight="520" RowSpacing="14">
         <Grid.RowDefinitions>
@@ -45,7 +46,7 @@
                         Text="Loading collections…"
                         FontSize="13"
                         Foreground="{StaticResource SecondaryTextBrush}"
-                        Margin="0,38,0,0" />
+                        Margin="0,38,0,0" loc:Localized.Text="web.collections.addToCollection.loading" />
                 </StackPanel>
                 <TextBlock
                     x:Name="EmptyText"

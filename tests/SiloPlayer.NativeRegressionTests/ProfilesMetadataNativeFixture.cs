@@ -43,7 +43,13 @@ internal static class ProfilesMetadataNativeFixture
             .AddSingleton<EpisodeSpoilerPreferences>().AddSingleton<PlayerService>()
             .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "profiles-metadata-images")))
-            .AddSingleton<ItemDetailPrefetchCache>().BuildServiceProvider();
+            .AddSingleton<ItemDetailPrefetchCache>()
+            .AddSingleton(sp => new SiloPlayer.Core.Localization.AppLanguagePreference(sp.GetRequiredService<SettingsApi>()))
+            .AddSingleton(sp => new SiloPlayer.Core.Localization.AppLocaleCoordinator(
+                sp.GetRequiredService<SiloPlayer.Core.Localization.AppLanguagePreference>(),
+                SiloPlayer.Core.Localization.LocaleService.Shared, local, () => ["en-US"], "en-US",
+                AppLocalization.PostTo(parent.DispatcherQueue)))
+            .BuildServiceProvider();
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previous = slot.GetValue(null); slot.SetValue(null, services);
         try

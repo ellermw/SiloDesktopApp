@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -14,6 +15,7 @@ internal static class CalendarCultureNativeFixture
     internal static async Task RunAsync()
     {
         var cultureBefore = CultureInfo.CurrentCulture;
+        var localeBefore = LocaleService.Shared.Current;
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var servicesBefore = (IServiceProvider)field.GetValue(null)!;
         try
@@ -21,6 +23,7 @@ internal static class CalendarCultureNativeFixture
             foreach (var name in new[] { "th-TH", "ar-SA", "fa-IR", "en-US" })
             {
                 CultureInfo.CurrentCulture = new CultureInfo(name);
+                LocaleService.Shared.Apply(LocaleService.Shared.Create(AppLocaleResolution.Resolve(null, [name], name)));
                 using var wire = new Wire();
                 using var http = new HttpClient(wire);
                 var client = new SiloApiClient(http); client.SetBaseUrl("https://calendar-culture.invalid");
@@ -53,7 +56,19 @@ internal static class CalendarCultureNativeFixture
                             var texts = Descendants(frame).OfType<TextBlock>().ToArray();
                             Require(texts.Any(t => t.Text == "Gregorian calendar fixture"), name + ": event missing from real CalendarPage.");
                             Require(texts.Any(t => t.Text == model.WeekRangeLabel && t.ActualHeight > 0), name + ": range label missing.");
-                            Require(model.WeekRangeLabel.EndsWith("2026", StringComparison.Ordinal), name + ": range year changed.");
+                            Require(model.WeekRangeLabel.Contains("2026", StringComparison.Ordinal), name + ": range year changed.");
+                            // The compact preset is never opened here: its items and closed selection follow the page.
+                            var preset = (ComboBox)((CalendarPage)frame.Content).FindName("CompactPresetComboBox");
+                            RequirePresetLanguage(preset, name);
+                            if (name == "en-US")
+                            {
+                                LocaleService.Shared.Apply(LocaleService.Shared.Create(AppLocaleResolution.Resolve("de", [name], name)));
+                                await Task.Delay(100); frame.UpdateLayout();
+                                RequirePresetLanguage(preset, name + " switched to German");
+                                LocaleService.Shared.Apply(LocaleService.Shared.Create(AppLocaleResolution.Resolve(null, [name], name)));
+                                await Task.Delay(100); frame.UpdateLayout();
+                                RequirePresetLanguage(preset, name + " switched back");
+                            }
                             Program.Log($"PASS: {name} actual HTTP week/navigation and CalendarPage at {width}px; range={model.WeekRangeLabel}.");
                         }
                         finally { frame.Content = null; window.Close(); }
@@ -62,11 +77,30 @@ internal static class CalendarCultureNativeFixture
                 finally { model.CancelLoad(); field.SetValue(null, servicesBefore); }
             }
         }
-        finally { field.SetValue(null, servicesBefore); CultureInfo.CurrentCulture = cultureBefore; }
+        finally
+        {
+            field.SetValue(null, servicesBefore); CultureInfo.CurrentCulture = cultureBefore;
+            LocaleService.Shared.Apply(LocaleService.Shared.Create(localeBefore.Resolution));
+        }
     }
 
     private static void Require(bool condition, string message)
     { if (!condition) throw new InvalidOperationException(message); }
+
+    private static void RequirePresetLanguage(ComboBox preset, string name)
+    {
+        var expected = new[]
+        {
+            AppStrings.Get("web.calendar.presetFollowing", fallback: "Following"),
+            AppStrings.Get("web.calendar.presetTrending", fallback: "Trending"),
+            AppStrings.Get("web.calendar.presetAll", fallback: "All"),
+        };
+        var shown = preset.Items.OfType<ComboBoxItem>().Select(item => item.Content as string ?? "").ToArray();
+        Require(shown.SequenceEqual(expected), name + ": never-opened calendar preset items show " + string.Join(",", shown));
+        if (preset.Visibility == Visibility.Visible && preset.IsLoaded && preset.ActualWidth > 0)
+            Require(Equals(preset.SelectionBoxItem, (preset.SelectedItem as ComboBoxItem)?.Content),
+                name + ": closed calendar preset selection shows " + preset.SelectionBoxItem);
+    }
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
     {

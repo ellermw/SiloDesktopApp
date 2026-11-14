@@ -122,6 +122,7 @@ public sealed partial class SectionRow : UserControl
     {
         this.InitializeComponent();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
+        AppLocalization.Register(this, () => { if (Section is { } shown) UpdateTitle(shown); });
         UpdateThemeFadeColors();
         Loaded += (_, _) =>
         {
@@ -206,27 +207,35 @@ public sealed partial class SectionRow : UserControl
         if (Section is { } section) UpdateSection(section);
     }
 
+    // Display only: pins, edits and saves keep the server's stored Title. Runs again
+    // on interface-language changes (AppLocalization.Register in the constructor).
+    private void UpdateTitle(HomeSectionWithItems section)
+    {
+        var title = section.DisplayTitle;
+        SectionTitle.Text = title;
+        TitleLinkTitle.Text = title;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            TitleLinkBtn,
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.view") + " · " + title);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ExploreAllBtn,
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.exploreAllLabel", new Dictionary<string, object?> { ["title"] = title }));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            CardsScrollViewer,
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.label"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ScrollLeftBtn,
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.scrollLeft"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ScrollRightBtn,
+            SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.scrollRight"));
+    }
+
     private void UpdateSection(HomeSectionWithItems section)
     {
         var previousOffset = CardsScrollViewer.HorizontalOffset;
         var isSameSection = string.Equals(_lastRenderedSectionId, section.Id, StringComparison.Ordinal);
-        SectionTitle.Text = section.Title;
-        TitleLinkTitle.Text = section.Title;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            TitleLinkBtn,
-            $"View {section.Title}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ExploreAllBtn,
-            $"Explore all {section.Title}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            CardsScrollViewer,
-            $"{section.Title} carousel");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ScrollLeftBtn,
-            $"Previous items in {section.Title}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ScrollRightBtn,
-            $"Next items in {section.Title}");
+        UpdateTitle(section);
 
         UpdateNavigationPresentation();
         UpdatePinAvailability();

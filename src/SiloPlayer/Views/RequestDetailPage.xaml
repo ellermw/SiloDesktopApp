@@ -1,7 +1,8 @@
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.RequestDetailPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:controls="using:SiloPlayer.Controls"
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="Page_SizeChanged">
@@ -16,11 +17,11 @@
                     <Rectangle.Fill><LinearGradientBrush StartPoint="0,0" EndPoint="1,0"><GradientStop x:Name="HeroLeftSolid" Color="{StaticResource AppBackgroundColor}" Offset="0" /><GradientStop x:Name="HeroLeftStrong" Offset="0.2" /><GradientStop x:Name="HeroLeftSoft" Offset="0.4" /><GradientStop x:Name="HeroLeftTransparent" Offset="0.6" /></LinearGradientBrush></Rectangle.Fill>
                 </Rectangle>
                 <Rectangle><Rectangle.Fill><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop x:Name="HeroBottomTransparent" /><GradientStop x:Name="HeroBottomSoft" Offset="0.25" /><GradientStop x:Name="HeroBottomMid" Offset="0.5" /><GradientStop x:Name="HeroBottomStrong" Offset="0.8" /><GradientStop x:Name="HeroBottomSolid" Color="{StaticResource AppBackgroundColor}" Offset="1" /></LinearGradientBrush></Rectangle.Fill></Rectangle>
-                <Button x:Name="BackButton" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="8,24,0,0" Width="32" Height="32" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="16" Background="#33000000" BorderThickness="1" BorderBrush="{StaticResource BorderBrush}" Click="Back_Click" AutomationProperties.Name="Go back"><FontIcon Glyph="&#xE76B;" FontSize="18" /></Button>
+                <Button x:Name="BackButton" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="8,24,0,0" Width="32" Height="32" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="16" Background="#33000000" BorderThickness="1" BorderBrush="{StaticResource BorderBrush}" Click="Back_Click" AutomationProperties.Name="Go back" loc:Localized.Name="web.shell.pageBack.goBack"><FontIcon Glyph="&#xE76B;" FontSize="18" /></Button>
                 <Grid x:Name="HeroContent" Margin="54,104,54,46" VerticalAlignment="Bottom" ColumnSpacing="34" RowSpacing="24">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="210" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <Border x:Name="PosterBorder" Width="210" Height="315" CornerRadius="12" Background="{StaticResource SurfaceBrush}" VerticalAlignment="Bottom" HorizontalAlignment="Left"><Grid><TextBlock x:Name="PosterFallback" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center" Margin="24" /><Image x:Name="PosterImage" Stretch="UniformToFill" /></Grid></Border>
+                    <Border x:Name="PosterBorder" Width="210" Height="315" CornerRadius="12" Background="{StaticResource SurfaceBrush}" VerticalAlignment="Bottom" HorizontalAlignment="Left"><Grid><TextBlock x:Name="PosterFallback" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center" Margin="24" /><Image x:Name="PosterImage" Stretch="UniformToFill"  FlowDirection="LeftToRight"/></Grid></Border>
                     <StackPanel x:Name="HeroInfo" Grid.Column="1" VerticalAlignment="Bottom" Spacing="0" MaxWidth="768" HorizontalAlignment="Left">
                         <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
                             <TextBlock x:Name="ContextText" FontSize="12" FontWeight="SemiBold" CharacterSpacing="160" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -45,15 +46,15 @@
             </Grid>
             <StackPanel x:Name="LowerContent" Grid.Row="1" MaxWidth="1400" Padding="40,40,40,40" Spacing="56">
                 <StackPanel x:Name="SeasonsSection" Spacing="20" Visibility="Collapsed">
-                    <Grid><TextBlock Text="Seasons" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" /><TextBlock x:Name="SeasonsCountText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" VerticalAlignment="Bottom" /></Grid>
+                    <Grid><TextBlock Text="Seasons" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"  loc:Localized.Text="web.detail.seasons.heading"/><TextBlock x:Name="SeasonsCountText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Right" VerticalAlignment="Bottom" /></Grid>
                     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="SeasonsPanel" Orientation="Horizontal" Spacing="12" /></ScrollViewer>
                 </StackPanel>
                 <StackPanel x:Name="CastSection" Spacing="20">
-                    <TextBlock Text="Cast" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
+                    <TextBlock Text="Cast" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"  loc:Localized.Text="web.detail.castCrew.cast"/>
                     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="12" /></ScrollViewer>
                 </StackPanel>
                 <StackPanel x:Name="RecommendationsSection" Spacing="20">
-                    <TextBlock Text="More Like This" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
+                    <TextBlock Text="More Like This" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"  loc:Localized.Text="web.recommendations.moreLikeThis"/>
                     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="RecommendationsPanel" Orientation="Horizontal" Spacing="12" /></ScrollViewer>
                 </StackPanel>
             </StackPanel>
@@ -61,7 +62,7 @@
                 <Button x:Name="LoadingBackButton"
                         VerticalAlignment="Top" HorizontalAlignment="Left" Margin="24"
                         Width="32" Height="32" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="16" Click="Back_Click"
-                        AutomationProperties.Name="Go back">
+                        AutomationProperties.Name="Go back" loc:Localized.Name="web.shell.pageBack.goBack">
                     <FontIcon Glyph="&#xE76B;" FontSize="18" />
                 </Button>
                 <Grid x:Name="DetailSkeleton" Margin="54,105,54,50" VerticalAlignment="Center" ColumnSpacing="34" RowSpacing="24">
@@ -80,7 +81,7 @@
                 </Grid>
                 <ProgressRing x:Name="LoadingRing" IsActive="False" Visibility="Collapsed" />
                 <TextBlock x:Name="LoadingText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="480" Visibility="Collapsed" />
-                <Button x:Name="RetryTitleButton" Content="Retry" Click="RetryTitle_Click" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,130,0,0" Visibility="Collapsed" />
+                <Button x:Name="RetryTitleButton" Content="Retry" Click="RetryTitle_Click" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,130,0,0" Visibility="Collapsed"  loc:Localized.Content="common.retry"/>
             </Grid>
         </Grid>
     </ScrollViewer>

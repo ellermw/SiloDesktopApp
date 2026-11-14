@@ -83,7 +83,7 @@ public sealed partial class LibraryPage
             catch (Exception ex)
             {
                 if (IsLibraryStateVisitCurrent(visit, owner, libraryId) && edit == _stateEdit)
-                    App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}");
+                    App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Could not restore library view: {ex.Message}"));
                 return null;
             }
         }
@@ -107,7 +107,7 @@ public sealed partial class LibraryPage
         catch (Exception ex)
         {
             if (IsLibraryStateVisitCurrent(visit, owner, libraryId))
-                App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}");
+                App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Could not restore library view: {ex.Message}"));
             return null;
         }
     }
@@ -253,7 +253,7 @@ public sealed partial class LibraryPage
             // Leave the latest edit queued for the next activation/departure, even while detached.
             if (_pendingStateSaves.TryGetValue(key, out var latest) && latest == save &&
                 save.Edit == CurrentLibraryStateEdit(save.Owner, save.Id))
-                App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember library view: {ex.Message}");
+                App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Could not remember library view: {ex.Message}"));
         }
         finally { _stateSavesInFlight.Remove(save); }
     }

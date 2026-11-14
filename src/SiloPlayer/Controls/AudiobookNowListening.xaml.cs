@@ -35,6 +35,17 @@ public sealed partial class AudiobookNowListening : UserControl
         AudiobookSliderAppearance.Apply(SeekSlider);
         AudiobookSliderAppearance.Apply(VolumeSlider, volume: true);
         SizeChanged += (_, e) => UpdateResponsiveLayout(e.NewSize.Width);
+        // Retained view: labels follow the interface language without
+        // restarting reads or touching playback state.
+        AppLocalization.Register(this, () =>
+        {
+            if (!_active) return;
+            SpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(_rate);
+            UpdateSkipButtonLabels(_settings.Load());
+            BuildFlyouts();
+            UpdateNarrator();
+            UpdatePlayback();
+        });
     }
 
     private void UpdateResponsiveLayout(double width)
@@ -71,7 +82,7 @@ public sealed partial class AudiobookNowListening : UserControl
         VolumeSlider.Value = _player.Volume;
         _suppressVolume = false;
         _rate = _player.AudiobookPlaybackRate;
-        SpeedButton.Content = $"{_rate:0.##}×";
+        SpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(_rate);
         var config = _settings.Load();
         UpdateSkipButtonLabels(config);
         BuildFlyouts();
@@ -104,7 +115,7 @@ public sealed partial class AudiobookNowListening : UserControl
     private void OnPlaybackRateChanged(double rate) => DispatcherQueue.TryEnqueue(() =>
     {
         _rate = rate;
-        SpeedButton.Content = $"{rate:0.##}×";
+        SpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(rate);
         BuildFlyouts();
         UpdatePlayback();
     });
@@ -114,11 +125,16 @@ public sealed partial class AudiobookNowListening : UserControl
         TitleText.Text = _player.Title;
         AuthorText.Text = _player.AudiobookAuthor ?? "";
         AuthorText.Visibility = string.IsNullOrWhiteSpace(AuthorText.Text) ? Visibility.Collapsed : Visibility.Visible;
+        UpdateNarrator();
+        _ = LoadCoverAsync();
+    }
+
+    private void UpdateNarrator()
+    {
         NarratorText.Text = string.IsNullOrWhiteSpace(_player.AudiobookNarrator)
             ? ""
-            : $"Narrated by  {_player.AudiobookNarrator}";
+            : AudiobookTransportAppearance.Labels.NarratedBy(_player.AudiobookNarrator);
         NarratorText.Visibility = string.IsNullOrWhiteSpace(NarratorText.Text) ? Visibility.Collapsed : Visibility.Visible;
-        _ = LoadCoverAsync();
     }
 
     private void UpdatePlayback()
@@ -133,14 +149,13 @@ public sealed partial class AudiobookNowListening : UserControl
         var remaining = Math.Max(0, duration - position);
         RightTimeButton.Content = _timeMode switch
         {
-            1 => $"−{FormatTime(remaining)}",
-            2 when Math.Abs(_rate - 1) > 0.001 => $"−{FormatTime(remaining / _rate)} at {_rate:0.##}×",
+            1 => AudiobookTransportAppearance.Labels.Remaining(FormatTime(remaining)),
+            2 when Math.Abs(_rate - 1) > 0.001 => AudiobookTransportAppearance.Labels.RemainingAtSpeed(FormatTime(remaining / _rate), _rate),
             _ => FormatTime(duration),
         };
         PlayPauseIcon.Glyph = _player.IsPaused ? "\uE768" : "\uE769";
-        var playPauseLabel = _player.IsPaused ? "Play" : "Pause";
-        AutomationProperties.SetName(PlayPauseButton, playPauseLabel);
-        ToolTipService.SetToolTip(PlayPauseButton, $"{playPauseLabel} (space)");
+        AutomationProperties.SetName(PlayPauseButton, AudiobookTransportAppearance.Labels.PlayPause(_player.IsPaused, title: false));
+        ToolTipService.SetToolTip(PlayPauseButton, AudiobookTransportAppearance.Labels.PlayPause(_player.IsPaused, title: true));
         var chapter = _player.CurrentAudiobookChapter;
         var hasChapters = _player.AudiobookChapters.Count > 0;
         PreviousChapterButton.Visibility = hasChapters ? Visibility.Visible : Visibility.Collapsed;
@@ -150,7 +165,7 @@ public sealed partial class AudiobookNowListening : UserControl
         ChapterPanel.Visibility = chapter == null ? Visibility.Collapsed : Visibility.Visible;
         if (chapter != null)
         {
-            ChapterNumberText.Text = $"CHAPTER {chapter.Index + 1}";
+            ChapterNumberText.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(AudiobookTransportAppearance.Labels.ChapterNumber(chapter.Index + 1));
             ChapterTitleText.Text = chapter.Title;
         }
         UpdateVolumeIcon();
@@ -185,11 +200,11 @@ public sealed partial class AudiobookNowListening : UserControl
         var speed = new MenuFlyout();
         foreach (var value in new[] { 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 })
         {
-            var item = new ToggleMenuFlyoutItem { Text = $"{value:0.##}×", IsChecked = Math.Abs(value - _rate) < 0.001 };
+            var item = new ToggleMenuFlyoutItem { Text = AudiobookTransportAppearance.Labels.Rate(value), IsChecked = Math.Abs(value - _rate) < 0.001 };
             item.Click += (_, _) =>
             {
                 _rate = _player.SetAudiobookPlaybackRate(value);
-                SpeedButton.Content = $"{value:0.##}×";
+                SpeedButton.Content = AudiobookTransportAppearance.Labels.Rate(value);
                 BuildFlyouts();
             };
             speed.Items.Add(item);
@@ -207,16 +222,16 @@ public sealed partial class AudiobookNowListening : UserControl
         ChaptersButton.IsEnabled = chapters.Items.Count > 0;
 
         var sleep = new MenuFlyout();
-        var off = new MenuFlyoutItem { Text = "Off" };
+        var off = new MenuFlyoutItem { Text = AudiobookTransportAppearance.Labels.SleepOff };
         off.Click += (_, _) => _player.ClearAudiobookSleepTimer();
         sleep.Items.Add(off);
         foreach (var minutes in new[] { 5, 15, 30, 45, 60 })
         {
-            var item = new MenuFlyoutItem { Text = $"{minutes} minutes" };
+            var item = new MenuFlyoutItem { Text = AudiobookTransportAppearance.Labels.SleepMinutes(minutes) };
             item.Click += (_, _) => _player.SetAudiobookSleepTimer(TimeSpan.FromMinutes(minutes), null);
             sleep.Items.Add(item);
         }
-        var end = new MenuFlyoutItem { Text = "End of chapter" };
+        var end = new MenuFlyoutItem { Text = AudiobookTransportAppearance.Labels.SleepEndOfChapter };
         end.Click += (_, _) => _player.SetAudiobookSleepTimer(null, _player.CurrentAudiobookChapter?.EndSeconds);
         sleep.Items.Add(end);
         SleepButton.Flyout = sleep;
@@ -227,9 +242,7 @@ public sealed partial class AudiobookNowListening : UserControl
     private void UpdateSleepLabel()
     {
         var remaining = _player.GetAudiobookSleepRemaining();
-        SleepTimerText.Text = remaining.HasValue
-            ? $"Sleep {(int)remaining.Value.TotalMinutes}:{remaining.Value.Seconds:00}"
-            : "Sleep";
+        SleepTimerText.Text = AudiobookTransportAppearance.Labels.Sleep(remaining);
     }
 
     private void OnSeekPreferencesChanged() { UpdateSkipButtonLabels(_settings.Load()); BuildFlyouts(); }
@@ -239,7 +252,8 @@ public sealed partial class AudiobookNowListening : UserControl
         var submenu = new MenuFlyoutSubItem { Text = label };
         foreach (var seconds in new[] { 5, 10, 15, 30, 45, 60, 90 })
         {
-            var item = new ToggleMenuFlyoutItem { Text = $"{seconds} seconds", IsChecked = seconds == selected };
+            var item = new ToggleMenuFlyoutItem { Text = SiloPlayer.Core.Localization.AppStrings.Get("web.player.seekBar.positionSeconds",
+                new Dictionary<string, object?> { ["seconds"] = seconds }, fallback: $"{seconds} seconds"), IsChecked = seconds == selected };
             item.Click += async (_, _) =>
             {
                 var config = _settings.Load();
@@ -300,7 +314,7 @@ public sealed partial class AudiobookNowListening : UserControl
         VolumeIcon.Glyph = _player.IsMuted || VolumeSlider.Value <= 0
             ? "\uE74F"
             : VolumeSlider.Value < 50 ? "\uE993" : "\uE767";
-        var label = _player.IsMuted || VolumeSlider.Value <= 0 ? "Unmute" : "Mute";
+        var label = AudiobookTransportAppearance.Labels.Mute(_player.IsMuted || VolumeSlider.Value <= 0);
         AutomationProperties.SetName(MuteButton, label);
         ToolTipService.SetToolTip(MuteButton, label);
     }
@@ -311,10 +325,10 @@ public sealed partial class AudiobookNowListening : UserControl
         var forward = Math.Clamp(_player.SeekIntervals.AudiobookForward, 5, 120);
         SkipBackText.Text = back.ToString();
         SkipForwardText.Text = forward.ToString();
-        AutomationProperties.SetName(SkipBackButton, $"Back {back} seconds");
-        AutomationProperties.SetName(SkipForwardButton, $"Forward {forward} seconds");
-        ToolTipService.SetToolTip(SkipBackButton, $"Back {back} seconds (Left)");
-        ToolTipService.SetToolTip(SkipForwardButton, $"Forward {forward} seconds (Right)");
+        AutomationProperties.SetName(SkipBackButton, AudiobookTransportAppearance.Labels.Skip(true, back, title: false));
+        AutomationProperties.SetName(SkipForwardButton, AudiobookTransportAppearance.Labels.Skip(false, forward, title: false));
+        ToolTipService.SetToolTip(SkipBackButton, AudiobookTransportAppearance.Labels.Skip(true, back, title: true));
+        ToolTipService.SetToolTip(SkipForwardButton, AudiobookTransportAppearance.Labels.Skip(false, forward, title: true));
     }
 
     private static string FormatTime(double seconds)

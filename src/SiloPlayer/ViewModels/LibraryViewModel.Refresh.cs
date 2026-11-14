@@ -192,7 +192,7 @@ public partial class LibraryViewModel
         {
             if (!Current()) return CatalogRefreshResult.Deferred;
             // Continued churn (no message) hands back the same way, without an error.
-            if (message is not null) ErrorMessage = $"Failed to refresh catalog: {message}";
+            if (message is not null) SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to refresh catalog: {message}", value => ErrorMessage = value);
             RetireUnconfirmedHeldRows();
             return message is null ? CatalogRefreshResult.Deferred : CatalogRefreshResult.Failed;
         }
@@ -311,7 +311,7 @@ public partial class LibraryViewModel
             window.Response.Total = 0;
         }
         _catalogRefreshPending = false;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         // These chunks used skip_total: omitted totals can deserialize as exact
         // zero. Keep the extent until the explicit count read in this snapshot.
         _exactCountQueryVersion = _queryVersion;

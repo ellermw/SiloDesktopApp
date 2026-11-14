@@ -36,18 +36,18 @@ public static class NotInterestedActions
         {
             await service.ApplyAsync(operation, item);
             if (!service.IsCurrent(operation.Context)) return false;
-            if (!operation.Marked) toast.Success("Back in your recommendations");
-            else toast.Success("We won't recommend this", "Undo", async () =>
+            if (!operation.Marked) toast.Success(SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.notInterested.restored", fallback: "Back in your recommendations"));
+            else toast.Success(SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.notInterested.hidden"), SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.notInterested.undo"), async () =>
             {
                 if (!service.IsCurrent(operation.Context)) return;
                 try { await service.ApplyAsync(operation with { Marked = false }, item); }
                 catch (OperationCanceledException) when (!service.IsCurrent(operation.Context)) { }
-                catch (Exception ex) { if (service.IsCurrent(operation.Context)) toast.Error(ex, "Failed to undo Not interested"); }
+                catch (Exception ex) { if (service.IsCurrent(operation.Context)) toast.Error(ex, MediaItemCardActions.Problem(ex, SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.notInterested.undoFailed"))); }
             });
             return true;
         }
         catch (OperationCanceledException) when (!service.IsCurrent(operation.Context)) { return false; }
-        catch (Exception ex) { if (service.IsCurrent(operation.Context)) toast.Error(ex, "Failed to update Not interested"); return false; }
+        catch (Exception ex) { if (service.IsCurrent(operation.Context)) toast.Error(ex, MediaItemCardActions.Problem(ex, SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.notInterested.updateFailed"))); return false; }
     }
 
     public static MenuFlyoutItem CreateMenuItem(MediaItem item, Action? stateChanged = null)
@@ -56,7 +56,8 @@ public static class NotInterestedActions
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var owner = client.CaptureIdentityContext();
         var action = new MenuFlyoutItem { Visibility = Visibility.Collapsed, Icon = new SymbolIcon(Symbol.Dislike), Tag = owner };
-        void Update() { action.Text = item.UserState?.NotInterested == true ? "Show in Recommendations" : "Not Interested"; Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(action, action.Text); }
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(action, "not-interested");
+        void Update() { SiloPlayer.Controls.MediaItemCardActions.BindText(action, "Text", element => element.Text = item.UserState?.NotInterested == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.showInRecommendations", fallback: "Show in Recommendations") : SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.notInterested", fallback: "Not Interested")); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(action, action.Text); }
         Update();
         action.Click += async (_, _) =>
         {
@@ -85,7 +86,7 @@ public static class NotInterestedActions
             var available = item.Type is "movie" or "series" && await catalog.SupportsNotInterestedAsync(context);
             if (catalog.IsCurrentContext(context))
             {
-                action.Text = item.UserState?.NotInterested == true ? "Show in Recommendations" : "Not Interested";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(action, "Text", element => element.Text = item.UserState?.NotInterested == true ? SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.showInRecommendations", fallback: "Show in Recommendations") : SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.notInterested", fallback: "Not Interested"));
                 action.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
             }
         }

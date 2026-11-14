@@ -5,6 +5,8 @@ using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -26,6 +28,7 @@ public sealed partial class CollectionEditorPage
     private int _syncedLoadGeneration;
     private bool _sourceChoiceLoading;
     private readonly TextBox _listSearch = new() { PlaceholderText = "Search MDBList and popular picks", MinHeight = 44 };
+    private bool _syncedCheckFailed;
     private readonly StackPanel _listSearchPanel = new() { Spacing = 8 };
     private readonly StackPanel _syncedLibraryChoices = new() { Spacing = 4 };
     private readonly TextBox _titleLimit = new() { PlaceholderText = "No limit", HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -43,33 +46,34 @@ public sealed partial class CollectionEditorPage
         EditorPrimaryColumn.Children.Insert(1, _syncedCreatePanel);
         _syncedBody.Spacing = 20;
         _syncedBody.Children.Add(new StackPanel { Spacing = 4, Children = {
-            new TextBlock { Text = "The list it follows", FontSize = 17, LineHeight = 25.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold },
-            new TextBlock { Text = "Titles come from this list and update on its schedule.", FontSize = 13.5, LineHeight = 20.25, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }
+            CollectionText.Keyed(new TextBlock { Text = "The list it follows", FontSize = 17, LineHeight = 25.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }, "web.collections.copy.syncedHeading"),
+            CollectionText.Keyed(new TextBlock { Text = "Titles come from this list and update on its schedule.", FontSize = 13.5, LineHeight = 20.25, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }, "web.collections.copy.syncedCaption")
         } });
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var context = client.CaptureContext();
         try { _creationCapabilities = await App.Services.GetRequiredService<CollectionsApi>().GetCollectionCapabilitiesAsync(); }
-        catch { _syncedError.Text = "Couldn't check whether Synced lists are on. Return to collections and try again."; }
+        catch { _syncedCheckFailed = true; _syncedError.Text = SyncedCheckFailedText(); }
         if (!_editorActive || !client.IsCurrentContext(context)) return;
         var offeredSources = new[] { "mdblist", "tmdb", "tmdb_list" }.Where(source => _creationCapabilities?.ImportSources?.Contains(source) == true).ToArray();
         _syncedSource = offeredSources.FirstOrDefault() ?? "";
         var tabs = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 4, VerticalSpacing = 4 };
-        foreach (var (source, label) in new[] { ("mdblist", "MDBList"), ("tmdb", "TMDB chart"), ("tmdb_list", "TMDB list") })
+        foreach (var (source, label, key) in new[] { ("mdblist", "MDBList", "sourceMdblist"), ("tmdb", "TMDB chart", "sourceTmdbChart"), ("tmdb_list", "TMDB list", "sourceTmdbList") })
         {
             if (!offeredSources.Contains(source)) continue;
-            var button = SyncedSourceTab(label, source == _syncedSource);
+            var button = CollectionText.KeyedContent(SyncedSourceTab(label, source == _syncedSource), "web.collections.types." + key);
             button.Checked += (_, _) => { _sourceLinks[_syncedSource] = _syncedLink.Text; _syncedSource = source; _syncedPick = null; _syncedLink.Text = _sourceLinks.GetValueOrDefault(source, ""); RenderSyncedSource(); }; tabs.Children.Add(button);
         }
         _syncedBody.Children.Add(new Border { Child = tabs, Padding = new(4), CornerRadius = new(12), Background = CurrentBrush("SurfaceBrush"), HorizontalAlignment = HorizontalAlignment.Left });
         _listSearch.IsEnabled = _creationCapabilities?.MdblistSearch == true;
-        AutomationProperties.SetName(_listSearch, "Search lists");
+        AutomationProperties.SetName(_listSearch, "Search lists"); Localized.SetName(_listSearch, "web.collections.templateGallery.searchLists");
+        Localized.SetPlaceholder(_listSearch, "web.collections.templateGallery.searchPlaceholder");
         _listSearch.TextChanged += async (_, _) => await SearchSyncedListsAsync();
         _listSearchPanel.Spacing = 12;
         _listSearch.Height = 42; _listSearch.MinHeight = 0; _listSearch.FontSize = 14; _listSearch.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); _listSearch.BorderThickness = new(0); _listSearch.Padding = new(0, 8, 0, 8);
         var searchLine = new Grid { ColumnSpacing = 8 }; searchLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); searchLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         var searchIcon = WebUiIcon.Create("search", 16, CurrentBrush("SecondaryTextBrush")); searchIcon.VerticalAlignment = VerticalAlignment.Center; searchLine.Children.Add(searchIcon); Grid.SetColumn(_listSearch, 1); searchLine.Children.Add(_listSearch);
         _listSearchPanel.Children.Add(new Border { Child = searchLine, Height = 44, Padding = new(12, 0, 12, 0), CornerRadius = new(12), Background = CurrentBrush("AppBackgroundBrush"), BorderBrush = CurrentBrush("BorderBrush"), BorderThickness = new(1) });
-        if (!_listSearch.IsEnabled) _listSearchPanel.Children.Add(new TextBlock { Text = "Search is off for this profile. Popular picks and pasted links still work.", FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = CurrentBrush("SecondaryTextBrush") });
+        if (!_listSearch.IsEnabled) _listSearchPanel.Children.Add(CollectionText.Keyed(new TextBlock { Text = "Search is off for this profile. Popular picks and pasted links still work.", FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = CurrentBrush("SecondaryTextBrush") }, "web.collections.copy.mdblistSearchOffProfile"));
         _listSearchPanel.Children.Add(_syncedThemes);
         _syncedChoiceFrame.Child = new ScrollViewer { Content = _syncedChoices, MaxHeight = 420, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         _syncedBody.Children.Add(_listSearchPanel); _syncedBody.Children.Add(_syncedChoiceFrame);
@@ -84,7 +88,7 @@ public sealed partial class CollectionEditorPage
             { _syncedPick = null; ApplySyncedPickFields("", "", null, ""); }
         };
         _syncedLink.MinHeight = 0; _syncedLink.Height = 44; _syncedLink.FontSize = 14;
-        _syncedLinkField = Field("Or paste any MDBList link", _syncedLink); _syncedBody.Children.Add(_syncedLinkField);
+        _syncedLinkField = Field(null, "Or paste any MDBList link", _syncedLink); _syncedBody.Children.Add(_syncedLinkField);
         foreach (var (key, label) in new[] { ("trending", "Trending"), ("popular", "Popular"), ("top_rated", "Top rated"), ("now_playing", "Now playing"), ("upcoming", "Upcoming"), ("airing_today", "Airing today"), ("on_the_air", "On the air") })
             _chartPreset.Items.Add(new ComboBoxItem { Content = label, Tag = key });
         _chartWindow.Items.Add(new ComboBoxItem { Content = "Today", Tag = "day" }); _chartWindow.Items.Add(new ComboBoxItem { Content = "This week", Tag = "week" }); _chartWindow.SelectedIndex = 0;
@@ -101,12 +105,13 @@ public sealed partial class CollectionEditorPage
         _titleLimit.LostFocus += (_, _) => CommitSyncedLimit();
         _titleLimit.KeyDown += (_, args) => { if (args.Key == Windows.System.VirtualKey.Enter) { args.Handled = true; CommitSyncedLimit(); } };
         _syncedBody.Children.Add(BuildSyncedOrder());
-        foreach (var (value, label) in new[] { ("", "Manual only"), ("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly") }) _newSchedule.Items.Add(new ComboBoxItem { Tag = value, Content = label });
+        foreach (var (value, label, key) in new[] { ("", "Manual only", "scheduleManualOnly"), ("daily", "Daily", "scheduleDaily"), ("weekly", "Weekly", "scheduleWeekly"), ("monthly", "Monthly", "scheduleMonthly") })
+            _newSchedule.Items.Add(CollectionText.KeyedItem(_newSchedule, new ComboBoxItem { Tag = value, Content = label }, "web.collections.fields." + key));
         _newSchedule.SelectedIndex = 0; ViewModel.SyncSchedule = "";
-        _newSchedule.SelectionChanged += (_, _) => ViewModel.SyncSchedule = (_newSchedule.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        _newSchedule.SelectionChanged += (_, _) => { if (!CollectionText.Relabeling) ViewModel.SyncSchedule = (_newSchedule.SelectedItem as ComboBoxItem)?.Tag?.ToString(); };
         _newSchedule.MinHeight = 0; _newSchedule.Height = 36; _newSchedule.FontSize = 14; _newSchedule.Width = 280; _newSchedule.HorizontalAlignment = HorizontalAlignment.Left;
-        AutomationProperties.SetName(_newSchedule, "Sync schedule");
-        _syncedBody.Children.Add(SyncedDivider(Field("Sync", _newSchedule)));
+        AutomationProperties.SetName(_newSchedule, "Sync schedule"); Localized.SetName(_newSchedule, "web.collections.copy.fieldSchedule");
+        _syncedBody.Children.Add(SyncedDivider(Field("web.collections.syncedList.syncHeading", "Sync", _newSchedule)));
         _syncedError.Foreground = CurrentBrush("ErrorBrush"); _syncedBody.Children.Add(_syncedError);
         _syncedImports = new(App.Services.GetRequiredService<CollectionsApi>(), App.Services.GetRequiredService<CatalogApi>(), requestClient: client);
         RenderSyncedSource(); UpdateCurrentEditor(); await LoadSyncedPicksAsync();
@@ -114,7 +119,7 @@ public sealed partial class CollectionEditorPage
     private void RefreshSyncedLibraries()
     {
         _syncedLibraryChoices.Children.Clear();
-        var allLibraries = new Button { Content = "All my libraries", IsEnabled = ViewModel.SelectedLibraryIds.Count > 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Stretch };
+        var allLibraries = new Button { Content = CollectionText.Get("web.collections.copy.allMyLibraries", "All my libraries"), IsEnabled = ViewModel.SelectedLibraryIds.Count > 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Stretch };
         allLibraries.Click += (_, _) => { ViewModel.SelectedLibraryIds.Clear(); RefreshSyncedLibraries(); };
         _syncedLibraryChoices.Children.Add(allLibraries);
         var media = _newSynced && _syncedSource == "tmdb" ? (_chartMedia.SelectedItem as ComboBoxItem)?.Tag?.ToString() : _syncedPick?.MediaKind;
@@ -150,9 +155,11 @@ public sealed partial class CollectionEditorPage
         BuildSyncedThemes();
         RefreshSyncedLibraries();
         if (_syncedLinkField != null) _syncedLinkField.Visibility = _syncedSource == "tmdb" ? Visibility.Collapsed : Visibility.Visible;
-        _syncedLink.PlaceholderText = _syncedSource == "mdblist" ? "https://mdblist.com/lists/…" : "Paste a public TMDB list link or list ID";
-        if (_syncedLinkField?.Children.FirstOrDefault() is TextBlock linkLabel) linkLabel.Text = _syncedSource == "mdblist" ? "Or paste any MDBList link" : "Public TMDB list link or list ID";
-        AutomationProperties.SetName(_syncedLink, _syncedSource == "mdblist" ? "MDBList link" : "TMDB list link");
+        _syncedLink.PlaceholderText = _syncedSource == "mdblist" ? "https://mdblist.com/lists/…" : CollectionText.Get("web.collections.copy.pasteTmdbListLink", "Paste a public TMDB list link or list ID");
+        if (_syncedLinkField?.Children.FirstOrDefault() is TextBlock linkLabel)
+            linkLabel.Text = _syncedSource == "mdblist" ? CollectionText.Get("web.collections.copy.pasteMdblistLink", "Or paste any MDBList link") : CollectionText.Get("web.collections.copy.tmdbListLink", "Public TMDB list link or list ID");
+        AutomationProperties.SetName(_syncedLink, _syncedSource == "mdblist" ? CollectionText.Get("web.collections.copy.mdblistLink", "MDBList link") : CollectionText.Get("web.collections.copy.tmdbListLink", "TMDB list link"));
+        if (_syncedCheckFailed) _syncedError.Text = SyncedCheckFailedText();
         if (_sourceChoiceLoading) { _syncedChoices.Children.Add(new SkeletonText { Width = 160, Height = 20, HorizontalAlignment = HorizontalAlignment.Left }); return; }
         if (_syncedImports?.TemplateErrorMessage != null && _syncedImports.TemplateGroups.Count == 0)
         {
@@ -161,7 +168,7 @@ public sealed partial class CollectionEditorPage
         var picks = (_syncedImports?.TemplateGroups.Where(group => _syncedSource != "mdblist" || _syncedTheme == "all" || group.Category == _syncedTheme).SelectMany(group => group.Templates).Where(pick => pick.Source == _syncedSource && !string.IsNullOrWhiteSpace(pick.Mdblist?.Url ?? pick.TmdbList?.Url ?? (pick.Source == "tmdb" ? pick.Id : null)) && (_syncedSource != "mdblist" || string.IsNullOrWhiteSpace(_listSearch.Text) || (pick.Title + " " + pick.Description + " " + string.Join(" ", pick.Tags)).Contains(_listSearch.Text.Trim(), StringComparison.OrdinalIgnoreCase))) ?? []).ToArray();
         if (_syncedSource != "mdblist") picks = [];
         _syncedChoiceFrame.Visibility = _syncedSource == "mdblist" ? Visibility.Visible : Visibility.Collapsed;
-        if (picks.Length > 0) _syncedChoices.Children.Add(SyncedGroupHeading("Popular picks", "Ready-made lists that work well here"));
+        if (picks.Length > 0) _syncedChoices.Children.Add(SyncedGroupHeading(CollectionText.Get("web.collections.copy.popularPicks", "Popular picks"), CollectionText.Get("web.collections.copy.popularPicksHelp", "Ready-made lists that work well here")));
         foreach (var pick in picks)
         {
             var row = CollectionPickRow.Create(pick, ReferenceEquals(pick, _syncedPick), "personal-list-" + GetHashCode());
@@ -183,17 +190,18 @@ public sealed partial class CollectionEditorPage
         }
         if (_syncedSource == "mdblist" && _syncedImports != null && !string.IsNullOrWhiteSpace(_listSearch.Text))
         {
-            _syncedChoices.Children.Add(SyncedGroupHeading("From MDBList", "Public lists matching your search"));
+            // The catalog's MDBList help ("Public lists by other people") means something else; this help stays English.
+            _syncedChoices.Children.Add(SyncedGroupHeading(CollectionText.Get("web.collections.copy.fromMdblist", "From MDBList"), "Public lists matching your search"));
             foreach (var list in _syncedImports.MdblistResults)
             {
                 var url = (list.Url ?? $"https://mdblist.com/lists/{list.UserName}/{list.Slug}").TrimEnd('/');
                 if (!url.EndsWith("/json", StringComparison.OrdinalIgnoreCase)) url += "/json";
-                var row = new RadioButton { GroupName = "personal-list-" + GetHashCode(), Content = new StackPanel { Spacing = 2, Children = { new TextBlock { Text = list.Name, FontSize = 14.5, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis }, new TextBlock { Text = $"by {list.UserName} · {list.Items:N0} titles", FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush") } } } };
+                var row = new RadioButton { GroupName = "personal-list-" + GetHashCode(), Content = new StackPanel { Spacing = 2, Children = { new TextBlock { Text = list.Name, FontSize = 14.5, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis }, new TextBlock { Text = CollectionText.Get("web.collections.templateGallery.byUser", $"by {list.UserName}", ("user", list.UserName)) + " · " + CollectionText.Titles(list.Items), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush") } } } };
                 row.Checked += (_, _) => { _pickingTemplate = true; _syncedLink.Text = url; _syncedPick = new() { Source = "mdblist", MediaKind = list.Mediatype == "show" ? "tv" : list.Mediatype, Mdblist = new() { Url = url } }; ApplySyncedPickFields(list.Name, list.Description, null, ""); _pickingTemplate = false; RefreshSyncedLibraries(); UpdateCurrentEditor(); };
                 _syncedChoices.Children.Add(row);
             }
         }
-        if (_syncedChoices.Children.Count == 0 && _syncedSource == "mdblist") _syncedChoices.Children.Add(new TextBlock { Text = "No popular picks here. Search MDBList or paste a link.", FontSize = 13, Margin = new(14, 12, 14, 12), TextWrapping = TextWrapping.Wrap, Foreground = CurrentBrush("SecondaryTextBrush") });
+        if (_syncedChoices.Children.Count == 0 && _syncedSource == "mdblist") _syncedChoices.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.templateGallery.noPicks", "No popular picks here. Search MDBList or paste a link."), FontSize = 13, Margin = new(14, 12, 14, 12), TextWrapping = TextWrapping.Wrap, Foreground = CurrentBrush("SecondaryTextBrush") });
     }
     private void NormalizeChart()
     {
@@ -240,9 +248,9 @@ public sealed partial class CollectionEditorPage
         if (ViewModel.IsSaving || _syncedImports == null) return;
         CommitSyncedLimit();
         var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
-        if (_creationCapabilities?.ImportSources?.Contains(_syncedSource) != true) { _syncedError.Text = "Synced lists are off on this server."; return; }
+        if (_creationCapabilities?.ImportSources?.Contains(_syncedSource) != true) { _syncedError.Text = CollectionText.Get("web.collections.copy.syncedOff", "Synced lists are off on this server."); return; }
         var pick = _syncedSource == "tmdb" ? new CollectionTemplate { Source = "tmdb", Tmdb = new() { Preset = (_chartPreset.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "", MediaType = (_chartMedia.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "", TimeWindow = (_chartPreset.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "trending" ? (_chartWindow.SelectedItem as ComboBoxItem)?.Tag?.ToString() : null } } : _syncedPick ?? new CollectionTemplate { Source = _syncedSource };
-        if (pick.Source == "tmdb" && string.IsNullOrEmpty(pick.Tmdb?.Preset)) { _syncedError.Text = "Pick a chart first."; return; }
+        if (pick.Source == "tmdb" && string.IsNullOrEmpty(pick.Tmdb?.Preset)) { _syncedError.Text = CollectionText.Get("web.collections.copy.pickAChart", "Pick a chart first."); return; }
         if (!string.IsNullOrWhiteSpace(ViewModel.MaxItemsText) && (!int.TryParse(ViewModel.MaxItemsText, out var limit) || limit < 1)) { _syncedError.Text = "Title limit must be a positive whole number."; return; }
         var poster = ViewModel.PosterFileBytes; var fileName = ViewModel.PosterFileName; var contentType = ViewModel.PosterContentType; var visible = ViewModel.IncludeInServerCollections;
         ViewModel.IsSaving = true;
@@ -263,7 +271,7 @@ public sealed partial class CollectionEditorPage
             // requests. Their failure must never repeat the creation POST.
             _newSynced = false; _syncedCreatePanel.Visibility = Visibility.Collapsed;
             Detach(ImportedDefaultSortCombo);
-            Body(ImportedSourceSection).Children.Add(Field("Order", ImportedDefaultSortCombo));
+            Body(ImportedSourceSection).Children.Add(Field("web.collections.copy.fieldOrder", "Order", ImportedDefaultSortCombo));
             ViewModel.CollectionId = created.Id; ViewModel.IsEditing = true; ViewModel.CollectionType = created.CollectionType;
             _editingCollectionId = created.Id;
             await LoadEditorAsync(created.Id);

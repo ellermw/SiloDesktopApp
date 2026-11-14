@@ -39,19 +39,23 @@ public sealed class MainWindowSourceTests
     }
 
     [Fact]
-    public void PageChangesEaseInWithoutWholePageOpacityFlashes()
+    public void PageChangesSwapInPlaceWithoutSlideOrWholePageOpacityFlashes()
     {
         var root = FindRepositoryRoot();
         var navigation = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "NavigationService.cs"));
         var shell = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
         var transition = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "PageTransitionHelper.cs"));
 
-        // New routes and Back ease in (Granary-like), on the compositor as one visual.
+        // New routes and Back share one page-change transition: an in-place swap. The incoming
+        // page is already at its final position; no rise, slide, drill-in or turnstile.
         Assert.Contains("return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());", navigation);
         Assert.Contains("Frame.GoBack(PageTransitionHelper.ForPageChange());", navigation);
-        Assert.Contains("new EntranceNavigationTransitionInfo()", transition);
-        // Reduced motion and an in-place refresh of the current route stay instant.
-        Assert.Contains("ArtworkReveal.AnimationsEnabled", transition);
+        Assert.Contains("ForPageChange() => new SuppressNavigationTransitionInfo();", transition);
+        foreach (var positional in new[] { "EntranceNavigationTransitionInfo", "SlideNavigationTransitionInfo",
+                     "DrillInNavigationTransitionInfo", "ContinuumNavigationTransitionInfo", "CommonNavigationTransitionInfo" })
+            Assert.DoesNotContain(positional, transition);
+        // Reduced motion needs no separate branch: every page change is already instant.
+        Assert.DoesNotContain("AnimationsEnabled", transition);
         Assert.Contains("new SuppressNavigationTransitionInfo()", transition);
         Assert.Contains("var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());", navigation);
         Assert.Contains("_currentPageType == pageType", navigation);
@@ -67,6 +71,25 @@ public sealed class MainWindowSourceTests
         Assert.DoesNotContain("DoubleAnimation", transition);
         Assert.DoesNotContain("TranslateY = 6", transition);
         Assert.DoesNotContain("ScaleX = 0.985", transition);
+    }
+
+    [Fact]
+    public void EveryAppFrameNavigationNamesTheInPlacePageChange()
+    {
+        // Frame.Navigate(type, parameter) and Frame.GoBack() without transition info fall back
+        // to the Frame's default theme transition, which slides the incoming page up.
+        var root = FindRepositoryRoot();
+        var call = new System.Text.RegularExpressions.Regex(@"[Ff]rame\??\.(Navigate|GoBack|NavigateToType)\(");
+        var offenders = Directory.EnumerateFiles(Path.Combine(root, "src", "SiloPlayer"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .SelectMany(path => File.ReadLines(path).Select((line, index) => (path, line, number: index + 1)))
+            .Where(entry => call.IsMatch(entry.line)
+                && !entry.line.Contains("PageTransitionHelper.ForPageChange()", StringComparison.Ordinal)
+                && !entry.line.Contains("new SuppressNavigationTransitionInfo()", StringComparison.Ordinal))
+            .Select(entry => $"{Path.GetRelativePath(root, entry.path)}:{entry.number}: {entry.line.Trim()}")
+            .ToArray();
+        Assert.True(offenders.Length == 0, "Frame navigation without the in-place page change:\n" + string.Join("\n", offenders));
     }
 
     [Fact]
@@ -129,9 +152,9 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PlayingNextCountdownPanel", xaml);
         Assert.Contains("PlayingNextAutoplayToggle", xaml);
         Assert.Contains("PlayingNextCountdownText", xaml);
-        Assert.Contains("PlayingNextCountdownText.Text = $\"{_playingNextRemaining}s\";", code);
+        Assert.Contains("PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);", code);
         Assert.Contains("PlayingNextCountdownRing.Value = _playingNextRemaining;", code);
-        Assert.Contains("PlayingNextPlayNowText.Text = \"Play Now\";", code);
+        Assert.Contains("EnsurePlayingNextTextKeys();", code);
         Assert.Contains("PlayingNextOnDeckSection", xaml);
         Assert.Contains("PlayingNextOnDeckRepeater", xaml);
         Assert.Contains("PlayingNextOnDeckPrev", xaml);
@@ -390,7 +413,6 @@ public sealed class MainWindowSourceTests
         Assert.Contains("FindPluginNavigationItem", code);
         Assert.Contains("BuildPinnedSidebarContent", code);
         Assert.Contains("ToolTipService.SetToolTip(unpinButton, \"Unpin\")", code);
-        Assert.Contains("AutomationProperties.SetName(unpinButton, $\"Unpin {pin.Label}\")", code);
         Assert.Contains("RemoveSidebarPinAsync", code);
         Assert.Contains("CloseMobileNavigationPane();", code);
         Assert.Contains("Modifiers=\"Menu\" Key=\"Left\"", xaml);

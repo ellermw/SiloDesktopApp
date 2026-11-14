@@ -92,7 +92,7 @@ public partial class CalendarViewModel : ObservableObject
 
         IsLoading = true;
         HasLoaded = false;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         try
         {
             // The optional filter lookup must not delay the independently
@@ -127,7 +127,7 @@ public partial class CalendarViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner) || context != _catalogApi.CaptureContext()) return;
-            ErrorMessage = $"Failed to load calendar: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load calendar: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
             IsEmpty = false;
         }
         finally
@@ -234,7 +234,7 @@ public partial class CalendarViewModel : ObservableObject
     {
         var d = ParseDate(dateStr);
         var culture = DisplayCulture();
-        return $"{d.ToString("dddd", culture)}, {d.ToString("MMMM", culture)} {Ordinal(d.Day)}";
+        return SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.dayHeading", new Dictionary<string, object?> { ["weekday"] = d.ToString("dddd", culture), ["month"] = d.ToString("MMMM", culture), ["day"] = d.Day.ToString(System.Globalization.CultureInfo.InvariantCulture) }, fallback: $"{d.ToString("dddd", culture)}, {d.ToString("MMMM", culture)} {Ordinal(d.Day)}");
     }
 
     /// <summary>"Apr 6 – 12, 2026" (same month) or "Apr 28 – May 4, 2026" (spanning).</summary>
@@ -244,8 +244,8 @@ public partial class CalendarViewModel : ObservableObject
         var end = start.AddDays(6);
         var culture = DisplayCulture();
         if (start.Month == end.Month && start.Year == end.Year)
-            return $"{start.ToString("MMM", culture)} {start.Day} \u2013 {end.Day}, {start.Year}";
-        return $"{start.ToString("MMM", culture)} {start.Day} \u2013 {end.ToString("MMM", culture)} {end.Day}, {end.Year}";
+            return SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.weekRangeSameMonth", new Dictionary<string, object?> { ["month"] = start.ToString("MMM", culture), ["start_day"] = start.Day.ToString(culture), ["end_day"] = end.Day.ToString(culture), ["year"] = start.Year.ToString(culture) }, fallback: $"{start.ToString("MMM", culture)} {start.Day} \u2013 {end.Day}, {start.Year}");
+        return SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.weekRange", new Dictionary<string, object?> { ["start"] = start.ToString("MMM d", culture), ["end"] = end.ToString("MMM d, yyyy", culture) }, fallback: $"{start.ToString("MMM", culture)} {start.Day} \u2013 {end.ToString("MMM", culture)} {end.Day}, {end.Year}");
     }
 
     public static (string Label, int Day) FormatShortDay(string dateStr)
@@ -266,7 +266,7 @@ public partial class CalendarViewModel : ObservableObject
     // must come from the Gregorian calendar in the user's language.
     private static System.Globalization.CultureInfo DisplayCulture()
     {
-        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        var culture = SiloPlayer.Core.Localization.AppStrings.FormatCulture;
         if (culture.DateTimeFormat.Calendar is System.Globalization.GregorianCalendar) return culture;
         var gregorian = culture.OptionalCalendars.OfType<System.Globalization.GregorianCalendar>().FirstOrDefault();
         if (gregorian == null) return System.Globalization.CultureInfo.InvariantCulture;

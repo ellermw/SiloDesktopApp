@@ -91,8 +91,8 @@ public class NavigationService
         if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
             return false;
 
-        // The incoming page eases in (PageTransitionHelper); an in-place refresh
-        // of the current route below stays an instant swap.
+        // Route changes swap in place (PageTransitionHelper), like the in-place
+        // refresh of the current route below.
         return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());
     }
 

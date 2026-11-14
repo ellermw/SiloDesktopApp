@@ -1,3 +1,4 @@
+using SiloPlayer.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Downloads;
@@ -17,6 +18,7 @@ public sealed partial class DownloadsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<DownloadsViewModel>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         ViewModel.Downloads.CollectionChanged += (_, _) => QueueDownloadBuild();
@@ -56,7 +58,7 @@ public sealed partial class DownloadsPage : Page
 
         if (hasItems)
         {
-            ItemCountText.Text = count.ToString();
+            MediaItemCardActions.BindText(ItemCountText, "Text", element => element.Text = count.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture));
             ItemCountLabel.Text = count == 1 ? "file" : "files";
         }
     }

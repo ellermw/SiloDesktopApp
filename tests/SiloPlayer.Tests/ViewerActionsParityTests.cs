@@ -404,7 +404,8 @@ public class ViewerActionsParityTests
     {
         var root = RepositoryRoot();
         var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs"));
-        var catchIndex = source.IndexOf("Sync failed: {ex.Message}", StringComparison.Ordinal);
+        // The message is now worded from the catalog with the Problem Details text (localization Task 5).
+        var catchIndex = source.IndexOf("LocalText(\"web.collections.list.syncFailed\", \"Sync failed\")}: {LocalProblem(ex)}", StringComparison.Ordinal);
         Assert.True(catchIndex > 0, "the catch block with the error message exists");
         var clearIndex = source.IndexOf("SyncSkippedTitles = null", catchIndex - 200, StringComparison.Ordinal);
         Assert.True(clearIndex > 0 && clearIndex < catchIndex, "SyncSkippedTitles is cleared before the error message in the catch block");

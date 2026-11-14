@@ -449,7 +449,7 @@ internal static class BrowseAcceptanceNativeFixture
         if (!editor.IsValid || query.Groups[0].Rules[0].Value is not double[] pair || pair[1] != 2002) throw new InvalidOperationException("Native range correction did not recover the valid typed value.");
         Call(editor, "ShowMode", false); await Layout(editor, 460, 640); Call(editor, "ShowMode", true); await Layout(editor, 460, 640);
         if (query.Groups[0].Rules[2].Value?.ToString() != "saved value" || query.Groups[0].Rules[2].Op != "vendor_op" || query.Match != "any") throw new InvalidOperationException("Guided/Advanced round trip discarded a saved unknown rule or top match.");
-        if (!Descendants<ComboBox>(editor).Any(combo => AutomationProperties.GetName(combo) == "Rule value")) throw new InvalidOperationException("Boolean rule must use a native boolean selector.");
+        if (!Descendants<ComboBox>(editor).Any(combo => AutomationProperties.GetAutomationId(combo) == "Rule value")) throw new InvalidOperationException("Boolean rule must use a native boolean selector.");
         await Capture(editor, "browse-acceptance-range-recovery.png"); parent.Children.Remove(editor);
     }
 

@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using Windows.Graphics.Imaging;
@@ -75,22 +76,28 @@ public partial class PlayerService
         InvokeSubscribersSafely(StillWatchingChanged, nameof(StillWatchingChanged));
     }
 
-    // Seam for the localized label: callers resolve PlaybackEndTime.LabelKey
-    // with argument "time" once the shared catalog lands; the OSC substitutes
-    // "{time}" with its live clock text.
-    internal static Func<string> EndTimeLabelTemplate { get; set; } = () => PlaybackEndTime.FallbackLabelTemplate;
-    // Explicit catalog seam while Task4 is absent from this base. The caller
-    // installs AppStrings at integration; raw server metadata never enters it.
-    internal static Func<string, string, string> HudText { get; set; } = (_, fallback) => fallback;
+    // PlaybackEndTime.LabelKey with argument "time" left as a placeholder; the
+    // OSC substitutes "{time}" with its live clock text.
+    private static string EndTimeLabelTemplate()
+    {
+        var template = AppStrings.Get(PlaybackEndTime.LabelKey,
+            new Dictionary<string, object?> { ["time"] = "{time}" }, fallback: PlaybackEndTime.FallbackLabelTemplate);
+        return template.Contains("{time}", StringComparison.Ordinal) ? template : PlaybackEndTime.FallbackLabelTemplate;
+    }
+
+    // Interface text for playback chrome; raw server metadata never enters it.
+    private static string HudText(string key, string fallback) => AppStrings.Get(key, fallback: fallback);
 
     private void PublishPlaybackHudPreferences(SiloPlayer.Player.MpvPlayer mpv)
     {
+        // The explicit profile clock wins; "auto" follows the display culture.
         string clock;
-        try { clock = PlaybackEndTime.ResolveClock(_settingsService.Load().UiTimeFormat, CultureInfo.CurrentCulture); }
-        catch { clock = PlaybackEndTime.ResolveClock(null, CultureInfo.CurrentCulture); }
+        try { clock = PlaybackEndTime.ResolveClock(_settingsService.Load().UiTimeFormat, AppStrings.FormatCulture); }
+        catch { clock = PlaybackEndTime.ResolveClock(null, AppStrings.FormatCulture); }
+        PublishOscLocalization(mpv);
         mpv.SendScriptMessage("osc-set-end-time-format", clock, EndTimeLabelTemplate());
         mpv.SendScriptMessage("osc-set-hud-wait-labels",
-            HudText("web.player.connection.reconnecting", "Reconnecting"), HudText("web.player.room.catchingUp", "Catching up"));
+            HudText("web.player.connection.reconnecting", "Reconnecting…"), HudText("web.player.room.catchingUp", "Catching up to the party"));
         mpv.SendScriptMessage("osc-set-autoplay-gate", IsStillWatchingGated ? "true" : "false");
     }
 

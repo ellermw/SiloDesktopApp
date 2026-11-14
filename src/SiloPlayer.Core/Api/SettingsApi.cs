@@ -341,6 +341,11 @@ public partial class SettingsApi(SiloApiClient client)
         string? deviceId = null, string? profileId = null, CancellationToken ct = default)
         => client.GetAsync<ContractEffectiveSettingEntry>(BuildContractSettingPath(key, scope, deviceId, profileId), ct);
 
+    public Task<ContractEffectiveSettingEntry> GetContractStoredSettingAsync(ApiRequestContext context, string key, string scope,
+        string? deviceId = null, CancellationToken ct = default)
+        => client.SendRequestAsync<ContractEffectiveSettingEntry>(context, HttpMethod.Get,
+            BuildContractSettingPath(key, scope, deviceId, context.ProfileId), null, ct);
+
     public async Task<UserDeviceListResponse> GetUserDevicesAsync(bool household = false, CancellationToken ct = default)
         => new() { Devices = await client.GetAllItemsAsync<UserDevice>(
             household ? "/api/v2/devices?scope=household&limit=100" : "/api/v2/devices?limit=100", ct) };

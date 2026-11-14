@@ -64,7 +64,8 @@ public sealed class CollectionsPresentationSourceTests
         Assert.Contains("x:Name=\"CollectionAddToHomeButton\"", xaml);
         Assert.DoesNotContain("Refine the archive", xaml + page);
         Assert.DoesNotContain("x:Name=\"CountPanel\"", xaml);
-        Assert.Contains("\"title\" : \"titles\"", page);
+        // The filter bar count is the catalog's plural title count (localization Task 5; covered by the collections-localization native group).
+        Assert.Contains("LoadedCountText.Text = CollectionText.Titles(count)", page);
         Assert.Contains("CollectionPageHeaderLoader.LoadAsync", header);
         Assert.Contains("_currentArgs != args", header);                       // navigation ownership
         Assert.Contains("_apiClient.IsCurrentContext(context)", header);       // profile/account ownership

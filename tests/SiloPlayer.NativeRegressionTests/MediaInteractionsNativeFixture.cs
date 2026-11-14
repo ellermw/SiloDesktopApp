@@ -220,7 +220,8 @@ internal static class MediaInteractionsNativeFixture
             var action = (Button)room.FindName("CandidatePlayBtn");
             if (action.IsEnabled) throw new InvalidOperationException("Candidate action remains enabled before watch-state classification.");
             handler.DelayMemberState.SetResult(); await UntilAsync(() => action.IsEnabled);
-            if (!((TextBlock)room.FindName("CandidateMemberState")).Text.Contains("Ahead of Riley Guest")) throw new InvalidOperationException("Unseen earlier guest episode does not expose spoiler warning.");
+            // The warning now uses the keyed WebUI spoiler sentence (web.watchTogether.series.spoilerRisk, Task5).
+            if (!((TextBlock)room.FindName("CandidateMemberState")).Text.Contains("Riley Guest hasn't seen E")) throw new InvalidOperationException("Unseen earlier guest episode does not expose spoiler warning.");
             var stages = handler.Stages;
             Invoke(room, "CandidatePlay_Click", action, new RoutedEventArgs());
             ContentDialog? dialog = null; await UntilAsync(() => (dialog = OpenDialog(parent)) != null);

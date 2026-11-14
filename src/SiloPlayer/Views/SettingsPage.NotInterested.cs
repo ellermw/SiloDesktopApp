@@ -55,7 +55,7 @@ public sealed partial class SettingsPage
         NotInterestedRetry.IsEnabled = !state.IsLoading;
         NotInterestedEmpty.Visibility = !state.IsLoading && state.Error == null && state.Items.Count == 0 && !state.HasMore ? Visibility.Visible : Visibility.Collapsed;
         NotInterestedMore.Visibility = state.HasMore ? Visibility.Visible : Visibility.Collapsed;
-        NotInterestedMore.Content = state.IsLoadingMore ? "Loading…" : state.MoreError != null ? "Retry loading more" : "Show more";
+        NotInterestedMore.Content = state.IsLoadingMore ? L("web.settings.notInterestedList.loading", "Loading…") : state.MoreError != null ? L("web.settings.notInterestedList.retryMore", "Retry loading more") : L("web.settings.notInterestedList.showMore", "Show more");
         NotInterestedMore.IsEnabled = !state.IsLoading && !state.IsLoadingMore;
         NotInterestedMoreError.Text = state.MoreError ?? "";
         NotInterestedMoreError.Visibility = state.MoreError != null ? Visibility.Visible : Visibility.Collapsed;
@@ -104,9 +104,9 @@ public sealed partial class SettingsPage
             HorizontalContentAlignment = HorizontalAlignment.Left, MaxWidth = 480, Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"] };
         title.Click += (_, _) => Navigate();
         text.Children.Add(title);
-        text.Children.Add(new TextBlock { Text = (item.Year > 0 ? item.Year + " · " : "") + (item.Type == "series" ? "Series" : "Movie"), FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        text.Children.Add(new TextBlock { Text = (item.Year > 0 ? item.Year + " · " : "") + (item.Type == "series" ? L("web.settings.notInterestedList.series", "Series") : L("web.settings.notInterestedList.movie", "Movie")), FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         Grid.SetColumn(text, 1); row.Children.Add(text);
-        var action = new Button { Content = "Show in Recommendations", Style = (Style)Application.Current.Resources["OutlineButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(10, 6, 10, 6), FontSize = 13 };
+        var action = new Button { Content = L("web.settings.notInterestedList.restore", "Show in Recommendations"), Style = (Style)Application.Current.Resources["OutlineButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(10, 6, 10, 6), FontSize = 13 };
         AutomationProperties.SetName(action, "Show " + item.Title + " in Recommendations");
         action.Click += async (_, _) =>
         {

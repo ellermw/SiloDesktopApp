@@ -1,3 +1,6 @@
 libs/mpv/libmpv-2.dll filter=lfs diff=lfs merge=lfs -text
 publish_test/libmpv-2.dll filter=lfs diff=lfs merge=lfs -text
 **/libmpv-2.dll filter=lfs diff=lfs merge=lfs -text
+
+# Generated localization catalogs: byte-stable LF so catalog-manifest.json checksums verify on every checkout.
+src/SiloPlayer.Core/Localization/Generated/** text eol=lf

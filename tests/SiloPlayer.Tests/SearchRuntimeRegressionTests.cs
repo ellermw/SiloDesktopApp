@@ -193,7 +193,7 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("ViewModel.OutsideLibraryResults.Count", state);
         Assert.Contains("NoResultsText.Visibility", state);
         Assert.Contains("var totalDisplay = mediaCount + peopleCount;", state);
-        Assert.Contains("ResultCountText.Text = $\"{totalDisplay:N0} in library\";", state);
+        Assert.Contains("web.catalog.page.inLibraryCount", state);
         Assert.Contains("ResultCountPanel.Visibility = Visibility.Collapsed;", state);
         Assert.DoesNotContain("ResultCountPanel.Visibility = ViewModel.IsLoading", state);
         Assert.Contains("SearchLoadingRepeater.Visibility = hasQuery &&", state);
@@ -248,7 +248,7 @@ public sealed class SearchRuntimeRegressionTests
 
         Assert.Contains(".Take(4)", dialog);
         Assert.Contains("Text = \"REQUEST TO ADD\"", dialog);
-        Assert.Contains("\"Not in your library\"", dialog);
+        Assert.Contains("\"web.requests.toAdd.headerNoHits\"", dialog);
         Assert.Contains("Width = 40, Height = 56", dialog);
         Assert.Contains("metadata.Add(TypeLabel(item.MediaType))", dialog);
         Assert.DoesNotContain("Request to add\", FontSize = 11", dialog);

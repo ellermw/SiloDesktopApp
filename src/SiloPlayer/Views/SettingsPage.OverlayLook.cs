@@ -60,7 +60,7 @@ public sealed partial class SettingsPage
             box.SelectionChanged += (_, _) => changed((box.SelectedItem as ComboBoxItem)?.Tag as string is { Length: > 0 } value ? value : null);
             AdvancedOverlayLookHost.Children.Add(box);
         }
-        Choice("Shape", current.Shape, ["pill", "rounded", "square"], value => Set(style => style with { Shape = value }));
+        Choice(L("web.settings.overlays.look.shape", "Shape"), current.Shape, ["pill", "rounded", "square"], value => Set(style => style with { Shape = value }));
         Choice("Font weight", current.FontWeight, ["regular", "semibold", "extrabold"], value => Set(style => style with { FontWeight = value }));
         void Color(string label, string? selected, bool alpha, Action<string?> changed)
         {
@@ -77,7 +77,7 @@ public sealed partial class SettingsPage
         Color("Text color", current.TextColor, false, value => Set(style => style with { TextColor = value }));
         Color("Border color", current.BorderColor, true, value => Set(style => style with { BorderColor = value }));
         Choice("Uppercase", current.Uppercase?.ToString().ToLowerInvariant(), ["true", "false"], value => Set(style => style with { Uppercase = value is null ? null : value == "true" }));
-        Choice("Shadow", current.Shadow?.ToString().ToLowerInvariant(), ["true", "false"], value => Set(style => style with { Shadow = value is null ? null : value == "true" }));
+        Choice(L("web.settings.overlays.look.shadow", "Shadow"), current.Shadow?.ToString().ToLowerInvariant(), ["true", "false"], value => Set(style => style with { Shadow = value is null ? null : value == "true" }));
         var reset = new Button { Content = "Use preset look" };
         reset.Click += (_, _) => { Set(_ => new OverlayStyle()); BuildAdvancedOverlayLook(); };
         AdvancedOverlayLookHost.Children.Add(reset);

@@ -103,8 +103,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
         _artworkFallback = new DefaultArtwork();
 
-        _posterImage = new Image
-        {
+        _posterImage = new Image { FlowDirection = FlowDirection.LeftToRight,
             Width = cardWidth,
             Height = posterHeight,
             Stretch = Stretch.UniformToFill,
@@ -262,6 +261,10 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         GotFocus += OnGotFocus;
         LostFocus += OnLostFocus;
         ContextRequested += OnContextRequested;
+        AppLocalization.Register(this, () =>
+        {
+            if (MediaItem is { } item) UpdateQuickActionState(item);
+        });
         Loaded += (_, _) => { RestartArtwork(); App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; };
         Unloaded += (_, _) =>
         {
@@ -309,7 +312,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         var episodeTitle = MediaItemDisplayText.BuildEpisodeTitle(item);
         _episodeTitleText.Text = episodeTitle ?? "";
         _episodeTitleText.Visibility = episodeTitle is null ? Visibility.Collapsed : Visibility.Visible;
-        _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, sortKey);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(_subtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (MediaItemCardActions.CardSubtitle(item, sortKey)) : _subtitleText.Text);
         SetTop(_subtitleText, _posterHeight + (episodeTitle is null ? 34 : 56));
         ApplyCardPresentation();
         UpdateOverlays(item);
@@ -329,7 +332,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     public void RefreshState()
     {
         if (MediaItem is not { } item) return;
-        _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, SortKey);
+        SiloPlayer.Controls.MediaItemCardActions.BindText(_subtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (MediaItemCardActions.CardSubtitle(item, SortKey)) : _subtitleText.Text);
         ApplyCardPresentation();
         UpdateOverlays(item);
         UpdateQuickActionState(item);
@@ -758,7 +761,8 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             : new SolidColorBrush(Microsoft.UI.Colors.White);
 
         var watchedLabel = MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched);
-        var favoriteLabel = isFavorite ? "Remove from favorites" : "Add to favorites";
+        var favoriteLabel = SiloPlayer.Core.Localization.AppStrings.Get(isFavorite
+            ? "web.detail.actions.removeFromFavorites" : "web.detail.actions.addToFavorites");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_quickWatchedButton, watchedLabel);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_quickFavoriteButton, favoriteLabel);
         ToolTipService.SetToolTip(_quickWatchedButton, watchedLabel);

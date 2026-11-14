@@ -3,6 +3,8 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -24,20 +26,22 @@ public sealed partial class CollectionEditorPage
     {
         Detach(RulesPanel); Detach(PreviewCountText);
         var heading = new StackPanel { Spacing = 4, Children = {
-            new TextBlock { Text = "Rules", FontSize = 17, FontWeight = FontWeights.SemiBold, LineHeight = 25.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight },
-            new TextBlock { Text = "Titles that match are in the collection. New matches join on their own.", FontSize = 13.5, LineHeight = 20.25, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap, Foreground = CurrentBrush("SecondaryTextBrush") }
+            CollectionText.Keyed(new TextBlock { Text = "Rules", FontSize = 17, FontWeight = FontWeights.SemiBold, LineHeight = 25.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight }, "web.collections.editor.rulesHeading"),
+            CollectionText.Keyed(new TextBlock { Text = "Titles that match are in the collection. New matches join on their own.", FontSize = 13.5, LineHeight = 20.25, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap, Foreground = CurrentBrush("SecondaryTextBrush") }, "web.collections.copy.rulesCaption")
         } };
-        foreach (var (key, label) in new[] { ("all", "all titles"), ("video", "movies and shows"), ("movie", "movies"), ("series", "shows"), ("episode", "episodes"), ("audiobook", "audiobooks"), ("ebook", "ebooks"), ("manga", "manga") })
-            _smartScope.Items.Add(new ComboBoxItem { Tag = key, Content = label });
-        AutomationProperties.SetName(_smartScope, "Kind of titles");
+        foreach (var (key, label, message) in new[] { ("all", "all titles", "scopeAll"), ("video", "movies and shows", "scopeVideo"), ("movie", "movies", "scopeMovie"), ("series", "shows", "scopeSeries"), ("episode", "episodes", "scopeEpisode"), ("audiobook", "audiobooks", "scopeAudiobook"), ("ebook", "ebooks", "scopeEbook"), ("manga", "manga", "scopeManga") })
+            _smartScope.Items.Add(CollectionText.KeyedItem(_smartScope, new ComboBoxItem { Tag = key, Content = label }, "web.home.addRow.rules." + message));
+        AutomationProperties.SetName(_smartScope, "Kind of titles"); Localized.SetName(_smartScope, "web.home.addRow.rules.kindOfTitles");
         _smartScope.SelectionChanged += (_, _) =>
         {
-            if (_settingSmartFields || _smartScope.SelectedItem is not ComboBoxItem selected) return;
+            if (_settingSmartFields || CollectionText.Relabeling || _smartScope.SelectedItem is not ComboBoxItem selected) return;
             ViewModel.RuleDefinition.MediaScope = Equals(selected.Tag, "all") ? null : (string)selected.Tag;
             _rulesEditor?.ConfigureCatalogScope(ViewModel.RuleDefinition.MediaScope);
             UpdateDirtyDock(); ScheduleSmartPreview();
         };
         var sentence = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
+        // The catalog words this sentence only as rich text around its controls (web.home.addRow.rules.sentenceAll),
+        // which cannot be split onto separate native controls without guessing word order; "Show"/"from" stay English.
         sentence.Children.Add(new TextBlock { Text = "Show", FontSize = 15, VerticalAlignment = VerticalAlignment.Center }); sentence.Children.Add(_smartScope);
         sentence.Children.Add(new TextBlock { Text = "from", FontSize = 15, VerticalAlignment = VerticalAlignment.Center });
         _smartLibraryPicker.Flyout = new Flyout { Content = new ScrollViewer { Content = _smartLibraries, MaxHeight = 320, MinWidth = 200, HorizontalScrollMode = ScrollMode.Disabled } };
@@ -47,7 +51,7 @@ public sealed partial class CollectionEditorPage
         _smartLimit.KeyDown += (_, args) => { if (args.Key == Windows.System.VirtualKey.Enter) { args.Handled = true; CommitSmartLimit(); } };
         var previewHeading = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 };
         previewHeading.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 55, 190, 128)), VerticalAlignment = VerticalAlignment.Center });
-        previewHeading.Children.Add(new TextBlock { Text = "Live preview", FontSize = 14, Foreground = CurrentBrush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+        previewHeading.Children.Add(CollectionText.Keyed(new TextBlock { Text = "Live preview", FontSize = 14, Foreground = CurrentBrush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center }, "web.collections.copy.previewLive"));
         PreviewCountText.FontSize = 14; PreviewCountText.TextWrapping = TextWrapping.Wrap; previewHeading.Children.Add(PreviewCountText);
         _smartPreviewStatus.Foreground = CurrentBrush("SecondaryTextBrush");
         _smartPreviewPanel.Child = new StackPanel { Spacing = 14, Children = { previewHeading, _smartPreviewGrid, _smartPreviewStatus } };
@@ -67,7 +71,7 @@ public sealed partial class CollectionEditorPage
             if (choice == null) { choice = new() { Content = scope, Tag = scope }; _smartScope.Items.Add(choice); }
             _smartScope.SelectedItem = choice;
             _smartLibraries.Children.Clear();
-            var all = new CheckBox { Content = "All my libraries", IsChecked = ViewModel.RuleDefinition.LibraryIds.Count == 0 };
+            var all = CollectionText.KeyedContent(new CheckBox { Content = "All my libraries", IsChecked = ViewModel.RuleDefinition.LibraryIds.Count == 0 }, "web.collections.copy.allMyLibraries");
             all.Checked += (_, _) => { if (_settingSmartFields) return; ViewModel.RuleDefinition.LibraryIds.Clear(); SyncSmartLibraries(); PopulateSmartFields(); };
             _smartLibraries.Children.Add(all);
             foreach (var library in ViewModel.AvailableLibraries)
@@ -92,9 +96,9 @@ public sealed partial class CollectionEditorPage
     {
         var ids = ViewModel.RuleDefinition.LibraryIds;
         var names = ViewModel.AvailableLibraries.Where(l => ids.Contains(l.Id)).Select(l => l.Name).ToArray();
-        var label = ids.Count == 0 ? "all my libraries" : names.Length == 1 && ids.Count == 1 ? names[0] : $"{ids.Count} libraries";
+        var label = ids.Count == 0 ? CollectionText.Get("web.collections.copy.allMyLibrariesInSentence", "all my libraries") : names.Length == 1 && ids.Count == 1 ? names[0] : $"{CollectionText.Number(ids.Count)} libraries";
         _smartLibraryPicker.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { new TextBlock { Text = label, FontSize = 14 }, WebUiIcon.Create("chevron-down", 14) } };
-        AutomationProperties.SetName(_smartLibraryPicker, "Libraries: " + label);
+        AutomationProperties.SetName(_smartLibraryPicker, CollectionText.Get("web.collections.copy.fieldLibraries", "Libraries") + ": " + label);
     }
 
     private void SyncSmartLibraries()
@@ -144,8 +148,12 @@ public sealed partial class CollectionEditorPage
     {
         if (_smartPreviewPanel.Child == null || ViewModel.CollectionType != "smart") return;
         PreviewCountText.Visibility = ViewModel.HasPreview ? Visibility.Visible : Visibility.Collapsed;
-        PreviewCountText.Text = ViewModel.HasPreview ? $"· {ViewModel.PreviewTotal.ToString("N0", CultureInfo.CurrentCulture)} {(ViewModel.PreviewTotal == 1 ? "title matches" : "titles match")}" +
-            (ViewModel.PreviewTotal > ViewModel.PreviewItems.Count && ViewModel.PreviewItems.Count > 0 ? $" · showing {ViewModel.PreviewItems.Count}" : "") : "";
+        var total = CollectionText.Number(ViewModel.PreviewTotal);
+        PreviewCountText.Text = ViewModel.HasPreview
+            ? "· " + CollectionText.Get("web.collections.copy.previewMatches", $"{total} {(ViewModel.PreviewTotal == 1 ? "title matches" : "titles match")}", ("count", ViewModel.PreviewTotal), ("total", total)) +
+              (ViewModel.PreviewTotal > ViewModel.PreviewItems.Count && ViewModel.PreviewItems.Count > 0
+                  ? " · " + CollectionText.Get("web.collections.preview.showing", $"showing {ViewModel.PreviewItems.Count}", ("shown", CollectionText.Number(ViewModel.PreviewItems.Count))) : "")
+            : "";
         _smartPreviewTiles.Clear(); _smartPreviewGrid.Children.Clear();
         foreach (var item in ViewModel.PreviewItems)
         {
@@ -172,8 +180,12 @@ public sealed partial class CollectionEditorPage
         }
         if (_smartPreviewTiles.Count == 0)
             for (var n = 0; n < 8; n++) { var ghost = new Border { CornerRadius = new(10), Background = CurrentBrush("SurfaceBrush"), BorderBrush = CurrentBrush("BorderBrush"), BorderThickness = new(1) }; _smartPreviewTiles.Add(ghost); _smartPreviewGrid.Children.Add(ghost); }
-        _smartPreviewStatus.Text = ViewModel.SmartNeedsRule ? SmartPreviewNeedsRuleText
-            : ViewModel.PreviewError ?? (ViewModel.HasPreview && ViewModel.PreviewItems.Count == 0 ? "No titles match yet\nYou can still save. Titles that match later join on their own." : "");
+        _smartPreviewStatus.Text = ViewModel.SmartNeedsRule
+                // The second line has no catalog message; it stays English.
+                ? CollectionText.Get("web.collections.copy.previewNeedsRule", "Add a rule to see what it matches") + "\nPick a field, an operator and a value."
+            : ViewModel.PreviewError ?? (ViewModel.HasPreview && ViewModel.PreviewItems.Count == 0
+                ? CollectionText.Get("web.collections.copy.previewEmpty", "No titles match yet") + "\n" + CollectionText.Get("web.collections.copy.previewEmptyHelp", "You can still save. Titles that match later join on their own.")
+                : "");
         _smartPreviewStatus.Visibility = string.IsNullOrEmpty(_smartPreviewStatus.Text) ? Visibility.Collapsed : Visibility.Visible;
         LayoutSmartPreview();
     }

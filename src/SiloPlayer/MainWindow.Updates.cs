@@ -258,7 +258,7 @@ public sealed partial class MainWindow
         if (_appUpdateDialog is null || _appUpdates is null || _updateStatusText is null || _updateBodyPanel is null) return;
         var state = _appUpdates.State;
         _updateStatusText.Text = state.Error ?? (_appUpdates.IsChangingChannel ? "Switching update channel…" : state.IsChecking ? "Checking for updates…" : state.IsDownloading
-            ? state.PreparationProgress is { } prep ? $"{prep.Stage} · {prep.CompletedFiles}/{prep.TotalFiles} files · {prep.CompletedBytes/1048576.0:0.0} MB downloaded" : $"Downloading {state.DownloadedBytes / 1048576.0:0.0} / {state.Release!.Size / 1048576.0:0.0} MB…"
+            ? state.PreparationProgress is { } prep ? string.Create(SiloPlayer.Core.Localization.AppStrings.FormatCulture, $"{prep.Stage} · {prep.CompletedFiles}/{prep.TotalFiles} files · {prep.CompletedBytes/1048576.0:0.0} MB downloaded") : string.Create(SiloPlayer.Core.Localization.AppStrings.FormatCulture, $"Downloading {state.DownloadedBytes / 1048576.0:0.0} / {state.Release!.Size / 1048576.0:0.0} MB…")
             : state.Release is null ? state.ChannelNotice ?? "You're up to date." : state.ReadyInstaller is not null || state.PreparedPackage is not null ? "Ready to update to " + state.Release.DisplayVersion + (state.Release.IsBeta ? " · Beta" : " · Stable")
             : "Update available: " + state.Release.DisplayVersion + (state.Release.IsBeta ? " · Beta" : " · Stable"));
         if (state.Error is null && !state.IsChecking && !state.IsDownloading && state.Release is not null && state.ChannelNotice is { } notice)

@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
@@ -53,9 +54,9 @@ public partial class InviteClaimViewModel(
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex is HttpRequestException
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is HttpRequestException
                 ? "Unable to connect to this Silo server."
-                : ex.Message;
+                : ex.Message));
         }
         finally
         {
@@ -83,12 +84,12 @@ public partial class InviteClaimViewModel(
         ErrorMessage = null;
         if (Password.Length < 8)
         {
-            ErrorMessage = "Password must be at least 8 characters.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters."));
             return;
         }
         if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
         {
-            ErrorMessage = "Passwords do not match.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.mismatch", fallback: "Passwords do not match."));
             return;
         }
 
@@ -101,7 +102,7 @@ public partial class InviteClaimViewModel(
                 _lifetime?.Token ?? CancellationToken.None);
             if (acceptance.LoginStatus != "signed_in" || acceptance.Tokens is not { } response)
             {
-                ErrorMessage = "Your account was created. Use Sign in to continue with your new password.";
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => "Your account was created. Use Sign in to continue with your new password.");
                 return;
             }
             var generation = authService.SetTokens(
@@ -122,18 +123,18 @@ public partial class InviteClaimViewModel(
         catch (OperationCanceledException) when (_lifetime?.IsCancellationRequested == true) { }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.ErrorCode switch
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.ErrorCode switch
             {
-                "weak_password" => "Password must be at least 8 characters.",
+                "weak_password" => AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters."),
                 "already_used" or "not_found" => "This invitation is invalid or has expired.",
                 _ => ex.Message,
-            };
+            }));
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex is HttpRequestException
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is HttpRequestException
                 ? "Unable to connect to this Silo server."
-                : ex.Message;
+                : ex.Message));
         }
         finally
         {

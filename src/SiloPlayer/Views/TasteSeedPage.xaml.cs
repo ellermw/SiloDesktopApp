@@ -18,6 +18,7 @@ public sealed partial class TasteSeedPage : Page
     public TasteSeedPage()
     {
         InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         TasteTitleRow.Children.RemoveAt(0);
         TasteTitleRow.Children.Insert(0, WebUiIcon.Create("sparkles", 20, (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]));
         SizeChanged += (_, _) => ReflowTastePicker();
@@ -27,7 +28,7 @@ public sealed partial class TasteSeedPage : Page
     {
         base.OnNavigatedTo(e);
         _returningFromSettings = e.Parameter is true;
-        SkipButton.Content = _returningFromSettings ? "Cancel" : "Skip";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SkipButton, "Content", element => element.Content = _returningFromSettings ? SiloPlayer.Core.Localization.AppStrings.Get("common.cancel", fallback: "Cancel") : SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.skip", fallback: "Skip"));
         await ViewModel.LoadAsync();
     }
 
@@ -51,13 +52,13 @@ public sealed partial class TasteSeedPage : Page
 
     private async void Done_Click(object sender, RoutedEventArgs e)
     {
-        DoneButton.Content = "Saving…";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(DoneButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.saving", fallback: "Saving…"));
         if (await ViewModel.SubmitAsync())
         {
             RememberDismissed();
             ReturnFromPicker();
         }
-        DoneButton.Content = "Done";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(DoneButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.done", fallback: "Done"));
     }
 
     private void ItemsScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
@@ -70,7 +71,7 @@ public sealed partial class TasteSeedPage : Page
     {
         if (_returningFromSettings)
         {
-            Frame.Navigate(typeof(SettingsPage), "Playback");
+            Frame.Navigate(typeof(SettingsPage), "Playback", PageTransitionHelper.ForPageChange());
         }
         else
         {

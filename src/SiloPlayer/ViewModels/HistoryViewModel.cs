@@ -123,7 +123,7 @@ public partial class HistoryViewModel : ObservableObject,
     {
         _loadInProgress = true;
         IsLoading = Items.Count == 0;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -219,7 +219,7 @@ public partial class HistoryViewModel : ObservableObject,
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load history: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load history: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {
@@ -245,7 +245,7 @@ public class HistoryDisplayItem
 
     public string ProgressText =>
         DurationSeconds > 0
-            ? $"{FormatTime(PositionSeconds)} / {FormatTime(DurationSeconds)} ({ProgressPercent}%)"
+            ? $"{FormatTime(PositionSeconds)} / {FormatTime(DurationSeconds)} ({(ProgressPercent / 100d).ToString("P0", SiloPlayer.Core.Localization.AppStrings.FormatCulture)})"
             : "Unknown duration";
 
     public string TimestampDisplay
@@ -260,10 +260,10 @@ public class HistoryDisplayItem
             var now = DateTime.Now;
             var diff = now - local;
 
-            if (diff.TotalMinutes < 1) return "Just now";
-            if (diff.TotalHours < 1) return $"{(int)diff.TotalMinutes}m ago";
-            if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
-            if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+            if (diff.TotalMinutes < 1) return SiloPlayer.Core.Localization.AppStrings.Get("web.common.date.justNow", fallback: "Just now");
+            if (diff.TotalHours < 1) return SiloPlayer.Core.Localization.AppStrings.Get("web.common.date.minutesAgo", new Dictionary<string, object?> { ["count_text"] = ((int)diff.TotalMinutes).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = (int)diff.TotalMinutes });
+            if (diff.TotalHours < 24) return SiloPlayer.Core.Localization.AppStrings.Get("web.common.date.hoursAgo", new Dictionary<string, object?> { ["count_text"] = ((int)diff.TotalHours).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = (int)diff.TotalHours });
+            if (diff.TotalDays < 7) return SiloPlayer.Core.Localization.AppStrings.Get("web.common.date.daysAgo", new Dictionary<string, object?> { ["count_text"] = ((int)diff.TotalDays).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = (int)diff.TotalDays });
             return SiloPlayer.Helpers.DateTimeDisplay.FormatDate(new DateTimeOffset(local), medium: true);
         }
     }

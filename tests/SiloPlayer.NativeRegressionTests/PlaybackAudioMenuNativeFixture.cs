@@ -175,7 +175,7 @@ internal static class PlaybackCommonMenuNativeFixture
                 && menuRect.Top >= videoRect.Top && menuRect.Bottom <= videoRect.Bottom,
                 "Native audio menu escaped its offscreen video bounds.");
             var current = (ListViewItem)list.Items[37];
-            Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
+            Require(AutomationProperties.GetName(current).Contains("Selected", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
             Require(AutomationProperties.GetName(current).Contains("640 kbps", StringComparison.Ordinal)
                 && Descendants<TextBlock>((DependencyObject)current.Content).Any(text => text.Text.Contains("640 kbps", StringComparison.Ordinal)),
@@ -1261,7 +1261,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 && menuRect.Top >= videoRect.Top && menuRect.Bottom <= videoRect.Bottom,
                 "Native audio menu escaped its offscreen video bounds.");
             var current = (ListViewItem)list.Items[37];
-            Require(AutomationProperties.GetName(current).Contains("Current selection", StringComparison.Ordinal)
+            Require(AutomationProperties.GetName(current).Contains("Selected", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "bitrate")
             {

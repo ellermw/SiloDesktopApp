@@ -6,6 +6,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using System.Text.Json;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -18,6 +19,7 @@ public sealed class MarkerEditorDialog : ItemScopedDialog
     private readonly StackPanel _historySection = new() { Spacing = 8 };
     public MarkerEditorDialog(string id) : base(id, "Edit markers", "Set intro, recap, credits, and preview times. Use m:ss or h:mm:ss; leave both fields empty to remove a marker. Removed markers stay absent through detection and rescans until you set them again.", 672, "Save", AuthorizationPolicy.CanEditMarkers)
     {
+        KeyHeading("web.markers.editTitle", "web.markers.dialog.description", "common.save");
         _api = new(Client); var rows = new StackPanel { Spacing = 12, Margin = new Thickness(0, 4, 0, 4) };
         foreach (var kind in MarkerEditPlan.Kinds)
         {
@@ -26,11 +28,11 @@ public sealed class MarkerEditorDialog : ItemScopedDialog
             var label = Text(MarkerEditPlan.Label(kind)); label.VerticalAlignment = VerticalAlignment.Center; row.Children.Add(label);
             var start = Input(kind, "start"); var end = Input(kind, "end");
             var clear = new Button { Content = WebUiIcon.Create("trash-2", 16), Width = 36, Height = 36, MinWidth = 0, MinHeight = 0, Padding = new Thickness(10), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
-            AutomationProperties.SetName(clear, "Clear " + MarkerEditPlan.Label(kind)); clear.Click += (_, _) => { start.Text = end.Text = ""; Status.Text = ""; };
+            AutomationProperties.SetName(clear, AppStrings.Get("web.markers.dialog.clearLabel", new Dictionary<string, object?> { ["kind"] = MarkerEditPlan.Label(kind) }, "Clear " + MarkerEditPlan.Label(kind))); clear.Click += (_, _) => { start.Text = end.Text = ""; Status.Text = ""; };
             Grid.SetColumn(start, 1); Grid.SetColumn(end, 2); Grid.SetColumn(clear, 3); row.Children.Add(start); row.Children.Add(end); row.Children.Add(clear); rows.Children.Add(row); _fields.Add(kind, (start, end, clear));
         }
         Body.Children.Add(rows);
-        _historySection.Children.Add(Text("Recent changes")); _historySection.Children.Add(new ScrollViewer { Content = _history, MaxHeight = 192, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        _historySection.Children.Add(Text(AppStrings.Get("web.markers.history.title", fallback: "Recent changes"))); _historySection.Children.Add(new ScrollViewer { Content = _history, MaxHeight = 192, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         Body.Children.Add(new Border { Child = _historySection, BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 12, 0, 0), Visibility = AuthorizationPolicy.IsActingAdmin(Auth) ? Visibility.Visible : Visibility.Collapsed });
     }
     private TextBox Input(string kind, string edge)
@@ -50,7 +52,7 @@ public sealed class MarkerEditorDialog : ItemScopedDialog
     }
     private async Task LoadHistoryAsync()
     {
-        _history.Children.Clear(); _history.Children.Add(Text("Loading…", 13, true));
+        _history.Children.Clear(); _history.Children.Add(Text(AppStrings.Get("web.item.menu.loading", fallback: "Loading…"), 13, true));
         try
         {
             var response = await _api.GetHistoryAsync(Context, ItemId, Lifetime.Token); RequireAuthority(); if (!AuthorizationPolicy.IsActingAdmin(Auth)) return;
@@ -65,12 +67,12 @@ public sealed class MarkerEditorDialog : ItemScopedDialog
                 content.ColumnDefinitions.Add(new() { Width = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(128) });
                 content.ColumnDefinitions.Add(new() { Width = narrow ? new GridLength(0) : new GridLength(1, GridUnitType.Star) });
                 content.RowDefinitions.Add(new() { Height = GridLength.Auto }); if (narrow) content.RowDefinitions.Add(new() { Height = GridLength.Auto });
-                var identity = new StackPanel(); identity.Children.Add(Text(created, 12, true)); identity.Children.Add(Text(Value("username") is { Length: > 0 } user ? user : "Unknown user", 12, true)); content.Children.Add(identity);
+                var identity = new StackPanel(); identity.Children.Add(Text(created, 12, true)); identity.Children.Add(Text(Value("username") is { Length: > 0 } user ? user : AppStrings.Get("web.markers.history.unknownUser", fallback: "Unknown user"), 12, true)); content.Children.Add(identity);
                 var detail = new StackPanel(); var action = Text((Value("action") == "clear" ? "Cleared " : "Set ") + label); action.FontWeight = Microsoft.UI.Text.FontWeights.Medium; detail.Children.Add(action);
                 var range = Text(Range("before") + " -> " + Range("after"), 12, true); range.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"); detail.Children.Add(range); Grid.SetColumn(detail, narrow ? 0 : 1); Grid.SetRow(detail, narrow ? 1 : 0); content.Children.Add(detail);
                 _history.Children.Add(new Border { Child = content, BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(0, 0, 0, 1) });
             }
-            if (_history.Children.Count == 0) _history.Children.Add(Text("No marker edits recorded.", 14, true));
+            if (_history.Children.Count == 0) _history.Children.Add(Text(AppStrings.Get("web.markers.history.empty", fallback: "No marker edits recorded."), 14, true));
         }
         catch (OperationCanceledException) { }
         catch { if (CanAct) { _history.Children.Clear(); _history.Children.Add(Text("Could not load recent changes.", 13, true)); } }

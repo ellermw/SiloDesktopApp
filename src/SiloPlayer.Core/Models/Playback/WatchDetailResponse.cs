@@ -212,7 +212,7 @@ public class TimeRange
 }
 
 // ===== Watch Together (Watch Party) =====
-// DTOs for the current Silo /api/v1/watch-together/* contract. Kept in this file
+// DTOs for the current Silo /api/v2/watch-together/* contract. Kept in this file
 // so playback-related models stay colocated; there is no separate WatchTogether
 // model folder yet.
 
