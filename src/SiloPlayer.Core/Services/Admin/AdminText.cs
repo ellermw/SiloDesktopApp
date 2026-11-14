@@ -22,6 +22,7 @@ public static class AdminText
         // App sidebar footer
         ["web.shell.sidebar.admin"] = "Admin",
         ["common.cancel"] = "Cancel",
+        ["common.retry"] = "Retry",
 
         // Admin shell
         ["web.admin.shell.drawer.close"] = "Close admin navigation",
@@ -183,6 +184,8 @@ public static class AdminText
         ["web.admin.activity.ipLookup.submit"] = "Lookup",
         ["web.admin.activity.page.liveCount"] = "{count, plural, one {{count_text} live} other {{count_text} live}}",
         ["web.admin.activity.page.loading"] = "Loading activity...",
+        ["web.admin.activity.page.loadFailed"] = "Could not load activity.",
+        ["web.admin.activity.page.stale"] = "Could not refresh activity. Showing previously loaded streams; they may be out of date.",
         ["web.admin.activity.page.noStreams"] = "No active streams",
         ["web.admin.activity.page.refresh"] = "Refresh",
         ["web.admin.activity.page.refreshing"] = "Refreshing...",

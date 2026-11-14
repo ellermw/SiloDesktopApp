@@ -70,11 +70,14 @@ internal static class AdminMonitorShellNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         public int SessionCount = 3;
+        public bool SessionsFail;
         public int AdminReads;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path.StartsWith("/api/v2/admin", StringComparison.Ordinal) || path == "/api/v2/libraries") Interlocked.Increment(ref AdminReads);
+            if (path == "/api/v2/admin/sessions" && SessionsFail)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") });
             string body = path switch
             {
                 "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", Enumerable.Range(0, SessionCount).Select(Session)) + "],\"page\":{\"has_more\":false}}",
@@ -210,6 +213,31 @@ internal static class AdminMonitorShellNativeFixture
         await Until(() => page.RenderedSessionIds.Count == 3);
         Check(page.RenderedSessionIds.Count == 3, "Activity renders every live session");
 
+        var table = (StackPanel)Field(page, "_tableHost")!;
+        bool Shows(string text) => Descendants(table).OfType<TextBlock>().Any(block => block.Text == text);
+        server.SessionsFail = true;
+        await store.RefreshSessionsAsync();
+        await Until(() => Shows(AdminText.T("web.admin.activity.page.stale")));
+        Check(Shows(AdminText.T("web.admin.activity.page.stale")) && page.RenderedSessionIds.Count == 3,
+            "failed refresh labels retained Activity rows as stale");
+        Check(Shows(store.Current.SessionsError!), "Activity displays the session read error");
+        server.SessionsFail = false;
+        server.SessionCount = 0;
+        await store.RefreshSessionsAsync();
+        await Until(() => Shows(AdminText.T("web.admin.activity.page.noStreams")));
+        server.SessionsFail = true;
+        await store.RefreshSessionsAsync();
+        await Until(() => Shows(AdminText.T("web.admin.activity.page.loadFailed")));
+        Check(Shows(AdminText.T("web.admin.activity.page.loadFailed")) && !Shows(AdminText.T("web.admin.activity.page.noStreams")),
+            "failed Activity read without rows shows an error instead of No active streams");
+        server.SessionsFail = false;
+        server.SessionCount = 3;
+        var retry = Descendants(table).OfType<Button>().Single(button => AutomationProperties.GetName(button) == AdminText.T("common.retry"));
+        ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(retry)
+            .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+        await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.loadFailed")));
+        Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
+
         foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900) })
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
@@ -221,6 +249,13 @@ internal static class AdminMonitorShellNativeFixture
         await Task.Delay(300);
         Check(!page.IsWideTable, "narrow container uses stacked rows with a Sort row");
         Check(page.RenderedSessionIds[0] == "synthetic-0" || page.RenderedSessionIds.Count == 3, "default sort is Time descending (stable for equal times)");
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        yield return root;
+        for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+            foreach (var child in Descendants(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i))) yield return child;
     }
 
     private static object? Field(object target, string name) => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target);

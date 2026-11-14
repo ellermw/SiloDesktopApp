@@ -834,7 +834,8 @@ public sealed partial class AdminShellPage : Page
 
     private async Task ShowSearchAsync()
     {
-        if (_searchDialog != null || XamlRoot == null) return;
+        if (_searchDialog != null || XamlRoot == null || !_active || _lease is not { IsCurrent: true } lease) return;
+        AdminRouteRequest? selected = null;
         var query = new TextBox { PlaceholderText = AdminText.T("web.admin.shell.search.label"), MinWidth = 360 };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(query, AdminText.T("web.admin.shell.search.label"));
         var results = new StackPanel { Spacing = 2, Margin = new Thickness(0, 12, 0, 0) };
@@ -860,7 +861,7 @@ public sealed partial class AdminShellPage : Page
                 item.HorizontalAlignment = HorizontalAlignment.Stretch;
                 item.HorizontalContentAlignment = HorizontalAlignment.Left;
                 var target = page.Route;
-                item.Click += (_, _) => { dialog.Hide(); Navigate(new AdminRouteRequest(target)); };
+                item.Click += (_, _) => { selected = new AdminRouteRequest(target); dialog.Hide(); };
                 results.Children.Add(item);
             }
         }
@@ -871,8 +872,8 @@ public sealed partial class AdminShellPage : Page
             var first = AdminNavigation.Search(query.Text).FirstOrDefault();
             if (first == null) return;
             e.Handled = true;
+            selected = new AdminRouteRequest(first.Route);
             dialog.Hide();
-            Navigate(new AdminRouteRequest(first.Route));
         };
         Render();
         _searchDialog = dialog;
@@ -883,5 +884,8 @@ public sealed partial class AdminShellPage : Page
         }
         catch (Exception ex) { Core.Services.LocalLog.AppendLine("admin_monitor.txt", $"admin search failed: {ex.GetType().Name}"); }
         finally { _searchDialog = null; }
+        // The search dialog must finish closing before Logging can show its leave confirmation.
+        if (selected != null && _active && ReferenceEquals(_lease, lease) && lease.IsCurrent)
+            Navigate(selected);
     }
 }

@@ -482,14 +482,23 @@ public sealed partial class MainWindow : Window
     {
         if (_receiverShutdownStarted) return;
         _receiverShutdownStarted = true;
-        if (ContentFrame.Content is SiloPlayer.Views.Admin.AdminShellPage admin && !await admin.CanLeaveAsync()) { _receiverShutdownStarted = false; return; }
-        if(!await PrepareAppUpdateExitAsync()){_receiverShutdownStarted=false;return;}
-        try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
-        catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
+        try
+        {
+            if (ContentFrame.Content is SiloPlayer.Views.Admin.AdminShellPage admin && !await admin.CanLeaveAsync()) return;
+            if (!await PrepareAppUpdateExitAsync()) return;
+            try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
+            catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
+            finally
+            {
+                _receiverShutdownComplete = true;
+                Close();
+            }
+        }
+        catch (Exception ex) { LocalLog.AppendException("silocast.txt", ex, "window_close_failed"); }
         finally
         {
-            _receiverShutdownComplete = true;
-            Close();
+            // A cancelled or failed leave/update guard must allow another close attempt.
+            if (!_receiverShutdownComplete) _receiverShutdownStarted = false;
         }
     }
 

@@ -53,6 +53,25 @@ public sealed partial class AdminActivityPage
         _tableHost.Children.Clear();
         if (!_snapshot.SessionsLoaded) return;
         var sessions = _snapshot.Sessions;
+        if (_snapshot.SessionsError is { } error)
+        {
+            var warning = new StackPanel { Spacing = 8 };
+            warning.Children.Add(A.Text(AdminText.T(sessions.Count == 0
+                ? "web.admin.activity.page.loadFailed" : "web.admin.activity.page.stale"), 14, A.Warning, trim: false));
+            warning.Children.Add(A.Text(error, 14, A.Foreground, trim: false));
+            var retry = A.Outline(AdminText.T("common.retry"), "refresh-cw");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(retry, AdminText.T("common.retry"));
+            retry.IsEnabled = !_refreshing;
+            retry.Click += (_, _) => _ = RefreshAsync();
+            warning.Children.Add(retry);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(warning, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+            _tableHost.Children.Add(A.Panel(warning, new Thickness(16)));
+            if (sessions.Count == 0)
+            {
+                RenderedSessionIds = [];
+                return;
+            }
+        }
         var filtered = _list.Apply(sessions);
         RenderedSessionIds = filtered.Select(s => s.SessionId).ToArray();
         if (filtered.Count == 0)

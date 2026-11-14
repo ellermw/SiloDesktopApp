@@ -230,6 +230,12 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = description, PrimaryButtonText = primary, SecondaryButtonText = secondary ?? "", CloseButtonText = T("common.cancel"), DefaultButton = ContentDialogButton.Close }; _dialog = dialog;
         using var cancellation = action.Token.Register(() => DispatcherQueue.TryEnqueue(() => dialog.Hide()));
         try { var result = await dialog.ShowAsync(); action.ThrowIfRetired(); return result; }
+        // Another shell dialog may already be open. Keep the draft and cancel
+        // this leave/reconciliation attempt rather than escaping an async UI handler.
+        catch (Exception ex) when (ex.HResult == unchecked((int)0x80000019))
+        {
+            return ContentDialogResult.None;
+        }
         finally { if (ReferenceEquals(dialog, _dialog)) _dialog = null; }
     }
     protected override void OnNavigatingFrom(NavigatingCancelEventArgs args)

@@ -110,8 +110,27 @@ internal static class AdminMonitorLogsNativeFixture
             await Until(() => settingsPage.Controller?.State.Values.Count > 0);
             Find<TextBox>(settingsPage, "LoggingField_opslog.retention_days").Text = "23";
             await Until(() => shell.RequiresLeaveConfirmation);
-            shell.Navigate(new AdminRouteRequest(AdminRoute.ServerLog));
+            var otherDialog = new ContentDialog { XamlRoot = shell.XamlRoot, Content = "Another admin dialog", CloseButtonText = "Cancel" };
+            var otherDialogTask = otherDialog.ShowAsync();
+            await Task.Delay(100);
+            try
+            {
+                Check(!await shell.CanLeaveAsync(), "a dialog collision cancels leaving without throwing or discarding edits");
+                Check(shell.RequiresLeaveConfirmation, "a dialog collision preserves the Logging draft");
+            }
+            finally { otherDialog.Hide(); await otherDialogTask; }
+
+            shell.TryOpenSearch();
+            ContentDialog? SearchDialog() => (ContentDialog?)typeof(AdminShellPage).GetField("_searchDialog", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell);
+            await Until(() => SearchDialog() != null && All(SearchDialog()!).OfType<Button>().Any(b => AutomationProperties.GetName(b) == "Activity"));
+            Invoke(All(SearchDialog()!).OfType<Button>().Single(b => AutomationProperties.GetName(b) == "Activity"));
             ContentDialog? CurrentDialog() => (ContentDialog?)typeof(AdminLoggingSettingsPage).GetField("_dialog", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(settingsPage);
+            await Until(() => CurrentDialog() != null);
+            Check(CurrentDialog() != null, "search closes before Logging opens its leave confirmation");
+            CurrentDialog()?.Hide();
+            await Task.Delay(150);
+            Check(shell.RequiresLeaveConfirmation, "cancelling a search departure preserves Logging edits");
+            shell.Navigate(new AdminRouteRequest(AdminRoute.ServerLog));
             await Until(() => CurrentDialog() != null);
             Check(All(shell).OfType<AdminLoggingSettingsPage>().Any(), "inner navigation waits for dirty Logging confirmation");
             CurrentDialog()!.Hide();

@@ -213,6 +213,7 @@ public sealed partial class AdminActivityPage : Page
         if (_store == null || _refreshing || _lease is not { } lease) return;
         _refreshing = true;
         RenderHeader();
+        if (_snapshot.SessionsError != null) RenderTable();
         var started = DateTimeOffset.UtcNow;
         try { await _store.RefreshSessionsAsync(); }
         finally
@@ -223,6 +224,7 @@ public sealed partial class AdminActivityPage : Page
             {
                 _refreshing = false;
                 RenderHeader();
+                if (_snapshot.SessionsError != null) RenderTable();
             }
         }
     }
@@ -253,7 +255,8 @@ public sealed partial class AdminActivityPage : Page
             RenderedSessionIds = [];
             return;
         }
-        _filterHost.Visibility = Visibility.Visible;
+        var failedWithoutRows = snapshot.SessionsError != null && snapshot.Sessions.Count == 0;
+        _filterHost.Visibility = failedWithoutRows ? Visibility.Collapsed : Visibility.Visible;
         RenderHeader();
         RenderIpLookup();
         RenderSummary();
@@ -275,14 +278,15 @@ public sealed partial class AdminActivityPage : Page
             Text = AdminText.T("web.admin.activity.page.title"), FontSize = ActualWidth >= 640 || ActualWidth == 0 ? 32 : 28,
             FontWeight = FontWeights.Bold, CharacterSpacing = -35, Foreground = A.Solid(A.Foreground),
         });
-        titles.Children.Add(new TextBlock
-        {
-            Text = AdminActivityListState.Subtitle(sessions), FontSize = 14, Foreground = A.Solid(A.Muted), TextWrapping = TextWrapping.Wrap, MaxWidth = 640,
-        });
+        if (_snapshot.SessionsError == null)
+            titles.Children.Add(new TextBlock
+            {
+                Text = AdminActivityListState.Subtitle(sessions), FontSize = 14, Foreground = A.Solid(A.Muted), TextWrapping = TextWrapping.Wrap, MaxWidth = 640,
+            });
         grid.Children.Add(titles);
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
-        if (sessions.Count > 0) actions.Children.Add(A.LiveBadge(AdminActivityListState.LiveCount(sessions.Count), withRadioIcon: true));
+        if (sessions.Count > 0 && _snapshot.SessionsError == null) actions.Children.Add(A.LiveBadge(AdminActivityListState.LiveCount(sessions.Count), withRadioIcon: true));
         var refreshContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
         refreshContent.Children.Add(_refreshing ? A.Spinner(14, A.Foreground) : A.Icon("refresh-cw", 14, A.Foreground));
         refreshContent.Children.Add(A.Text(AdminText.T(_refreshing ? "web.admin.activity.page.refreshing" : "web.admin.activity.page.refresh"), 12, A.Foreground, FontWeights.Medium));
@@ -317,7 +321,7 @@ public sealed partial class AdminActivityPage : Page
     private void RenderIpLookup()
     {
         _ipLookupHost.Children.Clear();
-        if (!_snapshot.SessionsLoaded) return;
+        if (!_snapshot.SessionsLoaded || (_snapshot.SessionsError != null && _snapshot.Sessions.Count == 0)) return;
         var summary = A.Plain(A.Text(AdminText.T("web.admin.activity.ipLookup.heading"), 14, A.Foreground, FontWeights.Medium), null,
             new Thickness(16, 12, 16, 12));
         summary.HorizontalAlignment = HorizontalAlignment.Stretch;
