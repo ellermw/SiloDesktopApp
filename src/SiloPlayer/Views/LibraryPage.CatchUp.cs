@@ -1,10 +1,166 @@
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Api;
+using Microsoft.UI.Xaml;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class LibraryPage
 {
+    // All scan state is owned by the UI thread. An event never cancels a read;
+    // a fixed batch window and one dirty bit bound both storms and trailing work.
+    private DispatcherTimer? _catalogContentTimer;
+    private bool _catalogContentDirty, _catalogContentBatchReady;
+    private bool _catalogContentRetryUsed;
+    private ApiRequestContext? _catalogContentContext;
+    private int? _catalogContentLibrary;
+    private long _catalogContentEpoch, _catalogContentOwner;
+
+    private void QueueCatalogContentRefresh(ApiRequestContext context, int? libraryId)
+    {
+        if (!_isNavigated || context != _stateSettings.CaptureContext() || ViewModel.Library is not { } library ||
+            libraryId is { } scoped && scoped != library.Id) return;
+        _catalogContentContext = context;
+        _catalogContentLibrary = library.Id;
+        _catalogContentRetryUsed = false;
+        _catalogContentDirty = true;
+        WakeCatalogContentRefresh();
+    }
+
+    private void WakeCatalogContentRefresh()
+    {
+        if (!_isNavigated || !IsLoaded || !_catalogContentDirty) return;
+        if (_catalogContentContext != _stateSettings.CaptureContext() || _catalogContentLibrary != ViewModel.Library?.Id)
+        {
+            _catalogContentTimer?.Stop();
+            _catalogContentDirty = _catalogContentBatchReady = false;
+            return;
+        }
+        if (_currentTab != "Library" || _currentAudiobookAxis != "books" || !_libraryCatalogLoaded) return;
+        if (_catalogContentBatchReady) { TryStartCatalogContentRefresh(); return; }
+        _catalogContentTimer ??= CreateCatalogContentTimer();
+        // Do not restart the two-second window when another event arrives.
+        if (!_catalogContentTimer.IsEnabled) _catalogContentTimer.Start();
+    }
+
+    private DispatcherTimer CreateCatalogContentTimer()
+    {
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        timer.Tick += CatalogContentTimer_Tick;
+        return timer;
+    }
+
+    private void CatalogContentTimer_Tick(object? sender, object e)
+    {
+        _catalogContentTimer?.Stop();
+        if (!_catalogContentDirty || !_isNavigated || !IsLoaded) return;
+        _catalogContentBatchReady = true;
+        TryStartCatalogContentRefresh();
+    }
+
+    private void TryStartCatalogContentRefresh()
+    {
+        if (!_catalogContentDirty || !_catalogContentBatchReady || _catalogContentOwner != 0 || !_isNavigated || !IsLoaded ||
+            _currentTab != "Library" || _currentAudiobookAxis != "books" || !_libraryCatalogLoaded) return;
+        if (_catalogContentContext != _stateSettings.CaptureContext() || _catalogContentLibrary != ViewModel.Library?.Id)
+        {
+            _catalogContentDirty = _catalogContentBatchReady = false;
+            return;
+        }
+        // The native landing owns the viewport after the seek's HTTP read ends.
+        if (ViewModel.IsLoading || ViewModel.IsCatalogRefreshInProgress || ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0 ||
+            _pendingLibraryLetterCommit is not null || _pendingLibraryScroll is { Owner: not null }) return;
+        _catalogContentDirty = _catalogContentBatchReady = false;
+        var owner = _catalogContentOwner = ++_catalogContentEpoch;
+        var visit = _libraryVisit;
+        var context = _catalogContentContext.Value;
+        var library = _catalogContentLibrary;
+        _ = RefreshCatalogContentAsync(owner, visit, context, library);
+    }
+
+    private async Task RefreshCatalogContentAsync(long owner, long visit, ApiRequestContext context, int? library)
+    {
+        bool IsCurrent() => _catalogContentOwner == owner && visit == _libraryVisit && _isNavigated && IsLoaded &&
+            context == _stateSettings.CaptureContext() && library == ViewModel.Library?.Id;
+        try
+        {
+            var layout = GetGridLayout();
+            var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
+            var result = await ViewModel.RefreshInPlaceAsync(range.StartIndex, Math.Max(1, range.EndIndex - range.StartIndex + 1),
+                kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+            if (!IsCurrent()) return;
+            if (result == LibraryViewModel.CatalogRefreshResult.NotLoaded && ViewModel.TotalCount == 0 &&
+                _currentTab == "Library" && _currentAudiobookAxis == "books")
+            {
+                // An empty mounted query has no rows to retain. Start fresh so
+                // neither its empty snapshot nor its exact zero can hide additions.
+                _libraryCatalogLoaded = false;
+                await EnsureLibraryCatalogLoadedAsync();
+                if (!IsCurrent() || _currentTab != "Library" || _currentAudiobookAxis != "books") return;
+                await FillViewportAsync();
+                if (!IsCurrent()) return;
+            }
+            LocalLog.AppendLine("catalog_queries.txt", $"library_content_refresh result={result} first_row={_currentFirstRow}");
+            QueueRenderVirtualGrid(force: true);
+            // Do not consume the final scan event just because a seek canceled
+            // its read or the server failed/churned. Allow one delayed retry per
+            // event batch; new events already own their own trailing batch.
+            if ((result is LibraryViewModel.CatalogRefreshResult.Deferred or LibraryViewModel.CatalogRefreshResult.Failed) &&
+                !_catalogContentDirty && !_catalogContentRetryUsed)
+            {
+                _catalogContentRetryUsed = true;
+                _catalogContentDirty = true;
+                _catalogContentBatchReady = false;
+            }
+        }
+        catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_content_refresh"); }
+        finally
+        {
+            // An old visit must never release a new visit's running owner.
+            if (_catalogContentOwner == owner && visit == _libraryVisit)
+            {
+                _catalogContentOwner = 0;
+                // Let foreground callers joined to this read finish their
+                // continuations before a trailing batch claims the query.
+                DispatcherQueue.TryEnqueue(WakeCatalogContentRefresh);
+            }
+        }
+    }
+
+    private void StopCatalogContentRefresh(bool retainDirty = true)
+    {
+        _catalogContentTimer?.Stop();
+        if (retainDirty && _catalogContentOwner != 0) _catalogContentDirty = true;
+        if (!retainDirty)
+        {
+            _catalogContentDirty = false;
+            _catalogContentRetryUsed = false;
+        }
+        _catalogContentBatchReady = false;
+        ++_catalogContentEpoch;
+        _catalogContentOwner = 0;
+    }
+
+    private void OnLibraryAccessChanged(ApiRequestContext context)
+    {
+        var visit = _libraryVisit;
+        void Retire()
+        {
+            var current = _stateSettings.CaptureContext();
+            // A following transport reconnect must not swallow an explicit
+            // revocation before its UI dispatch. New access/identity still wins.
+            if (!_isNavigated || visit != _libraryVisit ||
+                (context with { RequestContextGeneration = current.RequestContextGeneration }) != current) return;
+            StopCatalogContentRefresh(retainDirty: false);
+            HideUnconfirmedCatalogRows();
+            // Cancel actual query work, including a content refresh's shared task.
+            // A canceled RefreshInPlace waiter alone would leave that work alive.
+            ViewModel.CancelCatalogLoads();
+        }
+        if (DispatcherQueue.HasThreadAccess) Retire();
+        else DispatcherQueue.TryEnqueue(Retire);
+    }
+
     /// <summary>
     /// The server closes the event channel every few minutes; each reconnect asks
     /// mounted routes to catch up. A loaded title grid or Recommended tab catches up
@@ -119,6 +275,7 @@ public sealed partial class LibraryPage
             _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
             ScheduleVisibleRangeLoad(force: true);
             _ = RetryDeferredCatchUpAsync(++_catchUpRetryVersion);
+            WakeCatalogContentRefresh();
         }
         catch (Exception ex) { LocalLog.AppendException("catalog_errors.txt", ex, "library_transport_catchup"); }
     }
@@ -150,7 +307,7 @@ public sealed partial class LibraryPage
             {
                 await Task.Delay(delay);
                 if (version != _catchUpRetryVersion || !_isNavigated || _currentTab != "Library" ||
-                    _currentAudiobookAxis != "books" || !ViewModel.RequiresCatalogRefresh)
+                    _currentAudiobookAxis != "books" || !ViewModel.RequiresCatalogConfirmation)
                     return;
                 LocalLog.AppendLine("catalog_queries.txt", $"library_transport_catchup_retry delay_ms={delay}");
                 _lastRequestedStartIndex = _lastRequestedEndIndex = -1;

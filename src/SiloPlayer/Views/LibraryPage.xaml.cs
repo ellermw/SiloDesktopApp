@@ -180,6 +180,8 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        Loaded += LibraryPage_Loaded;
+        Unloaded += LibraryPage_Unloaded;
         SiloPlayer.Services.AppLocalization.Register(this, RefreshLibraryLocalization);
         // Posters load and decode during steady wheel and slow touchpad scrolling;
         // touchpad flicks, flings and fast scrollbar drags wait for the grid to slow.
@@ -321,6 +323,36 @@ public sealed partial class LibraryPage : Page,
         }
     }
 
+    private bool _catalogVisualDetached;
+
+    private void LibraryPage_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_catalogVisualDetached)
+        {
+            _catalogVisualDetached = false;
+            if (_isNavigated)
+            {
+                _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+                ScheduleVisibleRangeLoad(force: true);
+            }
+        }
+        WakeCatalogContentRefresh();
+    }
+
+    private void LibraryPage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        // WinUI can deliver a queued Unloaded after the cached page reattached.
+        // A real visual detachment must still retire work even while navigated.
+        if (IsLoaded) return;
+        _catalogVisualDetached = true;
+        StopCatalogContentRefresh();
+        ViewModel.SuspendCatalogLoads();
+        ++_libraryVisit;
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        if (_pendingLibraryScroll is { } pending) ClearPendingLibraryOffset(pending);
+    }
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -337,7 +369,7 @@ public sealed partial class LibraryPage : Page,
         AttachViewModelEvents();
         RegisterMediaMessages();
         AttachRecommendedRealtimeEvents();
-        if (ViewModel.RequiresCatalogRefresh) HideUnconfirmedCatalogRows();
+        if (ViewModel.RequiresCatalogConfirmation) HideUnconfirmedCatalogRows();
         else if (RecommendedRowsRequireConfirmation) HideUnconfirmedRecommendedRows();
 
         var navigationArgs = e.Parameter as NavigationArgs;
@@ -687,6 +719,7 @@ public sealed partial class LibraryPage : Page,
             _libraryCatalogLoaded = false;
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        StopCatalogContentRefresh();
         if (_pendingLibraryScroll is { } pendingScroll) ClearPendingLibraryOffset(pendingScroll);
         _queuedLetterJumpVersion = 0;
         _pendingLibraryLetterCommit = null;
@@ -776,21 +809,36 @@ public sealed partial class LibraryPage : Page,
     {
         if (_recommendationsRealtimeSubscription != null) return;
         _eventChannel.EventReceived += OnRecommendedRealtimeEvent;
+        _eventChannel.AccessChanged += OnLibraryAccessChanged;
         _recommendationsRealtimeSubscription = _eventChannel.Subscribe("catalog", "user_state");
     }
 
     private void DetachRecommendedRealtimeEvents()
     {
         _eventChannel.EventReceived -= OnRecommendedRealtimeEvent;
+        _eventChannel.AccessChanged -= OnLibraryAccessChanged;
         _recommendationsRealtimeSubscription?.Dispose();
         _recommendationsRealtimeSubscription = null;
     }
 
     private void OnRecommendedRealtimeEvent(string channel, string eventName, JsonElement data)
     {
+        // The channel owns the JsonDocument. Parse before returning, and carry
+        // only values plus request/visit ownership across the UI dispatch.
+        var context = _stateSettings.CaptureContext();
+        var visit = _libraryVisit;
+        var contentChanged = eventName is "catalog.library.changed" or "library.changed" or "library.item_added" or
+            "catalog.item.changed" or "metadata.updated";
+        int? libraryId = data.ValueKind == JsonValueKind.Object && data.TryGetProperty("library_id", out var scope) &&
+            scope.ValueKind == JsonValueKind.Number && scope.TryGetInt32(out var parsed) ? parsed : null;
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_isNavigated || visit != _libraryVisit || context != _stateSettings.CaptureContext()) return;
+                QueueRecommendedRefresh();
+                if (contentChanged) QueueCatalogContentRefresh(context, libraryId);
+            });
             return;
         }
 
@@ -807,7 +855,11 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_isNavigated && visit == _libraryVisit && context == _stateSettings.CaptureContext())
+                QueueRecommendedRefresh();
+        });
     }
 
     private void QueueRecommendedRefresh()
@@ -1196,6 +1248,7 @@ public sealed partial class LibraryPage : Page,
 
         _currentTab = tag;
         UpdateLibraryLetters();
+        WakeCatalogContentRefresh();
         // B42: Persist tab selection so a return to this library lands on the same tab.
         SaveViewState(tag);
 
@@ -1781,6 +1834,7 @@ public sealed partial class LibraryPage : Page,
         if (_pendingLibraryScroll is { Owner: not null } pending)
             ClearPendingLibraryOffset(pending);
         ScheduleVisibleRangeLoad(force: true);
+        WakeCatalogContentRefresh();
     }
 
     private void LibraryScroller_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
@@ -1827,6 +1881,11 @@ public sealed partial class LibraryPage : Page,
         // Only new input retires a choice. Coasting from an earlier manipulation
         // and native extent clamps still update the viewport, but keep its owner.
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
+        if (!e.IsIntermediate)
+        {
+            CompleteLibraryScrollLanding();
+            WakeCatalogContentRefresh();
+        }
     }
 
     private void LibraryScroller_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1874,6 +1933,7 @@ public sealed partial class LibraryPage : Page,
         _pendingLibraryScroll = null;
         if (request.Owner is not null) _chosenLibraryEndLetter = null;
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+        WakeCatalogContentRefresh();
     }
 
     private void UpdateLibraryScrollPosition(double offset, bool force = false)
@@ -1907,13 +1967,38 @@ public sealed partial class LibraryPage : Page,
                 return;
             }
             _pendingLibraryOffset = null;
-            _pendingLibraryScroll = null;
             // ChangeView may settle asynchronously even with animation disabled.
             // The requested offset is already published; ViewChanged supplies the
             // accepted position. Reading the old position here loses a final-letter jump.
-            if (!LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true))
+            // Compare against the position actually requested from native scrolling.
+            // The extent may grow before the landing callback arrives.
+            var landing = Math.Min(offset, LibraryScroller.ScrollableHeight);
+            if (request.Owner is not null && landing != request.Offset)
+                _pendingLibraryScroll = request = request with { Offset = landing };
+            var accepted = LibraryScroller.ChangeView(null, landing, null, disableAnimation: true);
+            // Keep the native landing's owner until the accepted position has
+            // crossed this dispatch boundary. ViewChanged may fire inline.
+            if (!accepted)
+            {
+                if (ReferenceEquals(_pendingLibraryScroll, request)) _pendingLibraryScroll = null;
                 UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+            }
+            else if (request.Owner is null && ReferenceEquals(_pendingLibraryScroll, request)) _pendingLibraryScroll = null;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                CompleteLibraryScrollLanding();
+                WakeCatalogContentRefresh();
+            });
         });
+    }
+
+    private void CompleteLibraryScrollLanding()
+    {
+        if (_pendingLibraryScroll is not { Owner: not null } request || _pendingLibraryOffset.HasValue) return;
+        if (request.Visit != _libraryVisit || !request.Owner()) { ClearPendingLibraryOffset(request); return; }
+        if (_libraryScrollIsIntermediate || Math.Abs(LibraryScroller.VerticalOffset - Math.Min(request.Offset, LibraryScroller.ScrollableHeight)) >= 2) return;
+        _pendingLibraryScroll = null;
+        UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
     }
 
     private void OnLibraryWindowLoaded()
@@ -1926,6 +2011,7 @@ public sealed partial class LibraryPage : Page,
             UpdateVirtualGridMetrics();
             QueueRenderVirtualGrid(force: true);
             UpdateLibraryLetters();
+            WakeCatalogContentRefresh();
         });
     }
 
@@ -1985,7 +2071,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        if (ViewModel.RequiresCatalogRefresh)
+        if (ViewModel.RequiresCatalogConfirmation)
         {
             HideUnconfirmedCatalogRows();
             // Keep slots as placeholders until their viewport read is confirmed;
@@ -3029,6 +3115,7 @@ public sealed partial class LibraryPage : Page,
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
             _ = ViewModel.EnsureLetterIndexAsync();
+            WakeCatalogContentRefresh();
             return;
         }
 
@@ -3044,6 +3131,7 @@ public sealed partial class LibraryPage : Page,
         finally
         {
             LibrarySkeletonScroll.Visibility = Visibility.Collapsed;
+            WakeCatalogContentRefresh();
         }
     }
 
