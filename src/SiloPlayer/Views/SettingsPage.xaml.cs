@@ -588,6 +588,10 @@ _webhookPlexAuthCts?.Cancel();
 
         SelectComboBoxByTag(QualityComboBox, ViewModel.QualityPreference);
         SelectComboBoxByTag(MaxBitrateComboBox, ViewModel.MaxBitrateKbps);
+        MeteredQualityComboBox.IsEnabled = ViewModel.MeteredQualitySupported;
+        MeteredBitrateComboBox.IsEnabled = ViewModel.MeteredQualitySupported;
+        SelectComboBoxByTag(MeteredQualityComboBox, ViewModel.MeteredQuality);
+        SelectComboBoxByTag(MeteredBitrateComboBox, ViewModel.MeteredBitrate);
         SelectComboBoxByTag(SubtitleLanguageComboBox, ViewModel.SubtitleLanguage);
         SelectComboBoxByTag(SubtitleModeComboBox, ViewModel.SubtitleMode);
         SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode);
@@ -2913,6 +2917,25 @@ _webhookPlexAuthCts?.Cancel();
         }
     }
 
+    private void MeteredQualityComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || !ViewModel.MeteredQualitySupported) return;
+        if (MeteredQualityComboBox.SelectedItem is ComboBoxItem { Tag: string value })
+        {
+            ViewModel.MeteredQuality = value;
+            _ = ViewModel.SaveMeteredQualityCommand.ExecuteAsync(null);
+        }
+    }
+
+    private void MeteredBitrateComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || !ViewModel.MeteredQualitySupported) return;
+        if (MeteredBitrateComboBox.SelectedItem is ComboBoxItem item)
+        {
+            ViewModel.MeteredBitrate = item.Tag as string ?? "";
+            _ = ViewModel.SaveMeteredBitrateCommand.ExecuteAsync(null);
+        }
+    }
     private void SpokenLanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressEvents) return;

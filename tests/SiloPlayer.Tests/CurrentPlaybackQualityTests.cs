@@ -10,6 +10,185 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentPlaybackQualityTests
 {
     [Fact]
+    public async Task RejectedCellularKeysFallBackToMainSettingsIncludingBuffering()
+    {
+        using var scope = new Fixture(); scope.Wire.RejectCellular = true;
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "auto", CancellationToken.None, includeBuffering: true, metered: true);
+        Assert.Equal("1080p", preferences.Quality); Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal("always", preferences.BufferingQualityMode);
+        Assert.Equal(2, scope.Wire.CellularReads);
+    }
+    [Fact]
+    public async Task OlderServerRejectingCellularKeysUsesMainSettings()
+    {
+        using var scope = new Fixture(); scope.Manager.IsMeteredConnection = () => true;
+        scope.Wire.ContractRevision = 19;
+        scope.Wire.RejectCellular = true;
+        var preferences = await scope.Manager.ResolveQualityPreferencesAsync();
+        Assert.Equal("1080p", preferences.Quality); Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Fact]
+    public async Task OlderContractWithMissingCellularRowsUsesMainSettingsIncludingBuffering()
+    {
+        using var scope = new Fixture(); scope.Wire.ContractRevision = 19; scope.Wire.OmitCellular = true;
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, includeBuffering: true, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal("always", preferences.BufferingQualityMode);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(405)]
+    [InlineData(501)]
+    public async Task MissingContractCapabilitiesUsesMainSettings(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.ContractStatus = (HttpStatusCode)statusCode;
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(429)]
+    [InlineData(500)]
+    [InlineData(503)]
+    public async Task FailedContractProbeStartsWithMainSettings(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.ContractStatus = (HttpStatusCode)statusCode;
+        scope.Manager.IsMeteredConnection = () => true;
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal("1080p", scope.Wire.Start!.Value.GetProperty("quality_preference").GetString());
+        Assert.Equal(3500, scope.Wire.Start.Value.GetProperty("bandwidth_cap_kbps").GetInt32());
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ContractProbeTransportFailureUsesMainSettingsIncludingBuffering(bool timeout)
+    {
+        using var scope = new Fixture();
+        scope.Wire.ContractFailure = timeout ? new TimeoutException() : new HttpRequestException();
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, includeBuffering: true, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal("always", preferences.BufferingQualityMode);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Fact]
+    public async Task ContractProbeHttpClientTimeoutUsesMainSettings()
+    {
+        using var scope = new Fixture();
+        scope.Wire.ContractFailure = new TaskCanceledException("Probe timed out.", new TimeoutException());
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    public async Task ContractProbeAuthorizationFailureStillAbortsPlayback(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.ContractStatus = (HttpStatusCode)statusCode;
+        scope.Manager.IsMeteredConnection = () => true;
+        var error = await Assert.ThrowsAsync<ApiException>(() => scope.Manager.StartSessionAsync(42));
+        Assert.Equal(statusCode, error.StatusCode);
+        Assert.Equal(0, scope.Wire.SettingsReads);
+        Assert.Null(scope.Wire.Start);
+    }
+
+    [Fact]
+    public async Task ContractProbeCancellationStillAbortsPlayback()
+    {
+        using var scope = new Fixture(); scope.Wire.ContractFailure = new OperationCanceledException();
+        scope.Manager.IsMeteredConnection = () => true;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Manager.StartSessionAsync(42));
+        Assert.Equal(0, scope.Wire.SettingsReads);
+        Assert.Null(scope.Wire.Start);
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(405)]
+    [InlineData(501)]
+    public async Task MeteredMissingOlderSettingsEndpointUsesLegacyPreferenceWithoutInventingCap(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.SettingsStatus = (HttpStatusCode)statusCode;
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, metered: true);
+        Assert.Equal("2160p", preferences.Quality);
+        Assert.Null(preferences.BandwidthCapKbps);
+    }
+
+    [Fact]
+    public async Task MeteredStartWithoutSettingsEndpointUsesLegacyPreferenceWithoutInventingCap()
+    {
+        using var scope = new Fixture(); scope.Wire.MissingSettings = true;
+        scope.Manager.IsMeteredConnection = () => true;
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal("720p", scope.Wire.Start!.Value.GetProperty("quality_preference").GetString());
+        Assert.True(!scope.Wire.Start.Value.TryGetProperty("bandwidth_cap_kbps", out var cap) || cap.ValueKind == JsonValueKind.Null);
+    }
+    [Fact]
+    public async Task MeteredStartUsesCellularQualityAndBitrate()
+    {
+        using var scope = new Fixture();
+        scope.Manager.IsMeteredConnection = () => true;
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal("720p", scope.Wire.Start!.Value.GetProperty("quality_preference").GetString());
+        Assert.Equal(2000, scope.Wire.Start.Value.GetProperty("bandwidth_cap_kbps").GetInt32());
+    }
+
+    [Fact]
+    public async Task NetworkChangeDuringSettingsReadResolvesCurrentConnection()
+    {
+        using var scope = new Fixture();
+        var metered = false;
+        scope.Manager.IsMeteredConnection = () => metered;
+        scope.Wire.BeforeSettingsReply = () => metered = true;
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal("720p", scope.Wire.Start!.Value.GetProperty("quality_preference").GetString());
+        Assert.Equal(2, scope.Wire.SettingsReads);
+    }
+
+    [Fact]
+    public async Task MissingCellularRowsUseContractDefaultsRatherThanMainLimit()
+    {
+        using var scope = new Fixture(); scope.Wire.OmitCellular = true;
+        scope.Manager.IsMeteredConnection = () => true;
+        var preferences = await scope.Manager.ResolveQualityPreferencesAsync();
+        Assert.Equal("720p", preferences.Quality);
+        Assert.Equal(2000, preferences.BandwidthCapKbps);
+    }
+    [Fact]
+    public async Task ConnectionTransitionsUseIndependentQualityPairs()
+    {
+        using var scope = new Fixture(); var metered = false;
+        scope.Manager.IsMeteredConnection = () => metered;
+        var main = await scope.Manager.ResolveQualityPreferencesAsync();
+        metered = true; var cellular = await scope.Manager.ResolveQualityPreferencesAsync();
+        metered = false; var restored = await scope.Manager.ResolveQualityPreferencesAsync();
+        Assert.Equal(("1080p", (int?)3500), (main.Quality, main.BandwidthCapKbps));
+        Assert.Equal(("720p", (int?)2000), (cellular.Quality, cellular.BandwidthCapKbps));
+        Assert.Equal((main.Quality, main.BandwidthCapKbps), (restored.Quality, restored.BandwidthCapKbps));
+    }
+
+    [Fact]
+    public async Task ExplicitUncappedCellularValueDoesNotReuseMainOrDefaultBitrate()
+    {
+        using var scope = new Fixture(); scope.Manager.IsMeteredConnection = () => true;
+        scope.Wire.CellularCap = null; scope.Wire.CellularQuality = "hd";
+        var preferences = await scope.Manager.ResolveQualityPreferencesAsync();
+        Assert.Equal("720p", preferences.Quality); Assert.Null(preferences.BandwidthCapKbps);
+    }
+    [Fact]
     public async Task CanonicalQualityAndCapReachStartAndRemainThroughManualQualityChange()
     {
         using var scope = new Fixture();
@@ -113,18 +292,43 @@ public sealed class CurrentPlaybackQualityTests
     private sealed class Wire : HttpMessageHandler
     {
         public JsonElement? Start, Replan;
-        public bool MissingSettings, Cropped;
-        public int SettingsReads;
+        public bool MissingSettings, Cropped, OmitCellular, RejectCellular;
+        public string CellularQuality = "720p";
+        public int? CellularCap = 2000;
+        public int SettingsReads, CellularReads;
+        public int ContractRevision = 20;
+        public HttpStatusCode? ContractStatus, SettingsStatus;
+        public Exception? ContractFailure;
         public Action? BeforeSettingsReply;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/settings/contract/capabilities")
+            {
+                if (ContractFailure is { } failure) throw failure;
+                return ContractStatus is { } contractStatus
+                    ? new(contractStatus) { Content = new StringContent("{}") }
+                    : Json(JsonSerializer.Serialize(new { api_version = 1, manifest_revision = ContractRevision, supports_batched_effective = true }));
+            }
             if (path == "/api/v2/settings/values/effective")
             {
                 SettingsReads++;
+                if (request.RequestUri!.Query.Contains("cellular", StringComparison.Ordinal))
+                {
+                    CellularReads++;
+                    if (RejectCellular) return new(HttpStatusCode.UnprocessableEntity) { Content = new StringContent("{}") };
+                }
+                if (SettingsStatus is { } settingsStatus) return new(settingsStatus) { Content = new StringContent("{}") };
                 BeforeSettingsReply?.Invoke();
                 if (MissingSettings) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
-                return Json("""{"items":[{"key":"playback.preferred_quality","value":"1080p"},{"key":"playback.max_bitrate_kbps","value":3500}]}""");
+                return Json(OmitCellular
+                    ? """{"items":[{"key":"playback.preferred_quality","value":"1080p"},{"key":"playback.max_bitrate_kbps","value":3500},{"key":"playback.buffering_quality_mode","value":"always"}]}"""
+                    : JsonSerializer.Serialize(new { items = new object[] {
+                        new { key = "playback.buffering_quality_mode", value = "always" },
+                        new { key = "playback.preferred_quality", value = "1080p" },
+                        new { key = "playback.max_bitrate_kbps", value = 3500 },
+                        new { key = "playback.cellular_preferred_quality", value = CellularQuality },
+                        new { key = "playback.cellular_max_bitrate_kbps", value = CellularCap } } }));
             }
             if (path == "/api/v2/playback/capabilities")
                 return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
