@@ -122,6 +122,34 @@ public sealed class AdminMonitorLoggingControllerTests
     }
 
     [Fact]
+    public async Task ProfileVerificationRequiredDiscardsUnsavedDraftImmediately()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (request, _) => Task.FromResult(AdminMonitorDiagnosticsControllerTests.Reply(request.RequestUri!.AbsolutePath));
+        using var controller = new LoggingController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        controller.Set("server.log_level", "debug");
+        Assert.Single(controller.State.DirtyKeys);
+        var owner = controller.State.Owner!;
+        using var action = controller.CaptureAction();
+        var context = owner.Context;
+
+        kit.Auth.HandleProfileVerificationRequired(new(context.AuthenticationGeneration, context.RequestContextGeneration, context.ProfileId));
+
+        Assert.True(owner.Token.IsCancellationRequested);
+        Assert.False(controller.IsActionCurrent(action));
+        Assert.Null(controller.State.Owner);
+        Assert.Empty(controller.State.DirtyKeys);
+        Assert.Empty(controller.State.Values);
+        Assert.False(controller.State.Loaded);
+        Assert.True(authority.IsAvailable);
+        await controller.OpenAsync();
+        Assert.True(controller.State.Owner!.IsCurrent);
+        Assert.Empty(controller.State.DirtyKeys);
+    }
+
+    [Fact]
     public async Task LateSaveCannotRestoreRetiredDraftOrShowSuccess()
     {
         using var kit = AdminMonitorKit.Create();

@@ -70,13 +70,25 @@ internal static class AdminMonitorLogsNativeFixture
             Check(ReferenceEquals(((Grid)logging.Content).Children.OfType<ScrollViewer>().Single().Content, logging.MonitorScrollContent), "Logging restart insertion seam is in the main scroll body");
             var loggingOwner = logging.Controller!.State.Owner!;
             logging.Controller.Set("opslog.retention_days", "99");
+            client.SetProfile("p1", "synthetic-replaced-proof");
+            Check(logging.Controller.State.DirtyKeys.Count == 1 && !loggingOwner.IsCurrent, "silent proof replacement leaves a stale draft before notification");
+            Check(await logging.CanLeaveAsync(), "a stale owner cannot block leaving before retirement notification");
             client.InvalidateAccessContext();
             await Until(() => logging.Controller.State.Owner is { IsCurrent: true } owner && !ReferenceEquals(owner, loggingOwner) && logging.Controller.State.Loaded);
             Check(!loggingOwner.IsCurrent && logging.Controller.State.DirtyKeys.Count == 0 && logging.Controller.State.Values["opslog.retention_days"] == "7", "logging recaptures and reloads without reviving retired drafts");
+            logging.Controller.Set("opslog.retention_days", "99");
+            var verificationOwner = logging.Controller.State.Owner!;
+            var verificationContext = verificationOwner.Context;
+            var verificationLeave = logging.CanLeaveAsync();
+            await Task.Delay(100);
+            auth.HandleProfileVerificationRequired(new(verificationContext.AuthenticationGeneration, verificationContext.RequestContextGeneration, verificationContext.ProfileId));
+            Check(await verificationLeave, "profile verification releases navigation while an unsaved dialog is open");
+            await Until(() => logging.Controller.State.Loaded && logging.Controller.State.Owner is { IsCurrent: true } owner && !ReferenceEquals(owner, verificationOwner) && logging.SettingsHealth.DirtyCount == 0);
+            Check(verificationOwner.Token.IsCancellationRequested && logging.Controller.State.DirtyKeys.Count == 0 && logging.SettingsHealth.DirtyCount == 0, "profile verification retires the draft and clears unsaved health without reviving edits");
             await CaptureSizes(window, frame, "admin-logging-clean"); var days = Find<TextBox>(logging, "LoggingField_opslog.retention_days"); days.Text = "14"; await Task.Delay(100); Check(logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days"), "retention control registers dirty state"); Invoke(Find<Button>(logging, "LoggingAdvanced_server")); await Task.Delay(100); Find<TextBox>(logging, "LoggingField_server.log_quiet").Text = "metadata, scanner"; await Task.Delay(100); Check(logging.Controller.State.ServerAdvancedOpen, "dirty advanced fields remain discoverable"); await Capture(frame, "admin-logging-dirty.png");
             Invoke(Find<Button>(logging, "LoggingSave")); await Until(() => !logging.Controller.State.Saving && logging.Controller.State.DirtyKeys.Count == 0); Check(server.BatchWrites == 1, "Logging saves all dirty values in one batch");
             await Until(() => days.Text == "14" && logging.Controller!.State.DirtyKeys.Count == 0);
-            days.Text = "21"; await Until(() => logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days") && logging.Controller.State.Values["opslog.retention_days"] == "21"); var leave = logging.CanLeaveAsync(); await Task.Delay(100); auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" }); Check(!await leave, "retired authority cannot accept unsaved confirmation"); await Task.Delay(100); Check(logging.Controller.State.Values.Count == 0, "admin loss clears every sensitive draft");
+            days.Text = "21"; await Until(() => logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days") && logging.Controller.State.Values["opslog.retention_days"] == "21"); var leave = logging.CanLeaveAsync(); await Task.Delay(100); auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" }); Check(await leave, "authority retirement releases unsaved navigation without accepting the retired draft"); await Task.Delay(100); Check(logging.Controller.State.Values.Count == 0, "admin loss clears every sensitive draft");
             await Capture(frame, "admin-logging-retired.png");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
             foreach (var route in new[] { AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings })

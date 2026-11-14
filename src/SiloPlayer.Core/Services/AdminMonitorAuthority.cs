@@ -46,6 +46,7 @@ public sealed class AdminMonitorAuthority : IDisposable
         _fingerprint = ReadFingerprint();
         _auth.UserChanged += Reevaluate;
         _auth.ProfileChanged += Reevaluate;
+        _auth.ProfileVerificationRequired += Reevaluate;
         _auth.LoggedOut += Reevaluate;
         _client.ContextInvalidated += Reevaluate;
     }
@@ -194,6 +195,7 @@ public sealed class AdminMonitorAuthority : IDisposable
         }
         _auth.UserChanged -= Reevaluate;
         _auth.ProfileChanged -= Reevaluate;
+        _auth.ProfileVerificationRequired -= Reevaluate;
         _auth.LoggedOut -= Reevaluate;
         _client.ContextInvalidated -= Reevaluate;
         foreach (var lease in retired) lease.Cancel();

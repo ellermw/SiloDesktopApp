@@ -209,13 +209,19 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
     }
     public async Task<bool> CanLeaveAsync()
     {
-        var controller = _controller; if (controller == null || controller.State.DirtyKeys.Count == 0) return true; if (_leaving || _dialog != null) return false; _leaving = true;
+        var controller = _controller;
+        var owner = controller?.State.Owner;
+        // Retired drafts are discarded and must never block navigation or window close,
+        // even before the authority's retirement notification reaches this page.
+        if (controller == null || owner is not { IsCurrent: true } || controller.State.DirtyKeys.Count == 0) return true;
+        if (_leaving || _dialog != null) return false; _leaving = true;
         try
         {
             using var action = controller.CaptureAction(); var result = await ConfirmAsync(action, T("web.shell.unsavedChanges.title"), T("web.shell.unsavedChanges.description"), T("web.shell.unsavedChanges.discard"));
-            if (!ReferenceEquals(controller, _controller) || !controller.IsActionCurrent(action) || result != ContentDialogResult.Primary) return false; controller.Discard(); return true;
+            if (!ReferenceEquals(controller, _controller) || !owner.IsCurrent) return true;
+            if (!controller.IsActionCurrent(action) || result != ContentDialogResult.Primary) return false; controller.Discard(); return true;
         }
-        catch (OperationCanceledException) { return false; }
+        catch (OperationCanceledException) { return !ReferenceEquals(controller, _controller) || !owner.IsCurrent; }
         finally { _leaving = false; }
     }
     private async Task<ContentDialogResult> ConfirmAsync(MonitorAuthorityLease action, string title, string description, string primary, string? secondary = null)

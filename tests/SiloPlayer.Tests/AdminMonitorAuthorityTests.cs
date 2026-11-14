@@ -159,6 +159,32 @@ public sealed class AdminMonitorAuthorityTests
         Assert.False(authority.IsAvailable);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ProfileVerificationAndExplicitClearRetireLeasesImmediately(bool explicitClear)
+    {
+        using var kit = AdminMonitorKit.Create();
+        kit.Auth.SelectProfile("p1", "synthetic-proof", new Profile { Id = "p1", IsPrimary = true, HasPin = true });
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var raised = 0;
+        authority.AvailabilityChanged += () => raised++;
+        var context = lease.Context;
+
+        if (explicitClear) kit.Auth.ClearSelectedProfile();
+        else kit.Auth.HandleProfileVerificationRequired(new(context.AuthenticationGeneration, context.RequestContextGeneration, context.ProfileId));
+
+        Assert.Null(kit.Auth.SelectedProfileId);
+        Assert.True(lease.Token.IsCancellationRequested);
+        Assert.False(lease.IsCurrent);
+        Assert.Equal(1, raised);
+        Assert.True(authority.IsAvailable);
+        using var fresh = authority.Capture();
+        Assert.True(fresh.IsCurrent);
+        Assert.True(fresh.Epoch > lease.Epoch);
+    }
+
     [Fact]
     public void ContextChangeWithoutAnEventIsStillNotCurrent()
     {
