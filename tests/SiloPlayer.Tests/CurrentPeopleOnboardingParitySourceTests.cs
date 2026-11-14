@@ -77,6 +77,20 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
     }
 
     [Fact]
+    public void HomePersonalizationDoesNotUseTheSettingsTasteSeedOrigin()
+    {
+        var home = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
+        var settings = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
+        var picker = ReadRepoFile("src", "SiloPlayer", "Views", "TasteSeedPage.xaml.cs");
+
+        Assert.Contains("private void PersonalizeHome_Click(object sender, RoutedEventArgs e)\n        => Frame.Navigate(typeof(TasteSeedPage), null, PageTransitionHelper.ForPageChange());", home.Replace("\r\n", "\n"));
+        Assert.Contains("typeof(TasteSeedPage), true, PageTransitionHelper.ForPageChange()", settings);
+        Assert.Contains("_returningFromSettings = e.Parameter is true;", picker);
+        Assert.Contains("if (_returningFromSettings)", picker);
+        Assert.Contains("else\n        {\n            App.Services.GetRequiredService<NavigationService>().Navigate<HomePage>();", picker.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
     public void TasteSeedUsesCurrentWidthAndReturnsToPlaybackSettings()
     {
         var markup = ReadRepoFile("src", "SiloPlayer", "Views", "TasteSeedPage.xaml");
