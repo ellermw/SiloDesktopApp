@@ -126,11 +126,22 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         try { controller!.Set(key, value); } catch (OperationCanceledException) { }
     }
     private static readonly LoggingDisclosurePreferences DefaultDisclosurePreferences = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "monitor-ui"));
-    private void Open() { Close(); _controller = new(_api, _authority, App.Services.GetService<LoggingDisclosurePreferences>() ?? DefaultDisclosurePreferences); _controller.Changed += QueueRender; _ = _controller.OpenAsync(); }
+    private void Open() { Close(); _controller = new(_api, _authority, App.Services.GetService<LoggingDisclosurePreferences>() ?? DefaultDisclosurePreferences); _controller.Changed += QueueRender; _authority.AvailabilityChanged += OnAvailabilityChanged; _ = _controller.OpenAsync(); }
+    private void OnAvailabilityChanged()
+    {
+        var controller = _controller;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsLoaded || controller == null || !ReferenceEquals(controller, _controller) || controller.State.Owner is { IsCurrent: true }) return;
+            Render(controller.State);
+            if (_authority.IsAvailable) _ = controller.OpenAsync();
+        });
+    }
     internal void SuspendMonitor() => Close();
 
     private void Close()
     {
+        _authority.AvailabilityChanged -= OnAvailabilityChanged;
         _dialog?.Hide(); _dialog = null; if (_controller != null) { _controller.Changed -= QueueRender; _controller.Dispose(); _controller = null; }
         _syncing = true; foreach (var control in _controls.Values) { control.IsEnabled = false; if (control is TextBox input) input.Text = ""; else if (control is ComboBox select) select.SelectedIndex = -1; } _syncing = false;
         _alerts.Children.Clear(); _saveBar.Visibility = Visibility.Collapsed; _spacer.Visibility = Visibility.Collapsed; SetHealth(new(false, false, false, 0, false));

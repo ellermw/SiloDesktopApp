@@ -12,19 +12,50 @@ public interface ILogsSocket : IDisposable
     void Abort();
 }
 
-public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? socketFactory = null)
+public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? socketFactory = null, TimeProvider? timeProvider = null)
 {
     public const string Protocol = "silo.admin-logs.v2";
+    private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
     public async Task RunAsync(MonitorAuthorityLease lease, string stream, LogsQuery query, Action<LogsSocketFrame> receive, CancellationToken ct = default)
+    {
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
+        var failures = 0;
+        while (true)
+        {
+            lease.ThrowIfRetired();
+            stopping.Token.ThrowIfCancellationRequested();
+            var snapshotReceived = false;
+            try
+            {
+                var expired = await RunOnceAsync(lease, stream, query, frame =>
+                {
+                    if (frame.Type == "snapshot") { snapshotReceived = true; failures = 0; }
+                    receive(frame);
+                }, stopping.Token).ConfigureAwait(false);
+                if (expired) { failures = 0; continue; }
+                if (snapshotReceived) failures = 0;
+                else if (++failures >= 3) throw new InvalidDataException("The log stream repeatedly closed before its snapshot.");
+            }
+            catch (Exception error) when (!stopping.IsCancellationRequested && lease.IsCurrent &&
+                (error is WebSocketException or HttpRequestException or OperationCanceledException || error is ApiException { StatusCode: >= 500 or 429 }))
+            {
+                if (++failures >= 3) throw;
+            }
+            // Clean closes renew too, but never allow a server to create a tight ticket loop.
+            await Task.Delay(TimeSpan.FromMilliseconds(250 * (1 << failures)), _time, stopping.Token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> RunOnceAsync(MonitorAuthorityLease lease, string stream, LogsQuery query, Action<LogsSocketFrame> receive, CancellationToken ct)
     {
         lease.ThrowIfRetired();
         var ticket = await api.LogsCreateSocketTicketAsync(lease, ct).ConfigureAwait(false);
         lease.ThrowIfRetired();
         using var socket = socketFactory?.Invoke() ?? new LogsClientWebSocket();
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
+        using var expiration = new CancellationTokenSource(TimeSpan.FromSeconds(ticket.MaxConnectionSeconds), _time);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct, expiration.Token);
         using var abort = lifetime.Token.Register(socket.Abort);
-        lifetime.CancelAfter(TimeSpan.FromSeconds(ticket.MaxConnectionSeconds));
         var origin = new Uri(lease.Context.BaseUrl);
         if (origin.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(origin.UserInfo)) throw new InvalidDataException("Invalid log stream origin.");
         var address = new UriBuilder(origin) { Scheme = origin.Scheme == "https" ? "wss" : "ws", Path = "/api/v2/admin/logs/ws", Query = "stream=" + stream + "&" + query.ToQuery(stream).TrimStart('?'), Fragment = "" }.Uri;
@@ -36,12 +67,17 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
             {
                 var text = await socket.ReceiveAsync(lifetime.Token).ConfigureAwait(false);
                 lease.ThrowIfRetired();
-                if (text == null) return;
+                if (text == null) return expiration.IsCancellationRequested;
                 var frame = LogsSocketFrame.Parse(text, stream);
                 if (frame == null) continue;
                 lease.ThrowIfRetired();
                 receive(frame);
             }
+        }
+        catch (Exception error) when (expiration.IsCancellationRequested && !ct.IsCancellationRequested && lease.IsCurrent && (error is OperationCanceledException or WebSocketException))
+        {
+            // The ticket's bounded connection lifetime is a routine renewal, not a disconnect.
+            return true;
         }
         finally { lease.ThrowIfRetired(); }
     }

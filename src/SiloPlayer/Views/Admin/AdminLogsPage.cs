@@ -110,12 +110,23 @@ public sealed partial class AdminLogsPage : Page
     private void SelectTab(string tab) { if (_tab == tab) return; _tab = tab; FilterChanged(); }
     private void Open()
     {
-        Close(); SyncInputs(); _controller = new(_api, _authority, _stream); _controller.Changed += QueueRender; _ = _controller.OpenAsync(_tab, _query, false);
+        Close(); SyncInputs(); _controller = new(_api, _authority, _stream); _controller.Changed += QueueRender; _authority.AvailabilityChanged += OnAvailabilityChanged; _ = _controller.OpenAsync(_tab, _query, false);
+    }
+    private void OnAvailabilityChanged()
+    {
+        var controller = _controller;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsLoaded || controller == null || !ReferenceEquals(controller, _controller) || controller.State.Owner is { IsCurrent: true }) return;
+            Render(controller.State);
+            if (_authority.IsAvailable) _ = controller.OpenAsync(_tab, _query, false);
+        });
     }
     internal void SuspendMonitor() => Close();
 
     private void Close()
     {
+        _authority.AvailabilityChanged -= OnAvailabilityChanged;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Dispose(); _controller = null; }
         _sheet.Close(); _results.Children.Clear(); _summary.Children.Clear(); _connection.Text = ""; _connectionError.Text = ""; _history.Children.Clear(); _sessionChip.Text = "";
     }

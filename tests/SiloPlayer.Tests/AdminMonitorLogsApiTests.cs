@@ -106,6 +106,48 @@ public sealed class AdminMonitorLogsApiTests
     }
 
     [Fact]
+    public async Task EffectiveSettingsProjectsLoggingScalarsWithoutParsingUnrelatedValuesAsStrings()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) =>
+        {
+            var response = AdminMonitorKit.Json("""{"server.log_level":"info","opslog.retention_days":30,"diagnostics.uploads_enabled":true,"unrelated.number":42,"unrelated.boolean":false,"unrelated.null":null,"unrelated.object":{"nested":true},"unrelated.array":[1]}""");
+            response.Headers.ETag = new("\"settings\"");
+            return Task.FromResult(response);
+        };
+        var settings = await new AdminMonitorApi(kit.Client).LoggingGetSettingsAsync(lease);
+        Assert.Equal("\"settings\"", settings.ETag);
+        Assert.Equal(3, settings.Values.Count);
+        Assert.Equal("info", settings.Values["server.log_level"]);
+        Assert.Equal("30", settings.Values["opslog.retention_days"]);
+        Assert.Equal("true", settings.Values["diagnostics.uploads_enabled"]);
+    }
+
+    [Fact]
+    public async Task LoggingSaveProjectsMixedScalarsAndRetainsRestartMetadata()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) =>
+        {
+            var response = AdminMonitorKit.Json("""{"values":{"server.log_level":"debug","opslog.retention_days":30,"diagnostics.uploads_enabled":false,"unrelated.number":42,"unrelated.null":null},"restart_required":true,"restart_required_keys":["server.log_level"]}""");
+            response.Headers.ETag = new("\"ack\"");
+            return Task.FromResult(response);
+        };
+        var result = await new AdminMonitorApi(kit.Client).LoggingSaveAsync(lease,
+            new(new Dictionary<string, string> { ["server.log_level"] = "debug" }, "\"original\"", new Dictionary<string, long>()));
+        Assert.Equal("\"ack\"", result.ETag);
+        Assert.Equal(2, result.Body.Values.Count);
+        Assert.Equal("debug", result.Body.Values["server.log_level"]);
+        Assert.Equal("30", result.Body.Values["opslog.retention_days"]);
+        Assert.True(result.Body.RestartRequired);
+        Assert.Equal(["server.log_level"], result.Body.RestartRequiredKeys);
+    }
+
+    [Fact]
     public async Task SettingsConflictDoesNotReplayAndPreservesServerValidator()
     {
         using var kit = AdminMonitorKit.Create();

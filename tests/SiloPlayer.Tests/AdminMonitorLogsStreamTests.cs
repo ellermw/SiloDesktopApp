@@ -82,7 +82,7 @@ public sealed class AdminMonitorLogsStreamTests
     }
 
     [Fact]
-    public async Task DisconnectRequiresManualReconnectAndFilterChangesImmediatelyHideOldRows()
+    public async Task RepeatedDisconnectFailuresRequireManualReconnectAndFilterChangesImmediatelyHideOldRows()
     {
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
@@ -90,7 +90,11 @@ public sealed class AdminMonitorLogsStreamTests
         var sockets = new List<LogsSyntheticSocket>();
         var created = new TaskCompletionSource<LogsSyntheticSocket>(TaskCreationOptions.RunContinuationsAsynchronously);
         var api = new AdminMonitorApi(kit.Client);
-        using var controller = new LogsPageController(api, authority, new LogsStreamClient(api, () => { var socket = new LogsSyntheticSocket(); sockets.Add(socket); created.TrySetResult(socket); return socket; }));
+        using var controller = new LogsPageController(api, authority, new LogsStreamClient(api, () =>
+        {
+            var socket = new LogsSyntheticSocket { ConnectFailure = sockets.Count == 0 ? null : new System.Net.WebSockets.WebSocketException() };
+            sockets.Add(socket); created.TrySetResult(socket); return socket;
+        }));
         var opened = controller.OpenAsync("app", new(), debounce: false);
         await (await created.Task.WaitAsync(TimeSpan.FromSeconds(5))).Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await sockets[0].Frames.Writer.WriteAsync("""{"type":"snapshot","stream":"app","entries":[{"id":1,"timestamp":"2026-11-14T12:00:00Z","level":"info","component":"scanner","message":"First"}]}""");
@@ -99,7 +103,9 @@ public sealed class AdminMonitorLogsStreamTests
         await sockets[0].Frames.Writer.WriteAsync(null);
         await opened.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("disconnected", controller.State.Connection);
-        Assert.Single(sockets);
+        Assert.Equal(4, sockets.Count);
+        Assert.Equal(4, kit.Http.Requests.Count);
+        Assert.All(sockets, socket => Assert.True(socket.Aborted));
         var changed = controller.SelectAsync("app", new() { Message = "new" });
         Assert.Empty(controller.State.AppRows);
         Assert.Equal("connecting", controller.State.Connection);
@@ -107,7 +113,69 @@ public sealed class AdminMonitorLogsStreamTests
         await changed;
         Assert.Empty(controller.State.AppRows);
         Assert.Equal("disconnected", controller.State.Connection);
-        Assert.Single(sockets);
+        Assert.Equal(4, sockets.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CleanCloseOrTicketLifetimeRenewsUnderTheSameLiveSelection(bool lifetimeExpired)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"ticket":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","protocol":"silo.admin-logs.v2","expires_in":30,"max_connection_seconds":300}"""));
+        var sockets = Channel.CreateUnbounded<LogsSyntheticSocket>();
+        var time = new DashboardManualTime();
+        var api = new AdminMonitorApi(kit.Client);
+        using var controller = new LogsPageController(api, authority, new LogsStreamClient(api, () =>
+        {
+            var socket = new LogsSyntheticSocket(); sockets.Writer.TryWrite(socket); return socket;
+        }, lifetimeExpired ? time : TimeProvider.System));
+        var opened = controller.OpenAsync("app", new() { Message = "keep filter" }, false);
+        var first = await sockets.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Frames.Writer.WriteAsync("""{"type":"snapshot","stream":"app","entries":[{"id":1,"timestamp":"2026-11-14T12:00:00Z","level":"info","component":"scanner","message":"old"}]}""");
+        await WaitFor(controller, () => controller.State.Connection == "live");
+        var owner = controller.State.Owner;
+        var selection = controller.State.Selection;
+        if (lifetimeExpired) time.Advance(TimeSpan.FromSeconds(300));
+        else await first.Frames.Writer.WriteAsync(null);
+        var second = await sockets.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await second.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(first.Aborted);
+        Assert.Same(owner, controller.State.Owner);
+        Assert.Equal(selection, controller.State.Selection);
+        Assert.Equal("live", controller.State.Connection);
+        Assert.Equal(2, kit.Http.Requests.Count);
+        Assert.Contains("q=keep%20filter", second.Address!.Query);
+        await second.Frames.Writer.WriteAsync("""{"type":"snapshot","stream":"app","entries":[{"id":2,"timestamp":"2026-11-14T12:00:01Z","level":"info","component":"scanner","message":"fresh"}]}""");
+        await WaitFor(controller, () => controller.State.AppRows.FirstOrDefault()?.Id == "2");
+        Assert.Single(controller.State.AppRows);
+        kit.SetRole("user");
+        await opened.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(second.Aborted);
+        Assert.Empty(controller.State.AppRows);
+        Assert.Equal(2, kit.Http.Requests.Count);
+        Assert.False(sockets.Reader.TryRead(out _));
+    }
+
+    [Theory]
+    [InlineData(System.Net.HttpStatusCode.Unauthorized)]
+    [InlineData(System.Net.HttpStatusCode.Forbidden)]
+    public async Task TicketAccessFailuresNeverRetryOrRefreshAuthentication(System.Net.HttpStatusCode status)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var refreshes = 0;
+        var sockets = 0;
+        kit.Client.SetTokenRefresher(_ => { refreshes++; return Task.FromResult(true); });
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("{}", status));
+        var stream = new LogsStreamClient(new(kit.Client), () => { sockets++; return new LogsSyntheticSocket(); });
+        await Assert.ThrowsAsync<ApiException>(() => stream.RunAsync(lease, "app", new(), _ => { }));
+        Assert.Single(kit.Http.Requests);
+        Assert.Equal(0, sockets);
+        Assert.Equal(0, refreshes);
     }
 
     private static async Task WaitFor(LogsPageController controller, Func<bool> predicate)
@@ -128,9 +196,10 @@ internal sealed class LogsSyntheticSocket : ILogsSocket
     public Uri? Address { get; private set; }
     public IReadOnlyList<string> Protocols { get; private set; } = [];
     public bool Aborted { get; private set; }
+    public Exception? ConnectFailure { get; init; }
     public Task ConnectAsync(Uri address, IReadOnlyList<string> protocols, CancellationToken ct)
     {
-        Address = address; Protocols = protocols; Connected.TrySetResult(); return Task.CompletedTask;
+        Address = address; Protocols = protocols; Connected.TrySetResult(); return ConnectFailure == null ? Task.CompletedTask : Task.FromException(ConnectFailure);
     }
     public async Task<string?> ReceiveAsync(CancellationToken ct) => await Frames.Reader.ReadAsync(ct);
     public void Abort() => Aborted = true;

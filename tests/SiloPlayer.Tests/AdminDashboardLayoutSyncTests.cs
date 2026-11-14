@@ -237,8 +237,10 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
         Assert.Empty(_server.Saves);
     }
 
-    [Fact]
-    public async Task AnEditMadeBeforeTheServerReadArrivesIsNotOverwritten()
+    [Theory]
+    [InlineData(UsersOnly)]
+    [InlineData(null)]
+    public async Task AnEditMadeBeforeTheServerReadArrivesIsNotOverwrittenAndIsSaved(string? serverJson)
     {
         var read = new TaskCompletionSource<DashboardLayoutRead>();
         _server.OnRead = _ => read.Task;
@@ -247,10 +249,26 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
         var load = sync.LoadAsync();
         sync.RemoveWidget("users");
         Assert.True(sync.ServerSaveBlocked);
-        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", UsersOnly));
+        var resumed = false;
+        sync.Changed += () => { if (!sync.ServerSaveBlocked) resumed = true; };
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", serverJson));
         await load;
         Assert.DoesNotContain(sync.Entries, entry => entry.Id == "users");
         Assert.Contains(sync.Entries, entry => entry.Id == "libraries");
+        Assert.False(sync.ServerSaveBlocked);
+        Assert.True(resumed);
+        Debounce();
+        await sync.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal("\"A\"", save.ETag);
+        Assert.Equal(DashboardLayoutDocument.Serialize(sync.Entries), save.Document);
+
+        sync.RemoveWidget("libraries");
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Equal(2, _server.Saves.Count);
+        Assert.Equal("\"S1\"", _server.Saves[1].ETag);
+        Assert.False(sync.ServerSaveBlocked);
     }
 
     [Fact]

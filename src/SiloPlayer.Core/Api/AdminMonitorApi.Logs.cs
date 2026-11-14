@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
@@ -64,11 +65,10 @@ public sealed partial class AdminMonitorApi
 
     public async Task<LoggingSettingsSnapshot> LoggingGetSettingsAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
     {
-        var response = await client.MonitorLogsSendAsync<Dictionary<string, string>>(lease, HttpMethod.Get, "/api/v2/admin/settings/effective", ct: ct).ConfigureAwait(false);
+        var response = await client.MonitorLogsSendAsync<Dictionary<string, JsonElement>>(lease, HttpMethod.Get, "/api/v2/admin/settings/effective", ct: ct).ConfigureAwait(false);
         lease.ThrowIfRetired();
         LoggingDraft.RequireStrongETag(response.ETag);
-        var projected = response.Body.Where(pair => LoggingDraft.Keys.Contains(pair.Key, StringComparer.Ordinal) || pair.Key == "diagnostics.uploads_enabled").ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        return new(projected, response.ETag!);
+        return new(LoggingProjectSettings(response.Body, includeDiagnostics: true), response.ETag!);
     }
 
     public async Task<LoggingRestartKeys> LoggingGetRestartKeysAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
@@ -83,10 +83,15 @@ public sealed partial class AdminMonitorApi
         lease.ThrowIfRetired();
         LoggingDraft.Validate(intent.Values);
         if (intent.Values.Count == 0) throw new ArgumentException("There are no Logging changes to save.", nameof(intent));
-        var response = await client.MonitorLogsSendAsync<LoggingSettingsResult>(lease, HttpMethod.Put, "/api/v2/admin/settings", new { values = intent.Values }, intent.ETag, ct).ConfigureAwait(false);
+        var response = await client.MonitorLogsSendAsync<LoggingSettingsResponse>(lease, HttpMethod.Put, "/api/v2/admin/settings", new { values = intent.Values }, intent.ETag, ct).ConfigureAwait(false);
         lease.ThrowIfRetired();
         LoggingDraft.RequireStrongETag(response.ETag);
-        return new(response.Body with { Values = response.Body.Values.Where(pair => LoggingDraft.Keys.Contains(pair.Key, StringComparer.Ordinal)).ToDictionary() }, response.ETag);
+        return new(new LoggingSettingsResult
+        {
+            Values = LoggingProjectSettings(response.Body.Values),
+            RestartRequired = response.Body.RestartRequired,
+            RestartRequiredKeys = response.Body.RestartRequiredKeys
+        }, response.ETag);
     }
 
     public async Task<ApiResponse<LoggingSettingValue>> DiagnosticsSetUploadsEnabledAsync(MonitorAuthorityLease lease, bool enabled, string etag, CancellationToken ct = default)
@@ -94,6 +99,26 @@ public sealed partial class AdminMonitorApi
         var response = await client.MonitorLogsSendAsync<LoggingSettingValue>(lease, HttpMethod.Put, "/api/v2/admin/settings/diagnostics.uploads_enabled", new { value = enabled ? "true" : "false" }, etag, ct).ConfigureAwait(false);
         lease.ThrowIfRetired();
         return response;
+    }
+
+    private sealed record LoggingSettingsResponse
+    {
+        public LoggingSettingsResponse() { }
+        public Dictionary<string, JsonElement> Values { get; init; } = [];
+        public bool RestartRequired { get; init; }
+        public string[] RestartRequiredKeys { get; init; } = [];
+    }
+
+    private static Dictionary<string, string> LoggingProjectSettings(Dictionary<string, JsonElement> values, bool includeDiagnostics = false)
+    {
+        var projected = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in values)
+        {
+            if (!LoggingDraft.Keys.Contains(key, StringComparer.Ordinal) && !(includeDiagnostics && key == "diagnostics.uploads_enabled")) continue;
+            if (value.ValueKind == JsonValueKind.String) projected[key] = value.GetString()!;
+            else if (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False) projected[key] = value.GetRawText();
+        }
+        return projected;
     }
 
     private static ApiCollectionPage<T> LogsValidatePage<T>(ApiCollectionPage<T> page, string? cursor, int maxItems)

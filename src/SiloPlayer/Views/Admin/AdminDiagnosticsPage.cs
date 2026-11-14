@@ -83,23 +83,39 @@ public sealed partial class AdminDiagnosticsPage : Page
     private async Task ApplyAsync()
     {
         if (_controller == null) return;
-        try { await _controller.ApplyAsync(new() { UserId = _filters["user"].Text, Platform = Selected(_platform), ReportType = Selected(_type), From = _from.Value, To = _to.Value, ShortId = _filters["short"].Text }); _validation.Visibility = Visibility.Collapsed; }
+        try
+        {
+            var query = new DiagnosticsQuery { UserId = _filters["user"].Text, Platform = Selected(_platform), ReportType = Selected(_type), From = _from.Value, To = _to.Value, ShortId = _filters["short"].Text }.Apply();
+            _initialQuery = query;
+            await _controller.ApplyAsync(query); _validation.Visibility = Visibility.Collapsed;
+        }
         catch (ArgumentException error) { _validation.Text = error.Message; _validation.Foreground = Brush("ErrorBrush"); _validation.Visibility = Visibility.Visible; }
         catch (OperationCanceledException) { }
     }
     private void Open()
     {
-        Close(); SyncFilters(_initialQuery); _controller = new(_api, _authority); _controller.Changed += QueueRender; _ = OpenControllerAsync(_controller);
+        Close(); SyncFilters(_initialQuery); _controller = new(_api, _authority); _controller.Changed += QueueRender; _authority.AvailabilityChanged += OnAvailabilityChanged; _ = OpenControllerAsync(_controller);
     }
     private async Task OpenControllerAsync(DiagnosticsController controller)
     {
         try { await controller.OpenAsync(_initialQuery); }
         catch (ArgumentException error) { if (ReferenceEquals(controller, _controller) && IsLoaded) { _validation.Text = error.Message; _validation.Visibility = Visibility.Visible; await controller.OpenAsync(); } }
     }
+    private void OnAvailabilityChanged()
+    {
+        var controller = _controller;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsLoaded || controller == null || !ReferenceEquals(controller, _controller) || controller.State.Owner is { IsCurrent: true }) return;
+            Render(controller.State);
+            if (_authority.IsAvailable) _ = OpenControllerAsync(controller);
+        });
+    }
     internal void SuspendMonitor() => Close();
 
     private void Close()
     {
+        _authority.AvailabilityChanged -= OnAvailabilityChanged;
         _dialog?.Hide(); _dialog = null; _download?.Cancel(); _download?.Dispose(); _download = null;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Dispose(); _controller = null; }
         _sheet.Close(); _reports.Children.Clear(); _banners.Children.Clear(); _pagination.Children.Clear(); _retention.Text = ""; _syncing = true; _uploads.IsOn = false; _uploads.IsEnabled = false; _syncing = false;

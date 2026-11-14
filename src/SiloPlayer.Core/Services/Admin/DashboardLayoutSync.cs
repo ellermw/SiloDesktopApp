@@ -195,12 +195,21 @@ public sealed class DashboardLayoutSync : IDisposable
             return;
         }
         if (_disposed || !_lease.IsCurrent || read.Value == null) return;
+        bool edited;
         lock (_gate)
         {
             if (_settled) return;
             _settled = true;
             _baseline = read.Value.ETag;
-            if (_edited) return;
+            edited = _edited;
+            if (!_blocked) ServerSaveBlocked = false;
+        }
+        if (edited)
+        {
+            // The first read supplies the validator, not a replacement for session edits.
+            ScheduleSave(Entries);
+            RaiseChanged();
+            return;
         }
         var server = DashboardLayoutDocument.Sanitize(read.Value.Layout);
         if (server != null)
