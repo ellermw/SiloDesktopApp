@@ -228,14 +228,13 @@ public sealed class DiagnosticsController : IDisposable
         try
         {
             await _api.DiagnosticsSetUploadsEnabledAsync(action, enabled, etag).ConfigureAwait(false);
-            Update(action, () => _state = _state with { SettingsRevision = null });
-            var capabilities = await _api.DiagnosticsGetCapabilitiesAsync(action).ConfigureAwait(false);
-            var settings = await _api.LoggingGetSettingsAsync(action).ConfigureAwait(false);
-            Update(action, () => { _statusReadAt = Stopwatch.GetTimestamp(); _state = _state with { Capabilities = capabilities, UploadsEnabled = capabilities.Status != "disabled", SettingsRevision = settings.ETag, ToggleBusy = false, Notice = enabled ? LogsText.T("logs.native.diagnostics.uploadsEnabled") : LogsText.T("logs.native.diagnostics.uploadsDisabled") }; });
         }
-        catch (OperationCanceledException) when (!action.IsCurrent) { }
-        catch (LoggingSettingsConflictException) { Update(action, () => _state = _state with { ToggleBusy = false, SettingsRevision = null, ActionError = LogsText.T("logs.native.diagnostics.toggleConflict") }); }
-        catch (Exception) { Update(action, () => _state = _state with { ToggleBusy = false, ActionError = LogsText.T("logs.native.diagnostics.toggleFailed") }); }
+        catch (OperationCanceledException) when (!action.IsCurrent) { return; }
+        catch (LoggingSettingsConflictException) { Update(action, () => _state = _state with { ToggleBusy = false, SettingsRevision = null, Notice = null, StatusError = LogsText.T("logs.native.diagnostics.toggleConflict"), ActionError = LogsText.T("logs.native.diagnostics.toggleConflict") }); return; }
+        catch (Exception) { Update(action, () => _state = _state with { ToggleBusy = false, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.toggleFailed") }); return; }
+
+        Update(action, () => _state = _state with { SettingsRevision = null, UploadsEnabled = enabled, ToggleBusy = false, Notice = enabled ? LogsText.T("logs.native.diagnostics.uploadsEnabled") : LogsText.T("logs.native.diagnostics.uploadsDisabled") });
+        await LoadStatusAsync(action).ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(MonitorAuthorityLease action, string id)
@@ -253,7 +252,7 @@ public sealed class DiagnosticsController : IDisposable
             if (_lifetime.IsCurrent(action)) await LoadReportsAsync(action).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!action.IsCurrent) { }
-        catch (Exception) { Update(action, () => _state = _state with { Deleting = false, ActionError = LogsText.T("logs.native.diagnostics.deleteFailed") }); }
+        catch (Exception) { Update(action, () => _state = _state with { Deleting = false, Notice = null, ActionError = LogsText.T("logs.native.diagnostics.deleteFailed") }); }
     }
 
     public async Task<bool> DownloadAsync(MonitorAuthorityLease action, DiagnosticsReportSummary report, Stream destination, CancellationToken ct = default)
@@ -263,7 +262,7 @@ public sealed class DiagnosticsController : IDisposable
         {
             if (_disposed || !_lifetime.IsCurrent(action) || _state.Downloading || report.State != "ready") return false;
             limit = Math.Clamp(_state.Capabilities?.MaxBundleBytes ?? 256L * 1024 * 1024, 3, 256L * 1024 * 1024);
-            _state = _state with { Downloading = true, ActionError = null };
+            _state = _state with { Downloading = true, ActionError = null, Notice = null };
         }
         Changed?.Invoke();
         try
@@ -275,7 +274,7 @@ public sealed class DiagnosticsController : IDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested || !action.IsCurrent) { return false; }
         catch (Exception error)
         {
-            Update(action, () => _state = _state with { ActionError = error is ApiException apiError ? apiError.StatusCode switch { 409 => LogsText.T("logs.native.diagnostics.downloadNotReady"), 404 => LogsText.T("logs.native.diagnostics.reportMissing"), 503 => LogsText.T("logs.native.diagnostics.storageUnavailable"), _ => LogsText.T("logs.native.diagnostics.downloadFailed") } : error is InvalidDataException ? error.Message : LogsText.T("logs.native.diagnostics.downloadFailed") });
+            Update(action, () => _state = _state with { Notice = null, ActionError = error is ApiException apiError ? apiError.StatusCode switch { 409 => LogsText.T("logs.native.diagnostics.downloadNotReady"), 404 => LogsText.T("logs.native.diagnostics.reportMissing"), 503 => LogsText.T("logs.native.diagnostics.storageUnavailable"), _ => LogsText.T("logs.native.diagnostics.downloadFailed") } : error is InvalidDataException ? error.Message : LogsText.T("logs.native.diagnostics.downloadFailed") });
             return false;
         }
         finally { Update(action, () => _state = _state with { Downloading = false }); }

@@ -29,6 +29,7 @@ public sealed partial class AdminLogsPage : Page
     private readonly TextBlock _connection = Text("", 14);
     private readonly TextBlock _connectionError = Text("", 12, true);
     private readonly TextBlock _sessionChip = Text("", 12);
+    private readonly Border _sessionChipHost;
     private readonly Button _reconnect;
     private readonly Button _appTab;
     private readonly Button _auditTab;
@@ -52,17 +53,18 @@ public sealed partial class AdminLogsPage : Page
         InitializeComponent();
         _api = api; _authority = authority; _stream = stream; NavigationCacheMode = NavigationCacheMode.Disabled;
         AutomationProperties.SetAutomationId(this, "AdminLogsPage");
-        var status = Stack(3); var streamLabel = Text(T("web.admin.logs.page.streamLabel").ToUpperInvariant(), 12, true); streamLabel.CharacterSpacing = 200;
+        var status = Stack(); var streamLabel = Text(T("web.admin.logs.page.streamLabel").ToUpperInvariant(), 12, true); streamLabel.CharacterSpacing = 200; streamLabel.TextAlignment = TextAlignment.Right; _connection.TextAlignment = TextAlignment.Right; _connectionError.TextAlignment = TextAlignment.Right;
         status.Children.Add(streamLabel); status.Children.Add(_connection); status.Children.Add(_connectionError);
         _reconnect = Button(T("web.admin.logs.page.reconnect"), "LogsReconnect", "GhostButtonStyle"); _reconnect.MinHeight = 28; _reconnect.FontSize = 12;
         _reconnect.Click += (_, _) => { if (_controller != null) _ = _controller.ReconnectAsync(); }; status.Children.Add(_reconnect);
         _body.Children.Add(Header(T("web.admin.logs.page.title"), T("web.admin.logs.page.subtitle"), status));
-        var playback = new LogsWrapPanel(); playback.Children.Add(InputField("playbackSessionId", "playback", 448, true)); playback.Children.Add(_sessionChip);
+        var playback = new LogsWrapPanel(); playback.Children.Add(InputField("playbackSessionId", "playback", 448, true)); _sessionChipHost = new Border { Child = _sessionChip, CornerRadius = new(10), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Brush("AppBackgroundBrush"), Padding = new(8, 4, 8, 4), Visibility = Visibility.Collapsed }; playback.Children.Add(_sessionChipHost);
         _body.Children.Add(Panel(playback)); _body.Children.Add(_summary);
-        var tabs = Inline(3); tabs.Padding = new(3); tabs.CornerRadius = new(6); tabs.Background = Brush("SurfaceBrush"); tabs.HorizontalAlignment = HorizontalAlignment.Left;
+        var tabs = Inline(3); tabs.Padding = new(3); tabs.CornerRadius = new(12); tabs.Background = Brush("SurfaceBrush"); tabs.HorizontalAlignment = HorizontalAlignment.Left;
         _appTab = Button(T("web.admin.logs.tabs.application"), "LogsApplicationTab", "GhostButtonStyle"); _auditTab = Button(T("web.admin.logs.tabs.audit"), "LogsAuditTab", "GhostButtonStyle");
-        foreach (var button in new[] { _appTab, _auditTab }) { button.MinHeight = 30; button.Padding = new(12, 3, 12, 3); tabs.Children.Add(button); }
+        foreach (var button in new[] { _appTab, _auditTab }) { button.MinHeight = 30; button.Padding = new(8, 4, 8, 4); button.CornerRadius = new(10); button.FontWeight = Microsoft.UI.Text.FontWeights.Medium; tabs.Children.Add(button); }
         _appTab.Click += (_, _) => SelectTab("app"); _auditTab.Click += (_, _) => SelectTab("audit");
+        foreach (var tab in new[] { _appTab, _auditTab }) tab.KeyDown += (_, args) => { if (args.Key is Windows.System.VirtualKey.Left or Windows.System.VirtualKey.Right or Windows.System.VirtualKey.Home or Windows.System.VirtualKey.End) { var audit = args.Key is Windows.System.VirtualKey.Right or Windows.System.VirtualKey.End; SelectTab(audit ? "audit" : "app"); (audit ? _auditTab : _appTab).Focus(FocusState.Keyboard); args.Handled = true; } };
         _appFilters.Children.Add(InputField("requestId", "request", 320, true)); _appFilters.Children.Add(InputField("messageContains", "message", 384));
         _level = Select("web.admin.logs.filters.level", new[] { ("", T("web.admin.logs.filters.allLevels")) }.Concat(new[] { "debug", "info", "warn", "error" }.Select(value => (value, T("web.admin.logs.level." + value)))));
         _level.SelectionChanged += (_, _) => FilterChanged(); _appFilters.Children.Add(_level);
@@ -71,7 +73,7 @@ public sealed partial class AdminLogsPage : Page
         _focusedFFmpeg = Button(T("web.admin.logs.ffmpeg.filter"), "LogsFocusedFFmpeg"); _focusedFFmpeg.FontSize = 12; _focusedFFmpeg.Click += (_, _) => ToggleFFmpeg(); _appFilters.Children.Add(_focusedFFmpeg);
         _auditFilters.Children.Add(InputField("requestId", "auditRequest", 320, true)); _auditFilters.Children.Add(InputField("method", "method", 120)); _auditFilters.Children.Add(InputField("clientIp", "ip", 320, true));
         foreach (var (label, key, width) in new[] { ("auditActionPlaceholder", "action", 320), ("auditActorPlaceholder", "actor", 180), ("auditTargetTypePlaceholder", "targetType", 320), ("auditTargetIdPlaceholder", "targetId", 180) }) _auditFilters.Children.Add(InputField(label, key, width));
-        var content = Stack(16); content.Children.Add(Panel(_appFilters, 12)); content.Children.Add(Panel(_auditFilters, 12)); content.Children.Add(_results); var tabbed = Stack(8); tabbed.Children.Add(tabs); tabbed.Children.Add(content); _body.Children.Add(tabbed); _body.Children.Add(_history);
+        var content = Stack(16); content.Children.Add(Panel(_appFilters, 24, 12, true)); content.Children.Add(Panel(_auditFilters, 24, 12, true)); content.Children.Add(_results); var tabbed = Stack(8); tabbed.Children.Add(tabs); tabbed.Children.Add(content); _body.Children.Add(tabbed); _body.Children.Add(_history);
         var scroll = new ScrollViewer { Content = _body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new(0, 0, 0, 24) };
         _body.MaxWidth = 1560; _body.HorizontalAlignment = HorizontalAlignment.Stretch; _root.Children.Add(scroll); _sheet = new(scroll, 672); _root.Children.Add(_sheet); Content = _root;
         Loaded += (_, _) => Open(); Unloaded += (_, _) => Close();
@@ -145,8 +147,8 @@ public sealed partial class AdminLogsPage : Page
         _reconnect.Visibility = !state.History && state.Connection == "disconnected" ? Visibility.Visible : Visibility.Collapsed;
         _appFilters.Visibility = state.Stream == "app" ? Visibility.Visible : Visibility.Collapsed; ((FrameworkElement)_appFilters.Parent).Visibility = _appFilters.Visibility;
         _auditFilters.Visibility = state.Stream == "audit" ? Visibility.Visible : Visibility.Collapsed; ((FrameworkElement)_auditFilters.Parent).Visibility = _auditFilters.Visibility;
-        _appTab.Background = state.Stream == "app" ? Brush("InputBrush") : null; _auditTab.Background = state.Stream == "audit" ? Brush("InputBrush") : null;
-        var session = state.Query.PlaybackSessionId ?? ""; _sessionChip.Text = session.Length == 0 ? "" : T("web.admin.logs.filters.playbackSessionChip", ("id", LogsPresentation.ShortId(session)));
+        foreach (var tab in new[] { _appTab, _auditTab }) { var selected = ReferenceEquals(tab, _appTab) == (state.Stream == "app"); tab.Background = selected ? Brush("SurfaceRaisedBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); tab.Foreground = Brush(selected ? "PrimaryTextBrush" : "SecondaryTextBrush"); tab.BorderBrush = selected ? Brush("BorderBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); tab.BorderThickness = new(1); }
+        var session = state.Query.PlaybackSessionId ?? ""; _sessionChipHost.Visibility = session.Length > 0 ? Visibility.Visible : Visibility.Collapsed; _sessionChip.Text = session.Length == 0 ? "" : T("web.admin.logs.filters.playbackSessionChip", ("id", LogsPresentation.ShortId(session)));
         _focusedFFmpeg.Visibility = _playbackFocus && session.Length > 0 ? Visibility.Visible : Visibility.Collapsed; SetFFmpegButton(_focusedFFmpeg, state.Query.Component == "ffmpeg", "filter");
         if (session.Length > 0) { RenderSummary(state, session); _summary.Visibility = Visibility.Visible; }
         if (state.Loading) { var loading = Text(T("web.admin.logs.loading"), 14, true); loading.Margin = new(0, 32, 0, 32); _results.Children.Add(loading); }
@@ -156,26 +158,18 @@ public sealed partial class AdminLogsPage : Page
     }
     private void RenderSummary(LogsPageSnapshot state, string session)
     {
-        var summary = LogsPlaybackSummary.From(session, state.AppRows, state.AuditRows); var metrics = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        var summary = LogsPlaybackSummary.From(session, state.AppRows, state.AuditRows);
         var values = new List<(string Key, string Value)> { ("playbackSession", LogsPresentation.ShortId(session)), ("applicationLogs", summary.ApplicationCount.ToString()), ("ffmpegLogs", summary.FFmpegCount.ToString()), ("auditLogs", summary.AuditCount.ToString()), ("firstSeen", Date(summary.FirstSeen)), ("nodesSeen", summary.Nodes.Length > 0 ? string.Join(", ", summary.Nodes) : "-") };
         if (summary.LastSeen != null) values.Add(("lastSeen", Date(summary.LastSeen)));
-        foreach (var (key, value) in values) metrics.Children.Add(Metric(T("web.admin.logs.summary." + key), value, key == "playbackSession" || key == "nodesSeen" && summary.Nodes.Length > 0));
-        var layout = new Grid { ColumnSpacing = 12, RowSpacing = 12, Margin = new(0, 0, 0, 16) }; layout.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); layout.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.Children.Add(metrics);
-        var ffmpeg = Button("", "LogsFilterFFmpeg"); SetFFmpegButton(ffmpeg, state.Query.Component == "ffmpeg", "open"); ffmpeg.FontSize = 12; ffmpeg.VerticalAlignment = VerticalAlignment.Top; ffmpeg.Click += (_, _) => ToggleFFmpeg(); Grid.SetColumn(ffmpeg, 1); layout.Children.Add(ffmpeg);
-        void Arrange()
-        {
-            var wide = (XamlRoot?.Size.Width ?? ActualWidth) >= 768; var columns = wide ? 6 : Math.Max(1, (int)(Math.Max(metrics.ActualWidth, 140) / 140));
-            metrics.ColumnDefinitions.Clear(); metrics.RowDefinitions.Clear(); for (var index = 0; index < columns; index++) metrics.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-            for (var index = 0; index < (values.Count + columns - 1) / columns; index++) metrics.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            for (var index = 0; index < metrics.Children.Count; index++) { Grid.SetColumn((FrameworkElement)metrics.Children[index], index % columns); Grid.SetRow((FrameworkElement)metrics.Children[index], index / columns); }
-            Grid.SetColumnSpan(metrics, wide ? 1 : 2); Grid.SetColumn(ffmpeg, wide ? 1 : 0); Grid.SetRow(ffmpeg, wide ? 0 : 1);
-        }
-        layout.SizeChanged += (_, _) => Arrange(); Arrange(); _summary.Children.Add(Panel(layout, 8, 16, true));
+        var ffmpeg = Button("", "LogsFilterFFmpeg"); SetFFmpegButton(ffmpeg, state.Query.Component == "ffmpeg", "open"); ffmpeg.FontSize = 12; ffmpeg.VerticalAlignment = VerticalAlignment.Top; ffmpeg.Click += (_, _) => ToggleFFmpeg();
+        var layout = new LogsSummaryLayout(ffmpeg) { Margin = new(0, 0, 0, 16) };
+        foreach (var (key, value) in values) { var metric = Metric(T("web.admin.logs.summary." + key), value, key == "playbackSession" || key == "nodesSeen" && summary.Nodes.Length > 0); AutomationProperties.SetAutomationId(metric, "LogsSummary_" + key); layout.Children.Add(metric); }
+        _summary.Children.Add(Panel(layout, 8, 16, true));
     }
     private void ToggleFFmpeg() => _component.Text = _component.Text == "ffmpeg" ? "" : "ffmpeg";
     private static void SetFFmpegButton(Button button, bool selected, string alternate)
     {
-        var label = T("web.admin.logs.ffmpeg." + (selected ? "showingOnly" : alternate)); button.Content = label; AutomationProperties.SetName(button, label);
+        var label = T("web.admin.logs.ffmpeg." + (selected ? "showingOnly" : alternate)); var caption = Text(label, 12); caption.FontWeight = Microsoft.UI.Text.FontWeights.Medium; button.Content = caption; button.Padding = new(12, 8, 12, 8); button.MinHeight = alternate == "open" ? 34 : 36; AutomationProperties.SetName(button, label);
         button.Foreground = Brush(selected ? "AccentBrush" : "SecondaryTextBrush"); button.BorderBrush = Brush(selected ? "AccentBrush" : "BorderBrush"); button.Background = selected ? new Microsoft.UI.Xaml.Media.SolidColorBrush(((Microsoft.UI.Xaml.Media.SolidColorBrush)Brush("AccentBrush")).Color) { Opacity = 0.1 } : Brush("AppBackgroundBrush");
     }
     private LogsNativeTable AppTable(LogsPageSnapshot state)
@@ -193,11 +187,11 @@ public sealed partial class AdminLogsPage : Page
         var table = new LogsNativeTable(new[] { "time", "actionChanges", "target", "method", "path", "status", "client", "actor", "session", "playback", "request" }.Select(key => T("web.admin.logs.columns." + key)).ToArray(), [185, 280, 150, 80, 300, 75, 150, 150, 180, 180, 180]);
         foreach (var row in state.AuditRows)
         {
-            var changes = Stack(4); changes.Children.Add(Text(row.Action ?? T("web.admin.logs.audit.httpRequest")));
+            var changes = Stack(4); changes.MinWidth = 240; changes.MaxWidth = 520; changes.Children.Add(Text(row.Action ?? T("web.admin.logs.audit.httpRequest")));
             foreach (var change in row.Changes) changes.Children.Add(Text(T("web.admin.logs.audit.change", ("field", change.Field.Replace('_', ' ')), ("summary", LogsPresentation.ChangeSummary(change, row.TargetType))), 12, true));
             var target = row.TargetType == null ? "-" : T("web.admin.logs.audit.target", ("type", row.TargetType == "api_key" ? T("web.admin.logs.audit.targetApiKey") : row.TargetType.Replace('_', ' ')), ("id", row.TargetId));
             var actor = row.ImpersonatorUserId != null ? T("web.admin.logs.audit.impersonatedActor", ("impersonator", row.ImpersonatorUserId), ("user", row.UserId ?? "-")) : row.UserId == null ? "-" : T("web.admin.logs.audit.actor", ("user", row.UserId));
-            table.Add([Cell(Date(row.Timestamp)), changes, Cell(target), Cell(row.Method), Cell(row.Path, mono: true), Cell(row.StatusCode.ToString()), Cell(LogsPresentation.ClientIp(row.ClientIp), mono: true), Text(actor), Cell(row.SessionId ?? "-", mono: true), Cell(row.PlaybackSessionId ?? "-", mono: true), Cell(row.RequestId ?? "-", mono: true)]);
+            table.Add([Cell(Date(row.Timestamp)), changes, Cell(target), Cell(row.Method), Cell(row.Path, mono: true, max: 420), Cell(row.StatusCode.ToString()), Cell(LogsPresentation.ClientIp(row.ClientIp), mono: true), Text(actor), Cell(row.SessionId ?? "-", mono: true), Cell(row.PlaybackSessionId ?? "-", mono: true), Cell(row.RequestId ?? "-", mono: true)]);
         }
         return table;
     }
@@ -212,14 +206,14 @@ public sealed partial class AdminLogsPage : Page
     private void ShowEntry(LogsOperationalEntry entry, long selection)
     {
         var state = _controller?.State; if (state?.Owner?.IsCurrent != true || state.Selection != selection) return;
-        _detailSelection = selection; var content = Stack(16); var fields = new LogsWrapPanel { Spacing = 12 };
-        foreach (var (key, value) in new[] { ("requestId", entry.RequestId ?? "-"), ("node", entry.NodeId ?? "-"), ("method", LogsPresentation.Attribute(entry, "method")), ("status", LogsPresentation.Attribute(entry, "status")), ("duration", Duration(entry)), ("clientIp", entry.ClientIp ?? LogsPresentation.Attribute(entry, "client_ip")), ("userId", entry.UserId ?? "-"), ("sessionId", entry.SessionId ?? LogsPresentation.Attribute(entry, "session_id")), ("playbackSession", entry.PlaybackSessionId ?? LogsPresentation.Attribute(entry, "playback_session_id")) }) { var metric = Metric(T("web.admin.logs.detail." + key), value, key is "requestId" or "sessionId" or "playbackSession" or "clientIp"); metric.Width = 290; fields.Children.Add(metric); }
+        _detailSelection = selection; var content = Stack(16); var fields = new LogsMetricGrid(2, 2) { ColumnSpacing = 12, RowSpacing = 12 };
+        foreach (var (key, value) in new[] { ("requestId", entry.RequestId ?? "-"), ("node", entry.NodeId ?? "-"), ("method", LogsPresentation.Attribute(entry, "method")), ("status", LogsPresentation.Attribute(entry, "status")), ("duration", Duration(entry)), ("clientIp", entry.ClientIp ?? LogsPresentation.Attribute(entry, "client_ip")), ("userId", entry.UserId ?? "-"), ("sessionId", entry.SessionId ?? LogsPresentation.Attribute(entry, "session_id")), ("playbackSession", entry.PlaybackSessionId ?? LogsPresentation.Attribute(entry, "playback_session_id")) }) { var metric = Metric(T("web.admin.logs.detail." + key), value, key is "requestId" or "sessionId" or "playbackSession" or "clientIp"); fields.Add(metric); }
         content.Children.Add(fields); var session = entry.PlaybackSessionId ?? LogsPresentation.Attribute(entry, "playback_session_id");
-        if (session != "-") { var related = Button(T("web.admin.logs.detail.viewPlaybackSessionLogs"), "LogsRelatedPlayback", "GhostButtonStyle"); related.Click += (_, _) => { _sheet.Close(); _inputs["playback"].Text = session; }; content.Children.Add(related); }
-        content.Children.Add(Metric(T("web.admin.logs.detail.path"), LogsPresentation.Attribute(entry, "path"), true)); content.Children.Add(Text(T("web.admin.logs.detail.attributes")));
-        var json = Text(JsonSerializer.Serialize(entry.Attrs ?? [], new JsonSerializerOptions { WriteIndented = true }), 12, mono: true); json.IsTextSelectionEnabled = true; content.Children.Add(Panel(json, 6));
+        if (session != "-") { var related = Button(T("web.admin.logs.detail.viewPlaybackSessionLogs"), "LogsRelatedPlayback", "GhostButtonStyle"); related.Padding = new(0); related.MinHeight = 0; related.FontWeight = Microsoft.UI.Text.FontWeights.Medium; related.Foreground = Brush("AccentBrush"); related.HorizontalAlignment = HorizontalAlignment.Left; related.Click += (_, _) => { _sheet.Close(); _inputs["playback"].Text = session; }; content.Children.Add(related); }
+        var path = Stack(4); var pathLabel = Text(T("web.admin.logs.detail.path")); pathLabel.FontWeight = Microsoft.UI.Text.FontWeights.Medium; path.Children.Add(pathLabel); var pathValue = Text(LogsPresentation.Attribute(entry, "path"), 12, mono: true); path.Children.Add(new Border { Child = pathValue, Background = Brush("MutedBrush"), CornerRadius = new(10), Padding = new(12, 8, 12, 8) }); content.Children.Add(path); var attributesLabel = Text(T("web.admin.logs.detail.attributes")); attributesLabel.FontWeight = Microsoft.UI.Text.FontWeights.Medium; content.Children.Add(attributesLabel);
+        var json = Text(JsonSerializer.Serialize(entry.Attrs ?? [], new JsonSerializerOptions { WriteIndented = true }), 12, mono: true); json.IsTextSelectionEnabled = true; json.LineHeight = 20; content.Children.Add(new Border { Background = Brush("SurfaceRaisedBrush"), CornerRadius = new(10), Padding = new(12), Child = new ScrollViewer { Content = json, MaxHeight = 420, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
         _sheet.Show(entry.Message, entry.Component + " · " + entry.Level.ToUpperInvariant() + " · " + Date(entry.Timestamp), content);
     }
     private static string Duration(LogsOperationalEntry entry) { var value = LogsPresentation.Attribute(entry, "duration_ms"); return value == "-" ? value : T("web.admin.logs.durationMs", ("value", value)); }
-    internal static string Date(DateTimeOffset? value) => value == null ? "—" : SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(value.Value);
+    internal static string Date(DateTimeOffset? value) => value == null ? "—" : $"{SiloPlayer.Helpers.DateTimeDisplay.FormatDate(value.Value)}, {SiloPlayer.Helpers.DateTimeDisplay.FormatTime(value.Value, seconds: true)}";
 }

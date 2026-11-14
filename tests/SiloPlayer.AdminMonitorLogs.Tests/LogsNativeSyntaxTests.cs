@@ -12,6 +12,7 @@ public sealed class LogsNativeSyntaxTests
     [InlineData("src/SiloPlayer/Views/Admin/AdminLoggingSettingsPage.cs")]
     [InlineData("src/SiloPlayer/Views/Admin/LogsNativeUi.cs")]
     [InlineData("tests/SiloPlayer.NativeRegressionTests/AdminMonitorLogsNativeFixture.cs")]
+    [InlineData("tests/SiloPlayer.NativeRegressionTests/AdminMonitorLogsStateCoverage.cs")]
     public void NativeSourceParsesWithoutBuildingOrLaunchingThePlayer(string relativePath)
     {
         var root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(SourcePath())!, "../.."));

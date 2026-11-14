@@ -26,6 +26,15 @@ public sealed class AdminMonitorLogsStateTests
     }
 
     [Fact]
+    public void SnapshotWithEmptyComponentStillPublishesAllRows()
+    {
+        var frame = LogsSocketFrame.Parse("""{"type":"snapshot","stream":"app","entries":[{"id":41,"timestamp":"2026-11-14T12:00:00Z","level":"info","component":"ffmpeg","message":"Started"},{"id":44,"timestamp":"2026-11-14T12:00:03Z","level":"mystery","component":"","message":"Missing optional presentation fields"}]}""", "app");
+        Assert.NotNull(frame);
+        Assert.Equal(["41", "44"], frame.Entries.Select(row => row.Id));
+        Assert.Equal("", frame.Entries[1].Component);
+    }
+
+    [Fact]
     public void FramesRespectStreamAndRejectLossyBridgeIdentifiers()
     {
         Assert.Null(LogsSocketFrame.Parse("""{"type":"append","stream":"audit","entry":{"id":1}}""", "app"));

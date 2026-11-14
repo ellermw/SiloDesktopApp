@@ -15,6 +15,7 @@
     <Reference Include="Microsoft.CodeAnalysis" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.dll" />
     <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.CSharp.dll" />
     <Compile Include="../SiloPlayer.Tests/AdminMonitorTestKit.cs" Link="AdminMonitorTestKit.cs" />
+    <Compile Include="../SiloPlayer.Tests/AdminDashboardTestSupport.cs" Link="AdminDashboardTestSupport.cs" />
     <Compile Include="../SiloPlayer.Tests/AdminMonitorLogs*.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../SiloPlayer.Tests/AdminMonitorLogging*.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../SiloPlayer.Tests/AdminMonitorDiagnostics*.cs" Link="%(Filename)%(Extension)" />

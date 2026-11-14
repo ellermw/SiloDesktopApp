@@ -82,7 +82,7 @@ public sealed record LogsSocketFrame
                 if (stream == "app")
                 {
                     var row = entry.Deserialize<LogsOperationalEntry>(Options);
-                    if (row == null || string.IsNullOrEmpty(row.Id) || row.Timestamp == default || string.IsNullOrEmpty(row.Level) || string.IsNullOrEmpty(row.Component)) return null;
+                    if (row == null || string.IsNullOrEmpty(row.Id) || row.Timestamp == default || string.IsNullOrEmpty(row.Level)) return null;
                     app.Add(row);
                 }
                 else

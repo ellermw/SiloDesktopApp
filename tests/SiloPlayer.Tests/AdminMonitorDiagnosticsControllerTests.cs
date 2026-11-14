@@ -65,6 +65,40 @@ public sealed class AdminMonitorDiagnosticsControllerTests
         Assert.True(controller.State.CanToggle);
     }
 
+    [Theory]
+    [InlineData(404)]
+    [InlineData(409)]
+    [InlineData(503)]
+    public async Task FailedDownloadCannotRestoreAnEarlierUploadsNotice(int status)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (request, _) => Task.FromResult(request.Method == HttpMethod.Put
+            ? AdminMonitorKit.Json("{\"value\":\"false\"}") : Reply(request.RequestUri!.AbsolutePath));
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        using var action = controller.CaptureAction();
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.NotNull(controller.State.Notice);
+        await controller.SelectAsync("1");
+        var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        kit.Http.Respond = (request, _) => request.RequestUri!.AbsolutePath.EndsWith("/download")
+            ? pending.Task : Task.FromResult(Reply(request.RequestUri.AbsolutePath));
+        using var destination = new MemoryStream();
+        var download = controller.DownloadAsync(action, new() { Id = "1", State = "ready" }, destination);
+        Assert.True(controller.State.Downloading);
+        Assert.Null(controller.State.Notice);
+        pending.SetResult(AdminMonitorKit.Json("{}", (HttpStatusCode)status));
+        Assert.False(await download);
+        Assert.NotNull(controller.State.ActionError);
+        Assert.Null(controller.State.Notice);
+        controller.CloseDetail();
+        Assert.Null(controller.State.ActionError);
+        Assert.Null(controller.State.Notice);
+        await controller.SelectAsync("1");
+        Assert.Null(controller.State.Notice);
+    }
+
     [Fact]
     public async Task ManualRetryAfterStaleCursorStartsAtTheFirstPageWithoutReplayingActions()
     {
@@ -174,6 +208,100 @@ public sealed class AdminMonitorDiagnosticsControllerTests
         Assert.False(controller.State.ToggleBusy);
         Assert.Null(controller.State.ActionError);
         Assert.Equal("\"one\"", controller.State.SettingsRevision);
+    }
+
+    [Fact]
+    public async Task UploadsConflictPersistsUntilRefreshAndRecoversWithoutReplayingWrite()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var writes = 0;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Put)
+            {
+                writes++;
+                return Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.PreconditionFailed));
+            }
+            var path = request.RequestUri!.AbsolutePath;
+            var response = Reply(path, writes > 0 ? "disabled" : "available");
+            if (writes > 0 && path.EndsWith("/effective")) response.Headers.ETag = new("\"two\"");
+            return Task.FromResult(response);
+        };
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        using var action = controller.CaptureAction();
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.False(controller.State.ToggleBusy);
+        Assert.Null(controller.State.SettingsRevision);
+        Assert.Null(controller.State.Notice);
+        Assert.False(controller.State.CanToggle);
+        Assert.Equal(LogsText.T("logs.native.diagnostics.toggleConflict"), controller.State.StatusError);
+
+        controller.CloseDetail();
+        Assert.Null(controller.State.ActionError);
+        Assert.NotNull(controller.State.StatusError);
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.Equal(1, writes);
+
+        await controller.RefreshAsync();
+        Assert.Null(controller.State.StatusError);
+        Assert.Equal("\"two\"", controller.State.SettingsRevision);
+        Assert.False(controller.State.UploadsEnabled);
+        Assert.True(controller.State.CanToggle);
+        Assert.Equal(1, writes);
+    }
+
+    [Theory]
+    [InlineData("/capabilities", false)]
+    [InlineData("/capabilities", true)]
+    [InlineData("/effective", false)]
+    [InlineData("/effective", true)]
+    public async Task SuccessfulToggleWithFailedStatusRefreshOffersRetryWithoutReplayingWrite(string failedPath, bool timeout)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var saved = false;
+        var failRefresh = true;
+        var writes = 0;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Put)
+            {
+                saved = true;
+                writes++;
+                return Task.FromResult(AdminMonitorKit.Json("{\"value\":\"false\"}"));
+            }
+            var path = request.RequestUri!.AbsolutePath;
+            if (saved && failRefresh && path.EndsWith(failedPath))
+                return timeout
+                    ? Task.FromException<HttpResponseMessage>(new TaskCanceledException("timeout", new TimeoutException()))
+                    : Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.InternalServerError));
+            var response = Reply(path, saved ? "disabled" : "available");
+            if (saved && path.EndsWith("/effective")) response.Headers.ETag = new("\"two\"");
+            return Task.FromResult(response);
+        };
+        using var controller = new DiagnosticsController(new(kit.Client), authority);
+        await controller.OpenAsync();
+        using var action = controller.CaptureAction();
+        await controller.SetUploadsEnabledAsync(action, false);
+        Assert.True(saved);
+        Assert.False(controller.State.UploadsEnabled);
+        Assert.False(controller.State.ToggleBusy);
+        Assert.False(controller.State.StatusLoading);
+        Assert.False(controller.State.CanToggle);
+        Assert.Null(controller.State.ActionError);
+        Assert.NotNull(controller.State.Notice);
+        Assert.NotNull(controller.State.StatusError);
+
+        failRefresh = false;
+        await controller.RefreshAsync();
+        Assert.Null(controller.State.StatusError);
+        Assert.Null(controller.State.ActionError);
+        Assert.False(controller.State.UploadsEnabled);
+        Assert.Equal("\"two\"", controller.State.SettingsRevision);
+        Assert.True(controller.State.CanToggle);
+        Assert.Equal(1, writes);
     }
 
     [Fact]
