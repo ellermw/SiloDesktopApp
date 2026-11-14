@@ -107,6 +107,10 @@ public sealed partial class AdminShellPage : Page
     }
 
     /// <summary>Back within admin pages first (Alt+Left, mouse back, gamepad B).</summary>
+    internal Grid MonitorOverlayRoot => _root;
+    private AdminLoggingSettingsPage? _loggingHealthSource;
+    private bool _loggingRestartObserved;
+
     public bool RequiresLeaveConfirmation => _frame.Content is AdminLoggingSettingsPage logging && logging.SettingsHealth.DirtyCount > 0;
 
     public Task<bool> CanLeaveAsync() => _frame.Content is IAdminLoggingNavigationGuard guard ? guard.CanLeaveAsync() : Task.FromResult(true);
@@ -170,6 +174,7 @@ public sealed partial class AdminShellPage : Page
 
     private void Retire()
     {
+        DetachLoggingHealth();
         _restartDialog?.Hide();
         _restartDialog = null;
         _restartPending = false;
@@ -255,6 +260,8 @@ public sealed partial class AdminShellPage : Page
     {
         var route = (e.Parameter as AdminRouteRequest)?.Route ?? AdminRoute.Dashboard;
         AttachRestartBanner();
+        DetachLoggingHealth();
+        if (_frame.Content is AdminLoggingSettingsPage logging) { _loggingHealthSource = logging; logging.SettingsHealthChanged += OnLoggingHealthChanged; }
         _route = route;
         _topics.Arrive(AdminNavigation.TopicOf(route));
         _narrowTitle.Text = AdminNavigation.HeaderTitle(route);
@@ -262,6 +269,19 @@ public sealed partial class AdminShellPage : Page
         RebuildSidebars();
         RouteChanged?.Invoke(route);
         if (_lease != null) _ = LoadServerStatusAsync(_lease, force: false);
+    }
+
+    private void DetachLoggingHealth()
+    {
+        if (_loggingHealthSource != null) _loggingHealthSource.SettingsHealthChanged -= OnLoggingHealthChanged;
+        _loggingHealthSource = null; _loggingRestartObserved = false;
+    }
+    private void OnLoggingHealthChanged(LoggingSettingsHealth health)
+    {
+        if (!_active || _lease?.IsCurrent != true || !ReferenceEquals(_frame.Content, _loggingHealthSource)) return;
+        var newlyRequired = health.RestartRequired && !_loggingRestartObserved;
+        _loggingRestartObserved = health.RestartRequired;
+        if (newlyRequired) _ = LoadServerStatusAsync(_lease, force: true);
     }
 
     // ── Data ─────────────────────────────────────────────────

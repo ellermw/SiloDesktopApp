@@ -27,17 +27,21 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
     private readonly AdminMonitorAuthority _authority;
     private readonly StackPanel _body = Stack(20);
     private readonly StackPanel _alerts = Stack(8);
+    private readonly StackPanel _loading = Stack(24);
+    private readonly FrameworkElement _header;
     private readonly StackPanel _fields = Stack(20);
     private readonly StackPanel _serverAdvanced = Stack();
     private readonly StackPanel _retentionAdvanced = Stack();
     private readonly Dictionary<string, Control> _controls = new();
     private readonly Dictionary<string, FrameworkElement> _dots = new();
     private readonly Dictionary<string, FrameworkElement> _restarts = new();
-    private readonly List<(string[] Keys, TextBlock Title, TextBlock Description, string? Original)> _groups = [];
+    private readonly List<(string[] Keys, TextBlock Title, TextBlock Description, string? Original, Border DirtyDot)> _groups = [];
     private readonly Border _saveBar;
+    private readonly Border _saveScrim;
     private readonly TextBlock _saveCount = Text("", 13);
     private readonly Button _save;
     private readonly Button _discard;
+    private readonly LogsActionFeedback _feedback;
     private readonly Border _spacer = new() { Height = 112 };
     private readonly Button _serverDisclosure;
     private readonly Button _retentionDisclosure;
@@ -56,9 +60,15 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
     public AdminLoggingSettingsPage(AdminMonitorApi api, AdminMonitorAuthority authority)
     {
         InitializeComponent();
+        _feedback = new(this);
         _api = api; _authority = authority; NavigationCacheMode = NavigationCacheMode.Disabled; AutomationProperties.SetAutomationId(this, "AdminLoggingSettingsPage");
         _body.MaxWidth = 1120; _body.HorizontalAlignment = HorizontalAlignment.Left;
-        _body.Children.Add(Header(L("title"), T("web.admin.settings.search.logging.description"))); _body.Children.Add(_alerts); _body.Children.Add(_fields);
+        _header = Header(L("title"), T("web.admin.settings.search.logging.description"));
+        _loading.Visibility = Visibility.Collapsed; AutomationProperties.SetName(_loading, T("web.admin.settings.fields.loadingSettings")); AutomationProperties.SetLiveSetting(_loading, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        Border Skeleton(double height, double width = double.NaN) => new() { Height = height, Width = width, Background = Tint("SecondaryTextBrush", 0.12), CornerRadius = new(10), HorizontalAlignment = double.IsNaN(width) ? HorizontalAlignment.Stretch : HorizontalAlignment.Left };
+        _loading.Children.Add(Skeleton(32, 192));
+        foreach (var rows in new[] { 2, 3 }) { var group = Stack(16); for (var row = 0; row < rows; row++) group.Children.Add(Skeleton(40)); _loading.Children.Add(group); }
+        _body.Children.Add(_loading); _body.Children.Add(_header); _body.Children.Add(_alerts); _body.Children.Add(_fields);
         var server = Stack(); server.Children.Add(Field("server.log_level", L("server.level.label"), L("server.level.description"), options: new[] { "debug", "info", "warn", "error" }.Select(value => (value, L("server.level." + value)))));
         _serverDisclosure = Disclosure("server", 1); server.Children.Add(_serverDisclosure);
         _serverAdvanced.Children.Add(Field("server.log_quiet", L("server.quiet.label"), L("server.quiet.description"), hint: "metadata, scanner")); server.Children.Add(AdvancedRail(_serverAdvanced));
@@ -71,15 +81,19 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         _fields.Children.Add(Group(L("retention.group"), L("retention.description"), ["opslog.retention_days", "opslog.max_size_mb", "opslog.max_rows", "policy.decision_log_retention_days", "policy.decision_log_verbosity"], retention));
         _body.Children.Add(_spacer);
         var root = new Grid(); var scroll = new ScrollViewer { Content = _body, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }; scroll.SizeChanged += (_, args) => _body.Width = Math.Min(1120, args.NewSize.Width); root.Children.Add(scroll);
-        var bar = Inline(16); bar.Children.Add(_saveCount); _discard = Button(T("web.shell.unsavedChanges.discard"), "LoggingDiscard", "GhostButtonStyle"); _discard.CornerRadius = new(999); _discard.MinHeight = 32; _discard.Click += (_, _) => _controller?.Discard(); bar.Children.Add(_discard);
-        _save = Button(T("common.save"), "LoggingSave"); _save.CornerRadius = new(999); _save.MinHeight = 32; _save.Background = Violet; _save.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 21, 21, 26)); _save.Click += async (_, _) => await SaveAsync(); bar.Children.Add(_save);
-        _saveBar = Panel(bar, 999, 8, true); _saveBar.Padding = new(20, 8, 8, 8); _saveBar.HorizontalAlignment = HorizontalAlignment.Center; _saveBar.VerticalAlignment = VerticalAlignment.Bottom; _saveBar.Margin = new(0, 0, 0, 24); _saveBar.Visibility = Visibility.Collapsed; AutomationProperties.SetName(_saveBar, T("web.shell.saveBar.regionLabel")); root.Children.Add(_saveBar); Content = root;
+        var bar = new Grid { ColumnSpacing = 16 }; bar.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); bar.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); _saveCount.FontWeight = FontWeights.Medium; _saveCount.TextWrapping = TextWrapping.NoWrap; _saveCount.TextTrimming = TextTrimming.CharacterEllipsis; bar.Children.Add(_saveCount); var actions = Inline(6); Grid.SetColumn(actions, 1); bar.Children.Add(actions); _discard = Button(T("web.shell.unsavedChanges.discard"), "LoggingDiscard", "GhostButtonStyle"); _discard.CornerRadius = new(999); _discard.MinHeight = 32; _discard.Click += (_, _) => _controller?.Discard(); actions.Children.Add(_discard);
+        _save = Button(T("common.save"), "LoggingSave"); _save.CornerRadius = new(999); _save.MinHeight = 32; _save.Background = Violet; _save.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 21, 21, 26)); _save.Click += async (_, _) => await SaveAsync(); actions.Children.Add(_save);
+        var background = ((SolidColorBrush)Brush("AppBackgroundBrush")).Color; var middle = background; middle.A = 184; var clear = background; clear.A = 0;
+        _saveScrim = new Border { Height = 160, VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false, Visibility = Visibility.Collapsed,
+            Background = new LinearGradientBrush { StartPoint = new Windows.Foundation.Point(0, 1), EndPoint = new Windows.Foundation.Point(0, 0), GradientStops = { new GradientStop { Color = background, Offset = 0 }, new GradientStop { Color = middle, Offset = 0.5 }, new GradientStop { Color = clear, Offset = 1 } } } }; root.Children.Add(_saveScrim);
+        _saveBar = Panel(bar, 999, 8, true); _saveBar.Padding = new(20, 8, 8, 8); var surface = ((SolidColorBrush)Brush("SurfaceBrush")).Color; _saveBar.Background = new AcrylicBrush { TintColor = surface, TintOpacity = 0.82, FallbackColor = surface }; _saveBar.Shadow = new ThemeShadow(); _saveBar.Translation = new System.Numerics.Vector3(0, 0, 20); root.SizeChanged += (_, args) => _saveBar.MaxWidth = Math.Max(0, args.NewSize.Width - 32); _saveBar.HorizontalAlignment = HorizontalAlignment.Center; _saveBar.VerticalAlignment = VerticalAlignment.Bottom; _saveBar.Margin = new(0, 0, 0, 24); _saveBar.Visibility = Visibility.Collapsed; AutomationProperties.SetName(_saveBar, T("web.shell.saveBar.regionLabel")); root.Children.Add(_saveBar); Content = root;
+        root.Children.Add(_feedback);
         Loaded += (_, _) => Open(); Unloaded += (_, _) => Close();
     }
     private FrameworkElement Field(string key, string label, string? description = null, bool numeric = false, string? unit = null, string? hint = null, IEnumerable<(string Value, string Label)>? options = null)
     {
         var row = new Grid { Padding = new(0, 14, 0, 14), ColumnSpacing = 24, RowSpacing = 12 }; row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var labels = Stack(5); var title = new LogsWrapPanel { Spacing = 6 }; var dot = new Border { Width = 6, Height = 6, Background = Violet, CornerRadius = new(3), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center }; _dots[key] = dot; title.Children.Add(dot); var fieldLabel = Text(label); fieldLabel.FontWeight = FontWeights.SemiBold; title.Children.Add(fieldLabel);
+        var labels = Stack(5); labels.MaxWidth = 520; var title = new LogsWrapPanel { Spacing = 6 }; var dot = new Border { Width = 6, Height = 6, Background = Violet, CornerRadius = new(3), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center }; _dots[key] = dot; title.Children.Add(dot); var fieldLabel = Text(label); fieldLabel.FontWeight = FontWeights.Medium; title.Children.Add(fieldLabel);
         var restart = Panel(Text(T("web.settings.restartBadge.label"), 11), 4, 4, true); ToolTipService.SetToolTip(restart, T("web.settings.restartBadge.title")); restart.Visibility = Visibility.Collapsed; _restarts[key] = restart; title.Children.Add(restart); labels.Children.Add(title); if (description != null) labels.Children.Add(Text(description, 13, true)); row.Children.Add(labels);
         Control control;
         if (options != null)
@@ -93,17 +107,18 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
             // and a user edit retires older queued model renders immediately.
             input.TextChanging += (_, _) => { if (!_syncing) Set(key, input.Text); }; control = input;
         }
-        _controls[key] = control; var trailing = new Grid { ColumnSpacing = 12 }; trailing.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); trailing.ColumnDefinitions.Add(new() { Width = new(64) }); trailing.Children.Add(control); var units = Text(unit ?? "", 13, true); Grid.SetColumn(units, 1); trailing.Children.Add(units); Grid.SetColumn(trailing, 1); row.Children.Add(trailing);
-        row.SizeChanged += (_, args) => { var stacked = args.NewSize.Width < 560; row.RowSpacing = stacked ? 12 : 0; Grid.SetColumn(trailing, stacked ? 0 : 1); Grid.SetRow(trailing, stacked ? 1 : 0); Grid.SetColumnSpan(labels, stacked ? 2 : 1); trailing.HorizontalAlignment = stacked ? HorizontalAlignment.Left : HorizontalAlignment.Right; };
+        _controls[key] = control; var trailing = new Grid { ColumnSpacing = 8 }; trailing.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); trailing.ColumnDefinitions.Add(new() { Width = new(64) }); trailing.Children.Add(control); var units = Text(unit ?? "", 13, true); Grid.SetColumn(units, 1); trailing.Children.Add(units); Grid.SetColumn(trailing, 1); row.Children.Add(trailing);
+        var naturalControlWidth = control.Width;
+        row.SizeChanged += (_, args) => { var stacked = (XamlRoot?.Size.Width ?? args.NewSize.Width) < 640; row.RowSpacing = stacked ? 12 : 0; Grid.SetColumn(trailing, stacked ? 0 : 1); Grid.SetRow(trailing, stacked ? 1 : 0); Grid.SetColumnSpan(labels, stacked ? 2 : 1); trailing.HorizontalAlignment = stacked ? HorizontalAlignment.Stretch : HorizontalAlignment.Right; trailing.Width = stacked ? args.NewSize.Width : double.NaN; trailing.ColumnDefinitions[0].Width = stacked ? new(1, GridUnitType.Star) : GridLength.Auto; trailing.ColumnDefinitions[1].Width = new(stacked && unit == null ? 0 : 64); control.Width = stacked ? double.NaN : naturalControlWidth; control.HorizontalAlignment = HorizontalAlignment.Stretch; };
         return new Border { Child = row, BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 0, 0, 1) };
     }
     private FrameworkElement Group(string label, string? description, string[] keys, StackPanel fields)
     {
-        var section = new Grid { ColumnSpacing = 48, RowSpacing = 20, Padding = new(0, 24, 0, 0), BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 1, 0, 0) }; section.ColumnDefinitions.Add(new() { Width = new(256) }); section.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); section.RowDefinitions.Add(new() { Height = GridLength.Auto }); section.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var heading = Stack(6); var title = Text(label, 15); title.FontWeight = FontWeights.SemiBold; heading.Children.Add(title); var subtitle = Text(description ?? "", 13, true); subtitle.Visibility = string.IsNullOrEmpty(description) ? Visibility.Collapsed : Visibility.Visible; heading.Children.Add(subtitle); _groups.Add((keys, title, subtitle, description)); section.Children.Add(heading); section.Children.Add(fields);
+        var section = new Grid { ColumnSpacing = 48, RowSpacing = 16, Padding = new(0, 24, 0, 0), BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 1, 0, 0) }; section.ColumnDefinitions.Add(new() { Width = new(256) }); section.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); section.RowDefinitions.Add(new() { Height = GridLength.Auto }); section.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var heading = Stack(6); var title = Text(label, 15); title.FontWeight = FontWeights.SemiBold; var titleRow = new Grid { ColumnSpacing = 8 }; titleRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); titleRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titleRow.Children.Add(title); var dirtyDot = new Border { Width = 6, Height = 6, CornerRadius = new(3), Background = Violet, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed }; Grid.SetColumn(dirtyDot, 1); titleRow.Children.Add(dirtyDot); heading.Children.Add(titleRow); var subtitle = Text(description ?? "", 13, true); subtitle.Visibility = string.IsNullOrEmpty(description) ? Visibility.Collapsed : Visibility.Visible; heading.Children.Add(subtitle); _groups.Add((keys, title, subtitle, description, dirtyDot)); section.Children.Add(heading); section.Children.Add(fields);
         void Arrange()
         {
-            var wide = (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 && section.ActualWidth >= 832; section.RowSpacing = wide ? 0 : 20; section.ColumnDefinitions[0].Width = wide ? new(256) : new(1, GridUnitType.Star); Grid.SetColumn(fields, wide ? 1 : 0); Grid.SetRow(fields, wide ? 0 : 1); Grid.SetColumnSpan(fields, wide ? 1 : 2); Grid.SetColumnSpan(heading, wide ? 1 : 2); fields.Margin = wide ? new(0, -14, 0, 0) : new(0); section.Padding = new(0, (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 ? 28 : 24, 0, 24);
+            var wide = (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 && section.ActualWidth >= 832; section.RowSpacing = wide ? 0 : 16; section.ColumnDefinitions[0].Width = wide ? new(256) : new(1, GridUnitType.Star); Grid.SetColumn(fields, wide ? 1 : 0); Grid.SetRow(fields, wide ? 0 : 1); Grid.SetColumnSpan(fields, wide ? 1 : 2); Grid.SetColumnSpan(heading, wide ? 1 : 2); fields.Margin = wide ? new(0, -14, 0, 0) : new(0); section.Padding = new(0, (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 ? 28 : 24, 0, 24);
         }
         section.SizeChanged += (_, _) => Arrange(); section.Loaded += (_, _) => Arrange(); return section;
     }
@@ -141,10 +156,11 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
 
     private void Close()
     {
+        _feedback.Clear();
         _authority.AvailabilityChanged -= OnAvailabilityChanged;
         _dialog?.Hide(); _dialog = null; if (_controller != null) { _controller.Changed -= QueueRender; _controller.Dispose(); _controller = null; }
         _syncing = true; foreach (var control in _controls.Values) { control.IsEnabled = false; if (control is TextBox input) input.Text = ""; else if (control is ComboBox select) select.SelectedIndex = -1; } _syncing = false;
-        _alerts.Children.Clear(); _saveBar.Visibility = Visibility.Collapsed; _spacer.Visibility = Visibility.Collapsed; SetHealth(new(false, false, false, 0, false));
+        _alerts.Children.Clear(); _saveBar.Visibility = Visibility.Collapsed; _saveScrim.Visibility = Visibility.Collapsed; _spacer.Visibility = Visibility.Collapsed; SetHealth(new(false, false, false, 0, false));
     }
     private void QueueRender()
     {
@@ -167,15 +183,15 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         }
         finally { _syncing = false; }
         _fields.Visibility = state.Loaded ? Visibility.Visible : Visibility.Collapsed;
-        if (state.Owner == null) { _dialog?.Hide(); _saveBar.Visibility = Visibility.Collapsed; _spacer.Visibility = Visibility.Collapsed; SetHealth(new(false, false, false, 0, false)); return; }
-        if (state.Loading) _alerts.Children.Add(Text(T("web.admin.settings.fields.loadingSettings"), 14, true));
-        if (state.Error != null) _alerts.Children.Add(Banner(state.Error, true));
+        if (state.Owner == null) { _feedback.Clear(); _dialog?.Hide(); _saveBar.Visibility = Visibility.Collapsed; _saveScrim.Visibility = Visibility.Collapsed; _spacer.Visibility = Visibility.Collapsed; SetHealth(new(false, false, false, 0, false)); return; }
+        _loading.Visibility = state.Loading ? Visibility.Visible : Visibility.Collapsed; _header.Visibility = state.Loading ? Visibility.Collapsed : Visibility.Visible;
+        if (state.Error != null && (!state.Loaded || state.Conflict)) _alerts.Children.Add(Banner(state.Error, true));
+        _feedback.Present(state.Loaded ? state.Error : null, state.Notice);
         if (!state.Loading && (!state.Loaded || state.Conflict)) { var retry = Button(state.Conflict ? "Reload server changes" : "Retry", "LoggingReload"); retry.Click += async (_, _) => await ReconcileAsync(); _alerts.Children.Add(retry); }
-        if (state.Notice != null) _alerts.Children.Add(Text(state.Notice, 13, true));
-        if (state.RestartRequired) _alerts.Children.Add(Banner(T("web.admin.settings.fields.restartAll")));
+        // Restart prompting belongs to the shared shell banner; fields retain their restart annotations.
         foreach (var group in _groups)
         {
-            var dirty = group.Keys.Any(state.DirtyKeys.Contains); group.Title.Text = group.Title.Text.TrimEnd(' ', '•') + (dirty ? "  •" : "");
+            var dirty = group.Keys.Any(state.DirtyKeys.Contains); group.DirtyDot.Visibility = dirty ? Visibility.Visible : Visibility.Collapsed;
             group.Description.Text = group.Keys.All(state.RestartKeys.Has) ? (group.Original == null ? T("web.admin.settings.fields.restartAll") : T("web.admin.settings.fields.restartAllWithDescription", ("description", group.Original))) : group.Original ?? "";
         }
         _alerts.Visibility = _alerts.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -184,7 +200,7 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         _retentionAdvanced.Visibility = state.RetentionAdvancedOpen ? Visibility.Visible : Visibility.Collapsed; ((FrameworkElement)_retentionAdvanced.Parent).Visibility = _retentionAdvanced.Visibility;
         _serverDisclosure.Content = DisclosureContent(state.ServerAdvancedOpen, 1); _retentionDisclosure.Content = DisclosureContent(state.RetentionAdvancedOpen, 3);
         _saveCount.Text = T("web.shell.saveBar.count", ("count", state.DirtyKeys.Count), ("shown", state.DirtyKeys.Count)); _save.Content = T(state.Saving ? "web.ui.saving" : "common.save"); _save.IsEnabled = !state.Saving && !state.Conflict; _discard.IsEnabled = true;
-        _saveBar.Visibility = state.DirtyKeys.Count > 0 ? Visibility.Visible : Visibility.Collapsed; _spacer.Visibility = _saveBar.Visibility;
+        _saveBar.Visibility = state.DirtyKeys.Count > 0 ? Visibility.Visible : Visibility.Collapsed; _saveScrim.Visibility = _saveBar.Visibility; _spacer.Visibility = _saveBar.Visibility;
         SetHealth(new(state.Loaded, !state.Loaded && state.Error != null, state.Conflict, state.DirtyKeys.Count, state.RestartRequired));
     }
     private static Grid DisclosureContent(bool open, int count) { var content = new Grid { ColumnSpacing = 10 }; content.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); content.Children.Add(Icon(open ? "chevron-down" : "chevron-right", 14)); var label = Text(T("web.settings.advancedSection.title"), 13, !open); Grid.SetColumn(label, 1); content.Children.Add(label); var number = Text(count.ToString(), 12, true); Grid.SetColumn(number, 2); content.Children.Add(number); return content; }
