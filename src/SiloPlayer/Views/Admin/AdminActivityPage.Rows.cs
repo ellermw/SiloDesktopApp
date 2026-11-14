@@ -23,6 +23,7 @@ public sealed partial class AdminActivityPage
         public bool? OptimisticPaused;
         public bool? OptimisticBasis;
         public string? PendingAction;
+        public object? MessageOwner;
         public IReadOnlyList<AdminActivityLogRow> FfmpegRows = [];
         public bool FfmpegLoading;
         public bool FfmpegFetching;
@@ -266,17 +267,22 @@ public sealed partial class AdminActivityPage
         var ip = s.ClientIp?.Trim() ?? "";
         if (clientLabel.Length > 0 || ip.Length > 0 || P.IsJellyfinSession(s))
         {
-            var meta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 2, 0, 0) };
-            if (JellyfinPill(s) is { } pill) meta.Children.Add(pill);
+            var meta = new Grid { ColumnSpacing = 6, Margin = new Thickness(0, 2, 0, 0) };
+            void AddMetadata(FrameworkElement element, bool flexible = false)
+            {
+                Grid.SetColumn(element, meta.ColumnDefinitions.Count);
+                meta.ColumnDefinitions.Add(new ColumnDefinition { Width = flexible ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
+                meta.Children.Add(element);
+            }
+            if (JellyfinPill(s) is { } pill) AddMetadata(pill);
             if (clientLabel.Length > 0)
             {
                 var client = A.Text(clientLabel, 10, A.Muted);
-                client.MaxWidth = 128;
                 ToolTipService.SetToolTip(client, ClientTitle(s));
-                meta.Children.Add(client);
+                AddMetadata(client, flexible: true);
             }
-            if (clientLabel.Length > 0 && ip.Length > 0) meta.Children.Add(A.Text("·", 10, A.Muted));
-            if (ip.Length > 0) meta.Children.Add(IpButton(ip));
+            if (clientLabel.Length > 0 && ip.Length > 0) AddMetadata(A.Text("·", 10, A.Muted));
+            if (ip.Length > 0) AddMetadata(IpButton(ip));
             userText.Children.Add(meta);
         }
         Grid.SetColumn(userText, 1);
@@ -458,8 +464,7 @@ public sealed partial class AdminActivityPage
     /// <summary>PlaybackRouteBadges: stream location, access network, then serving nodes.</summary>
     private static FrameworkElement RouteBadges(AdminActivitySession s)
     {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        var wrap = new StackPanel { Spacing = 4 };
+        var panel = new LogsWrapPanel { Spacing = 4, RowSpacing = 4 };
         if (!string.IsNullOrEmpty(s.StreamLocation))
         {
             var location = A.Badge(AdminText.T(s.StreamLocation == "local" ? "web.player.routeBadge.local" : "web.player.routeBadge.remote"), A.Primary, backgroundAlpha: 0.10, borderAlpha: 0.20);
@@ -476,8 +481,7 @@ public sealed partial class AdminActivityPage
         ToolTipService.SetToolTip(network, networkTitle);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(network, AdminText.T("web.player.routeBadge.networkAria", new { name = networkName }));
         panel.Children.Add(network);
-        wrap.Children.Add(panel);
-        var nodes = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var nodes = panel;
         foreach (var node in P.GetSessionRouteNodes(s))
         {
             var (tone, bg, border) = node.Kind switch
@@ -500,8 +504,7 @@ public sealed partial class AdminActivityPage
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(badge, title);
             nodes.Children.Add(badge);
         }
-        wrap.Children.Add(nodes);
-        return wrap;
+        return panel;
     }
 
     // ── Actions ──────────────────────────────────────────────
@@ -628,7 +631,7 @@ public sealed partial class AdminActivityPage
 
     private async Task ShowMessageDialogAsync(AdminActivitySession s, RowState state)
     {
-        if (XamlRoot == null || _api == null || _lease is not { } lease || !lease.IsCurrent || !s.HasPlaybackControl) return;
+        if (XamlRoot == null || _api == null || _lease is not { } lease || !lease.IsCurrent || state.PendingAction != null || !s.HasPlaybackControl) return;
         var name = string.IsNullOrEmpty(s.Username)
             ? AdminText.T("web.admin.sessions.playback.messageDialog.userFallback", new { id = s.UserId })
             : s.Username;
@@ -656,6 +659,23 @@ public sealed partial class AdminActivityPage
         };
         if (Application.Current.Resources.TryGetValue("WebUiContentDialogStyle", out var style) && style is Style dialogStyle)
             dialog.Style = dialogStyle;
+        var dialogHeading = new Grid { ColumnSpacing = 16, Width = Math.Min(400, Math.Max(0, XamlRoot.Size.Width - 80)) };
+        dialogHeading.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        dialogHeading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        dialogHeading.Children.Add(A.Text(AdminText.T("web.admin.sessions.playback.messageDialog.title"), 18, A.Foreground, FontWeights.SemiBold));
+        var closeMessage = A.Plain(A.Icon("x", 16, A.Muted), AdminText.T("web.ui.close"));
+        closeMessage.Width = 24; closeMessage.Height = 24; closeMessage.Padding = new Thickness(0);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(closeMessage, "AdminMessageClose");
+        closeMessage.Click += (_, _) => dialog.Hide();
+        Grid.SetColumn(closeMessage, 1); dialogHeading.Children.Add(closeMessage); dialog.Title = dialogHeading;
+        Button? CancelButton(DependencyObject parent)
+        {
+            if (parent is Button { Name: "CloseButton" } cancel) return cancel;
+            for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+                if (CancelButton(VisualTreeHelper.GetChild(parent, index)) is { } found) return found;
+            return null;
+        }
+        dialog.CloseButtonClick += (_, args) => args.Cancel = state.PendingAction == "message";
         dialog.PrimaryButtonClick += async (sender, args) =>
         {
             if (!ReferenceEquals(lease, _lease) || !lease.IsCurrent ||
@@ -664,6 +684,7 @@ public sealed partial class AdminActivityPage
                 box.Text = "";
                 return;
             }
+            if (state.PendingAction != null) { args.Cancel = true; return; }
             var text = box.Text.Trim();
             if (text.Length == 0)
             {
@@ -671,9 +692,15 @@ public sealed partial class AdminActivityPage
                 _toasts?.Error(AdminText.T("web.admin.sessions.playback.toast.messageRequired"));
                 return;
             }
-            var deferral = args.GetDeferral();
+            // Keep the dialog interactive so its independent Close button remains available.
+            // ContentDialog deferrals disable the entire content tree while pending.
+            args.Cancel = true;
             sender.IsPrimaryButtonEnabled = false;
+            if (CancelButton(sender) is { } cancel) cancel.IsEnabled = false;
+            var messageOwner = new object();
+            state.MessageOwner = messageOwner;
             state.PendingAction = "message";
+            RenderTable();
             try
             {
                 var receipt = await _api.SendActivityCommandAsync(lease, s.SessionId, "message", text);
@@ -681,7 +708,7 @@ public sealed partial class AdminActivityPage
                 var outcome = AdminActivityCommandText.FromReceipt("message", receipt);
                 _toasts?.Success(outcome.Message);
                 // A replay keeps the dialog and text so the admin can send a new one deliberately.
-                if (receipt.Outcome == "replayed") args.Cancel = true;
+                if (receipt.Outcome != "replayed" && ReferenceEquals(_messageDialog, sender)) sender.Hide();
             }
             catch (Exception error)
             {
@@ -691,9 +718,14 @@ public sealed partial class AdminActivityPage
             }
             finally
             {
-                state.PendingAction = null;
+                if (ReferenceEquals(state.MessageOwner, messageOwner))
+                {
+                    state.MessageOwner = null;
+                    state.PendingAction = null;
+                    if (ReferenceEquals(lease, _lease) && lease.IsCurrent) RenderTable();
+                }
                 sender.IsPrimaryButtonEnabled = true;
-                deferral.Complete();
+                if (CancelButton(sender) is { } restoredCancel) restoredCancel.IsEnabled = true;
             }
         };
         _messageDialog = dialog;
@@ -744,10 +776,10 @@ public sealed partial class AdminActivityPage
             if (state.Ffmpeg) _ = LoadFfmpegAsync(sessionId, state, force: false);
     }
 
-    private static readonly Color TerminalBg = Color.FromArgb(255, 0x0B, 0x10, 0x18);
-    private static readonly Color TerminalFg = Color.FromArgb(255, 0xD7, 0xE3, 0xF4);
-    private static readonly Color TerminalMuted = Color.FromArgb(255, 0x7D, 0x8B, 0xA1);
-    private static readonly Color TerminalBorder = Color.FromArgb(255, 0x23, 0x30, 0x42);
+    private static readonly Color TerminalBg = Color.FromArgb(255, 0x09, 0x0B, 0x0F);
+    private static readonly Color TerminalFg = Color.FromArgb(255, 0x72, 0xEA, 0xA2);
+    private static readonly Color TerminalMuted = Color.FromArgb(255, 0x59, 0xA1, 0x74);
+    private static readonly Color TerminalBorder = Color.FromArgb(255, 0x17, 0x35, 0x23);
 
     private FrameworkElement ExpandedPanel(AdminActivitySession s, RowState state)
     {
@@ -790,8 +822,8 @@ public sealed partial class AdminActivityPage
                 audio == "transcode" && video != "transcode" ? mode : null, null),
             ClientCard(s),
         };
-        // grid gap-2 sm:grid-cols-2 lg:grid-cols-3, by the content column width.
-        var width = _tableWidth > 0 ? _tableWidth : 1200;
+        // Tailwind sm/lg are viewport breakpoints, including the sidebar.
+        var width = ActivityViewportWidth > 0 ? ActivityViewportWidth : 1200;
         var columns = width >= 1024 ? 3 : width >= 640 ? 2 : 1;
         var grid = new Grid { ColumnSpacing = 8, RowSpacing = 8, Margin = new Thickness(0, 0, 0, 12) };
         for (var c = 0; c < columns; c++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

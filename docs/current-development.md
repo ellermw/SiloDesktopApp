@@ -1,3 +1,27 @@
+# November 14 — Admin Monitor visual follow-up verification
+
+Official WebUI main rechecked at 1a99f7beffcea3850f067df000c319f2704fd23b.
+Follow-ups integrate PR156 source 31bc6b9b, merged to Beta as 74f14630; version remains
+1.2.1056-beta.1 / numeric 1.2.1055.1, with pipeline stamping unchanged.
+The original PR/branch was not pushed by this work.
+
+Final integrated checks: 6,591/6,591 main units, 77/77 focused Logs checks,
+Release publish/native build, and Admin shell/Activity, all-widget Dashboard and
+baseline Logs native groups pass. Across bounded runs all 75 expanded Logs
+scenarios pass, with named functional evidence in 79/81 families. The 162-row
+ledger separates captures/assertions from visual comparison and records gaps.
+
+Changes are grouped into theme tokens, Logs/foundation, Dashboard, and
+shell/Activity follow-ups. PR156 is still a dependency for the Admin groups;
+Logs is aligned to Beta after PR156 merged; Dashboard and shell/Activity remain stacked until their bases reach Beta.
+Final per-cut validation: all three Admin native groups pass; 6,592/6,593 main tests pass on the full run, with the one updater-helper failure passing all three cases on isolated rerun; 77/77 Logs tests pass. The earlier 6,591 result above remains historical integrated evidence. See [verification and limits](parity/2026-11-14-admin-visual-followups.md).
+No complete-parity, live-server, physical-input, all-theme/DPI/locale or full
+playback-overlay certification is claimed. Installed player/settings untouched.
+Earlier automatic approval review rejected cleanup; no deletion was retried and
+0 GiB recovery is claimed on each drive. Local receipt:
+D:/SiloPlayer-build/admin-visual-parity/final-visual-followup-receipt.json.
+
+---
 # November 14 — Admin Monitor implemented for Beta
 
 Native Admin Monitor adds an acting-admin-only footer entry above Profile,

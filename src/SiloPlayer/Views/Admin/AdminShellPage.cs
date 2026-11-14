@@ -175,6 +175,7 @@ public sealed partial class AdminShellPage : Page
     private void Retire()
     {
         DetachLoggingHealth();
+        _closeSearch?.Invoke();
         _restartDialog?.Hide();
         _restartDialog = null;
         _restartPending = false;
@@ -294,7 +295,10 @@ public sealed partial class AdminShellPage : Page
         {
             if (!_active || !ReferenceEquals(_frame.Content, page)) return;
             if (FindPageScroller(page)?.Content is StackPanel content && !content.Children.Contains(_restartBannerHost))
+            {
                 content.Children.Insert(0, _restartBannerHost);
+                RenderRestartBanner();
+            }
         }
         if (page.IsLoaded) Attach();
         else
@@ -496,6 +500,7 @@ public sealed partial class AdminShellPage : Page
             ? new Thickness(gutter, 16, gutter, 16)
             : new Thickness(gutter, 64, gutter, 32);
         if (changed) RebuildSidebars();
+        if (_restartBannerHost.Parent != null) RenderRestartBanner();
     }
 
     private void OpenDrawer()
@@ -591,6 +596,8 @@ public sealed partial class AdminShellPage : Page
             search.BorderBrush = A.Solid(A.Border, 0.7);
             search.Background = A.Solid(A.Surface, 0.7);
             search.Margin = new Thickness(12, 0, 12, 16);
+            search.HorizontalAlignment = HorizontalAlignment.Stretch;
+            search.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             ToolTipService.SetToolTip(search, AdminText.T("web.admin.shell.search.title", new { shortcut = "Ctrl K" }));
             search.Click += (_, _) => _ = ShowSearchAsync();
             Grid.SetRow(search, 1);
@@ -750,24 +757,24 @@ public sealed partial class AdminShellPage : Page
         var signature = status.RestartMarkCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (_restartDismissedSignature == signature) return;
 
-        var grid = new Grid { ColumnSpacing = 12 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var grid = new LogsWrapPanel { Spacing = 12, RowSpacing = 12, GrowFields = true };
         grid.Children.Add(new Border
         {
             Width = 28, Height = 28, CornerRadius = new CornerRadius(8), Background = A.Solid(A.Amber500, 0.15),
             Child = new Viewbox { Width = 14, Height = 14, Child = A.Icon("alert-triangle", 14, A.Amber400) },
         });
+        var title = A.Text(AdminText.T("web.admin.common.restartBanner.title"), 13, A.Foreground, FontWeights.Medium);
+        title.LineHeight = 19.5; title.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        var description = A.Text(AdminText.T("web.admin.common.restartBanner.description"), 11.5, A.Muted, trim: false);
+        description.LineHeight = 17.25; description.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
         var text = new StackPanel
         {
+            MinWidth = 256,
             Children =
             {
-                A.Text(AdminText.T("web.admin.common.restartBanner.title"), 13, A.Foreground, FontWeights.Medium),
-                A.Text(AdminText.T("web.admin.common.restartBanner.description"), 11.5, A.Muted, trim: false),
+                title, description,
             },
         };
-        Grid.SetColumn(text, 1);
         grid.Children.Add(text);
         var later = A.Plain(A.Text(AdminText.T("web.admin.common.restartBanner.later"), 12, A.Foreground, FontWeights.Medium), null, new Thickness(12, 6, 12, 6));
         later.Click += (_, _) => { _restartDismissedSignature = signature; RenderRestartBanner(); };
@@ -779,13 +786,13 @@ public sealed partial class AdminShellPage : Page
             Orientation = Orientation.Horizontal, Spacing = 8,
             Children = { later, restart },
         };
-        Grid.SetColumn(actions, 2);
+        grid.TrailingActions = actions;
         grid.Children.Add(actions);
         _restartBannerHost.Visibility = Visibility.Visible;
         _restartBannerHost.Children.Add(new Border
         {
-            Margin = new Thickness(0, 0, 0, _narrow ? 16 : 24),
-            Padding = new Thickness(_narrow ? 16 : 20, 12, _narrow ? 16 : 20, 12),
+            Margin = new Thickness(0, 0, 0, (ActualWidth < 640 ? 16 : 24) - (_restartBannerHost.Parent is StackPanel owner ? owner.Spacing : 0)),
+            Padding = new Thickness(ActualWidth < 640 ? 16 : 20, 12, ActualWidth < 640 ? 16 : 20, 12),
             CornerRadius = new CornerRadius(16),
             BorderThickness = new Thickness(1),
             BorderBrush = A.Solid(A.Amber500, 0.30),
@@ -850,62 +857,160 @@ public sealed partial class AdminShellPage : Page
 
     // ── Scoped admin search ──────────────────────────────────
 
-    private ContentDialog? _searchDialog;
+    private Grid? _searchOverlay;
+    private Action? _closeSearch;
 
     private async Task ShowSearchAsync()
     {
-        if (_searchDialog != null || XamlRoot == null || !_active || _lease is not { IsCurrent: true } lease) return;
-        AdminRouteRequest? selected = null;
-        var query = new TextBox { PlaceholderText = AdminText.T("web.admin.shell.search.label"), MinWidth = 360 };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(query, AdminText.T("web.admin.shell.search.label"));
-        var results = new StackPanel { Spacing = 2, Margin = new Thickness(0, 12, 0, 0) };
-        var dialog = new ContentDialog
+        if (_searchOverlay != null || XamlRoot == null || !_active || _lease?.IsCurrent != true) return;
+        var lease = _lease;
+        var previousFocus = FocusManager.GetFocusedElement(XamlRoot) as Control;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var layer = new Grid { Background = A.Solid(Microsoft.UI.Colors.Black, 0.5), TabFocusNavigation = KeyboardNavigationMode.Cycle };
+        Grid.SetRowSpan(layer, 2);
+        Canvas.SetZIndex(layer, 100);
+        var query = new TextBox
+
         {
-            XamlRoot = XamlRoot,
-            Content = new StackPanel { Children = { query, results } },
-            CloseButtonText = AdminText.T("common.cancel"),
+            PlaceholderText = AdminText.T("web.admin.homeRows.commandDialog.searchPlaceholder"),
+            BorderThickness = new Thickness(0), Background = A.Solid(Microsoft.UI.Colors.Transparent, 0),
+            FontSize = 14, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Stretch,
         };
-        if (Application.Current.Resources.TryGetValue("WebUiContentDialogStyle", out var style) && style is Style dialogStyle)
-            dialog.Style = dialogStyle;
-        void Render()
+        // Use the same native editing template as the app search palette: no Fluent focus fill.
+        query.Foreground = A.Solid(A.Foreground);
+        query.VerticalContentAlignment = VerticalAlignment.Center;
+        query.Padding = new Thickness(0, 14, 0, 14);
+        query.Template = (ControlTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load("""
+            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="TextBox">
+                <Grid Background="{TemplateBinding Background}">
+                    <ScrollViewer x:Name="ContentElement" Padding="{TemplateBinding Padding}"
+                                  Foreground="{TemplateBinding Foreground}"
+                                  HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Hidden"
+                                  VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Hidden"
+                                  IsTabStop="False" ZoomMode="Disabled" />
+                    <TextBlock x:Name="PlaceholderTextContentPresenter" Text="{TemplateBinding PlaceholderText}"
+                               Padding="{TemplateBinding Padding}" Foreground="{StaticResource SecondaryTextBrush}"
+                               FontSize="{TemplateBinding FontSize}" FontFamily="{TemplateBinding FontFamily}"
+                               VerticalAlignment="Center" IsHitTestVisible="False" />
+                </Grid>
+            </ControlTemplate>
+            """);
+        query.Resources["TextControlBackground"] = A.Solid(Microsoft.UI.Colors.Transparent, 0);
+        query.Resources["TextControlBackgroundFocused"] = A.Solid(Microsoft.UI.Colors.Transparent, 0);
+        query.Resources["TextControlBorderBrushFocused"] = A.Solid(Microsoft.UI.Colors.Transparent, 0);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(query, AdminText.T("web.admin.shell.search.label"));
+        var searchRow = new Grid { Height = 48, ColumnSpacing = 12, Padding = new Thickness(16, 0, 16, 0), BorderThickness = new Thickness(0, 0, 0, 1), BorderBrush = A.Solid(A.Border) };
+        searchRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        searchRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        searchRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var searchIcon = A.Icon("search", 16, A.Muted); searchIcon.VerticalAlignment = VerticalAlignment.Center;
+        searchRow.Children.Add(searchIcon); Grid.SetColumn(query, 1); searchRow.Children.Add(query);
+        var escape = new Border { CornerRadius = new CornerRadius(4), BorderThickness = new Thickness(1), BorderBrush = A.Solid(A.Border), Background = A.Solid(A.Surface), Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center, Child = A.Text("ESC", 10, A.Muted, FontWeights.Medium) };
+        Grid.SetColumn(escape, 2); searchRow.Children.Add(escape);
+        var results = new StackPanel { Spacing = 4, Padding = new Thickness(8) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(results, AdminText.T("web.admin.homeRows.commandDialog.resultsLabel"));
+        var scroll = new ScrollViewer { Content = results, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var footer = A.Text("", 12, A.Muted);
+        var footerHost = new Border { BorderThickness = new Thickness(0, 1, 0, 0), BorderBrush = A.Solid(A.Border), Padding = new Thickness(16, 8, 16, 8), Child = footer };
+        var content = new Grid();
+        content.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        content.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
+        content.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        content.Children.Add(searchRow); Grid.SetRow(scroll, 1); content.Children.Add(scroll); Grid.SetRow(footerHost, 2); content.Children.Add(footerHost);
+        var panel = new Border { VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Center, Background = A.Solid(A.ColorOf("PopoverColor", A.Surface)), BorderBrush = A.Solid(A.Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = content };
+        layer.Children.Add(panel);
+        var selectedIndex = 0;
+        IReadOnlyList<AdminNavPage> matches = [];
+        var buttons = new List<Button>();
+        void Position()
         {
-            results.Children.Clear();
-            foreach (var page in AdminNavigation.Search(query.Text))
+            var size = XamlRoot?.Size ?? new Windows.Foundation.Size(ActualWidth, ActualHeight);
+            panel.Width = Math.Max(0, Math.Min(576, size.Width - 32));
+            panel.MaxHeight = Math.Max(0, Math.Min(544, size.Height * 0.82 - 16));
+            panel.Margin = new Thickness(0, size.Height * 0.18, 0, 0);
+            escape.Visibility = size.Width >= 640 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        void Select(int index)
+        {
+            selectedIndex = matches.Count == 0 ? 0 : (index + matches.Count) % matches.Count;
+            for (var i = 0; i < buttons.Count; i++)
             {
-                var row = new StackPanel { Spacing = 2, Children =
-                {
-                    A.Text(page.Label, 14, A.Foreground, FontWeights.SemiBold),
-                    A.Text(page.Description, 12, A.Muted),
-                } };
-                var item = A.Plain(row, page.Label, new Thickness(12, 8, 12, 8));
-                item.HorizontalAlignment = HorizontalAlignment.Stretch;
-                item.HorizontalContentAlignment = HorizontalAlignment.Left;
-                var target = page.Route;
-                item.Click += (_, _) => { selected = new AdminRouteRequest(target); dialog.Hide(); };
-                results.Children.Add(item);
+                buttons[i].Background = A.Solid(A.ColorOf("SurfaceHoverColor", A.Surface), i == selectedIndex ? 1 : 0);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(buttons[i], i == selectedIndex ? "selected" : "");
+
             }
         }
-        query.TextChanged += (_, _) => Render();
-        query.KeyDown += (_, e) =>
+        void Close()
         {
-            if (e.Key != Windows.System.VirtualKey.Enter) return;
-            var first = AdminNavigation.Search(query.Text).FirstOrDefault();
-            if (first == null) return;
-            e.Handled = true;
-            selected = new AdminRouteRequest(first.Route);
-            dialog.Hide();
-        };
-        Render();
-        _searchDialog = dialog;
-        try
-        {
-            dialog.Opened += (_, _) => query.Focus(FocusState.Programmatic);
-            await dialog.ShowAsync();
+            if (!ReferenceEquals(_searchOverlay, layer)) return;
+            _root.Children.Remove(layer); _searchOverlay = null; _closeSearch = null;
+            if (lease.IsCurrent) previousFocus?.Focus(FocusState.Programmatic);
+            done.TrySetResult();
         }
-        catch (Exception ex) { Core.Services.LocalLog.AppendLine("admin_monitor.txt", $"admin search failed: {ex.GetType().Name}"); }
-        finally { _searchDialog = null; }
-        // The search dialog must finish closing before Logging can show its leave confirmation.
-        if (selected != null && _active && ReferenceEquals(_lease, lease) && lease.IsCurrent)
-            Navigate(selected);
+        void Pick(int index)
+        {
+            if (!_active || !ReferenceEquals(_lease, lease) || !lease.IsCurrent || index < 0 || index >= matches.Count) return;
+            var route = matches[index].Route; Close(); Navigate(new AdminRouteRequest(route));
+        }
+        void Render()
+        {
+            matches = AdminNavigation.Search(query.Text); buttons.Clear(); results.Children.Clear();
+            if (matches.Count == 0)
+            {
+                var empty = A.Text(AdminText.T("web.admin.homeRows.commandDialog.noMatches"), 14, A.Muted);
+                empty.TextAlignment = TextAlignment.Center;
+                results.Children.Add(new Border { Padding = new Thickness(12, 24, 12, 24), Child = empty });
+            }
+            else
+            {
+                string? group = null;
+                for (var index = 0; index < matches.Count; index++)
+                {
+                    var page = matches[index]; var targetIndex = index;
+                    var section = page.Route is AdminRoute.Dashboard or AdminRoute.Activity ? "web.admin.shell.nav.section.monitor" : "web.admin.shell.nav.topic.logs";
+                    if (group != section)
+                    {
+                        results.Children.Add(new Border { Padding = new Thickness(8, group == null ? 0 : 8, 8, 4), Child = A.Text(AdminText.T(section), 12, A.Muted, FontWeights.Medium) });
+                        group = section;
+                    }
+                    var row = new Grid { ColumnSpacing = 12 };
+                    row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+                    var icon = A.Icon(page.Icon, 16, A.Muted); icon.Margin = new Thickness(2, 4, 2, 0); icon.VerticalAlignment = VerticalAlignment.Top; row.Children.Add(icon);
+                    var labels = new StackPanel { Spacing = 2 };
+                    labels.Children.Add(A.Text(page.Label, 14, A.Foreground, FontWeights.Medium));
+                    var description = A.Text(page.Description, 12, A.Muted, trim: false); description.TextWrapping = TextWrapping.Wrap; description.LineHeight = 19.5; labels.Children.Add(description);
+                    Grid.SetColumn(labels, 1); row.Children.Add(labels);
+                    var item = A.Plain(row, page.Label, new Thickness(12, 8, 12, 8));
+                    item.HorizontalAlignment = HorizontalAlignment.Stretch; item.HorizontalContentAlignment = HorizontalAlignment.Stretch; item.CornerRadius = new CornerRadius(6);
+                    item.PointerEntered += (_, _) => Select(targetIndex); item.Click += (_, _) => Pick(targetIndex);
+                    results.Children.Add(item); buttons.Add(item);
+                }
+            }
+            Select(0);
+            footer.Text = AdminText.T(query.Text.Trim().Length > 0 ? "web.admin.homeRows.commandDialog.matchCount" : "web.admin.homeRows.commandDialog.sectionCount", new { count = matches.Count });
+        }
+        query.TextChanged += (_, _) => Render();
+        layer.KeyDown += (_, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Escape) Close();
+            else if (e.Key is Windows.System.VirtualKey.Down or Windows.System.VirtualKey.Up)
+            {
+                Select(selectedIndex + (e.Key == Windows.System.VirtualKey.Down ? 1 : -1));
+                if (buttons.Count > 0) buttons[selectedIndex].StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+            }
+            else if (e.Key == Windows.System.VirtualKey.Enter) Pick(selectedIndex);
+            else return;
+            e.Handled = true;
+        };
+        layer.Tapped += (_, e) => { if (ReferenceEquals(e.OriginalSource, layer)) Close(); };
+        SizeChangedEventHandler reposition = (_, _) => Position();
+        _root.SizeChanged += reposition;
+        _searchOverlay = layer; _closeSearch = Close;
+        layer.Loaded += (_, _) => query.Focus(FocusState.Programmatic);
+        Position(); Render(); _root.Children.Add(layer);
+        try { await done.Task; }
+        finally { _root.SizeChanged -= reposition; Close(); }
+
     }
 }

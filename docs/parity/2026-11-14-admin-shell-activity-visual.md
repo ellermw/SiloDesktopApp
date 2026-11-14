@@ -1,0 +1,5 @@
+# Admin shell and Activity visual correction group
+
+Follow-up to PR #156, pinned to official WebUI `1a99f7be`. Matches search palette placement/surface/results, popover radius, restart notice wrapping/flow, Activity wide/stacked boundary and metadata/detail allocation. Pending Message disables Send/Cancel while independent X remains available. A per-operation owner and pending guard prevent reopening a second send or an older completion clearing newer state.
+
+Integrated native checks exercise nine widths including 1362/1363, focused search/no-match/filter states, expanded details, Message pending/X/reopen, and authority/lifetime retirement. Captures and reference state inventories are indexed by `2026-11-14-admin-visual-followups.md`. Programmatic focus and synthetic indicator checks do not establish physical keyboard/pointer or real playback-overlay parity. Minor native text/spacing differences and unlisted state combinations remain explicit gaps.

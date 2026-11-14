@@ -72,12 +72,20 @@ internal static class AdminMonitorShellNativeFixture
         public int SessionCount = 3;
         public bool SessionsFail;
         public int AdminReads;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public TaskCompletionSource<bool>? HeldMessage;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/message", StringComparison.Ordinal) && HeldMessage is { } held)
+            {
+                var command = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement;
+                await held.Task.WaitAsync(cancellationToken);
+                var receipt = JsonSerializer.Serialize(new { command_id = command.GetProperty("command_id").GetString(), sequence = command.GetProperty("sequence").GetInt64(), outcome = "applied", delivery = "dispatched" });
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(receipt, Encoding.UTF8, "application/json") };
+            }
             if (path.StartsWith("/api/v2/admin", StringComparison.Ordinal) || path == "/api/v2/libraries") Interlocked.Increment(ref AdminReads);
             if (path == "/api/v2/admin/sessions" && SessionsFail)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") });
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             string body = path switch
             {
                 "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", Enumerable.Range(0, SessionCount).Select(Session)) + "],\"page\":{\"has_more\":false}}",
@@ -90,7 +98,7 @@ internal static class AdminMonitorShellNativeFixture
                 "/api/v2/admin/logs/app" => "{\"items\":[{\"id\":\"9\",\"timestamp\":\"2026-11-14T10:00:00Z\",\"level\":\"info\",\"component\":\"ffmpeg\",\"message\":\"ffmpeg stderr\",\"node_id\":\"gpu-1\",\"attrs\":{\"ffmpeg_line\":\"frame=  120 fps= 48 q=28.0\",\"hw_accel\":\"qsv\",\"restart_count\":1}}],\"page\":{\"has_more\":false}}",
                 _ => "{}",
             };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }
 
         private static string Session(int i) =>
@@ -207,9 +215,10 @@ internal static class AdminMonitorShellNativeFixture
         var frame = new Frame { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"] };
         window.Content = frame;
         Check(((Microsoft.UI.Xaml.Markup.IXamlMetadataProvider)Application.Current).GetXamlType(typeof(AdminActivityPage)) != null, "Activity has WinUI navigation activation metadata");
-        frame.Navigate(typeof(AdminActivityPage), new AdminRouteRequest(AdminRoute.Activity));
-
-        var page = (AdminActivityPage)frame.Content;
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        var shell = (AdminShellPage)frame.Content;
+        var innerFrame = (Frame)Field(shell, "_frame")!;
+        var page = (AdminActivityPage)innerFrame.Content;
         await Until(() => page.RenderedSessionIds.Count == 3);
         Check(page.RenderedSessionIds.Count == 3, "Activity renders every live session");
 
@@ -238,15 +247,88 @@ internal static class AdminMonitorShellNativeFixture
         await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.loadFailed")));
         Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
 
-        foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900) })
+        foreach (var (width, height) in new[] { (1440, 900), (1363, 900), (1362, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900) })
+
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
             await Task.Delay(300);
             Program.Log($"TRACE activity {width}x{height}: wide={page.IsWideTable}");
+            if (width is 1362 or 1363) Check(page.IsWideTable == (width == 1363), $"Activity wide rows switch at the reference boundary ({width}px)");
             await CaptureAsync(frame, $"admin-activity-{width}x{height}.png");
         }
+        var rowStates = (System.Collections.IDictionary)Field(page, "_rowStates")!;
+        var firstSession = store.Current.Sessions.First();
+        var rowState = rowStates[firstSession.SessionId]!;
+        rowState.GetType().GetField("Details")!.SetValue(rowState, true);
+        typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+        foreach (var width in new[] { 1440, 1280, 1024, 1023, 800 })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
+            await Task.Delay(150);
+            await CaptureAsync(frame, $"admin-activity-expanded-{width}x900.png");
+        }
+        rowState.GetType().GetField("Ffmpeg")!.SetValue(rowState, true);
+        var ffmpegRead = (Task)typeof(AdminActivityPage).GetMethod("LoadFfmpegAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, new object[] { firstSession.SessionId, rowState, true })!;
+        await ffmpegRead;
+        typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+        await CaptureAsync(frame, "admin-activity-ffmpeg-800x900.png");
+        var consoleLine = Descendants(page).OfType<TextBlock>().Single(text => text.Text.StartsWith("frame=", StringComparison.Ordinal));
+        consoleLine.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        await Task.Delay(200);
+        var consoleOrigin = consoleLine.TransformToVisual(frame).TransformPoint(new Windows.Foundation.Point(0, 0));
+        Check(consoleOrigin.Y >= 0 && consoleOrigin.Y + consoleLine.ActualHeight <= frame.ActualHeight, "FFmpeg console line is in the captured viewport");
+        await CaptureAsync(frame, "admin-activity-ffmpeg-scrolled-800x900.png");
+        ((ScrollViewer)Field(page, "_scroller")!).ChangeView(null, 0, null, true);
+        rowState.GetType().GetField("Details")!.SetValue(rowState, false);
+        rowState.GetType().GetField("Ffmpeg")!.SetValue(rowState, false);
+        typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(800, 900));
         await Task.Delay(300);
+        var messageRowState = rowStates[firstSession.SessionId]!;
+        var pendingDialog = (Task)typeof(AdminActivityPage).GetMethod("ShowMessageDialogAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, new[] { (object)firstSession, messageRowState })!;
+        await Until(() => Field(page, "_messageDialog") != null);
+        var messageDialog = (ContentDialog)Field(page, "_messageDialog")!;
+        ((TextBox)Field(page, "_messageDraft")!).Text = "Synthetic pending message";
+        await Until(() => Descendants(messageDialog).OfType<Button>().Any(button => button.Name == "PrimaryButton"));
+        await Until(() => Descendants(messageDialog).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminMessageClose"));
+        server.HeldMessage = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Invoke(Descendants(messageDialog).OfType<Button>().Single(button => button.Name == "PrimaryButton"));
+        await Until(() => !messageDialog.IsPrimaryButtonEnabled);
+        var cancel = Descendants(messageDialog).OfType<Button>().First(button => button.Visibility == Visibility.Visible && button.Name is "SecondaryButton" or "CloseButton");
+        Check(!cancel.IsEnabled, "pending Message disables Cancel as in WebUI");
+        var closeMessage = Descendants(messageDialog).OfType<Button>().FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == "AdminMessageClose");
+        Program.Log("TRACE pending Message buttons: " + string.Join("; ", Descendants(messageDialog).OfType<Button>().Select(button => $"{button.Name}/{AutomationProperties.GetAutomationId(button)} enabled={button.IsEnabled}")));
+        Check(closeMessage?.IsEnabled == true, "pending Message keeps the independent Close button enabled");
+        await CaptureAsync(messageDialog, "admin-message-pending-800x900.png");
+        if (closeMessage != null) Invoke(closeMessage); else messageDialog.Hide();
+        await pendingDialog;
+        var reopen = (Task)typeof(AdminActivityPage).GetMethod("ShowMessageDialogAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, new[] { (object)firstSession, messageRowState })!;
+        await Task.Delay(100);
+        Check(Field(page, "_messageDialog") == null, "a pending Message cannot reopen after X closes its dialog");
+        if (Field(page, "_messageDialog") is ContentDialog reopened) reopened.Hide();
+        await reopen;
+        server.HeldMessage.TrySetResult(true);
+        server.HeldMessage = null;
+        Check(Field(page, "_messageDialog") == null && Field(page, "_messageDraft") == null, "closing pending Message clears the private draft");
+        var searchTask = (Task)typeof(AdminShellPage).GetMethod("ShowSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(shell, null)!;
+        await Until(() => Field(shell, "_searchOverlay") != null);
+        var overlay = (Grid)Field(shell, "_searchOverlay")!;
+        var panel = (Border)overlay.Children[0];
+        await Until(() => panel.ActualWidth > 0 && panel.ActualHeight > 0);
+        Program.Log($"TRACE search palette: width={panel.ActualWidth}, top={panel.Margin.Top}, root={shell.XamlRoot.Size}");
+        Check(Math.Abs(panel.ActualWidth - 576) < 2 && Math.Abs(panel.Margin.Top - 162) < 2, "search palette is 576px wide at the WebUI 18% top anchor");
+        var query = Descendants(overlay).OfType<TextBox>().Single();
+        Check(query.Background is Microsoft.UI.Xaml.Media.SolidColorBrush { Color.A: 0 }, "focused search input has a transparent editing surface");
+        await CaptureAsync(frame, "admin-search-800x900.png");
+        query.Text = "no matching section";
+        await Until(() => Descendants(overlay).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.homeRows.commandDialog.noMatches")));
+        Check(Descendants(overlay).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.homeRows.commandDialog.noMatches")), "search renders no-match state for typed text");
+        await CaptureAsync(frame, "admin-search-no-match-800x900.png");
+        query.Text = "logs";
+        await CaptureAsync(frame, "admin-search-filtered-800x900.png");
+        ((Action)Field(shell, "_closeSearch")!).Invoke();
+        await searchTask;
+        Check(Field(shell, "_searchOverlay") == null, "closing search retires its overlay");
         Check(!page.IsWideTable, "narrow container uses stacked rows with a Sort row");
         Check(page.RenderedSessionIds[0] == "synthetic-0" || page.RenderedSessionIds.Count == 3, "default sort is Time descending (stable for equal times)");
     }
@@ -310,6 +392,9 @@ internal static class AdminMonitorShellNativeFixture
             "outer shell departure retires inner Activity without inner navigation");
         Check(second.RenderedSessionIds.Count == 0, "departed Activity clears private rows");
     }
+
+    private static void Invoke(Button button) => ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(button).GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+
 
     private static async Task CaptureAsync(FrameworkElement element, string name)
     {
