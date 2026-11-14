@@ -937,7 +937,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -953,7 +953,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -969,7 +969,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -987,7 +987,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1003,7 +1003,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1021,7 +1021,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -1221,7 +1221,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -1229,7 +1229,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -1237,7 +1237,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -1267,7 +1267,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1060-beta.1`; numeric version: `1.2.1059.1`.
+Source version: `1.2.1064-beta.1`; numeric version: `1.2.1063.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
