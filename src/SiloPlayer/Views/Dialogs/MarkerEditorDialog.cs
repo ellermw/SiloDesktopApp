@@ -1,3 +1,5 @@
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Messaging;
 using Microsoft.UI.Xaml.Automation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
@@ -78,7 +80,14 @@ public sealed class MarkerEditorDialog : ItemScopedDialog
     protected override async Task SubmitAsync()
     {
         RequireAuthority(); var plan = MarkerEditPlan.Build(_original, _fields.ToDictionary(pair => pair.Key, pair => (pair.Value.Start.Text, pair.Value.End.Text)));
-        if (plan.Count > 0) { await _api.SetMarkersAsync(Context, ItemId, plan, Lifetime.Token); RequireAuthority(); HasSaved = true; }
+        if (plan.Count > 0)
+        {
+            await _api.SetMarkersAsync(Context, ItemId, plan, Lifetime.Token);
+            // An accepted write retires cached markers even if dialog authority was revoked.
+            if (Client.IsCurrentContext(Context))
+                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, ItemId, context: Context));
+            RequireAuthority(); HasSaved = true;
+        }
         // Hide after the command deferral releases the pending-close guard.
         DispatcherQueue.TryEnqueue(Hide);
     }
