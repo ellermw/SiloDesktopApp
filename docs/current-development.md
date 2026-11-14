@@ -1,15 +1,30 @@
+# November 13 - Marker-save watch-cache invalidation
+
+Independent upstream4448e401 marker increment: accepted edits/redetection publish
+the existing context-scoped metadata invalidation, retiring pre-save /watch
+prefetches.44 related units and the actual marker-cache native fixture passed;
+Release publish/native build passed. See
+[scope and evidence](parity/2026-11-13-upstream-4448-markers.md).
+Base6f9f87f7; version1.2.1017-beta.1 /1.2.1016.1 unchanged. Ranking is separately
+submitted in PR148; metered quality and library scan refresh remain pending.
+Output reuses the same sub-1.3GiB payload; free C:192.84GiB, D:480.83GiB.
+Cleanup remains unattempted after the prior policy rejection; recovered0GiB on
+both drives. Installed player remains open and PR145 is untouched.
+
+---
 # November 13 - Upstream 4448e401 Auto ranking and multipart increment
 
-Current Beta base is 6f9f87f7, version 1.2.1017-beta.1 / 1.2.1016.1. The first
+Reviewed Beta base is 6f9f87f7, version 1.2.1017-beta.1 / 1.2.1016.1. The first
 independent increment of the 43-commit update implements server-order detail Auto,
 saved later-part Resume, first-part Start Over and ordered multipart downloads.
 67 related units, Release publish, native host build and both track-choices and
 detail-action-hover native fixtures passed. Independent review found no P0-P2.
 See [scope and limits](parity/2026-11-13-upstream-4448-ranking.md).
 
-Connection-quality, marker invalidation and mounted-library scan refresh remain
-separate pending increments. Pipeline owns review/fixes/QA/delivery after each
-qualifying Beta submission. PR145 is untouched; versions remain pipeline-owned.
+Marker invalidation is covered by the increment above; connection-quality and
+mounted-library scan refresh remain separate pending increments. Pipeline owns
+review/fixes/QA/delivery after each qualifying Beta submission. PR145 is untouched;
+versions remain pipeline-owned.
 One existing output/publish/native payload is reused. Generated data stays below
 1.3 GiB, free C: 192.83 GiB and D: 480.84 GiB. Cleanup is not retried after the
 previous automatic approval block; recovered 0 GiB on each drive. Installed
