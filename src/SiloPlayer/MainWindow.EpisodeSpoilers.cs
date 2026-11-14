@@ -82,11 +82,11 @@ public sealed partial class MainWindow
 
     /// <summary><paramref name="beforeSource"/> runs before the bitmap gets its source, so no decode failure is missed.</summary>
     private async Task<BitmapImage?> LoadEpisodePreviewImageAsync(string contentId, string url, bool hide, int decodeWidth = 640,
-        Action<BitmapImage>? beforeSource = null)
+        Action<BitmapImage>? beforeSource = null, string imageType = "playing-next")
     {
         var identity = _apiClient.CaptureIdentityContext();
         var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(contentId,
-            "playing-next", url, App.Services.GetRequiredService<HttpClient>());
+            imageType, url, App.Services.GetRequiredService<HttpClient>());
         if (string.IsNullOrWhiteSpace(path)) return null;
         if (!_apiClient.IsCurrentIdentityContext(identity)) return null;
         var bytes = hide ? await ArtworkEffects.BlurEpisodeStillAsync(await File.ReadAllBytesAsync(path)) : null;
