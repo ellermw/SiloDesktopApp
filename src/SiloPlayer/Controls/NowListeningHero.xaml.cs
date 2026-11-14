@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Services;
 using System.Runtime.InteropServices.WindowsRuntime;
@@ -45,9 +46,34 @@ public sealed partial class NowListeningHero : UserControl
         }
     }
 
+    // Raw author/narrator names; the joining words follow the interface language.
+    private (string Author, string Narrator) _credits = ("", "");
+
+    private void ApplyCredits()
+    {
+        var (author, narrator) = _credits;
+        var args = new Dictionary<string, object?> { ["author"] = author, ["narrator"] = narrator };
+        CreditsText.Text = narrator.Length == 0 ? author
+            : author.Length == 0 ? AppStrings.Get("web.audiobooks.hero.narratedBy", args, fallback: "Narrated by " + narrator)
+            : AppStrings.Get("web.audiobooks.hero.authorAndNarrator", args, fallback: author + " · Narrated by " + narrator);
+        CreditsText.Visibility = string.IsNullOrWhiteSpace(CreditsText.Text) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private static string ResumeLabel(bool playing, double position) => playing
+        ? AppStrings.Get("web.audiobooks.hero.pause", fallback: "Pause")
+        : position > 0 ? AppStrings.Get("web.audiobooks.hero.resume", fallback: "Resume")
+        : AppStrings.Get("web.audiobooks.hero.listen", fallback: "Listen");
+
     public NowListeningHero()
     {
         InitializeComponent();
+        // Retained hero: labels follow the interface language; no detail re-read.
+        AppLocalization.Register(this, () =>
+        {
+            EyebrowText.Text = AppStrings.Uppercase(AppStrings.Get("web.audiobooks.hero.eyebrow", fallback: "Now Listening"));
+            ApplyCredits();
+            if (_item != null) UpdateLiveState();
+        });
         SetTransportIcon(false);
         InfoIcon.Children.Add(WebUiIcon.Create("info", 16, (Brush)Application.Current.Resources["PrimaryTextBrush"]));
         UpdateScrims();
@@ -123,7 +149,7 @@ public sealed partial class NowListeningHero : UserControl
         if (duration <= 0 && active) duration = _player!.Duration;
         _progress = duration > 0 ? Math.Clamp(position / duration, 0, 1) : 0;
         var playing = active && !_player!.IsPaused;
-        ResumeText.Text = playing ? "Pause" : position > 0 ? "Resume" : "Listen";
+        ResumeText.Text = ResumeLabel(playing, position);
         SetTransportIcon(playing);
         var live = active ? _player!.CurrentAudiobookChapter : null;
         PositionText.Text = _chapters.Count > 0 ? NowListeningPresentation.ChapterLine(_chapters, position, duration)
@@ -150,8 +176,8 @@ public sealed partial class NowListeningHero : UserControl
             _chapters.AddRange(NowListeningPresentation.BuildChapters(detail.Versions));
             var author = string.Join(", ", detail.Audiobook?.Authors.Select(person => person.Name?.Trim()).Where(name => !string.IsNullOrEmpty(name)) ?? []);
             var narrator = string.Join(", ", detail.Audiobook?.Narrators.Select(person => person.Name?.Trim()).Where(name => !string.IsNullOrEmpty(name)) ?? []);
-            CreditsText.Text = author + (!string.IsNullOrEmpty(narrator) ? (string.IsNullOrEmpty(author) ? "" : " · ") + "Narrated by " + narrator : "");
-            CreditsText.Visibility = string.IsNullOrWhiteSpace(CreditsText.Text) ? Visibility.Collapsed : Visibility.Visible;
+            _credits = (author, narrator ?? "");
+            ApplyCredits();
             UpdateLiveState();
         }
         catch (OperationCanceledException) { } catch { /* Section progress remains usable if optional detail fails. */ }
@@ -176,19 +202,16 @@ public sealed partial class NowListeningHero : UserControl
         BalanceTitle();
         var authors = item.Audiobook?.Authors.Select(person => person.Name).Where(name => !string.IsNullOrWhiteSpace(name)).ToList() ?? [];
         var narrators = item.Audiobook?.Narrators.Select(person => person.Name).Where(name => !string.IsNullOrWhiteSpace(name)).ToList() ?? [];
-        var credits = new List<string>();
-        if (authors.Count > 0) credits.Add(string.Join(", ", authors));
-        if (narrators.Count > 0) credits.Add($"Narrated by {string.Join(", ", narrators)}");
-        if (_detail == null || credits.Count > 0)
+        if (_detail == null || authors.Count > 0 || narrators.Count > 0)
         {
-            CreditsText.Text = string.Join(" · ", credits);
-            CreditsText.Visibility = credits.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            _credits = (string.Join(", ", authors), string.Join(", ", narrators));
+            ApplyCredits();
         }
 
         var position = Math.Max(0, item.PositionSeconds ?? 0);
         var duration = Math.Max(0, item.DurationSeconds ?? item.Audiobook?.TotalDurationSeconds ?? 0);
         _progress = duration > 0 ? Math.Clamp(position / duration, 0, 1) : 0;
-        ResumeText.Text = position > 0 ? "Resume" : "Listen";
+        ResumeText.Text = ResumeLabel(false, position);
         PositionText.Text = duration > 0 ? $"{FormatDuration(position)} of {FormatDuration(duration)}" : "";
         TimeLeftText.Text = duration > 0 ? $"{FormatDuration(duration - position)} left" : "";
         UpdateProgressWidth();

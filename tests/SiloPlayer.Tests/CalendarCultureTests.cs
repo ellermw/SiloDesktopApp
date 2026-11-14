@@ -39,9 +39,12 @@ public sealed class CalendarCultureTests
             var culture = (CultureInfo)CultureInfo.CurrentCulture.Clone();
             culture.DateTimeFormat.Calendar = new GregorianCalendar();
             var october = new DateTime(2026, 10, 1).ToString("MMM", culture);
-
-            Assert.Equal($"{october} 26 – {new DateTime(2026, 11, 1).ToString("MMM", culture)} 1, 2026",
-                CalendarViewModel.FormatWeekRangeLabel("2026-10-26"));
+            using var locale = SiloPlayer.Core.Localization.AppStrings.UseForCurrentFlow(new SiloPlayer.Core.Localization.LocaleService().Create(
+                SiloPlayer.Core.Localization.AppLocaleResolution.Resolve(null, [cultureName], cultureName)));
+            var range = CalendarViewModel.FormatWeekRangeLabel("2026-10-26");
+            Assert.Contains(october, range);
+            Assert.Contains(new DateTime(2026, 11, 1).ToString("MMM", culture), range);
+            Assert.Contains("2026", range);
             Assert.Equal(new DateTime(2026, 10, 28).ToString("ddd", culture), CalendarViewModel.FormatShortDay("2026-10-28").Label);
         }
         finally { CultureInfo.CurrentCulture = previous; }

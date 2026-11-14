@@ -2,6 +2,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Controls;
 
@@ -12,13 +14,18 @@ public sealed class AllowTitleDialog : ContentDialog
     private readonly string _itemId;
     private readonly StackPanel _rows = new() { Spacing = 10 };
     private readonly TextBlock _error = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Button _retry = new() { Content = "Retry", Visibility = Visibility.Collapsed };
+    private readonly Button _retry = new() { Content = AppStrings.Get("common.retry", fallback: "Retry"), Visibility = Visibility.Collapsed };
     private bool _open, _busy, _loaded;
 
     public AllowTitleDialog(TitleAllowanceSession owner, string itemId, string title)
     {
         _owner = owner; _itemId = itemId;
-        Title = "Allow for… " + title; CloseButtonText = "Done";
+        void RefreshTitle()
+        {
+            Title = AppStrings.Get("web.profiles.allow.title", new Dictionary<string, object?> { ["name"] = title });
+            CloseButtonText = AppStrings.Get("common.done", fallback: "Done");
+        }
+        RefreshTitle(); AppLocalization.Register(this, RefreshTitle);
         var content = new StackPanel { Spacing = 12, MinWidth = 280, MaxWidth = 440 };
         content.Children.Add(new TextBlock { Text = "Allow these profiles to watch this title above their content limits. Changes save immediately. Library access still applies.", TextWrapping = TextWrapping.Wrap });
         content.Children.Add(_rows); content.Children.Add(_error); content.Children.Add(_retry);
@@ -68,6 +75,6 @@ public sealed class AllowTitleDialog : ContentDialog
             };
             _rows.Children.Add(check);
         }
-        if (_rows.Children.Count == 0) _rows.Children.Add(new TextBlock { Text = "Everyone can already watch this title.", TextWrapping = TextWrapping.Wrap });
+        if (_rows.Children.Count == 0) _rows.Children.Add(new TextBlock { Text = AppStrings.Get("web.profiles.allow.everyoneCanWatch", fallback: "Everyone can already watch this title."), TextWrapping = TextWrapping.Wrap });
     }
 }

@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:loc="using:SiloPlayer.Services"
     mc:Ignorable="d"
     Title=""
     Background="#F1111114"
@@ -37,6 +38,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Spacing="2">
                 <TextBlock
+                    x:Name="EyebrowText"
                     Text="CAPTIONS"
                     FontSize="10"
                     FontWeight="SemiBold"
@@ -44,6 +46,7 @@
                     Foreground="{StaticResource PanelSectionLabel}" />
                 <TextBlock
                     Text="Subtitle appearance"
+                    loc:Localized.Text="web.settings.subtitlePanel.title"
                     FontSize="17"
                     FontWeight="SemiBold"
                     Foreground="White" />
@@ -58,6 +61,8 @@
                 CornerRadius="18"
                 ToolTipService.ToolTip="Close"
                 AutomationProperties.Name="Close"
+                loc:Localized.ToolTip="web.settings.subtitlePanel.close"
+                loc:Localized.Name="web.settings.subtitlePanel.close"
                 Click="Close_Click">
                 <FontIcon Glyph="&#xE711;" FontSize="15" Foreground="#B3FFFFFF" />
             </Button>
@@ -85,11 +90,11 @@
                 Margin="0,0,0,14"
                 Spacing="4">
                 <Border x:Name="PreviewBg1" CornerRadius="4" Padding="12,4">
-                    <TextBlock x:Name="PreviewLine1" Text="The quick brown fox"
+                    <TextBlock x:Name="PreviewLine1" Text="The quick brown fox" loc:Localized.Text="web.settings.subtitlePanel.previewLine1"
                                HorizontalAlignment="Center" />
                 </Border>
                 <Border x:Name="PreviewBg2" CornerRadius="4" Padding="12,4">
-                    <TextBlock x:Name="PreviewLine2" Text="jumps over the lazy dog."
+                    <TextBlock x:Name="PreviewLine2" Text="jumps over the lazy dog." loc:Localized.Text="web.settings.subtitlePanel.previewLine2"
                                HorizontalAlignment="Center" />
                 </Border>
             </StackPanel>
@@ -106,6 +111,7 @@
                 <!-- Text section -->
                 <StackPanel Spacing="12">
                     <TextBlock
+                        x:Name="TextSectionText"
                         Text="TEXT"
                         FontSize="10.5"
                         FontWeight="SemiBold"
@@ -117,7 +123,7 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Size" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Size" loc:Localized.Text="web.settings.subtitlePanel.size" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <StackPanel Grid.Column="1" x:Name="SizePillsHost" Orientation="Horizontal"
                                     Spacing="6" VerticalAlignment="Center" />
@@ -128,7 +134,7 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Font" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Font" loc:Localized.Text="web.settings.subtitlePanel.font" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <StackPanel Grid.Column="1" x:Name="FontPillsHost" Orientation="Horizontal"
                                     Spacing="6" VerticalAlignment="Center" />
@@ -139,7 +145,7 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Color" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Color" loc:Localized.Text="web.settings.subtitlePanel.color" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <StackPanel Grid.Column="1" x:Name="FontColorSwatchHost" Orientation="Horizontal"
                                     Spacing="8" VerticalAlignment="Center" />
@@ -150,10 +156,11 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Outline" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Outline" loc:Localized.Text="web.settings.subtitlePanel.outline" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <ToggleSwitch x:Name="OutlineToggle" Grid.Column="1" OnContent="" OffContent=""
                                       AutomationProperties.Name="Outline"
+                                      loc:Localized.Name="web.settings.subtitlePanel.textOutline"
                                       Toggled="OutlineToggle_Toggled" />
                     </Grid>
 
@@ -164,6 +171,7 @@
                 <!-- Background section -->
                 <StackPanel Spacing="12">
                     <TextBlock
+                        x:Name="BackgroundSectionText"
                         Text="BACKGROUND"
                         FontSize="10.5"
                         FontWeight="SemiBold"
@@ -175,21 +183,22 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Style" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Style" loc:Localized.Text="web.settings.subtitlePanel.style" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <StackPanel Grid.Column="1" x:Name="BgStylePillsHost" Orientation="Horizontal"
                                     Spacing="6" VerticalAlignment="Center" />
                     </Grid>
 
                     <Slider x:Name="TextOpacitySlider" Header="Text opacity" Minimum="1" Maximum="100" StepFrequency="1"
-                            AutomationProperties.Name="Text opacity" ValueChanged="TextOpacitySlider_ValueChanged" />
+                            loc:Localized.Header="web.settings.subtitlePanel.textOpacity"
+                            AutomationProperties.Name="Text opacity" loc:Localized.Name="web.settings.subtitlePanel.textOpacity" ValueChanged="TextOpacitySlider_ValueChanged" />
                     <!-- Box-only rows: Opacity + Color -->
                     <Grid x:Name="BgOpacityRow" ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Opacity" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Opacity" loc:Localized.Text="web.settings.subtitlePanel.opacity" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <Grid Grid.Column="1" ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
@@ -199,6 +208,7 @@
                             <Slider x:Name="OpacitySlider" Grid.Column="0"
                                     Minimum="0" Maximum="100" StepFrequency="5"
                                     AutomationProperties.Name="Opacity"
+                                    loc:Localized.Name="web.settings.subtitlePanel.backgroundOpacity"
                                     ValueChanged="OpacitySlider_ValueChanged"
                                     VerticalAlignment="Center" />
                             <TextBlock x:Name="OpacityValueLabel" Grid.Column="1"
@@ -213,7 +223,7 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Color" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Color" loc:Localized.Text="web.settings.subtitlePanel.color" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <StackPanel Grid.Column="1" x:Name="BgColorSwatchHost" Orientation="Horizontal"
                                     Spacing="8" VerticalAlignment="Center" />
@@ -225,6 +235,7 @@
                 <!-- Position section -->
                 <StackPanel Spacing="12">
                     <TextBlock
+                        x:Name="PositionSectionText"
                         Text="POSITION"
                         FontSize="10.5"
                         FontWeight="SemiBold"
@@ -236,7 +247,7 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Vertical" FontSize="13"
+                        <TextBlock Grid.Column="0" Text="Vertical" loc:Localized.Text="web.settings.subtitlePanel.vertical" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <StackPanel Grid.Column="1" x:Name="PositionPillsHost" Orientation="Horizontal"
                                     Spacing="6" VerticalAlignment="Center" />
@@ -261,7 +272,7 @@
             </Button>
             <StackPanel Grid.Column="1" HorizontalAlignment="Right" MaxWidth="260" Spacing="4">
                 <TextBlock x:Name="SaveStatusText" Text="Loading…" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource PanelFooterText}" />
-                <Button x:Name="RetryButton" Content="Retry" Click="Retry_Click" Visibility="Collapsed" />
+                <Button x:Name="RetryButton" Content="Retry" loc:Localized.Content="common.retry" Click="Retry_Click" Visibility="Collapsed" />
             </StackPanel>
         </Grid>
     </Grid>

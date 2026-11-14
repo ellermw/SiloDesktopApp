@@ -72,7 +72,7 @@ public partial class RecommendationsViewModel : ObservableObject
         IsLoading = isInitialLoad;
         IsTasteProfileLoading = TasteProfile == null;
         if (isInitialLoad)
-            ErrorMessage = null;
+            SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -85,7 +85,7 @@ public partial class RecommendationsViewModel : ObservableObject
             ReconcileRows(rows);
             _hasLoaded = true;
 
-            ErrorMessage = null;
+            SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
             _lastLoadedAt = DateTime.UtcNow;
             IsLoading = false;
 
@@ -96,7 +96,7 @@ public partial class RecommendationsViewModel : ObservableObject
             if (!_catalogApi.IsCurrentContext(context) || generation != _loadGeneration) return;
             System.Diagnostics.Debug.WriteLine($"Recommendations load failed: {ex}");
             if (Rows.Count == 0)
-                ErrorMessage = "Failed to load recommendations.";
+                SetLocalizedMessage(nameof(ErrorMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.library.recommended.loadFailed", fallback: "Failed to load recommendations."), value => ErrorMessage = value);
         }
         finally
         {
@@ -122,13 +122,20 @@ public partial class RecommendationsViewModel : ObservableObject
 
     private void ReconcileRows(IReadOnlyList<RecommendationRowDisplay> incoming)
     {
-        static string Key(RecommendationRowDisplay row) => row.Type + "\n" + row.SectionKind + "\n" + row.SectionKey + "\n" + row.Label;
+        static string Key(RecommendationRowDisplay row) => row.Type + "\n" + row.SectionKind + "\n" + (string.IsNullOrEmpty(row.SectionKey) ? row.Label : row.SectionKey);
         var desired = new List<RecommendationRowDisplay>();
         foreach (var next in incoming)
         {
             var mounted = Rows.FirstOrDefault(row => Key(row) == Key(next));
             if (mounted == null) desired.Add(next);
-            else { MediaItemCollectionReconciler.Apply(mounted.Items, next.Items.ToArray()); desired.Add(mounted); }
+            else
+            {
+                mounted.Label = next.Label;
+                mounted.TitleKey = next.TitleKey;
+                mounted.TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(next.TitleArgs);
+                MediaItemCollectionReconciler.Apply(mounted.Items, next.Items.ToArray());
+                desired.Add(mounted);
+            }
         }
         foreach (var stale in Rows.Where(row => !desired.Contains(row)).ToArray()) Rows.Remove(stale);
         for (var index = 0; index < desired.Count; index++)
@@ -137,6 +144,7 @@ public partial class RecommendationsViewModel : ObservableObject
             if (existing < 0) Rows.Insert(index, desired[index]);
             else if (existing != index) Rows.Move(existing, index);
         }
+        OnPropertyChanged(nameof(Rows));
     }
 
     private async Task<TasteProfileResponse?> GetTasteProfileAsync()
@@ -164,6 +172,8 @@ public partial class RecommendationsViewModel : ObservableObject
                 var displayRow = new RecommendationRowDisplay
                 {
                     Label = row.Label,
+                    TitleKey = row.TitleKey,
+                    TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(row.TitleArgs),
                     Type = row.Type,
                     SectionKind = row.SectionKind,
                     SectionKey = row.SectionKey
@@ -201,6 +211,8 @@ public partial class RecommendationsViewModel : ObservableObject
             var displayRow = new RecommendationRowDisplay
             {
                 Label = row.Label,
+                TitleKey = row.TitleKey,
+                TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(row.TitleArgs),
                 Type = row.Type
             };
 
@@ -251,6 +263,8 @@ public partial class RecommendationsViewModel : ObservableObject
 public class RecommendationRowDisplay
 {
     public string Label { get; set; } = "";
+    public string? TitleKey { get; set; }
+    public Dictionary<string, string>? TitleArgs { get; set; }
     public string Type { get; set; } = "";
     public string? SectionKind { get; set; }
     public string? SectionKey { get; set; }

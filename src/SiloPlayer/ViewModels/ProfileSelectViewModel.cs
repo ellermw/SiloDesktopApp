@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -38,7 +39,7 @@ public partial class ProfileSelectViewModel : ObservableObject
         ErrorMessage = null; PinErrorMessage = null; Pin = "";
         var primary = Profiles.FirstOrDefault(profile => profile.IsPrimary);
         if (primary == null)
-        { ErrorMessage = "Couldn't find the primary profile needed to manage profiles."; return; }
+        { ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.profiles.picker.primaryMissing", fallback: "Couldn't find the primary profile needed to manage profiles.")); return; }
         _managementOwner = _authApi.CaptureContext();
         _managementCts = new(); _managementPrimary = primary; _managementAdding = adding;
         IsManagementBusy = true;
@@ -75,7 +76,7 @@ public partial class ProfileSelectViewModel : ObservableObject
         catch (OperationCanceledException) when (!Current()) { }
         catch (Exception)
         {
-            if (Current()) ErrorMessage = "Couldn't open the new profile form. Try again.";
+            if (Current()) ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.profiles.picker.addFormFailed", fallback: "Couldn't open the new profile form. Try again."));
             if (Current()) CancelManagement();
         }
         finally
@@ -172,7 +173,7 @@ public partial class ProfileSelectViewModel : ObservableObject
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (ReferenceEquals(_profilesCts, cts) && _authApi.IsCurrentContext(owner)) ErrorMessage = $"Failed to load profiles: {ex.Message}";
+            if (ReferenceEquals(_profilesCts, cts) && _authApi.IsCurrentContext(owner)) ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to load profiles: {ShellProblem(ex, ex.Message)}");
         }
         finally
         {
@@ -194,7 +195,7 @@ public partial class ProfileSelectViewModel : ObservableObject
         {
             IsPinRequired = true;
             Pin = "";
-            PinErrorMessage = null;
+            PinErrorMessage = null; IsPinLockedOut = false;
             return;
         }
 
@@ -204,13 +205,14 @@ public partial class ProfileSelectViewModel : ObservableObject
     [RelayCommand]
     private async Task VerifyPinAsync()
     {
+        IsPinLockedOut = false;
         if (_managementPrimary != null)
         { await VerifyManagementPinAsync(); return; }
         if (SelectedProfile == null) return;
 
         if (string.IsNullOrWhiteSpace(Pin))
         {
-            PinErrorMessage = "PIN is required.";
+            PinErrorMessage = ShellText(nameof(PinErrorMessage), () => "PIN is required.");
             return;
         }
 
@@ -234,20 +236,20 @@ public partial class ProfileSelectViewModel : ObservableObject
             }
             else
             {
-                PinErrorMessage = "Incorrect PIN";
+                PinErrorMessage = ShellText(nameof(PinErrorMessage), () => AppStrings.Get("web.profiles.pin.incorrect", fallback: "Incorrect PIN"));
                 Pin = "";
             }
         }
         catch (ApiException ex)
         {
             if (!IsCurrent()) return;
-            PinErrorMessage = ProfilePinFeedback.Lockout(ex) ?? "Verification failed";
+            PinErrorMessage = ShellText(nameof(PinErrorMessage), () => PinLockout(ex) ?? ShellProblem(ex, AppStrings.Get("web.profiles.pin.verifyFailed", fallback: "Verification failed")));
             if (ex.StatusCode == 429) Pin = "";
         }
         catch (Exception)
         {
             if (!IsCurrent()) return;
-            PinErrorMessage = "Verification failed";
+            PinErrorMessage = ShellText(nameof(PinErrorMessage), () => AppStrings.Get("web.profiles.pin.verifyFailed", fallback: "Verification failed"));
         }
         finally
         {
@@ -296,24 +298,24 @@ public partial class ProfileSelectViewModel : ObservableObject
                         if (verification.Valid && !string.IsNullOrWhiteSpace(verification.ProfileToken))
                             await ActivateProfileAsync(profile, verification.ProfileToken);
                         else
-                            ErrorMessage = "Profile created, but PIN verification failed.";
+                            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.profiles.picker.createdPinFailed"));
                     }
                     catch (Exception ex)
                     {
                         if (!Current()) return;
-                        ErrorMessage = ProfilePinFeedback.Lockout(ex) is { } lockout
-                            ? $"Profile created. {lockout}" : "Profile created, but PIN verification failed.";
+                        ErrorMessage = ShellText(nameof(ErrorMessage), () => PinLockout(ex) is { } lockout
+                            ? AppStrings.Get("web.profiles.picker.createdLockout", new Dictionary<string, object?> { ["lockout"] = lockout }) : ShellProblem(ex, AppStrings.Get("web.profiles.picker.createdPinFailed")));
                     }
                 }
             }
         }
         catch (ApiException ex)
         {
-            if (Current()) ErrorMessage = $"Failed to create profile: {ex.Message}";
+            if (Current()) ErrorMessage = ShellText(nameof(ErrorMessage), () => $"{AppStrings.Get("web.setup.account.createProfileFailed", fallback: "Failed to create profile")}: {ShellProblem(ex, ex.Message)}");
         }
         catch (Exception ex)
         {
-            if (Current()) ErrorMessage = $"Failed to create profile: {ex.Message}";
+            if (Current()) ErrorMessage = ShellText(nameof(ErrorMessage), () => $"{AppStrings.Get("web.setup.account.createProfileFailed", fallback: "Failed to create profile")}: {ShellProblem(ex, ex.Message)}");
         }
         finally
         {
@@ -345,11 +347,11 @@ public partial class ProfileSelectViewModel : ObservableObject
         }
         catch (ApiException ex)
         {
-            ErrorMessage = $"Failed to update profile: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to update profile: {ShellProblem(ex, ex.Message)}");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to update profile: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to update profile: {ShellProblem(ex, ex.Message)}");
         }
         finally
         {
@@ -373,11 +375,11 @@ public partial class ProfileSelectViewModel : ObservableObject
         }
         catch (ApiException ex)
         {
-            ErrorMessage = $"Failed to delete profile: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to delete profile: {ShellProblem(ex, ex.Message)}");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to delete profile: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => $"Failed to delete profile: {ShellProblem(ex, ex.Message)}");
         }
         finally
         {
@@ -445,7 +447,7 @@ public partial class ProfileSelectViewModel : ObservableObject
 
     private async Task VerifyManagementPinAsync()
     {
-        if (string.IsNullOrWhiteSpace(Pin)) { PinErrorMessage = "PIN is required."; return; }
+        if (string.IsNullOrWhiteSpace(Pin)) { PinErrorMessage = ShellText(nameof(PinErrorMessage), () => "PIN is required."); return; }
         var cts = _managementCts; var profile = _managementPrimary; var owner = _managementOwner;
         if (cts == null || profile == null) return;
         var revision = ++_pinRevision;
@@ -458,7 +460,7 @@ public partial class ProfileSelectViewModel : ObservableObject
             if (!Current()) return;
             Pin = "";
             if (!result.Valid || string.IsNullOrWhiteSpace(result.ProfileToken))
-            { PinErrorMessage = "Incorrect PIN"; return; }
+            { PinErrorMessage = ShellText(nameof(PinErrorMessage), () => AppStrings.Get("web.profiles.pin.incorrect", fallback: "Incorrect PIN")); return; }
             IsPinRequired = false;
             await ContinueManagementAsync(result.ProfileToken);
         }
@@ -466,14 +468,60 @@ public partial class ProfileSelectViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!Current()) return;
-            Pin = ""; PinErrorMessage = ProfilePinFeedback.Lockout(ex) ?? "Verification failed. Try again.";
+            Pin = ""; PinErrorMessage = ShellText(nameof(PinErrorMessage), () => PinLockout(ex) ?? ShellProblem(ex, "Verification failed. Try again."));
         }
     }
 }
 
-public sealed class ProfilePickerCard(Profile? profile)
+public sealed class ProfilePickerCard(Profile? profile) : ObservableObject
 {
     public Profile? Profile { get; } = profile;
+    public string AccessibleName => Profile is { HasPin: true } profile
+        ? AppStrings.Get("web.profiles.picker.pinProtected", new Dictionary<string, object?> { ["name"] = profile.Name }, profile.SelectProfileAccessibleName)
+        : Profile?.Name ?? AppStrings.Get("web.profiles.picker.add");
+    public void RefreshLocalizedText() => OnPropertyChanged(nameof(AccessibleName));
     public bool IsAdd => Profile == null;
     public bool IsProfile => Profile != null;
+}
+
+public partial class ProfileSelectViewModel
+{
+    private readonly Dictionary<string, (Func<string> Render, string Last)> _shellText = [];
+
+    private string ShellText(string property, Func<string> render)
+    {
+        var text = render();
+        _shellText[property] = (render, text);
+        return text;
+    }
+
+    private static string ShellProblem(Exception exception, string english)
+        => exception is ApiException problem ? ApiProblemText.Display(problem, english) : english;
+
+    public bool IsPinLockedOut { get; private set; }
+
+    private string? PinLockout(Exception exception)
+    {
+        if (exception is not ApiException { StatusCode: 429 } refusal) return null;
+        IsPinLockedOut = true;
+        if (refusal.RetryAfterSeconds is not { } seconds || !double.IsFinite(seconds)) return AppStrings.Get("web.profiles.pin.lockedLater");
+        var minutes = Math.Max(1, Math.Ceiling(seconds / 60));
+        return AppStrings.Get("web.profiles.pin.lockedMinutes", new Dictionary<string, object?>
+        { ["count"] = minutes, ["count_text"] = minutes.ToString("0", AppStrings.FormatCulture) },
+            SiloPlayer.Core.Services.ProfilePinFeedback.Lockout(exception));
+    }
+
+    public void RefreshLocalizedText()
+    {
+        foreach (var card in PickerCards) card.RefreshLocalizedText();
+        foreach (var (property, text) in _shellText.ToArray())
+        {
+            switch (property)
+            {
+                case nameof(ErrorMessage) when ErrorMessage == text.Last: ErrorMessage = ShellText(property, text.Render); break;
+                case nameof(PinErrorMessage) when PinErrorMessage == text.Last: PinErrorMessage = ShellText(property, text.Render); break;
+                default: _shellText.Remove(property); break;
+            }
+        }
+    }
 }

@@ -1,5 +1,7 @@
 using SiloPlayer.Core.Models.Collections;
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -20,7 +22,9 @@ public sealed partial class CollectionEditorPage
         var keepDescription = !string.IsNullOrWhiteSpace(ViewModel.Description) && ViewModel.Description != _syncedFilledDescription;
         if (!keepName) ViewModel.Name = name;
         if (!keepDescription) ViewModel.Description = description;
-        _syncedKeptFields = keepName && keepDescription ? "Kept your name and description" : keepName ? "Kept your name" : keepDescription ? "Kept your description" : null;
+        // The catalog key of what was kept; worded when shown, so a language change rewords it.
+        _syncedKeptFields = keepName && keepDescription ? "web.collections.copy.keptNameAndDescription"
+            : keepName ? "web.collections.copy.keptName" : keepDescription ? "web.collections.copy.keptDescription" : null;
         var limitText = limit?.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if ((string.IsNullOrWhiteSpace(ViewModel.MaxItemsText) ? null : ViewModel.MaxItemsText) == _syncedFilledLimit) ViewModel.MaxItemsText = limitText;
         if ((ViewModel.SyncSchedule ?? "") == _syncedFilledSchedule) ViewModel.SyncSchedule = schedule ?? "";
@@ -46,7 +50,8 @@ public sealed partial class CollectionEditorPage
         var template = _syncedImports?.TemplateGroups.SelectMany(group => group.Templates).FirstOrDefault(t => t.Source == "tmdb" && t.Tmdb is { } chart && chart.Preset == preset && chart.MediaType == media &&
             (preset != "trending" || (chart.TimeWindow ?? "day") == window));
         if (template != null) { ApplySyncedTemplateFields(template); return; }
-        var title = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(chosen.Content?.ToString() ?? "");
+        // This becomes the saved collection name: always English, from the chart's own value, never from the shown label.
+        var title = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(ChartNameEnglish(preset));
         var name = string.Join(" ", new[] { title, media switch { "movie" => "Movies", "tv" => "TV Shows", _ => "" }, window switch { "week" => "This Week", "day" => "Today", _ => "" } }.Where(s => s.Length > 0));
         ApplySyncedPickFields(name, "", null, "");
     }

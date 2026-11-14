@@ -9,7 +9,7 @@ public sealed class GlobalSearchInteractionParitySourceTests
 
         Assert.Contains("private FrameworkElement BuildResultRow", source);
         Assert.Contains("string.IsNullOrWhiteSpace(item.PlayContentId)", source);
-        Assert.Contains("AutomationProperties.SetName(play,", source);
+        Assert.Contains("MediaItemCardActions.BindText(play, \"Name\"", source);
         Assert.Contains("PlayAsync(item.PlayContentId)", source);
         Assert.Contains("private Button BuildRequestRow", source);
         Assert.Contains("AutomationProperties.SetName(row,", source);

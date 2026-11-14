@@ -44,7 +44,7 @@ public sealed class CurrentProfilesParitySourceTests
         Assert.Contains("Restrict libraries", editor);
         Assert.Contains("UploadProfileAvatarAsync", editor);
         Assert.Contains("DeleteProfileAvatarAsync", editor);
-        Assert.Contains("Choose at least one library.", editor);
+        Assert.Contains("\"web.profiles.editor.librariesRequired\"", editor);
     }
 
     [Fact]
@@ -72,9 +72,9 @@ public sealed class CurrentProfilesParitySourceTests
         var fetch = load.IndexOf("await authApi.GetProfilesAsync()", StringComparison.Ordinal);
         var clear = load.IndexOf("ProfileCardsPanel.Children.Clear()", StringComparison.Ordinal);
         Assert.True(fetch >= 0 && clear > fetch);
-        Assert.Contains("Text = \"Current\"", load);
-        Assert.Contains("new TextBlock { Text = \"Edit\" }", load);
-        Assert.Contains("new TextBlock { Text = \"Delete\" }", load);
+        Assert.Contains("Text = L(\"web.settings.profiles.badge.current\", \"Current\")", load);
+        Assert.Contains("new TextBlock { Text = L(\"web.settings.profiles.edit\", \"Edit\") }", load);
+        Assert.Contains("new TextBlock { Text = L(\"web.settings.profiles.delete\", \"Delete\") }", load);
         Assert.Contains("profiles.Count <= 1", load);
     }
 

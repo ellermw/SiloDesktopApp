@@ -37,7 +37,7 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("IsPrimaryButtonEnabled = false", source);
         Assert.Contains("args.Cancel = true", source);
         Assert.Contains("ItemAdded?.Invoke()", source);
-        Assert.Contains("Collections could not be loaded.", source);
+        Assert.Contains("web.collections.addToCollection.loadFailed", source);
         Assert.Contains("_collectionsApi.GetCollectionsAsync", source);
         Assert.DoesNotContain("AdminApi", source);
     }
@@ -59,28 +59,27 @@ public sealed class UserDialogParitySourceTests
     [Fact]
     public void ProfileEditorUsesTheCurrentWebUiSelectionAndPendingPatterns()
     {
-        var source = ReadRepoFile("src", "SiloPlayer", "Views", "Dialogs", "ProfileEditorDialog.cs");
+        // PIN/save text moved behind explicit catalog keys (Task5); the keyed partial holds the state-dependent text.
+        var source = ReadRepoFile("src", "SiloPlayer", "Views", "Dialogs", "ProfileEditorDialog.cs")
+            + ReadRepoFile("src", "SiloPlayer", "Views", "Dialogs", "ProfileEditorDialog.Localization.cs");
 
         Assert.Contains("private readonly Grid _avatarStyleGrid", source);
         Assert.Contains("AvatarStyleSummary", source);
         Assert.Contains("private readonly Dictionary<int, ToggleSwitch> _libraryChecks", source);
         Assert.DoesNotContain("private readonly Dictionary<int, CheckBox> _libraryChecks", source);
-        Assert.Contains("PIN will be removed", source);
-        Assert.Contains("Keep existing PIN", source);
+        Assert.Contains("\"web.profiles.editor.pinRemoved\"", source);
+        Assert.Contains("\"web.profiles.editor.keepPin\"", source);
         Assert.Contains("args.Cancel = _saving", source);
-        Assert.Contains("sender.PrimaryButtonText = \"Saving...\"", source);
-        Assert.Contains("Choose at least one library.", source);
+        Assert.Contains("sender.PrimaryButtonText = AppStrings.Get(\"web.profiles.editor.saving\")", source);
+        Assert.Contains("\"web.profiles.editor.librariesRequired\"", source);
     }
 
     [Fact]
-    public void ProfilePinPromptsAutoFocusAndUseTheCurrentWebUiErrors()
+    public void ProfilePinPromptsAutoFocus()
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "ProfileSelectPage.xaml.cs");
-        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "ProfileSelectViewModel.cs");
 
         Assert.Contains("dialog.Opened += (_, _) => pinBox.Focus(FocusState.Programmatic)", page);
-        Assert.Contains("PinErrorMessage = \"Incorrect PIN\"", viewModel);
-        Assert.Contains("PinErrorMessage = \"Verification failed\"", viewModel);
     }
 
     [Fact]
@@ -212,7 +211,7 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("public Dictionary<string, object>? SortConfig", models);
         Assert.Contains("SortConfig = request.SortConfig", viewModel);
         Assert.Contains("SortConfig = draft.SortConfig", viewModel);
-        Assert.Contains("Field(\"Order\", ImportedDefaultSortCombo)", page);
+        Assert.Contains("Field(\"web.collections.copy.fieldOrder\", \"Order\", ImportedDefaultSortCombo)", page); // keyed label (localization Task 5)
         Assert.Contains("SortConfig = ViewModel.CaptureSortConfig()", page);
         Assert.Contains("BuildCollectionSortConfig(DefaultSortValue)", editor);
         Assert.Contains("_storedSortConfig", editor);

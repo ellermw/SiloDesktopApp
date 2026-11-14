@@ -47,7 +47,7 @@ public partial class CollectionEditorViewModel
         {
             if (Current())
             {
-                PreviewError = "The preview didn't load. You can still save.";
+                PreviewError = LocalText("web.collections.copy.previewFailed", "The preview didn't load. You can still save.");
                 SiloPlayer.Core.Services.LocalLog.AppendLine("collection_preview_error.txt", $"Smart preview failed; scope={RuleDefinition.MediaScope ?? "all"}; groups={RuleDefinition.Groups.Count}; status={(ex as SiloPlayer.Core.Api.ApiException)?.StatusCode}; location={(ex as SiloPlayer.Core.Api.ApiException)?.ErrorLocation}; {ex}");
             }
         }

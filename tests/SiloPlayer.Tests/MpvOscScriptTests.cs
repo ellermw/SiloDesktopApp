@@ -123,7 +123,7 @@ public sealed class MpvOscScriptTests
 
         Assert.Contains("local function draw_pip_icon", script);
         // #3993 moved Picture in picture into More on every rail.
-        Assert.Contains("{name=\"btn_pip\", label=\"Picture in picture\"}", script);
+        Assert.Contains("{name=\"btn_pip\", label=T(\"web.player.controls.pictureInPictureItem\")}", script);
         Assert.Contains("silo-pip-toggle", script);
         Assert.Contains("osc-pip-state", script);
         Assert.Contains("silo-pip-override", script);
@@ -186,14 +186,15 @@ public sealed class MpvOscScriptTests
     {
         var script = File.ReadAllText(FindOscScriptPath());
 
-        Assert.Contains("Search Online…", script);
-        Assert.Contains("Appearance…", script);
-        Assert.Contains("Translate with AI…", script);
+        // Task 5: catalog keys (English defaults stay in the OSC's text table).
+        Assert.Contains("T(\"web.subtitles.menu.addSubtitles\")", script);
+        Assert.Contains("T(\"web.subtitles.menu.appearance\")", script);
+        Assert.Contains("T(\"web.subtitles.menu.translateWithAi\")", script);
         Assert.Contains("local action_count = (state.subtitle_ai_available and 4 or 3) + sync_rows", script);
         Assert.Contains("if selected_sync.sync then sync_rows = sync_rows + 1 end", script);
         Assert.Contains("if selected_sync.reset then sync_rows = sync_rows + 1 end", script);
         Assert.Contains("if selected_sync.reload then sync_rows = sync_rows + 1 end", script);
-        Assert.Contains("\"DELAY\"", script);
+        Assert.Contains("i18n.upper(\"web.subtitles.menu.delay\")", script);
         Assert.Contains("delta = -0.1", script);
         Assert.Contains("delta = 0.1", script);
         Assert.Contains("subtitle_menu_offset", script);
@@ -239,7 +240,7 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("visible_quality_tiers", script);
-        Assert.Contains("Original (", script);
+        Assert.Contains("i18n.original_quality(resolution)", script);
         Assert.Contains("requested_file_id", script);
         Assert.Contains("local has_versions = #versions > 1", script);
         Assert.Contains("active_quality_label()", script);
@@ -252,7 +253,7 @@ public sealed class MpvOscScriptTests
     public void StatsOverlay_DoesNotCountDelayedFramesAsDroppedFrames()
     {
         var script = File.ReadAllText(FindOscScriptPath());
-        var droppedLabelIndex = script.IndexOf("Dropped frames", StringComparison.Ordinal);
+        var droppedLabelIndex = script.IndexOf("T(\"web.player.info.droppedFrames\")", StringComparison.Ordinal);
         Assert.True(droppedLabelIndex >= 0);
 
         var droppedCalculationStart = Math.Max(0, droppedLabelIndex - 500);
@@ -262,7 +263,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("decoder-frame-drop-count", droppedCalculation);
         Assert.DoesNotContain("vo-delayed-frame-count", droppedCalculation);
         Assert.DoesNotContain("Delayed frames", script);
-        Assert.Contains("CURRENT SOURCE FILE", script);
+        Assert.Contains("i18n.upper(\"web.player.info.section.source\")", script);
         Assert.Contains("Audio sample rate", script);
         Assert.Contains("Color range", script);
         Assert.Contains("Auto-switched from", script);
@@ -428,10 +429,10 @@ public sealed class MpvOscScriptTests
         Assert.Contains("codec_label = \"TRUEHD\"", script);
         Assert.Contains("codec_label = \"DTS-HD\"", script);
         Assert.Contains("channel_label = \"7.1\"", script);
-        Assert.Contains("table.insert(badges, \"DEFAULT\")", script);
+        Assert.Contains("i18n.upper(\"web.player.audioMenu.defaultBadge\")", script);
         Assert.Contains("track.sample_rate", script);
         Assert.Contains("track.bit_depth", script);
-        Assert.Contains("DOWNLOADED", script);
+        Assert.Contains("downloaded = \"web.subtitles.menu.source.downloaded\"", script);
         Assert.Contains("string.format(\"%d Hz\"", script);
     }
 
@@ -441,7 +442,7 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("osc-set-watch-party", script);
-        Assert.Contains("WATCH PARTY", script);
+        Assert.Contains("i18n.upper(\"web.player.watchTogether.title\")", script);
         Assert.Contains("Guests can pause & resume", script);
         Assert.Contains("Only you control playback", script);
         Assert.Contains("Allow Pause", script);
@@ -461,8 +462,8 @@ public sealed class MpvOscScriptTests
 
         Assert.Contains("osc-set-next-episode-detail", script);
         Assert.Contains("next_ep_countdown_remaining = 10", script);
-        Assert.Contains("local lead = \"Up next in \"", script);
-        Assert.Contains("Play Now", script);
+        Assert.Contains("TN(\"web.player.nextEpisode.upNextIn\", state.next_ep_countdown_remaining)", script);
+        Assert.Contains("T(\"web.player.nextEpisode.playNow\")", script);
         Assert.Contains("next_ep_countdown_cancelled = true", script);
         Assert.Contains("state.time_pos < state.credits_start", script);
         Assert.Contains("state.next_ep_countdown_overlay.z = 57", script);

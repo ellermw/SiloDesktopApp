@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Controls;
 
@@ -50,7 +51,7 @@ public sealed partial class QueryRulesEditor : UserControl
         if (IsLoaded) _ = RefreshCapabilitiesAsync();
     }
     private sealed record Option(string Label, string Value) { public override string ToString() => Label; }
-    internal static string Label(string value) => value switch
+    private static string EnglishLabel(string value) => value switch
     {
         "rating_imdb" => "IMDb rating", "content_rating" => "Content rating", "original_language" => "Original language",
         "audio_language" => "Audio language", "added_at" => "Date added", "release_date" => "Release date",
@@ -69,6 +70,7 @@ public sealed partial class QueryRulesEditor : UserControl
         Content = _body;
         CapabilitiesLoader = ct => App.Services.GetRequiredService<CatalogApi>().GetQueryEditorCapabilitiesAsync(ct);
         Loaded += (_, _) => { if (_capabilityOwner == null) _ = RefreshCapabilitiesAsync(); };
+        AttachLocalization();
         Unloaded += (_, _) => { _capabilityOwner?.Cancel(); _capabilityOwner = null; };
     }
 
@@ -101,13 +103,14 @@ public sealed partial class QueryRulesEditor : UserControl
 
     private void Rebuild()
     {
+        _drawnLocale = SiloPlayer.Core.Localization.AppStrings.Current;
         Children.Clear(); _invalid.Clear(); _fieldChoices.Clear(); _operatorChoices.Clear();
         if (CollectionPresentation) { BuildCollectionPresentation(); return; }
         var match = Choice(["all", "any"], Query.Match, "Match groups");
         match.Width = 80; match.Height = 36; match.FontSize = 14;
         match.SelectionChanged += (_, _) => { Query.Match = Selected(match); Changed?.Invoke(); };
         var heading = new StackPanel { Spacing = 8 };
-        heading.Children.Add(new TextBlock { Text = "Rule Groups", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        heading.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.rules.ruleGroups", "Rule Groups"), FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
         heading.Children.Add(MatchLine(match, "of the following groups"));
         Children.Add(heading);
         foreach (var group in Query.Groups)
@@ -124,12 +127,12 @@ public sealed partial class QueryRulesEditor : UserControl
             removeGroup.Click += (_, _) => { Query.Groups.Remove(group); Rebuild(); Changed?.Invoke(); };
             Grid.SetColumn(removeGroup, 1); header.Children.Add(removeGroup); body.Children.Add(header);
             foreach (var rule in group.Rules) body.Children.Add(BuildRule(group, rule));
-            var add = AddButton("Add Rule", true);
+            var add = AddButton(CollectionText.Get("web.catalog.rules.addRule", "Add Rule"), true);
             add.Click += (_, _) => { group.Rules.Add(new() { Field = "genre", Op = "is", Value = "" }); Rebuild(); Changed?.Invoke(); };
             body.Children.Add(add);
             Children.Add(new Border { Child = body, Padding = new Thickness(12), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), BorderBrush = (Brush)Application.Current.Resources["BorderBrush"] });
         }
-        var addGroup = AddButton("Add Group", false);
+        var addGroup = AddButton(CollectionText.Get("web.catalog.rules.addGroup", "Add Group"), false);
         addGroup.Click += (_, _) => { Query.Groups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = "" }] }); Rebuild(); Changed?.Invoke(); };
         Children.Add(addGroup);
         Children.Add(BuildSortControls());
@@ -150,7 +153,9 @@ public sealed partial class QueryRulesEditor : UserControl
         var options = SortFields.Where(sort => CatalogRatingSortPolicy.AppliesToScope(sort.Field, _mediaScope ?? "all")
             && (ShownRatingSources == null || CatalogRatingSortPolicy.IsAvailable(sort.Field, ShownRatingSources, selected))
             && (sort.Field is not ("progress" or "date_viewed" or "plays") || AllowPersonalizedSorts || sort.Field == OnlyPersonalizedSort))
-            .Select(sort => new Option(_mediaScope is "ebook" or "manga" ? sort.Field switch { "date_viewed" => "Date Read", "plays" => "Reads", _ => sort.Label } : sort.Label, sort.Field)).ToList();
+            .Select(sort => new Option(_mediaScope is "ebook" or "manga" && sort.Field is "date_viewed" or "plays"
+                ? sort.Field == "date_viewed" ? CollectionText.Get("web.common.sort.dateRead", "Date Read") : CollectionText.Get("web.common.sort.reads", "Reads")
+                : SortLabel(sort.Field, sort.Label), sort.Field)).ToList();
         // Rendering a saved sort must not silently rewrite it, including future fields.
         if (!options.Any(option => option.Value == selected)) options.Add(new(Label(selected), selected));
         choice.ItemsSource = options; choice.SelectedItem = options.First(option => option.Value == selected);
@@ -161,8 +166,8 @@ public sealed partial class QueryRulesEditor : UserControl
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         row.Children.Add(new TextBlock { Text = "Sort by", FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         var choice = _sortChoice = new ComboBox { Width = 128, Height = 36, MinHeight = 0, MinWidth = 0, FontSize = 12 };
-        PopulateSortChoice(choice); AutomationProperties.SetName(choice, "Sort by");
-        var direction = Choice(["desc", "asc"], Query.Sort?.Order ?? "desc", "Direction"); direction.Width = 112; direction.Height = 36;
+        PopulateSortChoice(choice); AutomationProperties.SetName(choice, CollectionText.Get("web.catalog.sort.sortBy", "Sort by"));
+        var direction = Choice(["desc", "asc"], Query.Sort?.Order ?? "desc", CollectionText.Get("web.catalog.sort.direction", "Direction")); direction.Width = 112; direction.Height = 36;
         var updating = false;
         choice.SelectionChanged += (_, _) =>
         {
@@ -197,13 +202,13 @@ public sealed partial class QueryRulesEditor : UserControl
             var row = new Grid { ColumnSpacing = 8 };
             row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            row.Children.Add(new TextBlock { Text = $"Not editable here  {rule.Field} {rule.Op} {System.Text.Json.JsonSerializer.Serialize(rule.Value)}", FontSize = 12,
+            row.Children.Add(new TextBlock { Text = $"{CollectionText.Get("web.catalog.rules.notEditable", "Not editable here")}  {rule.Field} {rule.Op} {System.Text.Json.JsonSerializer.Serialize(rule.Value)}", FontSize = 12,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
-            var removeOpaque = RemoveButton("Remove rule");
+            var removeOpaque = RemoveButton(CollectionText.Get("web.catalog.rules.removeRule", "Remove rule"));
             removeOpaque.Click += (_, _) => { group.Rules.Remove(rule); Rebuild(); Changed?.Invoke(); };
             Grid.SetColumn(removeOpaque, 1); row.Children.Add(removeOpaque);
             var readonlyRule = new Border { Child = row, Padding = new(8, 4, 8, 4), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = (Brush)Application.Current.Resources["BorderBrush"] };
-            AutomationProperties.SetName(readonlyRule, "Rule not editable here");
+            AutomationProperties.SetName(readonlyRule, CollectionText.Get("web.catalog.rules.notEditableLabel", "Rule not editable here"));
             return readonlyRule;
         }
         var body = new StackPanel { Spacing = 6 };
@@ -258,18 +263,18 @@ public sealed partial class QueryRulesEditor : UserControl
         if (CollectionPresentation) { field.Height = 36; field.FontSize = 14; }
         field.SelectionChanged += (_, _) => { if (_refreshingChoices) return; rule.Field = Selected(field); rule.Op = QueryFieldCatalog.Get(rule.Field)!.Operators[0]; rule.Value = QueryRuleValues.IsBoolean(rule.Field) ? false : QueryRuleValues.IsNumeric(rule.Field) ? 0 : ""; Rebuild(); Changed?.Invoke(); };
         selectors.Children.Add(field);
-        var op = Choice(QueryFieldCatalog.OfferedOperators(rule.Field, rule.Op, ExtendedRules), rule.Op, "Rule operator");
+        var op = Choice(QueryFieldCatalog.OfferedOperators(rule.Field, rule.Op, ExtendedRules), rule.Op, "Rule operator", "web.catalog.rules.condition");
         _operatorChoices.Add((op, rule.Field, rule.Op));
         op.SelectionChanged += (_, _) => { if (_refreshingChoices) return; rule.Op = Selected(op); rule.Value = QueryRuleValues.ForOperator(rule.Field, rule.Op, rule.Value); Rebuild(); Changed?.Invoke(); };
         Grid.SetColumn(op, 1); selectors.Children.Add(op);
         if (CollectionPresentation) { op.Height = 36; op.FontSize = 14; }
-        var remove = RemoveButton("Remove rule");
+        var remove = RemoveButton(CollectionText.Get("web.catalog.rules.removeRule", "Remove rule"));
         remove.Click += (_, _) => { group.Rules.Remove(rule); Rebuild(); Changed?.Invoke(); };
         Grid.SetColumn(remove, 3); selectors.Children.Add(remove); body.Children.Add(selectors);
         if (rule.Op is "exists" or "not_exists") return body;
         if (QueryRuleValues.IsBoolean(rule.Field) && rule.Op is not ("between" or "in" or "not_in"))
         {
-            var boolean = Choice(["true", "false"], QueryRuleValues.Format(rule.Value), "Rule value");
+            var boolean = Choice(["true", "false"], QueryRuleValues.Format(rule.Value), "Rule value", "web.catalog.rules.value");
             boolean.SelectionChanged += (_, _) => { rule.Value = Selected(boolean) == "true"; Changed?.Invoke(); };
             AddValue(boolean); return body;
         }
@@ -285,13 +290,13 @@ public sealed partial class QueryRulesEditor : UserControl
                 for (var index = 0; index < 2; index++)
                 {
                     var endpoint = index;
-                    var date = DateInput(dates[index], index == 0 ? "From" : "To", text => { dates[endpoint] = text; rule.Value = dates.ToArray(); ValidateDates(); Changed?.Invoke(); });
+                    var date = DateInput(dates[index], index == 0 ? CollectionText.Get("web.catalog.rules.rangeFrom", "From") : CollectionText.Get("web.catalog.rules.rangeTo", "To"), text => { dates[endpoint] = text; rule.Value = dates.ToArray(); ValidateDates(); Changed?.Invoke(); });
                     Grid.SetColumn(date, index); range.Children.Add(date);
                 }
                 ValidateDates(); AddValue(range); return body;
             }
-            var from = new TextBox { Height = 32, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new Thickness(8, 4, 8, 4), Text = parts.ElementAtOrDefault(0) ?? "", PlaceholderText = "From" };
-            var to = new TextBox { Height = 32, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new Thickness(8, 4, 8, 4), Text = parts.ElementAtOrDefault(1) ?? "", PlaceholderText = "To" };
+            var from = new TextBox { Height = 32, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new Thickness(8, 4, 8, 4), Text = parts.ElementAtOrDefault(0) ?? "", PlaceholderText = CollectionText.Get("web.catalog.rules.rangeFrom", "From") };
+            var to = new TextBox { Height = 32, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new Thickness(8, 4, 8, 4), Text = parts.ElementAtOrDefault(1) ?? "", PlaceholderText = CollectionText.Get("web.catalog.rules.rangeTo", "To") };
             var row = new Grid { ColumnSpacing = 8 };
             row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -317,10 +322,11 @@ public sealed partial class QueryRulesEditor : UserControl
                 {
                     var row = new Grid { ColumnSpacing = 8 };
                     row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = new GridLength(96) });
-                    var amount = new TextBox { Text = parsed.Success ? parsed.Groups[1].Value : "", PlaceholderText = "Amount", MinWidth = 0, Height = 32, MinHeight = 0, FontSize = 12 };
-                    AutomationProperties.SetName(amount, "Relative date amount");
+                    var amount = new TextBox { Text = parsed.Success ? parsed.Groups[1].Value : "", PlaceholderText = CollectionText.Get("web.catalog.rules.amount", "Amount"), MinWidth = 0, Height = 32, MinHeight = 0, FontSize = 12 };
+                    AutomationProperties.SetAutomationId(amount, "Relative date amount");
+                    AutomationProperties.SetName(amount, CollectionText.Get("web.catalog.rules.amount", "Relative date amount"));
                     var currentUnit = parsed.Success ? parsed.Groups[2].Value.ToLowerInvariant() : "d";
-                    var units = Choice(currentUnit == "h" ? ["h", "d", "w", "m", "y"] : ["d", "w", "m", "y"], currentUnit, "Relative date unit");
+                    var units = Choice(currentUnit == "h" ? ["h", "d", "w", "m", "y"] : ["d", "w", "m", "y"], currentUnit, "Relative date unit", "web.catalog.rules.unit");
                     void WriteSpan() { rule.Value = long.TryParse(amount.Text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count) && count >= 1 ? count.ToString(System.Globalization.CultureInfo.InvariantCulture) + Selected(units) : ""; Changed?.Invoke(); }
                     amount.TextChanged += (_, _) => WriteSpan(); units.SelectionChanged += (_, _) => WriteSpan();
                     Grid.SetColumn(units, 1); row.Children.Add(amount); row.Children.Add(units); AddValue(row); return body;
@@ -338,13 +344,13 @@ public sealed partial class QueryRulesEditor : UserControl
                 "decade" => Enumerable.Range(190, DateTime.Today.Year / 10 - 189).Reverse().Select(decade => (decade * 10).ToString()).ToArray(),
                 _ => Array.Empty<string>()
             };
-            var choice = Choice(values, QueryRuleValues.Format(rule.Value), "Rule value");
+            var choice = Choice(values, QueryRuleValues.Format(rule.Value), "Rule value", "web.catalog.rules.value");
             choice.SelectionChanged += (_, _) => { rule.Value = QueryRuleValues.IsNumeric(rule.Field) ? QueryRuleValues.Parse(rule.Field, rule.Op, Selected(choice)) : Selected(choice); Changed?.Invoke(); };
             AddValue(choice); return body;
         }
         if (rule.Field is "actor" or "director" or "writer" or "producer" && PeopleSearch != null)
         {
-            var search = new AutoSuggestBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = "Search people", DisplayMemberPath = "Name" };
+            var search = new AutoSuggestBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = CollectionText.Get("web.ui.personSearch.placeholder", "Search people"), DisplayMemberPath = "Name" };
             CancellationTokenSource? owner = null;
             search.TextChanged += async (_, args) =>
             {
@@ -360,7 +366,7 @@ public sealed partial class QueryRulesEditor : UserControl
         if (definition.Kind == "language")
         {
             var selected = QueryRuleValues.Format(rule.Value);
-            var choice = new ComboBox { Height = 32, MinHeight = 0, MinWidth = 0, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = "Pick a language" };
+            var choice = new ComboBox { Height = 32, MinHeight = 0, MinWidth = 0, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = CollectionText.Get("web.catalog.rules.pickLanguage", "Pick a language") };
             AutomationProperties.SetName(choice, "Rule language");
             var status = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], Visibility = Visibility.Collapsed };
             var populating = false;
@@ -372,7 +378,7 @@ public sealed partial class QueryRulesEditor : UserControl
                     var options = codes.Concat(string.IsNullOrEmpty(selected) ? [] : new[] { selected }).Distinct()
                         .Select(code => new Option(LanguageName(code), code)).OrderBy(option => option.Label).ToArray();
                     choice.ItemsSource = options; choice.SelectedItem = options.FirstOrDefault(option => option.Value == selected);
-                    status.Text = options.Length == 0 ? "No languages available" : ""; status.Visibility = status.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+                    status.Text = options.Length == 0 ? CollectionText.Get("web.catalog.rules.noLanguages", "No languages available") : ""; status.Visibility = status.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
                 }
                 finally { populating = false; }
             }
@@ -382,10 +388,10 @@ public sealed partial class QueryRulesEditor : UserControl
             async Task Refresh()
             {
                 if (LanguageLoader == null || owner != null) return;
-                var current = owner = new CancellationTokenSource(); choice.PlaceholderText = "Loading languages";
-                try { var codes = await LanguageLoader(rule.Field, current.Token); if (owner == current && !current.IsCancellationRequested) { Populate(codes); choice.PlaceholderText = "Pick a language"; } }
+                var current = owner = new CancellationTokenSource(); choice.PlaceholderText = CollectionText.Get("web.catalog.rules.loadingLanguages", "Loading languages");
+                try { var codes = await LanguageLoader(rule.Field, current.Token); if (owner == current && !current.IsCancellationRequested) { Populate(codes); choice.PlaceholderText = CollectionText.Get("web.catalog.rules.pickLanguage", "Pick a language"); } }
                 catch (OperationCanceledException) { }
-                catch { if (owner == current) { status.Text = choice.Items.Count > 0 ? "Couldn’t refresh languages" : "Couldn’t load languages"; status.Visibility = Visibility.Visible; choice.PlaceholderText = "Couldn’t load languages"; } }
+                catch { if (owner == current) { status.Text = choice.Items.Count > 0 ? CollectionText.Get("web.catalog.rules.languagesRefreshFailed", "Couldn’t refresh languages") : CollectionText.Get("web.catalog.rules.languagesLoadFailed", "Couldn’t load languages"); status.Visibility = Visibility.Visible; choice.PlaceholderText = CollectionText.Get("web.catalog.rules.languagesLoadFailed", "Couldn’t load languages"); } }
                 finally { if (owner == current) owner = null; current.Dispose(); }
             }
             WhenVisible(choice, Refresh); choice.DropDownOpened += async (_, _) => await Refresh();
@@ -394,7 +400,7 @@ public sealed partial class QueryRulesEditor : UserControl
         }
         if (definition.Kind == "facet" && FacetSearch != null)
         {
-            var search = new AutoSuggestBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = "Search " + Label(rule.Field).ToLowerInvariant() };
+            var search = new AutoSuggestBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = FacetSearchPlaceholder(rule.Field) };
             var status = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], Visibility = Visibility.Collapsed };
             CancellationTokenSource? owner = null;
             async Task Refresh(string text, bool debounce)
@@ -419,14 +425,15 @@ public sealed partial class QueryRulesEditor : UserControl
         if (rule.Field == "type" || Options.ContainsKey(rule.Field))
         {
             var values = rule.Field == "type" ? new[] { "movie", "series", "episode", "audiobook", "ebook", "manga" } : Options[rule.Field];
-            var search = new AutoSuggestBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = "Search " + Label(rule.Field).ToLowerInvariant() };
+            var search = new AutoSuggestBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = CollectionText.Get("web.catalog.rules.searchValues", "Search " + EnglishLabel(rule.Field).ToLowerInvariant()) };
             search.TextChanged += (_, args) => { if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput) search.ItemsSource = values.Where(value => value.Contains(search.Text, StringComparison.OrdinalIgnoreCase)).Take(30).ToArray(); };
             search.SuggestionChosen += (_, args) => { rule.Value = args.SelectedItem?.ToString() ?? ""; Changed?.Invoke(); };
             search.QuerySubmitted += (_, args) => { if (values.Contains(args.QueryText)) { rule.Value = args.QueryText; Changed?.Invoke(); } };
             AddValue(search); return body;
         }
-        var input = new TextBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = rule.Op is "between" or "in" or "not_in" ? "Values separated by commas" : "Value" };
-        AutomationProperties.SetName(input, "Rule value");
+        var input = new TextBox { Text = QueryRuleValues.Format(rule.Value), PlaceholderText = rule.Op is "between" or "in" or "not_in" ? "Values separated by commas" : CollectionText.Get("web.catalog.rules.value", "Value") };
+        AutomationProperties.SetAutomationId(input, "Rule value");
+        AutomationProperties.SetName(input, CollectionText.Get("web.catalog.rules.value", "Rule value"));
         var error = new TextBlock { Foreground = (Brush)Application.Current.Resources["ErrorBrush"], TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
         input.TextChanged += (_, _) =>
         {
@@ -461,11 +468,6 @@ public sealed partial class QueryRulesEditor : UserControl
 
     private sealed record PersonOption(string Id, string Name);
 
-    private static string LanguageName(string code)
-    {
-        try { return System.Globalization.CultureInfo.GetCultureInfo(code).EnglishName; }
-        catch (System.Globalization.CultureNotFoundException) { return code; }
-    }
 
     private void WhenVisible(FrameworkElement input, Func<Task> load)
     {
@@ -485,19 +487,22 @@ public sealed partial class QueryRulesEditor : UserControl
         {
             var date = new CalendarDatePicker { MinWidth = 0, Height = 32, MinHeight = 0, FontSize = 12, PlaceholderText = name };
             if (value.Length > 0) date.Date = new DateTimeOffset(DateTime.ParseExact(value, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
-            AutomationProperties.SetName(date, name);
+            AutomationProperties.SetAutomationId(date, name);
+            AutomationProperties.SetName(date, CollectionText.Get("web.catalog.rules.value", name));
             date.DateChanged += (_, _) => changed(date.Date?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) ?? "");
             return date;
         }
         var input = new TextBox { Text = value, MinWidth = 0, Height = 32, MinHeight = 0, FontSize = 12 };
-        AutomationProperties.SetName(input, name); input.TextChanged += (_, _) => changed(input.Text); return input;
+        AutomationProperties.SetAutomationId(input, name);
+        AutomationProperties.SetName(input, CollectionText.Get("web.catalog.rules.value", name)); input.TextChanged += (_, _) => changed(input.Text); return input;
     }
 
     private ComboBox FieldChoice(string selected)
     {
         var choice = new ComboBox { MinWidth = 0, MinHeight = 0, Height = 32, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Stretch };
         PopulateFieldChoice(choice, selected); _fieldChoices.Add((choice, selected));
-        AutomationProperties.SetName(choice, "Rule field"); return choice;
+        AutomationProperties.SetAutomationId(choice, "Rule field");
+        AutomationProperties.SetName(choice, CollectionText.Get("web.catalog.rules.field", "Rule field")); return choice;
     }
 
     private void PopulateFieldChoice(ComboBox choice, string selected)
@@ -509,22 +514,22 @@ public sealed partial class QueryRulesEditor : UserControl
         foreach (var group in new[] { "Title", "People", "File", "You", "Library" })
         {
             var members = fields.Where(field => field.Group == group).ToList(); if (members.Count == 0) continue;
-            choice.Items.Add(new ComboBoxItem { Content = group, IsEnabled = false, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            choice.Items.Add(new ComboBoxItem { Content = GroupLabel(group), IsEnabled = false, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
             foreach (var field in members)
             {
-                var label = _mediaScope is "ebook" or "manga" ? field.Name switch { "watched" => "Read", "last_watched" => "Last read", _ => field.Label } : field.Label;
-                if (_mediaScope == "episode" && field.Name == "title") label = "Episode title";
+                var label = FieldLabel(field);
                 var item = new ComboBoxItem { Content = label, Tag = field.Name == definition.Name ? selected : field.Name };
                 choice.Items.Add(item); if (field.Name == definition.Name) choice.SelectedItem = item;
             }
         }
     }
 
-    private static ComboBox Choice(IEnumerable<string> values, string selected, string name)
+    private static ComboBox Choice(IEnumerable<string> values, string selected, string name, string? nameKey = null)
     {
         var control = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0, MinHeight = 0, Height = 32, FontSize = 12 };
         PopulateChoices(control, values, selected);
-        AutomationProperties.SetName(control, name); return control;
+        AutomationProperties.SetAutomationId(control, name);
+        AutomationProperties.SetName(control, nameKey == null ? name : CollectionText.Get(nameKey, name)); return control;
     }
 
     private static void PopulateChoices(ComboBox control, IEnumerable<string> values, string selected)

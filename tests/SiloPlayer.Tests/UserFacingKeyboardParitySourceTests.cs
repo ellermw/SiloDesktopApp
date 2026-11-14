@@ -29,7 +29,7 @@ public sealed class UserFacingKeyboardParitySourceTests
     {
         var source = Read("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
 
-        Assert.Contains("AutomationProperties.SetName(openButton, $\"Open {collection.Title}\")", source);
+        Assert.Contains("MediaItemCardActions.BindText(openButton, \"Name\"", source);
         Assert.Contains("openButton.Click +=", source);
         Assert.DoesNotContain("card.Tapped += (s, _) =>", source);
     }

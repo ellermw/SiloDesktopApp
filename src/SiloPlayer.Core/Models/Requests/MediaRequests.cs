@@ -93,6 +93,12 @@ public class RequestDiscoverySection : RequestMediaPage
     public int? NextPage { get; set; }
     public string Key { get; set; } = "";
     public string Title { get; set; } = "";
+    [JsonPropertyName("title_key")]
+    public string? TitleKey { get; set; }
+    [JsonPropertyName("title_args")]
+    public Dictionary<string, string>? TitleArgs { get; set; }
+    [JsonIgnore]
+    public string DisplayTitle => SiloPlayer.Core.Localization.AppStrings.ServerText(TitleKey, TitleArgs, Title);
 }
 
 public class RequestDiscoveryResponse
@@ -107,6 +113,12 @@ public class RequestDiscoverRow
     public string Key { get; set; } = "";
     public string Type { get; set; } = "";
     public string Title { get; set; } = "";
+    [JsonPropertyName("title_key")]
+    public string? TitleKey { get; set; }
+    [JsonPropertyName("title_args")]
+    public Dictionary<string, string>? TitleArgs { get; set; }
+    [JsonIgnore]
+    public string DisplayTitle => SiloPlayer.Core.Localization.AppStrings.ServerText(TitleKey, TitleArgs, Title);
 }
 
 public class DiscoverBrandCard

@@ -6,11 +6,23 @@ public class HomeSectionsResponse
 {
     public List<HomeSectionWithItems> Sections { get; set; } = [];
 }
-public class HomeSectionWithItems
+public class HomeSectionWithItems : SiloPlayer.Core.Localization.IServerTitled, IJsonOnDeserialized
 {
     public string Id { get; set; } = "";
     public string SectionType { get; set; } = "";
+    /// <summary>The server's title: the stored value pins, edits and saves use. Show <see cref="DisplayTitle"/>.</summary>
     public string Title { get; set; } = "";
+    /// <summary>Optional <c>home.section.*</c> catalog key for <see cref="Title"/> while it is the server's own text.</summary>
+    public string? TitleKey { get; set; }
+    public Dictionary<string, string>? TitleArgs { get; set; }
+    /// <summary>The title <see cref="TitleKey"/> arrived with; copies carry it with the key.</summary>
+    [JsonIgnore] public string? KeyedTitle { get; set; }
+    [JsonIgnore] public string DisplayTitle => SiloPlayer.Core.Localization.SectionTitles.Display(this);
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        TitleKey = SiloPlayer.Core.Localization.SectionTitles.Normalize(TitleKey);
+        KeyedTitle = TitleKey == null ? null : Title;
+    }
     public bool Featured { get; set; }
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }

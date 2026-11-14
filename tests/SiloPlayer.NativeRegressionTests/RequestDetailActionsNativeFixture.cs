@@ -56,10 +56,11 @@ internal static class RequestDetailActionsNativeFixture
             }
             handler.Item.Request = new() { RequestedByViewer = true, RequestId = "fixture-owned", Status = "pending", State = "pending" }; Render(); await UntilAsync(() => ((SiloPlayer.Controls.WrapPanel)page.FindName("ActionsPanel")).Children.OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "cancel"));
             var cancel = Action("cancel"); Click(cancel); ContentDialog? dialog = null; await UntilAsync(() => (dialog = Dialog(parent)) != null);
-            dialog!.Hide(); await Task.Delay(100); if (handler.Cancels != 0) throw new InvalidOperationException("Keeping the request invokes cancellation.");
-            handler.Reject = true; Click(cancel); await UntilAsync(() => (dialog = Dialog(parent)) != null); Primary(dialog!); await UntilAsync(() => handler.Cancels == 1 && cancel.IsEnabled);
+            dialog!.Hide(); await UntilAsync(() => Dialog(parent) == null && !(bool)typeof(RequestDetailPage).GetField("_requestConfirmationOpen", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!);
+            if (handler.Cancels != 0) throw new InvalidOperationException("Keeping the request invokes cancellation.");
+            handler.Reject = true; cancel = Action("cancel"); Click(cancel); await UntilAsync(() => (dialog = Dialog(parent)) != null); Primary(dialog!); await UntilAsync(() => handler.Cancels == 1 && cancel.IsEnabled && Dialog(parent) == null);
             if (handler.Item.Request.RequestId != "fixture-owned") throw new InvalidOperationException("Rejected cancellation discards the owned request.");
-            handler.Reject = false; handler.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously); Click(cancel); await UntilAsync(() => (dialog = Dialog(parent)) != null); Primary(dialog!); await UntilAsync(() => handler.Active == 1);
+            handler.Reject = false; handler.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously); cancel = Action("cancel"); Click(cancel); await UntilAsync(() => (dialog = Dialog(parent)) != null); Primary(dialog!); await UntilAsync(() => handler.Active == 1);
             if (cancel.IsEnabled || cancel.Content is not ProgressRing) throw new InvalidOperationException("Actual cancellation permits another request while pending.");
             handler.Gate.SetResult(); await UntilAsync(() => string.IsNullOrWhiteSpace(handler.Item.Request.RequestId) && cancel.IsEnabled && Dialog(parent) == null);
             handler.Gate = null; handler.Item.Request = new() { Requestable = true }; Render();

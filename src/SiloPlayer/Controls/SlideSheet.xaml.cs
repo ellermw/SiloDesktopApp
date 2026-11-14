@@ -32,6 +32,10 @@ public sealed partial class SlideSheet : UserControl
             typeof(SlideSheet),
             new PropertyMetadata("", OnTitleChanged));
 
+    public static readonly DependencyProperty TitleKeyProperty = DependencyProperty.Register(
+        nameof(TitleKey), typeof(string), typeof(SlideSheet), new PropertyMetadata(null, OnTitleChanged));
+    public string? TitleKey { get => (string?)GetValue(TitleKeyProperty); set => SetValue(TitleKeyProperty, value); }
+
     public static readonly DependencyProperty SheetContentProperty =
         DependencyProperty.Register(
             nameof(SheetContent),
@@ -52,11 +56,12 @@ public sealed partial class SlideSheet : UserControl
     }
 
     /// <summary>Optional filter-sheet composition; other sheets keep their defaults.</summary>
-    public void ConfigureFilterHeader(FrameworkElement modes, string description)
+    public void ConfigureFilterHeader(FrameworkElement modes, string description, string? descriptionKey = null)
     {
         HeaderActionsHost.Content = modes;
         CloseButton.Visibility = Visibility.Collapsed;
         DescriptionText.Text = description;
+        if (descriptionKey != null) SiloPlayer.Services.Localized.SetText(DescriptionText, descriptionKey);
         DescriptionText.Visibility = Visibility.Visible;
         TitleText.LineHeight = 24;
         TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
@@ -95,6 +100,7 @@ public sealed partial class SlideSheet : UserControl
     public SlideSheet()
     {
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, RefreshLocalizedTitle);
     }
 
     private static void OnIsOpenChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -108,8 +114,11 @@ public sealed partial class SlideSheet : UserControl
 
     private static void OnTitleChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is SlideSheet s) s.TitleText.Text = (string)e.NewValue;
+        if (d is SlideSheet s) s.RefreshLocalizedTitle();
     }
+
+    private void RefreshLocalizedTitle() => TitleText.Text = string.IsNullOrEmpty(TitleKey) ? Title
+        : SiloPlayer.Core.Localization.AppStrings.Get(TitleKey, fallback: Title);
 
     private void Open()
     {

@@ -100,6 +100,10 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException += (_, args) =>
             LocalLog.AppendException("errors.txt", args.Exception, "TaskScheduler.UnobservedTaskException");
 
+        // Seed the interface language before the first window paints: the cached
+        // profile choice or the device languages, until a profile's setting loads.
+        try { Services.GetRequiredService<SiloPlayer.Core.Localization.AppLocaleCoordinator>().ApplyBeforeSettings(); }
+        catch (Exception ex) { LocalLog.AppendException("errors.txt", ex, "app_language_startup"); }
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
         // Set the update restart frame before either activation path can show the window.
@@ -340,6 +344,13 @@ public partial class App : Application
         services.AddSingleton<CatalogApi>(sp => new CatalogApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<NotInterestedService>(sp => Controls.NotInterestedActions.CreateService(sp.GetRequiredService<CatalogApi>()));
         services.AddSingleton<SettingsApi>(sp => new SettingsApi(sp.GetRequiredService<SiloApiClient>()));
+        // Interface language: Core chooses, the window applies. First resolved on the UI thread in OnLaunched.
+        services.AddSingleton(SiloPlayer.Core.Localization.LocaleService.Shared);
+        services.AddSingleton(sp => new SiloPlayer.Core.Localization.AppLanguagePreference(sp.GetRequiredService<SettingsApi>()));
+        services.AddSingleton(sp => new SiloPlayer.Core.Localization.AppLocaleCoordinator(
+            sp.GetRequiredService<SiloPlayer.Core.Localization.AppLanguagePreference>(), SiloPlayer.Core.Localization.LocaleService.Shared,
+            sp.GetRequiredService<SettingsService>(), AppLocalization.DeviceLanguages, AppLocalization.DeviceFormatCulture,
+            AppLocalization.PostTo(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread())));
         services.AddSingleton<WebhookSyncApi>(sp => new WebhookSyncApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<PlexBrowserAuthApi>();
         services.AddSingleton<PlaybackApi>(sp => new PlaybackApi(sp.GetRequiredService<SiloApiClient>()));

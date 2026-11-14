@@ -21,6 +21,7 @@ public sealed partial class RecommendationSectionPage : Page
         ViewModel = App.Services.GetRequiredService<RecommendationSectionViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); Bindings.Update(); UpdatePageState(); });
         // Kept for Back: returning from a title shows the section where it was left, without a reload.
         NavigationCacheMode = NavigationCacheMode.Enabled;
         LoadingSkeleton.ItemsSource = Enumerable.Range(0, 24).ToArray();
@@ -108,7 +109,7 @@ public sealed partial class RecommendationSectionPage : Page
         EmptyState.Visibility = !ViewModel.IsLoading && !hasError && !hasItems ? Visibility.Visible : Visibility.Collapsed;
         ItemsGrid.Visibility = !ViewModel.IsLoading && hasItems ? Visibility.Visible : Visibility.Collapsed;
         ItemCountLabel.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
-        ItemCountLabel.Text = ViewModel.Items.Count == 1 ? "1 title" : $"{ViewModel.Items.Count:N0} titles";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(ItemCountLabel, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.titleCount", new Dictionary<string, object?> { ["shown"] = (ViewModel.Items.Count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = ViewModel.Items.Count }, fallback: ViewModel.Items.Count == 1 ? "1 title" : $"{ViewModel.Items.Count:N0} titles"));
     }
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)

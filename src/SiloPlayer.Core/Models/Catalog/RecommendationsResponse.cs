@@ -17,6 +17,9 @@ public class DiscoverRow
     public string Type { get; set; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("title")]
     public string Label { get; set; } = "";
+    /// <summary>Optional <c>home.section.*</c> key for the server-worded <see cref="Label"/>.</summary>
+    public string? TitleKey { get; set; }
+    public Dictionary<string, string>? TitleArgs { get; set; }
     [System.Text.Json.Serialization.JsonPropertyName("kind")]
     public string? SectionKind { get; set; }
     [System.Text.Json.Serialization.JsonPropertyName("key")]
@@ -31,6 +34,9 @@ public class RecommendationSectionResponse
     public string Type { get; set; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("title")]
     public string Label { get; set; } = "";
+    /// <summary>Optional <c>home.section.*</c> key for the server-worded <see cref="Label"/>.</summary>
+    public string? TitleKey { get; set; }
+    public Dictionary<string, string>? TitleArgs { get; set; }
     public List<MediaItem> Items { get; set; } = [];
 }
 
@@ -80,6 +86,9 @@ public class RecommendationRow
     public string Type { get; set; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("title")]
     public string Label { get; set; } = "";
+    /// <summary>Optional <c>home.section.*</c> key for the server-worded <see cref="Label"/>.</summary>
+    public string? TitleKey { get; set; }
+    public Dictionary<string, string>? TitleArgs { get; set; }
     public string? Kind { get; set; }
     public string? Key { get; set; }
     public List<RecommendationItem> Items { get; set; } = [];

@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Media.Animation;
 using SiloPlayer.Helpers;
 using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -39,10 +40,12 @@ public sealed partial class CollectionEditorPage
     }
     private static ContentDialog CreateDepartureDialog(XamlRoot root)
     {
-        var title = new TextBlock { Text = "Discard unsaved changes?", FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
+        var title = CollectionText.Keyed(new TextBlock { Text = "Discard unsaved changes?", FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap }, "web.shell.unsavedChanges.title");
         var content = new TextBlock { Text = "This page has edits that were never saved. Leaving now throws them away.", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+        CollectionText.Keyed(content, "web.shell.unsavedChanges.description");
         var dialog = new ContentDialog { XamlRoot = root, Title = title, Content = content, PrimaryButtonText = "Discard", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        Localized.SetPrimaryButton(dialog, "web.shell.unsavedChanges.discard"); Localized.SetCloseButton(dialog, "common.cancel"); Localized.SetDirection(dialog, true);
         dialog.PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"];
         EditorDialogPresentation.Configure(dialog, 512, new Thickness(24));
         void Reflow()

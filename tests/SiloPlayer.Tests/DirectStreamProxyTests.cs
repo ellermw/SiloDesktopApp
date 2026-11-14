@@ -32,7 +32,7 @@ public sealed class DirectStreamProxyTests
         var handler = new RecordingHandler(_ => CreateResponse(new byte[] { 5, 6, 7 }));
         using var upstreamClient = new HttpClient(handler);
         using var proxy = new DirectStreamProxy(
-            "https://server.example/api/v1/stream/session?token=stale-token&seek=5",
+            "https://server.example/stream/v3/session?token=stale-token&seek=5",
             () => "fresh-user-access-token",
             httpClient: upstreamClient);
         using var localClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
@@ -52,7 +52,7 @@ public sealed class DirectStreamProxyTests
         var handler = new RecordingHandler(_ => CreateResponse(new byte[] { 8, 9, 10 }));
         using var upstreamClient = new HttpClient(handler);
         using var proxy = new DirectStreamProxy(
-            "https://server.example/api/v1/stream/session",
+            "https://server.example/stream/v3/session",
             () => "access-token",
             httpClient: upstreamClient);
         using var localClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
@@ -96,7 +96,7 @@ public sealed class DirectStreamProxyTests
         using var handler = new BlockingHandler();
         using var upstreamClient = new HttpClient(handler);
         var proxy = new DirectStreamProxy(
-            "https://server.example/api/v1/stream/session",
+            "https://server.example/stream/v3/session",
             () => "access-token",
             httpClient: upstreamClient);
         using var localClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
@@ -119,7 +119,7 @@ public sealed class DirectStreamProxyTests
         var handler = new RecordingHandler(_ => throw new InvalidOperationException("Upstream should not be called."));
         using var upstreamClient = new HttpClient(handler);
         using var proxy = new DirectStreamProxy(
-            "https://server.example/api/v1/stream/session",
+            "https://server.example/stream/v3/session",
             () => "access-token",
             httpClient: upstreamClient);
         using var localClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };

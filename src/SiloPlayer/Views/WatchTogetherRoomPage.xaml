@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Views.WatchTogetherRoomPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
@@ -82,7 +83,7 @@
                                     Padding="12,8" FontSize="13" Click="LeaveButton_Click" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE8BB;" FontSize="12" />
-                                    <TextBlock Text="Leave" />
+                                    <TextBlock Text="Leave" loc:Localized.Text="web.watchTogether.strip.leave" />
                                 </StackPanel>
                             </Button>
                         </controls:WrapPanel>
@@ -102,7 +103,7 @@
                                     <TextBlock x:Name="ReadySummary" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap"/>
                                     <controls:WrapPanel HorizontalSpacing="8" VerticalSpacing="8">
                                         <Button x:Name="StartStagedButton" Content="Start for everyone" Click="StartStagedButton_Click" Style="{StaticResource AccentButtonStyle}" Height="36" Padding="12,0" HorizontalAlignment="Left"/>
-                                        <Button x:Name="ChangeStagedButton" Click="ChangeStagedButton_Click" Style="{StaticResource OutlineButtonStyle}" Height="36" MinHeight="0" Padding="16,0"><TextBlock Text="Change" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"/></Button>
+                                        <Button x:Name="ChangeStagedButton" Click="ChangeStagedButton_Click" Style="{StaticResource OutlineButtonStyle}" Height="36" MinHeight="0" Padding="16,0"><TextBlock Text="Change" loc:Localized.Text="web.watchTogether.common.change" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"/></Button>
                                         <Button x:Name="LobbyReadyButton" Content="I'm ready" Click="LobbyReadyButton_Click" HorizontalAlignment="Left"/>
                                     </controls:WrapPanel>
                                 </StackPanel>
@@ -111,7 +112,7 @@
                     </Border>
                     <Border x:Name="ReadyCheckPanel" Background="{StaticResource PartySubtleBrush}" BorderBrush="{StaticResource PartySubtleBorderBrush}" BorderThickness="1" CornerRadius="16" Padding="16,12">
                         <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="2"><TextBlock x:Name="ReadyCheckHeading" Text="Guest ready check" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock x:Name="ReadyCheckSummary" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                            <StackPanel Spacing="2"><TextBlock x:Name="ReadyCheckHeading" Text="Guest ready check" loc:Localized.Text="web.watchTogether.readyCheck.title" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock x:Name="ReadyCheckSummary" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
                             <controls:WrapPanel x:Name="ReadyCheckMembers" Grid.Column="1" VerticalAlignment="Center" HorizontalSpacing="16" VerticalSpacing="8" />
                         </Grid>
                     </Border>
@@ -119,8 +120,8 @@
                         <Grid x:Name="StageInviteGrid" ColumnSpacing="12" RowSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                            <controls:WrapPanel x:Name="StageInviteInfo" HorizontalSpacing="12" VerticalSpacing="6"><TextBlock Text="INVITE" FontSize="11" LineHeight="16.5" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"/><TextBlock Text="Share the code to let people in." FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"/><Button x:Name="StageCodeButton" Content="Code" Click="CopyCodeButton_Click" Height="32" MinHeight="0" Padding="10,0" HorizontalAlignment="Left" AutomationProperties.Name="Copy room code"/></controls:WrapPanel>
-                            <StackPanel x:Name="GuestPausePanel" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><Grid Width="32" Height="20"><ToggleSwitch x:Name="GuestPauseToggle" Width="44" MinWidth="44" Height="38" Margin="-6,-9,-6,-9" OnContent="" OffContent="" Toggled="GuestPauseToggle_Toggled" AutomationProperties.Name="Guests can pause"/></Grid><TextBlock x:Name="GuestPauseLabel" Text="Guests can pause" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center"/></StackPanel>
+                            <controls:WrapPanel x:Name="StageInviteInfo" HorizontalSpacing="12" VerticalSpacing="6"><TextBlock x:Name="InviteEyebrow" Text="INVITE" FontSize="11" LineHeight="16.5" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"/><TextBlock Text="Share the code to let people in." loc:Localized.Text="web.watchTogether.inviteBar.shareCode" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"/><Button x:Name="StageCodeButton" Content="Code" Click="CopyCodeButton_Click" Height="32" MinHeight="0" Padding="10,0" HorizontalAlignment="Left" AutomationProperties.Name="Copy room code"/></controls:WrapPanel>
+                            <StackPanel x:Name="GuestPausePanel" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><Grid Width="32" Height="20"><ToggleSwitch x:Name="GuestPauseToggle" Width="44" MinWidth="44" Height="38" Margin="-6,-9,-6,-9" OnContent="" OffContent="" Toggled="GuestPauseToggle_Toggled" AutomationProperties.Name="Guests can pause" loc:Localized.Name="web.watchTogether.inviteBar.guestsCanPause"/></Grid><TextBlock x:Name="GuestPauseLabel" Text="Guests can pause" loc:Localized.Text="web.watchTogether.inviteBar.guestsCanPause" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center"/></StackPanel>
                         </Grid>
                     </Border>
                 </StackPanel>
@@ -151,7 +152,7 @@
                         <StackPanel Margin="24" VerticalAlignment="Center" Spacing="4">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <Ellipse Width="8" Height="8" Fill="#34D399" />
-                                <TextBlock Text="NOW PLAYING" FontSize="10" FontWeight="SemiBold"
+                                <TextBlock x:Name="NowPlayingEyebrow" Text="NOW PLAYING" FontSize="10" FontWeight="SemiBold"
                                            CharacterSpacing="180" Foreground="#34D399" />
                             </StackPanel>
                             <TextBlock x:Name="NowPlayingTitle" Text="Loading..." FontSize="27" FontWeight="SemiBold" />
@@ -282,13 +283,13 @@
                                     <Image x:Name="PickerSeriesPoster" Stretch="UniformToFill" Opacity="0" ImageOpened="PickerImage_Opened" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Bottom">
-                                    <TextBlock Text="CANDIDATE · SERIES" FontSize="11" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="PickerSeriesEyebrow" Text="CANDIDATE · SERIES" FontSize="11" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock x:Name="PickerSeriesTitle" FontSize="16" FontWeight="SemiBold" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
                                     <TextBlock x:Name="PickerSeriesMeta" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                     <TextBlock x:Name="PickerSeriesOverview" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                             </Grid>
-                            <Button Content="×" Click="CloseSeriesPicker_Click" Style="{StaticResource GhostButtonStyle}" Width="28" Height="28" Padding="0" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" AutomationProperties.Name="Close series" />
+                            <Button Content="×" Click="CloseSeriesPicker_Click" Style="{StaticResource GhostButtonStyle}" Width="28" Height="28" Padding="0" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" AutomationProperties.Name="Close series" loc:Localized.Name="web.watchTogether.series.close" />
                         </Grid>
                         <Grid x:Name="PickerSeriesBody" Grid.Row="1">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -308,7 +309,7 @@
                         <Button x:Name="DrillDownBackBtn" Click="DrillDownBack_Click"
                                 Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" Visibility="Collapsed">
                             <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE76B;" FontSize="12" />
+                                <FontIcon x:Name="DrillDownBackIcon" Glyph="&#xE76B;" FontSize="12" MirroredWhenRightToLeft="True" />
                                 <TextBlock x:Name="DrillDownBackText" Text="Back to results" FontSize="13" />
                             </StackPanel>
                         </Button>
@@ -323,7 +324,7 @@
                             <Border Height="80" CornerRadius="8" Background="{StaticResource SurfaceBrush}" />
                             <Border Height="80" CornerRadius="8" Background="{StaticResource SurfaceBrush}" />
                         </StackPanel>
-                        <TextBlock x:Name="DrillDownEmptyText" Visibility="Collapsed" Text="No playable episodes in this season."
+                        <TextBlock x:Name="DrillDownEmptyText" Visibility="Collapsed" Text="No playable episodes in this season." loc:Localized.Text="web.watchTogether.series.noEpisodes"
                                    Margin="8,32" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                         <ItemsRepeater x:Name="DrillDownItems">
                             <ItemsRepeater.Layout>
@@ -376,11 +377,11 @@
                         <Grid x:Name="PickerConfirmation" Grid.Row="2" Visibility="Collapsed" Padding="16,12" ColumnSpacing="12" BorderThickness="0,1,0,0" BorderBrush="{StaticResource BorderBrush}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Spacing="3">
-                                <TextBlock Text="YOUR PICK" FontSize="11" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock x:Name="PickerPickEyebrow" Text="YOUR PICK" FontSize="11" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock x:Name="PickerPickTitle" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                 <TextBlock x:Name="PickerPickRisk" FontSize="12" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <Button Grid.Column="1" Content="Cancel" Click="CloseSeriesPicker_Click" Style="{StaticResource GhostButtonStyle}" IsEnabled="{Binding IsEnabled, ElementName=PickerConfirmButton}" FontSize="14" />
+                            <Button Grid.Column="1" Content="Cancel" loc:Localized.Content="common.cancel" Click="CloseSeriesPicker_Click" Style="{StaticResource GhostButtonStyle}" IsEnabled="{Binding IsEnabled, ElementName=PickerConfirmButton}" FontSize="14" />
                             <Button x:Name="PickerConfirmButton" Grid.Column="2" Content="Stage it" Click="SeriesConfirm_Click" Style="{StaticResource AccentButtonStyle}" FontSize="14" />
                         </Grid>
                     </Grid>
@@ -410,7 +411,7 @@
                                     <FontIcon Glyph="&#xE74A;" FontSize="14" Foreground="{StaticResource AccentBrush}" />
                                 </Border>
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="Suggestions" FontSize="18" FontWeight="SemiBold" />
+                                    <TextBlock Text="Suggestions" loc:Localized.Text="web.watchTogether.lobby.suggestions" FontSize="18" FontWeight="SemiBold" />
                                     <TextBlock x:Name="SuggestionsSubtitle" Text="No suggestions yet — search for something to add."
                                                FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                                 </StackPanel>
@@ -419,7 +420,7 @@
                                     Padding="12,8" Click="SuggestButton_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE721;" FontSize="12" />
-                                    <TextBlock Text="Suggest" />
+                                    <TextBlock Text="Suggest" loc:Localized.Text="watchParty.button.suggest" />
                                 </StackPanel>
                             </Button>
                         </Grid>
@@ -477,7 +478,7 @@
                     <Grid Padding="8,0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <Button x:Name="PeopleTabButton" Content="People" Height="36" CornerRadius="0" Background="Transparent" BorderBrush="{StaticResource PrimaryTextBrush}" BorderThickness="0,0,0,2" HorizontalAlignment="Stretch" Click="PeopleTab_Click"/>
-                        <Button x:Name="ActivityTabButton" Grid.Column="1" Content="Activity" Height="36" CornerRadius="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Stretch" Click="ActivityTab_Click"/>
+                        <Button x:Name="ActivityTabButton" Grid.Column="1" Content="Activity" loc:Localized.Content="web.watchTogether.rail.activity" Height="36" CornerRadius="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Stretch" Click="ActivityTab_Click"/>
                     </Grid>
                 <!-- Additive participants field from the current server. -->
                 <Border x:Name="MembersPanel" Visibility="Collapsed">

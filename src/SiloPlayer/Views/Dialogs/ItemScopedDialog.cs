@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -31,13 +32,14 @@ public abstract class ItemScopedDialog : ContentDialog
     protected ItemScopedDialog(string itemId, string title, string description, double width, string primary, Func<AuthService, bool> authorized, double maxHeightRatio = 1)
     {
         ItemId = itemId; Context = Client.CaptureContext(); _authorized = authorized; _width = width; _maxHeightRatio = maxHeightRatio;
-        var header = new Grid(); var titleText = Text(title, 18); titleText.FontWeight = FontWeights.SemiBold;
+        var header = new Grid(); var titleText = _titleText = Text(title, 18); titleText.FontWeight = FontWeights.SemiBold;
         header.Children.Add(titleText); Title = header;
         Status.Visibility = Visibility.Collapsed;
         Status.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) => Status.Visibility = string.IsNullOrEmpty(Status.Text) ? Visibility.Collapsed : Visibility.Visible);
-        Body.Children.Add(Text(description, 14, true)); Body.Children.Add(Status);
+        Body.Children.Add(_descriptionText = Text(description, 14, true)); Body.Children.Add(Status);
         _scroll = new() { Content = Body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        Content = _scroll; PrimaryButtonText = primary; CloseButtonText = "Cancel"; DefaultButton = ContentDialogButton.Primary; IsPrimaryButtonEnabled = false;
+        Content = _scroll; PrimaryButtonText = primary; CloseButtonText = AppStrings.Get("common.cancel"); DefaultButton = ContentDialogButton.Primary; IsPrimaryButtonEnabled = false;
+        this.KeyedDialog(close: "common.cancel");
         EditorDialogPresentation.Configure(this, width, new Thickness(24));
         var close = _cornerClose = EditorDialogPresentation.CornerClose(this);
         _scroll.Loaded += (_, _) => { EditorDialogPresentation.PlaceCornerClose(this, header, close); Reflow(); };
@@ -61,15 +63,25 @@ public abstract class ItemScopedDialog : ContentDialog
         _navigationRegistration = token.Register(() => { Lifetime.Cancel(); DispatcherQueue.TryEnqueue(() => { if (!Busy) Hide(); }); });
     }
     protected static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
+    private readonly TextBlock _titleText, _descriptionText;
+
+    /// <summary>Keys the shared heading and description (the English already passed is the fallback); they follow language changes while open.</summary>
+    protected void KeyHeading(string titleKey, string? descriptionKey = null, string? primaryKey = null)
+    {
+        _titleText.Keyed(titleKey);
+        if (descriptionKey != null) _descriptionText.Keyed(descriptionKey);
+        if (primaryKey != null) this.KeyedDialog(primary: primaryKey);
+    }
+
     protected static TextBlock Text(string value, double size = 14, bool muted = false)
         => new() { Text = value, FontSize = size, LineHeight = size * 1.45, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap, Foreground = Brush(muted ? "SecondaryTextBrush" : "PrimaryTextBrush") };
     protected void RequireAuthority() { Lifetime.Token.ThrowIfCancellationRequested(); if (!CanAct) throw new OperationCanceledException("Media action authority changed.", Lifetime.Token); }
     protected async Task LoadSafelyAsync()
     {
-        Ready = false; SetEditing(false); Status.Text = "Loading…";
+        Ready = false; SetEditing(false); Status.Text = AppStrings.Get("web.item.menu.loading", fallback: "Loading…");
         try { RequireAuthority(); await LoadAsync(); RequireAuthority(); Ready = true; Status.Text = ""; }
         catch (OperationCanceledException) { if (!Lifetime.IsCancellationRequested) Status.Text = "The selected profile or item changed. Close and reopen this dialog."; }
-        catch (Exception error) { Status.Text = error.Message; }
+        catch (Exception error) { Status.Text = error.DisplayMessage(); }
         SetEditing(Ready && CanAct); UpdateCommands();
     }
     protected virtual void UpdateCommands() => IsPrimaryButtonEnabled = Ready && CanAct && !Busy;
@@ -79,7 +91,7 @@ public abstract class ItemScopedDialog : ContentDialog
         Busy = true; IsPrimaryButtonEnabled = false; SetCloseEnabled(false); _cornerClose.IsEnabled = false; SetEditing(false);
         try { RequireAuthority(); await action(); }
         catch (OperationCanceledException) { if (!Lifetime.IsCancellationRequested) Status.Text = "The selected profile or item changed. Close and reopen this dialog."; }
-        catch (Exception error) { Status.Text = error.Message; LocalLog.AppendLine("media_detail_errors.txt", $"action={GetType().Name} | error={error.GetType().Name} | status={(error as ApiException)?.StatusCode}"); }
+        catch (Exception error) { Status.Text = error.DisplayMessage(); LocalLog.AppendLine("media_detail_errors.txt", $"action={GetType().Name} | error={error.GetType().Name} | status={(error as ApiException)?.StatusCode}"); }
         finally { Busy = false; SetCloseEnabled(true); _cornerClose.IsEnabled = true; SetEditing(Ready && CanAct); UpdateCommands(); if (Lifetime.IsCancellationRequested) DispatcherQueue.TryEnqueue(Hide); }
     }
     protected virtual void SetEditing(bool enabled) { }

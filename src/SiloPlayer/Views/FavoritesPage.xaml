@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.FavoritesPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
@@ -64,11 +65,11 @@
                     Text="Favorites"
                     FontSize="{StaticResource FontSizeDisplayLarge}"
                     FontWeight="Bold"
-                    Foreground="{StaticResource PrimaryTextBrush}" />
+                    Foreground="{StaticResource PrimaryTextBrush}"  loc:Localized.Text="web.catalog.page.favorites"/>
                 <TextBlock
                     Text="Movies and series you've marked as favorites."
                     FontSize="14"
-                    Foreground="{StaticResource SecondaryTextBrush}" />
+                    Foreground="{StaticResource SecondaryTextBrush}" loc:Localized.Text="web.catalog.page.favoritesSubtitle" />
             </StackPanel>
 
             <!-- Item count panel (web: surface-panel-subtle rounded-[1.35rem]) -->
@@ -87,7 +88,7 @@
                         FontSize="10"
                         FontWeight="SemiBold"
                         CharacterSpacing="160"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
+                        Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.page.favorites" loc:Localized.Uppercase="True"/>
                     <TextBlock
                         x:Name="ItemCountText"
                         FontSize="24"
@@ -117,10 +118,10 @@
                 Style="{StaticResource PillComboBoxStyle}"
                 Width="150"
                 SelectionChanged="SortComboBox_SelectionChanged"
-                PlaceholderText="Sort by">
-                <ComboBoxItem Content="Title" Tag="title" IsSelected="True" />
-                <ComboBoxItem Content="Year" Tag="year" />
-                <ComboBoxItem Content="Date Added" Tag="added_at" />
+                PlaceholderText="Sort by" loc:Localized.Placeholder="web.catalog.sort.sortBy">
+                <ComboBoxItem Content="Title" Tag="title" IsSelected="True"  loc:Localized.Content="catalog.sort.title"/>
+                <ComboBoxItem Content="Year" Tag="year"  loc:Localized.Content="catalog.sort.year"/>
+                <ComboBoxItem Content="Date Added" Tag="added_at"  loc:Localized.Content="catalog.sort.added"/>
             </ComboBox>
 
             <!-- Order toggle -->

@@ -25,6 +25,9 @@ public class AppSettings
     public List<ServerEntry> Servers { get; set; } = [];
     public string? DeviceId { get; set; }
     public string? LastProfileId { get; set; }
+    /// <summary>The last explicit interface language a profile applied, used before a profile's settings load
+    /// (launch, sign-in, profile picker). Cleared when a profile follows the device. Display only.</summary>
+    public string? LastAppLanguageOverride { get; set; }
     /// <summary>Local launch choice: remember the last profile, or ask on every launch.</summary>
     public string ProfileLaunchMode { get; set; } = "remember";
     public string? LastTheme { get; set; }

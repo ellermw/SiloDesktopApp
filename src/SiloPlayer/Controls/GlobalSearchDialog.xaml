@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ContentDialog
+<ContentDialog loc:Localized.Direction="True"
     x:Class="SiloPlayer.Controls.GlobalSearchDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:automation="using:Microsoft.UI.Xaml.Automation"
@@ -83,7 +84,7 @@
                                Foreground="{StaticResource SecondaryTextBrush}" />
                 </Border>
                 <TextBlock Text="See all" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight"
-                           Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                           Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"  loc:Localized.Text="web.search.seeAll"/>
             </StackPanel>
         </Grid>
 
@@ -102,7 +103,7 @@
                 <StackPanel Padding="8">
             <Grid x:Name="LoadingPanel" Padding="12,24" Visibility="Collapsed">
                 <TextBlock Text="Searching..." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
-                           TextAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+                           TextAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.search.searching"/>
             </Grid>
 
             <!-- Empty -->
@@ -112,7 +113,7 @@
                        TextAlignment="Center" TextWrapping="Wrap"
                        Padding="12,24"
                        Foreground="{StaticResource SecondaryTextBrush}"
-                       Visibility="Collapsed" />
+                       Visibility="Collapsed" loc:Localized.Text="web.search.noMatches" />
                     <StackPanel x:Name="ResultsPanel" Spacing="0" />
                 </StackPanel>
             </ScrollViewer>

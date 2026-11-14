@@ -34,12 +34,12 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     {
         InitializeComponent();
         _catalog = catalog; _client = client; ViewModel = new(catalog);
+        SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); SiloPlayer.Services.AppLocalization.ApplyDirection(this); Render(); });
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var back = new Button { Name = "BoxSetBack", Content = new FontIcon { Glyph = "\uE72B" }, Width = 40, Height = 40, Margin = new Thickness(24, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetName(back, "Go back");
-        ToolTipService.SetToolTip(back, "Go back");
+        MediaItemCardActions.Localize(back, name: "common.back", toolTip: "common.back");
         back.Click += (_, _) =>
         {
             var navigation = App.Services.GetRequiredService<NavigationService>();
@@ -139,21 +139,21 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             Body.Children.Add(new ProgressRing { IsActive = true });
             Body.Children.Add(new SkeletonPoster { Width = 160, Height = 240 });
             Body.Children.Add(new SkeletonText { Width = 300, Height = 32 });
-            Body.Children.Add(new TextBlock { Text = "Loading box set…" }); return;
+            Body.Children.Add(MediaItemCardActions.Localize(new TextBlock { Text = "Loading box set…" }, text: "common.loading")); return;
         }
         if (ViewModel.Detail == null && ViewModel.Failure != DetailFailureKind.None)
         {
             var unavailable = ViewModel.Failure is DetailFailureKind.NotFound or DetailFailureKind.AccessDenied;
-            Body.Children.Add(new TextBlock { Text = unavailable ? "Box set unavailable" : "Could not load box set", FontSize = 24, TextWrapping = TextWrapping.Wrap });
+            Body.Children.Add(new TextBlock { Text = unavailable ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.unavailableTitle") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.loadFailedTitle"), FontSize = 24, TextWrapping = TextWrapping.Wrap });
             if (ViewModel.Failure == DetailFailureKind.AccessDenied)
                 Body.Children.Add(new TextBlock { Text = DetailFailurePolicy.Message(ViewModel.Failure), TextWrapping = TextWrapping.Wrap });
-            if (!unavailable) { var retry = new Button { Content = "Try again" }; retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
+            if (!unavailable) { var retry = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Try again" }, content: "common.tryAgain"); retry.Click += async (_, _) => await ViewModel.RefreshAsync(); Body.Children.Add(retry); } return;
         }
         if (ViewModel.Detail is not {} set) return;
         var hero = new Grid { MinHeight = 220 };
         if (!string.IsNullOrWhiteSpace(set.BackdropUrl))
         {
-            var backdrop = _heroBackdrop = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.BackdropUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill, Opacity = .22, MaxHeight = 300 };
+            var backdrop = _heroBackdrop = new Image { FlowDirection = FlowDirection.LeftToRight, Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.BackdropUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill, Opacity = .22, MaxHeight = 300 };
             Grid.SetColumnSpan(backdrop, 2); hero.Children.Add(backdrop);
         }
         hero.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); hero.ColumnDefinitions.Add(new ColumnDefinition());
@@ -165,16 +165,16 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         artwork.Children.Add(fallback);
         if (!string.IsNullOrWhiteSpace(set.PosterUrl))
         {
-            _heroPoster = new Image { Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill };
+            _heroPoster = new Image { FlowDirection = FlowDirection.LeftToRight, Source = new SiloPlayer.Converters.UrlToImageSourceConverter().Convert(set.PosterUrl, typeof(ImageSource), null!, "") as ImageSource, Stretch = Stretch.UniformToFill };
             artwork.Children.Add(_heroPoster);
         }
         hero.Children.Add(artwork); Grid.SetColumn(info, 1);
-        info.Children.Add(new TextBlock { Text = "Box set" });
+        info.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Box set" }, text: "web.detail.boxSet.label"));
         info.Children.Add(_title = new TextBlock { FontSize = 32, TextWrapping = TextWrapping.Wrap });
         info.Children.Add(_counts = new TextBlock { TextWrapping = TextWrapping.Wrap });
         info.Children.Add(_overview = new TextBlock { TextWrapping = TextWrapping.Wrap });
         var actionText = set.PlayTarget is {} next && !string.IsNullOrWhiteSpace(next.Title)
-            ? (set.PlayLabel == "Continue" ? "Continue · " : "Play ") + next.Title : set.PlayLabel;
+            ? SiloPlayer.Core.Localization.AppStrings.Get(set.PlayedCount > 0 && set.PlayedCount < set.MovieCount ? "web.detail.boxSet.continueTitle" : "web.detail.boxSet.playTitle", new Dictionary<string, object?> { ["title"] = next.Title }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.play");
         var play = new Button { Name = "BoxSetPlay", Style = (Style)Application.Current.Resources["AccentButtonStyle"], Height = 44, CornerRadius = new CornerRadius(22), Padding = new Thickness(24, 0, 24, 0), Content = new TextBlock { Text = actionText, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 400 }, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 440, IsEnabled = set.PlayTarget != null && ViewModel.CanPlay };
         AutomationProperties.SetName(play, actionText);
         _playButton = play; _playText = (TextBlock)play.Content;
@@ -185,18 +185,18 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             _playPending = true; play.IsEnabled = false;
             try { await PlayPrimaryAsync(); }
             catch (Exception) when (!_active || visit != _visit) { }
-            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+            catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
             finally { _playPending = false; if (ViewModel.Detail is {} current && _renderedSet != null) UpdateDetail(current); }
         };
         info.Children.Add(play); hero.Children.Add(info); Body.Children.Add(hero);
         hero.SizeChanged += (_, _) => { var narrow = hero.ActualWidth < 400; artwork.Width = hero.ActualWidth < 600 ? 110 : 160; artwork.Height = artwork.Width * 1.5; hero.ColumnDefinitions[0].Width = narrow ? new GridLength(0) : GridLength.Auto; artwork.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible; };
-        Body.Children.Add(new TextBlock { Text = "Movies", FontSize = 24 });
+        Body.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Movies", FontSize = 24 }, text: "web.detail.boxSet.movies"));
         var movies = new ItemsControl { ItemsPanel = (ItemsPanelTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load("<ItemsPanelTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'><ItemsWrapGrid Orientation='Horizontal'/></ItemsPanelTemplate>") };
         foreach (var movie in set.Items.Where(BoxSetDetail.IsMovieMember)) movies.Items.Add(new PosterCard { MediaItem = movie, Margin = new Thickness(0, 0, 16, 16) });
         _movies = movies; Body.Children.Add(movies);
-        if (set.Items.Count == 0) Body.Children.Add(new TextBlock { Text = "No movies available." });
+        if (set.Items.Count == 0) Body.Children.Add(new TextBlock { Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.unavailableBody") });
         Body.Children.Add(_refreshNotice = new TextBlock { Text = "Could not refresh box set. Showing the last loaded details.", TextWrapping = TextWrapping.Wrap });
-        _refreshRetry = new Button { Content = "Try again" };
+        _refreshRetry = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Try again" }, content: "common.tryAgain");
         _refreshRetry.Click += async (_, _) => await ViewModel.RefreshAsync();
         Body.Children.Add(_refreshRetry);
         UpdateDetail(set);
@@ -213,10 +213,10 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             RetryRenewedArtwork(_heroBackdrop, previous.BackdropUrl, set.BackdropUrl);
         }
         _title!.Text = set.Title;
-        _counts!.Text = $"{set.MovieCount} films  ·  {set.Years}  ·  {set.ProgressText}";
+        _counts!.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.filmCount", new Dictionary<string, object?> { ["count"] = set.MovieCount }) + "  ·  " + set.Years + "  ·  " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.boxSet.watchedFraction", new Dictionary<string, object?> { ["played"] = Math.Clamp(set.PlayedCount, 0, Math.Max(0, set.MovieCount)), ["total"] = set.MovieCount });
         _overview!.Text = set.Overview;
         var actionText = set.PlayTarget is {} next && !string.IsNullOrWhiteSpace(next.Title)
-            ? (set.PlayLabel == "Continue" ? "Continue · " : "Play ") + next.Title : set.PlayLabel;
+            ? SiloPlayer.Core.Localization.AppStrings.Get(set.PlayedCount > 0 && set.PlayedCount < set.MovieCount ? "web.detail.boxSet.continueTitle" : "web.detail.boxSet.playTitle", new Dictionary<string, object?> { ["title"] = next.Title }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.play");
         _playText!.Text = actionText;
         AutomationProperties.SetName(_playButton!, actionText);
         _playButton!.IsEnabled = !_playPending && set.PlayTarget != null && ViewModel.CanPlay;

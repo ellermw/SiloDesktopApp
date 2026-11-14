@@ -123,6 +123,7 @@
       <Compile Include="..\SiloPlayer.UpdateHost\UpdateProgressWindow.cs" Link="Updates\UpdateProgressWindow.cs" />
       <Compile Include="..\SiloPlayer.Core\**\*.cs" Exclude="..\SiloPlayer.Core\bin\**;..\SiloPlayer.Core\obj\**" LinkBase="SiloPlayer.Core" />
     <EmbeddedResource Include="..\SiloPlayer.Core\Models\Settings\device-settings.json" LogicalName="SiloPlayer.Core.Models.Settings.device-settings.json" />
+    <EmbeddedResource Include="..\SiloPlayer.Core\Localization\Generated\*.json" LogicalName="SiloPlayer.Core.Localization.Generated.%(Filename)%(Extension)" />
       <Compile Include="..\SiloPlayer.Player\**\*.cs" Exclude="..\SiloPlayer.Player\bin\**;..\SiloPlayer.Player\obj\**" LinkBase="SiloPlayer.Player" />
       <None Include="..\..\libs\mpv\libmpv-2.dll">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

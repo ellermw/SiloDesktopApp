@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
@@ -125,32 +126,32 @@ public partial class SignupViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(Username))
         {
-            ErrorMessage = "Username is required.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Username is required.");
             return;
         }
         if (string.IsNullOrWhiteSpace(Email))
         {
-            ErrorMessage = "Email is required.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Email is required.");
             return;
         }
         if (string.IsNullOrWhiteSpace(Password))
         {
-            ErrorMessage = "Password is required.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Password is required.");
             return;
         }
         if (Password.Length < 8)
         {
-            ErrorMessage = "Password must be at least 8 characters.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters."));
             return;
         }
         if (Password != ConfirmPassword)
         {
-            ErrorMessage = "Passwords do not match.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.mismatch", fallback: "Passwords do not match."));
             return;
         }
         if (string.IsNullOrWhiteSpace(InviteCode))
         {
-            ErrorMessage = "Invite code is required.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Invite code is required.");
             return;
         }
 
@@ -201,23 +202,23 @@ public partial class SignupViewModel : ObservableObject
         }
         catch (ApiException ex)
         {
-            ErrorMessage = ex.ErrorCode switch
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.ErrorCode switch
             {
-                "signup_disabled" => "Signup is not currently available.",
+                "signup_disabled" => AppStrings.Get("web.auth.signup.closed"),
                 "invalid_code" => "The invite code is invalid.",
                 "code_exhausted" => "This invite code has reached its maximum uses.",
                 "code_disabled" => "This invite code is no longer active.",
                 "duplicate" => "This username or email is already registered.",
                 _ => ex.Message
-            };
+            }));
         }
         catch (HttpRequestException)
         {
-            ErrorMessage = "Unable to connect to the server. Check your network connection.";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Unable to connect to the server. Check your network connection.");
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"An error occurred: {ex.Message}";
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, $"An error occurred: {ex.Message}"));
         }
         finally
         {

@@ -118,7 +118,8 @@ internal static class WatchPartyActionsNativeFixture
                 await UntilAsync(() => !VisualTreeHelper.GetOpenPopupsForXamlRoot(parent.XamlRoot).Any(popup => Descendants(popup.Child).Contains(other)));
             }
             handler.Reject = true; await ChooseModeAsync(); await UntilAsync(() => handler.ModeCalls == 1 && !room.IsBusy);
-            if (room.IsVoteMode || room.ErrorMessage?.Contains("Could not change selection mode") != true) throw new InvalidOperationException("Rejected actual mode action changes the lobby selection or loses feedback.");
+            // Rejected mode change now shows the keyed WebUI failure (Task5).
+            if (room.IsVoteMode || room.ErrorMessage?.Contains(SiloPlayer.Core.Localization.AppStrings.Get("web.watchTogether.actions.modeFailed")) != true) throw new InvalidOperationException("Rejected actual mode action changes the lobby selection or loses feedback.");
             handler.Reject = false; handler.Delay = new(TaskCreationOptions.RunContinuationsAsynchronously); await ChooseModeAsync(); await UntilAsync(() => room.IsBusy);
             Press("ModeButton"); await Task.Delay(75);
             if (handler.ModeCalls != 2) throw new InvalidOperationException("Actual mode action duplicates its pending mutation.");

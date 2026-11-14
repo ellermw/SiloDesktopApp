@@ -29,6 +29,7 @@ public sealed partial class PersonDetailPage : Page
         ViewModel.FormatPersonDate = date => DateTimeDisplay.FormatDate(new DateTimeOffset(date), medium: true);
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
 
         FilmographyRepeater.ItemsSource = ViewModel.Filmography;
 
@@ -116,9 +117,9 @@ public sealed partial class PersonDetailPage : Page
         var person = ViewModel.Person;
         ContentScroll.Visibility = !ViewModel.IsLoading && person != null ? Visibility.Visible : Visibility.Collapsed;
         PersonUnavailableState.Visibility = !ViewModel.IsLoading && person == null && ViewModel.ErrorMessage != null ? Visibility.Visible : Visibility.Collapsed;
-        var missing = ViewModel.ErrorMessage == "Person not found.";
-        PersonUnavailableTitle.Text = missing ? "This person isn't available" : "Couldn't load this person";
-        PersonUnavailableDescription.Text = missing ? "They may have been removed from the catalog, or the link may be wrong." : "Something went wrong while loading them. Try again in a moment.";
+        var missing = ViewModel.Failure == DetailFailureKind.NotFound;
+        SiloPlayer.Controls.MediaItemCardActions.BindText(PersonUnavailableTitle, "Text", element => element.Text = missing ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.unavailableTitle", fallback: "This person isn't available") : SiloPlayer.Core.Localization.AppStrings.Get("web.person.loadFailedTitle", fallback: "Couldn't load this person"));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(PersonUnavailableDescription, "Text", element => element.Text = missing ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.unavailableBody", fallback: "They may have been removed from the catalog, or the link may be wrong.") : SiloPlayer.Core.Localization.AppStrings.Get("web.person.loadFailedBody", fallback: "Something went wrong while loading them. Try again in a moment."));
         PersonRetryButton.Visibility = missing ? Visibility.Collapsed : Visibility.Visible;
         PersonRetryButton.IsEnabled = !ViewModel.IsLoading;
         if (person == null) return;
@@ -127,7 +128,7 @@ public sealed partial class PersonDetailPage : Page
         PersonActions.Visibility = Visibility.Visible;
         EditPersonButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
         RefreshPersonButton.IsEnabled = !ViewModel.IsRefreshing;
-        RefreshPersonLabel.Text = ViewModel.IsRefreshing ? isAdmin ? "Refreshing..." : "Queueing..." : isAdmin ? "Refresh now" : "Refresh metadata";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(RefreshPersonLabel, "Text", element => element.Text = ViewModel.IsRefreshing ? isAdmin ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.refreshing", fallback: "Refreshing...") : SiloPlayer.Core.Localization.AppStrings.Get("web.person.queueing", fallback: "Queueing...") : isAdmin ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.refreshNow", fallback: "Refresh now") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.refreshMetadata", fallback: "Refresh metadata"));
         PersonName.Text = person.Name;
         if (App.MainWindowInstance is MainWindow mw)
             mw.SetDynamicTitle(person.Name);
@@ -204,7 +205,7 @@ public sealed partial class PersonDetailPage : Page
         var personId = ViewModel.Person.Id;
         var isAdmin = AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>());
         RefreshPersonButton.IsEnabled = false;
-        RefreshPersonLabel.Text = isAdmin ? "Refreshing..." : "Queueing...";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(RefreshPersonLabel, "Text", element => element.Text = isAdmin ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.refreshing", fallback: "Refreshing...") : SiloPlayer.Core.Localization.AppStrings.Get("web.person.queueing", fallback: "Queueing..."));
         try
         {
             await ViewModel.RefreshAsync(isAdmin);
@@ -212,7 +213,7 @@ public sealed partial class PersonDetailPage : Page
                 App.Services.GetRequiredService<ToastService>().Success(isAdmin ? "Person metadata refreshed" : "Person refresh queued");
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
         finally { RefreshPersonButton.IsEnabled = true; UpdateUI(); }
     }
 
@@ -420,8 +421,7 @@ public sealed partial class PersonDetailPage : Page
             if (!_isActive || !ReferenceEquals(_photoCts, cts) ||
                 cts.IsCancellationRequested || !apiClient.IsCurrentContext(context)) return;
 
-            var image = new Image
-            {
+            var image = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill
             };

@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels;
 
@@ -86,7 +87,7 @@ public partial class SettingsViewModel
             WeakReferenceMessenger.Default.Send(new HomePreferenceChanged(context, ReloadLayout: true));
             ShowStatus(reset ? "Using server default" : "Next up mode saved");
         }
-        catch (Exception ex) { if (revision == _nextUpPreferenceRevision && _settingsApi.IsCurrentContext(context)) ErrorMessage = $"Failed to update next up preference: {ex.Message}"; }
+        catch (Exception ex) { if (revision == _nextUpPreferenceRevision && _settingsApi.IsCurrentContext(context)) ErrorMessage = $"Failed to update next up preference: {ex.DisplayMessage()}"; }
         finally
         {
             if (revision == _nextUpPreferenceRevision)

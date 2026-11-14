@@ -90,8 +90,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(Menu(service) != null && service.ActiveSubtitleServerIndex < 0 && !wire.SubtitleSavedIndices.Any(),
                 "A disabled actual Subtitle row dispatched or persisted a choice.");
             var root = (Grid)Get(menu, "_root")!;
-            Require(Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Add subtitles"), "Subtitle upload/search handoff is unreachable.");
-            Require(Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Subtitle appearance"), "Subtitle appearance handoff is unreachable.");
+            Require(Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Add Subtitles"), "Subtitle upload/search handoff is unreachable.");
+            Require(Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Appearance…"), "Subtitle appearance handoff is unreachable.");
             Require(Descendants<Button>(root).Where(button => AutomationProperties.GetName(button).StartsWith("Subtitle delay", StringComparison.Ordinal)).All(button => !button.IsEnabled), "Delay should be disabled while Off.");
             Call(menu, "Input", "end");
             Require(list.SelectedIndex == list.Items.Count - 1 && Descendants<ScrollViewer>(list).Any(scroll => scroll.VerticalOffset > 0), "Subtitle End did not scroll to the last original track.");
@@ -164,14 +164,14 @@ internal static partial class PlaybackAudioMenuNativeFixture
             await Until(() => Descendants<TextBlock>(root).Any(text => text.Text == "+100 ms"), "Subtitle delay did not update live.");
             Call(service, "InvokeNativeSubtitleAction", "reset-delay");
             await Until(() => service.SubtitleOffsetMs == 0, "Subtitle delay reset did not execute.");
-            await Until(() => Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Sync subtitles to audio" && button.Visibility == Visibility.Visible && button.IsEnabled), "Active stored subtitle lost its sync action.");
+            await Until(() => Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Sync to audio" && button.Visibility == Visibility.Visible && button.IsEnabled), "Active stored subtitle lost its sync action.");
             Call(service, "InvokeNativeSubtitleAction", "sync");
             await wire.SubtitleSyncStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await Until(() => Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Sync subtitles to audio" && !button.IsEnabled), "Sync pending did not disable its actual native action.");
+            await Until(() => Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Sync to audio" && !button.IsEnabled), "Sync pending did not disable its actual native action.");
             Call(service, "InvokeNativeSubtitleAction", "sync");
             Require(wire.SubtitleSyncStarts == 1 && ReferenceEquals(Menu(service), menu), "Pending sync duplicated a request or dismissed the menu.");
             wire.ReleaseSubtitleSync.TrySetResult();
-            await Until(() => Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Reset subtitle timing" && button.IsEnabled && button.Visibility == Visibility.Visible), "Reset timing did not recover after sync completion.");
+            await Until(() => Descendants<Button>(root).Any(button => AutomationProperties.GetName(button) == "Reset timing" && button.IsEnabled && button.Visibility == Visibility.Visible), "Reset timing did not recover after sync completion.");
             Call(service, "InvokeNativeSubtitleAction", "reset-timing");
             await Until(() => wire.SubtitleTimingResets == 1, "Native Reset timing did not use the existing ETag/API action.");
             Require(ReferenceEquals(Menu(service), menu) && mpv.IsPaused, "Subtitle timing actions changed genuine pause or dismissed the menu.");

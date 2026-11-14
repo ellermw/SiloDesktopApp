@@ -179,6 +179,17 @@ internal static class PlaybackHudNov12NativeFixture
         player.SendScriptMessage("osc-set-buffering", "false");
         player.SendScriptMessage("osc-clear-loading-backdrop", "fixture-1");
 
+        // A continuing reload must retain the picture under the same disc.
+        player.SendScriptMessage("osc-set-transport-reloading", "true");
+        await Task.Delay(300);
+        var reloadShot = await Capture("transport-reload-1920.png");
+        var reloadDisc = reloadShot.At(0.5, 0.5);
+        var reloadPicture = reloadShot.At(0.1, 0.5);
+        Require(reloadPicture.R > 130, $"Transport reload covered the picture: {reloadPicture}.");
+        Require(reloadDisc.R < reloadPicture.R - 40, $"Transport reload lost its spinner disc: {reloadDisc} over {reloadPicture}.");
+        Require(reloadShot.MaxBrightnessInRing(0.5, 0.5, 15, 21) > 180, "Transport reload spinner ring is not visible.");
+        player.SendScriptMessage("osc-set-transport-reloading", "false");
+
         // Credits countdown: gated waits, ungated shows the card.
         player.SendScriptMessage("osc-set-markers", "{\"content_id\":\"nov12-fixture\",\"credits_start\":7,\"credits_end\":9.6}");
         player.SendScriptMessage("osc-set-next-episode-detail", "{\"season_number\":1,\"episode_number\":3,\"title\":\"Synthetic Next\"}");
@@ -217,6 +228,7 @@ internal static class PlaybackHudNov12NativeFixture
             script, scriptSha256 = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(script))), observations,
             cover = new { left = left.ToString(), right = right.ToString(), centre = centre.ToString(), coverShot.Path },
             rebuffer = new { disc = disc.ToString(), picture = picture.ToString(), bufferShot.Path },
+            transportReload = new { disc = reloadDisc.ToString(), picture = reloadPicture.ToString(), reloadShot.Path },
             gated = gatedShot.Path, countdown = countdownShot.Path,
             scope = "Actual offscreen libmpv window with the published production OSC; synthetic clip and host messages. No live server, installed app, physical input or display certification.",
         }, new JsonSerializerOptions { WriteIndented = true }));

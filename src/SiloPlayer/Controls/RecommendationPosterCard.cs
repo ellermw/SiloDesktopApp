@@ -23,7 +23,7 @@ public sealed class RecommendationPosterCard : Grid
         _artwork = new Grid { Background = (Brush)Application.Current.Resources["CardBackgroundBrush"] };
         var fallback = new DefaultArtwork { MediaType = item.Type, Thumbhash = item.PosterThumbhash };
         var zoom = new ScaleTransform();
-        var image = new Image { Stretch = Stretch.UniformToFill, RenderTransform = zoom, RenderTransformOrigin = new(.5, .5) };
+        var image = new Image { FlowDirection = FlowDirection.LeftToRight, Stretch = Stretch.UniformToFill, RenderTransform = zoom, RenderTransformOrigin = new(.5, .5) };
         if (!string.IsNullOrWhiteSpace(item.PosterUrl))
             image.Source = (ImageSource)new UrlToImageSourceConverter().Convert(item.PosterUrl, typeof(ImageSource), null!, "");
         fallback.Visibility = image.Source == null ? Visibility.Visible : Visibility.Collapsed;
@@ -64,7 +64,7 @@ public sealed class RecommendationPosterCard : Grid
                 Padding = new(0), CornerRadius = new(18), Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(204, 0, 0, 0)),
                 Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), BorderThickness = new(0),
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Opacity = 0, IsHitTestVisible = false };
-            AutomationProperties.SetName(play, "Play " + item.Title); Children.Add(play);
+            MediaItemCardActions.BindText(play, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.card.play", new Dictionary<string, object?> { ["title"] = item.Title }))); Children.Add(play);
             var hovered = false;
             void Reveal() { var visible = hovered || play.FocusState != FocusState.Unfocused; play.Opacity = visible ? 1 : 0; play.IsHitTestVisible = visible; }
             PointerEntered += (_, _) => { hovered = true; Reveal(); };
@@ -73,7 +73,7 @@ public sealed class RecommendationPosterCard : Grid
             play.Click += async (_, _) =>
             {
                 try { await App.Services.GetRequiredService<PlayerService>().PlayAsync(playId, libraryId: MediaNavigationContext.LibraryId(this)); }
-                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
             };
         }
     }

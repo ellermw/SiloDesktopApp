@@ -46,6 +46,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
         foreach (var scenario in scenarios)
         {
+            Program.Log($"TRACE sidecar case start {scenario} {DateTimeOffset.UtcNow:O}");
             try
             {
                 if (scenario == "initializer-timing-change") await CheckInitializerTimingChangeAsync();
@@ -65,6 +66,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
         foreach (var scenario in new[] { "quality-failed-pick", "audio-failed-pick", "version-failed-pick", "version-reordered-pick", "seek-failed-pick", "invalidation-noop-pick", "invalidation-noop-read", "inventory-removed", "inventory-unplayable" })
         {
+            Program.Log($"TRACE sidecar case start {scenario} {DateTimeOffset.UtcNow:O}");
             try
             {
                 if (scenario == "version-reordered-pick") await CheckVersionReorderedPickAsync();
@@ -75,6 +77,7 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         }
         foreach (var scenario in new[] { "newer-busy", "newer-applied", "failed-retry", "raw-labels" })
         {
+            Program.Log($"TRACE sidecar case start {scenario} {DateTimeOffset.UtcNow:O}");
             try
             {
                 await CheckAppliedPreferenceAsync(scenario);
@@ -693,6 +696,8 @@ internal static class SubtitleSidecarOwnershipNativeFixture
 
     private static async Task CheckAppliedPreferenceAsync(string scenario)
     {
+        void Trace(string phase) => Program.Log($"TRACE applied preference {scenario}: {phase} {DateTimeOffset.UtcNow:O}");
+        Trace("create fixture resources");
         using var subtitles = new HeldSubtitleServer(false) { BusyResponses = 100 };
         subtitles.Release.TrySetResult();
         using var wire = new Wire(subtitles.Origin); using var http = new HttpClient(wire);
@@ -702,13 +707,13 @@ internal static class SubtitleSidecarOwnershipNativeFixture
         using var service = new PlayerService(playback, catalog, auth, api,
             new SettingsService(Path.Combine(Program.ResultDirectory, "applied-preference-" + scenario)), new SettingsApi(api));
         using var manager = new PlaybackManager(playback, catalog, auth, api);
-        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [Version()] }); await manager.StartSessionAsync(42);
-        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
+        manager.UseWatchDetail(new() { ContentId = "movie", Versions = [Version()] }); Trace("start session"); await manager.StartSessionAsync(42); Trace("session started");
+        using var mpv = new MpvPlayer(); Trace("initialize native player"); mpv.Initialize(16, 16); Trace("native player initialized"); mpv.SetProperty("ao", "null"); mpv.SetProperty("video", "no");
         Set(service, "_mpv", mpv); Set(service, "_playbackManager", manager);
         Property(service, "State", PlayerState.Expanded); Property(service, "ContentId", "movie");
         var wave = Path.Combine(Program.ResultDirectory, "applied-preference-" + scenario + ".wav"); WriteWave(wave);
         Set(service, "_activeTransportPlan", PlaybackTransportPlanner.Plan("direct", wave));
-        mpv.LoadFile(wave); await Until(() => mpv.GetPropertyDouble("duration") > 0); service.SetPaused(true);
+        Trace("load wave"); mpv.LoadFile(wave); Trace("await wave duration"); await Until(() => mpv.GetPropertyDouble("duration") > 0); service.SetPaused(true); Trace("wave ready and paused");
         try
         {
             var spanish = manager.CurrentSession!.SubtitleUrls.Single(t => t.Index == 1);
@@ -727,7 +732,9 @@ internal static class SubtitleSidecarOwnershipNativeFixture
             }
             wire.FailNextPreference = scenario == "failed-retry";
             wire.HoldNextPreference = scenario != "failed-retry";
+            Trace("start first preference");
             var first = service.SetSubtitleTrackAndPersistAsync(1, spanish.Language, spanish);
+            Trace("first preference task returned");
             if (scenario == "failed-retry")
             {
                 await first.WaitAsync(TimeSpan.FromSeconds(4));
@@ -741,11 +748,15 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "The failed applied preference must retry successfully once, without duplicate successful saves.");
                 return;
             }
+            Trace("await preference entry");
             await wire.PreferenceEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            Trace("preference entered");
             var priorSid = mpv.GetPropertyDouble("sid");
             Require(priorSid > 0 && service.ActiveSubtitleServerIndex == 1 && !first.IsCompleted,
                 "The held preference must belong to a verified, already applied choice.");
+            Trace("start newer selection");
             var newer = (Task)Call(service, "SelectSubtitleByServerIndexAsync", scenario == "newer-busy" ? 0 : -1, true)!;
+            Trace("newer selection task returned");
             if (scenario == "newer-busy")
             {
                 await newer.WaitAsync(TimeSpan.FromSeconds(6));
@@ -761,14 +772,18 @@ internal static class SubtitleSidecarOwnershipNativeFixture
                     "A newer executed preference must wait behind the earlier dispatched write.");
             }
             wire.PreferenceRelease.TrySetResult();
+            Trace("await both preference tasks after release");
             await Task.WhenAll(first, newer).WaitAsync(TimeSpan.FromSeconds(4));
+            Trace("both preference tasks finished");
             Require(wire.CommittedPreferences.SequenceEqual(scenario == "newer-busy" ? new[] { 1 } : new[] { 1, -1 }),
                 "Applied preference writes were lost or committed out of execution order.");
         }
         finally
         {
             wire.PreferenceRelease.TrySetResult();
+            Trace("stop sync and detach native player");
             Call(service, "StopSubtitleSync"); Set(service, "_mpv", null); Set(service, "_playbackManager", null);
+            Trace("cleanup complete; dispose fixture resources");
         }
     }
 

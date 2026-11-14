@@ -32,7 +32,8 @@ internal static class WatchPartyShelvesNativeFixture
             Invoke(room, "UpdateRoomUi"); parent.Children.Add(room); room.UpdateLayout(); await Task.Delay(100);
             await (Task)Invoke(room, "RunHostSearchAsync")!;
             var shelves = ((StackPanel)room.FindName("BrowseShelfRows")).Children.OfType<StackPanel>().Select(shelf => ((TextBlock)shelf.Children[0]).Text).ToArray();
-            if (!shelves.Contains("Continue together") || !shelves.Contains("Room watchlists") || !shelves.Contains("Recently added series") || shelves.Contains("Recently added movies"))
+            // Shelf titles use the WebUI catalog keys (English: "Continue watching together", "On your watchlists").
+            if (!shelves.Contains(SiloPlayer.Core.Localization.AppStrings.Get("web.watchTogether.browse.togetherTitle")) || !shelves.Contains(SiloPlayer.Core.Localization.AppStrings.Get("web.watchTogether.browse.watchlistsTitle")) || !shelves.Contains("Recently added series") || shelves.Contains("Recently added movies"))
                 throw new InvalidOperationException("Shared picker or independently successful recent series shelf is lost after movie failure.");
             if (!shelves.Contains("Discovery 1") || shelves.Contains("Discovery 2") || !shelves.Contains("Discovery 3") || !shelves.Contains("Discovery 4") || shelves.Contains("Discovery 5") || handler.PersonalRequests != 0)
                 throw new InvalidOperationException("Discovery shelves do not exclude personal rows, cap four, and preserve successful rows after one failure.");

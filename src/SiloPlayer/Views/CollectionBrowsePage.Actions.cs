@@ -38,28 +38,28 @@ public sealed partial class CollectionBrowsePage
 
     private MenuFlyout BuildMoreMenu(CollectionHeroMenu plan, CollectionPageAccess access, HeroScope scope)
     {
-        var menu = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
+        var menu = CollectionText.Direct(new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight });
         CollectionActionMenuPresentation.Configure(menu);
         MenuFlyoutItem? sync = null, delete = null;
         if (plan.ShowSync)
         {
-            sync = Entry("Sync now", "refresh-cw");
+            sync = Entry(CollectionText.Get("web.collections.copy.syncNow", "Sync now"), "refresh-cw");
             sync.Click += async (_, _) => await SyncAsync(scope);
             menu.Items.Add(sync);
         }
         if (plan.LibraryPages.Count == 1)
         {
             var page = plan.LibraryPages[0];
-            var item = Entry(CollectionHeroActions.AddToLibraryPage(page.Name), "library");
+            var item = Entry(CollectionText.Get("web.collections.pageActions.addToMyLibraryPage", CollectionHeroActions.AddToLibraryPage(page.Name), ("library", page.Name)), "library");
             item.Click += (_, _) => AddToLibraryPage(scope, page);
             menu.Items.Add(item);
         }
         else if (plan.LibraryPages.Count > 1)
         {
-            var group = new MenuFlyoutSubItem { Text = CollectionHeroActions.AddToLibraryPageGroup, Icon = WebUiIcon.Navigation("library", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]) };
+            var group = new MenuFlyoutSubItem { Text = CollectionText.Get("web.collections.copy.addToMyLibraryPage", CollectionHeroActions.AddToLibraryPageGroup), Icon = WebUiIcon.Navigation("library", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]) };
             foreach (var page in plan.LibraryPages)
             {
-                var item = new MenuFlyoutItem { Text = CollectionHeroActions.LibraryPage(page.Name) };
+                var item = new MenuFlyoutItem { Text = CollectionText.Get("web.collections.copy.libraryPage", CollectionHeroActions.LibraryPage(page.Name), ("library", page.Name)) };
                 CollectionActionMenuPresentation.Configure(item);
                 item.Click += (_, _) => AddToLibraryPage(scope, page);
                 group.Items.Add(item);
@@ -69,13 +69,13 @@ public sealed partial class CollectionBrowsePage
         if (plan.ShowDelete && access.Personal is { } own)
         {
             if (menu.Items.Count > 0) menu.Items.Add(new MenuFlyoutSeparator());
-            delete = Entry("Delete…", "trash-2", destructive: true);
+            delete = Entry(CollectionText.Get("web.collections.actions.delete", "Delete…"), "trash-2", destructive: true);
             delete.Click += async (_, _) => await DeleteAsync(scope, own);
             menu.Items.Add(delete);
         }
         menu.Opened += (_, _) =>
         {
-            if (sync != null) { sync.IsEnabled = !_heroActionBusy; sync.Text = _syncing ? "Syncing…" : "Sync now"; }
+            if (sync != null) { sync.IsEnabled = !_heroActionBusy; sync.Text = _syncing ? CollectionText.Get("web.collections.actions.syncing", "Syncing…") : CollectionText.Get("web.collections.copy.syncNow", "Sync now"); }
             if (delete != null) delete.IsEnabled = !_heroActionBusy;
         };
         return menu;
@@ -100,11 +100,11 @@ public sealed partial class CollectionBrowsePage
     {
         if (!HeroCurrent(scope) || _heroActionBusy) return;
         _heroActionBusy = _syncing = true;
-        SetActionStatus("Syncing…", error: false);
+        SetActionStatus(CollectionText.Get("web.collections.actions.syncing", "Syncing…"), error: false);
         UserCollectionSyncResult? result = null;
         string? failure = null;
         try { result = await _collectionsApi.SyncCollectionAsync(scope.Args.CollectionId); }
-        catch (Exception ex) { failure = $"Failed to sync collection: {ex.Message}"; }
+        catch (Exception ex) { failure = $"Failed to sync collection: {CollectionText.Problem(ex)}"; }
         finally { _heroActionBusy = _syncing = false; }
         // The page was left, or the account changed, while the server worked: nothing here may repaint another page.
         if (!HeroCurrent(scope)) return;
@@ -128,7 +128,7 @@ public sealed partial class CollectionBrowsePage
                 // A dialog left open over a page the viewer has since left must not delete on its behalf.
                 if (!HeroCurrent(scope)) return "This collection's page is no longer open.";
                 try { await _collectionsApi.DeleteCollectionAsync(scope.Args.CollectionId); return null; }
-                catch (Exception ex) { return $"Failed to delete collection: {ex.Message}"; }
+                catch (Exception ex) { return $"Failed to delete collection: {CollectionText.Problem(ex)}"; }
             });
         }
         finally { _heroActionBusy = false; }

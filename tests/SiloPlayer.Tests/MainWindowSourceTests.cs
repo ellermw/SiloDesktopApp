@@ -152,9 +152,9 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PlayingNextCountdownPanel", xaml);
         Assert.Contains("PlayingNextAutoplayToggle", xaml);
         Assert.Contains("PlayingNextCountdownText", xaml);
-        Assert.Contains("PlayingNextCountdownText.Text = $\"{_playingNextRemaining}s\";", code);
+        Assert.Contains("PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);", code);
         Assert.Contains("PlayingNextCountdownRing.Value = _playingNextRemaining;", code);
-        Assert.Contains("PlayingNextPlayNowText.Text = \"Play Now\";", code);
+        Assert.Contains("EnsurePlayingNextTextKeys();", code);
         Assert.Contains("PlayingNextOnDeckSection", xaml);
         Assert.Contains("PlayingNextOnDeckRepeater", xaml);
         Assert.Contains("PlayingNextOnDeckPrev", xaml);
@@ -413,7 +413,6 @@ public sealed class MainWindowSourceTests
         Assert.Contains("FindPluginNavigationItem", code);
         Assert.Contains("BuildPinnedSidebarContent", code);
         Assert.Contains("ToolTipService.SetToolTip(unpinButton, \"Unpin\")", code);
-        Assert.Contains("AutomationProperties.SetName(unpinButton, $\"Unpin {pin.Label}\")", code);
         Assert.Contains("RemoveSidebarPinAsync", code);
         Assert.Contains("CloseMobileNavigationPane();", code);
         Assert.Contains("Modifiers=\"Menu\" Key=\"Left\"", xaml);

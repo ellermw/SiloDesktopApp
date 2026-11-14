@@ -18,7 +18,7 @@ public static class DisplayRatingEntry
         if (rating.Source == "tmdb")
         {
             var height = small ? 8d : 10d;
-            var mark = new Image { Height = height, Width = height * 273.42 / 35.52, Stretch = Stretch.Uniform,
+            var mark = new Image { FlowDirection = FlowDirection.LeftToRight, Height = height, Width = height * 273.42 / 35.52, Stretch = Stretch.Uniform,
                 VerticalAlignment = VerticalAlignment.Center, Source = new SvgImageSource(new Uri("ms-appx:///Assets/Ratings/tmdb-logo.svg")) };
             AutomationProperties.SetName(mark, rating.Name); row.Children.Add(mark);
         }

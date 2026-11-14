@@ -103,14 +103,14 @@ public sealed class BoxSetCard : Button
         stack.Children.Add(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Gray), CornerRadius = new CornerRadius(9), Margin = new Thickness(4, -4, -4, 4) });
         var face = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.DarkSlateGray) };
         face.Children.Add(_fallback = new DefaultArtwork());
-        face.Children.Add(_poster = new Image { Stretch = Stretch.UniformToFill });
+        face.Children.Add(_poster = new Image { FlowDirection = FlowDirection.LeftToRight, Stretch = Stretch.UniformToFill });
         _poster.ImageOpened += (_, _) => _fallback.Visibility = Visibility.Collapsed;
         _poster.ImageFailed += (_, _) => { _poster.Source = null; _fallback.Visibility = Visibility.Visible; _ = _fallback.ShowThumbhashAsync(); };
-        face.Children.Add(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Black), Padding = new Thickness(6), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Child = new TextBlock { Text = "Box set" } });
+        face.Children.Add(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Black), Padding = new Thickness(6), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Child = SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Box set" }, text: "web.detail.boxSet.label") });
         face.Children.Add(new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Black), Padding = new Thickness(6), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Child = _filmCount = new TextBlock() });
         stack.Children.Add(face); panel.Children.Add(stack);
         _progress = new ProgressBar { Minimum = 0, Height = 4 };
-        AutomationProperties.SetName(_progress, "Films watched");
+        MediaItemCardActions.Localize(_progress, name: "web.detail.boxSet.filmsWatched");
         panel.Children.Add(_progress);
         panel.Children.Add(_title = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxLines = 2, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         panel.Children.Add(_subtitle = new TextBlock { TextWrapping = TextWrapping.Wrap });

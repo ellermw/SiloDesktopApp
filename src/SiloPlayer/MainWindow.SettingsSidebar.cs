@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
@@ -91,7 +92,7 @@ public sealed partial class MainWindow
             NavView.MenuItems.Add(item);
         }
         if (NavView.MenuItems.Count == 0)
-            NavView.MenuItems.Add(new NavigationViewItemHeader { Content = "No matching settings" });
+            NavView.MenuItems.Add(new NavigationViewItemHeader { Content = AppStrings.Get("web.settings.search.noMatches") });
         SynchronizeSettingsSidebarSelection();
     }
 

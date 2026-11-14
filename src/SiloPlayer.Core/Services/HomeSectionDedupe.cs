@@ -59,6 +59,7 @@ public static class HomeSectionDedupe
     public static HomeSectionWithItems Snapshot(HomeSectionWithItems source) => new()
     {
         Id = source.Id, SectionType = source.SectionType, Title = source.Title,
+        TitleKey = source.TitleKey, TitleArgs = Localization.SectionTitles.CopyArguments(source.TitleArgs), KeyedTitle = source.KeyedTitle,
         Featured = source.Featured, ItemLimit = source.ItemLimit, TotalCount = source.TotalCount,
         IsCustom = source.IsCustom, Customized = source.Customized,
         LoadFailed = source.LoadFailed, LoadCompleted = source.LoadCompleted,

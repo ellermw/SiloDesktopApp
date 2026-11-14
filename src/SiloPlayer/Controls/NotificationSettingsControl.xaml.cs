@@ -4,9 +4,12 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Controls;
 
@@ -23,6 +26,21 @@ public sealed partial class NotificationSettingsControl : UserControl
         InitializeComponent();
         DataContext = ViewModel;
         Loaded += NotificationSettingsControl_Loaded;
+        AppLocalization.Register(this, RefreshModeLabels);
+    }
+
+    // The frequency items stay in their closed dropdowns, so they refresh from here.
+    // Restoring the selection is not a choice the person made: nothing is saved.
+    private void RefreshModeLabels()
+    {
+        var ready = _isReady;
+        _isReady = false;
+        try
+        {
+            Localized.RefreshItems(EmailModeCombo);
+            Localized.RefreshItems(DiscordModeCombo);
+        }
+        finally { _isReady = ready; }
     }
 
     private async void NotificationSettingsControl_Loaded(object sender, RoutedEventArgs e)
@@ -118,7 +136,7 @@ public sealed partial class NotificationSettingsControl : UserControl
     {
         _emailEditorOpen = open;
         EmailAddressEditor.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-        EmailAddressActionButton.Content = open ? "Cancel" : ViewModel.EmailAddressActionText;
+        EmailAddressActionButton.Content = open ? AppStrings.Get("common.cancel", fallback: "Cancel") : ViewModel.EmailAddressActionText;
         if (open)
         {
             EmailAddressInput.Focus(FocusState.Programmatic);
@@ -159,10 +177,14 @@ public sealed partial class NotificationSettingsControl : UserControl
             XamlRoot = XamlRoot,
             Title = "Unlink Discord?",
             Content = "Discord direct messages will stop for this account.",
-            PrimaryButtonText = "Unlink",
-            CloseButtonText = "Cancel",
+            PrimaryButtonText = AppStrings.Get("web.settings.notifications.discord.unlink", fallback: "Unlink"),
+            CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel"),
             DefaultButton = ContentDialogButton.Close,
         };
+        MediaItemCardActions.Localize(dialog, content: "web.settings.notifications.discord.description",
+            primaryButton: "web.settings.notifications.discord.unlink", closeButton: "common.cancel");
+        MediaItemCardActions.BindText(dialog, "Title", element => element.Title = AppStrings.Get(
+            "web.settings.watchProviders.disconnectConfirm", new Dictionary<string, object?> { ["provider"] = "Discord" }));
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             await ViewModel.UnlinkDiscordAsync();
     }
@@ -181,31 +203,31 @@ public sealed partial class NotificationSettingsControl : UserControl
 
     private async Task OpenWebhookDialogAsync(NotificationWebhook? webhook)
     {
-        var name = new TextBox { Header = "Name", Text = webhook?.Name ?? "", PlaceholderText = "Family Discord", MaxLength = 64 };
+        var name = new TextBox { Header = AppStrings.Get("web.settings.notifications.webhooks.name", fallback: "Name"), Text = webhook?.Name ?? "", PlaceholderText = AppStrings.Get("web.settings.notifications.webhooks.namePlaceholder", fallback: "Family Discord"), MaxLength = 64 };
         var url = new TextBox
         {
-            Header = webhook is null ? "URL" : "Replace URL (optional)",
+            Header = webhook is null ? AppStrings.Get("web.settings.notifications.webhooks.url", fallback: "URL") : AppStrings.Get("web.settings.notifications.webhooks.replaceUrl", fallback: "Replace URL (optional)"),
             PlaceholderText = webhook is null ? "https://discord.com/api/webhooks/…" : $"Currently pointing at {webhook.UrlHost}",
         };
-        var favorites = MakeReasonToggle("Favorites", webhook?.NotifyFavorites ?? true,
+        var favorites = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.favorites", fallback: "Favorites"), webhook?.NotifyFavorites ?? true,
             !ViewModel.NotificationsEnabled || !ViewModel.NotifyFavorites);
-        var watchlist = MakeReasonToggle("Watchlist", webhook?.NotifyWatchlist ?? true,
+        var watchlist = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.watchlist", fallback: "Watchlist"), webhook?.NotifyWatchlist ?? true,
             !ViewModel.NotificationsEnabled || !ViewModel.NotifyWatchlist);
-        var watching = MakeReasonToggle("Continue Watching", webhook?.NotifyContinueWatching ?? true,
+        var watching = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.continueWatching", fallback: "Continue Watching"), webhook?.NotifyContinueWatching ?? true,
             !ViewModel.NotificationsEnabled || !ViewModel.NotifyContinueWatching);
-        var nextUp = MakeReasonToggle("Next Up", webhook?.NotifyNextUp ?? true,
+        var nextUp = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.nextUp", fallback: "Next Up"), webhook?.NotifyNextUp ?? true,
             !ViewModel.NotificationsEnabled || !ViewModel.NotifyNextUp);
-        var requests = MakeReasonToggle("Requests", webhook?.NotifyRequests ?? true, !ViewModel.NotificationsEnabled);
+        var requests = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.requests", fallback: "Requests"), webhook?.NotifyRequests ?? true, !ViewModel.NotificationsEnabled);
         var content = new StackPanel { Spacing = 12, Width = 470 };
         content.Children.Add(new TextBlock
         {
-            Text = "Discord webhook URLs render as native embeds. Any other HTTPS endpoint receives signed JSON.",
+            Text = AppStrings.Get("web.settings.notifications.webhooks.dialogDescription", fallback: "Discord webhook URLs render as native embeds. Any other HTTPS endpoint receives signed JSON."),
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
         });
         content.Children.Add(name);
         content.Children.Add(url);
-        content.Children.Add(new TextBlock { Text = "Send notifications for", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        content.Children.Add(new TextBlock { Text = AppStrings.Get("web.settings.notifications.webhooks.sendFor", fallback: "Send notifications for"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         content.Children.Add(favorites);
         content.Children.Add(watchlist);
         content.Children.Add(watching);
@@ -214,19 +236,22 @@ public sealed partial class NotificationSettingsControl : UserControl
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = webhook is null ? "Add webhook" : $"Edit \"{webhook.Name}\"",
+
             Content = content,
-            PrimaryButtonText = webhook is null ? "Create" : "Save",
-            CloseButtonText = "Cancel",
+            PrimaryButtonText = webhook is null ? AppStrings.Get("web.settings.notifications.webhooks.create", fallback: "Create") : AppStrings.Get("common.save", fallback: "Save"),
+            CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text),
         };
+        MediaItemCardActions.BindText(dialog, "Title", element => element.Title = webhook is null
+            ? AppStrings.Get("web.settings.notifications.webhooks.add", fallback: "Add webhook")
+            : AppStrings.Get("web.settings.notifications.webhooks.editTitle", new Dictionary<string, object?> { ["name"] = webhook.Name }));
         name.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text);
         dialog.PrimaryButtonClick += (_, args) =>
         {
             if (webhook is not null || !string.IsNullOrWhiteSpace(url.Text)) return;
             args.Cancel = true;
-            ViewModel.ErrorMessage = "A webhook URL is required";
+            ViewModel.ErrorMessage = AppStrings.Get("web.settings.notifications.webhooks.urlRequired", fallback: "A webhook URL is required");
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
@@ -280,13 +305,17 @@ public sealed partial class NotificationSettingsControl : UserControl
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = $"Delete \"{webhook.Name}\"?",
-            Content = "Notifications will stop posting to this destination. This cannot be undone.",
-            PrimaryButtonText = "Delete",
+            Title = AppStrings.Get("web.settings.notifications.webhooks.deleteTitle", new Dictionary<string, object?> { ["name"] = webhook.Name }),
+            Content = AppStrings.Get("web.settings.notifications.webhooks.deleteDescription", fallback: "Notifications will stop posting to this destination. This cannot be undone."),
+            PrimaryButtonText = AppStrings.Get("web.settings.notifications.webhooks.delete", fallback: "Delete"),
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-            CloseButtonText = "Cancel",
+            CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel"),
             DefaultButton = ContentDialogButton.Close,
         };
+        MediaItemCardActions.BindText(dialog, "Title", element => element.Title = AppStrings.Get(
+            "web.settings.notifications.webhooks.deleteTitle", new Dictionary<string, object?> { ["name"] = webhook.Name }));
+        dialog.KeyedDialog(primary: "web.settings.notifications.webhooks.delete", close: "common.cancel");
+        MediaItemCardActions.BindText(dialog, "Content", element => element.Content = AppStrings.Get("web.settings.notifications.webhooks.deleteDescription"));
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             await ViewModel.DeleteWebhookAsync(webhook.Id);
     }
@@ -298,14 +327,14 @@ public sealed partial class NotificationSettingsControl : UserControl
             Content = new FontIcon { Glyph = "\uE8C8", FontSize = 14 },
             Padding = new Thickness(7),
         };
-        ToolTipService.SetToolTip(copyButton, "Copy signing secret");
+        ToolTipService.SetToolTip(copyButton, AppStrings.Get("web.common.signingSecret.copy", fallback: "Copy signing secret"));
         copyButton.Click += (_, _) =>
         {
             var package = new DataPackage();
             package.SetText(secret);
             Clipboard.SetContent(package);
             copyButton.Content = new FontIcon { Glyph = "\uE73E", FontSize = 14 };
-            ToolTipService.SetToolTip(copyButton, "Copied");
+            ToolTipService.SetToolTip(copyButton, AppStrings.Get("web.settings.watchProviders.auth.copied", fallback: "Copied"));
         };
 
         var secretRow = new Grid();
@@ -325,7 +354,7 @@ public sealed partial class NotificationSettingsControl : UserControl
         var content = new StackPanel { Spacing = 14, Width = 460 };
         content.Children.Add(new TextBlock
         {
-            Text = "Silo signs every delivery with this secret so your receiver can verify it. It is shown only once — store it on the receiving service now. You can rotate it later if it is lost.",
+            Text = AppStrings.Get("web.common.signingSecret.description", fallback: "Silo signs every delivery with this secret so your receiver can verify it. It is shown only once — store it on the receiving service now. You can rotate it later if it is lost."),
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
         });
@@ -340,9 +369,9 @@ public sealed partial class NotificationSettingsControl : UserControl
         await new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "Save your signing secret",
+            Title = AppStrings.Get("web.common.signingSecret.title", fallback: "Save your signing secret"),
             Content = content,
-            PrimaryButtonText = "I've saved it",
+            PrimaryButtonText = AppStrings.Get("web.common.signingSecret.saved", fallback: "I've saved it"),
             DefaultButton = ContentDialogButton.Primary,
         }.ShowAsync();
     }
@@ -354,7 +383,7 @@ public sealed partial class NotificationSettingsControl : UserControl
             XamlRoot = XamlRoot,
             Title = title,
             Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
-            CloseButtonText = "Close",
+            CloseButtonText = AppStrings.Get("web.ui.close", fallback: "Close"),
         }.ShowAsync();
     }
 }

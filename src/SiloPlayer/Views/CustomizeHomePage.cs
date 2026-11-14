@@ -23,7 +23,7 @@ public sealed class CustomizeHomePage : Page
         var api = App.Services.GetRequiredService<SettingsApi>(); var context = api.CaptureContext();
         bool Current() => _active && revision == _navigationRevision && api.IsCurrentContext(context);
         _editor ??= new SettingsPage();
-        var error = new TextBlock { Text = "Loading saved rows…", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(24) };
+        var error = new TextBlock { Text = SiloPlayer.Helpers.CollectionText.Get("web.home.rows.page.loading", "Loading saved rows…"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(24) };
         Content = error;
         try
         {
@@ -41,8 +41,8 @@ public sealed class CustomizeHomePage : Page
         catch (Exception ex)
         {
             if (!Current()) return;
-            error.Text = $"Could not load saved rows: {ex.Message}";
-            var retry = new Button { Content = "Retry" };
+            error.Text = LoadFailed(ex);
+            var retry = new Button { Content = SiloPlayer.Helpers.CollectionText.Get("common.retry", "Retry") };
             retry.Click += async (_, _) =>
             {
                 if (_editor == null || !Current()) return;
@@ -54,11 +54,14 @@ public sealed class CustomizeHomePage : Page
                     _editor.Content = content; Content = _editor;
                     if (args != null) { await Task.Yield(); if (Current()) await _editor.OpenCollectionRowEditorAsync(args); }
                 }
-                catch (Exception failure) { if (Current()) error.Text = $"Could not load saved rows: {failure.Message}"; }
+                catch (Exception failure) { if (Current()) error.Text = LoadFailed(failure); }
                 finally { retry.IsEnabled = true; }
             };
             Content = new StackPanel { Margin = new Thickness(24), Spacing = 12, Children = { error, retry } };
         }
     }
+    /// <summary>The catalog's "Could not load these rows." and the request's own problem text.</summary>
+    private static string LoadFailed(Exception exception)
+        => SiloPlayer.Helpers.CollectionText.Get("web.home.rows.page.loadFailed", "Could not load saved rows.") + " " + SiloPlayer.Helpers.CollectionText.Problem(exception);
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; ++_navigationRevision; _editor?.DeactivateCustomizeHome(); base.OnNavigatedFrom(e); }
 }

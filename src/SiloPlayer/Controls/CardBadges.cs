@@ -10,7 +10,7 @@ using Windows.Foundation;
 namespace SiloPlayer.Controls;
 
 internal readonly record struct CardBadge(OverlayPosition Corner, string Text, string OverlayId, OverlayItemConfig Config, string Preset, double Scale,
-    OverlayStyle? Style = null, string? ValueKey = null, CardOverlayService? Images = null);
+    OverlayStyle? Style = null, string? ValueKey = null, CardOverlayService? Images = null, Func<string>? DisplayText = null);
 
 internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottomLeft, Panel bottomRight, Panel leftEdge, Panel rightEdge)
 {
@@ -84,7 +84,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         var scale = badges.Count > 0 ? badges[0].Scale : 1;
         if (_bottomRows is not null) { _bottomRows.Gap = 8 * scale; _bottomRows.StackGap = look.StackGap * scale; }
         foreach (var host in new[] { topLeft, topRight, leftEdge, rightEdge }.OfType<StackPanel>()) host.Spacing = look.StackGap * scale;
-        FrameworkElement Build(CardBadge badge) => PosterCard.BuildAdvancedBadge(badge.Text, badge.OverlayId, badge.Config with { Position = badge.Corner }, badge.Preset, badge.Scale, badge.Style, badge.ValueKey, badge.Images);
+        FrameworkElement Build(CardBadge badge) => OverlayBadgeRenderer.Build(badge.Text, badge.OverlayId, badge.Config with { Position = badge.Corner }, badge.Preset, badge.Scale, badge.Style, badge.ValueKey, badge.Images, badge.DisplayText);
         foreach (var badge in badges.Where(badge => badge.Corner is not OverlayPosition.BottomLeft and not OverlayPosition.BottomRight && !(_band && badge.Corner == OverlayPosition.TopLeft)))
         {
             var element = Build(badge); var host = Host(badge.Corner);
@@ -183,7 +183,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         OverlayPosition.LeftEdge => leftEdge, OverlayPosition.RightEdge => rightEdge, _ => topLeft,
     };
 
-    internal static List<CardBadge> ForData(OverlayData data, CardOverlayService service, double scale, CardOverlayPrefs? document = null)
+    internal static List<CardBadge> ForData(OverlayData data, CardOverlayService service, double scale, CardOverlayPrefs? document = null, Func<string>? requestStatus = null)
     {
         var prefs = document?.Items ?? service.GetPrefs();
         var result = new List<CardBadge>();
@@ -198,7 +198,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
             var position = service.DisplayPosition(config.Position);
             var limit = position is OverlayPosition.LeftEdge or OverlayPosition.RightEdge ? 4 : 3;
             if (counts.GetValueOrDefault(position) >= limit) continue;
-            result.Add(new(position, value, definition.Id, config, document?.Preset ?? service.Preset, scale, document is null ? service.Style : document.Style, OverlayRegistry.ValueKey(definition.Id, data), service));
+            result.Add(new(position, value, definition.Id, config, document?.Preset ?? service.Preset, scale, document is null ? service.Style : document.Style, OverlayRegistry.ValueKey(definition.Id, data), service, definition.Id == "request_status" ? requestStatus : null));
             counts[position] = counts.GetValueOrDefault(position) + 1;
         }
         return result;
@@ -217,7 +217,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
             if (item.Status is "pending" or "unmatched" or "ambiguous")
             {
                 var label = item.Status switch { "pending" => "SCANNING", "unmatched" => "UNMATCHED", _ => "AMBIGUOUS" };
-                badges.Add(new(OverlayPosition.TopLeft, label, "status", new OverlayItemConfig(true, OverlayPosition.TopLeft), service.Preset, scale, service.Style));
+                badges.Add(new(OverlayPosition.TopLeft, label, "status", new OverlayItemConfig(true, OverlayPosition.TopLeft), service.Preset, scale, service.Style, item.Status));
                 return badges;
             }
             if (item.Type == "manga")
@@ -248,7 +248,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
             foreach (var badge in upcomingEvent.Badges.Take(3))
             {
                 var label = SiloPlayer.Core.Services.UpcomingBadgePresentation.Label(badge);
-                badges.Add(new(OverlayPosition.TopLeft, label, "upcoming_event", new OverlayItemConfig(true, OverlayPosition.TopLeft), service.Preset, scale, service.Style));
+                badges.Add(new(OverlayPosition.TopLeft, label, "upcoming_event", new OverlayItemConfig(true, OverlayPosition.TopLeft), service.Preset, scale, service.Style, badge));
             }
         }
 

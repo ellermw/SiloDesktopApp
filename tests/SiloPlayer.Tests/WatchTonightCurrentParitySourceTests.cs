@@ -22,7 +22,8 @@ public sealed class WatchTonightCurrentParitySourceTests
 
         Assert.DoesNotContain("CloseButtonText=", markup);
         Assert.Contains("Click=\"CloseButton_Click\"", markup);
-        Assert.Contains("AutomationProperties.Name=\"Close Watch Tonight\"", markup);
+        Assert.Contains("loc:Localized.Name=\"web.ui.close\"", markup);
+        Assert.Contains("loc:Localized.ToolTip=\"web.ui.close\"", markup);
         Assert.Contains("this.Closed += OnClosed", code);
         Assert.Contains("_selectedGenres.Clear()", code);
         Assert.Contains("_cards.Clear()", code);

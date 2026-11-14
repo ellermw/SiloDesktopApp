@@ -35,6 +35,7 @@ public sealed class DefaultArtwork : Grid
 
     public DefaultArtwork()
     {
+        FlowDirection = FlowDirection.LeftToRight;
         IsHitTestVisible = false;
         AutomationProperties.SetAccessibilityView(this, AccessibilityView.Raw);
         _brushes = Enumerable.Range(0, 3).Select(_ => new RadialGradientBrush

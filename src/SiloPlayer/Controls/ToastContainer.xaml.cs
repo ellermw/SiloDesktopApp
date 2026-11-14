@@ -18,6 +18,7 @@ public sealed partial class ToastContainer : UserControl
     public ToastContainer()
     {
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () => SiloPlayer.Services.AppLocalization.ApplyDirection(this));
     }
 
     public enum ToastKind { Success, Error, Info, Warning }
@@ -175,6 +176,7 @@ public sealed partial class ToastContainer : UserControl
             CornerRadius = new CornerRadius(12),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        SiloPlayer.Services.Localized.SetName(dismissBtn, "web.ui.close");
         dismissBtn.Click += (_, _) => DismissToast(root);
         Grid.SetColumn(dismissBtn, 2);
         grid.Children.Add(dismissBtn);

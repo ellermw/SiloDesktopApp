@@ -277,6 +277,8 @@ internal static partial class EpisodeQuickPlayNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
+        internal string? AppLanguage;
+        internal TaskCompletionSource? AppLanguageHold;
         internal bool SubtitleAiEnabled;
         internal bool SubtitleAiTranslationEnabled = true, SubtitleAiTranscriptionEnabled;
         internal Func<CancellationToken, Task>? SubtitleAiStatusBoundary;
@@ -334,9 +336,17 @@ internal static partial class EpisodeQuickPlayNativeFixture
                     .Replace("COUNT", BoxSetPlayed ? "1" : "0").Replace("PLAYED", BoxSetPlayed ? "true" : "false");
                 return Json(membership ? "{\"box_set\":" + detail + "}" : detail);
             }
-            if (path == "/api/v2/settings/contract/capabilities") return Json("""{"api_version":1,"manifest_revision":17,"supports_batched_effective":true}""");
+            if (path == "/api/v2/settings/contract/capabilities") return Json(AppLanguage == null
+                ? """{"api_version":1,"manifest_revision":17,"supports_batched_effective":true}"""
+                : """{"api_version":1,"manifest_revision":28,"supports_batched_effective":true}""");
             if (path == "/api/v2/settings/values/effective")
             {
+                if (AppLanguage != null && request.RequestUri.Query.Contains("ui.app_language"))
+                {
+                    var tag = AppLanguage;
+                    if (AppLanguageHold != null) await AppLanguageHold.Task.WaitAsync(ct);
+                    return Json($$"""{"items":[{"key":"ui.app_language","value":"{{tag}}","source":"profile"}]}""");
+                }
                 if (HoldSettings && request.RequestUri.Query.Contains("playback.preferred_quality", StringComparison.Ordinal))
                 { BoundaryStarted.TrySetResult(); await ReleaseBoundary.Task.WaitAsync(ct); }
                 return Json("""{"items":[{"key":"catalog.hide_unwatched_episode_images","value":true},{"key":"catalog.hide_unwatched_episode_overviews","value":true}]}""");

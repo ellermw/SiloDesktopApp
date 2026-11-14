@@ -34,7 +34,7 @@ internal static class ConditionalEditorsNativeFixture
         using var auth = new AuthService(client, new AuthApi(client));
         auth.SetTokens("fixture-only", "fixture-refresh-only", 86400); Admin(auth);
         var toast = new ToastService(); var toasts = new ToastContainer(); owner.Children.Add(toasts); toast.Register(toasts, owner.DispatcherQueue);
-        using var services = new ServiceCollection().AddSingleton(auth).AddSingleton(new PeopleApi(client)).AddSingleton(new CatalogApi(client))
+        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(new PeopleApi(client)).AddSingleton(new CatalogApi(client))
             .AddSingleton(new MediaMaintenanceApi(client)).AddSingleton(toast).BuildServiceProvider();
         field.SetValue(null, services);
         try
@@ -75,7 +75,7 @@ internal static class ConditionalEditorsNativeFixture
     private static async Task CaseAsync(string label, Func<Task> run)
     {
         try { await run(); Program.Log("PASS editor case " + label); }
-        catch (Exception ex) { Failures.Add(label + ": " + ex.Message); Program.Log("FAIL editor case " + label + ": " + ex.Message); }
+        catch (Exception ex) { Failures.Add(label + ": " + ex.Message); Program.Log("FAIL editor case " + label + ": " + ex); }
     }
     private static void Check(bool condition, string message) { if (!condition) { Failures.Add(message); Program.Log("FAIL " + message); } }
     private static async Task CaptureEditorsAsync(FrameworkElement owner, Wire wire, string size)
@@ -184,8 +184,13 @@ internal static class ConditionalEditorsNativeFixture
             {
                 var groups = Field<Dictionary<string, FrameworkElement>>(dialog, "_fieldGroups");
                 var content = groups["content_rating"].TransformToVisual(dialog).TransformPoint(new Windows.Foundation.Point());
-                var companion = groups[type == "series" ? "status" : "season_number"].TransformToVisual(dialog).TransformPoint(new Windows.Foundation.Point());
-                Check(Math.Abs(content.Y - companion.Y) < 2 && companion.X > content.X, type + " content-rating row companion differs from current editor");
+                if (type == "series")
+                    Check(!groups.ContainsKey("status"), "series exposes the retired status editor");
+                else
+                {
+                    var companion = groups["season_number"].TransformToVisual(dialog).TransformPoint(new Windows.Foundation.Point());
+                    Check(Math.Abs(content.Y - companion.Y) < 2 && companion.X > content.X, type + " content-rating row companion differs from current editor");
+                }
                 if (type == "episode")
                 {
                     var number = groups["episode_number"].TransformToVisual(dialog).TransformPoint(new Windows.Foundation.Point());
@@ -313,7 +318,8 @@ internal static class ConditionalEditorsNativeFixture
         var dialog = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot }; var showing = dialog.ShowAsync();
         try
         {
-            await UntilAsync(() => Descendants<Button>(dialog).Any(button => Equals(button.Content, "Translate")));
+            await UntilAsync(() => Descendants<Button>(dialog).Any(button => Equals(button.Content, "Translate")),
+                () => "translation controls absent; notifications=" + string.Join(";", Descendants<TextBlock>(owner).Select(text => text.Text)));
             var languages = Descendants<ComboBox>(dialog).Single(combo => Equals(combo.Header, "Language"));
             languages.SelectedItem = languages.Items.OfType<ComboBoxItem>().First();
             var button = Descendants<Button>(dialog).Single(button => Equals(button.Content, "Translate"));
@@ -361,7 +367,8 @@ internal static class ConditionalEditorsNativeFixture
         var dialog = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot }; var showing = dialog.ShowAsync();
         try
         {
-            await UntilAsync(() => Descendants<Button>(dialog).Any(button => Equals(button.Content, "Translate")));
+            await UntilAsync(() => Descendants<Button>(dialog).Any(button => Equals(button.Content, "Translate")),
+                () => "narrow translation controls absent; notifications=" + string.Join(";", Descendants<TextBlock>(owner).Select(text => text.Text)));
             dialog.UpdateLayout(); await Task.Delay(60);
             var shell = Descendants<Border>(dialog).Single(border => border.Name == "BackgroundElement");
             var cancel = Descendants<Button>(dialog).Single(button => button.Name == "CloseButton");
@@ -387,9 +394,16 @@ internal static class ConditionalEditorsNativeFixture
         wire.Reset(); var dialog = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot }; var showing = dialog.ShowAsync(); await Task.Delay(150);
         try
         {
-            Box(dialog, "Title").Text = "Must not save"; auth.SetCurrentUser(new() { Id = "fixture", Role = "user" }); Save(dialog); await Task.Delay(100);
+            Box(dialog, "Title").Text = "Must not save"; auth.SetCurrentUser(new() { Id = "fixture", Role = "user" }); await Task.Delay(100);
+            Check(!dialog.IsPrimaryButtonEnabled, "metadata Save remains enabled after permission revocation");
             Check(wire.Writes.Count == 0 && showing.Status == Windows.Foundation.AsyncStatus.Started, "metadata save ignored permission revocation");
-            Admin(auth); Section(dialog, "Images"); await Task.Delay(100); var images = Field<Dictionary<string, StackPanel>>(dialog, "_sections")["images"];
+        }
+        finally { dialog.Hide(); await showing; Admin(auth); }
+        // Revocation permanently retires an editor; restoring permission requires a new visit.
+        dialog = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot }; showing = dialog.ShowAsync(); await Task.Delay(150);
+        try
+        {
+            Section(dialog, "Images"); await Task.Delay(100); var images = Field<Dictionary<string, StackPanel>>(dialog, "_sections")["images"];
             Invoke(images.Children.OfType<WrapPanel>().Single().Children.OfType<Button>().Last()); auth.SetCurrentUser(new() { Id = "fixture", Role = "user" }); Invoke(images.Children.OfType<Button>().Single()); await Task.Delay(100);
             Check(wire.Writes.Count == 0, "image apply ignored revoked admin permission");
         }

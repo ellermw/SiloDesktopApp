@@ -68,7 +68,7 @@ public sealed partial class LibraryPage
         ResetRecommendedContent();
         RecommendedPanel.Visibility = _currentTab == "Recommended"
             ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
-        RecommendedError.Text = "Recommendations could not be refreshed. Please retry.";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(RecommendedError, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.library.recommended.refreshFailed"));
         RecommendedErrorPanel.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
     }
 

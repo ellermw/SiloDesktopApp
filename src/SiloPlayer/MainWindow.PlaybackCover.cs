@@ -104,12 +104,13 @@ public sealed partial class MainWindow
 
     private void OnStillWatchingChanged() => DispatcherQueue.TryEnqueue(() =>
     {
+        EnsurePlayingNextTextKeys();
         if (PlayingNextOverlay.Visibility != Visibility.Visible || _playingNextFinishedCountdown) return;
         if (!PlayingNextCountdownAllowed && _playingNextTimer != null)
         {
             StopPlayingNextCountdown();
             _playingNextRemaining = PlayingNextCountdownSeconds;
-            PlayingNextCountdownText.Text = $"{_playingNextRemaining}s";
+            PlayingNextCountdownText.Text = PlayingNextCountdown(_playingNextRemaining);
             PlayingNextCountdownRing.Value = _playingNextRemaining;
         }
         else if (PlayingNextCountdownAllowed && _playingNextTimer == null &&

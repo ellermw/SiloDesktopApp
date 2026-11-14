@@ -103,7 +103,7 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         Assert.Contains("ItemsSource=\"{x:Bind SkeletonItems}\"", markup);
         Assert.Contains("Enumerable.Range(0, 24)", page);
         Assert.Contains("AutomationProperties.Name=\"{x:Bind AccessibleName, Mode=OneWay}\"", markup);
-        Assert.Contains("Deselect", viewModel);
+        Assert.Contains("web.home.tasteSeed.deselectTitle", viewModel);
         Assert.Contains("typeof(SettingsPage), \"Playback\"", page);
     }
 
