@@ -2994,7 +2994,10 @@ public partial class PlayerService : IDisposable
                 }
                 : null;
             var progressIdentity = expectedOwner?.Identity ?? authority.ApiClient.CaptureIdentityContext();
-            _playbackManager = requestManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough);
+            _playbackManager = requestManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough)
+            {
+                IsMeteredConnection = () => PlaybackConnectionNetwork.CaptureForQuality().Metered,
+            };
             _playbackProgressOwner = new(_playbackManager, progressIdentity);
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
 
@@ -8828,6 +8831,8 @@ public partial class PlayerService : IDisposable
             _videoWindow?.Hide();
         else if (_postRollActive && !_postRollVideoEnded)
             _videoWindow?.EnterPostRollPreview();
+        else if (_postRollVideoEnded)
+            _videoWindow?.Hide();
         else if (State == PlayerState.Minimized)
             PositionVideoForMiniBar();
         else if (State == PlayerState.PictureInPicture)
@@ -8843,6 +8848,11 @@ public partial class PlayerService : IDisposable
             _videoWindow?.Hide();
         else if (_postRollActive && !_postRollVideoEnded)
             _videoWindow?.EnterPostRollPreview();
+        else if (_postRollVideoEnded)
+            // The ended screen owns the client area. Every owner move and
+            // resize arrives here; showing the finished video again would put
+            // the native popup over the finishing artwork and its actions.
+            _videoWindow?.Hide();
         else if (!IsAudiobook && (State == PlayerState.Expanded || State == PlayerState.Fullscreen))
             _videoWindow?.Show();
         else if (State == PlayerState.Minimized)

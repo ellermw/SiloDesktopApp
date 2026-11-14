@@ -22,7 +22,9 @@ namespace SiloPlayer.Helpers;
 /// accepted one, or from the longest snapshot rejected since, so a row that
 /// shrank cannot be indexed past its end in either case. Every rejection is logged with both counts. Later model changes in
 /// that window are not lost: they are coalesced into the Reset, which publishes
-/// the collection as it is then. A rejected Reset is retried a few times with
+/// the collection as it is then. Move batches also use this deferred Reset:
+/// WinUI can accept Move followed by Replace yet retain a stale realized card,
+/// without throwing a rejection. A rejected Reset is retried a few times with
 /// a growing delay; after that the failure is logged to home_error.txt and
 /// <see cref="GaveUp"/> lets the owner rebind the repeater. Otherwise the
 /// view stays stale until the next model change. Only the repeater's
@@ -150,6 +152,15 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
             // A new change is a fresh chance for the abandoned recovery.
             _stale = false;
             _failedResyncs = 0;
+            QueueResync();
+            return;
+        }
+        if (e.Action == NotifyCollectionChangedAction.Move)
+        {
+            // WinUI can accept Move followed by Replace without rebinding the
+            // realized card at the moved index. Keep the accepted snapshot
+            // until one deferred Reset publishes the complete reorder. Later
+            // changes in this batch coalesce into it; owner hooks retain focus.
             QueueResync();
             return;
         }

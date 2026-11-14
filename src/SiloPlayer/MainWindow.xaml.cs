@@ -193,6 +193,8 @@ public sealed partial class MainWindow : Window
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
         // Activate() is never called, so the subscription lives here now.
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
+        // Every way Playing Next closes retires its finishing artwork with it.
+        PlayingNextOverlay.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, OnPlayingNextOverlayVisibilityChanged);
         _playerService.StillWatchingChanged += OnStillWatchingChanged;
         _playerService.LoadingBackdropChanged += OnLoadingBackdropChanged;
         _playerService.PositionChanged += OnPlaybackPositionForPlayingNext;
@@ -581,6 +583,8 @@ public sealed partial class MainWindow : Window
             if (videoEnded && PlayingNextOverlay.Visibility == Visibility.Visible)
             {
                 _playerService.FinishPostRollPreview();
+                // The hidden native preview leaves its slot to the finished title's artwork.
+                ShowPlayingNextFinishingArtAtEnd();
                 UpdatePlayingNextAutoPlayVisuals();
                 if (_playerService.HasNextEpisodeForCurrentPlayback &&
                     PlayingNextCountdownAllowed)
@@ -623,6 +627,7 @@ public sealed partial class MainWindow : Window
             // Size the hero before it shows, then place the artwork prepared during playback.
             if (Content?.XamlRoot is { } root) UpdatePlayingNextLayout(root.Size.Width, root.Size.Height);
             BeginPlayingNextArt(hasNextEpisode);
+            BeginPlayingNextFinishingArt();
             PlayingNextOnDeckRepeater.ItemsSource = null;
             PlayingNextOnDeckSection.Visibility = Visibility.Collapsed;
             _ = LoadPlayingNextOnDeckAsync();
@@ -643,6 +648,8 @@ public sealed partial class MainWindow : Window
                 _playerService.EnterPostRollPreview();
 
             PlayingNextOverlay.Visibility = Visibility.Visible;
+            // Live: the slot under the native preview. Ended: its artwork, or no rectangle at all.
+            UpdatePlayingNextFinishingArt();
             _playingNextVideoBounds = null;
             PlayingNextFinishingTitle.Text = _playerService.WatchDetail?.Title ?? "Finishing episode";
             PlayingNextComposition.UpdateLayout();
@@ -1712,6 +1719,8 @@ public sealed partial class MainWindow : Window
     {
         void Refresh()
         {
+            // Finishing artwork loaded for one profile is not shown to the next.
+            UpdatePlayingNextFinishingArt();
             if (_hydratedShellKey != null &&
                 (!CanExposeAuthenticatedNavigation || !string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal)))
             {
@@ -2976,6 +2985,8 @@ public sealed partial class MainWindow : Window
             Interlocked.Exchange(ref _loadingOverlayOwner, currentOwner);
         DispatcherQueue.TryEnqueue(() =>
         {
+            // A playback that starts under an open ended screen does not keep the previous title's picture.
+            UpdatePlayingNextFinishingArt();
             if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Visible;
             ErrorState.Visibility = Visibility.Collapsed;

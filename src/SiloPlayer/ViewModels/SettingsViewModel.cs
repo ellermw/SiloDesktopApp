@@ -273,6 +273,25 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnHideUnwatchedEpisodeOverviewsChanged(bool value)
     { if (!_suppressSave && EpisodeSpoilersSupported) _ = SaveContractProfileSettingAsync("catalog.hide_unwatched_episode_overviews", value); }
 
+    [ObservableProperty] private bool _meteredQualitySupported;
+    [ObservableProperty] private string _meteredQuality = "720p";
+    [ObservableProperty] private string _meteredBitrate = "2000";
+
+    [RelayCommand]
+    private async Task SaveMeteredQualityAsync()
+    {
+        if (_suppressSave || !MeteredQualitySupported) return;
+        await SaveContractProfileSettingAsync("playback.cellular_preferred_quality", MeteredQuality);
+    }
+
+    [RelayCommand]
+    private async Task SaveMeteredBitrateAsync()
+    {
+        if (_suppressSave || !MeteredQualitySupported) return;
+        await SaveContractProfileSettingAsync("playback.cellular_max_bitrate_kbps",
+            int.TryParse(MeteredBitrate, out var value) ? value : (int?)null);
+    }
+
     private const string PlaybackAudioLanguageSettingKey = "playback.audio_language";
     private static readonly string[] ContractPlaybackSettingKeys =
     [
@@ -652,6 +671,8 @@ public partial class SettingsViewModel : ObservableObject
                     var keys = supported ? ContractPlaybackSettingKeys : ContractPlaybackSettingKeys.Except(SeekPreferences.Keys).ToArray();
                     EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17 && capability.SupportsBatchedEffective;
                     if (EpisodeSpoilersSupported) keys = [.. keys, "catalog.hide_unwatched_episode_images", "catalog.hide_unwatched_episode_overviews"];
+                    MeteredQualitySupported = capability.ApiVersion == 1 && capability.Revision >= 20 && capability.SupportsBatchedEffective;
+                    if (MeteredQualitySupported) keys = [.. keys, "playback.cellular_preferred_quality", "playback.cellular_max_bitrate_kbps"];
                     var response = await _settingsApi.GetContractEffectiveSettingsAsync(keys);
                     if (!_settingsApi.IsCurrentContext(context)) return;
                     SeekSettingsAvailable = supported && SeekPreferences.Keys.All(key => response.Settings.Any(entry => entry.Key == key));
@@ -660,6 +681,9 @@ public partial class SettingsViewModel : ObservableObject
 
                     QualityPreference = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.preferred_quality", "auto"));
                     MaxBitrateKbps = ReadNullableNumber(values, "playback.max_bitrate_kbps");
+                    MeteredQuality = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.cellular_preferred_quality", "720p"));
+                    MeteredBitrate = values.ContainsKey("playback.cellular_max_bitrate_kbps")
+                        ? ReadNullableNumber(values, "playback.cellular_max_bitrate_kbps") : "2000";
                     AudioLanguage = ReadNullableString(values, PlaybackAudioLanguageSettingKey);
                     SubtitleLanguage = ReadNullableString(values, "playback.subtitle_language");
                     SubtitleMode = ReadString(values, "playback.subtitle_mode", "auto");
@@ -691,6 +715,7 @@ public partial class SettingsViewModel : ObservableObject
                 {
                     if (!_settingsApi.IsCurrentContext(context)) return;
                     SeekSettingsAvailable = false;
+                    MeteredQualitySupported = false;
                     SeekSettingsStatus = "Could not check seek settings compatibility. Reload settings to retry.";
                     // Servers predating the typed settings contract still use
                     // the profile/legacy values loaded above.

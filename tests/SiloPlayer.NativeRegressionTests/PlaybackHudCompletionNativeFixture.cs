@@ -62,6 +62,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
             var mode = Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE") ?? "postroll";
             wire.HasEpisodes=mode=="metadata";
             wire.HasSeries = !mode.StartsWith("mini-prepare", StringComparison.Ordinal);
+            if(mode.StartsWith("finished-",StringComparison.Ordinal)) await PrepareFinishedPreview(wire,mode);
             await service.PlayAsync("episode-1", fromStart: true);
             await Until(() => service.Mpv != null && !service.IsLoading && service.WatchDetail?.ContentId == "episode-1" && (bool)Field(service,"_transportHasFirstOutput")!, "Actual PlayAsync did not load the first episode.");
             service.Mpv!.SetProperty("ao", "null"); service.Mpv.SetProperty("loop-file", "inf");
@@ -163,6 +164,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
             }
             else if(mode=="still") await VerifyStill(service,wire,provider.GetRequiredService<EpisodeSpoilerPreferences>());
             else if(mode=="cover") await VerifyCover(service);
+            else if(mode.StartsWith("finished-",StringComparison.Ordinal)) await VerifyFinishedPreview(mode,service,wire,window,root,auth);
             else await VerifyAutoplay(service, wire, api, window);
             Program.Log("PASS: HUD_COMPLETION_"+mode+" actual PlaybackManager/PlayerService and native controls.");
         }
@@ -314,10 +316,22 @@ internal static partial class PlaybackHudCompletionNativeFixture
         internal readonly List<string> WatchQueries=[];
         internal readonly TaskCompletionSource AdvanceEntered=new(TaskCreationOptions.RunContinuationsAsynchronously),AdvanceRelease=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal List<double> Progress = [];
+        // Finished-preview cases: a watch backdrop per content id, its response, and responses held open.
+        internal readonly Dictionary<string,string> BackdropFor=[];
+        internal readonly Dictionary<string,(HttpStatusCode Status,byte[] Body)> Backdrops=[];
+        internal readonly Dictionary<string,TaskCompletionSource> HeldBackdrops=[];
+        internal readonly System.Collections.Concurrent.ConcurrentDictionary<string,int> BackdropRequests=new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Check(request.RequestUri!.Host == "hud-completion.fixture.invalid", "Unexpected fixture origin.");
             var path = request.RequestUri.AbsolutePath;
+            if(path.StartsWith("/backdrops/",StringComparison.Ordinal))
+            {
+                BackdropRequests.AddOrUpdate(path,1,(_,count)=>count+1);
+                if(HeldBackdrops.TryGetValue(path,out var release)) await release.Task;
+                return Backdrops.TryGetValue(path,out var backdrop)
+                    ? new(backdrop.Status){Content=new ByteArrayContent(backdrop.Body)} : new(HttpStatusCode.NotFound);
+            }
             if(path.EndsWith(".png"))
             {
                 if(HoldStill) { StillEntered.TrySetResult(); await StillRelease.Task; }
@@ -353,6 +367,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
                     await preparation.Release.Task;
                 }
                 return Json(new { content_id=id,type=HasSeries ? "episode" : "movie",title="Finishing episode",series_id=HasSeries ? "series" : null,series_title="Synthetic Show",season_number=1,episode_number=1,
+                    backdrop_url=BackdropFor.GetValueOrDefault(id),
                     versions=new[] {new {file_id=42,duration=30,container="y4m",codec_video="rawvideo"}} });
             }
             if (path.EndsWith("/progress"))
