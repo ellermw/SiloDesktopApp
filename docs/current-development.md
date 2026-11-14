@@ -38,6 +38,25 @@ Cleanup remains unattempted after the prior policy rejection; recovered0GiB on
 both drives. Installed player remains open and PR145 is untouched.
 
 ---
+# November 13 - Upstream 4448e401 Auto ranking and multipart increment
+
+Reviewed Beta base is 6f9f87f7, version 1.2.1017-beta.1 / 1.2.1016.1. The first
+independent increment of the 43-commit update implements server-order detail Auto,
+saved later-part Resume, first-part Start Over and ordered multipart downloads.
+67 related units, Release publish, native host build and both track-choices and
+detail-action-hover native fixtures passed. Independent review found no P0-P2.
+See [scope and limits](parity/2026-11-13-upstream-4448-ranking.md).
+
+Marker invalidation is covered by the increment above; connection-quality and
+mounted-library scan refresh remain separate pending increments. Pipeline owns
+review/fixes/QA/delivery after each qualifying Beta submission. PR145 is untouched;
+versions remain pipeline-owned.
+One existing output/publish/native payload is reused. Generated data stays below
+1.3 GiB, free C: 192.83 GiB and D: 480.84 GiB. Cleanup is not retried after the
+previous automatic approval block; recovered 0 GiB on each drive. Installed
+player PID38020 remains open.
+
+---
 # November 13 - Edition-scoped detail Auto verified locally
 
 Branch codex/edition-auto-nov13 starts at Beta e438c30d. Official upstream
