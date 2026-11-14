@@ -75,7 +75,7 @@ public sealed partial class SettingsPage
             _loginSessionTimer.Start();
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (Current()) _loginSessionError = ex.Message; }
+        catch (Exception ex) { if (Current()) _loginSessionError = ex.DisplayMessage(); }
         finally
         {
             if (Current()) { _loginSessionLoading = false; RebuildSessionCards(); }
@@ -92,37 +92,37 @@ public sealed partial class SettingsPage
     private void RebuildSessionCards()
     {
         SessionCardsContainer.Children.Clear();
-        var refresh = new Button { Content = "Refresh", IsEnabled = !_loginSessionLoading, HorizontalAlignment = HorizontalAlignment.Left };
+        var refresh = new Button { Content = L("web.settings.sessions.refresh", "Refresh"), IsEnabled = !_loginSessionLoading, HorizontalAlignment = HorizontalAlignment.Left };
         refresh.Click += async (_, _) => await LoadSessionsAsync();
-        AutomationProperties.SetName(refresh, "Refresh sessions");
+        AutomationProperties.SetName(refresh, L("web.settings.sessions.refreshLabel", "Refresh sessions"));
         SessionCardsContainer.Children.Add(refresh);
-        if (_loginSessionLoading) SessionCardsContainer.Children.Add(SecondaryText("Loading sessions…"));
-        if (_loginSessionUnavailable) { SessionCardsContainer.Children.Add(SecondaryText("Signed-in session management is unavailable on this server.")); return; }
+        if (_loginSessionLoading) SessionCardsContainer.Children.Add(SecondaryText(L("web.settings.sessions.loading", "Loading sessions…")));
+        if (_loginSessionUnavailable) { SessionCardsContainer.Children.Add(SecondaryText(L("web.settings.signedInSessions.unavailable", "Signed-in session management is unavailable on this server."))); return; }
         if (_loginSessionError != null)
         {
             SessionCardsContainer.Children.Add(ErrorText($"{(_loginSessionCapabilitiesLoaded ? "Couldn't load sessions." : "Couldn't load session settings.")} {_loginSessionError}"));
-            var retry = new Button { Content = "Retry", IsEnabled = !_loginSessionLoading };
+            var retry = new Button { Content = L("common.retry", "Retry"), IsEnabled = !_loginSessionLoading };
             retry.Click += async (_, _) => await LoadSessionsAsync(append: _loginSessionNextCursor != null);
             SessionCardsContainer.Children.Add(retry);
         }
         if (_currentLoginSession is { } current)
         {
-            var group = CreateSettingsGroup("This app", "The session you're using right now.");
+            var group = CreateSettingsGroup("This app", L("web.settings.sessions.current.description", "The session you're using right now."));
             ((StackPanel)group.Child).Children.Add(BuildSessionCard(current));
             SessionCardsContainer.Children.Add(group);
         }
         var others = _loginSessions.Where(row => !row.IsCurrent && row.Id != _currentLoginSession?.Id).ToList();
         if (!_loginSessionLoading || _loginSessions.Count > 0)
         {
-            var group = CreateSettingsGroup("Other signed-in sessions", "Other browsers and apps with access to your account.");
+            var group = CreateSettingsGroup(L("web.settings.sessions.others.title", "Other signed-in sessions"), L("web.settings.sessions.others.description", "Other browsers and apps with access to your account."));
             var stack = (StackPanel)group.Child;
             foreach (var session in others) stack.Children.Add(BuildSessionCard(session));
-            if (others.Count == 0) stack.Children.Add(SecondaryText("No other signed-in sessions."));
+            if (others.Count == 0) stack.Children.Add(SecondaryText(L("web.settings.sessions.others.empty", "No other signed-in sessions.")));
             SessionCardsContainer.Children.Add(group);
         }
         if (_loginSessionNextCursor != null && _loginSessionError == null)
         {
-            var more = new Button { Content = _loginSessionLoading ? "Loading…" : "Load more sessions", IsEnabled = !_loginSessionLoading };
+            var more = new Button { Content = _loginSessionLoading ? L("web.settings.sessions.loadingMore", "Loading…") : L("web.settings.sessions.loadMore", "Load more sessions"), IsEnabled = !_loginSessionLoading };
             more.Click += async (_, _) => await LoadSessionsAsync(append: true);
             SessionCardsContainer.Children.Add(more);
         }
@@ -139,22 +139,23 @@ public sealed partial class SettingsPage
         var name = LoginSessionDisplay.Name(session);
         stack.Children.Add(new TextBlock { Text = name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
         if (session.IsCurrent) stack.Children.Add(SecondaryText("This app"));
-        stack.Children.Add(SecondaryText($"{LoginSessionDisplay.LastSeen(session.LastSeenAt, DateTimeOffset.UtcNow)} · Signed in {SessionDate(session.CreatedAt)}"));
-        var signOut = new Button { Content = session.IsCurrent ? "Sign out this app" : "Sign out", HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetName(signOut, session.IsCurrent ? "Sign out this app" : $"Sign out {name}");
+        stack.Children.Add(SecondaryText(L("web.settings.sessions.row.summary", $"{LoginSessionDisplay.LastSeen(session.LastSeenAt, DateTimeOffset.UtcNow)} · Signed in {SessionDate(session.CreatedAt)}",
+            Args(("last_seen", LoginSessionDisplay.LastSeen(session.LastSeenAt, DateTimeOffset.UtcNow)), ("signed_in", SessionDate(session.CreatedAt))))));
+        var signOut = new Button { Content = session.IsCurrent ? "Sign out this app" : L("common.signOut", "Sign out"), HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetName(signOut, session.IsCurrent ? "Sign out this app" : L("web.settings.sessions.row.signOutDevice", $"Sign out {name}", Args(("device", name))));
         signOut.Click += async (_, _) => await ConfirmSessionSignOutAsync(session);
         stack.Children.Add(signOut);
         var details = new StackPanel { Spacing = 8 };
-        foreach (var (label, value) in new[] { ("Last seen", session.LastSeenAt == null ? "Not recorded yet" : SessionDate(session.LastSeenAt)),
-            ("Signed in", SessionDate(session.CreatedAt)), ("IP address at sign-in", string.IsNullOrEmpty(session.IpAddress) ? "Unknown" : session.IpAddress),
-            ("Expires", SessionDate(session.ExpiresAt)), ("User-Agent", string.IsNullOrEmpty(session.DeviceName) ? "Not sent" : session.DeviceName) })
+        foreach (var (label, value) in new[] { (L("web.settings.sessions.row.lastSeen", "Last seen"), session.LastSeenAt == null ? L("web.settings.sessions.row.notRecorded", "Not recorded yet") : SessionDate(session.LastSeenAt)),
+            (L("web.settings.sessions.row.signedIn", "Signed in"), SessionDate(session.CreatedAt)), (L("web.settings.sessions.row.ipAddress", "IP address at sign-in"), string.IsNullOrEmpty(session.IpAddress) ? L("web.settings.sessions.row.unknown", "Unknown") : session.IpAddress),
+            (L("web.settings.sessions.row.expires", "Expires"), SessionDate(session.ExpiresAt)), (L("web.settings.sessions.row.userAgent", "User-Agent"), string.IsNullOrEmpty(session.DeviceName) ? L("web.settings.sessions.row.notSent", "Not sent") : session.DeviceName) })
             details.Children.Add(new TextBlock { Text = $"{label}\n{value}", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
-        stack.Children.Add(new Expander { Header = "Details", Content = details, HorizontalAlignment = HorizontalAlignment.Stretch });
+        stack.Children.Add(new Expander { Header = L("web.settings.sessions.row.details", "Details"), Content = details, HorizontalAlignment = HorizontalAlignment.Stretch });
         return card;
     }
 
     private static string SessionDate(string? value) => DateTimeOffset.TryParse(value, out var date)
-        ? DateTimeDisplay.FormatDate(date.LocalDateTime, medium: true) + " " + DateTimeDisplay.FormatTime(date.LocalDateTime) : "Not recorded yet";
+        ? DateTimeDisplay.FormatDate(date.LocalDateTime, medium: true) + " " + DateTimeDisplay.FormatTime(date.LocalDateTime) : L("web.settings.sessions.row.notRecorded", "Not recorded yet");
 
     private async Task ConfirmSessionSignOutAsync(AuthSession session)
     {
@@ -165,16 +166,16 @@ public sealed partial class SettingsPage
         if (!client.IsCurrentContext(context)) return;
         var error = ErrorText(""); error.Visibility = Visibility.Collapsed;
         var content = new StackPanel { Spacing = 12, Children = {
-            SecondaryText(session.IsCurrent ? "You'll return to the sign-in screen. You can sign in again with the same password or sign-in provider."
-                : "This client will lose access on its next authenticated request. Its other sessions and password stay unchanged."),
-            SecondaryText("A video already playing may continue until its next request. Saved device settings are kept."), error } };
-        var dialog = new ContentDialog { Title = session.IsCurrent ? "Sign out this app?" : $"Sign out {LoginSessionDisplay.Name(session)}?",
-            Content = content, PrimaryButtonText = "Sign out", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, XamlRoot = XamlRoot };
+            SecondaryText(session.IsCurrent ? L("web.settings.sessions.confirm.thisBrowserDescription", "You'll return to the sign-in screen. You can sign in again with the same password or sign-in provider.")
+                : L("web.settings.sessions.confirm.clientDescription", "This client will lose access on its next authenticated request. Its other sessions and password stay unchanged.")),
+            SecondaryText(L("web.settings.sessions.confirm.note", "A video already playing may continue until its next request. Saved device settings are kept.")), error } };
+        var dialog = new ContentDialog { Title = session.IsCurrent ? "Sign out this app?" : L("web.settings.sessions.confirm.deviceTitle", $"Sign out {LoginSessionDisplay.Name(session)}?", Args(("device", LoginSessionDisplay.Name(session)))),
+            Content = content, PrimaryButtonText = L("common.signOut", "Sign out"), CloseButtonText = L("common.cancel", "Cancel"), DefaultButton = ContentDialogButton.Close, XamlRoot = XamlRoot };
         var completed = false;
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true; var deferral = args.GetDeferral();
-            dialog.IsPrimaryButtonEnabled = false; dialog.IsSecondaryButtonEnabled = false; dialog.CloseButtonText = ""; dialog.PrimaryButtonText = "Signing out…";
+            dialog.IsPrimaryButtonEnabled = false; dialog.IsSecondaryButtonEnabled = false; dialog.CloseButtonText = ""; dialog.PrimaryButtonText = L("web.settings.sessions.confirm.signingOut", "Signing out…");
             try
             {
                 if (revision != _loginSessionRevision || !client.IsCurrentContext(context)) return;
@@ -183,14 +184,14 @@ public sealed partial class SettingsPage
                 completed = true; args.Cancel = false;
             }
             catch (OperationCanceledException) { dialog.Hide(); }
-            catch (Exception ex) { error.Text = ex.Message; error.Visibility = Visibility.Visible; }
-            finally { dialog.IsPrimaryButtonEnabled = true; dialog.CloseButtonText = "Cancel"; dialog.PrimaryButtonText = "Sign out"; deferral.Complete(); }
+            catch (Exception ex) { error.Text = ex.DisplayMessage(); error.Visibility = Visibility.Visible; }
+            finally { dialog.IsPrimaryButtonEnabled = true; dialog.CloseButtonText = L("common.cancel", "Cancel"); dialog.PrimaryButtonText = L("common.signOut", "Sign out"); deferral.Complete(); }
         };
         _loginSessionDialog = dialog;
         try { await dialog.ShowAsync(); }
         finally { if (ReferenceEquals(_loginSessionDialog, dialog)) _loginSessionDialog = null; }
         if (!completed || !client.IsCurrentContext(context)) return;
         if (session.IsCurrent) await App.Services.GetRequiredService<AuthService>().LogoutAsync();
-        else { Toast("Session signed out"); await LoadSessionsAsync(); }
+        else { Toast(L("web.settings.sessions.signedOut", "Session signed out")); await LoadSessionsAsync(); }
     }
 }

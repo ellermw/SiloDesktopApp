@@ -1,6 +1,8 @@
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using SiloPlayer.Controls;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -23,8 +25,9 @@ public sealed partial class CollectionEditorPage
         if (_normalizingChart || _syncedChart.Children.Count == 0) return;
         RemoveFrom(_syncedChartUi, _syncedChartCards);
         _syncedChartUi.Children.Clear(); _syncedChartCards.Children.Clear();
-        var entries = new[] { ("trending", "Trending", "What's hot now"), ("popular", "Popular", "Most viewed"), ("top_rated", "Top rated", "Best scores"),
-            ("now_playing", "Now playing", "Movies in cinemas"), ("upcoming", "Upcoming", "Movies coming soon"), ("airing_today", "Airing today", "TV, today"), ("on_the_air", "On the air", "TV, this week") };
+        var entries = new[] { ("trending", "Trending", "What's hot now", "Trending"), ("popular", "Popular", "Most viewed", "Popular"), ("top_rated", "Top rated", "Best scores", "TopRated"),
+            ("now_playing", "Now playing", "Movies in cinemas", "NowPlaying"), ("upcoming", "Upcoming", "Movies coming soon", "Upcoming"), ("airing_today", "Airing today", "TV, today", "AiringToday"), ("on_the_air", "On the air", "TV, this week", "OnTheAir") }
+            .Select(entry => (entry.Item1, CollectionText.Get("web.collections.tmdbSources.chart" + entry.Item4, entry.Item2), CollectionText.Get("web.collections.tmdbSources.chart" + entry.Item4 + "Hint", entry.Item3))).ToArray();
         var preset = (_chartPreset.SelectedItem as ComboBoxItem)?.Tag?.ToString();
         for (var n = 0; n < entries.Length; n++)
         {
@@ -57,20 +60,21 @@ public sealed partial class CollectionEditorPage
             AutomationProperties.SetName(card, label + " " + hint); _syncedChartCards.Children.Add(card);
         }
         LayoutSyncedChartCards();
-        _syncedChartUi.Children.Add(Field("Chart", _syncedChartCards));
+        _syncedChartUi.Children.Add(Field("web.collections.fields.chart", "Chart", _syncedChartCards));
         if (preset != null)
         {
             var media = (_chartMedia.SelectedItem as ComboBoxItem)?.Tag?.ToString();
             var allowed = _chartMedia.Items.OfType<ComboBoxItem>().Select(item => item.Tag?.ToString()).ToHashSet();
             var choices = new WrapPanel { HorizontalSpacing = 32, VerticalSpacing = 12 };
-            choices.Children.Add(Field("Show", SyncedChartSegments("media", preset == "trending" ? [("movie", "Movies"), ("tv", "TV shows"), ("all", "Both")] : [("movie", "Movies"), ("tv", "TV shows")], media, allowed,
+            var movies = CollectionText.Get("web.collections.tmdbSources.mediaMovies", "Movies"); var shows = CollectionText.Get("web.collections.tmdbSources.mediaTv", "TV shows");
+            choices.Children.Add(Field("web.collections.fields.show", "Show", SyncedChartSegments("media", preset == "trending" ? [("movie", movies), ("tv", shows), ("all", CollectionText.Get("web.collections.tmdbSources.mediaBoth", "Both"))] : [("movie", movies), ("tv", shows)], media, allowed,
                 key => _chartMedia.SelectedItem = _chartMedia.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, key)))));
-            if (preset == "trending") choices.Children.Add(Field("Trending over", SyncedChartSegments("window", [("day", "Today"), ("week", "This week")], (_chartWindow.SelectedItem as ComboBoxItem)?.Tag?.ToString(), null,
+            if (preset == "trending") choices.Children.Add(Field("web.collections.fields.trendingOver", "Trending over", SyncedChartSegments("window", [("day", CollectionText.Get("web.collections.tmdbSources.windowDay", "Today")), ("week", CollectionText.Get("web.collections.tmdbSources.windowWeek", "This week"))], (_chartWindow.SelectedItem as ComboBoxItem)?.Tag?.ToString(), null,
                 key => _chartWindow.SelectedItem = _chartWindow.Items.OfType<ComboBoxItem>().Single(item => Equals(item.Tag, key)))));
             _syncedChartUi.Children.Add(choices);
-            if (allowed.Count == 1) _syncedChartUi.Children.Add(new TextBlock { Text = "TMDB has this chart for " + (allowed.Contains("movie") ? "movies" : "TV shows") + " only", FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+            if (allowed.Count == 1) _syncedChartUi.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.tmdbSources.chartLockReason", "TMDB has this chart for " + (allowed.Contains("movie") ? "movies" : "TV shows") + " only", ("kind", allowed.Contains("movie") ? "movie" : "tv")), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
         }
-        _syncedChartUi.Children.Add(new TextBlock { Text = "“Trending over” and “Both” appear only for Trending.", FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        _syncedChartUi.Children.Add(new TextBlock { Text = CollectionText.Get("web.collections.copy.chartRulesNote", "“Trending over” and “Both” appear only for Trending."), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
     }
 
     private Border SyncedChartSegments(string group, (string Key, string Label)[] choices, string? selected, HashSet<string?>? allowed, Action<string> changed)

@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
@@ -16,6 +18,7 @@ public sealed partial class InviteClaimPage : Page
     {
         ViewModel = App.Services.GetRequiredService<InviteClaimViewModel>();
         InitializeComponent();
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); UpdateState(); });
         ViewModel.InvitationAccepted += OnInvitationAccepted;
         ViewModel.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateState);
     }
@@ -55,16 +58,16 @@ public sealed partial class InviteClaimPage : Page
         if (ViewModel.Invitation is { } invitation)
         {
             EmailBox.Text = invitation.Email;
-            WelcomeTitle.Text = $"Welcome to {invitation.ServerName}";
+            WelcomeTitle.Text = AppStrings.Get("web.auth.invite.title", new Dictionary<string, object?> { ["server"] = invitation.ServerName }, $"Welcome to {invitation.ServerName}");
             InviterText.Text = string.IsNullOrWhiteSpace(invitation.InviterName)
                 ? ""
-                : $"INVITED BY {invitation.InviterName}";
+                : AppStrings.Get("web.auth.invite.invitedBy", new Dictionary<string, object?> { ["inviter"] = invitation.InviterName }, $"INVITED BY {invitation.InviterName}");
             InviterText.Visibility = string.IsNullOrWhiteSpace(invitation.InviterName)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
         }
         ConnectionErrorText.Text = ViewModel.ErrorMessage ?? "The invitation could not be loaded.";
-        CreateAccountButton.Content = ViewModel.IsSubmitting ? "Creating account…" : "Create account";
+        CreateAccountButton.Content = ViewModel.IsSubmitting ? AppStrings.Get("web.auth.passwordRules.creatingAccount") : AppStrings.Get("web.auth.createAccount");
     }
 
     private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)

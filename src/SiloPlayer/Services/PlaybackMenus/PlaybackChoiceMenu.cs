@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Core.Localization;
 using Windows.Graphics;
 using VirtualKey = Windows.System.VirtualKey;
 
@@ -47,6 +48,11 @@ internal class PlaybackChoiceMenu
     private bool _pointerSelection;
     private readonly bool _segmented;
     private readonly TextBlock? _headingValue;
+    private readonly TextBlock _heading;
+    private Func<string>? _localizedTitle;
+    private Func<IReadOnlyList<PlaybackMenuChoice>?>? _localizedChoices;
+    private IDisposable? _localization;
+    private long _textGeneration = AppStrings.Current.Generation;
 
     internal PlaybackChoiceMenu(MpvVideoWindow owner, PlaybackMenuAnchor anchor, string title,
         IReadOnlyList<PlaybackMenuChoice> choices, Func<bool> isCurrent,
@@ -79,7 +85,7 @@ internal class PlaybackChoiceMenu
         }
         AutomationProperties.SetName(_list, title + " choices");
         BuildChoices();
-        var heading = new TextBlock { Text = title, FontSize = _segmented ? 14 : 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(12, 10, 12, 8) };
+        var heading = _heading = new TextBlock { Text = title, FontSize = _segmented ? 14 : 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(12, 10, 12, 8) };
         _root = new Grid
         {
             RequestedTheme = ElementTheme.Dark, Background = ThemeBrush("PopoverBrush", 0x18, 0x18, 0x1C),
@@ -105,6 +111,9 @@ internal class PlaybackChoiceMenu
             _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Grid.SetRow(_footer, 2); _root.Children.Add(_footer);
         }
+        // Menu text follows the interface language; the popup's placement and
+        // the video surface it belongs to keep their left-to-right geometry.
+        AppLocalization.ApplyDirection(_root);
         _window = new Window { Content = _root, Title = "Silo Desktop Player — " + title };
         Hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
         SetWindowLongPtrW(Hwnd, -8, owner.Hwnd);
@@ -195,7 +204,7 @@ internal class PlaybackChoiceMenu
                             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                             Foreground = choice.IsCurrent ? HudAccentBrush(true) : new SolidColorBrush(Windows.UI.Color.FromArgb(255,245,243,239)),
                             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold } } };
-                AutomationProperties.SetName(segment, string.Join(", ",new[]{choice.Title,choice.Metadata,choice.IsCurrent?"Current selection":"",choice.IsPending?"Pending":"",choice.DisabledReason}.Where(s=>s.Length>0)));
+                AutomationProperties.SetName(segment, string.Join(", ",new[]{choice.Title,choice.Metadata,choice.IsCurrent?SelectedText:"",choice.IsPending?PendingText:"",choice.DisabledReason}.Where(s=>s.Length>0)));
                 ToolTipService.SetToolTip(segment,AutomationProperties.GetName(segment)); segment.Loaded+=OnRowLoaded;
                 return segment;
             }
@@ -211,20 +220,60 @@ internal class PlaybackChoiceMenu
                 content.Children.Add(leading); Grid.SetColumn(copy, 1); content.Children.Add(copy); row.Children.Add(content);
             }
             else row.Children.Add(copy);
-            var check = new TextBlock { Text = choice.IsPending ? "Pending" : choice.IsCurrent ? "✓" : "", VerticalAlignment = VerticalAlignment.Center };
+            var check = new TextBlock { Text = choice.IsPending ? PendingText : choice.IsCurrent ? "✓" : "", VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(check, 1); row.Children.Add(check);
             var item = new ListViewItem { Content = row, Tag = choice.Id, IsEnabled = choice.IsEnabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(item, string.Join(", ", new[] { choice.Title, choice.Metadata, string.Join(", ", choice.Badges),
-                choice.IsCurrent ? "Current selection" : "", choice.IsPending ? "Pending" : "", choice.DisabledReason }.Where(s => s.Length > 0)));
+                choice.IsCurrent ? SelectedText : "", choice.IsPending ? PendingText : "", choice.DisabledReason }.Where(s => s.Length > 0)));
             ToolTipService.SetToolTip(item, AutomationProperties.GetName(item));
             item.Loaded += OnRowLoaded;
             return item;
     }
 
-    internal void UpdateChoices(IReadOnlyList<PlaybackMenuChoice> choices)
+    // Spoken state words. "Pending" is native-only (no catalog equivalent).
+    private static string SelectedText => AppStrings.Get("web.player.quality.selected", fallback: "Selected");
+    private const string PendingText = "Pending";
+
+    /// <summary>
+    /// Re-renders this open menu's text when the interface language changes:
+    /// heading, rows, spoken names and direction update in place. Selection,
+    /// scroll, focus, the request lease and the playback owner are untouched;
+    /// a retired or closed menu ignores the change.
+    /// </summary>
+    internal void Localize(Func<string> title, Func<IReadOnlyList<PlaybackMenuChoice>?>? choices = null)
+    {
+        if (_finished) return;
+        _localizedTitle = title; _localizedChoices = choices;
+        _localization?.Dispose();
+        _localization = AppLocalization.Register(_root, Relocalize);
+    }
+
+    private void Relocalize()
+    {
+        if (_finished || !_isCurrent()) return;
+        var generation = AppStrings.Current.Generation;
+        if (generation == _textGeneration) return;
+        _textGeneration = generation;
+        AppLocalization.ApplyDirection(_root);
+        if (_localizedTitle is { } title)
+        {
+            var text = title();
+            _heading.Text = text;
+            _window.Title = "Silo Desktop Player — " + text;
+            AutomationProperties.SetName(_list, text + " choices");
+        }
+        if (_localizedChoices?.Invoke() is { Count: > 0 } choices) ApplyChoices(choices, relocalized: true);
+        else if (_shown) QueueLayout(placement: true);
+    }
+
+    internal void UpdateChoices(IReadOnlyList<PlaybackMenuChoice> choices) => ApplyChoices(choices, relocalized: false);
+
+    // One reflected/internal entry point stays UpdateChoices; this carries the language-change mode.
+    private void ApplyChoices(IReadOnlyList<PlaybackMenuChoice> choices, bool relocalized)
     {
         if (_finished || !_isCurrent() || choices.Count == 0) return;
-        static bool Same(PlaybackMenuChoice a, PlaybackMenuChoice b) =>
+        // A language change refreshes every row: spoken state words are not part of the choice data.
+        bool Same(PlaybackMenuChoice a, PlaybackMenuChoice b) => !relocalized &&
             a.Id == b.Id && a.Title == b.Title && a.Metadata == b.Metadata && a.Badges.SequenceEqual(b.Badges) &&
             a.IsCurrent == b.IsCurrent && a.IsEnabled == b.IsEnabled && a.DisabledReason == b.DisabledReason &&
             a.CloseOnInvoke == b.CloseOnInvoke && a.IsPending == b.IsPending;
@@ -516,6 +565,7 @@ internal class PlaybackChoiceMenu
     {
         if (_finished) return;
         _finished = true;
+        _localization?.Dispose(); _localization = null;
         _ownerWatch.Stop();
         _ownerWatch.Tick -= OnOwnerWatch;
         var restore = reason is PlaybackMenuCloseReason.Selection or PlaybackMenuCloseReason.Cancel

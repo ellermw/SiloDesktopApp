@@ -29,8 +29,14 @@ internal static class CollectionPickRow
             heading.SizeChanged += (_, _) => title.MaxWidth = Math.Max(0, heading.ActualWidth - badge.ActualWidth - 8);
         }
         copy.Children.Add(heading);
-        var media = template.MediaKind switch { "movie" => "Movies", "series" or "tv" => "TV", "mixed" => "Movies + TV", _ => "" };
-        var meta = string.Join(" · ", new[] { media, template.DefaultLimit > 0 ? $"{template.DefaultLimit} titles" : "", string.IsNullOrWhiteSpace(template.DefaultSyncSchedule) ? "" : "syncs " + Schedule(template.DefaultSyncSchedule) }.Where(value => value.Length > 0));
+        var media = template.MediaKind switch
+        {
+            "movie" => SiloPlayer.Helpers.CollectionText.Get("web.collections.templates.mediaKind.movie", "Movies"),
+            "series" or "tv" => SiloPlayer.Helpers.CollectionText.Get("web.collections.templates.mediaKind.tv", "TV"),
+            "mixed" => SiloPlayer.Helpers.CollectionText.Get("web.collections.templates.mediaKind.mixed", "Movies + TV"),
+            _ => "",
+        };
+        var meta = string.Join(" · ", new[] { media, template.DefaultLimit > 0 ? SiloPlayer.Helpers.CollectionText.Titles(template.DefaultLimit) : "", string.IsNullOrWhiteSpace(template.DefaultSyncSchedule) ? "" : Schedule(template.DefaultSyncSchedule) }.Where(value => value.Length > 0));
         copy.Children.Add(new TextBlock { Text = meta, FontSize = 12.5, LineHeight = 18.75, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis });
         Grid.SetColumn(copy, 1); columns.Children.Add(poster); columns.Children.Add(copy);
         var row = new RadioButton { Content = columns, IsChecked = selected, GroupName = group, Padding = new(14, 10, 14, 10), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -68,12 +74,15 @@ internal static class CollectionPickRow
     private static string Schedule(string cron)
     {
         var fields = cron.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (fields.Length != 5) return "on schedule";
-        if (System.Text.RegularExpressions.Regex.IsMatch(fields[1], @"^\*/\d+$")) return $"every {fields[1][2..]} hours";
-        if (fields[1] == "*") return "hourly";
-        if (fields[2] == "1" && fields[3] == "*") return "monthly";
-        if (fields[2] == "*" && fields[3] == "*" && fields[4] == "*") return "daily";
-        return fields[2] == "*" && fields[3] == "*" ? "weekly" : "on schedule";
+        // "syncs daily" and the like, in the interface language; the cron itself is only read.
+        string Syncs(string kind) => SiloPlayer.Helpers.CollectionText.Get("web.collections.templateGallery.syncs", "syncs " + (kind == "other" ? "on schedule" : kind), ("schedule", kind));
+        if (fields.Length != 5) return Syncs("other");
+        if (System.Text.RegularExpressions.Regex.IsMatch(fields[1], @"^\*/\d+$") && int.TryParse(fields[1][2..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var hours))
+            return SiloPlayer.Helpers.CollectionText.Get("web.collections.templateGallery.syncsEveryHours", $"syncs every {fields[1][2..]} hours", ("count", hours), ("hours", SiloPlayer.Helpers.CollectionText.Number(hours)));
+        if (fields[1] == "*") return Syncs("hourly");
+        if (fields[2] == "1" && fields[3] == "*") return Syncs("monthly");
+        if (fields[2] == "*" && fields[3] == "*" && fields[4] == "*") return Syncs("daily");
+        return Syncs(fields[2] == "*" && fields[3] == "*" ? "weekly" : "other");
     }
     private static void ClipPoster(Border poster)
     {

@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Views;
 
@@ -57,7 +58,39 @@ public static class DocumentTitle
         [typeof(ProfileSelectPage)] = "Select Profile",
         [typeof(ServerSetupRequiredPage)] = "Setup Required",
         [typeof(ActivateDevicePage)] = "Activate Device",
+        [typeof(PasswordRecoveryPage)] = "Reset Password",
+        [typeof(ChoosePasswordPage)] = "Choose a New Password",
+        [typeof(InviteClaimPage)] = "Invitation",
 
+    };
+
+    private static readonly Dictionary<Type, string> PageKeys = new()
+    {
+        [typeof(HomePage)] = "web.shell.sidebar.home",
+        [typeof(SearchPage)] = "web.shell.sidebar.search",
+        [typeof(CatalogPage)] = "web.catalog.page.catalog",
+        [typeof(CalendarPage)] = "web.shell.sidebar.calendar",
+        [typeof(RequestsPage)] = "web.shell.sidebar.requests",
+        [typeof(NotificationsPage)] = "web.notifications.inbox.title",
+        [typeof(RecommendationsPage)] = "web.recommendations.fallbackDefault",
+        [typeof(RecommendationSectionPage)] = "web.recommendations.fallbackDefault",
+        [typeof(FavoritesPage)] = "web.shell.sidebar.favorites",
+        [typeof(WatchlistPage)] = "web.shell.sidebar.watchlist",
+        [typeof(HistoryPage)] = "web.shell.sidebar.history",
+        [typeof(CollectionsPage)] = "web.shell.sidebar.collections",
+        [typeof(DownloadsPage)] = "web.setup.features.downloads",
+        [typeof(LibraryPage)] = "web.library.page.titleFallback",
+        [typeof(PersonDetailPage)] = "web.person.fallbackTitle",
+        [typeof(SettingsPage)] = "web.shell.sidebar.settings",
+        [typeof(TasteSeedPage)] = "web.home.tasteSeed.title",
+        [typeof(WatchTogetherJoinPage)] = "web.shell.sidebar.watchParty",
+        [typeof(WatchTogetherRoomPage)] = "web.shell.sidebar.watchParty",
+        [typeof(LoginPage)] = "web.auth.login.documentTitle",
+        [typeof(ActivateDevicePage)] = "web.auth.activate.documentTitle",
+        [typeof(InviteClaimPage)] = "web.watchTogether.invite.documentTitle",
+        [typeof(ProfileSelectPage)] = "web.profiles.picker.documentTitle",
+        [typeof(PasswordRecoveryPage)] = "web.auth.passwordReset.documentTitle",
+        [typeof(ChoosePasswordPage)] = "web.auth.choosePassword.documentTitle",
     };
 
     public static void SetServerName(string? serverName)
@@ -72,7 +105,7 @@ public static class DocumentTitle
     public static string FromPageType(Type pageType)
     {
         if (_pageLabels.TryGetValue(pageType, out var label))
-            return $"{label}{Separator}{AppName}";
+            return $"{(PageKeys.TryGetValue(pageType, out var key) ? AppStrings.Get(key, fallback: label) : label)}{Separator}{AppName}";
         return AppName;
     }
 

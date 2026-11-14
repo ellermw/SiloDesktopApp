@@ -7,7 +7,7 @@ using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
 
-public sealed record RecommendationSectionNavigationArgs(string Kind, string? Key, string Title);
+public sealed record RecommendationSectionNavigationArgs(string Kind, string? Key, string Title, string? TitleKey = null, Dictionary<string, string>? TitleArgs = null);
 
 public partial class RecommendationSectionViewModel : ObservableObject
 {
@@ -53,8 +53,10 @@ public partial class RecommendationSectionViewModel : ObservableObject
         previous?.Cancel();
 
         IsLoading = Items.Count == 0;
-        ErrorMessage = null;
-        Title = string.IsNullOrWhiteSpace(args.Title) ? GetFallbackTitle(args.Kind, args.Key) : args.Title;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        var titleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(args.TitleArgs);
+        SetLocalizedMessage(nameof(Title), () => string.IsNullOrWhiteSpace(args.Title) ? GetFallbackTitle(args.Kind, args.Key)
+            : SiloPlayer.Core.Localization.AppStrings.ServerText(args.TitleKey, titleArgs, args.Title), value => Title = value ?? "");
 
         try
         {
@@ -63,7 +65,10 @@ public partial class RecommendationSectionViewModel : ObservableObject
             if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner) || !_recommendationsApi.IsCurrentContext(context)) return;
 
             if (!string.IsNullOrWhiteSpace(response.Label))
-                Title = response.Label;
+            {
+                var responseArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(response.TitleArgs);
+                SetLocalizedMessage(nameof(Title), () => SiloPlayer.Core.Localization.AppStrings.ServerText(response.TitleKey, responseArgs, response.Label), value => Title = value ?? "");
+            }
 
             MediaItemCollectionReconciler.Apply(Items, response.Items.Where(item => item.UserState?.NotInterested != true).ToArray());
             _loadedArgs = args;
@@ -77,7 +82,7 @@ public partial class RecommendationSectionViewModel : ObservableObject
         {
             if (!_recommendationsApi.IsCurrentContext(context) || !ReferenceEquals(Volatile.Read(ref _loadCts), owner)) return;
             System.Diagnostics.Debug.WriteLine($"Recommendation section load failed: {ex}");
-            if (Items.Count == 0) ErrorMessage = "Failed to load this section.";
+            if (Items.Count == 0) SetLocalizedMessage(nameof(ErrorMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.recommendations.sectionLoadFailed", fallback: "Failed to load this section."), value => ErrorMessage = value);
         }
         finally
         {
@@ -109,7 +114,7 @@ public partial class RecommendationSectionViewModel : ObservableObject
         _loadedArgs = null;
         _loadedContext = null;
         Items.Clear();
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
     }
 
     public void CancelLoad()

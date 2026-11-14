@@ -81,7 +81,7 @@ public sealed partial class CatalogPage
         var loaded = !ExternalTitlesLoading.IsActive && !error && !empty;
         ExternalWatchlistHintPanel.Visibility = ExternalWatchlistHintGrid.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
         ExternalTitlesRepeater.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
-        ExternalTitlesStateText.Text = error ? "Could not load these titles." : "Nothing waiting for the library";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(ExternalTitlesStateText, "Text", element => element.Text = error ? SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.loadFailed", fallback: "Could not load these titles.") : SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.emptyTitle", fallback: "Nothing waiting for the library"));
         ExternalTitlesStateIcon.Visibility = ExternalTitlesStateDescription.Visibility = !error && empty ? Visibility.Visible : Visibility.Collapsed;
         ExternalTitlesStateOutline.StrokeDashArray = error ? null : new DoubleCollection { 4, 4 };
         ExternalTitlesStateOutline.Visibility = Visibility.Visible;
@@ -152,7 +152,7 @@ public sealed partial class CatalogPage
         ExternalTitlesSkeletonLayout.MaximumRowsOrColumns = columns;
         for (var i = 0; i < 6; i++)
             if (ExternalTitlesSkeleton.TryGetElement(i) is Border placeholder) { placeholder.Width = _externalTitleWidth; placeholder.Height = _externalTitleWidth * 1.5; }
-        ExternalWatchlistTabLabel.Text = ActualWidth < 640 ? "Not in library" : "Not in your library yet";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(ExternalWatchlistTabLabel, "Text", element => element.Text = ActualWidth < 640 ? SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.notInLibraryTabShort", fallback: "Not in library") : SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.notInLibraryTab", fallback: "Not in your library yet"));
         var compact = breakpointWidth < 640;
         ExternalWatchlistHintGrid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : GridLength.Auto;
         Grid.SetColumn(ExternalWatchlistDiscoverLink, compact ? 0 : 1);
@@ -188,7 +188,7 @@ public sealed partial class CatalogPage
             } : null,
             watchlist: async () => { await _watchlistTitles!.RemoveExternalTitleAsync(title); },
             removeOnly: true, statusCaption: caption, attention: title.Status is "needs_review" or "removed",
-            statusBadge: status.Badge, watchlistCard: true,
+            statusBadge: status.Badge, watchlistCard: true, captionText: () => MediaItemCardActions.WatchlistText(title).Caption, badgeText: () => MediaItemCardActions.WatchlistText(title).Badge,
             statusSearchAction: title.Status is "needs_review" or "removed" ? () =>
                 App.Services.GetRequiredService<NavigationService>().Navigate<SearchPage>(new SearchNavigation(title.Title, title.MediaType)) : null);
         host.Content = card;

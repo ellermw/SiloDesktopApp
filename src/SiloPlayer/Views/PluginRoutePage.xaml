@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page xmlns:loc="using:SiloPlayer.Services" loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.PluginRoutePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="{StaticResource AppBackgroundBrush}">
     <Grid>
-        <WebView2 x:Name="PluginWebView"
+        <WebView2 x:Name="PluginWebView" FlowDirection="LeftToRight"
                   HorizontalAlignment="Stretch"
                   VerticalAlignment="Stretch" />
         <ProgressRing x:Name="LoadingRing"

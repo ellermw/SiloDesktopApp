@@ -39,7 +39,12 @@ internal static class HouseholdContractsNativeFixture
             .AddSingleton<EpisodeSpoilerPreferences>().AddSingleton<PlayerService>()
             .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "household-images")))
-            .AddSingleton<ItemDetailPrefetchCache>().BuildServiceProvider();
+            .AddSingleton<ItemDetailPrefetchCache>()
+            // SettingsPage now hosts the interface-language group (Task4/5); register the production localization services.
+            .AddSingleton(sp => new SiloPlayer.Core.Localization.AppLanguagePreference(sp.GetRequiredService<SettingsApi>()))
+            .AddSingleton(sp => new SiloPlayer.Core.Localization.AppLocaleCoordinator(sp.GetRequiredService<SiloPlayer.Core.Localization.AppLanguagePreference>(),
+                SiloPlayer.Core.Localization.LocaleService.Shared, sp.GetRequiredService<SettingsService>(), () => ["en-US"], "en-US", AppLocalization.PostTo(parent.DispatcherQueue)))
+            .BuildServiceProvider();
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previous = slot.GetValue(null); slot.SetValue(null, services);
         try

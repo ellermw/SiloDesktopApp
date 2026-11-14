@@ -95,7 +95,7 @@ public sealed partial class LibraryPage
             // Retain the previous window. Opening the Library tab must not repeat
             // this visit's failed read and toast; the next visit, a policy
             // invalidation or a deliberate current-tab retry reads again.
-            App.Services.GetRequiredService<ToastService>().Error(ex);
+            App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
         }
     }
 }

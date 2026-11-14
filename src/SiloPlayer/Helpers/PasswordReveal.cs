@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -27,7 +29,7 @@ public static class PasswordReveal
         {
             var visible = input.PasswordRevealMode == PasswordRevealMode.Visible;
             reveal.Content = Eye(visible, (Brush)Application.Current.Resources["SecondaryTextBrush"]);
-            AutomationProperties.SetName(reveal, visible ? "Hide password" : "Show password");
+            AutomationProperties.SetName(reveal, visible ? AppStrings.Get("web.auth.passwordInput.hide") : AppStrings.Get("web.auth.passwordInput.show"));
             AutomationProperties.SetItemStatus(reveal, visible ? "Revealed" : "Masked");
         }
         reveal.Click += (_, _) =>
@@ -35,6 +37,7 @@ public static class PasswordReveal
             input.PasswordRevealMode = input.PasswordRevealMode == PasswordRevealMode.Visible ? PasswordRevealMode.Hidden : PasswordRevealMode.Visible;
             Update();
         };
+        AppLocalization.Register(reveal, Update);
         Update(); surface.Children.Add(reveal);
         return surface;
     }

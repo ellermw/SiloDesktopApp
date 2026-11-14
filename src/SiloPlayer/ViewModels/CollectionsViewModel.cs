@@ -11,6 +11,12 @@ namespace SiloPlayer.ViewModels;
 
 public partial class CollectionsViewModel : ObservableObject
 {
+    // Display messages: explicit catalog keys with the English text as fallback, and a request's Problem Details text.
+    // Callers branch only on state and error codes, never on this text.
+    private static string LocalText(string key, string english) => SiloPlayer.Core.Localization.AppStrings.Get(key, null, english);
+    private static string LocalProblem(Exception exception)
+        => exception is ApiException api ? SiloPlayer.Core.Localization.ApiProblemText.Display(api) : exception.Message;
+
     private readonly CollectionsApi _collectionsApi;
     private readonly CatalogApi _catalogApi;
     private bool _loadInProgress;
@@ -225,7 +231,7 @@ public partial class CollectionsViewModel : ObservableObject
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                if (Current()) ErrorMessage = $"Failed to load collections: {ex.Message}";
+                if (Current()) ErrorMessage = $"Failed to load collections: {LocalProblem(ex)}";
             }
             catch (OperationCanceledException) { }
             finally
@@ -256,7 +262,7 @@ public partial class CollectionsViewModel : ObservableObject
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // Report this independent failure without hiding the personal cards.
-                if (Current()) ServerCollectionsErrorMessage = $"Couldn't load server collections: {ex.Message}";
+                if (Current()) ServerCollectionsErrorMessage = $"Couldn't load server collections: {LocalProblem(ex)}";
             }
             catch (OperationCanceledException) { }
             finally
@@ -312,7 +318,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to add group: {ex.Message}";
+            ErrorMessage = $"Failed to add group: {LocalProblem(ex)}";
             return false;
         }
     }
@@ -328,7 +334,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to rename group: {ex.Message}";
+            ErrorMessage = $"Failed to rename group: {LocalProblem(ex)}";
             return false;
         }
     }
@@ -343,7 +349,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to delete group: {ex.Message}";
+            ErrorMessage = $"Failed to delete group: {LocalProblem(ex)}";
             return false;
         }
     }
@@ -358,7 +364,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to move collection: {ex.Message}";
+            ErrorMessage = $"{LocalText("web.collections.copy.moveFailed", "Failed to move collection")}: {LocalProblem(ex)}";
             return false;
         }
     }
@@ -382,7 +388,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to reorder collections: {ex.Message}";
+            ErrorMessage = $"{LocalText("web.collections.toast.reorderFailed", "Failed to reorder collections")}: {LocalProblem(ex)}";
             return false;
         }
     }
@@ -411,7 +417,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to reorder collections: {ex.Message}";
+            ErrorMessage = $"{LocalText("web.collections.toast.reorderFailed", "Failed to reorder collections")}: {LocalProblem(ex)}";
             return false;
         }
         finally { _dragSnapshot = null; IsCollectionMutationPending = false; }
@@ -436,7 +442,7 @@ public partial class CollectionsViewModel : ObservableObject
             var updated = await _collectionsApi.UpdateCollectionAsync(collection.Id, new() { IsShared = shared });
             UpsertCollection(updated); return true;
         }
-        catch (Exception ex) { ErrorMessage = $"Could not change sharing: {ex.Message}"; return false; }
+        catch (Exception ex) { ErrorMessage = $"{LocalText("web.collections.toast.sharingFailed", "Could not change sharing")}: {LocalProblem(ex)}"; return false; }
         finally { IsCollectionMutationPending = false; }
     }
 
@@ -458,7 +464,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to reorder collection groups: {ex.Message}";
+            ErrorMessage = $"Failed to reorder collection groups: {LocalProblem(ex)}";
             return false;
         }
     }
@@ -496,7 +502,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to delete collection: {ex.Message}";
+            ErrorMessage = $"Failed to delete collection: {LocalProblem(ex)}";
         }
     }
 
@@ -521,7 +527,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to sync collection: {ex.Message}";
+            ErrorMessage = $"Failed to sync collection: {LocalProblem(ex)}";
         }
         finally { IsCollectionMutationPending = false; }
     }
@@ -555,7 +561,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            TemplateErrorMessage = $"Failed to load collection templates: {ex.Message}";
+            TemplateErrorMessage = $"Failed to load collection templates: {LocalProblem(ex)}";
         }
         finally
         {
@@ -585,7 +591,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (generation == _mdblistSearchGeneration) TemplateErrorMessage = $"MDBList search failed: {ex.Message}";
+            if (generation == _mdblistSearchGeneration) TemplateErrorMessage = $"MDBList search failed: {LocalProblem(ex)}";
         }
         finally
         {
@@ -610,7 +616,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (generation == _mdblistSearchGeneration) TemplateErrorMessage = $"MDBList top lists failed: {ex.Message}";
+            if (generation == _mdblistSearchGeneration) TemplateErrorMessage = $"MDBList top lists failed: {LocalProblem(ex)}";
         }
         finally
         {
@@ -622,13 +628,13 @@ public partial class CollectionsViewModel : ObservableObject
     {
         if (draft.Template == null)
         {
-            TemplateErrorMessage = "Choose a collection template first.";
+            TemplateErrorMessage = LocalText("web.collections.scope.pickAListFirst", "Choose a collection template first.");
             return null;
         }
 
         if (string.IsNullOrWhiteSpace(draft.Title))
         {
-            TemplateErrorMessage = "Collection title is required.";
+            TemplateErrorMessage = LocalText("web.collections.copy.nameItThenCreate", "Collection title is required.");
             return null;
         }
 
@@ -652,7 +658,7 @@ public partial class CollectionsViewModel : ObservableObject
             {
                 case "tmdb_list":
                     var listUrl = draft.TMDBListUrl?.Trim() ?? template.TmdbList?.Url;
-                    if (!CollectionImportPolicy.IsTMDBListUrl(listUrl)) { TemplateErrorMessage = "Enter a public TMDB list URL or numeric list ID."; return null; }
+                    if (!CollectionImportPolicy.IsTMDBListUrl(listUrl)) { TemplateErrorMessage = LocalText("web.collections.tmdbListUrl.invalid", "Enter a public TMDB list URL or numeric list ID."); return null; }
                     response = await _collectionsApi.ImportUserTMDBListCollectionAsync(new()
                     {
                         Title = request.Title, Description = request.Description, Limit = request.Limit, SyncSchedule = request.SyncSchedule,
@@ -667,7 +673,7 @@ public partial class CollectionsViewModel : ObservableObject
 
                     if (!CollectionImportPolicy.IsMDBListUrl(mdblistUrl))
                     {
-                        TemplateErrorMessage = "Enter an MDBList list link, for example https://mdblist.com/lists/name/list.";
+                        TemplateErrorMessage = LocalText("web.collections.copy.mdblistLinkInvalid", "Enter an MDBList list link, for example https://mdblist.com/lists/name/list.");
                         return null;
                     }
 
@@ -724,7 +730,7 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            TemplateErrorMessage = $"Failed to import collection: {ex.Message}";
+            TemplateErrorMessage = $"Failed to import collection: {LocalProblem(ex)}";
             return null;
         }
         finally

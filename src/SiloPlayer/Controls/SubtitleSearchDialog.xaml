@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:loc="using:SiloPlayer.Services"
     mc:Ignorable="d"
     Title=""
     Background="#FF171717"
@@ -32,6 +33,7 @@
                 x:Name="DialogTitleText"
                 Grid.Column="0"
                 Text="Add Subtitles"
+                loc:Localized.Text="web.subtitles.search.title"
                 FontSize="14"
                 FontWeight="SemiBold"
                 VerticalAlignment="Center"
@@ -45,6 +47,8 @@
                 BorderThickness="0"
                 ToolTipService.ToolTip="Close"
                 AutomationProperties.Name="Close"
+                loc:Localized.ToolTip="web.subtitles.closeDialog"
+                loc:Localized.Name="web.subtitles.closeDialog"
                 Click="Close_Click">
                 <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="#99FFFFFF" />
             </Button>
@@ -69,10 +73,12 @@
                 <StackPanel Spacing="2">
                     <TextBlock
                         Text="Upload subtitle"
+                        loc:Localized.Text="web.subtitles.upload.heading"
                         FontSize="14"
                         FontWeight="SemiBold"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
+                        x:Name="UploadHelpText"
                         Text="Drag and drop or browse for SRT, VTT, ASS, SSA, or SUB files up to 5 MB. Language is detected automatically when possible."
                         FontSize="12"
                         TextWrapping="Wrap"
@@ -94,7 +100,7 @@
                     Click="BrowseUploadButton_Click">
                     <StackPanel Spacing="3" HorizontalAlignment="Center">
                         <FontIcon Glyph="&#xE898;" FontSize="18" Foreground="#B3FFFFFF" />
-                        <TextBlock Text="Drag and drop a subtitle file" FontSize="13" FontWeight="SemiBold"
+                        <TextBlock Text="Drag and drop a subtitle file" loc:Localized.Text="web.subtitles.upload.dragFile" FontSize="13" FontWeight="SemiBold"
                                    HorizontalAlignment="Center" />
                         <TextBlock Text="or click to browse · SRT, VTT, ASS, SSA, or SUB" FontSize="11"
                                    Foreground="#80FFFFFF" HorizontalAlignment="Center" />
@@ -113,7 +119,10 @@
                         TabIndex="0"
                         Grid.Column="0"
                         HorizontalAlignment="Stretch"
-                        PlaceholderText="Language">
+                        PlaceholderText="Language"
+                        loc:Localized.Placeholder="web.subtitles.upload.languagePlaceholder"
+                        AutomationProperties.Name="Upload language"
+                        loc:Localized.Name="web.subtitles.upload.languageLabel">
                         <ComboBoxItem Content="Arabic" Tag="ar" />
                         <ComboBoxItem Content="Bengali" Tag="bn" />
                         <ComboBoxItem Content="Bulgarian" Tag="bg" />
@@ -164,6 +173,7 @@
                         x:Name="UploadButton"
                         Grid.Column="2"
                         Content="Upload"
+                        loc:Localized.Content="web.subtitles.upload.upload"
                         IsEnabled="False"
                         Click="UploadButton_Click" />
                 </Grid>
@@ -187,6 +197,7 @@
             x:Name="OnlineSearchHeading"
             Grid.Row="3"
             Text="Search online"
+            loc:Localized.Text="web.subtitles.search.searchOnline"
             Margin="0,10,0,8"
             FontSize="12"
             FontWeight="SemiBold"
@@ -204,7 +215,8 @@
                 TabIndex="1"
                 Grid.Column="0"
                 HorizontalAlignment="Stretch"
-                PlaceholderText="Language">
+                PlaceholderText="Language"
+                loc:Localized.Placeholder="web.subtitles.search.language">
                 <ComboBoxItem Content="Arabic" Tag="ar" />
                 <ComboBoxItem Content="Bengali" Tag="bn" />
                 <ComboBoxItem Content="Bulgarian" Tag="bg" />
@@ -247,6 +259,7 @@
                 x:Name="SearchButton"
                 Grid.Column="1"
                 Content="Search"
+                loc:Localized.Content="web.subtitles.search.search"
                 IsEnabled="False"
                 Click="SearchButton_Click" />
             <ProgressRing

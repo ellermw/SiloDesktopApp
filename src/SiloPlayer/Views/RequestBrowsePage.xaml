@@ -1,7 +1,8 @@
-<Page
+<Page loc:Localized.Direction="True"
     x:Class="SiloPlayer.Views.RequestBrowsePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:requests="using:SiloPlayer.Core.Models.Requests"
     xmlns:controls="using:SiloPlayer.Controls"
     xmlns:converters="using:SiloPlayer.Converters"
@@ -22,7 +23,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="16">
                     <Border x:Name="HeaderTile" Width="112" Height="64" CornerRadius="6" Background="{StaticResource CardBackgroundBrush}">
                         <Grid>
-                            <Image x:Name="HeaderLogo" Stretch="Uniform" Margin="10" />
+                            <Image x:Name="HeaderLogo" Stretch="Uniform" Margin="10"  FlowDirection="LeftToRight"/>
                             <TextBlock x:Name="HeaderTileText" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" FontSize="14" FontWeight="SemiBold" Margin="8" />
                         </Grid>
                     </Border>
@@ -32,12 +33,12 @@
                     </StackPanel>
                 </StackPanel>
                 <StackPanel x:Name="FilterPanel" Grid.Column="1" Orientation="Horizontal" Spacing="10">
-                    <StackPanel x:Name="MediaTypeTabs" Orientation="Horizontal" Spacing="4"><Button x:Name="MoviesTab" Content="Movies" Style="{StaticResource GhostButtonStyle}" Padding="12,6" CornerRadius="6" Click="MediaType_Click" Tag="movie" /><Button x:Name="SeriesTab" Content="Series" Style="{StaticResource GhostButtonStyle}" Padding="12,6" CornerRadius="6" Click="MediaType_Click" Tag="series" /></StackPanel>
-                    <ComboBox x:Name="SortCombo" Width="160" SelectionChanged="Filter_Changed"><ComboBoxItem Content="Popularity" Tag="popularity" IsSelected="True" /><ComboBoxItem Content="Rating" Tag="vote_average" /><ComboBoxItem Content="Release date" Tag="release_date" /></ComboBox>
+                    <StackPanel x:Name="MediaTypeTabs" Orientation="Horizontal" Spacing="4"><Button x:Name="MoviesTab" Content="Movies" Style="{StaticResource GhostButtonStyle}" Padding="12,6" CornerRadius="6" Click="MediaType_Click" Tag="movie"  loc:Localized.Content="web.requests.browse.movies"/><Button x:Name="SeriesTab" Content="Series" Style="{StaticResource GhostButtonStyle}" Padding="12,6" CornerRadius="6" Click="MediaType_Click" Tag="series"  loc:Localized.Content="web.requests.browse.series"/></StackPanel>
+                    <ComboBox x:Name="SortCombo" Width="160" SelectionChanged="Filter_Changed"><ComboBoxItem Content="Popularity" Tag="popularity" IsSelected="True"  loc:Localized.Content="web.requests.browse.sortPopularity"/><ComboBoxItem Content="Rating" Tag="vote_average"  loc:Localized.Content="web.requests.browse.sortRating"/><ComboBoxItem Content="Release date" Tag="release_date"  loc:Localized.Content="web.requests.browse.sortReleaseDate"/></ComboBox>
                 </StackPanel>
             </Grid>
         </StackPanel>
-        <Button x:Name="BackButton" Grid.Row="0" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,24,0,0" Width="34" Height="34" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="17" Style="{StaticResource GhostButtonStyle}" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" AutomationProperties.Name="Go back" Click="Back_Click"><Viewbox Width="20" Height="20"><Canvas Width="24" Height="24"><Path Data="M15 18 L9 12 L15 6" Stroke="{StaticResource PrimaryTextBrush}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox></Button>
+        <Button x:Name="BackButton" Grid.Row="0" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,24,0,0" Width="34" Height="34" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="17" Style="{StaticResource GhostButtonStyle}" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" AutomationProperties.Name="Go back" Click="Back_Click" loc:Localized.Name="web.shell.pageBack.goBack"><Viewbox Width="20" Height="20"><Canvas Width="24" Height="24"><Path Data="M15 18 L9 12 L15 6" Stroke="{StaticResource PrimaryTextBrush}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox></Button>
         <GridView x:Name="ResultsGrid" Grid.Row="1" Padding="40,8,40,20" SelectionMode="None" IsItemClickEnabled="False" Loaded="ResultsGrid_Loaded" ContainerContentChanging="ResultsGrid_ContainerContentChanging">
             <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="196" ItemHeight="344" /></ItemsPanelTemplate></GridView.ItemsPanel>
             <GridView.ItemTemplate><DataTemplate x:DataType="requests:RequestMediaResult"><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate></GridView.ItemTemplate>
@@ -45,12 +46,12 @@
         <StackPanel x:Name="EmptyState" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="Collapsed" MaxWidth="420">
             <FontIcon Glyph="&#xE8A5;" FontSize="40" Opacity="0.5" HorizontalAlignment="Center" />
             <TextBlock Text="Nothing matched. Try a different sort." FontSize="13" Opacity="0.65"
-                       HorizontalAlignment="Center" TextAlignment="Center" />
+                       HorizontalAlignment="Center" TextAlignment="Center"  loc:Localized.Text="web.requests.browse.empty"/>
         </StackPanel>
         <Grid x:Name="FooterPanel" Grid.Row="2" Padding="40,8,40,18">
             <StackPanel HorizontalAlignment="Center" Spacing="12">
                 <ProgressRing x:Name="MoreLoadingRing" Width="24" Height="24" Visibility="Collapsed" />
-                <TextBlock x:Name="MoreErrorText" Text="Couldn't load more titles." Visibility="Collapsed" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                <TextBlock x:Name="MoreErrorText" Text="Couldn't load more titles." Visibility="Collapsed" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.requests.results.loadMoreFailed"/>
                 <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" HorizontalAlignment="Center" />
             </StackPanel>
         </Grid>
@@ -64,7 +65,7 @@
             <ProgressRing x:Name="LoadingRing" IsActive="False" Visibility="Collapsed" />
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                 <TextBlock x:Name="LoadingText" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="480" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
-                <Button x:Name="RetryBrowseButton" Content="Retry" HorizontalAlignment="Center" Visibility="Collapsed" Click="RetryBrowse_Click" />
+                <Button x:Name="RetryBrowseButton" Content="Retry" HorizontalAlignment="Center" Visibility="Collapsed" Click="RetryBrowse_Click"  loc:Localized.Content="common.retry"/>
             </StackPanel>
         </Grid>
     </Grid>

@@ -2,6 +2,7 @@ using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.ViewModels;
 
@@ -85,15 +86,17 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
         ErrorMessage = null;
         SuccessMessage = null;
         if (!CanChangePassword)
-            ErrorMessage = "Password changes are unavailable for this account.";
+            ErrorMessage = AppStrings.Get("web.settings.account.password.error.unavailable");
         else if (CurrentPassword.Length == 0)
             ErrorMessage = "Current password is required.";
         else if (NewPassword != ConfirmPassword)
-            ErrorMessage = "New passwords do not match.";
+            ErrorMessage = AppStrings.Get("web.settings.account.password.error.mismatch");
         else if (NewPassword.EnumerateRunes().Count() < _capability!.MinimumPasswordLength)
             ErrorMessage = $"New password must be at least {_capability.MinimumPasswordLength} characters.";
         else if (Encoding.UTF8.GetByteCount(NewPassword) > _capability!.MaximumPasswordBytes)
-            ErrorMessage = $"New password must be at most {_capability.MaximumPasswordBytes} bytes.";
+            ErrorMessage = AppStrings.Get("web.settings.account.password.error.tooLong",
+                new Dictionary<string, object?> { ["maximum"] = _capability.MaximumPasswordBytes.ToString("N0", AppStrings.FormatCulture) },
+                $"New password must be at most {_capability.MaximumPasswordBytes} bytes.");
         if (ErrorMessage is not null) return;
 
         var generation = _generation;
@@ -106,13 +109,13 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
             if (!IsCurrent(generation, context)) return;
             ClearPasswords();
             SetProperty(ref _signOutOtherSessions, false, nameof(SignOutOtherSessions));
-            SuccessMessage = signOutOthers ? "Password changed. Other devices are signed out." : "Password changed";
+            SuccessMessage = signOutOthers ? AppStrings.Get("web.settings.account.password.changedSignedOutOthers") : AppStrings.Get("web.settings.account.password.changed");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || !api.IsCurrentContext(context)) { }
         catch (Exception ex)
         {
             if (IsCurrent(generation, context))
-                ErrorMessage = ex is ApiException ? ex.Message : "Failed to change password. Try again.";
+                ErrorMessage = ex is ApiException problem ? ApiProblemText.Display(problem) : "Failed to change password. Try again.";
         }
         finally
         {

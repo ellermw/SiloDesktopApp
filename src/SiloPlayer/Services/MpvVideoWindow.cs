@@ -14,6 +14,8 @@ public sealed class MpvVideoWindow : IDisposable
     private IntPtr _hwnd;
     private IntPtr _parentHwnd;
     private bool _disposed;
+    private readonly object _visibilityGate = new();
+    private object? _visibilityOwner;
     private const string ClassName = "SiloMpvHost";
     private const int ErrorClassAlreadyExists = 1410;
     private static readonly ConcurrentDictionary<IntPtr, MpvVideoWindow> s_windows = new();
@@ -81,12 +83,46 @@ public sealed class MpvVideoWindow : IDisposable
     [DllImport("user32.dll")]
     private static extern bool DestroyWindow(IntPtr hWnd);
 
-    [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll", EntryPoint = "ShowWindow")]
+    private static extern bool NativeShowWindow(IntPtr hWnd, int nCmdShow);
 
-    [DllImport("user32.dll")]
-    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+    [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
+    private static extern bool NativeSetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int x, int y, int cx, int cy, uint uFlags);
+
+    internal void SuppressVisibility(object owner)
+    {
+        lock (_visibilityGate)
+        {
+            _visibilityOwner = owner;
+            Hide();
+        }
+    }
+
+    internal void ReleaseVisibility(object owner)
+    {
+        lock (_visibilityGate)
+        {
+            if (ReferenceEquals(_visibilityOwner, owner))
+                _visibilityOwner = null;
+        }
+    }
+
+    private bool ShowWindow(IntPtr hwnd, int command)
+    {
+        lock (_visibilityGate)
+            return (command == SW_HIDE || _visibilityOwner == null) && NativeShowWindow(hwnd, command);
+    }
+
+    private bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags)
+    {
+        lock (_visibilityGate)
+        {
+            if (_visibilityOwner != null)
+                flags &= ~SWP_SHOWWINDOW;
+            return NativeSetWindowPos(hwnd, insertAfter, x, y, width, height, flags);
+        }
+    }
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(
@@ -383,12 +419,16 @@ public sealed class MpvVideoWindow : IDisposable
         _ = DwmFlush();
         // Re-assert position after 200ms — mpv's internal fullscreen handling
         // may reposition the window after our call.
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         System.Threading.Tasks.Task.Delay(200).ContinueWith(_ =>
         {
-            if (_isFullscreen && _hwnd != IntPtr.Zero)
+            dispatcher?.TryEnqueue(() =>
             {
-                PositionFullscreen(preserveZOrder: true);
-            }
+                if (_isFullscreen && _hwnd != IntPtr.Zero)
+                {
+                    PositionFullscreen(preserveZOrder: true);
+                }
+            });
         });
     }
 

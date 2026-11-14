@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -146,7 +147,7 @@ public sealed partial class MainWindow
                 tag.LibraryId = libraryId; tag.PinType = pin.Type; tag.PinId = pin.Id; tag.Label = pin.Label;
                 var content = (Grid)item.Content;
                 content.Children.OfType<TextBlock>().Single().Text = pin.Label;
-                AutomationProperties.SetName(content.Children.OfType<Button>().Single(), $"Unpin {pin.Label}");
+                AutomationProperties.SetName(content.Children.OfType<Button>().Single(), AppStrings.Get("web.shell.sidebar.unpin") + " " + pin.Label);
             }
             var icon = string.Equals(pin.Type, "collection", StringComparison.OrdinalIgnoreCase) ? "folder-open" : "layout-grid";
             if (!Equals(item.Icon?.Tag, icon))

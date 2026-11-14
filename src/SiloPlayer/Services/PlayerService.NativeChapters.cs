@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services.PlaybackMenus;
@@ -46,7 +47,8 @@ public partial class PlayerService
             .Where(chapter => chapter.Index >= 0)
             .DistinctBy(chapter => chapter.Index)
             .Select(chapter => new NativeChapterChoice(chapter.Index,
-                string.IsNullOrWhiteSpace(chapter.Title) ? $"Chapter {chapter.Index + 1}" : chapter.Title,
+                string.IsNullOrWhiteSpace(chapter.Title) ? AppStrings.Get("web.audiobooks.chapter.fallbackTitle",
+                    new Dictionary<string, object?> { ["number"] = chapter.Index + 1 }, fallback: $"Chapter {chapter.Index + 1}") : chapter.Title,
                 chapter.StartSeconds, chapter.EndSeconds, chapter.ThumbnailUrl)).ToArray();
         int ActiveChapter() => Array.FindIndex(chapters,
             chapter => Position >= chapter.Start && Position < chapter.End);
@@ -58,7 +60,7 @@ public partial class PlayerService
                 var valid = double.IsFinite(chapter.Start) && chapter.Start >= 0;
                 return new PlaybackMenuChoice(chapter.Id, chapter.Title, ChapterMenuTime(chapter.Start), [],
                     IsCurrent: index == active, IsEnabled: canSeek && valid,
-                    DisabledReason: IsLoading || _switchingContent ? "A playback change is already in progress." : !canSeek ? "Only the host can seek the room." : !valid ? "Chapter unavailable." : "");
+                    DisabledReason: IsLoading || _switchingContent ? "A playback change is already in progress." : !canSeek ? AppStrings.Get("web.player.room.onlyHostCanSeek", fallback: "Only the host can seek the room.") : !valid ? "Chapter unavailable." : "");
             }).ToArray();
         }
         void Refresh()
@@ -189,9 +191,11 @@ public partial class PlayerService
         }
         try
         {
-            menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, "Chapters", Choices(), Current,
+            menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.chaptersMenu.heading", "Chapters"), Choices(), Current,
                 Invoke, Closed, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root),
                 leadingContent: Preview, allowDisabledTraversal: true);
+            // Untitled chapter names and room reasons follow the interface language.
+            menu.Localize(() => HudText("web.player.chaptersMenu.heading", "Chapters"), () => { chapters = Snapshot(); return Choices(); });
             ChaptersChanged += Refresh;
             PositionChanged += PositionUpdated;
             return menu;

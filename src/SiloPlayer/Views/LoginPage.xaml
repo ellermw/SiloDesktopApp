@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Page
+<Page xmlns:loc="using:SiloPlayer.Services"
     x:Class="SiloPlayer.Views.LoginPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -9,7 +9,7 @@
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
     FontFamily="{StaticResource ThemeFontFamily}"
-    Background="{StaticResource AppBackgroundBrush}">
+    Background="{StaticResource AppBackgroundBrush}" loc:Localized.Direction="True">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
@@ -23,7 +23,7 @@
     <!-- Full-page centered auth shell. The server-controlled login artwork is
          rendered behind the same 70% readability scrim used by the WebUI. -->
     <Grid helpers:AuthBackdrop.Enabled="True">
-        <Image
+        <Image FlowDirection="LeftToRight"
             Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource UrlToImage}}"
             Stretch="UniformToFill"
             Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
@@ -94,8 +94,8 @@
                             Visibility="{x:Bind ViewModel.SessionRestoreUnavailable, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                         <StackPanel Spacing="8">
                             <TextBlock Text="{x:Bind ViewModel.SessionRestoreMessage, Mode=OneWay}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock Text="You're still signed in; try again in a moment." FontSize="14" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <Button Content="Try again" Click="RetryRestore_Click" IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                            <TextBlock Visibility="Collapsed" Text="You're still signed in; try again in a moment." FontSize="14" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <Button Content="Try again" loc:Localized.Content="common.tryAgain" Click="RetryRestore_Click" IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
                         </StackPanel>
                     </Border>
                     <StackPanel Spacing="8" Visibility="{x:Bind ViewModel.IsOAuthPending, Mode=OneWay, Converter={StaticResource BoolToVis}}">
@@ -113,7 +113,7 @@
                                             Padding="16,8" Tag="{Binding Provider}" Click="NetworkProviderButton_Click">
                                         <Grid ColumnSpacing="{Binding IconGap}">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                            <Image Source="{Binding Provider.IconUrl, Converter={StaticResource UrlToImage}}" Width="20" Height="20" Stretch="Uniform"
+                                            <Image FlowDirection="LeftToRight" Source="{Binding Provider.IconUrl, Converter={StaticResource UrlToImage}}" Width="20" Height="20" Stretch="Uniform"
                                                    Visibility="{Binding Provider.IconUrl, Converter={StaticResource NullToVis}}" />
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
@@ -128,7 +128,7 @@
                         <Grid Margin="0,8,0,0" Visibility="{x:Bind ViewModel.ShowNetworkDivider, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Border Height="1" Background="{StaticResource BorderBrush}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="or" FontSize="12" Margin="8,0" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="or" loc:Localized.Text="web.auth.login.or" FontSize="12" Margin="8,0" Foreground="{StaticResource SecondaryTextBrush}" />
                             <Border Grid.Column="2" Height="1" Background="{StaticResource BorderBrush}" VerticalAlignment="Center" />
                         </Grid>
                     </StackPanel>
@@ -155,7 +155,7 @@
                                             Orientation="Horizontal"
                                             HorizontalAlignment="Center"
                                             Spacing="8">
-                                            <Image
+                                            <Image FlowDirection="LeftToRight"
                                                 Source="{Binding IconUrl, Converter={StaticResource UrlToImage}}"
                                                 Width="20"
                                                 Height="20"
@@ -180,7 +180,7 @@
                             <Border Grid.Column="0" Height="1"
                                     Background="{StaticResource BorderBrush}"
                                     VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="or"
+                            <TextBlock Grid.Column="1" Text="or" loc:Localized.Text="web.auth.login.or"
                                        FontSize="13"
                                        Foreground="{StaticResource SecondaryTextBrush}"
                                        Margin="12,0" />
@@ -195,7 +195,7 @@
                         <!-- Username -->
                         <StackPanel Spacing="8">
                             <TextBlock
-                                Text="Username"
+                                Text="Username" loc:Localized.Text="web.auth.username"
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
@@ -208,13 +208,13 @@
 
                         <!-- Password -->
                         <StackPanel x:Name="LoginPasswordGroup" Spacing="8">
-                            <TextBlock Text="Password" FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
+                            <TextBlock Text="Password" loc:Localized.Text="web.auth.password" FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
                             <PasswordBox
                                 x:Name="PasswordBox"
                                 Style="{StaticResource DarkPasswordBoxStyle}"
                                 PasswordChanged="PasswordBox_PasswordChanged"
                                 KeyDown="InputBox_KeyDown" />
-                            <HyperlinkButton Content="Forgot password?" Click="ForgotPassword_Click" HorizontalAlignment="Right" Padding="0" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{x:Bind ViewModel.CanRecoverPassword, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                            <HyperlinkButton Content="Forgot password?" loc:Localized.Content="web.auth.login.forgotPassword" Click="ForgotPassword_Click" HorizontalAlignment="Right" Padding="0" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{x:Bind ViewModel.CanRecoverPassword, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                         </StackPanel>
 
                         <!-- Credential provider picker -->
@@ -222,7 +222,7 @@
                             Spacing="8"
                             Visibility="{x:Bind ViewModel.HasCredentialProviderPicker, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                             <TextBlock
-                                Text="Sign in with"
+                                Text="Sign in with" loc:Localized.Text="web.auth.login.providerLabel"
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
@@ -232,13 +232,13 @@
                                 SelectedItem="{x:Bind ViewModel.SelectedCredentialProvider, Mode=TwoWay}"
                                 DisplayMemberPath="DisplayName"
                                 HorizontalAlignment="Stretch" />
-                            <TextBlock Text="Automatic: accounts with a Silo password sign in with it, everyone else with the directory."
+                            <TextBlock Text="Automatic: accounts with a Silo password sign in with it, everyone else with the directory." loc:Localized.Text="web.auth.login.providerAutomaticHint"
                                        FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
 
                         <!-- Sign in button -->
                         <Button
-                            Content="Sign in"
+                            Content="Sign in" loc:Localized.Content="web.auth.signIn"
                             Style="{StaticResource AccentButtonStyle}"
                             HorizontalAlignment="Stretch"
                             Height="36" MinHeight="36" Padding="16,4"
@@ -260,14 +260,14 @@
                         <Border Height="1" Background="{StaticResource BorderBrush}" />
                         <StackPanel Spacing="12">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Use your phone instead" FontSize="14" Height="20" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
-                            <TextBlock Text="Scan a code, sign in there, and approve this device."
+                            <TextBlock Text="Use your phone instead" loc:Localized.Text="web.auth.login.device.title" FontSize="14" Height="20" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
+                            <TextBlock Text="Scan a code, sign in there, and approve this device." loc:Localized.Text="web.auth.login.device.description"
                                        FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}"
                                        TextWrapping="Wrap" />
                         </StackPanel>
 
                         <Button
-                            Content="Show QR code"
+                            Content="Show QR code" loc:Localized.Content="web.auth.login.device.showQrCode"
                             FontWeight="Medium"
                             Height="36" MinHeight="36" Padding="16,4"
                             Style="{StaticResource OutlineButtonStyle}"
@@ -285,19 +285,17 @@
                             Visibility="{x:Bind ViewModel.DeviceSession, Mode=OneWay, Converter={StaticResource NullToVis}}">
                             <StackPanel Spacing="12">
                                 <Border Background="White" CornerRadius="6" Padding="10" HorizontalAlignment="Center">
-                                    <Image Source="{x:Bind ViewModel.DeviceQrImage, Mode=OneWay}"
+                                    <Image FlowDirection="LeftToRight" Source="{x:Bind ViewModel.DeviceQrImage, Mode=OneWay}"
                                            Width="176" Height="176" Stretch="Uniform" />
                                 </Border>
                                 <StackPanel Spacing="3" HorizontalAlignment="Center">
-                                    <TextBlock FontSize="14" TextAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}">
-                                        <Run Text="Or go to " /><Run Text="{x:Bind ViewModel.DeviceSession.VerificationUri, Mode=OneWay}" /><Run Text=" and enter" />
-                                    </TextBlock>
+                                    <TextBlock x:Name="DeviceAddressText" FontSize="14" TextAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                                     <TextBlock Text="{x:Bind ViewModel.FormattedDeviceCode, Mode=OneWay}"
                                                AutomationProperties.Name="{x:Bind ViewModel.SpokenDeviceCode, Mode=OneWay}"
                                                FontSize="24" FontWeight="SemiBold" FontFamily="Consolas" CharacterSpacing="120"
                                                HorizontalAlignment="Center" />
                                 </StackPanel>
-                                <Button Content="Start over" Style="{StaticResource OutlineButtonStyle}"
+                                <Button Content="Start over" loc:Localized.Content="web.auth.login.device.startOver" Style="{StaticResource OutlineButtonStyle}"
                                         HorizontalAlignment="Stretch" Click="RestartDeviceLoginButton_Click" />
                                 <TextBlock Text="{x:Bind ViewModel.DeviceStatusMessage, Mode=OneWay}"
                                            FontSize="13" TextAlignment="Center" TextWrapping="Wrap"
@@ -314,9 +312,9 @@
                     <!-- Create account link -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="4" Height="20"
                         Visibility="{x:Bind ViewModel.IsSignupEnabled, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="Don't have an account?" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                        <TextBlock Visibility="Collapsed" Text="Don't have an account?" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                         <HyperlinkButton Padding="0" MinHeight="0" MinWidth="0" Height="20" Click="CreateAccountButton_Click">
-                            <TextBlock Text="Sign up" FontSize="14" TextDecorations="Underline" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <TextBlock Text="Sign up" loc:Localized.Text="web.auth.login.noAccount" FontSize="14" TextDecorations="Underline" Foreground="{StaticResource PrimaryTextBrush}" />
                         </HyperlinkButton>
                     </StackPanel>
                 </StackPanel>
@@ -325,7 +323,7 @@
         </StackPanel>
         </ScrollViewer>
         <!-- Native selected-server navigation, independent of the centered auth card. -->
-        <Button Content="Back to Servers" Style="{StaticResource GhostButtonStyle}"
+        <Button Content="Back to Servers" loc:Localized.Content="common.changeServer" Style="{StaticResource GhostButtonStyle}"
             HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,8" Click="BackButton_Click" />
     </Grid>
 </Page>

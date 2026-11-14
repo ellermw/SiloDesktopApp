@@ -249,7 +249,7 @@ public sealed class AuthServiceTests
         apiClient.SetTokenRefresher(ct => authService.TryRefreshAsync(ct));
 
         var exception = await Assert.ThrowsAsync<ApiException>(() =>
-            apiClient.GetAsync<Dictionary<string, object?>>("/api/v1/protected")
+            apiClient.GetAsync<Dictionary<string, object?>>("/api/v2/protected")
                 .WaitAsync(TimeSpan.FromSeconds(2)));
 
         Assert.Equal(401, exception.StatusCode);
@@ -471,7 +471,7 @@ public sealed class AuthServiceTests
         authService.SelectProfile("profile-1", "old-profile-token");
         apiClient.SetProfileVerificationRequiredHandler(authService.HandleProfileVerificationRequired);
 
-        var oldRequest = apiClient.GetAsync<Dictionary<string, object?>>("/api/v1/user/libraries");
+        var oldRequest = apiClient.GetAsync<Dictionary<string, object?>>("/api/v2/user/libraries");
         await requestStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         authService.SelectProfile("profile-2", "new-profile-token");
         releaseResponse.TrySetResult(true);

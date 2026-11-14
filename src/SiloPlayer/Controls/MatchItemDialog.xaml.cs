@@ -13,6 +13,7 @@ using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Messaging;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Controls;
 
@@ -35,6 +36,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private int _searchRevision;
     private volatile bool _authorityRetired;
     private readonly List<ProviderIdInput> _providerIdInputs = [];
+    private readonly List<Action> _candidateLocaleRefreshers = [];
     private MatchCandidate? _selectedCandidate;
     private bool _searching;
     private bool _applying;
@@ -80,11 +82,15 @@ public sealed partial class MatchItemDialog : ContentDialog
         LibraryScopeHost.Content = _scope; LibraryScopeHost.Visibility = _inventory ? Visibility.Visible : Visibility.Collapsed; _scope.Changed += RetireCandidates;
         SearchButton.IsEnabled = false;
         EditorDialogPresentation.Configure(this, 512, new Thickness(24));
+        SiloPlayer.Services.AppLocalization.Register(this, () =>
+        {
+            foreach (var refresh in _candidateLocaleRefreshers) refresh();
+        });
         var heading = new Grid();
         heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        heading.Children.Add(new TextBlock { Text = "Match Item", FontSize = 18, FontWeight = FontWeights.SemiBold,
-            Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        heading.Children.Add(MediaItemCardActions.Localize(new TextBlock { Text = AppStrings.Get("web.item.dialog.matchItemTitle", fallback: "Match Item"), FontSize = 18, FontWeight = FontWeights.SemiBold,
+            Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight }, text: "web.item.dialog.matchItemTitle"));
         var close = EditorDialogPresentation.CornerClose(this);
         close.Width = close.Height = 16; close.Padding = new Thickness(0); close.Margin = new Thickness(0, -8, -8, 0); close.VerticalAlignment = VerticalAlignment.Top;
         Grid.SetColumn(close, 1); heading.Children.Add(close); Title = heading;
@@ -96,7 +102,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         {
             _auth.UserChanged += AuthorityChanged; _auth.LoggedOut += AuthorityChanged;
             EditorDialogPresentation.PlaceCornerClose(this, heading, close); UpdateViewport(); if (XamlRoot != null) XamlRoot.Changed += RootChanged;
-            try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { } catch (Exception ex) { EmptyText.Text = ex.Message; EmptyText.Visibility = Visibility.Visible; }
+            try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { } catch (Exception ex) { EmptyText.Text = ex.DisplayMessage(); EmptyText.Visibility = Visibility.Visible; }
             StartHints();
             _initialScope.TrySetResult();
             UpdateCommands();
@@ -149,7 +155,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     }
     private void RetireCandidates()
     {
-        _searchRevision++; _selectedCandidate = null; ResultsPanel.Children.Clear(); ResultsSection.Visibility = Visibility.Collapsed;
+        _searchRevision++; _selectedCandidate = null; _candidateLocaleRefreshers.Clear(); ResultsPanel.Children.Clear(); ResultsSection.Visibility = Visibility.Collapsed;
         ApplyMatchButton.Visibility = ApplyMatchFooter.Visibility = Visibility.Collapsed; ApplyStatusText.Visibility = Visibility.Collapsed; StartHints(); UpdateCommands(); UpdateViewport();
     }
     private void UpdateCommands()
@@ -221,7 +227,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         _applying = true;
         ApplyMatchButton.IsEnabled = false;
         SearchButton.IsEnabled = false;
-        ApplyMatchButton.Content = "Applying...";
+        ApplyMatchButton.Content = AppStrings.Get("web.item.dialog.applying", fallback: "Applying...");
         ApplyStatusText.Text = "Applying match…";
         ApplyStatusText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
         ApplyStatusText.Visibility = Visibility.Visible;
@@ -263,8 +269,8 @@ public sealed partial class MatchItemDialog : ContentDialog
             // candidates, but only a changed inventory snapshot is scope drift.
             if (!CanAct || !_scope.State.IsCurrent(scope)) return;
             ApplyStatusText.Text = dispatched && !rejected
-                ? $"Match could not be applied or confirmed: {ex.Message} Reload the item before trying again."
-                : $"Match could not be applied: {ex.Message}";
+                ? $"Match could not be applied or confirmed: {ex.DisplayMessage()} Reload the item before trying again."
+                : $"Match could not be applied: {ex.DisplayMessage()}";
             ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
             ApplyStatusText.Visibility = Visibility.Visible;
         }
@@ -278,7 +284,7 @@ public sealed partial class MatchItemDialog : ContentDialog
                 InvalidateAppliedMatch(null);
             }
             _applying = false;
-            ApplyMatchButton.Content = "Apply Match"; UpdateCommands();
+            ApplyMatchButton.Content = AppStrings.Get("web.item.match.applyMatch", fallback: "Apply Match"); UpdateCommands();
             if (_lifetime.IsCancellationRequested) Hide();
         }
     }
@@ -357,7 +363,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             if (folderPaths == null || folderPaths.Count == 0)
             {
                 LocalMediaSection.Visibility = Visibility.Visible;
-                LocalMediaEmpty.Text = "No folder paths are available for this item.";
+                LocalMediaEmpty.Text = AppStrings.Get("web.item.match.noFolderPaths", fallback: "No folder paths are available for this item.");
                 LocalMediaEmpty.Visibility = Visibility.Visible;
                 return;
             }
@@ -385,7 +391,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         if (versions == null || versions.Count == 0)
         {
             LocalMediaSection.Visibility = Visibility.Visible;
-            LocalMediaEmpty.Text = "No file paths are available for this item.";
+            LocalMediaEmpty.Text = AppStrings.Get("web.item.match.noFilePaths", fallback: "No file paths are available for this item.");
             LocalMediaEmpty.Visibility = Visibility.Visible;
             return;
         }
@@ -400,7 +406,7 @@ public sealed partial class MatchItemDialog : ContentDialog
 
         if (shown == 0)
         {
-            LocalMediaEmpty.Text = "No file paths are available for this item.";
+            LocalMediaEmpty.Text = AppStrings.Get("web.item.match.noFilePaths", fallback: "No file paths are available for this item.");
             LocalMediaEmpty.Visibility = Visibility.Visible;
         }
         LocalMediaSection.Visibility = Visibility.Visible;
@@ -433,7 +439,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         string folderPath = filePath.Substring(0, lastSlash);
         string fileName = filePath.Substring(lastSlash + 1);
         if (string.IsNullOrEmpty(fileName))
-            fileName = fallbackName?.Trim() ?? "Unknown file";
+            fileName = fallbackName?.Trim() ?? AppStrings.Get("web.item.locations.unknownFile", fallback: "Unknown file");
 
         var segs = folderPath.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
         string folderName = segs.Length > 0 ? segs[^1] : folderPath;
@@ -514,7 +520,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             };
             AutomationProperties.SetName(copyBtn, "Copy full folder path for " + fileName);
             ToolTipService.SetToolTip(copyBtn, "Copy folder path");
-            copyBtn.Click += (_, _) => CopyToClipboard(folderPath, "Copied folder path");
+            copyBtn.Click += (_, _) => CopyToClipboard(folderPath, AppStrings.Get("web.item.dialog.copiedFolderPath", fallback: "Copied folder path"));
             Grid.SetColumn(copyBtn, 1);
             root.Children.Add(copyBtn);
         }
@@ -567,10 +573,10 @@ public sealed partial class MatchItemDialog : ContentDialog
             copyBtn.GotFocus += (_, _) => copyBtn.Opacity = 1;
             copyBtn.LostFocus += (_, _) => copyBtn.Opacity = 0;
         }
-        ToolTipService.SetToolTip(copyBtn, isRootPath ? "Copy root path" : "Copy full path");
+        ToolTipService.SetToolTip(copyBtn, isRootPath ? AppStrings.Get("web.item.match.copyRootPath", fallback: "Copy root path") : AppStrings.Get("web.item.match.copyFullPath", fallback: "Copy full path"));
         copyBtn.Click += (_, _) => CopyToClipboard(
             path,
-            isRootPath ? "Copied root path" : "Copied folder path");
+            isRootPath ? AppStrings.Get("web.item.match.copiedRootPath", fallback: "Copied root path") : AppStrings.Get("web.item.dialog.copiedFolderPath", fallback: "Copied folder path"));
         Grid.SetColumn(copyBtn, isRootPath ? 1 : 2);
         root.Children.Add(copyBtn);
 
@@ -583,7 +589,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         var root = new StackPanel { Spacing = 4, Margin = new Thickness(12, 8, 12, 8) };
         root.Children.Add(new TextBlock
         {
-            Text = "ROOT PATH",
+            Text = AppStrings.Uppercase(AppStrings.Get("web.item.match.rootPath", fallback: "Root path")),
             FontSize = 11,
             FontWeight = FontWeights.Medium, CharacterSpacing = 80,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
@@ -626,7 +632,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         }
         catch
         {
-            App.Services.GetService<SiloPlayer.Services.ToastService>()?.Error("Failed to copy path");
+            App.Services.GetService<SiloPlayer.Services.ToastService>()?.Error(AppStrings.Get("web.item.dialog.copyPathFailed", fallback: "Failed to copy path"));
         }
     }
 
@@ -654,7 +660,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         };
         ConfigureInput(providerBox);
         providerBox.KeyDown += SearchField_KeyDown;
-        AutomationProperties.SetName(providerBox, "Provider");
+        AutomationProperties.SetName(providerBox, AppStrings.Get("web.item.match.provider", fallback: "Provider"));
         row.Children.Add(providerBox);
 
         var valueBox = new TextBox
@@ -665,7 +671,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         };
         ConfigureInput(valueBox);
         valueBox.KeyDown += SearchField_KeyDown;
-        AutomationProperties.SetName(valueBox, "Provider ID");
+        AutomationProperties.SetName(valueBox, AppStrings.Get("web.item.match.providerId", fallback: "Provider ID"));
         Grid.SetColumn(valueBox, 1);
         row.Children.Add(valueBox);
 
@@ -679,8 +685,8 @@ public sealed partial class MatchItemDialog : ContentDialog
             Content = new FontIcon { Glyph = "\uE711", FontSize = 12 },
             VerticalAlignment = VerticalAlignment.Bottom,
         };
-        AutomationProperties.SetName(removeButton, "Remove provider ID");
-        ToolTipService.SetToolTip(removeButton, "Remove provider ID");
+        AutomationProperties.SetName(removeButton, AppStrings.Get("web.item.match.removeProviderId", fallback: "Remove provider ID"));
+        ToolTipService.SetToolTip(removeButton, AppStrings.Get("web.item.match.removeProviderId", fallback: "Remove provider ID"));
         Grid.SetColumn(removeButton, 2);
         row.Children.Add(removeButton);
 
@@ -749,8 +755,8 @@ public sealed partial class MatchItemDialog : ContentDialog
         LoadingRing.IsActive = true;
         LoadingRing.Visibility = Visibility.Visible;
         SearchButton.IsEnabled = false;
-        SearchButtonText.Text = "Searching...";
-        ResultsPanel.Children.Clear();
+        SearchButtonText.Text = AppStrings.Get("web.collections.manual.searching", fallback: "Searching...");
+        _candidateLocaleRefreshers.Clear(); ResultsPanel.Children.Clear();
         ResultsSection.Visibility = Visibility.Collapsed;
         EmptyText.Visibility = Visibility.Collapsed;
         _selectedCandidate = null;
@@ -795,7 +801,7 @@ public sealed partial class MatchItemDialog : ContentDialog
 
             if (response.Candidates.Count == 0)
             {
-                EmptyText.Text = "No candidates found.";
+                EmptyText.Text = AppStrings.Get("web.item.dialog.noCandidates", fallback: "No candidates found.");
                 EmptyText.Visibility = Visibility.Visible;
             }
             else
@@ -811,7 +817,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         catch (Exception ex)
         {
             if (!CanAct || revision != _searchRevision) return;
-            EmptyText.Text = $"Error: {ex.Message}";
+            EmptyText.Text = $"Error: {ex.DisplayMessage()}";
             EmptyText.Visibility = Visibility.Visible;
         }
         finally
@@ -820,7 +826,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             LoadingRing.IsActive = false;
             LoadingRing.Visibility = Visibility.Collapsed;
             UpdateCommands();
-            SearchButtonText.Text = "Search";
+            SearchButtonText.Text = AppStrings.Get("web.item.dialog.search", fallback: "Search");
         }
     }
 
@@ -904,24 +910,22 @@ public sealed partial class MatchItemDialog : ContentDialog
 
         if (matchedFallbackTitle != null)
         {
-            info.Children.Add(new TextBlock
+            info.Children.Add(CandidateLabel(new TextBlock
             {
-                Text = $"Native title: {candidate.Title}",
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
-            });
+            }, "web.item.match.nativeTitle", () => candidate.Title, "title"));
         }
         else if (!string.IsNullOrWhiteSpace(candidate.OriginalTitle) &&
                  !string.Equals(candidate.OriginalTitle, candidate.Title, StringComparison.Ordinal))
         {
-            info.Children.Add(new TextBlock
+            info.Children.Add(CandidateLabel(new TextBlock
             {
-                Text = $"Original: {candidate.OriginalTitle}",
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
-            });
+            }, "web.item.match.originalTitle", () => candidate.OriginalTitle, "title"));
         }
 
         if (matchedFallbackTitle == null &&
@@ -929,13 +933,12 @@ public sealed partial class MatchItemDialog : ContentDialog
             !string.Equals(candidate.MatchedTitle, candidate.Title, StringComparison.Ordinal) &&
             !string.Equals(candidate.MatchedTitle, candidate.OriginalTitle, StringComparison.Ordinal))
         {
-            info.Children.Add(new TextBlock
+            info.Children.Add(CandidateLabel(new TextBlock
             {
-                Text = $"Matched alias: {candidate.MatchedTitle}",
                 FontSize = 11,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
-            });
+            }, "web.item.match.matchedAlias", () => candidate.MatchedTitle, "title"));
         }
 
         info.Children.Add(new TextBlock
@@ -951,7 +954,12 @@ public sealed partial class MatchItemDialog : ContentDialog
             VerticalSpacing = 4,
         };
         if (candidate.MatchScore.HasValue)
-            badges.Children.Add(BuildCandidateBadge($"Score {candidate.MatchScore.Value:F1}", filled: true));
+        {
+            var scoreBadge = BuildCandidateBadge("", filled: true);
+            CandidateLabel((TextBlock)scoreBadge.Child, "web.item.match.score",
+                () => candidate.MatchScore.Value.ToString("F1", AppStrings.FormatCulture), "score");
+            badges.Children.Add(scoreBadge);
+        }
         foreach (var source in candidate.Sources)
             badges.Children.Add(BuildCandidateBadge(source, filled: false));
         if (candidate.Sources.Count > 1)
@@ -986,7 +994,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             {
                 if (CanAct && _scope.State.IsCurrent(scope))
                 {
-                    ApplyStatusText.Text = $"Match could not be applied: {ex.Message}";
+                    ApplyStatusText.Text = $"Match could not be applied: {ex.DisplayMessage()}";
                     ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
                     ApplyStatusText.Visibility = Visibility.Visible;
                 }
@@ -1010,11 +1018,18 @@ public sealed partial class MatchItemDialog : ContentDialog
             ApplyMatchButton.Visibility = Visibility.Visible;
             ApplyMatchFooter.Visibility = Visibility.Visible;
             UpdateCommands();
-            ApplyMatchButton.Content = "Apply Match";
+            ApplyMatchButton.Content = AppStrings.Get("web.item.match.applyMatch", fallback: "Apply Match");
             UpdateViewport();
         };
 
         return rowBtn;
+    }
+
+    private TextBlock CandidateLabel(TextBlock label, string key, Func<string?> value, string argument)
+    {
+        void Refresh() => label.Text = AppStrings.Get(key, new Dictionary<string, object?> { [argument] = value() });
+        Refresh(); _candidateLocaleRefreshers.Add(Refresh);
+        return label;
     }
 
     private static Border BuildCandidateBadge(string text, bool filled)

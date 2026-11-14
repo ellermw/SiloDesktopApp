@@ -5,6 +5,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Views.Dialogs;
 
@@ -14,7 +15,7 @@ public sealed class EditPersonDialog : ContentDialog
     private readonly Dictionary<string, TextBox> _inputs = [];
     private readonly Dictionary<string, string> _original = [];
     private readonly Dictionary<string, StackPanel> _groups = [];
-    private readonly TextBlock _heading = new() { Text = "Edit Person Metadata", FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly TextBlock _heading = new TextBlock { Text = "Edit Person Metadata", FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private readonly Grid _form = new() { RowSpacing = 16, ColumnSpacing = 16 };
     private bool _pending;
     public bool HasSaved { get; private set; }
@@ -24,26 +25,28 @@ public sealed class EditPersonDialog : ContentDialog
         var header = new Grid(); header.Children.Add(_heading);
         var close = EditorDialogPresentation.CornerClose(this); close.HorizontalAlignment = HorizontalAlignment.Right;
         close.Margin = new Thickness(0, -8, -8, 0); header.Children.Add(close); Title = header;
-        PrimaryButtonText = "Save"; CloseButtonText = "Cancel";
+        PrimaryButtonText = AppStrings.Get("common.save", fallback: "Save"); CloseButtonText = AppStrings.Get("common.cancel", fallback: "Cancel");
+        this.KeyedDialog(primary: "common.save", close: "common.cancel");
         DefaultButton = ContentDialogButton.Primary;
         Background = (Brush)Application.Current.Resources["AppBackgroundBrush"];
         EditorDialogPresentation.Configure(this, 672, new Thickness(24));
         _form.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         _form.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        Add("name", "Name", person.Name, true);
-        Add("bio", "Bio", person.Bio, true);
-        Add("birth_date", "Birth Date", person.BirthDate); Add("death_date", "Death Date", person.DeathDate);
-        Add("birthplace", "Birthplace", person.Birthplace); Add("homepage", "Homepage", person.Homepage);
-        Add("tmdb_id", "TMDB ID", person.TmdbId); Add("imdb_id", "IMDb ID", person.ImdbId); Add("tvdb_id", "TVDB ID", person.TvdbId);
+        _heading.Keyed("web.item.editPerson.title");
+        Add("name", "web.item.editPerson.name", person.Name, true);
+        Add("bio", "web.item.editPerson.bio", person.Bio, true);
+        Add("birth_date", "web.item.editPerson.birthDate", person.BirthDate); Add("death_date", "web.item.editPerson.deathDate", person.DeathDate);
+        Add("birthplace", "web.item.editPerson.birthplace", person.Birthplace); Add("homepage", "web.item.editPerson.homepage", person.Homepage);
+        Add("tmdb_id", "web.item.dialog.tmdbId", person.TmdbId); Add("imdb_id", "web.item.dialog.imdbId", person.ImdbId); Add("tvdb_id", "web.item.dialog.tvdbId", person.TvdbId);
         Content = new ScrollViewer { Content = _form, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Opened += (_, _) => Reflow(); SizeChanged += (_, _) => Reflow();
         PrimaryButtonClick += Save;
     }
-    private void Add(string key, string label, string? value, bool full = false)
+    private void Add(string key, string labelKey, string? value, bool full = false)
     {
         var group = new StackPanel { Spacing = 6, Tag = full }; _groups[key] = group;
-        group.Children.Add(new TextBlock { Text = label, FontSize = 14, Height = 14, LineHeight = 14,
-            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.Medium });
+        group.Children.Add(new TextBlock { FontSize = 14, Height = 14, LineHeight = 14,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.Medium }.Keyed(labelKey));
         var input = new TextBox { Text = value ?? "", FontSize = 14, Tag = full, Height = 36, MinHeight = 36,
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"], CornerRadius = new CornerRadius(10) };
         if (key == "bio") { input.AcceptsReturn = true; input.TextWrapping = TextWrapping.Wrap; input.MinHeight = input.Height = 128; }
@@ -86,9 +89,9 @@ public sealed class EditPersonDialog : ContentDialog
             changes[key] = key.EndsWith("_date") && input.Text.Length == 0 ? null : input.Text;
         }
         if (changes.Count == 0) { Hide(); return; }
-        _pending = true; IsPrimaryButtonEnabled = false; PrimaryButtonText = "Saving...";
+        _pending = true; IsPrimaryButtonEnabled = false; this.KeyedDialog(primary: "web.item.dialog.saving");
         try { await App.Services.GetRequiredService<PeopleApi>().UpdatePersonAsync(_person.Id, changes); HasSaved = true; Hide(); }
         catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
-        finally { _pending = false; IsPrimaryButtonEnabled = true; PrimaryButtonText = "Save"; }
+        finally { _pending = false; IsPrimaryButtonEnabled = true; this.KeyedDialog(primary: "common.save"); }
     }
 }

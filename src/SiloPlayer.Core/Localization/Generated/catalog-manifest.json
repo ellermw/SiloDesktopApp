@@ -1,0 +1,97 @@
+{
+  "format": 1,
+  "generator": "tools/SiloTranslationsImport",
+  "catalog_owner": "https://github.com/Silo-Server/silo-translations",
+  "catalog_release": "2026.11.12-ad2447a",
+  "catalog_release_platform": "web",
+  "catalog_release_tarball_sha256": "763d10367514093767e3a109b55bafa5d3b130298ec0dda4c76acef1545f15ed",
+  "source_repository": "https://github.com/Silo-Server/silo-server",
+  "source_commit": "0b579aa6192d49d7e8e0921dde5e955ac29ce302",
+  "source_path": "web/src/locales",
+  "source_keys_sha256": "6025d1515c888bbba2703208f5267517b9f5c51def0e7468b873d41befbe9697",
+  "excluded_key_prefixes": [
+    "web.admin."
+  ],
+  "languages": [
+    {
+      "tag": "en",
+      "name": "English",
+      "dir": "ltr",
+      "messages": 6782,
+      "source": "web/src/locales/en.json",
+      "source_sha256": "ea520a09fed1d0c9931ca3259600abd510e8632a094bf0cff00b2994ada8f6c7",
+      "output": "en.json",
+      "output_sha256": "495a5db3a8197d580b224db07373a7a413575d27f553b275481ec8ddba8f5931"
+    },
+    {
+      "tag": "es",
+      "name": "Español",
+      "dir": "ltr",
+      "messages": 6782,
+      "source": "web/src/locales/es.json",
+      "source_sha256": "0cfeea9279f23f1dac3cb11890e0a3a3a466985263ffe54a4c280bd01d9508ea",
+      "output": "es.json",
+      "output_sha256": "697fb162a47f9fbd9df9712d95125728e8d1814b775e079a902bae2beb871615"
+    },
+    {
+      "tag": "de",
+      "name": "Deutsch",
+      "dir": "ltr",
+      "messages": 6782,
+      "source": "web/src/locales/de.json",
+      "source_sha256": "eedb703bc6d57e444e8941a443e0c8c3464da2adf2d6a33387d3fba2f32dac0f",
+      "output": "de.json",
+      "output_sha256": "9857d059eb6c947cad832cdd63df20ca9e59e46b216d4b02395f210d905a4f1f"
+    },
+    {
+      "tag": "fr",
+      "name": "Français",
+      "dir": "ltr",
+      "messages": 6782,
+      "source": "web/src/locales/fr.json",
+      "source_sha256": "9f2a3bc47c9677d8944bf6964c1a736e09b130083c9a46446aac299b51829177",
+      "output": "fr.json",
+      "output_sha256": "6da5c74eec06238e73e79ef831f0097cfff2cc7192db19417ced8e675c791894"
+    },
+    {
+      "tag": "pt-BR",
+      "name": "Português (Brasil)",
+      "dir": "ltr",
+      "messages": 6782,
+      "source": "web/src/locales/pt-BR.json",
+      "source_sha256": "bd196a898fe73f8a1af14a600a4160bf1866a629f23557ac460bbb02ad3274d6",
+      "output": "pt-BR.json",
+      "output_sha256": "5481cecea26b9a73ec3e2c813ea1195000da8f3358ce6feebb64d203bfb59fbe"
+    },
+    {
+      "tag": "ja",
+      "name": "日本語",
+      "dir": "ltr",
+      "messages": 6782,
+      "source": "web/src/locales/ja.json",
+      "source_sha256": "cda7dd9f2e701f99da8cf72610bbe3623684f4a723f10cb24bd37ed79c2fcf15",
+      "output": "ja.json",
+      "output_sha256": "57aa2522eb127c3412caee23553b82fccb4f13ab9c54a5dd11898bc0b555e351"
+    },
+    {
+      "tag": "zh-Hans",
+      "name": "简体中文",
+      "dir": "ltr",
+      "messages": 6782,
+      "source": "web/src/locales/zh-Hans.json",
+      "source_sha256": "881c4110f6a96d5c0b1e846ea3b542de3e5225364fe1c147eaf155efd8ba1060",
+      "output": "zh-Hans.json",
+      "output_sha256": "0748354076330d917108cebc7c8fab7faa2fb9ae063ed9a58e74228baf34e177"
+    },
+    {
+      "tag": "ar",
+      "name": "العربية",
+      "dir": "rtl",
+      "messages": 6782,
+      "source": "web/src/locales/ar.json",
+      "source_sha256": "6808c3d28098ff239733432cc2ff52f4a0ddd071e9cb43dcdabcb4a89b2b633b",
+      "output": "ar.json",
+      "output_sha256": "5d4c6f888c4c76d8af00a9e91ebe02562979fe4695407a6f3fab123d6cf1779d"
+    }
+  ]
+}

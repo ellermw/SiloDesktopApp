@@ -291,7 +291,7 @@ internal static class CollectionsAcceptanceNativeFixture
             "Synced editor uses the retired section heading and caption");
         Probe(All<ScrollViewer>(page).Any(s => s.MaxHeight == 420 && ReferenceEquals(s.Content, Read(page, "_syncedChoices"))),
             "Synced popular picks have no bounded420px scroll surface");
-        Probe(All<TextBlock>(page).Any(t => t.Text == "Or paste any MDBList link") && All<TextBlock>(page).Any(t => t.Text.StartsWith("Blank takes up to 10,000 titles")),
+        Probe(All<TextBlock>(page).Any(t => t.Text == "Or paste any MDBList link") && All<TextBlock>(page).Any(t => t.Text.StartsWith("Blank takes the whole list: up to 10,000 titles")), // shared catalog wording (web.collections.copy.syncedOrderHelp)
             "Synced link and Order omit current visible labels/help");
         var pristine = (Dictionary<string, string>)Call(page, "CaptureDraft")!;
         All<RadioButton>(page).Single(button => Equals(button.Content, "TMDB chart")).IsChecked = true;
@@ -516,7 +516,7 @@ internal static class CollectionsAcceptanceNativeFixture
                 ((DispatcherTimer)Read(page, "_smartPreviewDelay")!).Stop();
             }
             page.ViewModel.AddRuleCommand.Execute(null); await Layout();
-            var fieldChoice = All<ComboBox>(page).Single(c => AutomationProperties.GetName(c) == "Rule field");
+            var fieldChoice = All<ComboBox>(page).Single(c => AutomationProperties.GetAutomationId(c) == "Rule field");
             Check(fieldChoice.Height == 36, "Smart rules still use compact32px selectors");
             fieldChoice.StartBringIntoView(); await Layout();
             var ruleSelectors = (Grid)fieldChoice.Parent;

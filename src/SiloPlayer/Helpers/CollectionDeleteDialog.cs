@@ -14,7 +14,8 @@ internal static class CollectionDeleteDialog
     internal static async Task<bool> ShowAsync(XamlRoot? xamlRoot, string name, bool shared, Func<Task<string?>> delete)
     {
         var content = new StackPanel { Spacing = 10 };
-        content.Children.Add(new TextBlock { Text = CollectionHeroActions.DeleteDescription(shared), TextWrapping = TextWrapping.Wrap });
+        var description = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        content.Children.Add(description);
         var error = new TextBlock
         {
             Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
@@ -32,6 +33,15 @@ internal static class CollectionDeleteDialog
             XamlRoot = xamlRoot,
             DefaultButton = ContentDialogButton.Close
         };
+        CollectionText.Dialog(dialog, () =>
+        {
+            dialog.Title = CollectionText.Get("web.collections.pageActions.deleteTitle", CollectionHeroActions.DeleteTitle(name), ("name", name));
+            description.Text = shared
+                ? CollectionText.Get("web.collections.copy.personalDeleteDescriptionShared", CollectionHeroActions.DeleteDescription(true))
+                : CollectionText.Get("web.collections.copy.cantBeUndone", CollectionHeroActions.DeleteDescription(false));
+            if (dialog.IsPrimaryButtonEnabled) dialog.PrimaryButtonText = CollectionText.Get("web.collections.deleteDialog.delete", "Delete");
+            dialog.CloseButtonText = CollectionText.Get("common.cancel", "Cancel");
+        });
         var deleted = false;
         dialog.PrimaryButtonClick += async (_, args) =>
         {
@@ -44,14 +54,14 @@ internal static class CollectionDeleteDialog
                 error.Visibility = Visibility.Collapsed;
                 string? failure;
                 try { failure = await delete(); }
-                catch (Exception ex) { failure = "The collection could not be deleted: " + ex.Message; }
+                catch (Exception ex) { failure = "The collection could not be deleted: " + CollectionText.Problem(ex); }
                 if (failure == null) { deleted = true; args.Cancel = false; return; }
                 error.Text = failure;
                 error.Visibility = Visibility.Visible;
             }
             finally
             {
-                dialog.PrimaryButtonText = "Delete";
+                dialog.PrimaryButtonText = CollectionText.Get("web.collections.deleteDialog.delete", "Delete");
                 dialog.IsPrimaryButtonEnabled = true;
                 deferral.Complete();
             }

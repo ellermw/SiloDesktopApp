@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
+    xmlns:loc="using:SiloPlayer.Services"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
     Loaded="Page_Loaded">
@@ -31,7 +32,7 @@
                 TextWrapping="Wrap"
                 MaxWidth="400" />
             <Button
-                Content="Retry"
+                Content="Retry" loc:Localized.Content="common.retry"
                 Style="{StaticResource AccentButtonStyle}"
                 HorizontalAlignment="Center"
                 Command="{x:Bind ViewModel.LoadCollectionsCommand}" />
@@ -62,7 +63,7 @@
 
                     <StackPanel Grid.Column="0" Spacing="12" VerticalAlignment="Center">
                         <TextBlock
-                            x:Name="CollectionsTitle" Text="Collections"
+                            x:Name="CollectionsTitle" Text="Collections" loc:Localized.Text="web.collections.page.title"
                             FontSize="48"
                             FontWeight="ExtraBold"
                             LineStackingStrategy="BlockLineHeight"
@@ -101,7 +102,7 @@
                             Click="CreateCollection_Click">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE710;" FontSize="14" />
-                                <TextBlock Text="New collection" />
+                                <TextBlock Text="New collection" loc:Localized.Text="web.collections.copy.newCollection" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
@@ -146,7 +147,7 @@
                             Foreground="{StaticResource TertiaryTextBrush}"
                             HorizontalAlignment="Center" />
                         <TextBlock
-                            Text="No collections yet"
+                            Text="No collections yet" loc:Localized.Text="web.library.collections.emptyTitle"
                             FontSize="14"
                             FontWeight="Medium"
                             Foreground="{StaticResource PrimaryTextBrush}"
@@ -191,7 +192,7 @@
                 </StackPanel>
                 <StackPanel x:Name="ServerCollectionsLoadingRows" Visibility="Collapsed" />
                 <TextBlock x:Name="CollectionsReorderHint" Visibility="Collapsed" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"
-                           Text="Drag a poster to change the order, or focus its handle and press Space, then the arrow keys." />
+                           Text="Drag a poster to change the order, or focus its handle and press Space, then the arrow keys." loc:Localized.Text="web.collections.page.reorderHint" />
 
                 <Button
                     x:Name="AddGroupButton"
@@ -217,11 +218,11 @@
                         Style="{StaticResource DarkTextBoxStyle}"
                         KeyDown="AddGroupNameBox_KeyDown" />
                     <Button
-                        Content="Add"
+                        Content="Add" loc:Localized.Content="web.collections.manual.add"
                         Style="{StaticResource GhostButtonStyle}"
                         Click="AddGroupCommit_Click" />
                     <Button
-                        Content="Cancel"
+                        Content="Cancel" loc:Localized.Content="common.cancel"
                         Style="{StaticResource GhostButtonStyle}"
                         Click="AddGroupCancel_Click" />
                 </StackPanel>
@@ -229,7 +230,7 @@
             </StackPanel>
         </ScrollViewer>
         <Border x:Name="CreateCollectionDock" VerticalAlignment="Bottom" Padding="16,22,16,20" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
-            <Button Content="New collection" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Height="44" Style="{StaticResource AccentButtonStyle}" Click="CreateCollection_Click" />
+            <Button Content="New collection" loc:Localized.Content="web.collections.copy.newCollection" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Height="44" Style="{StaticResource AccentButtonStyle}" Click="CreateCollection_Click" />
         </Border>
     </Grid>
 </Page>

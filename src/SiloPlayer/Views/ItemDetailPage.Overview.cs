@@ -105,7 +105,7 @@ public sealed partial class ItemDetailPage
         _translateButtonMode = false;
         TranslateOverviewButton.Visibility = Visibility.Collapsed;
         TranslateOverviewButton.IsEnabled = true;
-        TranslateOverviewButton.Content = "Translate description";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(TranslateOverviewButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translate", fallback: "Translate description"));
         OverviewText.Opacity = 1;
         var api = App.Services.GetRequiredService<CatalogApi>();
         var context = api.CaptureContext();
@@ -154,7 +154,7 @@ public sealed partial class ItemDetailPage
                 _translateButtonMode = true;
                 TranslateOverviewButton.Visibility = Visibility.Visible;
                 TranslateOverviewButton.IsEnabled = true;
-                TranslateOverviewButton.Content = "Translate description";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(TranslateOverviewButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translate", fallback: "Translate description"));
             }
             else if (status.OnView.Equals("auto", StringComparison.OrdinalIgnoreCase))
                 await TranslateOverviewAsync(source);
@@ -229,7 +229,7 @@ public sealed partial class ItemDetailPage
         bool Current() => !ct.IsCancellationRequested && OwnerCurrent();
         TranslateOverviewButton.Visibility = Visibility.Visible;
         TranslateOverviewButton.IsEnabled = false;
-        TranslateOverviewButton.Content = "Translating…";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(TranslateOverviewButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translating", fallback: "Translating…"));
         OverviewText.Opacity = 0.55;
         try
         {
@@ -252,8 +252,7 @@ public sealed partial class ItemDetailPage
             {
                 // Auto mode must leave a recovery action after a failed POST or poll.
                 _translateButtonMode = true;
-                App.Services.GetRequiredService<Services.ToastService>().Error(ex,
-                    ex is OperationCanceledException ? "Description translation timed out. Try again." : null);
+                App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, ex is OperationCanceledException ? "Description translation timed out. Try again." : null));
             }
         }
         finally
@@ -276,7 +275,7 @@ public sealed partial class ItemDetailPage
                     !string.IsNullOrWhiteSpace(ViewModel.OverviewSource?.PendingTranslationLanguage)
                     ? Visibility.Visible : Visibility.Collapsed;
                 TranslateOverviewButton.IsEnabled = true;
-                TranslateOverviewButton.Content = "Translate description";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(TranslateOverviewButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.translation.translate", fallback: "Translate description"));
             }
             if (ReferenceEquals(_translationCts, cts)) _translationCts = null;
             if (restoreControls)

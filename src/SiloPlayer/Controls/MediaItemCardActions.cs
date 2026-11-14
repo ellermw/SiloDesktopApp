@@ -12,7 +12,7 @@ namespace SiloPlayer.Controls;
 /// Executes the shared quick-action and overflow-menu mutations used by media
 /// cards. Profile state changes optimistically and rolls back on failure.
 /// </summary>
-public static class MediaItemCardActions
+public static partial class MediaItemCardActions
 {
     public static async Task ToggleWatchedAsync(MediaItem item)
     {
@@ -41,7 +41,7 @@ public static class MediaItemCardActions
         catch (OperationCanceledException) when (!catalog.IsCurrentContext(context)) { }
         catch (Exception ex)
         {
-            toast.Error(ex);
+            toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
         }
     }
 
@@ -65,7 +65,7 @@ public static class MediaItemCardActions
             toast.Success("Progress reset");
         }
         catch (OperationCanceledException) when (!catalog.IsCurrentContext(context)) { }
-        catch (Exception ex) { toast.Error(ex); }
+        catch (Exception ex) { toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
     }
 
     public static async Task ToggleFavoriteAsync(MediaItem item)
@@ -86,27 +86,27 @@ public static class MediaItemCardActions
                     : MediaSurfaceChangeKind.FavoriteRemoved,
                 item.ContentId,
                 item.SeriesId));
-            toast.Success(isFavorite ? "Added to favorites" : "Removed from favorites");
+            toast.Success(isFavorite ? SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.favorites.added", fallback: "Added to favorites") : SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.favorites.removed", fallback: "Removed from favorites"));
         }
         catch (Exception ex)
         {
-            toast.Error(ex);
+            toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
         }
     }
 
     public static string GetWatchedActionLabel(string type, bool played) => type switch
     {
-        "series" => played ? "Mark Series Unwatched" : "Mark Series Watched",
-        "season" => played ? "Mark Season Unwatched" : "Mark Season Watched",
-        "audiobook" => played ? "Mark Unlistened" : "Mark Listened",
-        "ebook" or "manga" => played ? "Mark Unread" : "Mark Read",
-        _ => played ? "Mark Unwatched" : "Mark Watched",
+        "series" => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeriesUnwatched", fallback: "Mark Series Unwatched") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeriesWatched", fallback: "Mark Series Watched"),
+        "season" => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeasonUnwatched", fallback: "Mark Season Unwatched") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markSeasonWatched", fallback: "Mark Season Watched"),
+        "audiobook" => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markUnlistened", fallback: "Mark Unlistened") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markListened", fallback: "Mark Listened"),
+        "ebook" or "manga" => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markUnread", fallback: "Mark Unread") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markRead", fallback: "Mark Read"),
+        _ => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markUnwatched", fallback: "Mark Unwatched") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markWatched", fallback: "Mark Watched"),
     };
 
     private static string GetWatchedToastMessage(string type, bool played) => type switch
     {
-        "audiobook" => played ? "Marked as listened" : "Marked as unlistened",
-        "ebook" or "manga" => played ? "Marked as read" : "Marked as unread",
-        _ => played ? "Marked as watched" : "Marked as unwatched",
+        "audiobook" => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markedListened", fallback: "Marked as listened") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markedUnlistened", fallback: "Marked as unlistened"),
+        "ebook" or "manga" => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markedRead", fallback: "Marked as read") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markedUnread", fallback: "Marked as unread"),
+        _ => played ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markedWatched", fallback: "Marked as watched") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.markedUnwatched", fallback: "Marked as unwatched"),
     };
 }

@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels;
 
@@ -98,7 +99,7 @@ public partial class SettingsViewModel
             }
             if (!committed) _settingsApi.NotifyLocalizedSettingChanged(key);
             ShowError(committed ? "Profile setting saved, but this device's override could not be cleared. Reload settings to retry."
-                : $"Failed to save setting: {ex.Message}");
+                : $"Failed to save setting: {ex.DisplayMessage()}");
         }
         finally { _markerDetailsWrites.Release(); }
     }

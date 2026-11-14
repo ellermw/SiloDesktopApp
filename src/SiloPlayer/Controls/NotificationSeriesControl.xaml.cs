@@ -12,6 +12,7 @@ using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.Views;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Controls;
 
@@ -29,6 +30,7 @@ public sealed partial class NotificationSeriesControl : UserControl
         InitializeComponent(); _ready = true;
         State.PropertyChanged += (_, _) => Update();
         Unloaded += (_, _) => Close();
+        AppLocalization.Register(this, RefreshInlineChoices);
     }
     public async Task OpenAsync()
     {
@@ -71,11 +73,11 @@ public sealed partial class NotificationSeriesControl : UserControl
         InactiveSection.Visibility = State.ShowInactive && State.Inactive.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         SeriesEmpty.Visibility = State.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
         var filtered = !string.IsNullOrWhiteSpace(State.Options.Q) || State.Options.Reason != null;
-        SeriesEmptyTitle.Text = filtered ? "No series match. Try another search or reason." : "No series notify you yet";
+        SeriesEmptyTitle.Text = filtered ? AppStrings.Get("web.notifications.series.noMatch", fallback: "No series match. Try another search or reason.") : AppStrings.Get("web.notifications.series.empty", fallback: "No series notify you yet");
         SeriesEmptyCaption.Visibility = filtered ? Visibility.Collapsed : Visibility.Visible;
         SeriesLoadMore.Visibility = State.HasMore ? Visibility.Visible : Visibility.Collapsed;
         SeriesLoadMore.IsEnabled = !State.IsLoading && !State.IsLoadingMore;
-        SeriesLoadMore.Content = State.IsLoadingMore ? "Loading…" : "Load more";
+        SeriesLoadMore.Content = State.IsLoadingMore ? AppStrings.Get("web.item.menu.loading", fallback: "Loading…") : AppStrings.Get("web.notifications.inbox.loadMore", fallback: "Load more");
         foreach (var stale in _rows.Keys.Except(State.Active.Concat(State.Inactive).Select(row => row.Item.ContentId)).ToArray()) _rows.Remove(stale);
     }
     private void SyncRows(StackPanel host, IEnumerable<NotificationSeries> models)
@@ -90,10 +92,10 @@ public sealed partial class NotificationSeriesControl : UserControl
             if (row.Poster.Tag as string != model.Item.PosterUrl)
             { row.Poster.Tag = model.Item.PosterUrl; row.Image.Source = (ImageSource?)new UrlToImageSourceConverter().Convert(model.Item.PosterUrl!, typeof(ImageSource), null!, ""); }
             row.Action.Visibility = State.CanMute ? Visibility.Visible : Visibility.Collapsed;
-            row.Action.IsEnabled = !State.IsPending(key); row.Label.Text = model.Muted ? "Unmute" : "Mute";
+            row.Action.IsEnabled = !State.IsPending(key); row.Label.Text = model.Muted ? AppStrings.Get("web.notifications.series.unmute", fallback: "Unmute") : AppStrings.Get("web.notifications.series.mute", fallback: "Mute");
             row.Icon.Child = WebUiIcon.Create(model.Muted ? "bell" : "bell-off", 16);
             AutomationProperties.SetName(row.Action, $"{row.Label.Text} {model.Item.Title}");
-            ToolTipService.SetToolTip(row.Action, model.Muted ? "Notify me about new episodes again" : "Stop notifying me about new episodes");
+            ToolTipService.SetToolTip(row.Action, model.Muted ? AppStrings.Get("web.notifications.series.unmuteHint", fallback: "Notify me about new episodes again") : AppStrings.Get("web.notifications.series.muteHint", fallback: "Stop notifying me about new episodes"));
             AutomationProperties.SetName(row.Link, model.Item.Title + ", " + row.Explanation.Text);
             var reasons = model.Reasons.Labels(model.ActiveReasons, model.Muted).ToArray();
             var signature = string.Join("|", reasons.Select(reason => reason.Label + reason.Active));
@@ -104,7 +106,7 @@ public sealed partial class NotificationSeriesControl : UserControl
                 {
                     var text = new TextBlock { Text = reason.Label, FontSize = 10, FontWeight = FontWeights.Medium,
                         TextDecorations = reason.Active ? Windows.UI.Text.TextDecorations.None : Windows.UI.Text.TextDecorations.Strikethrough, Foreground = Brush("SecondaryTextBrush") };
-                    AutomationProperties.SetName(text, reason.Label + (reason.Active ? "" : " (off)"));
+                    AutomationProperties.SetName(text, reason.Label + (reason.Active ? "" : AppStrings.Get("web.notifications.series.reasonOff", fallback: " (off)")));
                     row.Reasons.Children.Add(new Border { Child = text, Padding = new(8, 2, 8, 2), CornerRadius = new(10), BorderThickness = new(reason.Active ? 0 : 1), BorderBrush = Brush("BorderBrush"), Background = reason.Active ? Brush("SurfaceBrush") : null });
                 }
             }
@@ -136,7 +138,7 @@ public sealed partial class NotificationSeriesControl : UserControl
         if (State.Context is not { } context) return;
         if (!await State.SetMutedAsync(model, muted, context)) return;
         var toast = App.Services.GetRequiredService<ToastService>();
-        if (muted) toast.Success($"Muted {model.Item.Title}", "Undo", async () =>
+        if (muted) toast.Success(AppStrings.Get("web.notifications.queries.muted", new Dictionary<string, object?> { ["title"] = model.Item.Title }, $"Muted {model.Item.Title}"), AppStrings.Get("web.home.dismiss.undo", fallback: "Undo"), async () =>
         {
             if (!_api.IsCurrentContext(context)) { toast.Error("Switch back to the profile that muted this to undo it"); return; }
             try
@@ -145,7 +147,7 @@ public sealed partial class NotificationSeriesControl : UserControl
                 if (State.IsCurrent(context)) await State.ReloadAsync();
             }
             catch (OperationCanceledException) when (!_api.IsCurrentContext(context)) { }
-            catch (Exception ex) { if (_api.IsCurrentContext(context)) toast.Error(ex, "Failed to unmute the series"); }
+            catch (Exception ex) { if (_api.IsCurrentContext(context)) toast.Error(ex, AppStrings.Get("web.notifications.queries.unmuteFailed", fallback: "Failed to unmute the series")); }
         });
     }
     private void Control_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -166,5 +168,17 @@ public sealed partial class NotificationSeriesControl : UserControl
         public WrapPanel Reasons = new() { HorizontalSpacing = 4, VerticalSpacing = 4, Margin = new(0, 4, 0, 0) };
         public Button Action = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new(0, 0, 8, 0), Padding = new(8), MinWidth = 32 };
         public Border Icon = new(); public TextBlock Label = new() { FontSize = 14 };
+    }
+
+    private void RefreshInlineChoices()
+    {
+        var previous = _ready;
+        _ready = false;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(ReasonCombo);
+            SiloPlayer.Services.Localized.RefreshItems(SortCombo);
+        }
+        finally { _ready = previous; }
     }
 }

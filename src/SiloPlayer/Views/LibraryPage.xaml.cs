@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.UI.Xaml.Automation;
@@ -179,6 +180,9 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        Loaded += LibraryPage_Loaded;
+        Unloaded += LibraryPage_Unloaded;
+        SiloPlayer.Services.AppLocalization.Register(this, RefreshLibraryLocalization);
         // Posters load and decode during steady wheel and slow touchpad scrolling;
         // touchpad flicks, flings and fast scrollbar drags wait for the grid to slow.
         _artworkMotion = ArtworkViewport.For(LibraryScroller, ArtworkMotionPolicy.GridDeferSpeed);
@@ -319,6 +323,36 @@ public sealed partial class LibraryPage : Page,
         }
     }
 
+    private bool _catalogVisualDetached;
+
+    private void LibraryPage_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_catalogVisualDetached)
+        {
+            _catalogVisualDetached = false;
+            if (_isNavigated)
+            {
+                _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
+                ScheduleVisibleRangeLoad(force: true);
+            }
+        }
+        WakeCatalogContentRefresh();
+    }
+
+    private void LibraryPage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        // WinUI can deliver a queued Unloaded after the cached page reattached.
+        // A real visual detachment must still retire work even while navigated.
+        if (IsLoaded) return;
+        _catalogVisualDetached = true;
+        StopCatalogContentRefresh();
+        ViewModel.SuspendCatalogLoads();
+        ++_libraryVisit;
+        _queuedLetterJumpVersion = 0;
+        _pendingLibraryLetterCommit = null;
+        ClearLibraryLetterFrame();
+        if (_pendingLibraryScroll is { } pending) ClearPendingLibraryOffset(pending);
+    }
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -335,7 +369,7 @@ public sealed partial class LibraryPage : Page,
         AttachViewModelEvents();
         RegisterMediaMessages();
         AttachRecommendedRealtimeEvents();
-        if (ViewModel.RequiresCatalogRefresh) HideUnconfirmedCatalogRows();
+        if (ViewModel.RequiresCatalogConfirmation) HideUnconfirmedCatalogRows();
         else if (RecommendedRowsRequireConfirmation) HideUnconfirmedRecommendedRows();
 
         var navigationArgs = e.Parameter as NavigationArgs;
@@ -415,7 +449,7 @@ public sealed partial class LibraryPage : Page,
             HeaderGrid.Visibility = Visibility.Visible;
             LibraryTitle.Text = library.Name;
             LibraryEyebrowName.Text = library.Name.ToUpperInvariant();
-            RecommendedTab.Content = library.Type is "audiobook" or "audiobooks" ? "Home" : "Recommended";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(RecommendedTab, "Content", element => element.Content = library.Type is "audiobook" or "audiobooks" ? SiloPlayer.Core.Localization.AppStrings.Get("web.library.header.homeTab", fallback: "Home") : SiloPlayer.Core.Localization.AppStrings.Get("web.library.header.recommendedTab", fallback: "Recommended"));
             if (!sameLibrary) _currentAudiobookAxis = "books";
             MediaTypeFilterField.Visibility = string.Equals(library.Type, "mixed", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible
@@ -685,6 +719,7 @@ public sealed partial class LibraryPage : Page,
             _libraryCatalogLoaded = false;
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
+        StopCatalogContentRefresh();
         if (_pendingLibraryScroll is { } pendingScroll) ClearPendingLibraryOffset(pendingScroll);
         _queuedLetterJumpVersion = 0;
         _pendingLibraryLetterCommit = null;
@@ -774,21 +809,36 @@ public sealed partial class LibraryPage : Page,
     {
         if (_recommendationsRealtimeSubscription != null) return;
         _eventChannel.EventReceived += OnRecommendedRealtimeEvent;
+        _eventChannel.AccessChanged += OnLibraryAccessChanged;
         _recommendationsRealtimeSubscription = _eventChannel.Subscribe("catalog", "user_state");
     }
 
     private void DetachRecommendedRealtimeEvents()
     {
         _eventChannel.EventReceived -= OnRecommendedRealtimeEvent;
+        _eventChannel.AccessChanged -= OnLibraryAccessChanged;
         _recommendationsRealtimeSubscription?.Dispose();
         _recommendationsRealtimeSubscription = null;
     }
 
     private void OnRecommendedRealtimeEvent(string channel, string eventName, JsonElement data)
     {
+        // The channel owns the JsonDocument. Parse before returning, and carry
+        // only values plus request/visit ownership across the UI dispatch.
+        var context = _stateSettings.CaptureContext();
+        var visit = _libraryVisit;
+        var contentChanged = eventName is "catalog.library.changed" or "library.changed" or "library.item_added" or
+            "catalog.item.changed" or "metadata.updated";
+        int? libraryId = data.ValueKind == JsonValueKind.Object && data.TryGetProperty("library_id", out var scope) &&
+            scope.ValueKind == JsonValueKind.Number && scope.TryGetInt32(out var parsed) ? parsed : null;
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_isNavigated || visit != _libraryVisit || context != _stateSettings.CaptureContext()) return;
+                QueueRecommendedRefresh();
+                if (contentChanged) QueueCatalogContentRefresh(context, libraryId);
+            });
             return;
         }
 
@@ -805,7 +855,11 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_isNavigated && visit == _libraryVisit && context == _stateSettings.CaptureContext())
+                QueueRecommendedRefresh();
+        });
     }
 
     private void QueueRecommendedRefresh()
@@ -952,49 +1006,49 @@ public sealed partial class LibraryPage : Page,
         var allVideo = scope == "all";
         var options = new List<SortOption>
         {
-            new("Title", "title", "asc"),
-            new("Date Added", "added_at", "desc"),
-            new("Release Date", "release_date", "desc"),
-            new("Year", "year", "desc"),
+            new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.title"), "title", "asc"),
+            new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.added"), "added_at", "desc"),
+            new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.released"), "release_date", "desc"),
+            new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.year"), "year", "desc"),
         };
 
         if (scope is "series" or "episode")
         {
-            options.Insert(3, new("Latest Episode Air Date", "last_air_date", "desc"));
+            options.Insert(3, new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.latestEpisodeAirDate"), "last_air_date", "desc"));
             if (scope == "series")
-                options.Insert(4, new("Latest Episode Added", "latest_episode_added", "desc"));
+                options.Insert(4, new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.latestEpisodeAdded"), "latest_episode_added", "desc"));
         }
 
         if (allVideo || scope is "movie" or "series" or "episode")
         {
             options.AddRange(
             [
-                new("Content Rating", "content_rating", "asc"),
-                new("Duration", "runtime", "desc"),
-                new("IMDb Rating", "rating_imdb", "desc"),
-                new("TMDB Rating", "rating_tmdb", "desc"),
-                new("RT Critic Rating", "rating_rt_critic", "desc"),
-                new("RT Audience Rating", "rating_rt_audience", "desc"),
-                new("Resolution", "resolution", "desc"),
-                new("Bitrate", "bitrate", "desc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.contentRating"), "content_rating", "asc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.duration"), "runtime", "desc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.imdbRating"), "rating_imdb", "desc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.tmdbRating"), "rating_tmdb", "desc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.rtCriticRating"), "rating_rt_critic", "desc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.rtAudienceRating"), "rating_rt_audience", "desc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.resolution"), "resolution", "desc"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.bitrate"), "bitrate", "desc"),
             ]);
         }
         else if (scope is "audiobook" or "ebook")
         {
-            options.Add(new("Duration", "runtime", "desc"));
-            options.Add(new("Bitrate", "bitrate", "desc"));
+            options.Add(new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.duration"), "runtime", "desc"));
+            options.Add(new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.bitrate"), "bitrate", "desc"));
         }
 
-        options.Add(new("Progress", "progress", "desc"));
-        options.Add(new(scope is "ebook" or "manga" ? "Date Read" : "Date Viewed", "date_viewed", "desc"));
-        options.Add(new(scope is "ebook" or "manga" ? "Reads" : "Plays", "plays", "desc"));
+        options.Add(new(SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.progress"), "progress", "desc"));
+        options.Add(new(scope is "ebook" or "manga" ? SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.dateRead") : SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.dateViewed"), "date_viewed", "desc"));
+        options.Add(new(scope is "ebook" or "manga" ? SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.reads") : SiloPlayer.Core.Localization.AppStrings.Get("web.common.sort.plays"), "plays", "desc"));
 
         if (scope is "audiobook" or "ebook" or "manga")
-            options.Add(new("Author", "author", "asc"));
+            options.Add(new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.author"), "author", "asc"));
         if (scope == "audiobook")
-            options.Add(new("Narrator", "narrator", "asc"));
+            options.Add(new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.narrator"), "narrator", "asc"));
         if (scope is "audiobook" or "ebook")
-            options.Add(new("Series", "series", "asc"));
+            options.Add(new(SiloPlayer.Core.Localization.AppStrings.Get("catalog.sort.series"), "series", "asc"));
 
         var normalized = selectedSort switch
         {
@@ -1056,12 +1110,12 @@ public sealed partial class LibraryPage : Page,
         VideoQualityToggles.Visibility = isBook ? Visibility.Collapsed : Visibility.Visible;
         BookMetadataFilters.Visibility = isBook ? Visibility.Visible : Visibility.Collapsed;
         NarratorFilterField.Visibility = isAudiobook ? Visibility.Visible : Visibility.Collapsed;
-        WatchStatusLabel.Text = isEbook ? "Read Status" : isAudiobook ? "Listening Status" : "Watch Status";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(WatchStatusLabel, "Text", element => element.Text = isEbook ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.readStatus", fallback: "Read Status") : isAudiobook ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.listeningStatus", fallback: "Listening Status") : SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.watchStatus", fallback: "Watch Status"));
 
         if (WatchStatusComboBox.Items.Count >= 4)
         {
-            ((ComboBoxItem)WatchStatusComboBox.Items[1]).Content = isEbook ? "Read" : isAudiobook ? "Listened" : "Watched";
-            ((ComboBoxItem)WatchStatusComboBox.Items[3]).Content = isEbook ? "Unread" : isAudiobook ? "Unlistened" : "Unwatched";
+            SiloPlayer.Controls.MediaItemCardActions.BindText((ComboBoxItem)WatchStatusComboBox.Items[1], "Content", element => element.Content = isEbook ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.read") : isAudiobook ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.listened") : SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.watched"));
+            SiloPlayer.Controls.MediaItemCardActions.BindText((ComboBoxItem)WatchStatusComboBox.Items[3], "Content", element => element.Content = isEbook ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.unread") : isAudiobook ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.unlistened") : SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.unwatched"));
         }
     }
 
@@ -1078,8 +1132,8 @@ public sealed partial class LibraryPage : Page,
         {
             options =
             [
-                new("Series", "series"),
-                new("Episodes", "episode"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.series"), "series"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.episodes"), "episode"),
             ];
             selectedType ??= "series";
         }
@@ -1087,14 +1141,14 @@ public sealed partial class LibraryPage : Page,
         {
             options =
             [
-                new("All Media", ""),
-                new("Movies & Series", "video"),
-                new("Movies", "movie"),
-                new("Series", "series"),
-                new("Episodes", "episode"),
-                new("Audiobooks", "audiobook"),
-                new("Ebooks", "ebook"),
-                new("Manga", "manga"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.allMedia"), ""),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.moviesAndSeries"), "video"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.movies"), "movie"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.series"), "series"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.episodes"), "episode"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.audiobooks"), "audiobook"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.ebooks"), "ebook"),
+                new(SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.manga"), "manga"),
             ];
         }
 
@@ -1194,6 +1248,7 @@ public sealed partial class LibraryPage : Page,
 
         _currentTab = tag;
         UpdateLibraryLetters();
+        WakeCatalogContentRefresh();
         // B42: Persist tab selection so a return to this library lands on the same tab.
         SaveViewState(tag);
 
@@ -1222,11 +1277,11 @@ public sealed partial class LibraryPage : Page,
     {
         if (ViewModel.DisplayTotalCount > 0)
         {
-            ResultCountText.Text = $"{ViewModel.DisplayTotalCount:N0} {(ViewModel.DisplayTotalCount == 1 ? "item" : "items")}";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultCount", new Dictionary<string, object?> { ["shown"] = (ViewModel.DisplayTotalCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = ViewModel.DisplayTotalCount }, fallback: $"{ViewModel.DisplayTotalCount:N0} {(ViewModel.DisplayTotalCount == 1 ? "item" : "items")}"));
         }
         else if (ViewModel.TotalCount > 0)
         {
-            ResultCountText.Text = "Loading item count";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.loadingCount", fallback: "Loading item count"));
         }
         else
         {
@@ -1286,10 +1341,10 @@ public sealed partial class LibraryPage : Page,
     private void UpdateMultiSelectLabels()
     {
         GenreMultiSelectText.Text = _selectedGenres.Count == 0
-            ? "Select genres..."
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.selectGenres")
             : string.Join(", ", _selectedGenres.OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
         OriginalLanguageMultiSelectText.Text = _selectedOriginalLanguages.Count == 0
-            ? "Select languages..."
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.collections.guidedRules.selectLanguages")
             : string.Join(", ", _selectedOriginalLanguages.OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
     }
 
@@ -1352,18 +1407,18 @@ public sealed partial class LibraryPage : Page,
             },
             ColumnSpacing = 8,
         };
-        var clearButton = new Button
+        var clearButton = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button
         {
             Content = "Clear",
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Left,
-        };
-        var doneButton = new Button
+        }, content: "web.catalog.page.clearSelection");
+        var doneButton = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button
         {
             Content = "Done",
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Right,
-        };
+        }, content: "common.done");
         Grid.SetColumn(doneButton, 1);
         footer.Children.Add(clearButton);
         footer.Children.Add(doneButton);
@@ -1393,11 +1448,11 @@ public sealed partial class LibraryPage : Page,
                     .ToList();
 
             var visible = matches.Take(MaxVisibleMultiSelectOptions).ToList();
-            statusText.Text = matches.Count == 0
+            SiloPlayer.Controls.MediaItemCardActions.BindText(statusText, "Text", element => element.Text = matches.Count == 0
                 ? "No matching options."
                 : matches.Count > MaxVisibleMultiSelectOptions
-                    ? $"Showing {MaxVisibleMultiSelectOptions:N0} of {matches.Count:N0}. Type to narrow the list."
-                    : $"{matches.Count:N0} option{(matches.Count == 1 ? "" : "s")}";
+                    ? ((FormattableString)$"Showing {MaxVisibleMultiSelectOptions:N0} of {matches.Count:N0}. Type to narrow the list.").ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture)
+                    : ((FormattableString)$"{matches.Count:N0} option{(matches.Count == 1 ? "" : "s")}").ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture));
 
             foreach (var value in visible)
             {
@@ -1556,7 +1611,7 @@ public sealed partial class LibraryPage : Page,
         _sharedFilterEditor = new QueryFilterEditor();
         _sharedFilterEditor.ConfigureSort();
         _sharedFilterEditor.Load(query, query.MediaScope, ViewModel.Library?.Id, LibraryFilterOptions());
-        FiltersSheet.ConfigureFilterHeader(_sharedFilterEditor.DetachModeSelector(), "Refine your catalog results");
+        FiltersSheet.ConfigureFilterHeader(_sharedFilterEditor.DetachModeSelector(), "Refine your catalog results", "web.catalog.filters.subtitle");
         SizeLibraryFilterSheet();
         _sharedFilterEditor.SortChanged += () =>
         {
@@ -1779,6 +1834,7 @@ public sealed partial class LibraryPage : Page,
         if (_pendingLibraryScroll is { Owner: not null } pending)
             ClearPendingLibraryOffset(pending);
         ScheduleVisibleRangeLoad(force: true);
+        WakeCatalogContentRefresh();
     }
 
     private void LibraryScroller_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
@@ -1825,6 +1881,11 @@ public sealed partial class LibraryPage : Page,
         // Only new input retires a choice. Coasting from an earlier manipulation
         // and native extent clamps still update the viewport, but keep its owner.
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
+        if (!e.IsIntermediate)
+        {
+            CompleteLibraryScrollLanding();
+            WakeCatalogContentRefresh();
+        }
     }
 
     private void LibraryScroller_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1872,6 +1933,7 @@ public sealed partial class LibraryPage : Page,
         _pendingLibraryScroll = null;
         if (request.Owner is not null) _chosenLibraryEndLetter = null;
         UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+        WakeCatalogContentRefresh();
     }
 
     private void UpdateLibraryScrollPosition(double offset, bool force = false)
@@ -1905,13 +1967,38 @@ public sealed partial class LibraryPage : Page,
                 return;
             }
             _pendingLibraryOffset = null;
-            _pendingLibraryScroll = null;
             // ChangeView may settle asynchronously even with animation disabled.
             // The requested offset is already published; ViewChanged supplies the
             // accepted position. Reading the old position here loses a final-letter jump.
-            if (!LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true))
+            // Compare against the position actually requested from native scrolling.
+            // The extent may grow before the landing callback arrives.
+            var landing = Math.Min(offset, LibraryScroller.ScrollableHeight);
+            if (request.Owner is not null && landing != request.Offset)
+                _pendingLibraryScroll = request = request with { Offset = landing };
+            var accepted = LibraryScroller.ChangeView(null, landing, null, disableAnimation: true);
+            // Keep the native landing's owner until the accepted position has
+            // crossed this dispatch boundary. ViewChanged may fire inline.
+            if (!accepted)
+            {
+                if (ReferenceEquals(_pendingLibraryScroll, request)) _pendingLibraryScroll = null;
                 UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+            }
+            else if (request.Owner is null && ReferenceEquals(_pendingLibraryScroll, request)) _pendingLibraryScroll = null;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                CompleteLibraryScrollLanding();
+                WakeCatalogContentRefresh();
+            });
         });
+    }
+
+    private void CompleteLibraryScrollLanding()
+    {
+        if (_pendingLibraryScroll is not { Owner: not null } request || _pendingLibraryOffset.HasValue) return;
+        if (request.Visit != _libraryVisit || !request.Owner()) { ClearPendingLibraryOffset(request); return; }
+        if (_libraryScrollIsIntermediate || Math.Abs(LibraryScroller.VerticalOffset - Math.Min(request.Offset, LibraryScroller.ScrollableHeight)) >= 2) return;
+        _pendingLibraryScroll = null;
+        UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
     }
 
     private void OnLibraryWindowLoaded()
@@ -1924,6 +2011,7 @@ public sealed partial class LibraryPage : Page,
             UpdateVirtualGridMetrics();
             QueueRenderVirtualGrid(force: true);
             UpdateLibraryLetters();
+            WakeCatalogContentRefresh();
         });
     }
 
@@ -1983,7 +2071,7 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        if (ViewModel.RequiresCatalogRefresh)
+        if (ViewModel.RequiresCatalogConfirmation)
         {
             HideUnconfirmedCatalogRows();
             // Keep slots as placeholders until their viewport read is confirmed;
@@ -2128,7 +2216,7 @@ public sealed partial class LibraryPage : Page,
         _suppressFilterEvents = true;
         AudiobookGroupSortComboBox.SelectedIndex = axis == "series" ? 0 : 1;
         _suppressFilterEvents = false;
-        AudiobookGroupSearchBox.PlaceholderText = $"Search {AudiobookGroupNoun(axis)}…";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookGroupSearchBox, "PlaceholderText", element => element.PlaceholderText = SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.searchPlaceholder", new Dictionary<string, object?> { ["group_by"] = axis }));
         await LoadAudiobookGroupsAsync(reset: true);
     }
 
@@ -2232,12 +2320,8 @@ public sealed partial class LibraryPage : Page,
             _audiobookGroupsOffset += response.Groups.Count;
             _audiobookGroupsHasMore = response.HasMore;
             var noun = AudiobookGroupNoun(axis);
-            AudiobookGroupCountText.Text = _audiobookGroupsTotalExact
-                ? $"{(_audiobookGroupsOffset == _audiobookGroupsTotal ? $"{_audiobookGroupsTotal:N0}" : $"{_audiobookGroupsOffset:N0} of {_audiobookGroupsTotal:N0}")} {noun}"
-                : $"{_audiobookGroupsOffset:N0}{(_audiobookGroupsHasMore ? "+" : "")} {noun}";
-            AudiobookGroupsEmpty.Text = string.IsNullOrWhiteSpace(AudiobookGroupSearchBox.Text)
-                ? $"No {noun} found in this library."
-                : $"No {noun} match “{AudiobookGroupSearchBox.Text.Trim()}”.";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookGroupCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get(_audiobookGroupsTotalExact ? (_audiobookGroupsOffset == _audiobookGroupsTotal ? "web.audiobooks.groups.countAll" : "web.audiobooks.groups.countPartial") : _audiobookGroupsHasMore ? "web.audiobooks.groups.countAtLeast" : "web.audiobooks.groups.countAll", new Dictionary<string, object?> { ["group_by"] = axis, ["count"] = _audiobookGroupsTotalExact ? _audiobookGroupsTotal : _audiobookGroupsOffset, ["total"] = (_audiobookGroupsTotalExact ? _audiobookGroupsTotal : _audiobookGroupsOffset).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture), ["shown"] = _audiobookGroupsOffset.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture), ["loaded"] = _audiobookGroupsOffset.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookGroupsEmpty, "Text", element => element.Text = string.IsNullOrWhiteSpace(AudiobookGroupSearchBox.Text) ? SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.empty", new Dictionary<string, object?> { ["group_by"] = axis }) : SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.noMatch", new Dictionary<string, object?> { ["group_by"] = axis, ["filter"] = AudiobookGroupSearchBox.Text.Trim() }));
             AudiobookGroupsEmpty.Visibility = AudiobookGroupsHost.Children.Count == 0
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -2247,7 +2331,7 @@ public sealed partial class LibraryPage : Page,
         {
             if (!ReferenceEquals(_audiobookGroupLoadCts, owner) || ct.IsCancellationRequested) return;
             if (reset) AudiobookGroupsHost.Children.Clear();
-            AudiobookGroupsEmpty.Text = $"Could not load {AudiobookGroupNoun(_currentAudiobookAxis)}: {ex.Message}";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookGroupsEmpty, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.loadFailed", new Dictionary<string, object?> { ["group_by"] = _currentAudiobookAxis }) + ": " + (ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message));
             AudiobookGroupsEmpty.Visibility = Visibility.Visible;
         }
         finally
@@ -2282,6 +2366,7 @@ public sealed partial class LibraryPage : Page,
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxLines = 1,
         };
+        MediaItemCardActions.BindText(stats, "Text", element => element.Text = AudiobookGroupStats(group));
         var button = new Button
         {
             Padding = large ? new Thickness(0) : new Thickness(16, 12, 16, 12),
@@ -2430,8 +2515,7 @@ public sealed partial class LibraryPage : Page,
             var key = $"audiobook-group-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(groupName + url))).Substring(0, 16)}";
             var path = await imageService.GetImageDiskPathAsync(key, "poster", url, httpClient);
             if (string.IsNullOrWhiteSpace(path)) return;
-            host.Child = new Image
-            {
+            host.Child = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = (int)Math.Ceiling(size * 1.25) },
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
             };
@@ -2476,12 +2560,12 @@ public sealed partial class LibraryPage : Page,
         var minutes = (group.TotalDurationSeconds % 3600) / 60;
         var parts = new List<string>
         {
-            $"{group.ItemCount:N0} {(group.ItemCount == 1 ? "book" : "books")}",
-            hours > 0 ? $"{hours}h {minutes}m" : $"{minutes}m",
+            SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statBooks", new Dictionary<string, object?> { ["count"] = group.ItemCount, ["count_text"] = (group.ItemCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }),
+            MediaItemCardActions.Runtime((int)(group.TotalDurationSeconds / 60)),
         };
-        if (group.InProgressCount > 0) parts.Add($"{group.InProgressCount} in progress");
-        else if (group.FinishedCount == group.ItemCount && group.ItemCount > 0) parts.Add("all finished");
-        else if (group.FinishedCount > 0) parts.Add($"{group.FinishedCount} finished");
+        if (group.InProgressCount > 0) parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statInProgress", new Dictionary<string, object?> { ["count"] = group.InProgressCount, ["count_text"] = (group.InProgressCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
+        else if (group.FinishedCount == group.ItemCount && group.ItemCount > 0) parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statAllFinished"));
+        else if (group.FinishedCount > 0) parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statFinished", new Dictionary<string, object?> { ["count"] = group.FinishedCount, ["count_text"] = (group.FinishedCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
         return string.Join(" · ", parts);
     }
 
@@ -3031,6 +3115,7 @@ public sealed partial class LibraryPage : Page,
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
             _ = ViewModel.EnsureLetterIndexAsync();
+            WakeCatalogContentRefresh();
             return;
         }
 
@@ -3046,6 +3131,7 @@ public sealed partial class LibraryPage : Page,
         finally
         {
             LibrarySkeletonScroll.Visibility = Visibility.Collapsed;
+            WakeCatalogContentRefresh();
         }
     }
 
@@ -3206,7 +3292,7 @@ public sealed partial class LibraryPage : Page,
                     if (ReferenceEquals(layout, heroLayout))
                     {
                         RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
-                        RecommendedError.Text = "The featured section could not be loaded right now.";
+                        SiloPlayer.Controls.MediaItemCardActions.BindText(RecommendedError, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.library.recommended.heroFailed", fallback: "The featured section could not be loaded right now."));
                         RecommendedErrorPanel.Visibility = Visibility.Visible;
                         return;
                     }
@@ -3243,7 +3329,7 @@ public sealed partial class LibraryPage : Page,
             RecommendedLoading.IsActive = false;
             RecommendedLoading.Visibility = Visibility.Collapsed;
             RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
-            RecommendedError.Text = $"Failed to load recommendations: {ex.Message}";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(RecommendedError, "Text", element => element.Text = SiloPlayer.Controls.MediaItemCardActions.Problem(ex, SiloPlayer.Core.Localization.AppStrings.Get("web.library.recommended.loadFailed")));
             RecommendedErrorPanel.Visibility = Visibility.Visible;
         }
         finally
@@ -3361,7 +3447,7 @@ public sealed partial class LibraryPage : Page,
             if (heroFailed && _recommendedHeroSection is null)
             {
                 RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
-                RecommendedError.Text = "The featured section could not be loaded right now.";
+                SiloPlayer.Controls.MediaItemCardActions.BindText(RecommendedError, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.library.recommended.heroFailed", fallback: "The featured section could not be loaded right now."));
                 RecommendedErrorPanel.Visibility = Visibility.Visible;
             }
             else
@@ -3527,6 +3613,9 @@ public sealed partial class LibraryPage : Page,
             Id = $"{hero.Id}-rest",
             SectionType = "continue_listening",
             Title = hero.Title,
+            TitleKey = hero.TitleKey,
+            TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(hero.TitleArgs),
+            KeyedTitle = hero.KeyedTitle,
             ItemLimit = hero.Items.Count - 1,
             TotalCount = hero.Items.Count - 1,
             LoadCompleted = true,
@@ -3629,6 +3718,9 @@ public sealed partial class LibraryPage : Page,
         Id = layout.Id,
         SectionType = layout.SectionType,
         Title = layout.Title,
+        TitleKey = layout.TitleKey,
+        TitleArgs = SiloPlayer.Core.Localization.SectionTitles.CopyArguments(layout.TitleArgs),
+        KeyedTitle = layout.KeyedTitle,
         Featured = layout.Featured,
         ItemLimit = layout.ItemLimit,
         IsCustom = layout.IsCustom,
@@ -3652,7 +3744,8 @@ public sealed partial class LibraryPage : Page,
                 Title: section.Title,
                 Scope: "library",
                 SectionId: section.Id,
-                LibraryId: libraryId));
+                LibraryId: libraryId,
+                TitleKey: section.TitleKey, TitleArgs: SectionTitles.CopyArguments(section.TitleArgs), KeyedTitle: section.KeyedTitle));
     }
 
     private async Task RetryLibrarySectionAsync(SectionRow row, string sectionId, int libraryId)
@@ -3855,13 +3948,13 @@ public sealed partial class LibraryPage : Page,
 
         if (collection.IsUserCollection)
         {
-            content.Children.Add(new TextBlock
+            content.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock
             {
                 Text = "User collection",
                 FontSize = 12,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
                 Margin = new Thickness(2, 0, 2, 0)
-            });
+            }, text: "web.collections.posterCard.userCollection"));
         }
 
         var card = new Grid
@@ -3878,7 +3971,7 @@ public sealed partial class LibraryPage : Page,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Content = content,
         };
-        AutomationProperties.SetName(openButton, $"Open {collection.Title}");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(openButton, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.viewDetails") + " · " + collection.Title));
         card.Children.Add(openButton);
 
         Button? pinButton = null;
@@ -3900,7 +3993,7 @@ public sealed partial class LibraryPage : Page,
                 Content = pinIcon,
                 Opacity = pinned ? 1 : 0,
             };
-            ToolTipService.SetToolTip(pinButton, pinned ? "Unpin from sidebar" : "Pin to sidebar");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(pinButton, "ToolTip", element => ToolTipService.SetToolTip(element, SiloPlayer.Core.Localization.AppStrings.Get(App.MainWindowInstance?.IsSidebarPin(ownerLibrary.Id, "collection", collection.Id) == true ? "web.collections.posterCard.unpinFromSidebar" : "web.collections.posterCard.pinToSidebar")));
             pinButton.Tapped += (_, tapArgs) => tapArgs.Handled = true;
             pinButton.Click += async (_, args) =>
             {
@@ -3914,7 +4007,7 @@ public sealed partial class LibraryPage : Page,
                         ownerLibrary.Id, "collection", collection.Id, collection.Title);
                     pinIcon.Glyph = nowPinned ? "\uE841" : "\uE840";
                     pinButton.Opacity = nowPinned ? 1 : 0;
-                    ToolTipService.SetToolTip(pinButton, nowPinned ? "Unpin from sidebar" : "Pin to sidebar");
+                    ToolTipService.SetToolTip(pinButton, SiloPlayer.Core.Localization.AppStrings.Get(nowPinned ? "web.collections.posterCard.unpinFromSidebar" : "web.collections.posterCard.pinToSidebar"));
                 }
                 catch (OperationCanceledException)
                 {
@@ -3924,8 +4017,7 @@ public sealed partial class LibraryPage : Page,
                 catch (Exception ex)
                 {
                     if (IsLoaded && pinButton.IsLoaded && apiClient.IsCurrentContext(context))
-                        App.Services.GetRequiredService<ToastService>().Error(ex,
-                            ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins.");
+                        App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, ex is InvalidDataException ? ex.Message : "Silo could not update sidebar pins."));
                 }
                 finally { pinButton.IsEnabled = true; }
             };
@@ -4039,8 +4131,7 @@ public sealed partial class LibraryPage : Page,
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            posterBorder.Child = new Image
-            {
+            posterBorder.Child = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = bitmapImage,
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill
             };
@@ -4233,13 +4324,13 @@ public sealed partial class LibraryPage : Page,
         {
             var query = BuildLibraryRuleDraft(); query.Groups = QueryEditing.PopulatedGroups(query);
             foreach (var badge in CatalogFilterBadges.Create(query, query.MediaScope))
-                FilterBadgesPanel.Children.Add(CatalogFilterBadgeView.Build(badge.Label, async () =>
+                FilterBadgesPanel.Children.Add(CatalogFilterBadgeView.Build(badge, ViewModel.Library?.Type, async () =>
                 {
                     badge.Remove(); StoreLibraryRuleDraft(query); BuildAdvancedRulesPanel(); await ApplyAdvancedRulesAsync();
                 }));
             var count = CatalogFilterBadges.ActiveCount(query, query.MediaScope);
             ActiveFiltersBar.Visibility = FilterBadgesPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            FilterCountText.Text = count.ToString(); FilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            FilterCountText.Text = count.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture); FilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
             ClearAllFiltersButton.Visibility = count > 1 ? Visibility.Visible : Visibility.Collapsed;
             return;
         }
@@ -4249,17 +4340,17 @@ public sealed partial class LibraryPage : Page,
             {
                 var label = ViewModel.SelectedType switch
                 {
-                    "movie" => "Movies",
-                    "series" => "Series",
-                    "episode" => "Episodes",
+                    "movie" => SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.movies"),
+                    "series" => SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.series"),
+                    "episode" => SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.mediaType.episodes"),
                     _ => ViewModel.SelectedType
                 };
-                filters.Add(("Type", label, () => { ViewModel.SelectedType = null; MediaTypeComboBox.SelectedIndex = 0; }));
+                filters.Add((SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.typePlaceholder"), label, () => { ViewModel.SelectedType = null; MediaTypeComboBox.SelectedIndex = 0; }));
             }
             foreach (var selectedGenre in _selectedGenres.ToList())
             {
                 var capturedGenre = selectedGenre;
-                filters.Add(("Genre", capturedGenre, () =>
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeGenre", new Dictionary<string, object?> { ["genre"] = capturedGenre }), () =>
                 {
                     _selectedGenres.Remove(capturedGenre);
                     ViewModel.SelectedGenres = _selectedGenres.ToList();
@@ -4268,25 +4359,25 @@ public sealed partial class LibraryPage : Page,
                 }));
             }
             if (!string.IsNullOrEmpty(ViewModel.SelectedContentRating))
-                filters.Add(("Rating", ViewModel.SelectedContentRating, () => { ViewModel.SelectedContentRating = null; ContentRatingComboBox.SelectedIndex = 0; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeContentRating", new Dictionary<string, object?> { ["rating"] = ViewModel.SelectedContentRating }), () => { ViewModel.SelectedContentRating = null; ContentRatingComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedStudio))
-                filters.Add(("Studio", ViewModel.SelectedStudio, () => { ViewModel.SelectedStudio = null; StudioComboBox.SelectedIndex = 0; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeStudio", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedStudio }), () => { ViewModel.SelectedStudio = null; StudioComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedCountry))
-                filters.Add(("Country", ViewModel.SelectedCountry, () => { ViewModel.SelectedCountry = null; CountryComboBox.SelectedIndex = 0; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeCountry", new Dictionary<string, object?> { ["country"] = ViewModel.SelectedCountry }), () => { ViewModel.SelectedCountry = null; CountryComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedResolution))
                 filters.Add(("Quality", ViewModel.SelectedResolution, () => { ViewModel.SelectedResolution = null; ResolutionComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedAudioLanguage))
-                filters.Add(("Audio", ViewModel.SelectedAudioLanguage, () => { ViewModel.SelectedAudioLanguage = null; AudioLangComboBox.SelectedIndex = 0; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeLanguage", new Dictionary<string, object?> { ["language"] = ViewModel.SelectedAudioLanguage }), () => { ViewModel.SelectedAudioLanguage = null; AudioLangComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedYearMin))
-                filters.Add(("Year From", ViewModel.SelectedYearMin, () => { ViewModel.SelectedYearMin = null; YearMinBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeYearFrom", new Dictionary<string, object?> { ["year"] = ViewModel.SelectedYearMin }), () => { ViewModel.SelectedYearMin = null; YearMinBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedYearMax))
-                filters.Add(("Year To", ViewModel.SelectedYearMax, () => { ViewModel.SelectedYearMax = null; YearMaxBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeYearTo", new Dictionary<string, object?> { ["year"] = ViewModel.SelectedYearMax }), () => { ViewModel.SelectedYearMax = null; YearMaxBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedMinimumRating))
-                filters.Add(("IMDb", $"{ViewModel.SelectedMinimumRating}+", () => { ViewModel.SelectedMinimumRating = null; MinimumRatingBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeMinImdb", new Dictionary<string, object?> { ["rating"] = ViewModel.SelectedMinimumRating }), () => { ViewModel.SelectedMinimumRating = null; MinimumRatingBox.Text = ""; }));
             foreach (var selectedLanguage in _selectedOriginalLanguages.ToList())
             {
                 var capturedLanguage = selectedLanguage;
-                filters.Add(("Language", capturedLanguage, () =>
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeLanguage", new Dictionary<string, object?> { ["language"] = capturedLanguage }), () =>
                 {
                     _selectedOriginalLanguages.Remove(capturedLanguage);
                     ViewModel.SelectedOriginalLanguages = _selectedOriginalLanguages.ToList();
@@ -4295,29 +4386,29 @@ public sealed partial class LibraryPage : Page,
                 }));
             }
             if (!string.IsNullOrEmpty(ViewModel.SelectedActor))
-                filters.Add(("Actor", ViewModel.SelectedActor, () => { ViewModel.SelectedActor = null; ActorBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeActor", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedActor }), () => { ViewModel.SelectedActor = null; ActorBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedDirector))
-                filters.Add(("Director", ViewModel.SelectedDirector, () => { ViewModel.SelectedDirector = null; DirectorBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeDirector", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedDirector }), () => { ViewModel.SelectedDirector = null; DirectorBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedWriter))
-                filters.Add(("Writer", ViewModel.SelectedWriter, () => { ViewModel.SelectedWriter = null; WriterBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeWriter", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedWriter }), () => { ViewModel.SelectedWriter = null; WriterBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedProducer))
-                filters.Add(("Producer", ViewModel.SelectedProducer, () => { ViewModel.SelectedProducer = null; ProducerBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeProducer", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedProducer }), () => { ViewModel.SelectedProducer = null; ProducerBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedAuthor))
-                filters.Add(("Author", ViewModel.SelectedAuthor, () => { ViewModel.SelectedAuthor = null; AuthorBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeAuthor", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedAuthor }), () => { ViewModel.SelectedAuthor = null; AuthorBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedNarrator))
-                filters.Add(("Narrator", ViewModel.SelectedNarrator, () => { ViewModel.SelectedNarrator = null; NarratorBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeNarrator", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedNarrator }), () => { ViewModel.SelectedNarrator = null; NarratorBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedSeries))
-                filters.Add(("Series", ViewModel.SelectedSeries, () => { ViewModel.SelectedSeries = null; SeriesBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeSeries", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedSeries }), () => { ViewModel.SelectedSeries = null; SeriesBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedNetwork))
-                filters.Add(("Network", ViewModel.SelectedNetwork, () => { ViewModel.SelectedNetwork = null; NetworkComboBox.SelectedIndex = 0; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeNetwork", new Dictionary<string, object?> { ["name"] = ViewModel.SelectedNetwork }), () => { ViewModel.SelectedNetwork = null; NetworkComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedMatchStatus))
-                filters.Add(("Match", ViewModel.SelectedMatchStatus, () => { ViewModel.SelectedMatchStatus = null; MatchStatusComboBox.SelectedIndex = 0; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeMatch", new Dictionary<string, object?> { ["status"] = ViewModel.SelectedMatchStatus }), () => { ViewModel.SelectedMatchStatus = null; MatchStatusComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedWatchStatus))
-                filters.Add((WatchStatusLabel.Text, ViewModel.SelectedWatchStatus.Replace('_', ' '), () => { ViewModel.SelectedWatchStatus = null; WatchStatusComboBox.SelectedIndex = 0; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get(ViewModel.Library?.Type == "audiobook" ? "web.catalog.filters.badgeListening" : ViewModel.Library?.Type is "ebook" or "manga" ? "web.catalog.filters.badgeRead" : "web.catalog.filters.badgeWatch", new Dictionary<string, object?> { ["status"] = ViewModel.SelectedWatchStatus }), () => { ViewModel.SelectedWatchStatus = null; WatchStatusComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedAddedInLast))
-                filters.Add(("Added", ViewModel.SelectedAddedInLast, () => { ViewModel.SelectedAddedInLast = null; AddedInLastBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeAddedInLast", new Dictionary<string, object?> { ["span"] = ViewModel.SelectedAddedInLast }), () => { ViewModel.SelectedAddedInLast = null; AddedInLastBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedReleasedInLast))
-                filters.Add(("Released", ViewModel.SelectedReleasedInLast, () => { ViewModel.SelectedReleasedInLast = null; ReleasedInLastBox.Text = ""; }));
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeReleasedInLast", new Dictionary<string, object?> { ["span"] = ViewModel.SelectedReleasedInLast }), () => { ViewModel.SelectedReleasedInLast = null; ReleasedInLastBox.Text = ""; }));
             if (ViewModel.SelectedFourK)
                 filters.Add(("Quality", "4K", () => { ViewModel.SelectedFourK = false; FourKToggle.IsChecked = false; }));
             if (ViewModel.SelectedHdr)
@@ -4335,7 +4426,7 @@ public sealed partial class LibraryPage : Page,
         }
 
         ActiveFiltersBar.Visibility = Visibility.Visible;
-        FilterCountText.Text = filters.Count.ToString();
+        FilterCountText.Text = filters.Count.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture);
         FilterCountBadge.Visibility = Visibility.Visible;
         ClearAllFiltersButton.Visibility = filters.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
 
@@ -4380,7 +4471,7 @@ public sealed partial class LibraryPage : Page,
             {
                 new TextBlock
                 {
-                    Text = $"{label}: {value}",
+                    Text = string.IsNullOrEmpty(label) ? value : $"{label}: {value}",
                     FontSize = 12,
                     Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
                     VerticalAlignment = VerticalAlignment.Center

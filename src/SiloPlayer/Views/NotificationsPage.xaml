@@ -1,4 +1,4 @@
-<Page
+<Page xmlns:loc="using:SiloPlayer.Services"
     x:Class="SiloPlayer.Views.NotificationsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -6,7 +6,7 @@
     xmlns:converters="using:SiloPlayer.Converters"
     xmlns:controls="using:SiloPlayer.Controls"
     Background="{StaticResource AppBackgroundBrush}"
-    SizeChanged="Page_SizeChanged">
+    SizeChanged="Page_SizeChanged" loc:Localized.Direction="True">
 
     <Page.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" /><converters:UrlToImageSourceConverter x:Key="UrlToImage" />
@@ -24,13 +24,13 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xEA8F;" FontSize="24" />
-                <TextBlock Text="Notifications" FontSize="24" LineHeight="32" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Text="Notifications" loc:Localized.Text="web.notifications.inbox.title" FontSize="24" LineHeight="32" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" VerticalAlignment="Center" />
             </StackPanel>
             <Button x:Name="MarkAllButton" Grid.Column="1" Click="MarkAll_Click" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="32" Padding="12,4" FontSize="14">
-                <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE8FB;" FontSize="15" /><TextBlock Text="Mark all read" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE8FB;" FontSize="15" /><TextBlock Text="Mark all read" loc:Localized.Text="web.notifications.inbox.markAllRead" /></StackPanel>
             </Button>
             <Button x:Name="PreferencesButton" Grid.Column="2" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="32" Padding="12,4" FontSize="14">
-                <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE713;" FontSize="15" /><TextBlock Text="Preferences" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE713;" FontSize="15" /><TextBlock Text="Preferences" loc:Localized.Text="web.notifications.preferences.open" /></StackPanel>
                 <Button.Flyout>
                     <Flyout Placement="BottomEdgeAlignedRight">
                         <Flyout.FlyoutPresenterStyle><Style TargetType="FlyoutPresenter"><Setter Property="Padding" Value="16" /><Setter Property="MaxWidth" Value="320" /><Setter Property="CornerRadius" Value="16" /><Setter Property="BorderThickness" Value="1" /><Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" /><Setter Property="Background" Value="{StaticResource PopoverBrush}" /><Setter Property="Foreground" Value="{StaticResource PopoverForegroundBrush}" /></Style></Flyout.FlyoutPresenterStyle>
@@ -59,18 +59,18 @@
                                     <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
                                 </Style>
                             </StackPanel.Resources>
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Notifications" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="Master switch for this profile" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="NotificationsEnabledToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Notifications" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Notifications" loc:Localized.Text="web.notifications.inbox.title" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="Master switch for this profile" loc:Localized.Text="web.notifications.preferences.enabledDescription" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="NotificationsEnabledToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Notifications" loc:Localized.Name="web.notifications.inbox.title" /></Grid>
                             <Border Height="1" Background="{StaticResource BorderBrush}" />
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Favorites" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="New episodes of favorited series" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="FavoritesToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Favorites" /></Grid>
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Watchlist" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="New episodes of watchlisted series" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="WatchlistToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Watchlist" /></Grid>
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Continue Watching" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="Series you are actively watching" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="ContinueWatchingToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Continue Watching" /></Grid>
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Next Up" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="The next episode after your progress" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="NextUpToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Next Up" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Favorites" loc:Localized.Text="web.notifications.preferences.favorites" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="New episodes of favorited series" loc:Localized.Text="web.notifications.preferences.favoritesDescription" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="FavoritesToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Favorites" loc:Localized.Name="web.notifications.preferences.favorites" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Watchlist" loc:Localized.Text="web.notifications.preferences.watchlist" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="New episodes of watchlisted series" loc:Localized.Text="web.notifications.preferences.watchlistDescription" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="WatchlistToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Watchlist" loc:Localized.Name="web.notifications.preferences.watchlist" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Continue Watching" loc:Localized.Text="web.notifications.preferences.continueWatching" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="Series you are actively watching" loc:Localized.Text="web.notifications.preferences.continueWatchingDescription" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="ContinueWatchingToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Continue Watching" loc:Localized.Name="web.notifications.preferences.continueWatching" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Next Up" loc:Localized.Text="web.notifications.preferences.nextUp" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="The next episode after your progress" loc:Localized.Text="web.notifications.preferences.nextUpDescription" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="NextUpToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Next Up" loc:Localized.Name="web.notifications.preferences.nextUp" /></Grid>
                             <TextBlock x:Name="PreferenceErrorText" Foreground="{StaticResource ErrorBrush}" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
-                            <Button x:Name="SeeSeriesButton" Content="See which series notify you" Click="Series_Click" Visibility="Collapsed" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Left" />
+                            <Button x:Name="SeeSeriesButton" Content="See which series notify you" loc:Localized.Content="web.notifications.preferences.seeSeries" Click="Series_Click" Visibility="Collapsed" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Left" />
                             </StackPanel>
                             <StackPanel x:Name="PreferenceLoadFailedPanel" Spacing="12" Visibility="Collapsed">
-                                <TextBlock Text="Couldn’t load preferences." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <Button Content="Retry" HorizontalAlignment="Left" Style="{StaticResource OutlineButtonStyle}" Click="RetryPreferences_Click" />
+                                <TextBlock Text="Couldn’t load preferences." loc:Localized.Text="web.notifications.preferences.loadFailed" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Button Content="Retry" loc:Localized.Content="common.retry" HorizontalAlignment="Left" Style="{StaticResource OutlineButtonStyle}" Click="RetryPreferences_Click" />
                             </StackPanel>
                         </Grid>
                     </Flyout>
@@ -79,9 +79,9 @@
         </Grid>
 
         <StackPanel Orientation="Horizontal" Spacing="6">
-            <Button x:Name="AllButton" Content="All" Click="Filter_Click" Tag="all" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
+            <Button x:Name="AllButton" Content="All" loc:Localized.Content="web.notifications.inbox.filterAll" Click="Filter_Click" Tag="all" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
             <Button x:Name="UnreadButton" Click="Filter_Click" Tag="unread" Height="32" MinHeight="32" Padding="12,4" FontSize="14"><TextBlock x:Name="UnreadButtonText" Text="Unread" /></Button>
-            <Button x:Name="SeriesButton" Content="Series" Click="Series_Click" Visibility="Collapsed" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
+            <Button x:Name="SeriesButton" Content="Series" loc:Localized.Content="web.notifications.inbox.filterSeries" Click="Series_Click" Visibility="Collapsed" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
         </StackPanel>
 
         <StackPanel x:Name="InboxErrorPanel" Visibility="Collapsed" Spacing="8" HorizontalAlignment="Center">
@@ -100,7 +100,7 @@
             <StackPanel x:Name="EmptyState" Spacing="12" Margin="0,80" HorizontalAlignment="Center" VerticalAlignment="Top" Visibility="Collapsed" MaxWidth="384">
                 <FontIcon Glyph="&#xE7ED;" FontSize="40" Opacity="0.5" HorizontalAlignment="Center" />
                 <TextBlock x:Name="EmptyTitleText" Text="No notifications yet" FontSize="14" LineHeight="20" HorizontalAlignment="Center" />
-                <TextBlock Text="You will be notified here when new episodes arrive for series you favorite, watchlist, or are watching." TextAlignment="Center" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                <TextBlock Text="You will be notified here when new episodes arrive for series you favorite, watchlist, or are watching." loc:Localized.Text="web.notifications.inbox.emptyHint" TextAlignment="Center" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
             </Grid>
             <controls:NotificationSeriesControl x:Name="SeriesView" Visibility="Collapsed" />
@@ -111,16 +111,16 @@
                     <DataTemplate x:DataType="models:AppNotification">
                         <Grid x:Name="NotificationRowRoot" Padding="12" ColumnSpacing="12" MinHeight="88" CornerRadius="16" Loaded="NotificationRow_Loaded" DataContextChanged="NotificationRow_DataContextChanged" PointerEntered="NotificationRow_PointerEntered" PointerExited="NotificationRow_PointerExited">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Border Width="44" Height="64" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
+                            <Border Width="44" Height="64" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><Image FlowDirection="LeftToRight" Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
                             <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Top">
-                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock x:Name="NotificationTitleText" Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
-                                <TextBlock Text="{x:Bind Subtitle}" FontSize="14" LineHeight="20" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
-                                <ItemsControl x:Name="NotificationReasons" Margin="0,4,0,0" ItemsSource="{x:Bind ReasonLabels}">
+                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock x:Name="NotificationTitleText" Grid.Column="1"  FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" x:Name="NotificationTimeText" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
+                                <TextBlock x:Name="NotificationSubtitleText" FontSize="14" LineHeight="20" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                                <ItemsControl x:Name="NotificationReasons" Margin="0,4,0,0" >
                                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate><DataTemplate><Border Padding="8,2" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><TextBlock Text="{Binding}" FontSize="10" LineHeight="15" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" /></Border></DataTemplate></ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </StackPanel>
-                            <Button x:Name="InlineMarkReadButton" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Right" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" GotFocus="InlineMarkReadButton_GotFocus" LostFocus="InlineMarkReadButton_LostFocus" Width="28" Height="28" MinHeight="0" MinWidth="0" CornerRadius="10" Margin="0,0,-4,-4" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read" AutomationProperties.Name="Mark as read"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
+                            <Button x:Name="InlineMarkReadButton" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Right" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" GotFocus="InlineMarkReadButton_GotFocus" LostFocus="InlineMarkReadButton_LostFocus" Width="28" Height="28" MinHeight="0" MinWidth="0" CornerRadius="10" Margin="0,0,-4,-4" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read" loc:Localized.ToolTip="web.notifications.inbox.markRead" AutomationProperties.Name="Mark as read" loc:Localized.Name="web.notifications.inbox.markRead"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
                         </Grid>
                     </DataTemplate>
                 </ListView.ItemTemplate>
@@ -129,7 +129,7 @@
             <Button x:Name="LoadMoreButton" Click="LoadMore_Click" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <ProgressRing x:Name="LoadMoreBusy" Width="16" Height="16" Visibility="Collapsed" IsActive="False" />
-                    <TextBlock Text="Load more" />
+                    <TextBlock Text="Load more" loc:Localized.Text="web.notifications.inbox.loadMore" />
                 </StackPanel>
             </Button>
                 </StackPanel>

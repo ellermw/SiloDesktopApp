@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Core.Localization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -35,7 +36,7 @@ public partial class PlayerService
         var members = new StackPanel { Spacing = 8 };
         var memberScroll = new ScrollViewer { Content = members, MaxHeight = 160, IsTabStop = true,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        AutomationProperties.SetName(memberScroll, "Watch party viewers");
+        AutomationProperties.SetName(memberScroll, HudText("web.player.watchTogether.viewersLabel", "Viewers"));
         footer.Children.Add(summary); footer.Children.Add(policy); footer.Children.Add(error); footer.Children.Add(memberScroll);
         XamlRoot? footerRoot = null;
         void ResizeFooter(XamlRoot root, XamlRootChangedEventArgs args)
@@ -57,12 +58,14 @@ public partial class PlayerService
             var reason = room.IsBusy ? "A room update is pending." : IsLoading || _switchingContent ? "A playback change is already in progress." : "";
             if (snapshot.SelfCanManageRoom)
             {
-                rows.Add(new("invite", "Invite", "Copy invite link", [], IsEnabled: available, DisabledReason: reason, CloseOnInvoke: false));
-                rows.Add(new("toggle-policy", snapshot.GuestControlPolicy == "guest_play_pause" ? "Host Only" : "Allow Pause",
+                rows.Add(new("invite", HudText("web.player.watchTogether.invite", "Invite"), HudText("web.player.watchTogether.copyInviteLabel", "Copy invite link"), [],
+                    IsEnabled: available, DisabledReason: reason, CloseOnInvoke: false));
+                rows.Add(new("toggle-policy", snapshot.GuestControlPolicy == "guest_play_pause"
+                        ? HudText("web.player.watchTogether.setHostOnly", "Host Only") : HudText("web.player.watchTogether.allowPause", "Allow Pause"),
                     "Guest permission covers pause and resume. Seeking stays with the host.", [], IsEnabled: available,
                     DisabledReason: reason, CloseOnInvoke: false, IsPending: room.PendingPlaybackPanelAction == "toggle-policy"));
                 var canStop = available && snapshot.Phase == "playing" && room.ConnectionState == "connected";
-                rows.Add(new("stop", "Stop", "Stop for everyone and return to the room with this item staged.", [], IsEnabled: canStop,
+                rows.Add(new("stop", HudText("web.player.watchTogether.stop", "Stop"), "Stop for everyone and return to the room with this item staged.", [], IsEnabled: canStop,
                     DisabledReason: reason.Length > 0 ? reason : snapshot.Phase != "playing" ? "Playback is already stopped." :
                         room.ConnectionState != "connected" ? "Reconnect to the room before stopping playback." : "",
                     CloseOnInvoke: false, IsPending: room.PendingPlaybackPanelAction == "stop"));
@@ -70,7 +73,7 @@ public partial class PlayerService
                     DisabledReason: reason, CloseOnInvoke: false));
             }
             if (_offeredRoomQuality != null && _offeredFromQuality == ActiveQualityTier && IsWatchTogetherPlayback)
-                rows.Add(new("lower-quality", "Lower quality", "Keep watching with a lower streaming quality.", [], IsEnabled: available,
+                rows.Add(new("lower-quality", HudText("web.player.room.lowerQuality", "Lower quality"), "Keep watching with a lower streaming quality.", [], IsEnabled: available,
                     DisabledReason: reason));
             if (rows.Count == 0)
                 rows.Add(new("room-status", "Room status", "The host manages this watch party.", [], IsEnabled: false,
@@ -81,12 +84,22 @@ public partial class PlayerService
         {
             if (!Current()) { menu?.Close(PlaybackMenuCloseReason.OwnerRetired); return; }
             var snapshot = room.Room!;
-            var connection = room.ConnectionState switch { "connected" => "Connected", "connecting" => "Connecting",
-                "reconnecting" => "Reconnecting", _ => "Disconnected" };
-            summary.Text = $"{snapshot.Code} · {snapshot.MemberCount} {(snapshot.MemberCount == 1 ? "viewer" : "viewers")} · {connection}";
+            var connection = room.ConnectionState switch
+            {
+                "connected" => HudText("web.watchTogether.connection.connected", "Connected"),
+                "connecting" => HudText("web.watchTogether.connection.connecting", "Connecting…"),
+                "reconnecting" => HudText("web.player.connection.reconnecting", "Reconnecting…"),
+                _ => HudText("watchParty.connection.disconnected", "Disconnected"),
+            };
+            var viewers = AppStrings.Get("web.player.watchTogether.viewerCount", new Dictionary<string, object?> { ["count"] = snapshot.MemberCount },
+                fallback: $"{snapshot.MemberCount} {(snapshot.MemberCount == 1 ? "viewer" : "viewers")}");
+            // The room code is data and stays exactly as issued.
+            summary.Text = $"{snapshot.Code} · {viewers} · {connection}";
             policy.Text = snapshot.SelfCanManageRoom
-                ? snapshot.GuestControlPolicy == "guest_play_pause" ? "Guests can pause & resume" : "Only you control playback"
-                : snapshot.SelfCanControlTransport ? "You can pause & resume" : "Host controls playback";
+                ? snapshot.GuestControlPolicy == "guest_play_pause" ? HudText("web.player.watchTogether.policy.guestsCanPause", "Guests can pause & resume")
+                    : HudText("web.player.watchTogether.policy.hostOnly", "Only you control playback")
+                : snapshot.SelfCanControlTransport ? HudText("web.player.watchTogether.policy.youCanPause", "You can pause & resume")
+                    : HudText("web.player.watchTogether.policy.hostControls", "Host controls playback");
             error.Text = room.ErrorMessage ?? (room.IsBusy ? "Updating watch party…" : room.NoticeMessage ?? "");
             error.ClearValue(TextBlock.ForegroundProperty);
             if (room.ErrorMessage != null) error.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
@@ -99,11 +112,15 @@ public partial class PlayerService
             for (var index = 0; index < snapshot.Members.Count; index++)
             {
                 var member = snapshot.Members[index];
-                var status = member.IsBuffering ? "Buffering" : member.IsSyncing ? "Syncing" : member.IsReady ? "Ready" :
-                    member.Connected ? "Connected" : "Disconnected";
+                var status = member.IsBuffering ? HudText("web.player.watchTogether.member.buffering", "Buffering")
+                    : member.IsSyncing ? HudText("web.player.watchTogether.member.syncing", "Syncing")
+                    : member.IsReady ? HudText("web.player.watchTogether.member.ready", "Ready")
+                    : member.Connected ? HudText("web.player.watchTogether.member.connected", "Connected")
+                    : HudText("watchParty.connection.disconnected", "Disconnected");
                 var text = rebuild ? new TextBlock { Tag = identities[index], TextWrapping = TextWrapping.Wrap,
                     MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 } : (TextBlock)members.Children[index];
-                text.Text = $"{member.DisplayLabel}{(member.IsHost ? " · Host" : "")} · {status}";
+                // Member names are raw user data.
+                text.Text = $"{member.DisplayLabel}{(member.IsHost ? " · " + HudText("watchParty.seat.host", "Host") : "")} · {status}";
                 AutomationProperties.SetName(text, text.Text); ToolTipService.SetToolTip(text, text.Text);
                 if (rebuild) members.Children.Add(text);
             }
@@ -139,8 +156,15 @@ public partial class PlayerService
             room.PropertyChanged -= Changed; NativePartyStateChanged -= QueueRefresh;
             finish(reason);
         }
-        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, "Watch Party", Choices(), Current,
+        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.watchTogether.title", "Watch Party"), Choices(), Current,
             Action, Closed, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer);
+        // Footer text and rows re-render in place; room ownership is untouched.
+        menu.Localize(() => HudText("web.player.watchTogether.title", "Watch Party"), () =>
+        {
+            AutomationProperties.SetName(memberScroll, HudText("web.player.watchTogether.viewersLabel", "Viewers"));
+            Refresh();
+            return Choices();
+        });
         room.PropertyChanged += Changed; NativePartyStateChanged += QueueRefresh; Refresh();
         return menu;
     }
@@ -161,11 +185,22 @@ public partial class PlayerService
         {
             var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Visibility = Visibility.Collapsed,
                 Foreground = (Brush)Application.Current.Resources["ErrorBrush"] };
-            var content = new StackPanel { Spacing = 10, Children =
-                { new TextBlock { Text = "End the watch party for everyone?", TextWrapping = TextWrapping.Wrap }, error } };
-            dialog = new ContentDialog { Title = "End watch party?", Content = content, PrimaryButtonText = "End Party",
-                CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
+            var description = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            var content = new StackPanel { Spacing = 10, Children = { description, error } };
+            dialog = new ContentDialog { Content = content, DefaultButton = ContentDialogButton.Close,
                 PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
+            var ending = false;
+            void DialogText()
+            {
+                AppLocalization.ApplyDirection(dialog);
+                dialog.Title = HudText("web.watchTogether.endDialog.title", "End watch party?");
+                description.Text = HudText("web.watchTogether.endDialog.description", "End the watch party for everyone?");
+                dialog.PrimaryButtonText = ending ? "Ending…" : HudText("watchParty.end.confirm", "End Party");
+                dialog.CloseButtonText = HudText("common.cancel", "Cancel");
+            }
+            DialogText();
+            // An open confirmation follows the interface language without closing.
+            using var dialogText = AppLocalization.Register(dialog, DialogText);
             _nativePartyEndDialog = dialog;
             watch = _nativeMenuDispatcher!.CreateTimer(); watch.Interval = TimeSpan.FromMilliseconds(100);
             watch.Tick += (_, _) => { if (!isCurrent() || room.Room?.SelfCanManageRoom != true) dialog.Hide(); };
@@ -176,13 +211,13 @@ public partial class PlayerService
                 try
                 {
                     if (!isCurrent() || room.Room?.SelfCanManageRoom != true) { args.Cancel = false; return; }
-                    dialog.IsPrimaryButtonEnabled = false; dialog.PrimaryButtonText = "Ending…"; error.Visibility = Visibility.Collapsed;
+                    ending = true; dialog.IsPrimaryButtonEnabled = false; dialog.PrimaryButtonText = "Ending…"; error.Visibility = Visibility.Collapsed;
                     await coordinator.InvokePlaybackPanelActionAsync(room, "end", isCurrent);
                     if (!isCurrent() || room.ClosedReason == "host_left") args.Cancel = false;
                     else
                     {
                         error.Text = room.ErrorMessage ?? "The watch party could not be ended. Try again.";
-                        error.Visibility = Visibility.Visible; dialog.PrimaryButtonText = "End Party"; dialog.IsPrimaryButtonEnabled = true;
+                        ending = false; error.Visibility = Visibility.Visible; DialogText(); dialog.IsPrimaryButtonEnabled = true;
                     }
                 }
                 finally { deferral.Complete(); }
@@ -205,7 +240,7 @@ public partial class PlayerService
                 finally { dialog.Loaded -= EnableAfterLoad; }
             }, activate, isCurrent);
         }
-        catch (Exception) { if (isCurrent()) ShowNotice("Watch Party", "The confirmation could not open. Try again.", "error"); }
+        catch (Exception) { if (isCurrent()) ShowNotice(HudText("web.player.room.noticeTitle", "Watch Party"), "The confirmation could not open. Try again.", "error"); }
         finally
         {
             watch?.Stop(); _playbackDialogGate.Release();

@@ -93,7 +93,7 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
         _loadInProgress = true;
         IsLoading = replace && Items.Count == 0;
         IsLoadingMore = !replace;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -116,7 +116,7 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load favorites: {ex.Message}";
+            SetLocalizedMessage(nameof(ErrorMessage), () => $"{SiloPlayer.Core.Localization.AppStrings.Get("web.common.ui.carousel.loadFailed", new Dictionary<string, object?> { ["title_lower"] = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.favorites") })} {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally
         {

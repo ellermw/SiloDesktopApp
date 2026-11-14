@@ -450,8 +450,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
                         null!,
                         string.Empty) is ImageSource backdropSource)
                 {
-                    grid.Children.Add(new Image
-                    {
+                    grid.Children.Add(new Image { FlowDirection = FlowDirection.LeftToRight,
                         Source = backdropSource,
                         Stretch = Stretch.UniformToFill,
                     });
@@ -461,14 +460,14 @@ public sealed partial class WatchTonightDialog : ContentDialog
         }
         if (grid.Children.Count == 0)
         {
-            grid.Children.Add(new TextBlock
+            grid.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = "No Image",
                 FontSize = 14,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.home.continueWatching.noImage")));
         }
 
         // ── Gradient overlay (bottom dark → top clear) ───────────────
@@ -500,13 +499,13 @@ public sealed partial class WatchTonightDialog : ContentDialog
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(12),
-                Child = new TextBlock
+                Child = SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
                 {
                     Text = badgeLabel,
                     FontSize = 10,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = new SolidColorBrush(Colors.White),
-                },
+                }, "Text", element => element.Text = SourceLabel(card.WatchTonightSource)),
             });
         }
 
@@ -579,8 +578,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
                         null!,
                         string.Empty) is ImageSource logoSource)
                 {
-                    bottomInfo.Children.Add(new Image
-                    {
+                    bottomInfo.Children.Add(new Image { FlowDirection = FlowDirection.LeftToRight,
                         Source = logoSource,
                         Height = 40,
                         MaxWidth = 240,
@@ -620,13 +618,13 @@ public sealed partial class WatchTonightDialog : ContentDialog
         var metaRow = new Controls.WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 6 };
         if (card.Year > 0)
         {
-            metaRow.Children.Add(new TextBlock
+            metaRow.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = card.Year.ToString(),
                 FontSize = 12,
                 FontWeight = FontWeights.Medium,
                 Foreground = new SolidColorBrush(Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF)),
-            });
+            }, "Text", element => element.Text = card.Year.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture)));
         }
         if (card.RatingImdb.HasValue)
         {
@@ -638,26 +636,26 @@ public sealed partial class WatchTonightDialog : ContentDialog
                 Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFA, 0xCC, 0x15)),
                 VerticalAlignment = VerticalAlignment.Center,
             });
-            ratingStack.Children.Add(new TextBlock
+            ratingStack.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = card.RatingImdb.Value.ToString("0.0"),
                 FontSize = 12,
                 FontWeight = FontWeights.Medium,
                 Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFA, 0xCC, 0x15)),
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            }, "Text", element => element.Text = card.RatingImdb.Value.ToString("0.0", SiloPlayer.Core.Localization.AppStrings.FormatCulture)));
             metaRow.Children.Add(ratingStack);
         }
         if (card.Runtime.HasValue && card.Runtime.Value > 0)
         {
             int rt = card.Runtime.Value;
             string rtStr = rt >= 60 ? $"{rt / 60}h {rt % 60}m" : $"{rt}m";
-            metaRow.Children.Add(new TextBlock
+            metaRow.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = rtStr,
                 FontSize = 12,
                 Foreground = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)),
-            });
+            }, "Text", element => element.Text = MediaItemCardActions.Runtime(card.Runtime!.Value)));
         }
         foreach (var g in card.Genres.Take(3))
         {
@@ -803,7 +801,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
 
         if (card.Cast != null && card.Cast.Count > 0)
         {
-            content.Children.Add(new TextBlock
+            content.Children.Add(SiloPlayer.Controls.MediaItemCardActions.Localize(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = "CAST",
                 FontSize = 10,
@@ -811,7 +809,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
                 CharacterSpacing = 120,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                 Margin = new Thickness(0, 4, 0, 0),
-            });
+            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.castCrew.cast")), text: "web.detail.castCrew.cast"));
             var castStack = new StackPanel { Spacing = 4 };
             foreach (var c in card.Cast.Take(6))
             {
@@ -851,34 +849,34 @@ public sealed partial class WatchTonightDialog : ContentDialog
                 Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFA, 0xCC, 0x15)),
                 VerticalAlignment = VerticalAlignment.Center,
             });
-            stack.Children.Add(new TextBlock
+            stack.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = card.RatingImdb.Value.ToString("0.0"),
                 FontSize = 12,
                 Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFA, 0xCC, 0x15)),
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            }, "Text", element => element.Text = card.RatingImdb.Value.ToString("0.0", SiloPlayer.Core.Localization.AppStrings.FormatCulture)));
             metaRow.Children.Add(stack);
         }
         if (card.Runtime.HasValue && card.Runtime.Value > 0)
         {
             int rt = card.Runtime.Value;
             string rtStr = rt >= 60 ? $"{rt / 60}h {rt % 60}m" : $"{rt}m";
-            metaRow.Children.Add(new TextBlock
+            metaRow.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = rtStr,
                 FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            });
+            }, "Text", element => element.Text = MediaItemCardActions.Runtime(card.Runtime!.Value)));
         }
         if (card.Year > 0)
         {
-            metaRow.Children.Add(new TextBlock
+            metaRow.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
                 Text = card.Year.ToString(),
                 FontSize = 12,
                 Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
-            });
+            }, "Text", element => element.Text = card.Year.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture)));
         }
         if (metaRow.Children.Count > 0)
             content.Children.Add(metaRow);
@@ -1159,7 +1157,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
         catch (Exception ex)
         {
             App.Services.GetRequiredService<Services.ToastService>()
-                .Error(ex, $"Could not start playback: {ex.Message}");
+                .Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Could not start playback: {ex.Message}"));
         }
     }
 
@@ -1206,9 +1204,9 @@ public sealed partial class WatchTonightDialog : ContentDialog
 
     private static string SourceLabel(string source) => source switch
     {
-        "continue_watching" => "Continue",
-        "next_up" => "Next Up",
-        "recommendation" => "For You",
+        "continue_watching" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume"),
+        "next_up" => SiloPlayer.Core.Localization.AppStrings.Get("home.section.nextUp"),
+        "recommendation" => SiloPlayer.Core.Localization.AppStrings.Get("home.section.forYou"),
         _ => ""
     };
 }

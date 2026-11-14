@@ -38,12 +38,13 @@ public sealed partial class SearchPage : Page
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshInlineChoices(); ViewModel.RefreshLocalization(); UpdateResultsState(); UpdateRequestResults(); UpdateActiveResultFilters(); });
         CatalogToolbarChoices.Apply(ResultTypeCombo, ResultSortCombo, ResultOrderCombo);
         _catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
         _localizedReads = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().LocalizedReads;
         _resultSortChoices = CatalogSortChoices.Capture(ResultSortCombo);
         UpdateResultSortChoices();
-        ResultFiltersSheet.ConfigureFilterHeader(SearchQueryFilters.DetachModeSelector(), "Refine your catalog results");
+        ResultFiltersSheet.ConfigureFilterHeader(SearchQueryFilters.DetachModeSelector(), "Refine your catalog results", "web.catalog.filters.subtitle");
         NavigationCacheMode = NavigationCacheMode.Required;
         SearchLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
 
@@ -193,7 +194,7 @@ public sealed partial class SearchPage : Page
 
         if (hasQuery)
         {
-            ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultsFor", new Dictionary<string, object?> { ["query"] = ViewModel.Query }, fallback: $"Results for \"{ViewModel.Query}\""));
             var mediaCount = ViewModel.TotalCount;
             var peopleCount = ViewModel.PeopleResults.Count;
             // Match the catalog surface: the visible count describes in-library
@@ -201,7 +202,7 @@ public sealed partial class SearchPage : Page
             // their own section and should not make the header count jump a few
             // seconds after the media grid has settled.
             var totalDisplay = mediaCount + peopleCount;
-            ResultCountText.Text = $"{totalDisplay:N0} in library";
+            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.inLibraryCount", new Dictionary<string, object?> { ["count"] = totalDisplay.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }, fallback: $"{totalDisplay:N0} in library"));
             // Current WebUI Catalog.tsx deliberately hides the header count
             // while source=query. It avoids a misleading exact-total read while
             // the virtualized query window and request/discovery section settle.
@@ -346,10 +347,10 @@ public sealed partial class SearchPage : Page
         RequestResultsEyebrow.Text = hasLibraryHits
             ? "Discover · Outside your library"
             : "Outside your library";
-        RequestResultsTitle.Text = "Request to add";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(RequestResultsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.heading", fallback: "Request to add"));
         var count = ViewModel.OutsideLibraryResults.Count;
-        RequestResultsCount.Text = $"{count} {(count == 1 ? "result" : "results")}";
-        RequestPageText.Text = ViewModel.OutsideTotalPages > 0 ? $"Page {ViewModel.OutsidePage} of {ViewModel.OutsideTotalPages}" : "";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(RequestResultsCount, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultCount", new Dictionary<string, object?> { ["shown"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count }, fallback: $"{count} {(count == 1 ? "result" : "results")}"));
+        RequestPageText.Text = ViewModel.OutsideTotalPages > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.pageOf", new Dictionary<string, object?> { ["page"] = ViewModel.OutsidePage, ["total"] = ViewModel.OutsideTotalPages }) : "";
         RequestPreviousButton.IsEnabled = !ViewModel.IsOutsideLoading && ViewModel.OutsidePage > 1;
         RequestNextButton.IsEnabled = !ViewModel.IsOutsideLoading && ViewModel.OutsidePage < ViewModel.OutsideTotalPages;
         RequestPagingPanel.Visibility = ViewModel.OutsideTotalPages > 1 ? Visibility.Visible : Visibility.Collapsed;
@@ -439,7 +440,7 @@ public sealed partial class SearchPage : Page
         EmptyState.Visibility = Visibility.Collapsed;
         ResultsState.Visibility = Visibility.Visible;
         PositionSearchSurface();
-        ResultsTitle.Text = $"Results for \"{ViewModel.Query}\"";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(ResultsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultsFor", new Dictionary<string, object?> { ["query"] = ViewModel.Query }, fallback: $"Results for \"{ViewModel.Query}\""));
     }
 
     private void PositionSearchSurface()
@@ -818,13 +819,13 @@ public sealed partial class SearchPage : Page
     private void UpdateActiveResultFilters()
     {
         ActiveResultFiltersPanel.Children.Clear();
-        AddActiveResultFilter("genre", ViewModel.Genre, value => $"Genre: {value}");
-        AddActiveResultFilter("rating", ViewModel.ContentRating, value => $"Rated: {value}");
+        AddActiveResultFilter("genre", ViewModel.Genre, value => SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeGenre", new Dictionary<string, object?> { ["genre"] = value }));
+        AddActiveResultFilter("rating", ViewModel.ContentRating, value => SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeContentRating", new Dictionary<string, object?> { ["rating"] = value }));
         AddActiveResultFilter("resolution", ViewModel.Resolution, value => $"Resolution: {value}");
-        AddActiveResultFilter("country", ViewModel.Country, value => $"Country: {value}");
+        AddActiveResultFilter("country", ViewModel.Country, value => SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeCountry", new Dictionary<string, object?> { ["country"] = value }));
         foreach (var badge in SiloPlayer.Core.Services.CatalogFilterBadges.Create(ViewModel.AdvancedQuery, ViewModel.MediaScope))
         {
-            var chip = CatalogFilterBadgeView.Build(badge.Label, async () => { badge.Remove(); SearchQueryFilters.Load(ViewModel.AdvancedQuery, ViewModel.MediaScope, filters: ViewModel.AvailableFilters); UpdateActiveResultFilters(); await ViewModel.SearchCommand.ExecuteAsync(null); });
+            var chip = CatalogFilterBadgeView.Build(badge, ViewModel.MediaScope, async () => { badge.Remove(); SearchQueryFilters.Load(ViewModel.AdvancedQuery, ViewModel.MediaScope, filters: ViewModel.AvailableFilters); UpdateActiveResultFilters(); await ViewModel.SearchCommand.ExecuteAsync(null); });
             ActiveResultFiltersPanel.Children.Add(chip);
         }
 
@@ -931,4 +932,17 @@ public sealed partial class SearchPage : Page
     }
 
     private sealed record SearchFilterOption(string Label, string Value);
+
+    private void RefreshInlineChoices()
+    {
+        var previous = _filterInitializing;
+        _filterInitializing = true;
+        try
+        {
+            SiloPlayer.Services.Localized.RefreshItems(ResultTypeCombo);
+            SiloPlayer.Services.Localized.RefreshItems(ResultSortCombo);
+            SiloPlayer.Services.Localized.RefreshItems(ResultOrderCombo);
+        }
+        finally { _filterInitializing = previous; }
+    }
 }

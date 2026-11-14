@@ -90,6 +90,7 @@ public sealed partial class LibraryPage
                     _lastRequestedStartIndex = _lastRequestedEndIndex = -1;
                     ScheduleVisibleRangeLoad(force: true);
                 }
+                WakeCatalogContentRefresh();
             });
     }
 
@@ -106,7 +107,7 @@ public sealed partial class LibraryPage
             ? Visibility.Visible : Visibility.Collapsed;
         var pending = ViewModel.PendingLetter;
         var error = ViewModel.LetterJumpError;
-        LibraryLetterStatus.Text = error ?? (pending is null ? "" : $"Loading {pending}…");
+        SiloPlayer.Controls.MediaItemCardActions.BindText(LibraryLetterStatus, "Text", element => element.Text = ViewModel.LetterJumpError ?? (ViewModel.PendingLetter is not { } loading ? "" : SiloPlayer.Core.Localization.AppStrings.Get("common.loading") + " " + loading + "…"));
         LibraryLetterFeedback.Visibility = IsLibraryLetterGrid && (pending is not null || error is not null)
             ? Visibility.Visible : Visibility.Collapsed;
         LibraryLetterRetry.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
@@ -116,7 +117,7 @@ public sealed partial class LibraryPage
             button.IsEnabled = entry is { Count: > 0 } && entry.Position < ViewModel.TotalCount;
             var spoken = letter == "#" ? "Numbers and symbols" : letter;
             var count = entry?.Count ?? 0;
-            AutomationProperties.SetName(button, $"{spoken}, {(count == 0 ? "no titles" : count == 1 ? "1 title" : $"{count:N0} titles")}");
+            SiloPlayer.Controls.MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, spoken + ", " + SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.titleCount", new Dictionary<string, object?> { ["count"] = count, ["shown"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })));
             if (!CanShowLibraryLetters)
             {
                 // A pending or failed index has no current letter: grey every entry.
@@ -228,7 +229,7 @@ public sealed partial class LibraryPage
             if (_queuedLetterJumpVersion != jump) return;
             _queuedLetterJumpVersion = 0;
             _pendingLibraryLetterCommit = null;
-            if (!IsCurrent()) return;
+            if (!IsCurrent()) { WakeCatalogContentRefresh(); return; }
             UpdateVirtualGridMetrics();
             var layout = GetGridLayout();
             var offset = (index / layout.Columns) * layout.RowHeight;

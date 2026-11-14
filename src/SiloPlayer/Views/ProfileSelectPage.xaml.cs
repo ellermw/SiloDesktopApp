@@ -1,3 +1,5 @@
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -17,6 +19,7 @@ public sealed partial class ProfileSelectPage : Page
     {
         ViewModel = App.Services.GetRequiredService<ProfileSelectViewModel>();
         this.InitializeComponent();
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); });
         SizeChanged += (_, args) =>
         {
             ProfilePickerTitle.FontSize = Math.Clamp(args.NewSize.Width * .07, 35.2, 72);
@@ -128,7 +131,7 @@ public sealed partial class ProfileSelectPage : Page
     {
         var pinBox = new PasswordBox
         {
-            PlaceholderText = "Enter 4-digit PIN",
+            PlaceholderText = AppStrings.Get("web.profiles.pin.placeholder", fallback: "Enter 4-digit PIN"),
             MaxLength = 4,
             PasswordRevealMode = PasswordRevealMode.Hidden,
             InputScope = new InputScope { Names = { new InputScopeName(InputScopeNameValue.NumericPin) } },
@@ -140,22 +143,42 @@ public sealed partial class ProfileSelectPage : Page
             Visibility = Visibility.Collapsed,
         };
         var content = new StackPanel { Spacing = 8 };
-        if (purpose != null) content.Children.Add(new TextBlock
-        { Text = purpose == "add" ? "Adding a profile needs the primary profile's PIN." : "Managing profiles needs the primary profile's PIN.", TextWrapping = TextWrapping.Wrap });
-        content.Children.Add(new TextBlock { Text = "PIN", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        TextBlock? purposeText = null;
+        if (purpose != null)
+        {
+            purposeText = new TextBlock { Text = purpose == "add" ? "Adding a profile needs the primary profile's PIN." : "Managing profiles needs the primary profile's PIN.", TextWrapping = TextWrapping.Wrap };
+            Localized.SetText(purposeText, purpose == "add" ? "web.profiles.picker.addNeedsPin" : "web.profiles.picker.manageNeedsPin");
+            content.Children.Add(purposeText);
+        }
+        var pinLabel = new TextBlock { Text = "PIN", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        Localized.SetText(pinLabel, "web.profiles.pin.label");
+        content.Children.Add(pinLabel);
         content.Children.Add(pinBox);
         content.Children.Add(error);
         var dialog = new ContentDialog
         {
             Title = $"Enter PIN for {profile.Name}",
             Content = content,
-            PrimaryButtonText = "Confirm",
-            CloseButtonText = "Cancel",
+            PrimaryButtonText = AppStrings.Get("web.profiles.pin.confirm"),
+            CloseButtonText = AppStrings.Get("common.cancel"),
             DefaultButton = ContentDialogButton.Primary,
             IsPrimaryButtonEnabled = false,
             XamlRoot = XamlRoot,
         };
         var verificationPending = false;
+        Localized.SetPlaceholder(pinBox, "web.profiles.pin.placeholder");
+        AppLocalization.Register(dialog, () =>
+        {
+            AppLocalization.ApplyDirection(dialog);
+            pinBox.PlaceholderText = AppStrings.Get("web.profiles.pin.placeholder");
+            pinLabel.Text = AppStrings.Get("web.profiles.pin.label");
+            if (purposeText != null) purposeText.Text = AppStrings.Get(purpose == "add" ? "web.profiles.picker.addNeedsPin" : "web.profiles.picker.manageNeedsPin");
+            dialog.Title = AppStrings.Get("web.profiles.pin.title", new Dictionary<string, object?> { ["name"] = profile.Name }, $"Enter PIN for {profile.Name}");
+            dialog.PrimaryButtonText = AppStrings.Get(verificationPending ? "web.profiles.pin.verifying" : "web.profiles.pin.confirm");
+            dialog.CloseButtonText = AppStrings.Get("common.cancel");
+            ViewModel.RefreshLocalizedText();
+            if (error.Visibility == Visibility.Visible) error.Text = ViewModel.PinErrorMessage ?? AppStrings.Get("web.profiles.pin.verifyFailed");
+        });
         pinBox.PasswordChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !verificationPending && pinBox.Password.Length > 0;
         dialog.Opened += (_, _) => pinBox.Focus(FocusState.Programmatic);
         // Return the canceled primary-click event without a WinUI deferral so
@@ -169,7 +192,7 @@ public sealed partial class ProfileSelectPage : Page
             try
             {
                 sender.IsPrimaryButtonEnabled = false;
-                sender.PrimaryButtonText = "Verifying...";
+                sender.PrimaryButtonText = AppStrings.Get("web.profiles.pin.verifying", fallback: "Verifying...");
                 error.Visibility = Visibility.Collapsed;
                 ViewModel.Pin = pinBox.Password;
                 await ViewModel.VerifyPinCommand.ExecuteAsync(null);
@@ -180,7 +203,7 @@ public sealed partial class ProfileSelectPage : Page
                 }
 
                 error.Text = string.IsNullOrWhiteSpace(ViewModel.PinErrorMessage)
-                    ? "Verification failed"
+                    ? AppStrings.Get("web.profiles.pin.verifyFailed", fallback: "Verification failed")
                     : ViewModel.PinErrorMessage;
                 error.Visibility = Visibility.Visible;
                 pinBox.Password = "";
@@ -189,7 +212,7 @@ public sealed partial class ProfileSelectPage : Page
             finally
             {
                 verificationPending = false;
-                sender.PrimaryButtonText = "Confirm";
+                sender.PrimaryButtonText = AppStrings.Get("web.profiles.pin.confirm");
                 sender.IsPrimaryButtonEnabled = pinBox.Password.Length > 0;
             }
         };
@@ -237,8 +260,8 @@ public sealed partial class ProfileSelectPage : Page
             if (ViewModel.IsPinRequired)
             {
                 App.Services.GetRequiredService<Services.ToastService>()
-                    .Error(ViewModel.PinErrorMessage?.StartsWith("Too many incorrect PINs.", StringComparison.Ordinal) == true
-                        ? $"Profile created. {ViewModel.PinErrorMessage}" : "Profile created, but PIN verification failed");
+                    .Error(ViewModel.IsPinLockedOut
+                        ? AppStrings.Get("web.profiles.picker.createdLockout", new Dictionary<string, object?> { ["lockout"] = ViewModel.PinErrorMessage }, $"Profile created. {ViewModel.PinErrorMessage}") : AppStrings.Get("web.profiles.picker.createdPinFailed", fallback: "Profile created, but PIN verification failed"));
             }
         }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Couldn't open the new profile form: {ex.Message}"; }
@@ -271,7 +294,7 @@ public sealed partial class ProfileSelectPage : Page
             catch (OperationCanceledException) when (!session.IsCurrent) { }
             catch (Exception)
             {
-                if (session.IsCurrent) ViewModel.ErrorMessage = "Couldn't open the new profile form. Try again.";
+                if (session.IsCurrent) ViewModel.ErrorMessage = AppStrings.Get("web.profiles.picker.addFormFailed", fallback: "Couldn't open the new profile form. Try again.");
             }
             finally
             {

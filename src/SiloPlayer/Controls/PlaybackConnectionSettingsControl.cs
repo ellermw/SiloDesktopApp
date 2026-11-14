@@ -4,6 +4,9 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Controls;
 
@@ -16,12 +19,12 @@ public sealed class PlaybackConnectionSettingsControl : UserControl
     private readonly TextBlock _message = Description("");
     private readonly TextBlock _budget = Description("");
     private readonly Button _test = new() { Content = "Test speed", MinHeight = 36, Padding = new(16, 6, 16, 6) };
-    private readonly Button _reset = new() { Content = "Reset", MinHeight = 36 };
+    private readonly Button _reset = new Button { Content = "Reset", MinHeight = 36 }.Keyed("web.settings.playbackConnection.reset");
     private readonly StackPanel _buffering = new() { Spacing = 16 };
     private readonly StackPanel _connection = new() { Spacing = 16 };
     private readonly Border _bufferingBorder;
     private readonly Border _limitBorder;
-    private readonly TextBlock _connectionTitle = new() { Text = "Connection", FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly TextBlock _connectionTitle = new TextBlock { Text = "Connection", FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold }.Keyed("web.settings.playbackConnection.title");
     private readonly Grid _connectionSection = new() { ColumnSpacing = 48, RowSpacing = 16 };
     private readonly Border _connectionBorder;
     private readonly List<(Grid Row, FrameworkElement Label, FrameworkElement Action)> _rows = [];
@@ -33,19 +36,21 @@ public sealed class PlaybackConnectionSettingsControl : UserControl
     {
         _vm = App.Services.GetRequiredService<SettingsViewModel>();
         var panel = new StackPanel { Spacing = 24 };
-        foreach (var (label, value) in new[] { ("Never", "never"), ("Ask first", "ask"), ("Automatically", "always") })
-            _mode.Items.Add(new ComboBoxItem { Content = label, Tag = value });
-        AutomationProperties.SetName(_mode, "Lower quality when buffering");
+        foreach (var (label, value, key) in new[] { ("Never", "never", "settingsManifest.playback.buffering_quality_mode.option.never"), ("Ask first", "ask", "settingsManifest.playback.buffering_quality_mode.option.ask"), ("Automatically", "always", "settingsManifest.playback.buffering_quality_mode.option.always") })
+            _mode.Items.Add(new ComboBoxItem { Content = label, Tag = value }.Keyed(key));
+        AutomationProperties.SetName(_mode, "Lower quality when buffering"); _mode.KeyedName("settingsManifest.playback.buffering_quality_mode.label");
         var bufferingLabel = new StackPanel { Spacing = 4 };
-        bufferingLabel.Children.Add(Label("Lower quality when buffering"));
-        bufferingLabel.Children.Add(Description("What Silo does on Auto when playback keeps buffering. Silo always asks before lowering a quality you picked."));
+        bufferingLabel.Children.Add(Label("Lower quality when buffering").Keyed("settingsManifest.playback.buffering_quality_mode.label"));
+        bufferingLabel.Children.Add(Description("What Silo does on Auto when playback keeps buffering. Silo always asks before lowering a quality you picked.").Keyed("settingsManifest.playback.buffering_quality_mode.description"));
         _buffering.Children.Add(Row(bufferingLabel, _mode));
         _limitBorder = new Border { BorderThickness = new(0, 1, 0, 0), Padding = new(0, 16, 0, 0), BorderBrush = Application.Current.Resources["BorderBrush"] as Brush, Child = Row(_limit, _reset) };
         _buffering.Children.Add(_limitBorder);
         _bufferingBorder = new Border { Child = _buffering, BorderBrush = Application.Current.Resources["BorderBrush"] as Brush };
         panel.Children.Add(_bufferingBorder);
         var speedLabel = new StackPanel { Spacing = 4 };
-        speedLabel.Children.Add(Label("Connection speed")); speedLabel.Children.Add(_reading);
+        speedLabel.Children.Add(Label("Connection speed").Keyed("web.settings.playbackConnection.speed")); speedLabel.Children.Add(_reading);
+        // Retained in Settings: the view model re-reads its summaries, then this view re-renders them.
+        AppLocalization.Register(this, () => { _vm.RefreshConnectionLocale(); Render(); });
         _connection.Children.Add(Row(speedLabel, _test));
         _connection.Children.Add(_message); _connection.Children.Add(_budget);
         _connectionSection.ColumnDefinitions.Add(new() { Width = new(256) });
@@ -148,7 +153,7 @@ public sealed class PlaybackConnectionSettingsControl : UserControl
             _mode.SelectedItem = _mode.Items.OfType<ComboBoxItem>().FirstOrDefault(i => Equals(i.Tag, _vm.BufferingQualityMode));
             _test.IsEnabled = _vm.ConnectionSpeedSupported && !_vm.ConnectionSettingsBusy;
             _test.Visibility = _vm.ConnectionMetered ? Visibility.Collapsed : Visibility.Visible;
-            _test.Content = _vm.ConnectionTestRunning ? "Testing…" : "Test speed";
+            _test.Content = _vm.ConnectionTestRunning ? AppStrings.Get("web.settings.playbackConnection.testing") : AppStrings.Get("web.settings.playbackConnection.test");
             _reset.IsEnabled = !_vm.ConnectionSettingsBusy;
             _limit.Text = _vm.LearnedConnectionLimit;
             _limitBorder.Visibility = _limit.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;

@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using System.Text.Json;
@@ -34,6 +35,7 @@ public sealed partial class HomePage : Page
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); RefreshHeroLocale(); });
         ArtworkViewport.For(ContentScrollViewer);
         // Reuse the mounted home surface instead of reconstructing its hero,
         // section rows, and cards on every top-level navigation.
@@ -65,7 +67,7 @@ public sealed partial class HomePage : Page
             if (!_pageActive || activation != _activationGeneration) return;
             _isRefreshingLayout = false;
             LocalLog.AppendException("home_error.txt", ex, "page_load");
-            ViewModel.ErrorMessage = "Unable to load the homepage";
+            ViewModel.SetLocalizedMessage(nameof(ViewModel.ErrorMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.home.page.loadFailedTitle"), value => ViewModel.ErrorMessage = value);
         }
     }
 
@@ -315,7 +317,7 @@ public sealed partial class HomePage : Page
     }
 
     private void PersonalizeHome_Click(object sender, RoutedEventArgs e)
-        => Frame.Navigate(typeof(TasteSeedPage), true);
+        => Frame.Navigate(typeof(TasteSeedPage), null, PageTransitionHelper.ForPageChange());
 
     private void DismissTasteSeed_Click(object sender, RoutedEventArgs e)
     {
@@ -344,6 +346,13 @@ public sealed partial class HomePage : Page
             SynchronizeContent();
         });
     }
+    private void RefreshHeroLocale()
+    {
+        // Relabel the failure without resetting a mounted carousel or its active slide.
+        if (ViewModel.FeaturedSections.FirstOrDefault() is { LoadFailed: true } heroSection)
+            HeroErrorTitle.Text = heroSection.DisplayTitle;
+    }
+
     private void RefreshHero()
     {
         HeroCarouselControl.Visibility = Visibility.Collapsed;
@@ -362,7 +371,7 @@ public sealed partial class HomePage : Page
         if (heroSection.LoadFailed)
         {
             _failedHeroSectionId = heroSection.Id;
-            HeroErrorTitle.Text = heroSection.Title;
+            HeroErrorTitle.Text = heroSection.DisplayTitle;
             HeroErrorPanel.Visibility = Visibility.Visible;
         }
         else if (heroSection.Items.Count > 0)
@@ -425,7 +434,8 @@ public sealed partial class HomePage : Page
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<CatalogPage>(new CatalogNavigation(
-                Source: "section", Title: section.Title, Scope: "home", SectionId: section.Id));
+                Source: "section", Title: section.Title, Scope: "home", SectionId: section.Id,
+                TitleKey: section.TitleKey, TitleArgs: SectionTitles.CopyArguments(section.TitleArgs), KeyedTitle: section.KeyedTitle));
         };
     }
 

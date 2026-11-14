@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -18,7 +19,7 @@ public sealed record CollectionEditorNavigationArgs(string Kind = "manual")
 public sealed partial class CollectionEditorPage
 {
     private readonly TextBlock _kindTag = new() { FontSize = 12, FontWeight = FontWeights.SemiBold };
-    private readonly TextBlock _syncedNameHint = new() { Text = "Filled in from the list. Picking another list keeps anything you typed.", FontSize = 13, LineHeight = 19.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+    private readonly TextBlock _syncedNameHint = new() { FontSize = 13, LineHeight = 19.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly Image _headerPoster = new() { Stretch = Stretch.UniformToFill };
     private readonly Border _headerCover = new() { Width = 64, Height = 96, CornerRadius = new(10), VerticalAlignment = VerticalAlignment.Top };
     private readonly StackPanel _showOnly = new() { Spacing = 8 };
@@ -73,10 +74,14 @@ public sealed partial class CollectionEditorPage
         }
         return false;
     }
-    private StackPanel Field(string label, FrameworkElement control)
+    /// <summary>A labelled field. <paramref name="key"/> names the label's catalog message; <paramref name="label"/> is its English fallback.</summary>
+    private StackPanel Field(string? key, string label, FrameworkElement control)
     {
         Detach(control);
-        return new() { Spacing = 8, Children = { new TextBlock { Text = label, FontSize = 14.5, LineHeight = 21.75, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }, control } };
+        var heading = new TextBlock { Text = label, FontSize = 14.5, LineHeight = 21.75, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold };
+        // A null key: the caller words this label itself as its state changes.
+        if (key != null) CollectionText.Keyed(heading, key);
+        return new() { Spacing = 8, Children = { heading, control } };
     }
     private static void PanelStyle(Border panel, double padding)
     {
@@ -97,7 +102,7 @@ public sealed partial class CollectionEditorPage
         var header = (StackPanel)CollectionEditorShell.Children[0];
         Detach(PageTitle); Detach(PageSubtitle); header.Children.Clear();
         BackButton.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4,
-            Children = { WebUiIcon.Create("back", 16), new TextBlock { Text = "Collections", FontSize = 14, LineHeight = 21, LineStackingStrategy = LineStackingStrategy.BlockLineHeight } } };
+            Children = { WebUiIcon.Create("back", 16), CollectionText.Keyed(new TextBlock { Text = "Collections", FontSize = 14, LineHeight = 21, LineStackingStrategy = LineStackingStrategy.BlockLineHeight }, "web.collections.editor.backToCollections") } };
         BackButton.Width = double.NaN; BackButton.Height = 21; BackButton.MinHeight = 0; BackButton.Padding = new(0); Detach(BackButton); header.Children.Add(BackButton);
         header.Margin = new(0, 0, 0, 8);
         _currentHeader.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); _currentHeader.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
@@ -111,32 +116,33 @@ public sealed partial class CollectionEditorPage
         _currentHeader.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); _currentHeader.RowDefinitions.Add(new() { Height = GridLength.Auto }); _currentHeader.RowDefinitions.Add(new() { Height = GridLength.Auto });
         _currentHeader.Children.Add(_headerActions);
         var details = new StackPanel { Spacing = 16 };
-        var nameField = Field("Name", NameTextBox);
+        var nameField = Field("web.collections.copy.fieldName", "Name", NameTextBox);
         nameField.Children.Add(_syncedNameHint);
-        details.Children.Add(nameField); details.Children.Add(Field("Description · Optional", DescriptionTextBox));
+        details.Children.Add(nameField); var descriptionField = Field("web.collections.copy.fieldDescription", "Description · Optional", DescriptionTextBox);
+        _descriptionLabel = (TextBlock)descriptionField.Children[0]; Localized.SetText(_descriptionLabel, null); details.Children.Add(descriptionField);
         NameTextBox.MaxWidth = DescriptionTextBox.MaxWidth = double.PositiveInfinity; NameTextBox.HorizontalAlignment = DescriptionTextBox.HorizontalAlignment = HorizontalAlignment.Stretch;
         NameTextBox.MinHeight = 36; DescriptionTextBox.Height = 78;
         NameTextBox.PlaceholderText = DescriptionTextBox.PlaceholderText = "";
-        Detach(DisplayFilterGrid); _showOnly.Children.Add(new TextBlock { Text = "Show only", FontSize = 14.5, LineHeight = 21.75, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold });
+        Detach(DisplayFilterGrid); _showOnly.Children.Add(CollectionText.Keyed(new TextBlock { Text = "Show only", FontSize = 14.5, LineHeight = 21.75, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }, "web.collections.copy.fieldShowOnly"));
         WatchFilterCombo.Header = MediaFilterCombo.Header = null; _showOnly.Children.Add(DisplayFilterGrid);
         DisplayFilterGrid.ColumnSpacing = 8; DisplayFilterGrid.RowSpacing = 0;
-        _showOnly.Children.Add(new TextBlock { Text = "Hides titles while browsing, for example the ones you've finished. Nothing is removed.", FontSize = 12.5, LineHeight = 17.1875, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        _showOnly.Children.Add(CollectionText.Keyed(new TextBlock { Text = "Hides titles while browsing, for example the ones you've finished. Nothing is removed.", FontSize = 12.5, LineHeight = 17.1875, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }, "web.collections.details.showOnlyHelp"));
         details.Children.Add(_showOnly);
-        var list = Body(ImportedSourceSection); list.Children.Insert(0, new TextBlock { Text = "Synced list", FontSize = 17, FontWeight = FontWeights.SemiBold });
-        Detach(ImportedLibrariesPanel); list.Children.Add(Field("Libraries", ImportedLibrariesPanel));
-        Detach(ImportedDefaultSortCombo); list.Children.Add(Field("Order", ImportedDefaultSortCombo));
+        var list = Body(ImportedSourceSection); list.Children.Insert(0, CollectionText.Keyed(new TextBlock { Text = "Synced list", FontSize = 17, FontWeight = FontWeights.SemiBold }, "web.collections.types.kindSynced"));
+        Detach(ImportedLibrariesPanel); list.Children.Add(Field("web.collections.copy.fieldLibraries", "Libraries", ImportedLibrariesPanel));
+        Detach(ImportedDefaultSortCombo); list.Children.Add(Field("web.collections.copy.fieldOrder", "Order", ImportedDefaultSortCombo));
         Detach(SyncScheduleTextBlock);
-        foreach (var (value, label) in new[] { ("", "Manual only"), ("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly"), ("custom", "Custom schedule (current)") })
-            _savedSchedule.Items.Add(new ComboBoxItem { Tag = value, Content = label });
-        _savedSchedule.SelectionChanged += (_, _) => { if (!_settingSchedule) ViewModel.SyncSchedule = (_savedSchedule.SelectedItem as ComboBoxItem)?.Tag?.ToString(); };
-        list.Children.Add(Field("Sync", _savedSchedule));
+        foreach (var (value, key, label) in new[] { ("", "web.collections.fields.scheduleManualOnly", "Manual only"), ("daily", "web.collections.fields.scheduleDaily", "Daily"), ("weekly", "web.collections.fields.scheduleWeekly", "Weekly"), ("monthly", "web.collections.fields.scheduleMonthly", "Monthly"), ("custom", "web.collections.fields.customScheduleCurrent", "Custom schedule (current)") })
+            _savedSchedule.Items.Add(CollectionText.KeyedItem(_savedSchedule, new ComboBoxItem { Tag = value, Content = label }, key));
+        _savedSchedule.SelectionChanged += (_, _) => { if (!_settingSchedule && !CollectionText.Relabeling) ViewModel.SyncSchedule = (_savedSchedule.SelectedItem as ComboBoxItem)?.Tag?.ToString(); };
+        list.Children.Add(Field("web.collections.syncedList.syncHeading", "Sync", _savedSchedule));
         BasicInfoSection.Child = details;
         ConfigureManualContents();
         ConfigureEditorFooter();
         ConfigureSmartContents();
         var shared = Body(ImportedSharingSection); var visible = Body(ImportedVisibilitySection);
         ImportedSharingSection.Child = null; ImportedVisibilitySection.Child = null;
-        _where.Children.Add(new TextBlock { Text = "Where it shows", FontSize = 17, FontWeight = FontWeights.SemiBold }); _where.Children.Add(shared); _where.Children.Add(visible); _wherePanel.Child = _where;
+        _where.Children.Add(CollectionText.Keyed(new TextBlock { Text = "Where it shows", FontSize = 17, FontWeight = FontWeights.SemiBold }, "web.collections.whereItShows.heading")); _where.Children.Add(shared); _where.Children.Add(visible); _wherePanel.Child = _where;
         ConfigureWhereRows();
         var art = Body(ImportedPosterSection); ImportedPosterSection.Child = null; _look.Children.Add(art);
         _lookToggle.Style = (Style)Application.Current.Resources["GhostButtonStyle"]; _lookToggle.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -155,7 +161,8 @@ public sealed partial class CollectionEditorPage
         if (_wherePanel.Child == null) return;
         var phone = ActualWidth < 640;
         _syncedNameHint.Foreground = CurrentBrush("SecondaryTextBrush");
-        _syncedNameHint.Text = _syncedKeptFields ?? "Filled in from the list. Picking another list keeps anything you typed.";
+        _syncedNameHint.Text = _syncedKeptFields is { } kept ? CollectionText.Get(kept, KeptFieldsEnglish(kept)) : CollectionText.Get("web.collections.copy.nameFilledHelp", "Filled in from the list. Picking another list keeps anything you typed.");
+        _descriptionLabel!.Text = CollectionText.Get("web.collections.details.descriptionLabel", "Description · Optional", ("field", CollectionText.Get("web.collections.copy.fieldDescription", "Description")));
         _syncedNameHint.Visibility = _newSynced && (_syncedKeptFields != null || (ViewModel.Name.Length > 0 && ViewModel.Name == _syncedFilledName)) ? Visibility.Visible : Visibility.Collapsed;
         CollectionEditorShell.MaxWidth = 768; CollectionEditorShell.Spacing = 16;
         CollectionEditorScroll.HorizontalContentAlignment = HorizontalAlignment.Stretch;
@@ -170,9 +177,16 @@ public sealed partial class CollectionEditorPage
         ImportedEditorSurface.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); ImportedEditorSurface.BorderThickness = new(0);
         foreach (var panel in new[] { BasicInfoSection, ManualItemsSection, SmartRulesSection, _smartPreviewPanel, ImportedSourceSection, _wherePanel, _lookPanel }) PanelStyle(panel, phone ? 20 : 24);
         if (!_lookOpen) _lookPanel.Padding = new(0);
-        PageTitle.FontSize = phone ? 26 : 32; PageTitle.LineHeight = PageTitle.FontSize * 1.15; PageTitle.Text = string.IsNullOrEmpty(ViewModel.Name) ? "New collection" : ViewModel.Name;
-        _kindTag.Text = ViewModel.CollectionType switch { "manual" => "Manual", "smart" => "Smart", _ => "Synced list" };
-        PageSubtitle.Text = ViewModel.IsEditing ? $"{ViewModel.SourceItemCountText} titles" + (ViewModel.IsImportedCollection ? " · " + SavedSourceLabel() : "") : _newSynced ? "Pick the list, check the details, then press Create collection." : "Not created yet";
+        PageTitle.FontSize = phone ? 26 : 32; PageTitle.LineHeight = PageTitle.FontSize * 1.15; PageTitle.Text = string.IsNullOrEmpty(ViewModel.Name) ? CollectionText.Get("web.collections.copy.newCollection", "New collection") : ViewModel.Name;
+        _kindTag.Text = ViewModel.CollectionType switch
+        {
+            "manual" => CollectionText.Get("web.collections.types.kindManual", "Manual"),
+            "smart" => CollectionText.Get("web.collections.types.kindSmart", "Smart"),
+            _ => CollectionText.Get("web.collections.types.kindSynced", "Synced list"),
+        };
+        PageSubtitle.Text = ViewModel.IsEditing ? SourceTitles() + (ViewModel.IsImportedCollection ? " · " + SavedSourceLabel() : "")
+            : _newSynced ? CollectionText.Get("web.collections.copy.syncedCreateSubtitle", "Pick the list, check the details, then press Create collection.")
+            : CollectionText.Get("web.collections.copy.notCreatedYet", "Not created yet");
         PageSubtitle.Visibility = ViewModel.IsEditing || _newSynced ? Visibility.Visible : Visibility.Collapsed;
         _headerCover.Visibility = string.IsNullOrWhiteSpace(ViewModel.CurrentPosterUrl) ? Visibility.Collapsed : Visibility.Visible;
         if (_headerPosterUrl != ViewModel.CurrentPosterUrl)
@@ -192,7 +206,6 @@ public sealed partial class CollectionEditorPage
         _titleLimit.IsEnabled = _syncedMatchButton.IsEnabled = !ViewModel.IsSaving && !ViewModel.IsReadOnly;
         ImportedSourceSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
         CollectionDirtyDock.Visibility = Visibility.Collapsed; EditorActions.Visibility = Visibility.Visible;
-        SaveButtonText.Text = ViewModel.IsEditing ? "Save changes" : "Create collection";
         EditorPrimaryColumn.IsHitTestVisible = !ViewModel.IsSaving;
         EditorEditGuard.IsEnabled = !_initializingEditor && !ViewModel.IsLoading && !ViewModel.IsSaving && !ViewModel.IsReadOnly;
         SaveButton.IsEnabled = !_initializingEditor && !ViewModel.IsLoading && !ViewModel.IsSaving && !ViewModel.IsLoadUnavailable;
@@ -210,6 +223,7 @@ public sealed partial class CollectionEditorPage
         _savedSchedule.SelectedItem = _savedSchedule.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, ViewModel.SyncSchedule ?? ""));
         _savedSchedule.IsEnabled = ViewModel.CanEditSavedSyncSchedule && !ViewModel.IsSaving && !ViewModel.IsReadOnly;
         _settingSchedule = false;
+        // No catalog message names this toggle (the WebUI's Look panel uses Change/Done); the accessible name stays English.
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_lookToggle, _lookOpen ? "Done changing artwork" : "Change artwork");
     }
 }

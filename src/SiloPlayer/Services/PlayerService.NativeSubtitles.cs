@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Player;
@@ -135,28 +136,35 @@ public partial class PlayerService
             }
             refresh();
         }
-        Button Button(string title, string name, string id)
+        // Footer labels re-render with the interface language (see Localize below).
+        var footerText = new List<Action>();
+        Button Button(Func<string> title, Func<string> name, string id)
         {
-            var button = new Button { Content = title, Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetName(button, name);
+            var button = new Button { Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Stretch };
+            void Text() { button.Content = title(); AutomationProperties.SetName(button, name()); }
+            Text(); footerText.Add(Text);
             Action click = () => Action(id); button.Tag = click; button.Click += (_, _) => click();
             return button;
         }
-        var earlier = Button("−", "Subtitle delay 100ms earlier", "earlier");
-        var later = Button("+", "Subtitle delay 100ms later", "later");
-        var resetDelay = Button("Reset", "Reset subtitle delay", "reset-delay");
+        Func<string> Key(string key, string english) => () => HudText(key, english);
+        Func<string> Step(string key, string english) => () => AppStrings.Get(key,
+            new Dictionary<string, object?> { ["step"] = 100 }, fallback: english);
+        var earlier = Button(() => "−", Step("web.subtitles.menu.delayEarlier", "Subtitle delay 100ms earlier"), "earlier");
+        var later = Button(() => "+", Step("web.subtitles.menu.delayLater", "Subtitle delay 100ms later"), "later");
+        var resetDelay = Button(Key("web.subtitles.menu.resetDelay", "Reset"), Key("web.subtitles.menu.resetDelayLabel", "Reset subtitle delay"), "reset-delay");
         delay.Children.Add(earlier); delay.Children.Add(delayValue); delay.Children.Add(later); delay.Children.Add(resetDelay);
         footer.Children.Add(delayStatus); footer.Children.Add(delay);
         var syncStatus = new TextBlock { FontSize = 12, Opacity = .8, TextWrapping = TextWrapping.Wrap, MaxLines = 3 };
         footer.Children.Add(syncStatus);
         var syncActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        var sync = Button("Sync to audio", "Sync subtitles to audio", "sync");
-        var resetTiming = Button("Reset timing", "Reset subtitle timing", "reset-timing");
-        var reload = Button("Reload status", "Reload subtitle sync status", "reload-sync");
+        var sync = Button(Key("web.subtitles.menu.syncToAudio", "Sync to audio"), Key("web.subtitles.menu.syncToAudio", "Sync to audio"), "sync");
+        var resetTiming = Button(Key("web.subtitles.menu.resetTiming", "Reset timing"), Key("web.subtitles.menu.resetTiming", "Reset timing"), "reset-timing");
+        // Native-only: the catalog has no reload-status action.
+        var reload = Button(() => "Reload status", () => "Reload subtitle sync status", "reload-sync");
         syncActions.Children.Add(sync); syncActions.Children.Add(resetTiming); syncActions.Children.Add(reload); footer.Children.Add(syncActions);
-        footer.Children.Add(Button("Add Subtitles…", "Add subtitles", "add"));
-        var ai = Button("Translate with AI…", "Translate subtitles with AI", "ai"); footer.Children.Add(ai);
-        footer.Children.Add(Button("Appearance…", "Subtitle appearance", "appearance"));
+        footer.Children.Add(Button(Key("web.subtitles.menu.addSubtitles", "Add Subtitles…"), Key("web.subtitles.search.title", "Add Subtitles"), "add"));
+        var ai = Button(Key("web.subtitles.menu.translateWithAi", "Translate with AI…"), Key("web.subtitles.translate.titleTranslate", "Translate subtitles with AI"), "ai"); footer.Children.Add(ai);
+        footer.Children.Add(Button(Key("web.subtitles.menu.appearance", "Appearance…"), Key("web.subtitles.menu.appearance", "Appearance…"), "appearance"));
         bool CanChangeDelay() => ExecutedSubtitleIndex >= 0 && SubtitlePreferencesLoaded;
         (string? Key, string Status, bool Busy, bool Sync, bool Reset, bool Reload) ActiveTiming()
         {
@@ -166,7 +174,7 @@ public partial class PlayerService
                 var key = active == null ? null : SubtitleSyncPolicy.Key(active);
                 _subtitleSyncEntries.TryGetValue(key ?? "", out var entry);
                 return (key,
-                    entry?.Forbidden == true ? "This server doesn't allow changing subtitle timing." : entry?.Error ??
+                    entry?.Forbidden == true ? HudText("web.subtitles.menu.timingForbidden", "This server doesn't allow changing subtitle timing.") : entry?.Error ??
                         (entry == null ? "" : entry.State.Sync?.Status == "failed" ? SubtitleSyncPolicy.Failure(entry.State.Sync.Failure) : SubtitleSyncPolicy.Status(entry.State)),
                     entry?.Busy == true || SubtitleSyncPolicy.InProgress(entry?.State.Sync),
                     entry != null && !entry.Forbidden && !entry.Unsupported && _subtitleSyncCapability?.State == "available" &&
@@ -180,17 +188,19 @@ public partial class PlayerService
             var current = state.Current;
             var choices = new List<PlaybackMenuChoice>
             {
-                new("-1", "Off", "", [], current < 0, IsPending: state.Pending < 0 || state.Preference == -1),
+                new("-1", HudText("web.subtitles.menu.off", "Off"), "", [], current < 0, IsPending: state.Pending < 0 || state.Preference == -1),
             };
             foreach (var track in tracks.OrderBy(track => track.Source switch { "external" => 1, "downloaded" => 2, _ => 0 }))
             {
                 var language = LanguageCodeToName(track.Language);
-                var title = string.IsNullOrWhiteSpace(language) ? "Unknown" : language;
+                var title = string.IsNullOrWhiteSpace(language) ? HudText("web.languageName.unknown", "Unknown") : language;
                 var detail = track.Label == title || track.Label == track.Language ||
                     string.Equals(track.Label.TrimStart('.'), track.Codec, StringComparison.OrdinalIgnoreCase) ? "" : track.Label;
                 var badges = new[] { track.Codec?.ToUpperInvariant() ?? "", track.Source switch
-                    { "ai_generated" or "generated" => "AI Generated", "downloaded" => "Downloaded", "external" => "External", _ => "Embedded" },
-                    track.Forced ? "Forced" : "", track.HearingImpaired ? "SDH" : "" }.Where(text => text.Length > 0).ToArray();
+                    { "ai_generated" or "generated" => "AI Generated", "downloaded" => HudText("web.subtitles.menu.source.downloaded", "Downloaded"),
+                        "external" => HudText("web.subtitles.menu.source.external", "External"), _ => HudText("web.subtitles.menu.source.embedded", "Embedded") },
+                    track.Forced ? HudText("web.subtitles.translate.forced", "Forced") : "",
+                    track.HearingImpaired ? HudText("web.subtitles.translate.sdh", "SDH") : "" }.Where(text => text.Length > 0).ToArray();
                 var available = availableTracks.Contains(track);
                 choices.Add(new(track.Index.ToString(CultureInfo.InvariantCulture), title, detail, badges,
                     track.Index == current, IsEnabled: available,
@@ -203,15 +213,17 @@ public partial class PlayerService
         {
             if (!Current()) { menu?.Close(PlaybackMenuCloseReason.OwnerRetired); return; }
             var offset = SubtitleOffsetMs;
-            delayValue.Text = offset == 0 ? "0 ms" : $"{offset:+0;-0} ms";
+            var shownDelay = offset == 0 ? "0" : offset.ToString("+0;-0", AppStrings.FormatCulture);
+            delayValue.Text = AppStrings.Get("web.subtitles.menu.delayValue", new Dictionary<string, object?> { ["delay"] = shownDelay },
+                fallback: shownDelay + " ms");
             delayStatus.Text = SubtitlePreferenceError ?? (!SubtitlePreferencesLoaded ? "Loading subtitle preferences" :
-                _subtitleOffsetDraft.HasValue ? "Saving subtitle delay…" : "Delay");
+                _subtitleOffsetDraft.HasValue ? "Saving subtitle delay…" : HudText("web.subtitles.menu.delay", "Delay"));
             earlier.IsEnabled = CanChangeDelay() && offset > -10000; later.IsEnabled = CanChangeDelay() && offset < 10000;
             resetDelay.IsEnabled = CanChangeDelay() && offset != 0;
             var timing = ActiveTiming(); syncStatus.Text = timing.Status;
             syncStatus.Visibility = timing.Status.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             sync.Visibility = timing.Sync ? Visibility.Visible : Visibility.Collapsed; sync.IsEnabled = !timing.Busy;
-            sync.Content = timing.Busy ? "Syncing…" : "Sync to audio";
+            sync.Content = timing.Busy ? HudText("web.subtitles.menu.syncing", "Syncing…") : HudText("web.subtitles.menu.syncToAudio", "Sync to audio");
             resetTiming.Visibility = timing.Reset ? Visibility.Visible : Visibility.Collapsed; resetTiming.IsEnabled = !timing.Busy;
             reload.Visibility = timing.Reload ? Visibility.Visible : Visibility.Collapsed;
             ai.Visibility = NativeSubtitleAiAvailable ? Visibility.Visible : Visibility.Collapsed;
@@ -229,9 +241,15 @@ public partial class PlayerService
             if (ReferenceEquals(_nativeSubtitleAction, action)) _nativeSubtitleAction = null;
             finish(reason);
         }
-        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, "Subtitles", Choices(choiceState), Current,
+        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.subtitles.menu.heading", "Subtitles"), Choices(choiceState), Current,
             id => { if (InventoryCurrent() && int.TryParse(id, out var index)) _ = SelectNativeSubtitleAsync(owner, index); },
             Closed, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer);
+        menu.Localize(() => HudText("web.subtitles.menu.heading", "Subtitles"), () =>
+        {
+            foreach (var text in footerText) text();
+            Refresh();
+            return Choices(choiceState);
+        });
         refresh = Refresh; timer.Tick += (_, _) => Refresh(); Refresh(); timer.Start();
         _ = SubtitleSyncActionAsync("", "refresh");
         return menu;

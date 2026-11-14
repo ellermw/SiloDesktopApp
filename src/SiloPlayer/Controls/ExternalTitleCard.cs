@@ -17,7 +17,7 @@ namespace SiloPlayer.Controls;
 public static class ExternalTitleCard
 {
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
-    public static Border StatusBadge(string label, bool overlay = false)
+    public static Border StatusBadge(string label, bool overlay = false, Func<string>? display = null)
     {
         var primary = label == "Available"; var destructive = label == "Failed";
         var secondary = label is "Approved" or "Processing" or "Partially available";
@@ -25,12 +25,12 @@ public static class ExternalTitleCard
         return new Border { Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Left,
             BorderThickness = new Thickness(1), BorderBrush = primary || destructive || secondary ? new SolidColorBrush(Microsoft.UI.Colors.Transparent) : Brush("BorderBrush"),
             Background = primary ? Brush("AccentBrush") : destructive ? Brush("ErrorBrush") : secondary ? Brush("SecondaryBackgroundBrush") : overlay ? Brush("AppBackgroundBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            Child = new TextBlock { Text = label, FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Medium, Foreground = Brush(foreground), TextTrimming = TextTrimming.CharacterEllipsis } };
+            Child = MediaItemCardActions.BindText(new TextBlock { Text = label, FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Medium, Foreground = Brush(foreground), TextTrimming = TextTrimming.CharacterEllipsis }, "Text", element => element.Text = display?.Invoke() ?? label) };
     }
 
     public static Grid Build(RequestMediaResult item, double width, Func<Task>? request = null,
         Func<Task>? watchlist = null, bool removeOnly = false, string? statusCaption = null, bool attention = false, string? statusBadge = null,
-        bool watchlistCard = false, Action? statusSearchAction = null)
+        bool watchlistCard = false, Action? statusSearchAction = null, Func<string>? captionText = null, Func<string>? badgeText = null)
     {
         var card = new Grid { Width = width, RowSpacing = 0 };
         card.RowDefinitions.Add(new RowDefinition { Height = new GridLength(width * 1.5) });
@@ -39,7 +39,7 @@ public static class ExternalTitleCard
         var artworkWidth = Math.Max(0, width - 2);
         var artworkHeight = Math.Max(0, width * 1.5 - 2);
         var dim = attention || (!watchlistCard && !item.Request.Requestable);
-        var image = new Image { Width = artworkWidth, Height = artworkHeight, Stretch = Stretch.UniformToFill };
+        var image = new Image { FlowDirection = FlowDirection.LeftToRight, Width = artworkWidth, Height = artworkHeight, Stretch = Stretch.UniformToFill };
         if (item.PosterUrl is { } url)
             image.Source = (ImageSource)new UrlToImageSourceConverter().Convert(url, typeof(ImageSource), dim ? "request-dim" : null!, "");
         var poster = new Grid { Width = artworkWidth, Height = artworkHeight };
@@ -70,18 +70,22 @@ public static class ExternalTitleCard
         var meta = string.Join(" · ", new[] { item.MediaType == "series" ? "Series" : "Movie", item.YearText }.Where(s => s.Length > 0)).ToUpperInvariant();
         var caption = new StackPanel { Margin = new Thickness(4, 4, 4, 0), Spacing = 6,
             Visibility = Visibility.Visible };
-        caption.Children.Add(new TextBlock { Text = meta, FontSize = 11, FontWeight = FontWeights.Medium, LineHeight = 16.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            CharacterSpacing = 140, Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
+        caption.Children.Add(MediaItemCardActions.BindText(new TextBlock { Text = meta, FontSize = 11, FontWeight = FontWeights.Medium, LineHeight = 16.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            CharacterSpacing = 140, Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(string.Join(" · ", new[] { SiloPlayer.Core.Localization.AppStrings.Get(item.MediaType == "series" ? "web.requests.toAdd.series" : "web.requests.toAdd.movie"), item.YearText }.Where(value => value.Length > 0)))));
         if (statusCaption != null)
         {
             var statusText = new TextBlock { FontSize = 12, LineHeight = 18,
                 Foreground = attention ? Brush("WarningBrush") : Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis };
-            statusText.Inlines.Add(new Run { Text = statusCaption });
+            var statusRun = new Run { Text = statusCaption };
+            statusText.Inlines.Add(statusRun);
+            MediaItemCardActions.BindText(statusText, "Caption", _ => statusRun.Text = captionText?.Invoke() ?? statusCaption);
             if (statusSearchAction != null)
             {
                 statusText.Inlines.Add(new Run { Text = " · " });
                 var find = new Hyperlink { Foreground = statusText.Foreground, FontWeight = FontWeights.Medium };
-                find.Inlines.Add(new Run { Text = "Find it" });
+                var findRun = new Run { Text = "Find it" };
+                find.Inlines.Add(findRun);
+                SiloPlayer.Services.AppLocalization.Register(statusText, () => findRun.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.findIt", fallback: "Find it"));
                 find.Click += (_, _) => statusSearchAction();
                 statusText.Inlines.Add(find);
             }
@@ -92,17 +96,17 @@ public static class ExternalTitleCard
         var open = new Button { Tag = new RequestDetailNavigation(item.MediaType, item.TmdbId),
             Style = (Style)Application.Current.Resources["PosterHitTargetButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
-        AutomationProperties.SetName(open, $"Open {item.Title} request details");
+        MediaItemCardActions.BindText(open, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.viewDetails") + " · " + item.Title));
         open.Click += (_, _) => navigation.Navigate<RequestDetailPage>((RequestDetailNavigation)open.Tag);
         Grid.SetRowSpan(open, statusSearchAction == null ? 3 : 2); card.Children.Add(open);
         if (item.LibraryContentId is { Length: > 0 } libraryId)
         {
             var chip = new Button { Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4,
-                Children = { WebUiIcon.Create("library", 12, strokeThickness: 2.4), new TextBlock { Text = "LIBRARY", FontSize = 10, FontWeight = FontWeights.SemiBold, CharacterSpacing = 140 } } },
+                Children = { WebUiIcon.Create("library", 12, strokeThickness: 2.4), SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "LIBRARY", FontSize = 10, FontWeight = FontWeights.SemiBold, CharacterSpacing = 140 }, text: "web.library.page.titleFallback") } },
                 Margin = new Thickness(8), Padding = new Thickness(10, 4, 10, 4),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
             RoundedBadge.SetRadius(chip, 999);
-            AutomationProperties.SetName(chip, $"Open {item.Title} in library");
+            MediaItemCardActions.BindText(chip, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.hub.openInLibraryFor", new Dictionary<string, object?> { ["title"] = item.Title })));
             chip.Click += (_, _) => navigation.Navigate<ItemDetailPage>(libraryId); card.Children.Add(chip);
         }
         var state = item.Request.Status.Length > 0 || item.Request.State?.Length > 0 || item.Availability == "available";
@@ -122,11 +126,11 @@ public static class ExternalTitleCard
                 var progress = new ProgressBar { Value = Math.Clamp(percent!.Value, 0, 100), Minimum = 0, Maximum = 100,
                     Height = 4, MinHeight = 4, VerticalAlignment = VerticalAlignment.Bottom,
                     IsHitTestVisible = false, Foreground = Brush("AccentBrush"), Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(76, 255, 255, 255)) };
-                AutomationProperties.SetName(progress, "Request download progress");
+                MediaItemCardActions.Localize(progress, name: "web.requests.download.progress");
                 poster.Children.Add(progress);
             }
             var hosts = CardBadgeHosts.Create(poster, geometry, progressVisible ? 8 : 0);
-            var badges = CardBadgeHosts.ForData(data, overlayService, geometry.Scale);
+            var badges = CardBadgeHosts.ForData(data, overlayService, geometry.Scale, requestStatus: badgeText);
             if (attention)
                 badges = badges.Select(badge => badge.OverlayId == "request_status" && badge.Config.AccentColor is null
                     ? badge with { Config = badge.Config with { AccentColor = "#f59e0b" } } : badge).ToList();
@@ -137,7 +141,7 @@ public static class ExternalTitleCard
             var label = RequestViewerPolicy.Label(item.Request.Status, null, item.Request.State, item.Availability);
             if (!state) label = RequestViewerPolicy.Reason(item.Request.Reason);
             if (statusBadge != null) label = statusBadge;
-            var badge = StatusBadge(label, overlay: true); badge.Margin = new Thickness(8);
+            var badge = StatusBadge(label, overlay: true, display: badgeText ?? (() => state ? MediaItemCardActions.RequestStatus(item.Request.Status, state: item.Request.State, availability: item.Availability) : MediaItemCardActions.RequestReason(item.Request.Reason))); badge.Margin = new Thickness(8);
             badge.HorizontalAlignment = watchlistCard ? HorizontalAlignment.Left : HorizontalAlignment.Right; badge.VerticalAlignment = VerticalAlignment.Top;
             if (watchlistCard)
             {
@@ -167,14 +171,14 @@ public static class ExternalTitleCard
                 Style = (Style)Application.Current.Resources["AccentButtonStyle"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Opacity = 0 };
             RoundedBadge.SetRadius(button, 999);
             object NormalContent() => new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6,
-                Children = { WebUiIcon.Create("plus", 14, Brush("AccentForegroundBrush"), 2.5), new TextBlock { Text = "Request", FontSize = 12, FontWeight = FontWeights.SemiBold } } };
-            button.Content = NormalContent(); AutomationProperties.SetName(button, $"Request {item.Title}");
+                Children = { WebUiIcon.Create("plus", 14, Brush("AccentForegroundBrush"), 2.5), SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Request", FontSize = 12, FontWeight = FontWeights.SemiBold }, text: "web.requests.request") } };
+            button.Content = NormalContent(); MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.requestTitle", new Dictionary<string, object?> { ["title"] = item.Title })));
             button.Click += async (_, _) => { if (pending) return; pending = true; button.IsEnabled = false;
-                AutomationProperties.SetName(button, $"Sending request for {item.Title}");
-                button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new ProgressRing { IsActive = true, Width = 14, Height = 14 }, new TextBlock { Text = "Sending", FontSize = 12, FontWeight = FontWeights.SemiBold } } }; UpdateReveal();
+                MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.sendingFor", new Dictionary<string, object?> { ["title"] = item.Title })));
+                button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new ProgressRing { IsActive = true, Width = 14, Height = 14 }, SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Sending", FontSize = 12, FontWeight = FontWeights.SemiBold }, text: "web.requests.card.sending") } }; UpdateReveal();
                 try { await request(); }
-                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
-                finally { pending = false; button.IsEnabled = true; button.Content = NormalContent(); AutomationProperties.SetName(button, $"Request {item.Title}"); UpdateReveal(); } };
+                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
+                finally { pending = false; button.IsEnabled = true; button.Content = NormalContent(); MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.requestTitle", new Dictionary<string, object?> { ["title"] = item.Title }))); UpdateReveal(); } };
             actions.Add((button, () => pending)); card.Children.Add(button);
         }
         if (watchlist != null)
@@ -187,15 +191,16 @@ public static class ExternalTitleCard
                 button.Width = button.Height = wide ? 32 : 24; button.Margin = new Thickness(wide ? 10 : 6);
                 button.Content = WebUiIcon.Create(item.InWatchlist == true || removeOnly ? "bookmark-check" : "bookmark", wide ? 16 : 12,
                 item.InWatchlist == true || removeOnly ? Brush("AccentBrush") : Brush("PrimaryTextBrush"));
-                ToolTipService.SetToolTip(button, item.InWatchlist == true || removeOnly ? "On Watchlist" : "Add to Watchlist");
-                AutomationProperties.SetName(button, $"{(item.InWatchlist == true || removeOnly ? "Remove" : "Add")} {item.Title} {(item.InWatchlist == true || removeOnly ? "from" : "to")} your watchlist"); }
+                ToolTipService.SetToolTip(button, SiloPlayer.Core.Localization.AppStrings.Get(item.InWatchlist == true || removeOnly ? "web.requests.card.onWatchlist" : "web.requests.card.addToWatchlist"));
+                MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get(item.InWatchlist == true || removeOnly ? "web.requests.card.removeFromWatchlist" : "web.requests.card.addToWatchlistFor", new Dictionary<string, object?> { ["title"] = item.Title }))); }
             UpdateBookmark();
+            AppLocalization.Register(button, UpdateBookmark);
             XamlRoot? observedRoot = null;
             void RootChanged(XamlRoot _, XamlRootChangedEventArgs __) => UpdateBookmark();
             card.Loaded += (_, _) => { if (observedRoot != null) observedRoot.Changed -= RootChanged; observedRoot = card.XamlRoot; if (observedRoot != null) observedRoot.Changed += RootChanged; UpdateBookmark(); };
             card.Unloaded += (_, _) => { if (observedRoot != null) observedRoot.Changed -= RootChanged; observedRoot = null; };
             button.Click += async (_, _) => { if (pending) return; pending = true; button.IsEnabled = false; UpdateReveal();
-                try { await watchlist(); UpdateBookmark(); } catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+                try { await watchlist(); UpdateBookmark(); } catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
                 finally { pending = false; button.IsEnabled = true; UpdateReveal(); } };
             actions.Add((button, () => pending)); card.Children.Add(button);
         }

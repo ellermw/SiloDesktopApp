@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:loc="using:SiloPlayer.Services"
     mc:Ignorable="d"
     Title=""
     Background="#FF171717"
@@ -37,6 +38,8 @@
                 BorderThickness="0"
                 AutomationProperties.Name="Close"
                 ToolTipService.ToolTip="Close"
+                loc:Localized.Name="web.subtitles.closeDialog"
+                loc:Localized.ToolTip="web.subtitles.closeDialog"
                 Click="Close_Click">
                 <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="#99FFFFFF" />
             </Button>
@@ -57,6 +60,7 @@
                         x:Name="SubtitleModeButton"
                         Grid.Column="0"
                         Content="From subtitles"
+                        loc:Localized.Content="web.subtitles.translate.fromSubtitles"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Center"
                         Padding="8,6"
@@ -67,6 +71,7 @@
                         x:Name="AudioModeButton"
                         Grid.Column="1"
                         Content="From audio"
+                        loc:Localized.Content="web.subtitles.translate.fromAudio"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Center"
                         Padding="8,6"
@@ -141,6 +146,7 @@
                     x:Name="CancelButton"
                     Grid.Column="1"
                     Content="Cancel"
+                    loc:Localized.Content="common.cancel"
                     Padding="14,7"
                     Background="Transparent"
                     BorderThickness="0"

@@ -1,4 +1,5 @@
 using System.Globalization;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Services.PlaybackMenus;
@@ -19,7 +20,10 @@ internal static class PlaybackSpeedMenuModel
             var label = rate.ToString("0.##", CultureInfo.InvariantCulture);
             var custom = !VideoPlaybackRatePreferences.Presets.Contains(rate);
             var enabled = canChange && !isRoom;
-            return new PlaybackSpeedMenuOption("rate:" + label, label + "×",
+            // The id keeps the invariant wire rate; the title is display text.
+            var shown = rate.ToString("0.##", AppStrings.FormatCulture);
+            return new PlaybackSpeedMenuOption("rate:" + label, AppStrings.Get("web.player.speed.rate",
+                    new Dictionary<string, object?> { ["rate"] = shown }, fallback: shown + "×"),
                 custom ? "Saved custom speed" : rate == 1 ? "Normal speed" : "", rate,
                 rate == current, pending && rate == current, enabled,
                 enabled ? "" : isRoom ? "Watch Party controls playback speed." : "Playback speed is unavailable for this playback.");

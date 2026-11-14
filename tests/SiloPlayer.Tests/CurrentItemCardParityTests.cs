@@ -94,7 +94,7 @@ public sealed class CurrentItemCardParityTests
         Assert.Equal("Premiere", SiloPlayer.Core.Services.UpcomingBadgePresentation.Label("series_premiere"));
         Assert.Equal("New Season", SiloPlayer.Core.Services.UpcomingBadgePresentation.Label("season_premiere"));
         Assert.Contains("upcoming: true", code);
-        Assert.Contains("FormatUpcomingSchedule", code);
+        Assert.Contains("MediaItemCardActions.UpcomingSchedule", code);
     }
 
     [Fact]
@@ -131,7 +131,7 @@ public sealed class CurrentItemCardParityTests
         Assert.Contains("HoverDim, \"Opacity\", dimOpacity, 150", code);
         Assert.Contains("AutomationProperties.Name=\"More actions\"", xaml);
         Assert.Contains("var displayTitle = MediaItemDisplayText.BuildTitle(item)", code);
-        Assert.Contains("$\"Play {displayTitle}\"", code);
+        Assert.Contains("web.home.continueWatching.playTitle", code);
         Assert.Contains("Tapped=\"DismissButton_Tapped\"", xaml);
         Assert.Contains("private void DismissButton_Tapped", code);
         Assert.Contains("x:Name=\"QuickWatchedButton\"", xaml);
@@ -162,7 +162,7 @@ public sealed class CurrentItemCardParityTests
         Assert.Contains("MediaItemCardActions.ToggleFavoriteAsync", code);
         Assert.Contains("var currentlyInWatchlist = item.UserState?.InWatchlist == true", code);
         Assert.Contains("if (!item.IsEnabled) return", code);
-        Assert.Contains("AutomationProperties.SetName(item, text)", code);
+        Assert.Contains("MediaItemCardActions.BindText", code);
         var restart = code.IndexOf("Play from Beginning", StringComparison.Ordinal);
         var watched = code.IndexOf("GetWatchedActionLabel", StringComparison.Ordinal);
         var dismiss = code.IndexOf("var canDismiss", StringComparison.Ordinal);

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Core.Localization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Services.PlaybackMenus;
@@ -14,9 +15,12 @@ public partial class PlayerService
     {
         var session = _playbackManager?.CurrentSession
             ?? throw new InvalidOperationException("The playback session has ended.");
-        var options = PlaybackQualityMenuModel.Build(Versions.ToArray(), session, SelectedQualityMenuId,
-            RequestedMediaFileId, IsWatchTogetherPlayback, IsQualitySwitchActive || _switchingContent,
-            BufferingQualityPlaybackInfo);
+        var versionsAtOpen = Versions.ToArray(); var selectedAtOpen = SelectedQualityMenuId;
+        var requestedAtOpen = RequestedMediaFileId; var roomAtOpen = IsWatchTogetherPlayback;
+        var switchingAtOpen = IsQualitySwitchActive || _switchingContent; var limitAtOpen = BufferingQualityPlaybackInfo;
+        IReadOnlyList<PlaybackQualityMenuOption> BuildOptions() => PlaybackQualityMenuModel.Build(versionsAtOpen, session,
+            selectedAtOpen, requestedAtOpen, roomAtOpen, switchingAtOpen, limitAtOpen);
+        var options = BuildOptions();
         IReadOnlyList<PlaybackMenuChoice> Choices()
         {
             var rows = options.Select(row => new PlaybackMenuChoice(row.Id, row.Title, row.Metadata,
@@ -25,7 +29,9 @@ public partial class PlayerService
                 ? row.DisabledReason : row.IsEnabled ? "" : "A playback change is already in progress.",
             IsPending: row.IsPending)).ToList();
             if (CanPresentNativeSpeed)
-                rows.Add(new("speed", "Playback speed", DesiredVideoPlaybackRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "×", [],
+                rows.Add(new("speed", HudText("web.player.speed.heading", "Speed"), AppStrings.Get("web.player.speed.rate",
+                    new Dictionary<string, object?> { ["rate"] = DesiredVideoPlaybackRate.ToString("0.##", AppStrings.FormatCulture) },
+                    fallback: DesiredVideoPlaybackRate.ToString("0.##", AppStrings.FormatCulture) + "×"), [],
                     IsPending: VideoPlaybackRatePending));
             return rows;
         }
@@ -51,7 +57,8 @@ public partial class PlayerService
         }
         var initial = Choices();
         if (initial.Count == 0) return null;
-        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, CanPresentNativeSpeed ? "Playback settings" : "Quality", initial,
+        string Heading() => CanPresentNativeSpeed ? HudText("web.player.quality.playbackSettings", "Playback settings") : HudText("web.player.quality.title", "Quality");
+        menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, Heading(), initial,
             Current, id =>
             {
                 if (id == "speed")
@@ -70,6 +77,8 @@ public partial class PlayerService
             }, reason => { VideoPlaybackRateChanged -= Changed; finish(reason); },
             root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer: error);
         VideoPlaybackRateChanged += Changed;
+        // Same rows (ids/selection), re-rendered in the new interface language.
+        menu.Localize(Heading, () => { options = BuildOptions(); return Choices(); });
         Refresh();
         return menu;
     }

@@ -1,6 +1,8 @@
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using SiloPlayer.Controls;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -45,7 +47,8 @@ public sealed partial class CollectionEditorPage
         _syncedThemes.Children.Clear();
         var groups = _syncedImports?.TemplateGroups.Where(group => group.Templates.Any(t => t.Source == "mdblist" && !string.IsNullOrWhiteSpace(t.Mdblist?.Url))).ToArray() ?? [];
         _syncedThemes.Visibility = groups.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var (key, label) in new[] { ("all", "All") }.Concat(groups.Select(g => (g.Category, g.Label))))
+        // Theme names are the server's; only "All" is interface text.
+        foreach (var (key, label) in new[] { ("all", CollectionText.Get("web.collections.templateGallery.allThemes", "All")) }.Concat(groups.Select(g => (g.Category, g.Label))))
         {
             var selected = key == _syncedTheme;
             var button = new Button { Content = label, Tag = key, MinHeight = 0, Height = 32, CornerRadius = new(16), BorderThickness = new(1), Padding = new(12, 0, 12, 0), FontSize = 13, FontWeight = FontWeights.Medium,
@@ -68,8 +71,8 @@ public sealed partial class CollectionEditorPage
         Detach(ImportedDefaultSortCombo); Detach(_titleLimit); Detach(_syncedDirection);
         RemoveFrom(_syncedBody, ImportedDefaultSortCombo); RemoveFrom(_syncedBody, _titleLimit);
         ImportedDefaultSortCombo.MinHeight = 0; ImportedDefaultSortCombo.Height = 36; ImportedDefaultSortCombo.FontSize = 14; ImportedDefaultSortCombo.Header = null;
-        AutomationProperties.SetName(ImportedDefaultSortCombo, "Default sort");
-        AutomationProperties.SetName(_syncedDirection, "Direction");
+        AutomationProperties.SetName(ImportedDefaultSortCombo, "Default sort"); Localized.SetName(ImportedDefaultSortCombo, "web.collections.fields.defaultSort");
+        AutomationProperties.SetName(_syncedDirection, "Direction"); Localized.SetName(_syncedDirection, "web.collections.fields.directionLabel");
         _syncedDirection.SelectionChanged -= SyncedDirection_Changed;
         _syncedDirection.SelectionChanged += SyncedDirection_Changed;
         foreach (var control in new Control[] { ImportedDefaultSortCombo, _syncedDirection, _titleLimit })
@@ -77,12 +80,12 @@ public sealed partial class CollectionEditorPage
             control.GotFocus -= SyncedOrderControl_GotFocus;
             control.GotFocus += SyncedOrderControl_GotFocus;
         }
-        _titleLimit.PlaceholderText = "Whole list"; _titleLimit.FontSize = 14; _titleLimit.MinHeight = 0; _titleLimit.Height = 42;
-        AutomationProperties.SetName(_titleLimit, "Max titles");
+        _titleLimit.PlaceholderText = "Whole list"; Localized.SetPlaceholder(_titleLimit, "web.collections.fields.wholeList"); _titleLimit.FontSize = 14; _titleLimit.MinHeight = 0; _titleLimit.Height = 42;
+        AutomationProperties.SetName(_titleLimit, "Max titles"); Localized.SetName(_titleLimit, "web.collections.copy.fieldLimit");
         var limit = new Grid(); limit.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); limit.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         _titleLimit.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); _titleLimit.BorderThickness = new(0);
         limit.Children.Add(_titleLimit);
-        var unit = new Border { Padding = new(12, 0, 12, 0), BorderBrush = CurrentBrush("BorderBrush"), BorderThickness = new(1, 0, 0, 0), Child = new TextBlock { Text = "max titles", FontSize = 13, Foreground = CurrentBrush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center } };
+        var unit = new Border { Padding = new(12, 0, 12, 0), BorderBrush = CurrentBrush("BorderBrush"), BorderThickness = new(1, 0, 0, 0), Child = CollectionText.Keyed(new TextBlock { Text = "max titles", FontSize = 13, Foreground = CurrentBrush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center }, "web.collections.fields.maxTitlesSuffix") };
         Grid.SetColumn(unit, 1); limit.Children.Add(unit);
         var limitBorder = new Border { Height = 44, CornerRadius = new(8), BorderThickness = new(1), BorderBrush = CurrentBrush("BorderBrush"), Child = limit };
         _syncedOrderGrid = new() { ColumnSpacing = 10, RowSpacing = 10 };
@@ -90,14 +93,14 @@ public sealed partial class CollectionEditorPage
         _syncedOrderGrid.ColumnDefinitions.Add(new() { Width = new(2, GridUnitType.Star) });
         _syncedOrderGrid.ColumnDefinitions.Add(new() { Width = new(2, GridUnitType.Star) });
         for (var index = 0; index < 3; index++) _syncedOrderGrid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        _syncedOrderGrid.Children.Add(Field("Sort", ImportedDefaultSortCombo));
-        _syncedOrderGrid.Children.Add(Field("Direction", _syncedDirection));
-        _syncedOrderGrid.Children.Add(Field("Max titles", limitBorder));
+        _syncedOrderGrid.Children.Add(Field("web.collections.fields.sortBy", "Sort", ImportedDefaultSortCombo));
+        _syncedOrderGrid.Children.Add(Field("web.collections.fields.directionLabel", "Direction", _syncedDirection));
+        _syncedOrderGrid.Children.Add(Field("web.collections.copy.fieldLimit", "Max titles", limitBorder));
         RefreshImportedSortControls();
         UpdateSyncedResponsive();
         return SyncedDivider(new StackPanel { Spacing = 12, Children = {
-            new TextBlock { Text = "Order", FontSize = 14.5, LineHeight = 21.75, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }, _syncedOrderGrid,
-            new TextBlock { Text = "Blank takes up to 10,000 titles from an MDBList, or the first 20 from a TMDB chart. A profile that picks its own sort while browsing keeps that choice.", FontSize = 13, LineHeight = 19.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }
+            CollectionText.Keyed(new TextBlock { Text = "Order", FontSize = 14.5, LineHeight = 21.75, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }, "web.collections.copy.fieldOrder"), _syncedOrderGrid,
+            SyncedOrderHelpText()
         } });
     }
 
@@ -147,6 +150,7 @@ public sealed partial class CollectionEditorPage
                 null, synced ? choice?.Value ?? selected : selected, keepSavedEditorSort: true, preserveItems: true);
             if (synced && ImportedDefaultSortCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, "")) is { } source)
                 source.Content = "List order";
+            LocalizeImportedSortChoices();
             var canEditDefaultSort = (_newSynced ? _creationCapabilities : ViewModel.Capabilities)?.CollectionDefaultSort == true;
             ImportedDefaultSortCombo.IsEnabled = canEditDefaultSort && !ViewModel.IsReadOnly && !ViewModel.IsSaving;
             var directions = field.Length == 0 ? new[] { "" } : new[] { "asc", "desc" };
@@ -161,10 +165,11 @@ public sealed partial class CollectionEditorPage
             foreach (var item in _syncedDirection.Items.OfType<ComboBoxItem>())
             {
                 var direction = (string)item.Tag;
-                var label = field.Length == 0 ? "As listed"
-                    : alphabetical ? direction == "asc" ? "A–Z" : "Z–A"
-                    : date ? direction == "asc" ? "Oldest first" : "Newest first"
-                    : direction == "asc" ? "Lowest first" : "Highest first";
+                var (label, directionChoice) = field.Length == 0 ? ("As listed", "")
+                    : alphabetical ? direction == "asc" ? ("A–Z", "az") : ("Z–A", "za")
+                    : date ? direction == "asc" ? ("Oldest first", "oldest") : ("Newest first", "newest")
+                    : direction == "asc" ? ("Lowest first", "lowest") : ("Highest first", "highest");
+                label = directionChoice.Length == 0 ? CollectionText.Get("web.collections.fields.asListed", label) : CollectionText.Get("web.collections.fields.direction", label, ("direction", directionChoice));
                 // WinUI copies the selected row's content into the closed box.
                 // Reselect only when its label changes, retaining open-popup rows.
                 if (ReferenceEquals(_syncedDirection.SelectedItem, item) && !Equals(item.Content, label))
@@ -203,10 +208,12 @@ public sealed partial class CollectionEditorPage
     {
         var ids = ViewModel.SelectedLibraryIds;
         var first = ids.Count > 0 ? ViewModel.AvailableLibraries.FirstOrDefault(l => l.Id == ids[0])?.Name ?? "1 library" : "";
-        var label = ids.Count == 0 ? "All my libraries" : ids.Count == 1 ? first : $"{first} +{ids.Count - 1} more";
+        var label = ids.Count == 0 ? CollectionText.Get("web.collections.copy.allMyLibraries", "All my libraries") : ids.Count == 1 ? first
+            : $"{first} +" + CollectionText.Get("web.collections.copy.moreNames", $"{ids.Count - 1} more", ("count", ids.Count - 1), ("count_text", CollectionText.Number(ids.Count - 1)));
+        var matchInto = CollectionText.Get("web.collections.syncedList.matchInto", "Match into");
         _syncedMatchButton.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = {
-            new TextBlock { Text = "Match into", FontSize = 14.5, FontWeight = FontWeights.SemiBold }, new TextBlock { Text = label, FontSize = 14 }, WebUiIcon.Create("chevron-down", 14)
+            new TextBlock { Text = matchInto, FontSize = 14.5, FontWeight = FontWeights.SemiBold }, new TextBlock { Text = label, FontSize = 14 }, WebUiIcon.Create("chevron-down", 14)
         } };
-        AutomationProperties.SetName(_syncedMatchButton, "Match into: " + label);
+        AutomationProperties.SetName(_syncedMatchButton, matchInto + ": " + label);
     }
 }

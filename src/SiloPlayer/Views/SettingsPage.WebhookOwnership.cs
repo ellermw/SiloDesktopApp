@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views;
 
@@ -90,15 +91,33 @@ public sealed partial class SettingsPage
         WebhookDefaultProfileCombo.Items.Clear(); WebhookConnectionProfileCombo.Items.Clear(); WebhookPlexServerCombo.Items.Clear();
         WebhookUrlBox.Text = WebhookConnectionNameBox.Text = WebhookManualServerName.Text = "";
         WebhookDetailName.Text = WebhookDetailHealth.Text = WebhookDetailStatus.Text = WebhookPlexAuthStatus.Text = "";
-        WebhookPlexSignInButton.Content = "Sign in to Plex"; WebhookPlexSignInButton.IsEnabled = true;
+        _webhookCreating = _webhookDeleting = false;
+        WebhookPlexSignInButton.Content = L("web.settings.webhooks.add.signInToPlex", "Sign in to Plex"); WebhookPlexSignInButton.IsEnabled = true;
         WebhookConnectionDetail.Visibility = WebhookPlexServerRow.Visibility = Visibility.Collapsed;
-        WebhookCreateConnectionButton.Content = "Create connection";
-        WebhookDeleteConnectionButton.Content = "Delete connection";
+        WebhookCreateConnectionButton.Content = L("web.settings.webhooks.add.create", "Create connection");
+        WebhookDeleteConnectionButton.Content = L("web.settings.webhooks.detail.delete", "Delete connection");
         WebhookDeleteConnectionButton.IsEnabled = true;
         WebhookSyncPanel.Visibility = Visibility.Collapsed;
         NoConnectionsText.Text = "Switch to the primary profile and verify its PIN if requested, then reopen Webhook Sync.";
         NoConnectionsText.Visibility = Visibility.Visible;
         UpdateWebhookCreateButtonState();
+    }
+
+    /// <summary>Webhook action labels that code rewrites while work is pending, in the current language.</summary>
+    private bool _webhookCreating, _webhookDeleting;
+    private string? _webhookPlexHint;
+
+    private void RefreshWebhookActionLabels()
+    {
+        if (!_webhookCreating) WebhookCreateConnectionButton.Content = L("web.settings.webhooks.add.create", "Create connection");
+        if (!_webhookDeleting) WebhookDeleteConnectionButton.Content = L("web.settings.webhooks.detail.delete", "Delete connection");
+        if (WebhookPlexSignInButton.IsEnabled)
+            WebhookPlexSignInButton.Content = _webhookPlexServers.Count > 0
+                ? L("web.settings.webhooks.add.reauthenticate", "Re-authenticate")
+                : L("web.settings.webhooks.add.signInToPlex", "Sign in to Plex");
+        // Only the initial hint follows the language; a sign-in status stays as reported.
+        if (_webhookPlexHint == null || WebhookPlexAuthStatus.Text == _webhookPlexHint)
+            WebhookPlexAuthStatus.Text = _webhookPlexHint = L("web.settings.webhooks.add.plexAuthorizeHint", "Authorize via plex.tv to discover your servers");
     }
 
     private WebhookOwner? CaptureWebhookOwner()

@@ -58,7 +58,8 @@ public sealed class WatchTogetherCurrentParityTests
         Assert.Contains("HostSearchBox_TextChanged", xaml);
         Assert.Contains("End watch party?", code);
         Assert.Contains("inviteUri.ToString()", code);
-        Assert.Contains("No suggestions yet — search for something to add.", code);
+        // Empty suggestions now use the WebUI key (actual-control coverage: reader-party-language native group).
+        Assert.Contains("web.watchTogether.voting.noSuggestions", code);
         Assert.Contains("AutomationProperties.Name=\"Copy invite link\"", xaml);
         Assert.Contains("x:Name=\"TerminalStatePanel\"", xaml);
         Assert.Contains("This invite link is incomplete", code);

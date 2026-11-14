@@ -31,7 +31,7 @@ public sealed class MatchItemDialogParitySourceTests
         Assert.Contains("await _maintenanceApi.SearchMatchesAsync", code);
         Assert.Contains("public bool HasAppliedMatch", code);
         Assert.Contains("HasAppliedMatch = true;", code);
-        Assert.Contains("ApplyMatchButton.Content = \"Applying...\"", code);
+        Assert.Contains("ApplyMatchButton.Content = AppStrings.Get(\"web.item.dialog.applying\"", code);
         Assert.Contains("Match could not be applied", code);
 
         Assert.Contains("public Dictionary<string, string>? ProviderIds", models);

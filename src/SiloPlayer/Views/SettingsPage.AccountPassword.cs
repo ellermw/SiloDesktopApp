@@ -55,7 +55,7 @@ public sealed partial class SettingsPage
             ? Visibility.Visible : Visibility.Collapsed;
         AccountPasswordRequirements.Text = _accountPassword.Requirements;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(AccountNewPassword, _accountPassword.Requirements);
-        AccountPasswordSubmit.Content = _accountPassword.IsSubmitting ? "Changing…" : "Change password";
+        AccountPasswordSubmit.Content = _accountPassword.IsSubmitting ? L("web.settings.account.password.changing", "Changing…") : L("web.settings.account.password.change", "Change password");
         AccountPasswordSubmit.IsEnabled = allowed && !_accountPassword.IsSubmitting;
         AccountPasswordMessage.Message = _accountPassword.ErrorMessage ?? _accountPassword.SuccessMessage ?? "";
         AccountPasswordMessage.Severity = _accountPassword.ErrorMessage is null ? InfoBarSeverity.Success : InfoBarSeverity.Error;

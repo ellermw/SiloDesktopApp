@@ -19,7 +19,7 @@ public sealed class ExpandableDescription : StackPanel
         Spacing = 4;
         _text = new TextBlock { TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 3, FontSize = 15, LineHeight = 24,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
-        _toggle = new Button { Content = "More", Padding = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _toggle = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "More", Padding = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed }, content: "web.detail.actions.more");
         _toggle.Click += (_, _) => Toggle();
         _text.IsTextTrimmedChanged += (_, _) => UpdateToggle();
         _text.SizeChanged += (_, _) => UpdateToggle();
@@ -30,8 +30,8 @@ public sealed class ExpandableDescription : StackPanel
     private void Toggle() { _expanded = !_expanded; _text.MaxLines = _expanded ? 0 : 3; UpdateToggle(); }
     private void UpdateToggle()
     {
-        _toggle.Content = _expanded ? "Less" : "More";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(_toggle, "Content", element => element.Content = _expanded ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.less", fallback: "Less") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.more", fallback: "More"));
         _toggle.Visibility = _expanded || _text.IsTextTrimmed ? Visibility.Visible : Visibility.Collapsed;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_toggle, _expanded ? "Show less description" : "Show full description");
+        MediaItemCardActions.BindText(_toggle, "Name", element => Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get(_expanded ? "web.detail.overview.less" : "web.detail.overview.more")));
     }
 }

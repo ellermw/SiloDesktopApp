@@ -21,31 +21,34 @@ public partial class PlayerService
         // chapters and mute, plus the volume slider on wide rails.
         var compact = request.Layout == "compact";
         var volumeRows = request.Layout != "full";
-        PlaybackMenuChoice[] allChoices =
+        // Catalog labels where the WebUI has the same control; desktop-only rows
+        // and states (panel visibility, volume steps, mute toggle) stay English.
+        PlaybackMenuChoice[] AllChoices() =>
         [
-            new("audio", "Audio tracks", "", [], IsEnabled: audioAvailable,
-                DisabledReason: audioAvailable ? "" : "No alternate audio tracks."),
-            new("chapters", "Chapters", "", [], IsEnabled: chaptersAvailable,
+            new("audio", HudText("web.player.audioMenu.trigger", "Audio tracks"), "", [], IsEnabled: audioAvailable,
+                DisabledReason: audioAvailable ? "" : HudText("web.player.audioMenu.onlyOneTrack", "Only one audio track")),
+            new("chapters", HudText("web.player.chaptersMenu.trigger", "Chapters"), "", [], IsEnabled: chaptersAvailable,
                 DisabledReason: chaptersAvailable ? "" : "No chapters available."),
             // Playback Info is the OSC's own drawn panel, not a native list, so
             // say what this row does and whether the panel is shown.
-            new("stats", "Playback info", statsShown ? "On-screen panel shown" : "On-screen panel hidden", [],
+            new("stats", HudText("web.player.controls.playbackInfo", "Playback info"), statsShown ? "On-screen panel shown" : "On-screen panel hidden", [],
                 IsCurrent: statsShown),
-            new("pip", "Picture in picture", "", []),
-            new("fill", fill ? "Contain video" : "Fill screen", "", [], IsCurrent: fill),
+            new("pip", HudText("web.player.controls.pictureInPictureItem", "Picture in picture"), "", []),
+            new("fill", fill ? "Contain video" : HudText("web.player.controls.fillScreen", "Fill screen"), "", [], IsCurrent: fill),
             new("volume-down", "Volume -", $"{volume:0}%", [], IsEnabled: volume > 0,
                 DisabledReason: volume > 0 ? "" : "Minimum volume."),
             new("volume-up", "Volume +", $"{volume:0}%", [], IsEnabled: volume < 100,
                 DisabledReason: volume < 100 ? "" : "Maximum volume."),
             new("mute", "Mute / unmute", mute ? "Muted" : "Unmuted", [], IsCurrent: mute),
         ];
-        var choices = allChoices.Where(choice => choice.Id switch
+        PlaybackMenuChoice[] Choices() => AllChoices().Where(choice => choice.Id switch
         {
             "audio" or "chapters" or "mute" => compact,
             "volume-down" or "volume-up" => volumeRows,
             _ => true,
         }).ToArray();
-        return new PlaybackChoiceMenu(owner.Video, request.Anchor, "More player options", choices,
+        var choices = Choices();
+        var menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.controls.moreOptions", "More player options"), choices,
             () => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request),
             id =>
             {
@@ -63,6 +66,8 @@ public partial class PlayerService
                 finish(reason);
             },
             root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
+        menu.Localize(() => HudText("web.player.controls.moreOptions", "More player options"), Choices);
+        return menu;
     }
 }
 

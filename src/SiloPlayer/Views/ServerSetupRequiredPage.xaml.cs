@@ -9,6 +9,7 @@ namespace SiloPlayer.Views;
 
 public sealed partial class ServerSetupRequiredPage : Page
 {
+    private Func<string>? _localizedSetupError;
     private ServerEntry? _server;
     private string _serverUrl = "";
     private CancellationTokenSource? _setupStatusCts;
@@ -16,6 +17,11 @@ public sealed partial class ServerSetupRequiredPage : Page
     public ServerSetupRequiredPage()
     {
         InitializeComponent();
+        SiloPlayer.Services.AppLocalization.Register(this, () =>
+        {
+            SiloPlayer.Services.AppLocalization.ApplyDirection(this);
+            if (_localizedSetupError != null) StatusText.Text = _localizedSetupError();
+        });
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -85,7 +91,7 @@ public sealed partial class ServerSetupRequiredPage : Page
         catch (Exception ex)
         {
             if (!requestCts.IsCancellationRequested && ReferenceEquals(Frame?.Content, this))
-                ShowError($"Silo could not check setup status: {ex.Message}");
+                ShowError(() => ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : $"Silo could not check setup status: {ex.Message}");
         }
         finally
         {
@@ -104,8 +110,15 @@ public sealed partial class ServerSetupRequiredPage : Page
     private void ChooseServer_Click(object sender, RoutedEventArgs e)
         => App.Services.GetRequiredService<NavigationService>().Navigate<ServerSelectPage>();
 
+    private void ShowError(Func<string> render)
+    {
+        ShowError(render());
+        _localizedSetupError = render;
+    }
+
     private void ShowError(string message)
     {
+        _localizedSetupError = null;
         StatusText.Text = message;
         StatusText.Visibility = Visibility.Visible;
     }

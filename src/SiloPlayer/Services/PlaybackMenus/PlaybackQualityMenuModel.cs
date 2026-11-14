@@ -1,4 +1,5 @@
 using System.Globalization;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 
@@ -28,8 +29,8 @@ internal static class PlaybackQualityMenuModel
                 var playing = version.FileId == session.MediaFileId;
                 var requested = version.FileId == requestedFileId && !playing;
                 var badges = new List<string>();
-                if (playing) badges.Add("Playing");
-                if (requested) badges.Add("Requested");
+                if (playing) badges.Add(AppStrings.Get("web.player.quality.versionPlaying", fallback: "Playing"));
+                if (requested) badges.Add(AppStrings.Get("web.player.quality.versionRequested", fallback: "Requested"));
                 rows.Add(new("file:" + version.FileId.ToString(CultureInfo.InvariantCulture),
                     PlaybackQualityMenuOptionKind.Version,
                     $"{version.Resolution} {version.CodecVideo?.ToUpperInvariant()}{(version.Hdr ? " HDR" : "")}".Trim(),
@@ -48,11 +49,11 @@ internal static class PlaybackQualityMenuModel
             var supported = string.Equals(PlaybackQualityPreferences.Normalize(quality.Label), quality.Label, StringComparison.OrdinalIgnoreCase)
                 || (session.ProtocolVersion < 3 && quality.Label is "original" or "420p");
             var title = quality.DisplayName ?? quality.Label;
-            if (auto && bufferingLimit.Length > 0) title += " · limited after buffering";
+            if (auto && bufferingLimit.Length > 0)
+                title = AppStrings.Get("bufferingQuality.autoLimited", fallback: title + " · limited after buffering");
             var details = new List<string>();
             if (quality.BitrateKbps is > 0)
-                details.Add(quality.BitrateKbps >= 1000
-                    ? $"{quality.BitrateKbps.Value / 1000d:0.#} Mbps" : $"{quality.BitrateKbps} kbps");
+                details.Add(Bitrate(quality.BitrateKbps.Value));
             if (auto && !string.IsNullOrWhiteSpace(session.ActiveQuality)) details.Add($"Playing: {session.ActiveQuality}");
             if (auto && bufferingLimit.Length > 0) details.Add(bufferingLimit);
             rows.Add(new("quality:" + quality.Label, PlaybackQualityMenuOptionKind.Quality, title,
@@ -63,11 +64,19 @@ internal static class PlaybackQualityMenuModel
         return rows;
     }
 
+    // Display only: numbers in the display culture with the catalog's units.
+    private static string Bitrate(int kbps) => kbps >= 1000
+        ? AppStrings.Get("web.common.format.bitrate.mbps", new Dictionary<string, object?>
+            { ["rate"] = (kbps / 1000d).ToString("0.#", AppStrings.FormatCulture) }, fallback: $"{kbps / 1000d:0.#} Mbps")
+        : AppStrings.Get("web.common.format.bitrate.kbps", new Dictionary<string, object?>
+            { ["rate"] = kbps.ToString(AppStrings.FormatCulture) }, fallback: $"{kbps} kbps");
+
     private static IReadOnlyList<PlaybackQualityV3> LegacyOptions(string? sourceResolution)
     {
         var sourceHeight = Height(sourceResolution);
         (string Id, string Title, int Height, int Bitrate)[] legacy =
-        [("original", "Original", 0, 0), ("auto", "Auto", 0, 0),
+        [("original", AppStrings.Get("settingsManifest.downloads.default_quality.option.original", fallback: "Original"), 0, 0),
+         ("auto", AppStrings.Get("web.player.quality.auto", fallback: "Auto"), 0, 0),
          ("1080p-high", "1080p High", 1080, 10000), ("1080p", "1080p", 1080, 5000),
          ("720p-high", "720p High", 720, 4000), ("720p", "720p", 720, 2000),
          ("480p", "480p", 480, 1500), ("420p", "420p", 420, 720)];

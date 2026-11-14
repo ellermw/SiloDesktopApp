@@ -115,8 +115,10 @@ public sealed partial class WatchTogetherRoomPage
         if (year > 0) meta.Add(year.ToString());
         if (!string.IsNullOrWhiteSpace(detail?.ContentRating)) meta.Add(detail.ContentRating);
         if (detail?.Genres.Count > 0) meta.Add(string.Join(", ", detail.Genres.Take(2)));
-        if (count.HasValue) meta.Add($"{count} {(count == 1 ? "season" : "seasons")}");
-        PickerSeriesMeta.Text = string.Join(" · ", meta);
+        // Year, rating and genres are data; only the season count is interface text.
+        LocalizeText(PickerSeriesMeta, () => string.Join(" · ", count.HasValue
+            ? meta.Append(T("web.watchTogether.series.seasonCount", count == 1 ? "1 season" : $"{count} seasons", CountArguments(count.Value)))
+            : meta));
         PickerSeriesOverview.Text = detail?.Overview ?? "";
         SetPickerPlaceholder(PickerSeriesPosterBorder, string.IsNullOrWhiteSpace(detail?.PosterThumbhash) ? series.PosterThumbhash : detail.PosterThumbhash);
         SetImageSource(PickerSeriesPoster, string.IsNullOrWhiteSpace(detail?.PosterUrl) ? series.PosterUrl : detail.PosterUrl);
@@ -135,21 +137,27 @@ public sealed partial class WatchTogetherRoomPage
     private void BuildPickerSeasons(IEnumerable<Season> seasons)
     {
         PickerSeasons.Children.Clear();
+        ForgetLocalized("seasons");
         foreach (var season in seasons)
         {
-            var label = season.SeasonNumber == 0 ? "Specials" : $"Season {season.SeasonNumber}";
+            var number = season.SeasonNumber;
             var text = new StackPanel { Spacing = 2 };
-            text.Children.Add(new TextBlock { Text = label, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            var labelText = new TextBlock { FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+            text.Children.Add(labelText);
+            var button = new Button { Tag = number, Content = text, Padding = new Thickness(12, 6, 12, 6),
+                CornerRadius = new CornerRadius(8), Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalContentAlignment = HorizontalAlignment.Left };
+            Localize(button, "label", () => { labelText.Text = SeasonLabel(number); AutomationProperties.SetName(button, SeasonLabel(number)); }, "seasons");
             if (season.UserData is { } data && data.WatchedCount + data.UnplayedCount is var total && total > 0)
             {
-                var progress = data.WatchedCount == 0 && data.InProgressCount == 0 ? "unwatched"
-                    : data.WatchedCount == total ? "all watched" : $"{data.WatchedCount} of {total} watched";
-                text.Children.Add(new TextBlock { Text = "You · " + progress, FontSize = 10, Opacity = .7 });
+                var watched = data.WatchedCount; var inProgress = data.InProgressCount;
+                var progressText = new TextBlock { FontSize = 10, Opacity = .7 };
+                LocalizeText(progressText, () => T("web.watchTogether.series.youProgress", "You · " + (watched == 0 && inProgress == 0 ? "unwatched" : watched == total ? "all watched" : $"{watched} of {total} watched"),
+                    new Dictionary<string, object?> { ["progress"] = watched == 0 && inProgress == 0 ? T("web.watchTogether.series.unwatched", "unwatched")
+                        : watched == total ? T("web.watchTogether.series.allWatched", "all watched")
+                        : T("web.watchTogether.series.watchedOf", $"{watched} of {total} watched", new Dictionary<string, object?> { ["seen"] = Count(watched), ["total"] = Count(total) }) }), "seasons");
+                text.Children.Add(progressText);
             }
-            var button = new Button { Tag = season.SeasonNumber, Content = text, Padding = new Thickness(12, 6, 12, 6),
-                CornerRadius = new CornerRadius(8), Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalContentAlignment = HorizontalAlignment.Left };
-            AutomationProperties.SetName(button, label);
-            button.Click += async (_, _) => await ShowEpisodesAsync(new MediaItem { Type = "season", Year = season.SeasonNumber, Title = label });
+            button.Click += async (_, _) => await ShowEpisodesAsync(new MediaItem { Type = "season", Year = number, Title = SeasonLabel(number) });
             PickerSeasons.Children.Add(button);
         }
         UpdatePickerSeasonButtons();
@@ -163,7 +171,7 @@ public sealed partial class WatchTogetherRoomPage
             var active = button.Tag is int number && number == _pickerSeasonNumber;
             button.Background = active ? (Brush)Application.Current.Resources["PrimaryTextBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             button.Foreground = (Brush)Application.Current.Resources[active ? "AppBackgroundBrush" : "SecondaryTextBrush"];
-            AutomationProperties.SetItemStatus(button, active ? "Selected" : "");
+            AutomationProperties.SetItemStatus(button, active ? "Selected" : ""); // a11y state word: English fallback (no upstream key)
         }
     }
 
@@ -216,8 +224,10 @@ public sealed partial class WatchTogetherRoomPage
         _seriesPicked = item;
         CandidateSpotlight.Visibility = Visibility.Collapsed;
         CandidatePlayBtn.Tag = item; CandidateTitle.Text = item.Title;
+        // CandidateMeta is also sent as the suggestion subtitle (room data), so it keeps its stored English form.
         CandidateMeta.Text = $"{item.SeriesTitle} · S{item.SeasonNumber} E{item.EpisodeNumber}";
-        PickerPickTitle.Text = $"S{item.SeasonNumber} E{item.EpisodeNumber} “{item.Title}”";
+        LocalizeText(PickerPickTitle, () => T("web.watchTogether.series.pickedEpisode", $"S{item.SeasonNumber} E{item.EpisodeNumber} “{item.Title}”",
+            new Dictionary<string, object?> { ["season"] = item.SeasonNumber ?? 0, ["episode"] = item.EpisodeNumber ?? 0, ["title"] = item.Title }));
         PickerConfirmation.Visibility = Visibility.Visible;
         _ = LoadCandidateMemberStateAsync(item);
         UpdatePickerRows(); UpdateSeriesPickerLayout(DrillDownPanel.ActualWidth);
@@ -227,12 +237,14 @@ public sealed partial class WatchTogetherRoomPage
     {
         if (_seriesPicked is not { } item) return;
         PickerConfirmButton.IsEnabled = !ViewModel.IsBusy && !_candidateStateLoading;
-        PickerConfirmButton.Content = ViewModel.IsBusy ? "Working…" : !ViewModel.IsHost || ViewModel.IsVoteMode ? "Suggest" : ViewModel.IsPlaying ? "Play now" : "Stage it";
+        PickerConfirmButton.Content = ViewModel.IsBusy ? T("web.watchTogether.common.working", "Working…") : ActionLabel();
         var picked = _drillDownEpisodes.FirstOrDefault(episode => episode.ContentId == item.ContentId);
         var risk = !_candidateStateLoading && picked != null ? WatchPartyPickerPolicy.FindSpoilerRisk(picked, _drillDownEpisodes, ViewModel.Room?.Members ?? _stateMembers, _memberStates) : null;
+        // "Checking member watch state…" has no upstream key; English fallback.
         PickerPickRisk.Text = _candidateStateLoading ? "Checking member watch state…" : risk != null
-            ? $"{string.Join(" and ", risk.Names)} {(risk.Names.Count == 1 ? "hasn't" : "haven't")} seen E{risk.EpisodeNumber}. Heads up."
-            : ViewModel.Room?.SelectedContentId is { } staged && staged != item.ContentId ? $"Replaces {StagedTitle.Text}" : "";
+            ? SpoilerRiskText(risk)
+            : ViewModel.Room?.SelectedContentId is { } staged && staged != item.ContentId
+                ? T("web.watchTogether.common.replaces", $"Replaces {StagedTitle.Text}", new Dictionary<string, object?> { ["title"] = StagedTitle.Text }) : "";
         PickerPickRisk.Foreground = (Brush)Application.Current.Resources[risk != null ? "WarningBrush" : "SecondaryTextBrush"];
     }
 
@@ -311,14 +323,14 @@ public sealed partial class WatchTogetherRoomPage
         }
         foreach (var (id, text) in _pickerNextCaptions)
         {
-            text.Text = $"NEXT UP FOR {_pickerNextUpCount} OF YOU";
+            text.Text = Upper(T("web.watchTogether.series.nextUp", $"Next up for {_pickerNextUpCount} of you", CountArguments(_pickerNextUpCount)));
             text.Visibility = _pickerNextUpId == id ? Visibility.Visible : Visibility.Collapsed;
         }
         foreach (var (id, button) in _pickerActions)
         {
             var next = _pickerNextUpId == id;
             button.Style = (Style)Application.Current.Resources[next ? "AccentButtonStyle" : "OutlineButtonStyle"];
-            var label = !ViewModel.IsHost || ViewModel.IsVoteMode ? "Suggest" : ViewModel.IsPlaying ? "Play now" : "Stage it";
+            var label = ActionLabel();
             if (next)
             {
                 var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -328,7 +340,8 @@ public sealed partial class WatchTogetherRoomPage
             else button.Content = label;
             // Reserve action width while revealing pointer-only secondary actions.
             button.Opacity = next || _seriesPicked?.ContentId == id || button.FocusState != FocusState.Unfocused ? 1 : 0;
-            AutomationProperties.SetName(button, $"{label} S{_pickerSeasonNumber} E{(button.Tag as MediaItem)?.EpisodeNumber}");
+            AutomationProperties.SetName(button, T("web.watchTogether.series.pickLabel", $"{label} S{_pickerSeasonNumber} E{(button.Tag as MediaItem)?.EpisodeNumber}",
+                new Dictionary<string, object?> { ["action"] = label, ["season"] = _pickerSeasonNumber ?? 0, ["episode"] = (button.Tag as MediaItem)?.EpisodeNumber ?? 0 }));
         }
         TryScrollPickerNextUp();
     }
@@ -390,6 +403,7 @@ public sealed partial class WatchTogetherRoomPage
         if (!_showingEpisodes) return;
         var next = _memberStates.Count == 0 ? null : WatchPartyPickerPolicy.NextUpForRoom(_drillDownEpisodes, ViewModel.Room?.Members ?? _stateMembers, _memberStates);
         _pickerNextUpId = next?.Episode.ContentId; _pickerNextUpCount = next?.Count ?? 0;
+        // Always collapsed (hidden); English only.
         DrillDownSubtitle.Text = next == null ? "" : $"Next up for {next.Count} of you · E{next.Episode.EpisodeNumber} {next.Episode.Title}";
         DrillDownSubtitle.Visibility = Visibility.Collapsed;
         UpdatePickerRows();
@@ -424,14 +438,14 @@ public sealed partial class WatchTogetherRoomPage
     private void EpisodeNumber_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is not TextBlock { Tag: MediaItem item } text) return;
-        text.Text = item.Type == "episode" ? $"E{item.EpisodeNumber}" : "";
+        LocalizeText(text, () => item.Type == "episode" ? T("web.watchTogether.common.episodeNumber", $"E{item.EpisodeNumber}", new Dictionary<string, object?> { ["number"] = item.EpisodeNumber ?? 0 }) : "", "episodes");
         text.Visibility = item.Type == "episode" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void EpisodeRuntime_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is not TextBlock { Tag: MediaItem item } text) return;
-        text.Text = item.Type == "episode" && item.Runtime > 0 ? $"{item.Runtime}m" : "";
+        LocalizeText(text, () => item.Type == "episode" && item.Runtime > 0 ? T("web.watchTogether.series.runtime", $"{item.Runtime}m", new Dictionary<string, object?> { ["minutes"] = item.Runtime }) : "", "episodes");
         text.Visibility = text.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 }

@@ -97,7 +97,7 @@ public sealed class DirectStreamRelayTests
         });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 0);
         using var output = new MemoryStream();
@@ -131,7 +131,7 @@ public sealed class DirectStreamRelayTests
         });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 3,
             supportsRanges: false);
@@ -161,7 +161,7 @@ public sealed class DirectStreamRelayTests
         });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => "access-token",
             maxRetries: 2);
         DirectStreamRelayHeaders? headers = null;
@@ -210,7 +210,7 @@ public sealed class DirectStreamRelayTests
 
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => "access-token",
             maxRetries: 2);
 
@@ -260,7 +260,7 @@ public sealed class DirectStreamRelayTests
         });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 5);
         using var output = new MemoryStream();
@@ -291,7 +291,7 @@ public sealed class DirectStreamRelayTests
 
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 1);
 
@@ -341,7 +341,7 @@ public sealed class DirectStreamRelayTests
 
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null);
 
         using var output = new MemoryStream();
@@ -369,7 +369,7 @@ public sealed class DirectStreamRelayTests
                 contentRange: null));
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session?seek=90"),
+            new Uri("https://example.test/stream/v3/session?seek=90"),
             () => "access-token",
             supportsRanges: false);
         using var output = new MemoryStream();
@@ -420,7 +420,7 @@ public sealed class DirectStreamRelayTests
         });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 3);
         using var output = new MemoryStream();
@@ -462,7 +462,7 @@ public sealed class DirectStreamRelayTests
         });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 2,
             upstreamIdleTimeout: TimeSpan.FromMilliseconds(50));
@@ -508,7 +508,7 @@ public sealed class DirectStreamRelayTests
         });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 2);
         using var output = new MemoryStream();
@@ -544,7 +544,7 @@ public sealed class DirectStreamRelayTests
             new ContentRangeHeaderValue(99, 108, 200)));
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 0);
         using var output = new MemoryStream();
@@ -570,7 +570,7 @@ public sealed class DirectStreamRelayTests
                 contentRange: null));
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null);
         using var output = new MemoryStream();
 
@@ -597,7 +597,7 @@ public sealed class DirectStreamRelayTests
             contentRange: null));
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
-            new Uri("https://example.test/api/v1/stream/session"),
+            new Uri("https://example.test/stream/v3/session"),
             () => null,
             maxRetries: 5);
         using var output = new ThrowOnWriteStream();

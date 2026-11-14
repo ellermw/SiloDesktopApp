@@ -154,7 +154,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 wire.FailEnd = true; PressPrimary(dialog);
                 await Until(() => wire.Ends == 1 && !room.IsBusy && dialog.IsPrimaryButtonEnabled,
                     "Rejected End did not expose a retryable confirmation.");
-                Require(room.ClosedReason == null && Descendants<TextBlock>(dialog).Any(text => text.Text.Contains("Failed to close room")),
+                Require(room.ClosedReason == null && Descendants<TextBlock>(dialog).Any(text => text.Text.Contains(SiloPlayer.Core.Localization.AppStrings.Get("web.watchTogether.actions.endRoomFailed"))),
                     "Rejected End closed the room or lost inline error feedback.");
                 wire.FailEnd = false; wire.HoldEnd = true;
                 PressPrimary(dialog);

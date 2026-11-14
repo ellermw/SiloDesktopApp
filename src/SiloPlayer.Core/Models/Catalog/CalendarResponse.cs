@@ -1,7 +1,7 @@
 namespace SiloPlayer.Core.Models.Catalog;
 
 /// <summary>
-/// Wire model for <c>GET /api/v1/calendar?start=&amp;end=&amp;filter=&amp;library_id=</c>.
+/// Wire model for <c>GET /api/v2/calendar?start=&amp;end=&amp;filter=&amp;library_id=</c>.
 /// Mirrors the web client's <c>CalendarResponse</c> shape:
 /// <c>{ "events": [{ "date": "YYYY-MM-DD", "items": [...] }] }</c>.
 /// </summary>

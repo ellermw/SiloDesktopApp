@@ -51,10 +51,10 @@ public sealed partial class WatchTogetherRoomPage : Page
     private readonly Grid _browseFilterLayout = new() { ColumnSpacing = 8, RowSpacing = 8 };
     private readonly Border _compactRailStrip = new() { BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(16, 8, 16, 8), Visibility = Visibility.Collapsed };
     private readonly TextBlock _compactPeopleLabel = new() { FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
-    private readonly TextBlock _compactActivityLabel = new() { Text = "Activity", FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _compactActivityLabel = new() { FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _modeLabel = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
-    private readonly TextBlock _modeOwner = new() { Text = "· you", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
-    private readonly TextBlock _inviteLabel = new() { Text = "Invite link", FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+    private readonly TextBlock _modeOwner = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+    private readonly TextBlock _inviteLabel = new() { FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
     private readonly TextBlock _readOnlyModeLabel = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
     private readonly Border _readOnlyModeChip = new() { Height = 28, CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 0, 12, 0), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed };
     private void UpdateModeChip(double width)
@@ -62,7 +62,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         var visible = width <= 0 || width >= 400;
         var mutable = ViewModel.IsHost && ViewModel.Room?.Phase == "lobby" && ViewModel.Capabilities.SelectionModeSwitch;
         ModeButton.Visibility = visible && mutable ? Visibility.Visible : Visibility.Collapsed;
-        _readOnlyModeLabel.Text = ViewModel.Room?.SelectionMode == "vote" ? "Everyone votes" : "Host picks";
+        var voteMode = ViewModel.Room?.SelectionMode == "vote";
+        LocalizeText(_readOnlyModeLabel, () => ModeLabel(voteMode));
         _readOnlyModeChip.Visibility = visible && ViewModel.Room != null && !mutable ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -77,7 +78,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         InitializeSeriesPicker();
         var stageCode = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         stageCode.Children.Add(SiloPlayer.Controls.WebUiIcon.Create("copy", 14));
-        stageCode.Children.Add(new TextBlock { Text = "Code", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        var stageCodeLabel = new TextBlock { FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+        stageCode.Children.Add(stageCodeLabel);
         StageCodeButton.Content = stageCode;
         StageInvitePanel.SizeChanged += (_, _) => UpdateInviteLayout(ActualWidth);
         StageInviteInfo.SizeChanged += (_, _) => UpdateInviteLayout(ActualWidth);
@@ -86,7 +88,6 @@ public sealed partial class WatchTogetherRoomPage : Page
         modeContent.Children.Add(_modeLabel); modeContent.Children.Add(_modeOwner);
         modeContent.Children.Add(new FontIcon { Glyph = "\uE70D", FontSize = 12 });
         ModeButton.Content = modeContent;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ModeButton, "Change how the room picks");
         // The current room keeps its status strip and people rail fixed while
         // the stage and picker scroll independently inside the remaining viewport.
         RoomContent.Children.Remove(RoomStatusBar);
@@ -157,7 +158,6 @@ public sealed partial class WatchTogetherRoomPage : Page
         RailSheetButton.Height = 20; RailSheetButton.MinHeight = 0; RailSheetButton.Padding = new Thickness(0);
         RailSheetButton.BorderThickness = new Thickness(0); RailSheetButton.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         RailSheetButton.HorizontalAlignment = HorizontalAlignment.Stretch; RailSheetButton.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(RailSheetButton, "Open people and activity");
         _compactRailStrip.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
         _compactActivityLabel.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
         _compactRailStrip.Child = RailSheetButton;
@@ -165,6 +165,13 @@ public sealed partial class WatchTogetherRoomPage : Page
         RoomWorkspace.Children.Add(_compactRailStrip);
         SuggestionsRepeater.ItemsSource = ViewModel.Suggestions;
         _searchDebounce.Tick += SearchDebounce_Tick;
+        InitializeLocalization();
+        LocalizeText(stageCodeLabel, () => T("web.watchTogether.inviteBar.code", "Code"));
+        LocalizeText(InviteEyebrow, () => Upper(T("web.watchTogether.inviteBar.label", "Invite")));
+        LocalizeText(NowPlayingEyebrow, () => Upper(T("web.watchTogether.playing.eyebrow", "Now playing")));
+        LocalizeText(PickerSeriesEyebrow, () => Upper(T("web.watchTogether.series.eyebrow", "Candidate · series")));
+        LocalizeText(PickerPickEyebrow, () => Upper(T("web.watchTogether.series.yourPick", "Your pick")));
+        LocalizeText(PickerDotsLegend, () => "● " + T("web.watchTogether.dots.watched", "watched") + "   ◐ " + T("web.watchTogether.dots.inProgress", "in progress") + "   ○ " + T("web.watchTogether.dots.unseen", "unseen"));
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -176,9 +183,9 @@ public sealed partial class WatchTogetherRoomPage : Page
             || string.IsNullOrEmpty(args.RoomAccessToken))
         {
             ShowTerminalState(
-                "This invite link is incomplete",
-                "The link is missing its access token, so the room can't be opened. Ask the host for a fresh invite, or join with a room code instead.",
-                "Join with a code");
+                () => T("web.watchTogether.room.incompleteTitle", "This invite link is incomplete"),
+                () => T("web.watchTogether.room.incompleteBody", "The link is missing its access token. Ask the host for a fresh invite, or join with a room code."),
+                () => T("watchParty.page.joinWithCode", "Join with a code"));
             return;
         }
 
@@ -265,7 +272,7 @@ public sealed partial class WatchTogetherRoomPage : Page
                 await player.PlayAsync(contentId, fileId: room.SelectedFileId,
                     startPositionOverride: room.AnchorPositionSeconds);
             }
-            catch (Exception error) { requestedRoom.ErrorMessage = $"Could not start room playback: {error.Message}"; }
+            catch (Exception error) { requestedRoom.SetLocalizedError(SiloPlayer.ViewModels.WatchPartyText.ActionFailure("web.watchTogether.actions.startFailed", "Could not start playback", error)); }
         });
     }
 
@@ -325,9 +332,12 @@ public sealed partial class WatchTogetherRoomPage : Page
         UpdatePickerConfirmation();
 
         CodeText.Text = ViewModel.DisplayCode;
-        PhaseText.Text = $"{(room?.Phase == "playing" ? "Playing" : room?.SelectionMode == "vote" ? "Voting" : "Live")} · {room?.MemberCount ?? 0} here";
-        MemberCountText.Text = ViewModel.MemberCount.ToString();
-        _compactPeopleLabel.Text = $"People · {ViewModel.MemberCount}";
+        var memberCount = room?.MemberCount ?? 0;
+        var stripKey = room?.Phase == "playing" ? ("web.watchTogether.strip.playing", "Playing") : room?.SelectionMode == "vote" ? ("web.watchTogether.strip.voting", "Voting") : ("web.watchTogether.strip.live", "Live");
+        LocalizeText(PhaseText, () => T(stripKey.Item1, $"{stripKey.Item2} · {memberCount} here", CountArguments(memberCount)));
+        MemberCountText.Text = Count(ViewModel.MemberCount);
+        var peopleCount = ViewModel.MemberCount;
+        LocalizeText(_compactPeopleLabel, () => T("web.watchTogether.rail.peopleCount", $"People · {peopleCount}", new Dictionary<string, object?> { ["count"] = Count(peopleCount) }));
 
         bool hasRoom = room != null && ViewModel.ClosedReason == null;
         bool isHost = ViewModel.IsHost;
@@ -347,7 +357,7 @@ public sealed partial class WatchTogetherRoomPage : Page
             _memberFingerprint = fingerprint;
             if (_browseRevision > 0) _ = RefreshPickerMembersAsync();
         }
-        _modeLabel.Text = isVoteMode ? "Everyone votes" : "Host picks";
+        LocalizeText(_modeLabel, () => ModeLabel(isVoteMode));
         UpdateModeChip(ActualWidth);
         _modeOwner.Visibility = ActualWidth <= 0 || ActualWidth >= 640 ? Visibility.Visible : Visibility.Collapsed;
         var staged = room?.Phase == "lobby" && !string.IsNullOrEmpty(room.SelectedContentId);
@@ -360,16 +370,25 @@ public sealed partial class WatchTogetherRoomPage : Page
         StartStagedButton.Visibility = staged && isHost ? Visibility.Visible : Visibility.Collapsed;
         StartStagedButton.IsEnabled = !ViewModel.IsBusy && ViewModel.Capabilities.StagedSelection;
         LobbyReadyButton.Visibility = staged && !isHost && ViewModel.Capabilities.LobbyReady ? Visibility.Visible : Visibility.Collapsed;
-        LobbyReadyButton.Content = room?.Members.FirstOrDefault(m => m.IsSelf)?.LobbyReady == true ? "Ready ✓" : "I'm ready";
+        var selfReady = room?.Members.FirstOrDefault(m => m.IsSelf)?.LobbyReady == true;
+        Localize(LobbyReadyButton, "content", () => LobbyReadyButton.Content = selfReady ? T("web.watchTogether.lobby.readyDone", "Ready ✓") : T("watchParty.button.imReady", "I'm ready"));
         var guests = room?.Members.Where(m => !m.IsHost && m.Connected).ToArray() ?? [];
-        var hostName = room?.Members.FirstOrDefault(member => member.IsHost)?.DisplayName ?? "The host";
-        var readyCaption = guests.Length == 0 ? "Waiting for a guest to join" : $"{guests.Count(m => m.LobbyReady)} of {guests.Length} ready";
-        ReadySummary.Text = isHost ? readyCaption : $"Starts when {hostName} presses play · {readyCaption}";
-        StagedEyebrow.Text = isHost ? "UP NEXT" : $"UP NEXT · {hostName} QUEUED THIS";
+        var hostName = room?.Members.FirstOrDefault(member => member.IsHost)?.DisplayName;
+        var readyCount = guests.Count(m => m.LobbyReady);
+        var guestTotal = guests.Length;
+        // Member display names are data and pass through as arguments.
+        string Host() => hostName ?? T("watchParty.theHost", "The host");
+        Dictionary<string, object?> ReadyArguments() => new() { ["host"] = Host(), ["ready"] = Count(readyCount), ["total"] = guestTotal, ["total_text"] = Count(guestTotal) };
+        LocalizeText(ReadySummary, () => isHost
+            ? guestTotal == 0 ? T("web.watchTogether.lobby.waitingGuest", "Waiting for a guest to join") : T("web.watchTogether.presence.ready", $"{readyCount} of {guestTotal} ready", ReadyArguments())
+            : guestTotal == 0 ? T("web.watchTogether.voting.guestCaption", $"Starts when {Host()} presses play", ReadyArguments())
+                : T("web.watchTogether.lobby.guestCaption", $"Starts when {Host()} presses play · {readyCount} of {guestTotal} ready", ReadyArguments()));
+        LocalizeText(StagedEyebrow, () => Upper(isHost ? T("web.watchTogether.lobby.upNext", "Up next")
+            : T("web.watchTogether.lobby.upNextGuest", $"Up next · {Host()} queued this", new Dictionary<string, object?> { ["host"] = Host() })));
         ChangeStagedButton.Visibility = staged && isHost ? Visibility.Visible : Visibility.Collapsed;
         ChangeStagedButton.IsEnabled = !ViewModel.IsBusy;
         ReadyCheckPanel.Visibility = guests.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        ReadyCheckSummary.Text = $"{guests.Count(member => member.LobbyReady)} of {guests.Length} ready";
+        LocalizeText(ReadyCheckSummary, () => T("web.watchTogether.presence.ready", $"{readyCount} of {guestTotal} ready", ReadyArguments()));
         ReadyCheckMembers.Children.Clear();
         foreach (var member in guests)
         {
@@ -387,7 +406,11 @@ public sealed partial class WatchTogetherRoomPage : Page
         PolicyButton.Visibility = Visibility.Collapsed;
         var start = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         start.Children.Add(new FontIcon { Glyph = "\uE768", FontSize = 12 });
-        start.Children.Add(new TextBlock { Text = guests.Length == 0 ? "Start alone anyway" : $"Start for everyone · {guests.Count(m => m.LobbyReady)}/{guests.Length} ready", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        ForgetLocalized("start");
+        var startLabel = new TextBlock { FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+        LocalizeText(startLabel, () => guestTotal == 0 ? T("web.watchTogether.lobby.startAlone", "Start alone anyway")
+            : T("web.watchTogether.lobby.startEveryone", $"Start for everyone · {readyCount}/{guestTotal} ready", ReadyArguments()), "start");
+        start.Children.Add(startLabel);
         StartStagedButton.Content = start;
 
 
@@ -395,21 +418,21 @@ public sealed partial class WatchTogetherRoomPage : Page
         // already playing). Hidden for guests and vote-mode rooms.
         HostPickSection.Visibility = hasRoom
             ? Visibility.Visible : Visibility.Collapsed;
-        HostSearchBox.PlaceholderText = "Search movies, series, episodes…";
-        BrowseHeading.Text = isHost && !isVoteMode ? "Browse to pick" : "Browse to suggest";
-        CandidateActionLabel.Text = !isHost || isVoteMode ? "Suggest this" : isPlaying ? "Switch everyone" : "Stage it for the room";
+        LocalizeText(BrowseHeading, () => isHost && !isVoteMode ? T("web.watchTogether.browse.sectionPick", "Browse to pick") : T("web.watchTogether.browse.sectionSuggest", "Browse to suggest"));
+        // "Switch everyone", the kind eyebrows and the empty-search prompts have no upstream keys; English fallbacks.
+        LocalizeText(CandidateActionLabel, () => !isHost || isVoteMode ? T("web.watchTogether.candidate.suggestThis", "Suggest this") : isPlaying ? "Switch everyone" : T("web.watchTogether.candidate.stageForRoom", "Stage it for the room"));
         CandidateKindLabel.Text = isVoteMode ? "YOUR SUGGESTION" : "READY TO PLAY";
         if (!HasCurrentBrowseState())
-            SearchEmptyText.Text = isPlaying
+            LocalizeText(SearchEmptyText, () => isPlaying
                 ? "Search to switch what everyone is watching."
                 : isVoteMode
                     ? "Search for something to suggest to the room."
-                    : "Find something for everyone to watch.";
+                    : "Find something for everyone to watch.");
 
         if (isHost && room != null)
         {
-            PolicyButtonText.Text = room.GuestControlPolicy == "guest_play_pause"
-                ? "Host Only" : "Allow Pause";
+            var guestCanPause = room.GuestControlPolicy == "guest_play_pause";
+            LocalizeText(PolicyButtonText, () => guestCanPause ? T("web.player.watchTogether.setHostOnly", "Host Only") : T("web.player.watchTogether.allowPause", "Allow Pause"));
         }
 
         // Now Playing
@@ -425,6 +448,7 @@ public sealed partial class WatchTogetherRoomPage : Page
 
         // Vote-mode guests can search and suggest. Host-pick guests wait for the host.
         WaitingPanel.Visibility = hasRoom && !isHost && !isVoteMode && !staged ? Visibility.Visible : Visibility.Collapsed;
+        // Desktop guest waiting copy has no upstream keys; English fallbacks.
         WaitingSubtitle.Text = isPlaying
             ? "The host already started playback. You'll enter together."
             : "The host will choose a movie or episode for the room.";
@@ -438,15 +462,19 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private async Task ResolveStagedTitleAsync(string contentId)
     {
-        StagedTitle.Text = "Staged for the room";
+        LocalizeText(StagedTitle, () => T("web.watchTogether.hero.loading", "Loading…"));
         try
         {
             var item = await App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().GetItemDetailAsync(contentId);
             if (ViewModel.Room?.SelectedContentId != contentId) return;
-            StagedTitle.Text = item.Type == "episode" && !string.IsNullOrWhiteSpace(item.SeriesTitle) ? $"{item.SeriesTitle} — S{item.SeasonNumber} E{item.EpisodeNumber} {item.Title}" : item.Title;
+            // Series and episode titles are data; only the S/E pattern is interface text.
+            LocalizeText(StagedTitle, () => item.Type == "episode" && !string.IsNullOrWhiteSpace(item.SeriesTitle)
+                ? T("web.watchTogether.hero.episodeTitled", $"{item.SeriesTitle} — S{item.SeasonNumber} E{item.EpisodeNumber} \"{item.Title}\"",
+                    new Dictionary<string, object?> { ["series"] = item.SeriesTitle, ["season"] = item.SeasonNumber ?? 0, ["episode"] = item.EpisodeNumber ?? 0, ["title"] = item.Title })
+                : item.Title);
             SetImageSource(StagedBackdrop, item.BackdropUrl); SetImageSource(StagedPoster, item.PosterUrl);
         }
-        catch { if (ViewModel.Room?.SelectedContentId == contentId) StagedTitle.Text = "Unavailable"; }
+        catch { if (ViewModel.Room?.SelectedContentId == contentId) LocalizeText(StagedTitle, () => T("web.watchTogether.hero.unavailable", "Unavailable")); }
     }
     private void UpdateRoomActivity(WatchTogetherRoomSnapshot? room)
     {
@@ -454,21 +482,23 @@ public sealed partial class WatchTogetherRoomPage : Page
         foreach (var member in room.Members)
         {
             var key = member.ProfileId;
-            if (!_previousMembers.TryGetValue(key, out var old)) AddActivity(member.DisplayName + " joined the room");
-            else if (old.LobbyReady != member.LobbyReady) AddActivity(member.DisplayName + (member.LobbyReady ? " is ready" : " is no longer ready"));
-            else if (old.Connected != member.Connected) AddActivity(member.DisplayName + (member.Connected ? " reconnected" : " disconnected"));
+            var who = member.DisplayName;
+            if (!_previousMembers.TryGetValue(key, out var old)) AddActivity(MemberActivity("web.watchTogether.activity.joined", who + " joined", who));
+            else if (old.LobbyReady != member.LobbyReady) AddActivity(member.LobbyReady
+                ? MemberActivity("web.watchTogether.activity.ready", who + " is ready", who)
+                : MemberActivity("web.watchTogether.activity.unready", who + " is no longer ready", who));
+            // Connection changes, phase and selection notes have no upstream activity keys; English fallbacks.
+            else if (old.Connected != member.Connected) AddActivity(() => who + (member.Connected ? " reconnected" : " disconnected"));
         }
-        foreach (var old in _previousMembers.Values.Where(old => room.Members.All(member => member.ProfileId != old.ProfileId))) AddActivity(old.DisplayName + " left the room");
-        if (_previousPhase != null && _previousPhase != room.Phase) AddActivity(room.Phase == "playing" ? "Playback started" : "Returned to the lobby");
-        if (_previousSelection != room.SelectedContentId && room.SelectedContentId != null) AddActivity(room.Phase == "lobby" ? "A title was staged for the room" : "The room changed titles");
+        foreach (var old in _previousMembers.Values.Where(old => room.Members.All(member => member.ProfileId != old.ProfileId)))
+        {
+            var who = old.DisplayName;
+            AddActivity(MemberActivity("web.watchTogether.activity.left", who + " left", who));
+        }
+        if (_previousPhase != null && _previousPhase != room.Phase) { var playing = room.Phase == "playing"; AddActivity(() => playing ? "Playback started" : "Returned to the lobby"); }
+        if (_previousSelection != room.SelectedContentId && room.SelectedContentId != null) { var lobby = room.Phase == "lobby"; AddActivity(() => lobby ? "A title was staged for the room" : "The room changed titles"); }
         _previousPhase = room.Phase; _previousSelection = room.SelectedContentId;
         _previousMembers.Clear(); foreach (var member in room.Members) _previousMembers[member.ProfileId] = member;
-    }
-    private void AddActivity(string message)
-    {
-        _compactActivityLabel.Text = message;
-        ActivityList.Children.Insert(0, new TextBlock { Text = $"{DateTime.Now:t} · {message}", TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = .8 });
-        while (ActivityList.Children.Count > 80) ActivityList.Children.RemoveAt(ActivityList.Children.Count - 1);
     }
     private void PeopleTab_Click(object sender, RoutedEventArgs e) { _activitySelected = false; UpdateRailTabs(); }
     private void ActivityTab_Click(object sender, RoutedEventArgs e) { _activitySelected = true; UpdateRailTabs(); }
@@ -488,10 +518,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var tabs = new Grid(); tabs.ColumnDefinitions.Add(new ColumnDefinition()); tabs.ColumnDefinitions.Add(new ColumnDefinition());
-        var peopleButton = new Button { Content = "People", Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch, Background = null, CornerRadius = new CornerRadius(0) };
-        var activityButton = new Button { Content = "Activity", Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch, Background = null, CornerRadius = new CornerRadius(0) };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(peopleButton, "People");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(activityButton, "Activity");
+        var peopleButton = new Button { Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch, Background = null, CornerRadius = new CornerRadius(0) };
+        var activityButton = new Button { Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch, Background = null, CornerRadius = new CornerRadius(0) };
         Grid.SetColumn(activityButton, 1); tabs.Children.Add(peopleButton); tabs.Children.Add(activityButton); panel.Children.Add(tabs);
         var people = new StackPanel(); var activity = new StackPanel();
         var peopleScroll = new ScrollViewer { Content = people, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -502,10 +530,13 @@ public sealed partial class WatchTogetherRoomPage : Page
             people.Children.Clear(); activity.Children.Clear();
             var members = ViewModel.Room?.Members ?? [];
             peopleButton.Content = PeopleTabContent(members.Count);
+            activityButton.Content = T("web.watchTogether.rail.activity", "Activity");
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(peopleButton, T("web.watchTogether.rail.people", "People"));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(activityButton, T("web.watchTogether.rail.activity", "Activity"));
             foreach (var member in members) people.Children.Add(CreateMemberRow(member));
-            if (members.Count == 0) people.Children.Add(new TextBlock { Text = "No one here yet. Share the invite to fill the room.", FontSize = 14, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(16, 24, 16, 24) });
+            if (members.Count == 0) people.Children.Add(new TextBlock { Text = T("web.watchTogether.rail.peopleEmpty", "No one here yet. Share the invite to fill the room."), FontSize = 14, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(16, 24, 16, 24) });
             foreach (var entry in ActivityList.Children.OfType<TextBlock>().Take(80)) activity.Children.Add(new TextBlock { Text = entry.Text, FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 10, 16, 10) });
-            if (activity.Children.Count == 0) activity.Children.Add(new TextBlock { Text = "Things people do in the room show up here.", FontSize = 14, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(16, 24, 16, 24), Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+            if (activity.Children.Count == 0) activity.Children.Add(new TextBlock { Text = T("web.watchTogether.rail.activityEmpty", "Things people do in the room show up here."), FontSize = 14, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(16, 24, 16, 24), Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         }
         void Select(bool showPeople)
         {
@@ -521,7 +552,16 @@ public sealed partial class WatchTogetherRoomPage : Page
         Refresh(); Select(true);
         void RoomChanged(object? changed, System.ComponentModel.PropertyChangedEventArgs args) { if (args.PropertyName == nameof(ViewModel.Room)) DispatcherQueue.TryEnqueue(Refresh); }
         ViewModel.PropertyChanged += RoomChanged;
-        try { await new ContentDialog { XamlRoot = XamlRoot, Title = "People and activity", Content = panel, CloseButtonText = "Close" }.ShowAsync(); }
+        var sheet = new ContentDialog { XamlRoot = XamlRoot, Content = panel };
+        LocalizeDialog(sheet, () =>
+        {
+            sheet.Title = T("web.watchTogether.rail.sheetTitle", "People and activity");
+            sheet.CloseButtonText = T("web.ui.close", "Close");
+            Refresh();
+        });
+        sheet.Title = T("web.watchTogether.rail.sheetTitle", "People and activity");
+        sheet.CloseButtonText = T("web.ui.close", "Close");
+        try { await sheet.ShowAsync(); }
         finally { ViewModel.PropertyChanged -= RoomChanged; }
     }
 
@@ -533,13 +573,16 @@ public sealed partial class WatchTogetherRoomPage : Page
         var copy = new StackPanel { Spacing = 2 };
         var name = new Grid { ColumnSpacing = 8 }; name.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); name.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); name.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         name.Children.Add(new TextBlock { Text = member.DisplayName, FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, MaxWidth = member.IsHost ? 128 : 190, FontWeight = Microsoft.UI.Text.FontWeights.Medium, TextTrimming = TextTrimming.CharacterEllipsis });
-        if (member.IsHost) { var badge = new Border { CornerRadius = new CornerRadius(10), BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1), Padding = new Thickness(6, 2, 6, 2), Child = new TextBlock { Text = "HOST", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } }; Grid.SetColumn(badge, 1); name.Children.Add(badge); }
-        if (member.IsSelf) { var self = new TextBlock { Text = "(you)", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] }; Grid.SetColumn(self, 2); name.Children.Add(self); }
+        if (member.IsHost) { var badge = new Border { CornerRadius = new CornerRadius(10), BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1), Padding = new Thickness(6, 2, 6, 2), Child = new TextBlock { Text = Upper(T("watchParty.seat.host", "Host")), FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } }; Grid.SetColumn(badge, 1); name.Children.Add(badge); }
+        if (member.IsSelf) { var self = new TextBlock { Text = T("web.watchTogether.rail.you", "(you)"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] }; Grid.SetColumn(self, 2); name.Children.Add(self); }
         copy.Children.Add(name);
         var playing = ViewModel.Room?.Phase == "playing";
         var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         if (!playing && member.LobbyReady) status.Children.Add(WebUiIcon.Create("check", 12, new SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 211, 153))));
-        status.Children.Add(new TextBlock { Text = playing ? ViewModel.Room?.PlaybackState == "playing" ? "Watching" : ViewModel.Room?.PlaybackState == "waiting" ? "Buffering" : "Paused" : member.LobbyReady ? "Ready" : "Connected",
+        var playbackState = ViewModel.Room?.PlaybackState;
+        status.Children.Add(new TextBlock { Text = playing
+                ? playbackState == "playing" ? T("web.watchTogether.rail.stateWatching", "Watching") : playbackState == "waiting" ? T("web.watchTogether.rail.stateBuffering", "Buffering") : T("web.watchTogether.rail.statePaused", "Paused")
+                : member.LobbyReady ? T("web.watchTogether.rail.stateReady", "Ready") : T("web.watchTogether.rail.stateConnected", "Connected"),
             FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         copy.Children.Add(status);
         Grid.SetColumn(copy, 1); row.Children.Add(copy);
@@ -550,9 +593,9 @@ public sealed partial class WatchTogetherRoomPage : Page
     private static FrameworkElement PeopleTabContent(int count)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        row.Children.Add(new TextBlock { Text = "People", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        row.Children.Add(new TextBlock { Text = T("web.watchTogether.rail.people", "People"), FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
         row.Children.Add(RoundedBadge.Apply(new Border { Name = "PeopleCountBadge", Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"], Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock { Text = count.ToString(), FontSize = 10, LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold } }, 999));
+            Child = new TextBlock { Text = Count(count), FontSize = 10, LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold } }, 999));
         return row;
     }
 
@@ -562,7 +605,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         if (members == null || members.Count == 0)
         {
             PeopleTabButton.Content = PeopleTabContent(0);
-            MembersWrapPanel.Children.Add(new TextBlock { Text = "No one here yet. Share the invite to fill the room.", FontSize = 14, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(16, 24, 16, 24) });
+            MembersWrapPanel.Children.Add(new TextBlock { Text = T("web.watchTogether.rail.peopleEmpty", "No one here yet. Share the invite to fill the room."), FontSize = 14, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(16, 24, 16, 24) });
             UpdateRailTabs();
             return;
         }
@@ -582,15 +625,15 @@ public sealed partial class WatchTogetherRoomPage : Page
         {
             case "connected":
                 StatusDot.Fill = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 211, 153));
-                StatusText.Text = "Connected";
+                StatusText.Text = T("web.watchTogether.connection.connected", "Connected");
                 break;
             case "connecting":
                 StatusDot.Fill = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 252, 211, 77));
-                StatusText.Text = "Connecting…";
+                StatusText.Text = T("web.watchTogether.connection.connecting", "Connecting…");
                 break;
             default:
                 StatusDot.Fill = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 100, 103));
-                StatusText.Text = "Disconnected";
+                StatusText.Text = T("watchParty.connection.disconnected", "Disconnected");
                 break;
         }
     }
@@ -599,27 +642,16 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         var reason = ViewModel.ClosedReason;
         if (string.IsNullOrEmpty(reason)) return;
-        var title = reason switch
+        Func<string> title = reason switch
         {
-            "host_left" or "room_closed" => "The room has ended.",
-            "not_found" => "Room not found.",
-            _ => "The room is unavailable.",
+            "host_left" or "room_closed" => () => T("web.watchTogether.room.closed", "The room has ended."),
+            "not_found" => () => T("web.watchTogether.common.roomNotFound", "Room not found."),
+            _ => () => T("web.watchTogether.room.unavailable", "Room is unavailable."),
         };
         ShowTerminalState(
             title,
-            "Start a new watch party or join another room to keep watching together.",
-            "Start a new party");
-    }
-
-    private void ShowTerminalState(string title, string description, string action)
-    {
-        RoomWorkspace.Visibility = Visibility.Collapsed;
-        RoomContent.Visibility = Visibility.Collapsed;
-        TerminalStateTitle.Text = title;
-        TerminalStateDescription.Text = description;
-        TerminalStateAction.Content = action;
-        TerminalStatePanel.Visibility = Visibility.Visible;
-        TerminalStateAction.Focus(FocusState.Programmatic);
+            () => T("web.watchTogether.room.closedBody", "Start a new watch party or join another room to keep watching together."),
+            () => T("watchParty.page.start", "Start a party"));
     }
 
     private void UpdateSuggestionsUi()
@@ -627,8 +659,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         int n = ViewModel.Suggestions.Count;
         SuggestionsPanel.Visibility = ViewModel.Room != null && (ViewModel.IsVoteMode || n > 0) ? Visibility.Visible : Visibility.Collapsed;
         SuggestionsSubtitle.Text = n == 0
-            ? "No suggestions yet — search for something to add."
-            : $"{n} suggestion{(n == 1 ? "" : "s")} from the room";
+            ? T("web.watchTogether.voting.noSuggestions", "No suggestions yet")
+            : T("web.watchTogether.lobby.suggestionsCount", $"Suggestions · {n}", new Dictionary<string, object?> { ["count"] = Count(n) });
     }
 
     private async void CopyInviteButton_Click(object sender, RoutedEventArgs e)
@@ -651,8 +683,9 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private void CopyCodeButton_Click(object sender, RoutedEventArgs e)
     {
-        try { var data = new DataPackage(); data.SetText(ViewModel.DisplayCode); Clipboard.SetContent(data); ViewModel.NoticeMessage = "Room code copied"; }
-        catch { ViewModel.ErrorMessage = "Could not copy the room code"; }
+        var code = ViewModel.DisplayCode;
+        try { var data = new DataPackage(); data.SetText(code); Clipboard.SetContent(data); ViewModel.SetLocalizedNotice(() => T("web.watchTogether.common.codeCopied", $"Room code {code} copied", new Dictionary<string, object?> { ["code"] = code })); }
+        catch { ViewModel.SetLocalizedError(() => T("web.watchTogether.common.codeCopyFailed", "Could not copy the code")); }
     }
     private void ChangeStagedButton_Click(object sender, RoutedEventArgs e) => HostSearchBox.Focus(FocusState.Programmatic);
     private async void GuestPauseToggle_Toggled(object sender, RoutedEventArgs e)
@@ -684,7 +717,7 @@ public sealed partial class WatchTogetherRoomPage : Page
             {
                 new TextBlock
                 {
-                    Text = "End the watch party for everyone?",
+                    Text = T("web.watchTogether.endDialog.description", "End the watch party for everyone?"),
                     TextWrapping = TextWrapping.Wrap,
                 },
                 errorText,
@@ -693,13 +726,22 @@ public sealed partial class WatchTogetherRoomPage : Page
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "End watch party?",
             Content = content,
-            PrimaryButtonText = "End Party",
-            CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
         };
+        var ending = false;
+        void Words()
+        {
+            dialog.Title = T("web.watchTogether.endDialog.title", "End watch party?");
+            ((TextBlock)content.Children[0]).Text = T("web.watchTogether.endDialog.description", "End the watch party for everyone?");
+            // "Ending…" has no upstream key; English fallback while the request runs.
+            dialog.PrimaryButtonText = ending ? "Ending…" : T("watchParty.end.confirm", "End Party");
+            dialog.CloseButtonText = T("common.cancel", "Cancel");
+            if (errorText.Visibility == Visibility.Visible) errorText.Text = ViewModel.ErrorMessage ?? T("web.watchTogether.actions.endRoomFailed", "Failed to end room");
+        }
+        Words();
+        LocalizeDialog(dialog, Words);
 
         dialog.PrimaryButtonClick += async (_, args) =>
         {
@@ -708,7 +750,7 @@ public sealed partial class WatchTogetherRoomPage : Page
             try
             {
                 dialog.IsPrimaryButtonEnabled = false;
-                dialog.PrimaryButtonText = "Ending…";
+                ending = true; Words();
                 errorText.Visibility = Visibility.Collapsed;
                 await ViewModel.CloseRoomCommand.ExecuteAsync(null);
                 if (ViewModel.ClosedReason == "host_left")
@@ -717,9 +759,8 @@ public sealed partial class WatchTogetherRoomPage : Page
                 }
                 else
                 {
-                    errorText.Text = ViewModel.ErrorMessage ?? "The watch party could not be ended.";
                     errorText.Visibility = Visibility.Visible;
-                    dialog.PrimaryButtonText = "End Party";
+                    ending = false; Words();
                     dialog.IsPrimaryButtonEnabled = true;
                 }
             }
@@ -736,7 +777,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         App.Services.GetRequiredService<WatchTogetherCoordinator>().ClearActiveRoom();
         ViewModel.Dispose();
-        Frame?.Navigate(typeof(WatchTogetherJoinPage));
+        Frame?.Navigate(typeof(WatchTogetherJoinPage), null, PageTransitionHelper.ForPageChange());
     }
 
     private async void SuggestionVoteButton_Click(object sender, RoutedEventArgs e)
@@ -826,6 +867,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         _shelfMode = string.IsNullOrWhiteSpace(query);
         SearchEmptyIcon.Visibility = _shelfMode ? Visibility.Collapsed : Visibility.Visible;
         BrowseShelfRows.Children.Clear();
+        ForgetLocalized("shelves");
         _memberDots.Clear(); _memberStates.Clear(); _nextUp.Clear();
         BrowseShelfRows.Visibility = _shelfMode ? Visibility.Visible : Visibility.Collapsed;
         HostSearchResults.Visibility = _shelfMode ? Visibility.Collapsed : Visibility.Visible;
@@ -844,7 +886,7 @@ public sealed partial class WatchTogetherRoomPage : Page
             HostSearchResults.ItemsSource = items;
             await LoadMemberStatesAsync(items.Select(i => i.ContentId), revision, ct);
             SearchEmptyState.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            if (items.Count == 0) SearchEmptyText.Text = "No matches found. Try a different search.";
+            if (items.Count == 0) LocalizeText(SearchEmptyText, () => T("web.watchTogether.browse.noMatches", $"No matches for “{query}”. Try another title, or clear the filter.", new Dictionary<string, object?> { ["query"] = query }));
         }
         catch (OperationCanceledException) { }
         catch
@@ -852,13 +894,13 @@ public sealed partial class WatchTogetherRoomPage : Page
             if (revision != _browseRevision || !HasCurrentBrowseState()) return;
             HostSearchResults.ItemsSource = null;
             SearchEmptyState.Visibility = Visibility.Visible;
-            SearchEmptyText.Text = "Search is temporarily unavailable.";
+            LocalizeText(SearchEmptyText, () => T("web.watchTogether.browse.searchFailed", "Could not search."));
         }
     }
 
     private async Task LoadBrowseShelvesAsync(int shelf, long revision, CancellationToken ct)
     {
-        var rows = new List<(string Title, List<SiloPlayer.Core.Models.Home.MediaItem> Items)>();
+        var rows = new List<(Func<string> Title, List<SiloPlayer.Core.Models.Home.MediaItem> Items, bool Together)>();
         var catalog = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
         var home = App.Services.GetRequiredService<SiloPlayer.Core.Api.HomeApi>();
         var unavailable = false;
@@ -875,8 +917,8 @@ public sealed partial class WatchTogetherRoomPage : Page
             if (picker != null)
             {
             foreach (var entry in picker.ContinueTogether.Where(entry => entry.NextUp != null)) _nextUp[entry.Item.ContentId] = entry.NextUp!;
-            if (shelf is 0 or 3) rows.Add(("Continue together", picker.ContinueTogether.Select(entry => entry.Item).Take(24).ToList()));
-            if (shelf is 0 or 4) rows.Add(("Room watchlists", picker.WatchlistUnion.Select(entry => entry.Item).Take(24).ToList()));
+            if (shelf is 0 or 3) rows.Add((() => T("web.watchTogether.browse.togetherTitle", "Continue watching together"), picker.ContinueTogether.Select(entry => entry.Item).Take(24).ToList(), true));
+            if (shelf is 0 or 4) rows.Add((() => T("web.watchTogether.browse.watchlistsTitle", "On your watchlists"), picker.WatchlistUnion.Select(entry => entry.Item).Take(24).ToList(), false));
             }
         }
         if (shelf is 0 or 1 or 2)
@@ -885,34 +927,37 @@ public sealed partial class WatchTogetherRoomPage : Page
             var layout = await ReadShelfAsync(() => home.GetLayoutAsync(ct));
             var discovery = layout?.Sections.Where(section => !excluded.Contains(section.SectionType)).Take(4).ToArray() ?? [];
             var sections = await Task.WhenAll(discovery.Select(section => ReadShelfAsync(() => home.GetSectionItemsAsync(section.Id, ct))));
-            rows.AddRange(sections.Where(section => section?.Section != null).Select(section => (section!.Section!.Title, section.Section.Items.Where(item => item.Type is "movie" or "series").Where(item => shelf != 1 || item.Type == "movie").Where(item => shelf != 2 || item.Type == "series").Take(24).ToList())));
+            rows.AddRange(sections.Select(section => section?.Section).OfType<SiloPlayer.Core.Models.Home.HomeSectionWithItems>().Select(section => ((Func<string>)(() => section.DisplayTitle), section.Items.Where(item => item.Type is "movie" or "series").Where(item => shelf != 1 || item.Type == "movie").Where(item => shelf != 2 || item.Type == "series").Take(24).ToList(), false)));
         }
         if (shelf is 0 or 1 or 2 or 5)
         {
             var types = shelf == 1 ? new[] { "movie" } : shelf == 2 ? new[] { "series" } : new[] { "movie", "series" };
             var results = await Task.WhenAll(types.Select(type => ReadShelfAsync(() => catalog.GetCatalogAsync(null, type: type, sort: "added_at", order: "desc", limit: 24, includeTotal: false, ct: ct))));
-            for (var index = 0; index < results.Length; index++) if (results[index] is { } result) rows.Add((types[index] == "movie" ? "Recently added movies" : "Recently added series", result.Items.ToList()));
+            for (var index = 0; index < results.Length; index++) if (results[index] is { } result) { var movie = types[index] == "movie"; rows.Add((() => movie ? T("web.watchTogether.browse.recentMovies", "Recently added movies") : T("web.watchTogether.browse.recentSeries", "Recently added series"), result.Items.ToList(), false)); }
         }
         if (revision != _browseRevision || ct.IsCancellationRequested || !HasCurrentBrowseState()) return;
-        foreach (var row in rows.Where(row => row.Items.Count > 0)) BuildBrowseShelf(row.Title, row.Items);
+        foreach (var row in rows.Where(row => row.Items.Count > 0)) BuildBrowseShelf(row.Title, row.Items, row.Together);
         SearchEmptyState.Visibility = unavailable || BrowseShelfRows.Children.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         SearchEmptyIcon.Visibility = Visibility.Collapsed;
-        SearchEmptyText.Text = unavailable ? "Some shelves are unavailable. Select the shelf again to retry." : shelf switch
+        // Partial-failure retry wording has no upstream key; English fallback.
+        LocalizeText(SearchEmptyText, () => unavailable ? "Some shelves are unavailable. Select the shelf again to retry." : shelf switch
         {
-            1 => "No movies in the library yet. Search for one above.",
-            2 => "No series in the library yet. Search for one above.",
-            3 => "Nothing in progress for two or more of you yet.",
-            4 => "Nobody in the room has anything on their watchlist.",
-            5 => "Nothing added recently.",
-            _ => "Nothing to browse yet. Search for something above."
-        };
+            1 => T("web.watchTogether.browse.emptyMovies", "No movies in the library yet. Search for one above."),
+            2 => T("web.watchTogether.browse.emptySeries", "No series in the library yet. Search for one above."),
+            3 => T("web.watchTogether.browse.emptyTogether", "Nothing in progress for two or more of you yet."),
+            4 => T("web.watchTogether.browse.emptyWatchlists", "Nobody in the room has anything on their watchlist."),
+            5 => T("web.watchTogether.browse.emptyRecent", "Nothing added recently."),
+            _ => T("web.watchTogether.browse.emptyAll", "Nothing to browse yet. Search for something above.")
+        });
         await LoadMemberStatesAsync(rows.SelectMany(row => row.Items).Select(item => item.ContentId), revision, ct);
     }
 
-    private void BuildBrowseShelf(string title, List<SiloPlayer.Core.Models.Home.MediaItem> items)
+    private void BuildBrowseShelf(Func<string> title, List<SiloPlayer.Core.Models.Home.MediaItem> items, bool together)
     {
         var shelf = new StackPanel { Spacing = 12 };
-        shelf.Children.Add(new TextBlock { Text = title, FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        var heading = new TextBlock { FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        LocalizeText(heading, title, "shelves");
+        shelf.Children.Add(heading);
         var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         foreach (var item in items)
         {
@@ -925,7 +970,7 @@ public sealed partial class WatchTogetherRoomPage : Page
             body.Children.Add(dots);
             var button = new Button { Tag = item, Content = body, Padding = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0) };
             button.Click += async (_, _) => await SelectBrowseItemAsync(item,
-                title == "Continue together" && _nextUp.TryGetValue(item.ContentId, out var next) ? next.SeasonNumber : null);
+                together && _nextUp.TryGetValue(item.ContentId, out var next) ? next.SeasonNumber : null);
             cards.Children.Add(button);
         }
         shelf.Children.Add(new ScrollViewer { Content = cards, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
@@ -969,8 +1014,11 @@ public sealed partial class WatchTogetherRoomPage : Page
             var color = new SolidColorBrush(MemberTint(identity.UserId, identity.ProfileId));
             var dot = new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), BorderThickness = new Thickness(state == "unseen" ? 1 : 0), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 255, 255, 255)), Background = state == "watched" ? color : new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
             if (state == "in_progress") dot.Child = new Border { Width = 4, HorizontalAlignment = HorizontalAlignment.Left, Background = color, CornerRadius = new CornerRadius(4, 0, 0, 4) };
-            ToolTipService.SetToolTip(dot, $"{identity.DisplayName}: {state.Replace('_', ' ')}{(member?.OnWatchlist == true ? " · On watchlist" : "")}");
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dot, $"{identity.DisplayName}: {state.Replace('_', ' ')}");
+            var stateText = MemberStateText(state);
+            var nameArguments = new Dictionary<string, object?> { ["name"] = identity.DisplayName, ["state"] = stateText };
+            ToolTipService.SetToolTip(dot, T("web.watchTogether.dots.memberTitle", $"{identity.DisplayName}: {stateText}", nameArguments)
+                + (member?.OnWatchlist == true ? " · " + T("web.watchTogether.movie.onWatchlist", "On their watchlist") : ""));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dot, T("web.watchTogether.dots.memberLabel", $"{identity.DisplayName} {stateText}", nameArguments));
             panel.Children.Add(dot);
         }
     }
@@ -1038,8 +1086,9 @@ public sealed partial class WatchTogetherRoomPage : Page
         _pickerSeasonNumber = null;
         _pickerNextUpId = null;
         PickerSeasons.Children.Clear();
+        ForgetLocalized("seasons");
         SetSeriesPickerHeader(series, null);
-        DrillDownTitle.Text = series.Title;
+        LocalizeText(DrillDownTitle, () => series.Title);
         DrillDownSubtitle.Text = "Pick a season";
         DrillDownSubtitle.Visibility = Visibility.Collapsed;
         DrillDownBackText.Text = "Back to results";
@@ -1070,23 +1119,26 @@ public sealed partial class WatchTogetherRoomPage : Page
             SetSeriesPickerHeader(series, detail, seasonsResp.Seasons.Count);
             BuildPickerSeasons(seasonsResp.Seasons);
             if (_drillDownInitialSeason.HasValue) _ = RefreshSeriesPickerHeaderAsync(series, seasonsResp.Seasons.Count);
-            var seasonItems = seasonsResp.Seasons.Select(s => new SiloPlayer.Core.Models.Home.MediaItem
+            // Display-only season rows: a server season title is shown as sent; generated labels follow the language.
+            List<SiloPlayer.Core.Models.Home.MediaItem> SeasonItems() => seasonsResp.Seasons.Select(s => new SiloPlayer.Core.Models.Home.MediaItem
             {
                 ContentId = s.ContentId,
-                Title = !string.IsNullOrWhiteSpace(s.Title) ? s.Title : s.SeasonNumber == 0 ? "Specials" : $"Season {s.SeasonNumber}",
+                Title = !string.IsNullOrWhiteSpace(s.Title) ? s.Title : SeasonLabel(s.SeasonNumber),
                 Type = "season",
                 PosterUrl = s.PosterUrl,
-                Overview = $"{s.EpisodeCount} episode{(s.EpisodeCount == 1 ? "" : "s")}",
+                Overview = EpisodeCountText(s.EpisodeCount),
                 Year = s.SeasonNumber,
             }).ToList();
+            var seasonItems = SeasonItems();
             DrillDownItems.ItemsSource = seasonItems;
+            Localize(DrillDownItems, "seasons", () => { if (!_showingEpisodes && DrillDownItems.ItemsSource is List<SiloPlayer.Core.Models.Home.MediaItem> { Count: > 0 } shown && shown[0].Type == "season") DrillDownItems.ItemsSource = SeasonItems(); });
             SetDrillDownPending(false);
             if (chooseSeason)
             {
                 var number = SiloPlayer.Core.Services.WatchPartyPickerPolicy.ResolveSeason(seasonsResp.Seasons, _drillDownInitialSeason, detail?.PlaySeasonNumber);
                 var season = seasonItems.FirstOrDefault(item => item.Year == number);
                 if (season == null && number.HasValue)
-                    season = new() { Type = "season", Year = number.Value, Title = number == 0 ? "Specials" : $"Season {number}" };
+                    season = new() { Type = "season", Year = number.Value, Title = SeasonLabel(number.Value) };
                 if (season != null) await ShowEpisodesAsync(season);
                 else DrillDownEmptyText.Visibility = Visibility.Visible;
             }
@@ -1107,10 +1159,11 @@ public sealed partial class WatchTogetherRoomPage : Page
         if (_seriesPicked != null) { ++_candidateStateRevision; _candidateStateLoading = true; CandidatePlayBtn.IsEnabled = false; UpdatePickerConfirmation(); }
         _pickerNextUpId = null;
         _pickerRows.Clear();
+        ForgetLocalized("episodes");
         _pickerNextCaptions.Clear();
         _pickerStills.Clear();
         _pickerActions.Clear();
-        DrillDownTitle.Text = season.Title;
+        LocalizeText(DrillDownTitle, () => season.Title);
         DrillDownSubtitle.Visibility = Visibility.Collapsed;
         DrillDownBackText.Text = "Back to seasons";
         _showingEpisodes = true;
@@ -1140,7 +1193,8 @@ public sealed partial class WatchTogetherRoomPage : Page
                 Year = DateTime.TryParse(ep.AirDate, out var airDate) ? airDate.Year : 0
             }).ToList();
             DrillDownItems.ItemsSource = items;
-            DrillDownTitle.Text = (seasonNumber == 0 ? "SPECIALS" : $"SEASON {seasonNumber}") + (items.Count > 0 ? $" · {items.Count} EPISODES" : "");
+            var episodeCount = items.Count;
+            LocalizeText(DrillDownTitle, () => Upper(SeasonLabel(seasonNumber)) + (episodeCount > 0 ? " · " + Upper(EpisodeCountText(episodeCount)) : ""));
             _drillDownMemberStateTask = LoadMemberStatesAsync(items.Select(item => item.ContentId), revision, ct);
             SetDrillDownPending(false);
             DrillDownEmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -1229,7 +1283,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         var authority = client.CaptureContext(); var roomId = ViewModel.RoomId; var roomToken = ViewModel.RoomToken;
         bool Current() => revision == _candidateStateRevision && ReferenceEquals(CandidatePlayBtn.Tag, item)
             && IsCurrentCandidateVisible(item) && ViewModel.RoomId == roomId && ViewModel.RoomToken == roomToken && client.IsCurrentContext(authority);
-        CandidateMemberState.Text = "";
+        LocalizeText(CandidateMemberState, () => "");
         _candidateSpoilerRisk = false;
         _candidateStateLoading = false;
         CandidatePlayBtn.IsEnabled = !ViewModel.IsBusy;
@@ -1244,13 +1298,20 @@ public sealed partial class WatchTogetherRoomPage : Page
             var state = await App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>().GetWatchTogetherMemberStateAsync(roomId!, roomToken!, [item.ContentId]);
             if (!Current()) return;
             foreach (var value in state.Items) _memberStates[value.ContentId] = value;
-            CandidateMemberState.Text = string.Join("  ·  ", state.Items.SelectMany(i => i.Members).Select(m => (state.Members.FirstOrDefault(person => person.UserId == m.UserId && person.ProfileId == m.ProfileId)?.DisplayName ?? "Member") + ": " + m.State.Replace('_', ' ')));
+            // Member names are data; each state and the risk sentence are keyed.
+            var memberStates = state.Items.SelectMany(i => i.Members)
+                .Select(m => (Name: state.Members.FirstOrDefault(person => person.UserId == m.UserId && person.ProfileId == m.ProfileId)?.DisplayName, m.State)).ToList();
             var picked = _drillDownEpisodes.FirstOrDefault(episode => episode.ContentId == item.ContentId);
             var risk = picked == null ? null : SiloPlayer.Core.Services.WatchPartyPickerPolicy.FindSpoilerRisk(picked, _drillDownEpisodes, ViewModel.Room?.Members ?? _stateMembers, _memberStates);
             _candidateSpoilerRisk = risk != null;
-            if (risk != null) CandidateMemberState.Text += $"\nAhead of {string.Join(", ", risk.Names)} — they haven't watched episode {risk.EpisodeNumber}.";
+            LocalizeText(CandidateMemberState, () => string.Join("  ·  ", memberStates.Select(m =>
+            {
+                var name = m.Name ?? T("web.watchTogether.common.someone", "Someone");
+                var stateText = MemberStateText(m.State);
+                return T("web.watchTogether.dots.memberTitle", $"{name}: {stateText}", new Dictionary<string, object?> { ["name"] = name, ["state"] = stateText });
+            })) + (risk != null ? "\n" + SpoilerRiskText(risk) : ""));
         }
-        catch { if (Current()) CandidateMemberState.Text = "Member watch state unavailable. Retry selection to check again."; }
+        catch { if (Current()) LocalizeText(CandidateMemberState, () => "Member watch state unavailable. Retry selection to check again."); } // No upstream key; English fallback.
         finally { if (Current()) { _candidateStateLoading = false; CandidatePlayBtn.IsEnabled = !ViewModel.IsBusy; UpdatePickerConfirmation(); } }
     }
 
@@ -1268,15 +1329,19 @@ public sealed partial class WatchTogetherRoomPage : Page
         if (ViewModel.IsBusy || _candidateStateLoading) return;
         if (_candidateSpoilerRisk && !IsSeriesPickerCandidate(candidate))
         {
-            var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "This episode may contain spoilers", Content = CandidateMemberState.Text + " Queue it anyway?", PrimaryButtonText = "Queue episode", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+            // The spoiler confirmation wording has no upstream keys; English fallbacks around the keyed member state.
+            var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "This episode may contain spoilers", PrimaryButtonText = "Queue episode", DefaultButton = ContentDialogButton.Close };
+            LocalizeDialog(confirmation, () => { confirmation.Content = CandidateMemberState.Text + " Queue it anyway?"; confirmation.CloseButtonText = T("common.cancel", "Cancel"); });
+            confirmation.Content = CandidateMemberState.Text + " Queue it anyway?"; confirmation.CloseButtonText = T("common.cancel", "Cancel");
             if (await confirmation.ShowAsync() != ContentDialogResult.Primary || !Current()) return;
         }
         ViewModel.IsBusy = true; ViewModel.ErrorMessage = null; CandidatePlayBtn.IsEnabled = false;
         UpdatePickerConfirmation();
+        var suggesting = (!ViewModel.IsHost || ViewModel.IsVoteMode) && !string.IsNullOrWhiteSpace(ViewModel.RoomToken);
         try
         {
             var playbackApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>();
-            if ((!ViewModel.IsHost || ViewModel.IsVoteMode) && !string.IsNullOrWhiteSpace(ViewModel.RoomToken))
+            if (suggesting)
             {
                 var contentType = candidate.Type == "episode" ? "episode" : "movie";
                 var result = await playbackApi.CreateWatchTogetherSuggestionAsync(roomId, roomToken!, contentId, contentType, CandidateTitle.Text, CandidateMeta.Text, candidate.PosterUrl);
@@ -1295,7 +1360,12 @@ public sealed partial class WatchTogetherRoomPage : Page
             CandidateSpotlight.Visibility = Visibility.Collapsed;
             ClearSearchButton_Click(this, new RoutedEventArgs());
         }
-        catch (Exception ex) { if (Current()) ViewModel.ErrorMessage = $"Could not stage or suggest this title: {ex.Message}"; }
+        catch (Exception ex)
+        {
+            if (Current()) ViewModel.SetLocalizedError(suggesting
+                ? SiloPlayer.ViewModels.WatchPartyText.ActionFailure("web.watchTogether.common.suggestFailed", "Could not suggest that", ex)
+                : SiloPlayer.ViewModels.WatchPartyText.ActionFailure("web.watchTogether.actions.stageFailed", "Could not stage that", ex));
+        }
         finally
         {
             if (ViewModel.RoomId == roomId && ViewModel.RoomToken == roomToken)
@@ -1313,7 +1383,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         var presenter = new Style { TargetType = typeof(MenuFlyoutPresenter) };
         presenter.Setters.Add(new Setter(FrameworkElement.WidthProperty, 224d));
         var menu = new MenuFlyout { MenuFlyoutPresenterStyle = presenter };
-        foreach (var (mode, label) in new[] { ("host_pick", "Host picks"), ("vote", "Everyone votes") })
+        // Detached menu items are keyed before the flyout opens.
+        foreach (var (mode, label) in new[] { ("host_pick", ModeLabel(false)), ("vote", ModeLabel(true)) })
         {
             var choice = new MenuFlyoutItem { Text = label, IsEnabled = mode != ViewModel.Room.SelectionMode };
             choice.Click += async (_, _) => await ViewModel.ChangeSelectionModeAsync(mode);
@@ -1331,7 +1402,8 @@ public sealed partial class WatchTogetherRoomPage : Page
             var selected = (int)chip.Tag == ShelfPicker.SelectedIndex;
             chip.Background = (Brush)Application.Current.Resources[selected ? "PrimaryTextBrush" : "SurfaceRaisedBrush"];
             chip.Foreground = (Brush)Application.Current.Resources[selected ? "AppBackgroundBrush" : "SecondaryTextBrush"];
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(chip, selected ? "Selected filter" : "Filter");
+            // "Selected filter" has no upstream key; English fallback for the selected state.
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(chip, selected ? "Selected filter" : T("web.watchTogether.browse.filterLabel", "Filter"));
         }
     }
 
@@ -1345,18 +1417,18 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         if (_nowPlayingContentId == contentId) return;
         _nowPlayingContentId = contentId;
-        NowPlayingTitle.Text = "Loading title…";
+        LocalizeText(NowPlayingTitle, () => T("web.watchTogether.hero.loading", "Loading…"));
         try
         {
             var item = await App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().GetItemDetailAsync(contentId);
             if (_nowPlayingContentId == contentId)
             {
-                NowPlayingTitle.Text = item.Title;
-                NowPlayingSubtitle.Text = item.Type == "episode" ? "Episode" : "Movie";
+                LocalizeText(NowPlayingTitle, () => item.Title);
+                LocalizeText(NowPlayingSubtitle, () => item.Type == "episode" ? T("web.watchTogether.startSheet.episode", "Episode") : T("web.watchTogether.common.movie", "Movie"));
                 SetImageSource(NowPlayingBackdrop, item.BackdropUrl);
             }
         }
-        catch { if (_nowPlayingContentId == contentId) NowPlayingTitle.Text = "Now playing"; }
+        catch { if (_nowPlayingContentId == contentId) LocalizeText(NowPlayingTitle, () => T("web.watchTogether.playing.eyebrow", "Now playing")); }
     }
 
     private static void SetImageSource(Image target, string? url)
@@ -1410,7 +1482,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         RoomHeaderActions.HorizontalAlignment = HorizontalAlignment.Right;
         _inviteLabel.Visibility = width >= 640 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var label in ((StackPanel)LeaveButton.Content).Children.OfType<TextBlock>()) label.Visibility = width < 640 ? Visibility.Collapsed : Visibility.Visible;
-        EndButton.Content = width < 640 ? "End" : "End room";
+        var compactEnd = width < 640;
+        Localize(EndButton, "content", () => EndButton.Content = compactEnd ? T("web.watchTogether.strip.end", "End") : T("web.watchTogether.strip.endRoom", "End room"));
         UpdateHeaderWidth();
         _modeOwner.Visibility = width >= 640 ? Visibility.Visible : Visibility.Collapsed;
         UpdateModeChip(width);

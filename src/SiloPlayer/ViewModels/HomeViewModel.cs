@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
@@ -112,12 +113,12 @@ public partial class HomeViewModel : ObservableObject,
             _dismissContext = message.Context;
             _dismissSnapshot = HomeDismissalSnapshot.Capture(FeaturedSections.Concat(Sections), message.Item.ContentId,
                 HomeDismissalPolicy.SeriesIdentity(message.Item));
-            UndoMessage = message.Item.Type is "episode" or "series"
-                ? "Removed from Continue Watching and Next Up"
-                : message.Surface == "next_up" ? "Removed from Next Up"
-                : message.Item.Type == "audiobook" ? "Removed from Continue Listening"
-                : message.Item.Type == "ebook" ? "Removed from Continue Reading"
-                : "Removed from Continue Watching";
+            SetLocalizedMessage(nameof(UndoMessage), () => message.Item.Type is "episode" or "series"
+                ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.dismiss.removedContinueWatchingAndNextUp")
+                : message.Surface == "next_up" ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.dismiss.removedNextUp")
+                : message.Item.Type == "audiobook" ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.dismiss.removedContinueListening")
+                : message.Item.Type == "ebook" ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.dismiss.removedContinueReading")
+                : SiloPlayer.Core.Localization.AppStrings.Get("web.home.dismiss.removedContinueWatching"), value => UndoMessage = value ?? "");
             ShowUndoBanner = true;
             _ = AutoHideUndoBannerAsync();
         });
@@ -457,7 +458,7 @@ public partial class HomeViewModel : ObservableObject,
         _loadInProgress = true;
         var hadContent = FeaturedSections.Count + Sections.Count > 0;
         IsLoading = !hadContent;
-        ErrorMessage = null;
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
         try
         {
@@ -533,7 +534,7 @@ public partial class HomeViewModel : ObservableObject,
         {
             if (!_homeApi.IsCurrentContext(context)) return;
             if (!hadContent)
-                ErrorMessage = "Unable to load the homepage";
+                SetLocalizedMessage(nameof(ErrorMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.home.page.loadFailedTitle", fallback: "Unable to load the homepage"), value => ErrorMessage = value);
             else
                 LocalLog.AppendLine("home_error.txt", $"layout_refresh | {ex.GetType().Name}: {ex.Message}");
             IsLoading = false;
@@ -841,6 +842,9 @@ public partial class HomeViewModel : ObservableObject,
         Id = source.Id,
         SectionType = source.SectionType,
         Title = source.Title,
+        TitleKey = source.TitleKey,
+        TitleArgs = SectionTitles.CopyArguments(source.TitleArgs),
+        KeyedTitle = source.KeyedTitle,
         Featured = source.Featured,
         ItemLimit = source.ItemLimit,
         TotalCount = source.TotalCount,
@@ -865,6 +869,9 @@ public partial class HomeViewModel : ObservableObject,
         Id = meta.Id,
         SectionType = meta.SectionType,
         Title = meta.Title,
+        TitleKey = meta.TitleKey,
+        TitleArgs = SectionTitles.CopyArguments(meta.TitleArgs),
+        KeyedTitle = meta.KeyedTitle,
         Featured = meta.Featured,
         ItemLimit = meta.ItemLimit,
         TotalCount = cached?.TotalCount ?? 0,
@@ -886,6 +893,11 @@ public partial class HomeViewModel : ObservableObject,
         current.Id == meta.Id
         && current.SectionType == meta.SectionType
         && current.Title == meta.Title
+        && current.TitleKey == meta.TitleKey
+        && current.KeyedTitle == meta.KeyedTitle
+        && ((current.TitleArgs == null && meta.TitleArgs == null)
+            || (current.TitleArgs != null && meta.TitleArgs != null && current.TitleArgs.Count == meta.TitleArgs.Count
+                && current.TitleArgs.All(pair => meta.TitleArgs.TryGetValue(pair.Key, out var value) && value == pair.Value)))
         && current.Featured == meta.Featured
         && current.ItemLimit == meta.ItemLimit
         && current.IsCustom == meta.IsCustom
@@ -1184,7 +1196,7 @@ public partial class HomeViewModel : ObservableObject,
             // A retired owner was refused, not failed: nothing here is left to retry.
             if (!_homeApi.IsCurrentContext(owner)) { if (generation == _undoGeneration) ClearDismissState(); return; }
             LocalLog.AppendException("errors.txt", ex, "HomeViewModel.UndoDismissalAsync");
-            if (generation == _undoGeneration) { ErrorMessage = "Could not undo the dismissal. Try again."; ShowUndoBanner = true; }
+            if (generation == _undoGeneration) { SetLocalizedMessage(nameof(ErrorMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.home.dismiss.undoFailed", fallback: "Could not undo the dismissal. Try again."), value => ErrorMessage = value); ShowUndoBanner = true; }
             return;
         }
 

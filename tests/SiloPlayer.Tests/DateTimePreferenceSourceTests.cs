@@ -27,20 +27,8 @@ public sealed class DateTimePreferenceSourceTests
     [Fact]
     public void MediumDateFallbackMatchesTheWebUiAbbreviatedMonthContract()
     {
-        var source = File.ReadAllText(Path.Combine(
-            RepoRoot,
-            "src",
-            "SiloPlayer",
-            "Helpers",
-            "DateTimeDisplay.cs"));
-
-        Assert.Contains(
-            """_ => local.ToString("MMM d, yyyy", CultureInfo.CurrentCulture)""",
-            source,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            """_ => local.ToString("D", CultureInfo.CurrentCulture)""",
-            source,
-            StringComparison.Ordinal);
+        Assert.Equal("Nov 12, 2026", SiloPlayer.Core.Localization.DisplayDateFormatting.Date(
+            new DateTime(2026, 11, 12), "auto", System.Globalization.CultureInfo.GetCultureInfo("en-US"),
+            localized: false, medium: true));
     }
 }

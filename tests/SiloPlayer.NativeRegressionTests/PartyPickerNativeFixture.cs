@@ -65,8 +65,8 @@ internal static class PartyPickerNativeFixture
                 throw new InvalidOperationException("Next up was not presented on its actual episode row.");
             Invoke(page, "ShowSeriesEpisodePick", items[1]);
             await (Task)Invoke(page, "LoadCandidateMemberStateAsync", items[1])!;
-            if (!Named<TextBlock>(page, "CandidateMemberState").Text.Contains("Ahead of Guest")
-                || !Named<TextBlock>(page, "CandidateMemberState").Text.Contains("episode 1")
+            // The warning now uses the keyed WebUI spoiler sentence (web.watchTogether.series.spoilerRisk).
+            if (!Named<TextBlock>(page, "CandidateMemberState").Text.Contains("Guest hasn't seen E1. Heads up.")
                 || Named<TextBlock>(page, "CandidateMeta").Text != "resume-series · S6 E2")
                 throw new InvalidOperationException("An earlier partially watched episode did not produce the correct identity-aware warning and candidate breadcrumb.");
             if (Named<Grid>(page, "DrillDownPanel").Visibility != Visibility.Visible || Named<Border>(page, "CandidateSpotlight").Visibility != Visibility.Collapsed

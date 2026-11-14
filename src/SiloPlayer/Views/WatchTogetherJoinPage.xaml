@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Views.WatchTogetherJoinPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:SiloPlayer.Services"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
@@ -25,8 +26,8 @@
             <Grid x:Name="AutoJoinPanel" Visibility="Collapsed" MinHeight="420">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                     <ProgressRing IsActive="True" Width="32" Height="32" />
-                    <TextBlock Text="Joining Watch Party" FontSize="30" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                    <TextBlock Text="Hang tight — we're taking you into the room." FontSize="14"
+                    <TextBlock Text="Joining Watch Party" loc:Localized.Text="web.watchTogether.hub.joiningTitle" FontSize="30" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                    <TextBlock Text="Taking you into the room." loc:Localized.Text="web.watchTogether.hub.joiningBody" FontSize="14"
                                Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center" />
                 </StackPanel>
             </Grid>
@@ -35,6 +36,7 @@
                 <!-- Header -->
                 <StackPanel Spacing="12" MaxWidth="672" HorizontalAlignment="Left">
                     <TextBlock
+                        x:Name="EyebrowText"
                         Text="WATCH PARTY"
                         FontSize="11"
                         LineHeight="16.5" LineStackingStrategy="BlockLineHeight"
@@ -51,6 +53,7 @@
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
                         Text="Open a room, share the code, and everyone plays in sync. The host picks what's on, or the whole room votes."
+                        loc:Localized.Text="web.watchTogether.hub.intro"
                         FontSize="16" LineHeight="28" MaxWidth="576"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         TextWrapping="Wrap" />
@@ -96,16 +99,16 @@
                             <StackPanel Margin="24" Spacing="20">
                             <StackPanel Spacing="8">
                                 <StackPanel x:Name="StartHeading" Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="Start a party" FontSize="18" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"
+                                    <TextBlock Text="Start a party" loc:Localized.Text="watchParty.page.start" FontSize="18" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"
                                                Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
-                                <TextBlock Text="Open an empty room now and pick what to watch once people arrive."
+                                <TextBlock Text="Open an empty room now and pick what to watch once people arrive." loc:Localized.Text="web.watchTogether.hub.startBody"
                                            FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
 
                             <StackPanel Spacing="8">
-                                <Grid x:Name="ModeOptionsGrid" ColumnSpacing="8" RowSpacing="8" AutomationProperties.Name="How the room picks">
+                                <Grid x:Name="ModeOptionsGrid" ColumnSpacing="8" RowSpacing="8" AutomationProperties.Name="How the room picks" loc:Localized.Name="web.watchTogether.hub.modeGroup">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
@@ -116,8 +119,8 @@
                                             Padding="12" CornerRadius="16"
                                             Click="HostPickButton_Click" KeyDown="SelectionButton_KeyDown">
                                         <StackPanel Spacing="2">
-                                            <TextBlock Text="Host picks" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
-                                            <TextBlock Text="You choose, everyone watches." FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
+                                            <TextBlock Text="Host picks" loc:Localized.Text="web.watchTogether.common.hostPicks" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
+                                            <TextBlock Text="You choose, everyone watches." loc:Localized.Text="web.watchTogether.hub.hostPickCaption" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                                        Foreground="{StaticResource SecondaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
@@ -126,8 +129,8 @@
                                             Padding="12" CornerRadius="16"
                                             Click="VoteButton_Click" KeyDown="SelectionButton_KeyDown">
                                         <StackPanel Spacing="2">
-                                            <TextBlock Text="Everyone votes" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
-                                            <TextBlock Text="Anyone suggests, the room votes." FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
+                                            <TextBlock Text="Everyone votes" loc:Localized.Text="watchParty.options.everyoneVotes" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
+                                            <TextBlock Text="Anyone suggests, the room votes." loc:Localized.Text="web.watchTogether.hub.voteCaption" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                                        Foreground="{StaticResource SecondaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
@@ -136,13 +139,14 @@
 
                             <Button
                                 Content="Create Watch Party"
+                                loc:Localized.Content="web.watchTogether.hub.create"
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Stretch"
                                 MinHeight="48" FontSize="16" CornerRadius="12"
                                 Padding="16,0"
                                 Command="{x:Bind ViewModel.CreateRoomCommand}"
                                 IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InverseBool}}" />
-                            <TextBlock FontSize="12" LineHeight="20" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}">Already know what you want to watch? Open its page and choose <Run Text="Start a party with this" Foreground="{StaticResource PrimaryTextBrush}"/> from the menu.</TextBlock>
+                            <TextBlock x:Name="FromTitleHint" FontSize="12" LineHeight="20" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}">Already know what you want to watch? Open its page and choose <Run Text="Start a party with this" Foreground="{StaticResource PrimaryTextBrush}"/> from the menu.</TextBlock>
                         </StackPanel></Grid>
                     </Border>
 
@@ -153,10 +157,10 @@
                         <StackPanel Spacing="20">
                             <StackPanel Spacing="8">
                                 <StackPanel x:Name="JoinHeading" Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="Join a party" FontSize="18" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"
+                                    <TextBlock Text="Join a party" loc:Localized.Text="web.watchTogether.hub.joinTitle" FontSize="18" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"
                                                Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
                                 </StackPanel>
-                                <TextBlock Text="Got a code from the host? Enter it here. Invite links open straight into the room."
+                                <TextBlock Text="Got a code from the host? Enter it here. Invite links open straight into the room." loc:Localized.Text="web.watchTogether.hub.joinBody"
                                            FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
@@ -167,18 +171,20 @@
                                     x:Name="RoomCodeBox"
                                     Text="{x:Bind ViewModel.RoomCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     PlaceholderText="ABCD1234"
+                                    loc:Localized.Placeholder="web.watchTogether.hub.codePlaceholder"
                                     MaxLength="12"
                                     CharacterCasing="Upper"
-                                    FontSize="18" FontFamily="Consolas" Height="48" AutomationProperties.Name="Room code"
+                                    FontSize="18" FontFamily="Consolas" Height="48" AutomationProperties.Name="Room code" loc:Localized.Name="web.watchTogether.hub.codeLabel"
                                     CharacterSpacing="300"
                                     KeyDown="RoomCodeBox_KeyDown" />
-                                <Button Grid.Column="1" Click="PasteRoomCode_Click" Style="{StaticResource OutlineButtonStyle}" Height="48" Padding="12,0" AutomationProperties.Name="Paste room code">
-                                    <StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE77F;" FontSize="16"/><TextBlock x:Name="PasteLabel" Text="Paste" FontSize="14"/></StackPanel>
+                                <Button Grid.Column="1" Click="PasteRoomCode_Click" Style="{StaticResource OutlineButtonStyle}" Height="48" Padding="12,0" AutomationProperties.Name="Paste room code" loc:Localized.Name="web.watchTogether.hub.pasteLabel">
+                                    <StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE77F;" FontSize="16"/><TextBlock x:Name="PasteLabel" Text="Paste" loc:Localized.Text="web.watchTogether.hub.paste" FontSize="14"/></StackPanel>
                                 </Button>
                             </Grid>
 
                             <Button
                                 Content="Join Watch Party"
+                                loc:Localized.Content="web.watchTogether.hub.join"
                                 Style="{StaticResource OutlineButtonStyle}"
                                 HorizontalAlignment="Stretch"
                                 MinHeight="48" CornerRadius="12"
@@ -190,7 +196,7 @@
                 </Grid>
 
                 <StackPanel x:Name="RecentRoomsPanel" Spacing="10" Visibility="Collapsed">
-                    <TextBlock Text="Recent parties" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="Your recent parties" loc:Localized.Text="web.watchTogether.hub.recentTitle" FontSize="18" FontWeight="SemiBold"/>
                     <StackPanel x:Name="RecentRoomsList" Spacing="8"/>
                 </StackPanel>
                 <!-- How it works: 3 info cards -->
@@ -208,17 +214,17 @@
                     <Grid Grid.Column="0" ColumnSpacing="12">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource SurfaceRaisedBrush}" VerticalAlignment="Top"><TextBlock Text="1" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}"/></Border>
-                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Open a room" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Create one here, or start from any movie or episode page." FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Open a room" loc:Localized.Text="web.watchTogether.hub.stepOpenTitle" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Create one here, or start from any movie or episode page." loc:Localized.Text="web.watchTogether.hub.stepOpenCaption" FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
                     </Grid>
                     <Grid Grid.Column="1" ColumnSpacing="12">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource SurfaceRaisedBrush}" VerticalAlignment="Top"><TextBlock Text="2" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}"/></Border>
-                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Share the code" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Send the invite link or the eight-letter code to whoever is watching." FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Share the code" loc:Localized.Text="web.watchTogether.hub.stepShareTitle" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Send the invite link or the eight-letter code to whoever is watching." loc:Localized.Text="web.watchTogether.hub.stepShareCaption" FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
                     </Grid>
                     <Grid Grid.Column="2" ColumnSpacing="12">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource SurfaceRaisedBrush}" VerticalAlignment="Top"><TextBlock Text="3" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}"/></Border>
-                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Watch in sync" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Play, pause, and seek together. The room ends two minutes after the host drops off." FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Watch in sync" loc:Localized.Text="web.watchTogether.hub.stepSyncTitle" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Play, pause, and seek together. The room ends two minutes after the host drops off." loc:Localized.Text="web.watchTogether.hub.stepSyncCaption" FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
                     </Grid>
                 </Grid>
                 <!-- Busy indicator -->
