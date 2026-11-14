@@ -22,7 +22,7 @@ internal static class SettingsVisualOct24NativeFixture
         var mainProperty = typeof(App).GetProperty(nameof(App.MainWindowInstance))!;
         var previous = servicesField.GetValue(null);
         var previousMain = mainProperty.GetValue(null);
-        using var http = new HttpClient(new Wire());
+        var wire = new Wire(); using var http = new HttpClient(wire);
         var api = new SiloApiClient(http); api.SetBaseUrl("https://shell-fixture.invalid");
         using var auth = new AuthService(api, new AuthApi(api));
         auth.SetTokens("fixture-access", "fixture-refresh", 3600);
@@ -125,6 +125,19 @@ internal static class SettingsVisualOct24NativeFixture
             typeof(MainWindow).GetMethod("SynchronizeSettingsSidebar", instance)!.Invoke(window, null);
             await Task.Delay(160); root.UpdateLayout();
             var settingsVm = provider.GetRequiredService<SettingsViewModel>();
+            await settingsVm.LoadCommand.ExecuteAsync(null);
+            Check(settingsVm.MeteredQualitySupported, "Revision 20 did not enable metered controls.");
+            typeof(SettingsPage).GetMethod("SyncComboBoxes", instance)!.Invoke(page, null);
+            var meteredQuality = (ComboBox)page.FindName("MeteredQualityComboBox");
+            var meteredBitrate = (ComboBox)page.FindName("MeteredBitrateComboBox");
+            Check((meteredQuality.SelectedItem as ComboBoxItem)?.Tag as string == "720p"
+                && (meteredBitrate.SelectedItem as ComboBoxItem)?.Tag as string == "2000", "Metered defaults were not displayed.");
+            meteredQuality.SelectedItem = meteredQuality.Items.OfType<ComboBoxItem>().Single(item => item.Tag as string == "480p");
+            meteredBitrate.SelectedItem = meteredBitrate.Items.OfType<ComboBoxItem>().Single(item => (item.Tag as string ?? "") == "");
+            await Task.Delay(100);
+            Check(wire.Writes.TryGetValue("playback.cellular_preferred_quality", out var qualityWrite) && qualityWrite.Contains("480p")
+                && wire.Writes.TryGetValue("playback.cellular_max_bitrate_kbps", out var capWrite) && capWrite.Contains("null"), "Actual metered selectors did not save quality and uncapped bitrate.");
+            Program.Log("PASS: native metered quality/bitrate controls display defaults and save separate cellular settings.");
             Check(settingsVm.ConnectionSpeedSupported && settingsVm.BufferingQualitySupported,
                 "Actual Settings page did not expose the fixture server's available Connection/buffering controls.");
             foreach (var width in new[] { 3440, 3840, 1920, 1280, 900, 600 })
@@ -290,12 +303,14 @@ internal static class SettingsVisualOct24NativeFixture
     }
     private sealed class Wire : HttpMessageHandler
     {
+        internal Dictionary<string, string> Writes = new();
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Put && path.StartsWith("/api/v2/settings/values/")) Writes[Uri.UnescapeDataString(path.Split('/')[^1])] = request.Content!.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
             object body = path switch
             {
-                "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 17, supports_idempotent_writes = true, client_families = new[] { "desktop", "web" }, supports_batched_effective = true, supports_device_rename = true },
+                "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 20, supports_idempotent_writes = true, client_families = new[] { "desktop", "web" }, supports_batched_effective = true, supports_device_rename = true },
                 "/api/v2/playback/capabilities" => new { api_version = 3, features = new[] { "buffering_quality_v1", "connection_speed_v1" }, bandwidth_probe_automatic = false },
                 "/api/v2/playback/connection" => new { connection = "local", auto_budget_kbps = 80000,
                     probe = new { kbps = 100000, measured_at = DateTimeOffset.UtcNow, transport = "ethernet", lower_bound = false }, learned_limit = (object?)null },

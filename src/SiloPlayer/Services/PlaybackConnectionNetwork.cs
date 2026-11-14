@@ -4,6 +4,19 @@ namespace SiloPlayer.Services;
 
 internal static class PlaybackConnectionNetwork
 {
+    // Speed tests remain conservative; quality caps apply only to an identified link.
+    internal static (string Key, bool Metered, string Transport) CaptureForQuality()
+    {
+        var network = CaptureSafely();
+        return network.Key is "offline" or "unavailable" ? (network.Key, false, network.Transport) : network;
+    }
+
+    internal static (string Key, bool Metered, string Transport) CaptureSafely()
+    {
+        try { return Capture(); }
+        catch { return ("unavailable", true, "other"); }
+    }
+
     internal static (string Key, bool Metered, string Transport) Capture()
     {
         var profile = NetworkInformation.GetInternetConnectionProfile();

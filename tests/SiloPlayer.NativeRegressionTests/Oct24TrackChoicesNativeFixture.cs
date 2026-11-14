@@ -21,6 +21,7 @@ internal static class Oct24TrackChoicesNativeFixture
         var playback = new PlaybackApi(api);
         slot.SetValue(null, new Services(previous, api, new CatalogApi(api), playback));
         var page = new ItemDetailPage { Width = 900, Height = 700 };
+        Set(page, "_detailNetwork", (Func<(string, bool, string)>)(() => ("fixture", false, "ethernet")));
         var version = new FileVersion
         {
             FileId = 42, EffectiveAudioTrackIndex = 0,
@@ -157,6 +158,17 @@ internal static class Oct24TrackChoicesNativeFixture
                 "Quality refresh exposed movie badges on the audiobook surface.");
             page.ViewModel.Item = originalItem;
             Set(page, "_watchDetail", detail);
+            var laterPart = new FileVersion { FileId = 45, Resolution = "1080p", EditionKey = "" };
+            variants[0].Parts.Add(new() { PartIndex = 1, Versions = [laterPart] });
+            detail.Versions.Add(laterPart);
+            detail.UserData = new() { LastFileId = 45, LastEditionKey = "", PositionSeconds = 42, Played = true };
+            Call(page, "UpdatePlayButton");
+            Require(Get<FileVersion>(page, "_selectedVersion")?.FileId == 45,
+                "Actual Resume detail lost the saved later multipart file during a rewatch.");
+            Require(DetailVersionRanking.StartVersion(laterPart, variants, "auto")?.FileId == 42
+                && DetailVersionRanking.DownloadFiles(laterPart, variants, "auto").Select(file => file.FileId).SequenceEqual(new[] { 42, 45 }),
+                "Multipart Start Over or download ordering did not begin with the first part.");
+            Program.Log("PASS: saved later-part Resume stays on its part; Start Over and downloads resolve the presentation in play order.");
             await VerifyQualityReadsAsync(page, api, wire);
             Program.Log("PASS: same-file download inventory refreshes without losing choices; playback return retires them; catalog resume and metadata-free Auto labels remain usable; audiobook badges stay hidden; real settings reads reject stale revisions, content and owners and recover after failure.");
             var range = typeof(ItemDetailPage).GetMethod("FormatTrackDynamicRange", BindingFlags.NonPublic | BindingFlags.Static)!
@@ -216,12 +228,33 @@ internal static class Oct24TrackChoicesNativeFixture
             retiredOwner.SetResult(QualityResponse("2160p")); await loadingOwner;
             Require(!state.QualitySettled, "Retired profile accepted a late settings response.");
             api.SetProfile("fixture");
+            var metered = false;
+            Set(page, "_detailNetwork", (Func<(string, bool, string)>)(() => (metered ? "mobile" : "wired", metered, metered ? "cellular" : "ethernet")));
+            state = Fresh(); state.SelectEdition("extended");
+            var main = Queue(); main.SetResult(QualityResponse("2160p")); await Refresh();
+            Require(state.Quality == "2160p", "Unmetered detail did not use main quality.");
+            metered = true; var mobile = Queue(); mobile.SetResult(QualityResponse("2160p"));
+            Call(page, "VersionNetworkChanged", new object());
+            await Until(() => state.QualitySettled && state.Quality == "720p");
+            Require(state.EditionKey == "extended", "Metered transition replaced the selected edition.");
+            var cellularSetting = Queue(); cellularSetting.SetResult(QualityResponse("2160p", "480p"));
+            Call(page, "VersionSettingChanged", "playback.cellular_preferred_quality");
+            await Until(() => state.QualitySettled && state.Quality == "480p");
+            state.SelectFile(new FileVersion { FileId = 55, EditionKey = "extended" });
+            metered = false; var back = Queue(); back.SetResult(QualityResponse("2160p"));
+            Call(page, "VersionNetworkChanged", new object());
+            await Until(() => state.QualitySettled && state.Quality == "2160p");
+            Require(state.ManualFileId == 55 && state.EditionKey == "extended", "Network transition discarded an explicit file pin.");
+            state = Fresh(); var retiredNetwork = Queue(); var loadingNetwork = Refresh();
+            metered = true; retiredNetwork.SetResult(QualityResponse("2160p")); await loadingNetwork;
+            Require(!state.QualitySettled, "A settings response from a departed network was accepted.");
+            Program.Log("PASS: real network/settings handlers switch main/cellular limits, retain edition and manual pin, and reject a departed-network response.");
         }
         finally { Set(page, "_navigationCts", null); }
     }
-    private static HttpResponseMessage QualityResponse(string quality) => new(HttpStatusCode.OK)
+    private static HttpResponseMessage QualityResponse(string quality, string cellular = "720p") => new(HttpStatusCode.OK)
     {
-        Content = new StringContent(JsonSerializer.Serialize(new { items = new[] { new { key = "playback.preferred_quality", value = quality } } })),
+        Content = new StringContent(JsonSerializer.Serialize(new { items = new[] { new { key = "playback.preferred_quality", value = quality }, new { key = "playback.cellular_preferred_quality", value = cellular } } })),
     };
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready)
@@ -247,6 +280,8 @@ internal static class Oct24TrackChoicesNativeFixture
             if (request.RequestUri?.Host != "oct24-track-choices.invalid") throw new InvalidOperationException("Native track fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
             JsonElement? body = request.Content == null ? null : JsonDocument.Parse(await request.Content.ReadAsStringAsync(ct)).RootElement.Clone();
+            if (path == "/api/v2/settings/contract/capabilities")
+                return new(HttpStatusCode.OK) { Content = new StringContent("""{"api_version":1,"manifest_revision":20,"supports_batched_effective":true}""") };
             if (path == "/api/v2/settings/values/effective")
                 return QualityReads.Count > 0 ? await QualityReads.Dequeue().Task.WaitAsync(ct) : QualityResponse("auto");
             if (request.Method == HttpMethod.Get && path.StartsWith("/api/v2/subtitles/", StringComparison.Ordinal))
