@@ -16,6 +16,42 @@ recovered0GiB C:/D:. Installed player remains open.
 
 ---
 
+# November 13 - Finishing artwork on the ended screen
+
+Owner report: after the last Cops episode ended, "You've finished Cops" and On
+Deck were right but the finishing slot beside them was a large empty grey
+rectangle. True EOF hides the native preview and the slot had no picture of its
+own. It now shows the finished title's watch backdrop (a series backdrop for an
+episode: never an episode still or anything of the next item), decoded under
+the live preview and revealed only at true EOF; with no usable picture the slot
+leaves the layout. Closing Playing Next, a newer playback and a profile change
+each retire it. A second defect found on the way is fixed: any window move or
+resize on the ended screen re-showed the finished video over it.
+
+Branch codex/finished-preview-nov13 on Beta cbafac58; version 1.2.1017-beta.1 /
+1.2.1016.1 unchanged. Four new hud-completion cases (finished-early-eof,
+finished-eof, finished-no-art, finished-stale) failed against the unfixed
+product at an actual libmpv EOF and pass after it, with the nine existing
+hud-completion cases, hud-completion-scope and hud-nov12; 6,108/6,108 units.
+Product DLL SHA256 E553BDE9D1DDB6B86B36ECDD08C1A3D35C79B88F9DACE725601C1B83D70919D7.
+Receipt: D:/SiloPlayer-build/finished-preview-receipt.json.
+November 14 lead review: residual mini-bar/PiP resize re-show reproduced and
+corrected. Final lead verification passed the four new EOF cases, live
+post-roll, and 91 related source/API tests; delivery hashes are recorded in
+D:/SiloPlayer-build/finished-preview-delivery-receipt.json. See
+[scope and review limits](audit-gaps/2026-11-14-finished-preview.md).
+
+Limits: synthetic solid-colour backdrops and fixture HTTP, not a live server or
+the owner's library; shuffle and physical DPI were not exercised. The WebUI
+fades its finished mini player out and leaves that column empty; showing
+artwork there is a deliberate desktop difference. hud-completion `still` and
+hud-nov12 fail when rerun in a result directory that holds an earlier run's
+cached image or saved threshold, and pass in a fresh one; the `still` held URL
+is now unique per run. Output reuses the same payload (1.4 GiB); cleanup was
+not attempted after the earlier policy rejection, recovered 0 GiB on both
+drives. Installed player untouched.
+
+---
 # November 13 - Continue Watching stale/duplicate-card repair
 
 Independent branch codex/continue-watching-duplicate-nov13 starts at Beta
