@@ -54,6 +54,68 @@ public sealed class CurrentPlaybackQualityTests
     }
 
     [Theory]
+    [InlineData(429)]
+    [InlineData(500)]
+    [InlineData(503)]
+    public async Task FailedContractProbeStartsWithMainSettings(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.ContractStatus = (HttpStatusCode)statusCode;
+        scope.Manager.IsMeteredConnection = () => true;
+        await scope.Manager.StartSessionAsync(42);
+        Assert.Equal("1080p", scope.Wire.Start!.Value.GetProperty("quality_preference").GetString());
+        Assert.Equal(3500, scope.Wire.Start.Value.GetProperty("bandwidth_cap_kbps").GetInt32());
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ContractProbeTransportFailureUsesMainSettingsIncludingBuffering(bool timeout)
+    {
+        using var scope = new Fixture();
+        scope.Wire.ContractFailure = timeout ? new TimeoutException() : new HttpRequestException();
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, includeBuffering: true, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal("always", preferences.BufferingQualityMode);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Fact]
+    public async Task ContractProbeHttpClientTimeoutUsesMainSettings()
+    {
+        using var scope = new Fixture();
+        scope.Wire.ContractFailure = new TaskCanceledException("Probe timed out.", new TimeoutException());
+        var preferences = await PlaybackQualityPreferences.ReadAsync(scope.Client, "2160p", CancellationToken.None, metered: true);
+        Assert.Equal("1080p", preferences.Quality);
+        Assert.Equal(3500, preferences.BandwidthCapKbps);
+        Assert.Equal(0, scope.Wire.CellularReads);
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    public async Task ContractProbeAuthorizationFailureStillAbortsPlayback(int statusCode)
+    {
+        using var scope = new Fixture(); scope.Wire.ContractStatus = (HttpStatusCode)statusCode;
+        scope.Manager.IsMeteredConnection = () => true;
+        var error = await Assert.ThrowsAsync<ApiException>(() => scope.Manager.StartSessionAsync(42));
+        Assert.Equal(statusCode, error.StatusCode);
+        Assert.Equal(0, scope.Wire.SettingsReads);
+        Assert.Null(scope.Wire.Start);
+    }
+
+    [Fact]
+    public async Task ContractProbeCancellationStillAbortsPlayback()
+    {
+        using var scope = new Fixture(); scope.Wire.ContractFailure = new OperationCanceledException();
+        scope.Manager.IsMeteredConnection = () => true;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Manager.StartSessionAsync(42));
+        Assert.Equal(0, scope.Wire.SettingsReads);
+        Assert.Null(scope.Wire.Start);
+    }
+
+    [Theory]
     [InlineData(404)]
     [InlineData(405)]
     [InlineData(501)]
@@ -236,14 +298,18 @@ public sealed class CurrentPlaybackQualityTests
         public int SettingsReads, CellularReads;
         public int ContractRevision = 20;
         public HttpStatusCode? ContractStatus, SettingsStatus;
+        public Exception? ContractFailure;
         public Action? BeforeSettingsReply;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/api/v2/settings/contract/capabilities")
+            {
+                if (ContractFailure is { } failure) throw failure;
                 return ContractStatus is { } contractStatus
                     ? new(contractStatus) { Content = new StringContent("{}") }
                     : Json(JsonSerializer.Serialize(new { api_version = 1, manifest_revision = ContractRevision, supports_batched_effective = true }));
+            }
             if (path == "/api/v2/settings/values/effective")
             {
                 SettingsReads++;

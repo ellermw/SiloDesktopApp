@@ -50,7 +50,15 @@ public sealed record PlaybackQualityPreferences(ApiRequestContext Context, strin
                     var capability = await settings.GetContractCapabilitiesAsync(context, ct).ConfigureAwait(false);
                     metered = capability.ApiVersion == 1 && capability.Revision >= 20 && capability.SupportsBatchedEffective;
                 }
-                catch (ApiException ex) when (ex.StatusCode is 404 or 405 or 501) { metered = false; }
+                // HttpClient timeouts are cancellation-shaped, but do not cancel playback.
+                catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && ex.InnerException is TimeoutException)
+                { metered = false; }
+                catch (Exception ex) when (ex is not OperationCanceledException && ex is not ApiException { StatusCode: 401 or 403 })
+                {
+                    ct.ThrowIfCancellationRequested();
+                    // This auxiliary probe must not prevent playback with the main settings.
+                    metered = false;
+                }
             }
             var qualityKey = metered ? "playback.cellular_preferred_quality" : "playback.preferred_quality";
             var bitrateKey = metered ? "playback.cellular_max_bitrate_kbps" : "playback.max_bitrate_kbps";
