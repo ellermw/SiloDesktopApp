@@ -1318,7 +1318,7 @@ public sealed partial class MainWindow : Window
             {
                 App.Services.GetRequiredService<ToastService>().Error(AppStrings.Get("native.auth.invite.serverMismatch",
                     fallback: "This invitation could not be opened for the selected server. Select the server that issued it and open the link again."));
-                return true;
+                // No page was opened: let cold startup continue with saved-session restore.
             }
             return false;
         }
