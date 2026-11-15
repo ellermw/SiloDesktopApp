@@ -408,6 +408,20 @@ internal static partial class SubtitleIdentityNativeFixture
                     session.SubtitleUrls.Remove(adopted);
                     Require(Call(service, "ResolveReloadSubtitleChoice", stored, (int?)42) is null,
                         "A missing stored identity borrowed the reused ordinal.");
+                    var refreshPick = new SubtitleTrackInfo { Id = 123, Index = 25,
+                        TrackId = "file:42:subtitle:25", Source = "downloaded" };
+                    var olderPlanRow = new SubtitleTrackInfo { Index = 25, TrackId = refreshPick.TrackId,
+                        Source = "downloaded", Delivery = "native" };
+                    session.SubtitleUrls.Add(olderPlanRow);
+                    try
+                    {
+                        Require(ReferenceEquals(Call(service, "ResolveReloadSubtitleChoice", refreshPick, (int?)42), olderPlanRow),
+                            "A refresh-assigned stored Id could not rebind to an older plan without stored keys.");
+                        olderPlanRow.Id = 456;
+                        Require(Call(service, "ResolveReloadSubtitleChoice", refreshPick, (int?)42) is null,
+                            "A different stored identity borrowed the older-plan TrackId fallback.");
+                    }
+                    finally { session.SubtitleUrls.Remove(olderPlanRow); }
                     foreach (var identity in new[] { "id", "key", "both", "id-to-key", "key-to-id" })
                     {
                         var positional = new SubtitleTrackInfo { Index = 5, TrackId = "file:42:subtitle:5",

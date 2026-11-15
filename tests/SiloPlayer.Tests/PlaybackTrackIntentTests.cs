@@ -1658,6 +1658,73 @@ public sealed class PlaybackTrackIntentTests
     }
 
     [Theory]
+    [InlineData("quality")]
+    [InlineData("audio")]
+    public async Task RefreshAssignedStoredIdSurvivesSameFilePlanWithoutStoredKeys(string operation)
+    {
+        using var scope = new Fixture();
+        scope.Wire.DownloadedSubtitles = true;
+        await scope.Manager.StartSessionAsync(42);
+        var picked = scope.Manager.CurrentSession!.SubtitleUrls.Single(track => track.Index == 1);
+        Assert.Null(picked.Id);
+        Assert.Null(picked.SyncKey);
+        Assert.False(string.IsNullOrWhiteSpace(picked.TrackId));
+        Assert.False(string.IsNullOrWhiteSpace(picked.Delivery));
+        // RefreshSubtitlesAfterAiAsync assigns the preferred stored Id to a
+        // canonical older-plan row before recording the viewer's selection.
+        picked.Id = 101;
+        scope.Manager.RecordLocalSubtitleSelection(1);
+        var intent = scope.Manager.CaptureLocalSubtitleIntent();
+
+        var accepted = operation == "quality"
+            ? await scope.Manager.ReplanQualityAsync("720p", 12)
+            : await scope.Manager.ReplanAudioAsync(1, 12);
+        var rebound = accepted.SubtitleUrls.Single(track => track.TrackId == picked.TrackId);
+        Assert.NotSame(picked, rebound);
+        Assert.Null(rebound.Id);
+        Assert.Null(rebound.SyncKey);
+        Assert.False(accepted.SubtitleReconciliationFailed);
+        Assert.False(scope.Manager.IsRetainedSubtitleUnavailable);
+        Assert.Equal(1, scope.Manager.SubtitleSelectionForLoad);
+
+        Assert.NotNull(await scope.Manager.ReplanCurrentSubtitleAsync(13));
+        var submitted = scope.Wire.Replans[^1].GetProperty("selected_tracks").GetProperty("subtitle");
+        Assert.Equal(picked.TrackId, submitted.GetProperty("id").GetString());
+        Assert.Equal(1, submitted.GetProperty("index").GetInt32());
+        Assert.Equal(intent, scope.Manager.CaptureLocalSubtitleIntent());
+    }
+
+    [Theory]
+    [InlineData("identityless", true)]
+    [InlineData("different-id", false)]
+    [InlineData("different-key", false)]
+    [InlineData("unavailable", false)]
+    [InlineData("duplicate", false)]
+    [InlineData("different-source", false)]
+    [InlineData("missing-track-id", false)]
+    [InlineData("unavailable-stored-match", false)]
+    [InlineData("duplicate-stored-match", false)]
+    public void StoredIdentityTrackIdFallbackRequiresUniqueIdentitylessAvailableRoute(string shape, bool resolves)
+    {
+        var requested = new SubtitleTrackInfo { Id = 101, TrackId = "file:42:subtitle:1", Source = "downloaded" };
+        var route = new SubtitleTrackInfo { TrackId = requested.TrackId, Source = "downloaded" };
+        var inventory = new List<SubtitleTrackInfo> { route };
+        if (shape == "different-id") route.Id = 102;
+        if (shape == "different-key") route.SyncKey = "stored-102";
+        if (shape == "unavailable") route.Unplayable = true;
+        if (shape == "duplicate")
+            inventory.Add(new() { TrackId = requested.TrackId, Source = "downloaded", Unplayable = true });
+        if (shape == "different-source") route.Source = "external";
+        if (shape == "missing-track-id") requested.TrackId = null;
+        if (shape is "unavailable-stored-match" or "duplicate-stored-match")
+            inventory.Add(new() { Id = 101, Source = "downloaded", Unplayable = true });
+        if (shape == "duplicate-stored-match")
+            inventory.Add(new() { Id = 101, Source = "downloaded" });
+
+        Assert.Same(resolves ? route : null, SubtitleStoredIdentity.Resolve(requested, inventory));
+    }
+
+    [Theory]
     [InlineData("id", "downloaded")]
     [InlineData("key", "downloaded")]
     [InlineData("both", "downloaded")]

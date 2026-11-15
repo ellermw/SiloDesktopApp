@@ -5,14 +5,18 @@ its unique stable Id/SyncKey before considering positional track IDs. Deleting a
 earlier subtitle can no longer redirect the selection to the row that reused its
 position. Missing, duplicate, conflicting or unplayable identities are refused.
 Identityless and cross-file behavior, wire contracts and retained-unavailable
-selection policy are preserved. For older malformed/incomplete inventories that
-omit stable identity, the safe result is unavailable rather than a reused position.
+selection policy are preserved. Older plans that omit stored keys may rebind by
+unique, available TrackId only when that row has no stored identity and no stored
+identity match exists. A row carrying a different stored identity is still refused.
 
 Reference: official Silo Server 1452ea2d10efbe7d3ea5ce7140fb49756b493670;
 subtitle deletion behavior audited from #4080. Baseline 6caafd79, version 1.2.1064
 unchanged; the Beta pipeline owns stamping.
 
-Verification on final product source: 6,618 unit tests passed, Release publish
+The older-plan compatibility follow-up adds unit and native regression coverage;
+builds and tests for that follow-up are deferred to the pipeline.
+
+Verification before the compatibility follow-up: 6,618 unit tests passed, Release publish
 and native host build passed, focused reload-identity native cases and the broad
 subtitle-identity native group passed. The 17 new identity regressions were first
 shown failing against baseline resolvers. Independent static review found no
