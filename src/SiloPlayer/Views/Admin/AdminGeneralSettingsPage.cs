@@ -25,7 +25,9 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
     private readonly StackPanel _body = new() { MaxWidth = 1120, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly StackPanel _fields = new() { Spacing = 20 };
     private readonly StackPanel _header = new() { Spacing = 8, Margin = new(0, 0, 0, 32), Visibility = Visibility.Collapsed };
-    private readonly StackPanel _alerts = new() { Spacing = 8 };
+    private readonly StackPanel _alerts = new() { Spacing = 8, Visibility = Visibility.Collapsed };
+    private readonly TextBlock _errorText = U.Text("", 13);
+    private readonly Button _reload = U.Action(T("web.admin.settings.notifications.reload"), "GeneralReload");
     private readonly StackPanel _loading = new() { Spacing = 24 };
     private readonly Dictionary<string, Control> _controls = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AdminSettingsRow> _rows = new(StringComparer.Ordinal);
@@ -72,6 +74,12 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
             var block = new StackPanel { Spacing = 16 };
             block.Children.Add(Skeleton(40)); block.Children.Add(Skeleton(40)); _loading.Children.Add(block);
         }
+        AutomationProperties.SetAutomationId(_errorText, "GeneralErrorText");
+        _alerts.Children.Add(Alert(_errorText)); _alerts.Children.Add(_reload);
+        _reload.Click += async (_, _) =>
+        {
+            if (_controller is { State.Loading: false } controller) await controller.ReloadAsync(preserveDraft: true);
+        };
         _body.Children.Add(_loading); _body.Children.Add(_alerts); _body.Children.Add(_fields);
         var identity = Group("identity", ["branding.server_name", "branding.login_subtitle"]);
         AddText(identity, "branding.server_name", "identity.serverName", hint: "Silo");
@@ -105,7 +113,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
             // PasswordChanged is delivered asynchronously for programmatic updates too.
             // A model echo must not withdraw a newly staged clear or replacement.
             if (_redisUrl.Password == state.Values.GetValueOrDefault("redis.url", "")) return;
-            if (_redisUrl.Password.Length == 0) _controller.KeepSavedRedisUrl();
+            if (_redisUrl.Password.Length == 0 && state.Configured.Contains("redis.url")) _controller.KeepSavedRedisUrl();
             else _controller.StageRedisUrl(_redisUrl.Password);
         };
         var redisDb = U.Input(T("web.admin.settings.redis.db.label"), "General_redis.db", number: true);
@@ -115,6 +123,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         var checkContent = new AdminSettingsActionContent(_check, _checkResult);
         _check.HorizontalAlignment = HorizontalAlignment.Left;
         AutomationProperties.SetLiveSetting(_checkResult, AutomationLiveSetting.Polite);
+        AutomationProperties.SetAutomationId(_checkResult, "GeneralRedisResult");
         _checkRow = new Border { Child = checkContent, Padding = new(0, 14, 0, 14) }; _redisGroup.Add(_checkRow);
         _check.Click += async (_, _) => { if (_controller != null) await _controller.CheckRedisAsync(); };
         _redisUnavailable = Alert(T("web.admin.settings.redis.unavailable.title"), T("web.admin.settings.redis.unavailable.description"));
@@ -148,12 +157,13 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
 
     private static string T(string key, object? args = null) => AdminText.T(key, args);
     private static Border Skeleton(double height, double width = double.NaN) => new() { Height = height, Width = width, CornerRadius = new(10), Background = AdminMonitorUi.Solid(AdminMonitorUi.Muted, .12), HorizontalAlignment = double.IsNaN(width) ? HorizontalAlignment.Stretch : HorizontalAlignment.Left };
-    private static Border Alert(string message, string? description = null)
+    private static Border Alert(string message, string? description = null) => Alert(U.Text(message, description == null ? 13 : 14), description);
+    private static Border Alert(TextBlock text, string? description = null)
     {
         var row = new Grid { ColumnSpacing = 12 };
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         var icon = AdminMonitorUi.Icon("alert-triangle", 16, AdminMonitorUi.Red500); icon.VerticalAlignment = VerticalAlignment.Top; icon.Margin = new(0, 2, 0, 0); row.Children.Add(icon);
-        var text = U.Text(message, description == null ? 13 : 14);
+        AutomationProperties.SetLiveSetting(text, AutomationLiveSetting.Assertive);
         var content = new StackPanel { Spacing = 4 }; content.Children.Add(text);
         if (description != null) { text.FontWeight = Microsoft.UI.Text.FontWeights.Medium; content.Children.Add(U.Text(description, 13, true)); }
         else text.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive);
@@ -228,15 +238,13 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _loading.Visibility = state.Loading ? Visibility.Visible : Visibility.Collapsed;
         _header.Visibility = state.Loading ? Visibility.Collapsed : Visibility.Visible;
         _fields.Visibility = state.Loaded && !state.Loading && current && !accessBlocked ? Visibility.Visible : Visibility.Collapsed;
-        _alerts.Children.Clear();
-        if (state.Error != null)
-        {
-            _alerts.Children.Add(Alert(ErrorMessage(state)));
-            var reload = U.Action(T("web.admin.settings.notifications.reload"), "GeneralReload");
-            reload.IsEnabled = !state.Saving && !state.Loading && current;
-            reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(preserveDraft: true); };
-            _alerts.Children.Add(reload);
-        }
+        // Retain the live region and Reload control while the retry is in flight.
+        // A pending retry ignores duplicate activation without disabling keyboard focus.
+        _alerts.Visibility = current && (state.Error != null || state.Loading && _alerts.Visibility == Visibility.Visible)
+            ? Visibility.Visible : Visibility.Collapsed;
+        _reload.IsEnabled = !state.Saving && current;
+        _reload.IsHitTestVisible = !state.Loading;
+        if (state.Error != null) U.UpdateLiveText(_errorText, ErrorMessage(state));
         if (state.DirtyKeys.Count != _lastDirtyCount)
         {
             _lastDirtyCount = state.DirtyKeys.Count;
@@ -270,9 +278,9 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         {
             var allRestart = keys.All(state.RestartKeys.Has);
             group.State(keys.Any(Dirty), allRestart ? T("web.admin.settings.fields.restartAll") : "");
-            foreach (var key in keys) _rows[key].State(Dirty(key), !allRestart && state.RestartKeys.Has(key));
+            foreach (var key in keys) _rows[key].State(key != "redis.url" && Dirty(key), !allRestart && state.RestartKeys.Has(key));
         }
-        _rows["redis.enabled"].State(Dirty("redis.url"), state.RestartKeys.Has("redis.url") && !new[] { "redis.url", "redis.db" }.All(state.RestartKeys.Has));
+        _rows["redis.enabled"].State(false, state.RestartKeys.Has("redis.url") && !new[] { "redis.url", "redis.db" }.All(state.RestartKeys.Has));
         foreach (var key in new[] { "redis.url", "redis.db" }) _rows[key].Visibility = redisEnabled ? Visibility.Visible : Visibility.Collapsed;
         _checkRow.Visibility = redisEnabled ? Visibility.Visible : Visibility.Collapsed;
         foreach (var (group, _) in _groups) group.RefreshRules();
@@ -281,7 +289,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _check.Content = T(state.Checking ? "web.admin.common.connectionCheck.checking" : "web.admin.common.connectionCheck.check");
         AutomationProperties.SetName(_check, _check.Content.ToString());
         _check.IsEnabled = current && state.Loaded && !state.Loading && !accessBlocked && !state.Saving && !state.Checking && !state.SensitiveStatusError;
-        _checkResult.Text = state.ConnectionResult?.Message ?? "";
+        U.UpdateLiveText(_checkResult, state.ConnectionResult?.Message ?? "");
         _checkResult.Foreground = AdminMonitorUi.Solid(state.ConnectionResult?.Success == true
             ? Windows.UI.Color.FromArgb(255, 0x16, 0xA3, 0x4A) : Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26));
         foreach (var (key, control) in _controls) AutomationProperties.SetHelpText(control, _rows[key].Description.Text);

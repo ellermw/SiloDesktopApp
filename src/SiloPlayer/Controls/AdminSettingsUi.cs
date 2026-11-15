@@ -15,6 +15,16 @@ namespace SiloPlayer.Controls;
 /// <summary>Native counterparts of the official settings row/group primitives. No entrance motion.</summary>
 internal static class AdminSettingsUi
 {
+    internal static void UpdateLiveText(TextBlock element, string value)
+    {
+        if (element.Text == value) return;
+        element.Text = value;
+        AutomationProperties.SetName(element, value);
+        if (element.IsLoaded && value.Length > 0)
+            (FrameworkElementAutomationPeer.FromElement(element) ?? FrameworkElementAutomationPeer.CreatePeerForElement(element))
+                ?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
     // SettingField and SecretField explicitly override the global --input token.
     private static Brush FieldBorder => AdminMonitorUi.Solid(AdminMonitorUi.Muted, .25);
     internal static Brush Accent => new SolidColorBrush(Color.FromArgb(255, 167, 139, 250));
@@ -160,7 +170,7 @@ internal sealed class AdminSettingsSaveBar : Grid
     internal void State(int dirty, bool saving, bool canSave)
     {
         Visibility = dirty > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _count.Text = AdminText.T("web.shell.saveBar.count", new { count = dirty, shown = dirty });
+        AdminSettingsUi.UpdateLiveText(_count, AdminText.T("web.shell.saveBar.count", new { count = dirty, shown = dirty }));
         Save.Content = AdminText.T(saving ? "web.ui.saving" : "common.save");
         AutomationProperties.SetName(Save, Save.Content.ToString());
         Save.IsEnabled = canSave && !saving; Discard.IsEnabled = !saving;

@@ -145,6 +145,13 @@ internal static class AdminGeneralSettingsNativeFixture
                 var secret = Descendants(page).OfType<PasswordBox>().Single();
                 secret.Password = "redis://fixture.invalid:6379";
                 await Until(() => controller.State.DirtyKeys.Contains("redis.url"), "Redis edit staged");
+                secret.Password = "";
+                await Until(() => controller.State.Values.GetValueOrDefault("redis.url", "") == "", "new Redis URL erased");
+                await Task.Delay(100);
+                Check(toggle.IsOn && secret.IsLoaded && secret.Visibility == Visibility.Visible && controller.State.DirtyKeys.Contains("redis.url"),
+                    "erasing an unsaved Redis URL keeps the editor visible and its empty replacement staged");
+                secret.Password = "redis://fixture.invalid:6379";
+                await Until(() => controller.State.Values.GetValueOrDefault("redis.url", "") != "", "Redis replacement restaged");
                 await Click(page, "GeneralCheckRedis");
                 await Until(() => server.Checks == 1 && controller.State.ConnectionResult?.Success == true, "Redis connection check");
                 Check(true, "real Check Connection control uses current staged Redis inputs");
@@ -273,6 +280,17 @@ internal static class AdminGeneralSettingsNativeFixture
             server.ReadForbidden = true; await controller.ReloadAsync(true); await Task.Delay(100);
             Check(!name.IsEnabled && !Button(page, "GeneralSave").IsEnabled && Descendants(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("Permission to manage", StringComparison.Ordinal)),
                 "permission denial has an actionable state and disables editing and saving");
+            var reloadButton = Button(page, "GeneralReload");
+            reloadButton.Focus(FocusState.Keyboard);
+            await Click(page, "GeneralReload");
+            await Until(() => !controller.State.Loading && controller.State.Failure == AdminFailureKind.Forbidden, "rejected reload complete");
+            await Task.Delay(100);
+            Check(ReferenceEquals(reloadButton, Button(page, "GeneralReload")) && reloadButton.FocusState == FocusState.Keyboard,
+                "a repeated failed Reload preserves the native button and keyboard focus");
+            var errorText = Descendants(page).OfType<TextBlock>().First(t => t.Text.StartsWith("Permission to manage", StringComparison.Ordinal));
+            Check(AutomationProperties.GetLiveSetting(errorText) == AutomationLiveSetting.Assertive &&
+                FrameworkElementAutomationPeer.CreatePeerForElement(errorText)?.GetName() == errorText.Text,
+                "error text has a named assertive automation peer");
             server.ReadForbidden = false; await controller.ReloadAsync(true); await Task.Delay(100);
             Check(name.IsEnabled && name.Text == "Conflict draft", "restored access reloads without losing the retained draft");
             shell.Navigate(new(AdminRoute.Activity));
