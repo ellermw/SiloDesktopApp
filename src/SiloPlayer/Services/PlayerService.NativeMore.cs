@@ -65,7 +65,7 @@ public partial class PlayerService
                 selected = reason is PlaybackMenuCloseReason.Selection or PlaybackMenuCloseReason.PointerSelection;
                 finish(reason);
             },
-            root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root));
+            root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root)) { SelectOnOpen = false };
         menu.Localize(() => HudText("web.player.controls.moreOptions", "More player options"), Choices);
         return menu;
     }

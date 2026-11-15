@@ -1,3 +1,36 @@
+# November 15 - Neutral opening for playback More
+
+The playback ellipsis menu no longer preselects Playback info (or another
+action) when opened. The shared menu's first-enabled-row fallback caused the
+misleading selection even with the info panel hidden. Only More opts out:
+current-choice menus retain their defaults. First Down/Up reaches the first/last
+enabled action, Enter still invokes the first enabled action from neutral,
+pointer selection still works, and actual toggle state remains labeled.
+
+Baseline Beta: 6cdb2db93561c4ad957765d6376794d842b647ff. Version remains
+1.2.1081-beta.1 / 1.2.1080.1; pipeline owns stamping. The real OSC/native
+regression failed on the original initial selection and passes after the fix.
+Final Release publish/native build, 424 related tests, native More keyboard and
+pointer variants, and native Speed presentation pass. The neutral native menu
+capture was visually inspected. Independent static review found no actionable
+issues. Final app DLL SHA256:
+A9C5710F350F91C70C44D67FBF520994963D764DAB4A7C67C6CC9B360802AFC7.
+
+Broader native Chapters fails at thumbnail decoding and full native Speed fails
+at same-owner replacement speed/pause state. Both reproduce with the two
+product files restored to unchanged Beta, and remain outside this fix. Checks
+use synthetic media and offscreen windows; live-account, physical keyboard and
+Narrator/UIA focus verification are not claimed. The installed player remains
+open; no install, restart, settings change or direct release was performed.
+
+Evidence and review: D:/SiloPlayer-build/playback-info-preselection/, including
+results/final-more, final-more-pointer, final-speed-presentation, baseline-chapters
+and baseline-speed. Automatic approval review blocked removal of superseded
+unit output; cleanup was not retried and recovered 0 GiB. Task outputs remain
+within the 10 GiB limit with over 50 GiB free on both drives.
+
+---
+
 # November 14 — Bound and retire ebook searches
 
 Ebook search follows official Silo Server `7115ee7028c7c9bde9e201fd5f54e87ea70de3a7`: a whole-book 1,000-result limit, cooperative cancellation and corrected cross-node excerpts. New queries, clearing, file changes and leaving retire pending work. Native result adoption checks search, open and file identities. The native list joins excerpt parts as readable text, uses the current eight-language truncation message, and reports current renderer search failures. The relevant upstream vendor search files are unchanged through `1452ea2d10efbe7d3ea5ce7140fb49756b493670`.
