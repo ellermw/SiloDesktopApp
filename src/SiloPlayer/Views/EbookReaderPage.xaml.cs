@@ -49,6 +49,9 @@ public sealed partial class EbookReaderPage : Page
     private int _rendererPageCount;
     private ApiRequestContext _readerContext;
     private int _openGeneration;
+    private const int SearchResultLimit = 1000;
+    private int _searchGeneration;
+    private CancellationTokenSource? _searchCancellation;
     private bool _suppressControls;
     private bool _savePending;
     private string _activePanel = "contents";
@@ -189,6 +192,8 @@ public sealed partial class EbookReaderPage : Page
     protected override async void OnNavigatedFrom(NavigationEventArgs e)
     {
         _leaving = true;
+        RetireSearch();
+        await ClearRendererSearchAsync();
         _progressTimer.Stop();
         if (_initialized)
         {
@@ -293,8 +298,10 @@ public sealed partial class EbookReaderPage : Page
     {
         if (_opening || _leaving) return;
         _opening = true;
+        RetireSearch();
         try
         {
+        await ClearRendererSearchAsync();
         if (_initialized)
         {
             await ReadScrollFractionAsync();
@@ -546,14 +553,24 @@ public sealed partial class EbookReaderPage : Page
             }
             else if (type == "search-results")
             {
+                if (_opening) return;
+                if (message.RootElement.GetProperty("searchId").GetInt32() != _searchGeneration
+                    || message.RootElement.GetProperty("hostGeneration").GetInt32() != _openGeneration
+                    || message.RootElement.GetProperty("fileId").GetInt32() != _fileId) return;
                 SearchResultsList.Items.Clear();
+                if (message.RootElement.TryGetProperty("failed", out var failed) && failed.GetBoolean())
+                {
+                    SetSearchStatus(() => T("web.shell.errorBoundary.title", "Something went wrong"));
+                    return;
+                }
                 foreach (var item in message.RootElement.GetProperty("items").EnumerateArray())
                 {
                     var result = new BookSearchResult(0, item.GetProperty("chapterTitle").GetString() ?? "", item.GetProperty("snippet").GetString() ?? "", SearchBox.Text, item.GetProperty("cfi").GetString());
                     SearchResultsList.Items.Add(new ListViewItem { Content = $"{result.ChapterTitle}\n{result.Snippet}", Tag = result });
                 }
                 var count = SearchResultsList.Items.Count;
-                SetSearchStatus(() => MatchCountText(count));
+                var truncated = message.RootElement.GetProperty("truncated").GetBoolean();
+                SetSearchStatus(() => SearchResultText(count, truncated));
             }
             else if (type == "selection")
             {
@@ -1091,49 +1108,84 @@ public sealed partial class EbookReaderPage : Page
         await RunSearchAsync();
     }
 
+    private void RetireSearch()
+    {
+        ++_searchGeneration;
+        _searchCancellation?.Cancel();
+        _searchCancellation = null;
+        SearchResultsList.Items.Clear();
+        SetSearchStatus(() => "");
+    }
+
+    private async Task ClearRendererSearchAsync()
+    {
+        if (!UsesSharedRenderer || ReaderWebView.CoreWebView2 == null) return;
+        try { await ReaderWebView.ExecuteScriptAsync("window.siloReader?.clearSearch()"); }
+        catch (Exception) when (_leaving || _opening) { }
+    }
+
     private async Task RunSearchAsync()
     {
+        if (_opening || _leaving) return;
+        RetireSearch();
+        var searchGeneration = _searchGeneration;
+        var openGeneration = _openGeneration;
+        var fileId = _fileId;
+        var book = _book;
         var query = SearchBox.Text.Trim();
-        SearchResultsList.Items.Clear();
-        if (_book == null || query.Length < 2) { SetSearchStatus(() => "Enter at least two characters."); return; }
+        await ClearRendererSearchAsync();
+        if (_leaving || _opening || searchGeneration != _searchGeneration || openGeneration != _openGeneration || fileId != _fileId) return;
+        if (book == null || query.Length < 2) { SetSearchStatus(() => "Enter at least two characters."); return; }
         SetSearchStatus(() => T("web.search.searching", "Searching..."));
         if (UsesSharedRenderer)
         {
-            // WebView2 does not await JavaScript promises. Search completion is
-            // returned through the trusted shell message bridge.
-            await ReaderWebView.ExecuteScriptAsync($"window.siloReader.find({JsonSerializer.Serialize(query)}).then(items=>chrome.webview.postMessage(JSON.stringify({{type:'search-results',hostGeneration:{_openGeneration},items}})))");
+            await ReaderWebView.ExecuteScriptAsync($"window.siloReader.find({JsonSerializer.Serialize(query)},{searchGeneration}).then(outcome=>{{if(outcome != null) chrome.webview.postMessage(JSON.stringify({{type:'search-results',hostGeneration:{openGeneration},fileId:{fileId},...outcome}}))}})");
             return;
         }
-        var results = await Task.Run(() => SearchBook(query), _lifetime.Token);
-        foreach (var result in results)
-            SearchResultsList.Items.Add(new ListViewItem { Content = $"{result.ChapterTitle}\n{result.Snippet}", Tag = result });
-        var matches = results.Count;
-        SetSearchStatus(() => MatchCountText(matches));
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _searchCancellation = cancellation;
+        var token = cancellation.Token;
+        try
+        {
+            var outcome = await Task.Run(() => SearchBook(book, query, token), token);
+            if (_leaving || _opening || token.IsCancellationRequested || searchGeneration != _searchGeneration || openGeneration != _openGeneration || fileId != _fileId) return;
+            foreach (var result in outcome.Items)
+                SearchResultsList.Items.Add(new ListViewItem { Content = $"{result.ChapterTitle}\n{result.Snippet}", Tag = result });
+            SetSearchStatus(() => SearchResultText(outcome.Items.Count, outcome.Truncated));
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        finally
+        {
+            if (ReferenceEquals(_searchCancellation, cancellation)) _searchCancellation = null;
+        }
     }
 
-    private List<BookSearchResult> SearchBook(string query)
+    private static (List<BookSearchResult> Items, bool Truncated) SearchBook(ExtractedEbook book, string query, CancellationToken cancellationToken)
     {
         var results = new List<BookSearchResult>();
-        if (_book == null || !IsHtmlBook) return results;
-        for (var index = 0; index < _book.Chapters.Count && results.Count < 200; index++)
+        for (var index = 0; index < book.Chapters.Count; index++)
         {
-            var chapter = _book.Chapters[index];
-            var path = Path.GetFullPath(Path.Combine(_book.RootDirectory, chapter.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
-            if (!path.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(_book.RootDirectory)) + Path.DirectorySeparatorChar,
+            cancellationToken.ThrowIfCancellationRequested();
+            var chapter = book.Chapters[index];
+            var path = Path.GetFullPath(Path.Combine(book.RootDirectory, chapter.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
+            if (!path.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(book.RootDirectory)) + Path.DirectorySeparatorChar,
                     StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
             var html = File.ReadAllText(path);
+            cancellationToken.ThrowIfCancellationRequested();
             var text = WebUtility.HtmlDecode(Regex.Replace(Regex.Replace(html, "<(script|style)[^>]*>.*?</\\1>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline), "<[^>]+>", " "));
             text = Regex.Replace(text, "\\s+", " ").Trim();
             var start = 0;
-            while (results.Count < 200 && (start = text.IndexOf(query, start, StringComparison.OrdinalIgnoreCase)) >= 0)
+            while ((start = text.IndexOf(query, start, StringComparison.OrdinalIgnoreCase)) >= 0)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (results.Count == SearchResultLimit) return (results, true);
                 var left = Math.Max(0, start - 55);
                 var length = Math.Min(text.Length - left, query.Length + 110);
                 results.Add(new BookSearchResult(index, chapter.Title, (left > 0 ? "..." : "") + text.Substring(left, length) + (left + length < text.Length ? "..." : ""), query));
                 start += Math.Max(1, query.Length);
             }
         }
-        return results;
+        return (results, false);
     }
 
     private void SearchResultsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
