@@ -23,6 +23,8 @@ public static class AdminText
         ["web.shell.sidebar.admin"] = "Admin",
         ["common.cancel"] = "Cancel",
         ["common.retry"] = "Retry",
+        ["web.ui.close"] = "Close",
+
 
         // Admin shell
         ["web.admin.shell.drawer.close"] = "Close admin navigation",
@@ -77,6 +79,12 @@ public static class AdminText
         ["web.admin.common.restartServer.confirmTitle"] = "Restart server?",
         ["web.admin.common.restartServer.failed"] = "Could not confirm the restart. Check server status or restart manually.",
         ["web.admin.common.restartServer.shuttingDown"] = "Silo is shutting down to restart.",
+
+        ["web.admin.homeRows.commandDialog.searchPlaceholder"] = "Search admin sections...",
+        ["web.admin.homeRows.commandDialog.resultsLabel"] = "Admin sections",
+        ["web.admin.homeRows.commandDialog.noMatches"] = "No matching admin sections",
+        ["web.admin.homeRows.commandDialog.matchCount"] = "{count, plural, one {# match} other {# matches}}",
+        ["web.admin.homeRows.commandDialog.sectionCount"] = "{count, plural, one {# admin section} other {# admin sections}}",
 
         // Server activity indicator
         ["web.admin.common.serverActivity.connecting"] = "Connecting…",

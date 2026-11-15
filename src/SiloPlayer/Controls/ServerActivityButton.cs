@@ -257,7 +257,7 @@ public sealed class ServerActivityButton : UserControl
         style.Setters.Add(new Setter(WidthProperty, 320d));
         style.Setters.Add(new Setter(MaxWidthProperty, 320d));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
-        style.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(16)));
+        style.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(20)));
         style.Setters.Add(new Setter(Control.BackgroundProperty, A.Solid(A.Surface, 0.95)));
         style.Setters.Add(new Setter(Control.BorderBrushProperty, A.Solid(A.Border, 0.72)));
         style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
@@ -295,9 +295,9 @@ public sealed class ServerActivityButton : UserControl
         else
         {
             var lastIsScans = view.Preparations == null;
-            body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.streams"), view.StreamCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.streams"), ServerActivityPresentation.FormatBadgeCount(view.StreamCount),
                 view.StreamCount > 0, StreamsContent(view), OpenActivity, last: false));
-            body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.tasks"), view.Tasks.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.tasks"), ServerActivityPresentation.FormatBadgeCount(view.Tasks.Count),
                 view.Tasks.Count > 0, TasksContent(view), null, last: false));
             body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.scans"), view.ScanChipText,
                 view.ScanCount > 0, ScansContent(view), null, last: lastIsScans));
