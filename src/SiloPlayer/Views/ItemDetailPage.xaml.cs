@@ -7973,7 +7973,7 @@ public sealed partial class ItemDetailPage : Page
         cardButton.PointerEntered += (_, _) =>
         {
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                .Prefetch(season.ContentId);
+                .Prefetch(season.ContentId, ViewModel.LibraryId);
             posterBorder.Opacity = 0.92;
         };
         cardButton.PointerExited += (_, _) =>
@@ -7984,13 +7984,13 @@ public sealed partial class ItemDetailPage : Page
         {
             if (string.IsNullOrWhiteSpace(season.ContentId)) return;
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                .Prefetch(season.ContentId);
+                .Prefetch(season.ContentId, ViewModel.LibraryId);
             App.Services.GetRequiredService<NavigationService>()
                 .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(season.ContentId, ViewModel.LibraryId));
         };
         cardButton.GotFocus += (_, _) => App.Services
             .GetRequiredService<ItemDetailPrefetchCache>()
-            .Prefetch(season.ContentId);
+            .Prefetch(season.ContentId, ViewModel.LibraryId);
 
         return cardButton;
     }
@@ -8507,7 +8507,7 @@ public sealed partial class ItemDetailPage : Page
         cardBorder.PointerEntered += (s, _) =>
         {
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                .Prefetch(episode.ContentId);
+                .Prefetch(episode.ContentId, EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId));
             if (s is Border b)
                 b.Opacity = 0.9;
         };
@@ -8530,14 +8530,14 @@ public sealed partial class ItemDetailPage : Page
         button.Click += (_, _) =>
         {
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                .Prefetch(episode.ContentId);
+                .Prefetch(episode.ContentId, EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId));
             App.Services.GetRequiredService<NavigationService>()
                 .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(
                     episode.ContentId, EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId)));
         };
         button.GotFocus += (_, _) => App.Services
             .GetRequiredService<ItemDetailPrefetchCache>()
-            .Prefetch(episode.ContentId);
+            .Prefetch(episode.ContentId, EpisodeLinkLibraryPolicy.LibraryFor(episode, ViewModel.LibraryId));
         void RefreshActionState()
         {
             // Only sibling snapshots live outside the view model's reducer.

@@ -171,6 +171,8 @@ public partial class PlayerService
         var session = _playbackManager?.CurrentSession;
         var tracks = session?.SubtitleUrls.ToList();
         if (tracks == null) return null;
+        if (session!.MediaFileId == sourceFile && SubtitleStoredIdentity.HasIdentity(requested))
+            return SubtitleStoredIdentity.Resolve(requested, tracks);
         if (!string.IsNullOrEmpty(requested.TrackId))
         {
             var exact = tracks.Where(t => t.TrackId == requested.TrackId).ToList();
@@ -179,18 +181,6 @@ public partial class PlayerService
         }
         if (session!.MediaFileId == sourceFile)
         {
-            // Stored/downloaded identities must not borrow a reused ordinal.
-            if (requested.Id is > 0 || !string.IsNullOrEmpty(requested.SyncKey))
-            {
-                var exact = tracks.Where(t => requested.Id is > 0 ? t.Id == requested.Id : t.SyncKey == requested.SyncKey).ToList();
-                // Refreshed downloads have a stored Id, but a new v3 grant
-                // carries that identity only in SyncKey. Never use the ordinal
-                // or discard duplicate/unavailable identities to make a match.
-                if (exact.Count == 0 && !string.IsNullOrEmpty(requested.SyncKey))
-                    exact = tracks.Where(t => t.SyncKey == requested.SyncKey).ToList();
-                return exact.Count == 1 && !exact[0].Unplayable &&
-                    (requested.Id is not > 0 || exact[0].Id is not > 0 || exact[0].Id == requested.Id) ? exact[0] : null;
-            }
             return tracks.FirstOrDefault(t => !t.Unplayable && t.Index == requested.Index);
         }
         tracks = tracks.Where(t => !t.Unplayable).ToList();
