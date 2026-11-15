@@ -26,6 +26,8 @@ using Windows.Storage;
 /// "indicator" — visibility matrix, badge/99+/accessible names, suppression, role loss;
 /// "activity" — Activity page wide/stacked table, filters, IP lookup, FFmpeg console states,
 ///              plus PNG captures at 1440x900, 1280x800, 1024x768, 1023x768 and 800x900;
+/// "activity-scroll" — rendered outer/nested scrollbar bounds, rightmost-text clearance, gutter
+///              hit-test routing over both side gutters and across the nested streams panel;
 /// "" — both. Program.cs dispatch is wired by the lead (see admin-shell-implementation.md).
 /// </summary>
 internal static class AdminMonitorShellNativeFixture
@@ -141,6 +143,7 @@ internal static class AdminMonitorShellNativeFixture
             if (mode is "" or "indicator") await IndicatorAsync(window, server, realtime, auth, store);
             if (mode is "" or "activity") await ActivityAsync(window, server, store);
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
+            if (mode is "" or "activity-scroll") await ActivityScrollAsync(window, server, store);
         }
         finally
         {
@@ -425,6 +428,188 @@ internal static class AdminMonitorShellNativeFixture
         Check(Field(second, "_active") is false && Field(second, "_lease") == null && Field(second, "_reads") == null,
             "outer shell departure retires inner Activity without inner navigation");
         Check(second.RenderedSessionIds.Count == 0, "departed Activity clears private rows");
+    }
+
+    /// <summary>
+    /// Owner report: the Activity page scrollbar covered the rightmost text and sat on top of the
+    /// nested active-streams scrollbar, and the wheel only scrolled the page over the centred column.
+    /// WebUI scrolls the document, so its scrollbar is at the viewport edge and the side gutters scroll.
+    /// Measures the rendered shell/page geometry and the hit-test owner that wheel input routes to.
+    /// </summary>
+    private static async Task ActivityScrollAsync(Window window, Server server, ServerActivityStore store)
+    {
+        server.SessionCount = 30;
+        await store.RefreshSessionsAsync();
+        var frame = new Frame { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"] };
+        window.Content = frame;
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        var shell = (AdminShellPage)frame.Content;
+        var page = (AdminActivityPage)((Frame)Field(shell, "_frame")!).Content;
+        await Until(() => page.RenderedSessionIds.Count == 30);
+        Check(page.RenderedSessionIds.Count == 30, "scroll case renders 30 synthetic streams");
+        var outer = (ScrollViewer)Field(page, "_scroller")!;
+        var content = (FrameworkElement)Field(page, "_page")!;
+        var table = (StackPanel)Field(page, "_tableHost")!;
+        var header = (StackPanel)Field(page, "_header")!;
+
+        foreach (var (width, height) in new[] { (1440, 600), (1920, 600), (800, 600) })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
+            await Task.Delay(400);
+            // The nested panel height follows the viewport at render time; render it for this size.
+            typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+            frame.UpdateLayout();
+            await Task.Delay(300);
+            var inner = Descendants(table).OfType<ScrollViewer>().First();
+            outer.ChangeView(null, 0, null, true);
+            inner.ChangeView(null, 0, null, true);
+            await Task.Delay(200);
+            var size = $"{width}x{height}";
+            var windowWidth = frame.ActualWidth;
+            Check(outer.ScrollableHeight > 0 && inner.ScrollableHeight > 0,
+                $"{size}: page and nested streams both overflow (outer {outer.ScrollableHeight:0}, inner {inner.ScrollableHeight:0})");
+
+            var outerBar = VerticalBar(outer);
+            var innerBar = VerticalBar(inner);
+            var outerBarRect = outerBar == null ? default : Bounds(outerBar);
+            var innerBarRect = innerBar == null ? default : Bounds(innerBar);
+            var tableRect = Bounds(table);
+            var outerRect = Bounds(outer);
+            var tableCard = (FrameworkElement)table.Children[0];
+            var cardRect = Bounds(tableCard);
+            var texts = Descendants(content).OfType<TextBlock>()
+                .Where(text => Shown(text) && text.ActualWidth > 0 && text.ActualHeight > 0)
+                .Select(text => Bounds(text))
+                .Where(rect => rect.Bottom > outerRect.Top && rect.Top < outerRect.Bottom)
+                .ToList();
+            var textRight = texts.Count == 0 ? 0 : texts.Max(rect => rect.Right);
+
+            // The shell's centred column: 240px sidebar from 1024px, gutters 16/24/32/40, max 1560px.
+            var desktop = windowWidth >= AdminShellPage.DesktopBreakpoint;
+            var gutter = windowWidth >= 1280 ? 40 : windowWidth >= 1024 ? 32 : windowWidth >= 640 ? 24 : 16;
+            var hostLeft = desktop ? AdminShellPage.SidebarWidth : 0;
+            var hostWidth = windowWidth - hostLeft;
+            var contentWidth = Math.Min(AdminShellPage.ContentMaxWidth, hostWidth - 2 * gutter);
+            var contentLeft = hostLeft + gutter + (hostWidth - 2 * gutter - contentWidth) / 2;
+            Program.Log($"TRACE activity-scroll {size}: window={windowWidth:0.#} outerViewer={Fmt(outerRect)} outerBar={Fmt(outerBarRect)} " +
+                $"table={Fmt(tableRect)} card={Fmt(cardRect)} innerBar={Fmt(innerBarRect)} textRight={textRight:0.#} " +
+                $"expectedContent=[{contentLeft:0.#},{contentLeft + contentWidth:0.#}] wide={page.IsWideTable}");
+
+            Check(Math.Abs(tableRect.Left - contentLeft) < 1.5 && Math.Abs(tableRect.Width - contentWidth) < 1.5,
+                $"{size}: Activity content keeps the centred shell gutter layout");
+            Check(innerBar != null && Math.Abs(innerBarRect.Right - (cardRect.Right - tableCard.Margin.Right - 1)) < 1.5,
+                $"{size}: nested streams scrollbar stays at the table card's inner edge");
+            Check(outerBar != null && outerBarRect.Right >= windowWidth - 1.5,
+                $"{size}: page scrollbar sits at the window's right edge");
+            Check(outerBar != null && outerBarRect.Left >= textRight + 4,
+                $"{size}: page scrollbar clears the rightmost text ({outerBarRect.Left:0.#} vs {textRight:0.#})");
+            Check(outerBar != null && innerBar != null && outerBarRect.Left >= innerBarRect.Right + 4,
+                $"{size}: page and nested scrollbars are separate ({outerBarRect.Left:0.#} vs {innerBarRect.Right:0.#})");
+
+            var middle = outerRect.Top + outerRect.Height / 2;
+            var leftGutter = new Windows.Foundation.Point(contentLeft - gutter / 2.0, middle);
+            var rightSpace = outerBar != null && outerBarRect.Left > contentLeft + contentWidth ? outerBarRect.Left - (contentLeft + contentWidth) : gutter;
+            var rightGutter = new Windows.Foundation.Point(contentLeft + contentWidth + Math.Max(2, Math.Min(gutter / 2.0, rightSpace / 2)), middle);
+            var headerText = Descendants(header).OfType<TextBlock>().First(text => Shown(text) && text.ActualWidth > 0);
+            var headerRect = Bounds(headerText);
+            var control = new Windows.Foundation.Point(headerRect.Left + Math.Min(headerRect.Width / 2, 40), headerRect.Top + headerRect.Height / 2);
+            string Owner(Windows.Foundation.Point point)
+            {
+                var top = Microsoft.UI.Xaml.Media.VisualTreeHelper.FindElementsInHostCoordinates(point, frame).FirstOrDefault();
+                var owner = NearestScroller(top);
+                var name = ReferenceEquals(owner, outer) ? "outer" : ReferenceEquals(owner, inner) ? "inner" : top == null ? "nothing" : "outside";
+                Program.Log($"TRACE activity-scroll {size} hit ({point.X:0.#},{point.Y:0.#}) -> {name}: {Describe(top)}");
+                return name;
+            }
+            Check(Owner(control) == "outer", $"{size}: page text hit-tests inside the page scroller");
+            Check(Owner(leftGutter) == "outer", $"{size}: left gutter hit-tests inside the page scroller");
+            Check(Owner(rightGutter) == "outer", $"{size}: right gutter hit-tests inside the page scroller");
+
+            // Bring the nested panel into the page viewport with page scroll still available both ways,
+            // then probe across an unstriped row, whose blank areas have no background of their own.
+            var pageOffset = Math.Floor(outer.ScrollableHeight / 2);
+            outer.ChangeView(null, pageOffset, null, true);
+            await Task.Delay(250);
+            var outerNow = Bounds(outer);
+            var innerRect = Bounds(inner);
+            var visibleTop = Math.Max(innerRect.Top, outerNow.Top);
+            var visibleBottom = Math.Min(innerRect.Bottom, outerNow.Bottom);
+            var rows = (Panel)inner.Content;
+            var row = rows.Children.OfType<Panel>().Where((_, index) => index % 2 == 0)
+                .Select(candidate => (Row: candidate, Rect: Bounds(candidate)))
+                .FirstOrDefault(candidate => Math.Min(candidate.Rect.Bottom, visibleBottom) - Math.Max(candidate.Rect.Top, visibleTop) >= 24);
+            Check(row.Row != null && row.Row.Background == null, $"{size}: an unstriped stream row is visible for nested probes");
+            var rowMiddle = row.Row == null
+                ? (visibleTop + visibleBottom) / 2
+                : (Math.Max(row.Rect.Top, visibleTop) + Math.Min(row.Rect.Bottom, visibleBottom)) / 2;
+            var nestedPoints = new[] { 0.03, 0.25, 0.5, 0.75, 0.9 }
+                .Select(fraction => new Windows.Foundation.Point(innerRect.Left + innerRect.Width * fraction, rowMiddle)).ToArray();
+            var nestedOwners = nestedPoints.Select(Owner).ToArray();
+            Check(nestedOwners.All(owner => owner != "outer"), $"{size}: no point over the nested streams panel routes to the page scroller ({string.Join(",", nestedOwners)})");
+            Check(nestedOwners.All(owner => owner == "inner"), $"{size}: every probed point over the nested streams panel hit-tests inside that panel ({string.Join(",", nestedOwners)})");
+            // Wheel input routes from the topmost hit element to its nearest ScrollViewer, so these
+            // hit-test owners are the routing evidence. WinAppSDK input did not consume posted or sent
+            // WM_MOUSEWHEEL (input site or bridge) and global SendInput would reach the owner's desktop.
+
+            outer.ChangeView(null, outer.ScrollableHeight, null, true);
+            inner.ChangeView(null, 0, null, true);
+            await Task.Delay(200);
+            // Capture-only: page scrolled to its end so the nested panel and both bars are in view, bars expanded.
+            foreach (var viewer in new[] { outer, inner }) VisualStateManager.GoToState(viewer, "MouseIndicator", false);
+            foreach (var bar in new[] { outerBar, innerBar }) if (bar != null) VisualStateManager.GoToState(bar, "ExpandedWithoutAnimation", false);
+            await CaptureAsync(frame, $"admin-activity-scroll-{size}.png");
+        }
+
+        // Only Activity opts into the gutter-spanning scroller; other Monitor pages keep the shell column.
+        var column = (Grid)Field(shell, "_contentColumn")!;
+        var innerFrame = (Frame)Field(shell, "_frame")!;
+        shell.Navigate(new AdminRouteRequest(AdminRoute.ServerLog));
+        await Until(() => innerFrame.Content is AdminLogsPage);
+        await Task.Delay(200);
+        Check(innerFrame.Content is AdminLogsPage && column.MaxWidth == AdminShellPage.ContentMaxWidth && column.Margin.Left == 24 && column.Margin.Right == 24,
+            $"Logs keeps the gutter outside its frame (max {column.MaxWidth}, margin {column.Margin})");
+        shell.Navigate(new AdminRouteRequest(AdminRoute.Activity));
+        await Until(() => innerFrame.Content is AdminActivityPage);
+        await Task.Delay(200);
+        var returned = innerFrame.Content as AdminActivityPage;
+        var returnedContent = returned == null ? null : (FrameworkElement)Field(returned, "_page")!;
+        Check(returnedContent != null && column.Margin.Left == 0 && double.IsPositiveInfinity(column.MaxWidth)
+                && returnedContent.Margin.Left == 24 && returnedContent.MaxWidth == AdminShellPage.ContentMaxWidth,
+            "returning to Activity moves the gutter back inside its scroller");
+    }
+
+    private static Microsoft.UI.Xaml.Controls.Primitives.ScrollBar? VerticalBar(ScrollViewer viewer) =>
+        Descendants(viewer).OfType<Microsoft.UI.Xaml.Controls.Primitives.ScrollBar>()
+            .FirstOrDefault(bar => bar.Orientation == Orientation.Vertical && ReferenceEquals(NearestScroller(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(bar)), viewer));
+
+    private static ScrollViewer? NearestScroller(DependencyObject? element)
+    {
+        for (var current = element; current != null; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+            if (current is ScrollViewer viewer) return viewer;
+        return null;
+    }
+
+    private static bool Shown(UIElement element)
+    {
+        for (DependencyObject? current = element; current != null; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+            if (current is UIElement { Visibility: Visibility.Collapsed } or UIElement { Opacity: 0 }) return false;
+        return true;
+    }
+
+    private static Windows.Foundation.Rect Bounds(FrameworkElement element)
+    {
+        var origin = element.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+        return new Windows.Foundation.Rect(origin.X, origin.Y, element.ActualWidth, element.ActualHeight);
+    }
+
+    private static string Fmt(Windows.Foundation.Rect rect) => $"[{rect.Left:0.#},{rect.Top:0.#} → {rect.Right:0.#},{rect.Bottom:0.#}]";
+
+    private static string Describe(DependencyObject? element)
+    {
+        var chain = new List<string>();
+        for (var current = element; current != null && chain.Count < 6; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+            chain.Add(current.GetType().Name + (current is FrameworkElement { Name.Length: > 0 } named ? "#" + named.Name : ""));
+        return chain.Count == 0 ? "nothing" : string.Join(" < ", chain);
     }
 
     private static void Invoke(Button button) => ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(button).GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();

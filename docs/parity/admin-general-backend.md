@@ -1,0 +1,5 @@
+# Configure General backend handoff (November 15, 2026)
+
+This is an intermediate C1 backend, not a registered page or a claim of General visual parity. Reference: official Silo Server/WebUI c11b0a968f0d5980b7005579fb95acc2d11d8321; desktop version 1.2.1081-beta.1. It provides lease-bound bounded server-settings reads/writes, a shared single-flight cache, a page draft and a General controller. The remaining Configure catalog and native page, production registration, shell integration and native verification belong to the continuing C1 implementation.
+
+The General controller requires explicit activation and suspension. Its save notification carries only key names; the integrating page/shell must use it to refresh restart status and affected branding or capability caches under the current authority. A 412 or an uncertain write requires explicit reload and review before another save. The shared store is currently configured with General's owned key and secret lists; extend its explicitly allowed key union as future settings pages are added.
