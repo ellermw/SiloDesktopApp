@@ -369,14 +369,43 @@ public static class AdminActivityPresentation
     public static string GetPlaybackSessionTitle(AdminActivitySession s, TextFormat? format = null)
     {
         format ??= DefaultFormat;
-        if (IsEpisode(s)) return Or(s.EpisodeName, $"S{s.SeasonNumber}E{s.EpisodeNumber}");
+        if (IsEpisode(s)) return Or(s.EpisodeName, FormatEpisodeCode(s.SeasonNumber!.Value, s.EpisodeNumber!.Value, format));
         return Or(s.MediaTitle, format("web.common.activity.title.file", new { id = s.MediaFileId }));
     }
 
-    public static string? GetPlaybackSessionSubtitle(AdminActivitySession s)
+    /// <summary>"S3E13" (<c>web.detail.episodeCode</c>); numbers print as plain digits, as WebUI's <c>codeNumber</c>.</summary>
+    public static string FormatEpisodeCode(long season, long episode, TextFormat? format = null)
     {
-        if (IsEpisode(s)) return $"S{s.SeasonNumber}E{s.EpisodeNumber} · {s.SeriesName}";
-        return s.MediaType switch
+        format ??= DefaultFormat;
+        return format("web.detail.episodeCode", new
+        {
+            season = season.ToString(CultureInfo.InvariantCulture),
+            episode = episode.ToString(CultureInfo.InvariantCulture),
+        });
+    }
+
+    /// <summary>
+    /// The episode line Activity and the dashboard's Now Playing tiles share:
+    /// "S3E13 · Show" (<c>web.common.activity.subtitle.episode</c>).
+    /// </summary>
+    public static string FormatEpisodeSubtitle(long season, long episode, string series, TextFormat? format = null)
+    {
+        format ??= DefaultFormat;
+        return format("web.common.activity.subtitle.episode", new { code = FormatEpisodeCode(season, episode, format), series });
+    }
+
+    /// <summary>WebUI <c>getPlaybackSessionSubtitle</c>: the episode line, else Movie/Series by media type, else nothing.</summary>
+    public static string? GetPlaybackSessionSubtitle(AdminActivitySession s)
+        => PlaybackSessionSubtitle(s.SeriesName, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+
+    /// <summary>The same rule for a dashboard session, so Now Playing reads exactly as Activity.</summary>
+    public static string? GetPlaybackSessionSubtitle(DashboardSession s)
+        => PlaybackSessionSubtitle(s.SeriesName, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+
+    private static string? PlaybackSessionSubtitle(string? series, long? season, long? episode, string? mediaType)
+    {
+        if (!string.IsNullOrEmpty(series) && season is { } s && episode is { } e) return FormatEpisodeSubtitle(s, e, series);
+        return mediaType switch
         {
             "movie" => AdminText.T("web.common.activity.subtitle.movie"),
             "series" => AdminText.T("web.common.activity.subtitle.series"),
@@ -404,11 +433,21 @@ public static class AdminActivityPresentation
         return h > 0 ? $"{h}:{m:00}:{sec:00}" : $"{m}:{sec:00}";
     }
 
-    public static string FormatPlaybackPosition(AdminActivitySession s)
+    /// <summary>
+    /// WebUI <c>formatPlaybackPosition</c>: "47:12 / 2:29:40", or the position
+    /// alone when the duration is null or not positive. A non-finite or negative
+    /// position prints as 0:00.
+    /// </summary>
+    public static string FormatPlaybackPosition(double positionSeconds, long? fileDuration)
     {
-        var position = FormatClockTime(s.PositionSeconds);
-        return s.FileDuration is not > 0 ? position : $"{position} / {FormatClockTime(s.FileDuration.Value)}";
+        var position = FormatClockTime(positionSeconds);
+        return fileDuration is not > 0 ? position : $"{position} / {FormatClockTime(fileDuration.Value)}";
     }
+
+    public static string FormatPlaybackPosition(AdminActivitySession s) => FormatPlaybackPosition(s.PositionSeconds, s.FileDuration);
+
+    /// <summary>The Now Playing tile's position, from the same rule as Activity.</summary>
+    public static string FormatPlaybackPosition(DashboardSession s) => FormatPlaybackPosition(s.PositionSeconds, s.FileDuration);
 
     /// <summary>Elapsed time since the session started, as "m:ss"/"h:mm:ss".</summary>
     public static string GetElapsed(string startedAt, DateTimeOffset now)

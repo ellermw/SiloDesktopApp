@@ -18,6 +18,14 @@ internal sealed class DashboardWidgetContext
     public required string Id { get; init; }
     public required DashboardWidgetRange Range { get; set; }
     public required Action<DashboardWidgetRange> SetRange { get; init; }
+    /// <summary>
+    /// The presentation this placement renders: <see cref="DashboardLayoutDocument.EffectiveView"/>
+    /// of its layout entry, null for widgets without views. The layout is the only
+    /// source; a widget never keeps its own copy.
+    /// </summary>
+    public string? View { get; set; }
+    /// <summary>Stores a picked view in the layout entry (the range picker's debounced save); the layout echoes it back.</summary>
+    public required Action<string> SetView { get; init; }
     public required Action<bool> SetCollapsed { get; init; }
     public required Func<DashboardGridMode> Mode { get; init; }
     public required Func<double> ViewportWidth { get; init; }
@@ -58,6 +66,10 @@ internal abstract class DashboardWidgetView : Grid
     /// <summary>Below lg a fill-height chart keeps a fixed-height chart's 10rem.</summary>
     protected double ChartMinHeight => Fixed ? 0 : DashboardGridPlacement.StackedChartMinHeight;
     protected DashboardWidgetRange Range => C.Range;
+    /// <summary>The stored view to render (see <see cref="DashboardWidgetContext.View"/>).</summary>
+    public string? View => C.View;
+    /// <summary>Completed renders; fixtures use it to prove a resize settles instead of re-rendering in a loop.</summary>
+    public int RenderCount { get; private set; }
 
     protected abstract IEnumerable<string> Keys { get; }
     protected virtual IEnumerable<string> RenderTriggers => [];
@@ -90,6 +102,18 @@ internal abstract class DashboardWidgetView : Grid
         if (!_attached) return;
         Remount();
         RenderNow();
+    }
+
+    /// <summary>
+    /// The layout entry's view changed (a pick, Reload, Reset or another
+    /// device's layout): draw it. Views change presentation only, so nothing
+    /// remounts.
+    /// </summary>
+    public void SetView(string? view)
+    {
+        if (string.Equals(C.View, view, StringComparison.Ordinal)) return;
+        C.View = view;
+        if (_attached) RenderNow();
     }
 
     public void SetCustomizing(bool customizing)
@@ -130,6 +154,7 @@ internal abstract class DashboardWidgetView : Grid
         var content = Render();
         Children.Clear();
         Children.Add(content);
+        RenderCount++;
     }
 
     protected void Mount(string key)

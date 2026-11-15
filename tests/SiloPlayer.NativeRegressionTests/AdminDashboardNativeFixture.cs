@@ -29,7 +29,7 @@ using Windows.Storage;
 ///   if (SILO_NATIVE_TEST_ONLY == "admin-dashboard") await AdminDashboardNativeFixture.RunAsync(_window);
 /// Synthetic captures are not live visual parity evidence.
 /// </summary>
-internal static class AdminDashboardNativeFixture
+internal static partial class AdminDashboardNativeFixture
 {
     private static readonly List<string> Failures = [];
     private static readonly DateTimeOffset CaptureNow = DateTimeOffset.Parse("2026-11-14T12:00:00Z");
@@ -85,6 +85,12 @@ internal static class AdminDashboardNativeFixture
         public readonly List<string> Writes = [];
         public readonly List<string> Reads = [];
         public string LayoutETag = "\"L1\"";
+        // Current-UI hooks (off by default so the original cases keep their null server layout):
+        // a stored layout the GET returns and PUT/DELETE update, the PUT documents, and explicit session rows.
+        public bool PersistLayout;
+        public string? StoredLayout;
+        public readonly List<string> LayoutBodies = [];
+        public string[]? SessionRows;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -92,6 +98,16 @@ internal static class AdminDashboardNativeFixture
             if (request.Method != HttpMethod.Get)
             {
                 lock (Writes) Writes.Add($"{request.Method} {path} If-Match={string.Join(",", request.Headers.IfMatch)}");
+                if (PersistLayout && path == "/api/v2/admin/dashboard/layout")
+                {
+                    if (request.Method == HttpMethod.Delete) StoredLayout = null;
+                    else if (request.Method == HttpMethod.Put && !RejectSaves && request.Content != null)
+                    {
+                        using var put = JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken));
+                        StoredLayout = put.RootElement.GetProperty("layout").GetRawText();
+                        lock (Writes) LayoutBodies.Add(StoredLayout);
+                    }
+                }
                 if (path == "/api/v2/admin/dashboard/layout" && request.Method == HttpMethod.Put)
                 {
                     if (RejectSaves) return Json("""{"title":"Stale","status":412}""", HttpStatusCode.PreconditionFailed);
@@ -149,7 +165,9 @@ internal static class AdminDashboardNativeFixture
             return path switch
             {
                 "/api/v2/admin/dashboard/capabilities" => """{"allowed":true,"state":"available","timeseries":true,"playback_activity":true,"top_activity":true,"health":true,"watch_providers":true,"downloads_stats":true,"egress_totals":true,"egress_by_source":true,"api_clients":true,"log_level_list":true}""",
-                "/api/v2/admin/dashboard/layout" => """{"layout":null,"updated_at":null}""",
+                "/api/v2/admin/dashboard/layout" => PersistLayout && StoredLayout != null
+                    ? "{\"layout\":" + StoredLayout + ",\"updated_at\":\"2026-11-14T11:00:00Z\"}"
+                    : """{"layout":null,"updated_at":null}""",
                 "/api/v2/admin/stats" => """{"total_items":1500,"total_files":4200,"total_users":12,"total_movies":900,"total_movie_files":950,"total_shows":120,"total_show_files":3250,"advisory_titles":700,"active_streams":3,"total_storage_bytes":5497558138880,"watch_providers":[{"provider":"trakt","display_name":"Trakt","registered":true,"connected_profiles":3,"exporting":true,"scrobbling":true,"imported_watched_24h":12,"exported_watched_24h":4,"open_scrobbles":1,"sync_errors_24h":1,"failed_exports":0,"last_sync_completed_at":"2026-11-14T11:00:00Z"}]}""",
                 "/api/v2/admin/stats/timeseries" => $$$$"""{"resolution_seconds":60,"from":"{{{{Iso(now.AddMinutes(-59))}}}}","to":"{{{{Iso(now)}}}}","egress_bytes":5400000000,"download_egress_bytes":300000000,"egress_sources":[{"key":"api","kind":"api","name":"API","egress_bytes":1800000000},{"key":"node:2","kind":"node","name":"edge-2","node_id":"2","egress_bytes":3600000000}],"points":[{{{{Points(60)}}}}]}""",
                 "/api/v2/admin/stats/playback-activity" => $$$$"""{"hours":24,"bucket_seconds":3600,"from":"{{{{Iso(now.AddHours(-24))}}}}","to":"{{{{Iso(now)}}}}","profiles_active_24h":5,"buckets":[{"hour":"{{{{Iso(now.AddHours(-3))}}}}","direct":4,"remux":2,"transcode":1},{"hour":"{{{{Iso(now.AddHours(-1))}}}}","direct":2,"remux":0,"transcode":3}],"reliability":{"sessions_started":12,"transcode_starts":4,"finalized_sessions":10,"completed_sessions":8,"completion_rate":0.8,"unique_profiles":5}}""",
@@ -166,7 +184,7 @@ internal static class AdminDashboardNativeFixture
                 "/api/v2/admin/autoscan/status" => $$$$"""{"enabled":true,"running_scans":1,"accepted_scans":2,"active_scans":3,"latest_event_at":"{{{{Iso(now.AddMinutes(-7))}}}}","running_polls":[{}],"sources":[]}""",
                 "/api/v2/admin/autoscan/scans" => $$$$"""{"items":[{"id":"h1","library_id":"1","mode":"library","trigger":"autoscan","status":"completed","started_at":"{{{{Iso(now.AddMinutes(-62))}}}}","completed_at":"{{{{Iso(now.AddMinutes(-60))}}}}"},{"id":"h2","library_id":"2","mode":"file","trigger":"manual","status":"failed","started_at":"{{{{Iso(now.AddMinutes(-5))}}}}","completed_at":"{{{{Iso(now.AddMinutes(-4))}}}}"}],"page":{"has_more":false},"total":2}""",
                 "/api/v2/admin/logs/app" => $$$$"""{"items":[{"id":"1","timestamp":"{{{{Iso(now.AddMinutes(-1))}}}}","level":"error","component":"scan","message":"Synthetic error line"},{"id":"2","timestamp":"{{{{Iso(now.AddMinutes(-3))}}}}","level":"warn","component":"","message":"Synthetic warning line"}],"page":{"has_more":false}}""",
-                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", Enumerable.Range(0, Sessions).Select(Session)) + "],\"page\":{\"has_more\":false}}",
+                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", SessionRows ?? Enumerable.Range(0, Sessions).Select(Session)) + "],\"page\":{\"has_more\":false}}",
                 "/api/v2/admin/settings/effective" => """{"playback.transcode_enabled":"true","email.enabled":"false","server.public_url":"","ui.dashboard.hidden_attention":"[\"public-url\"]"}""",
                 "/api/v2/admin/settings/sensitive-status" => """{"configured":[]}""",
                 "/api/v2/theme/branding" => """{"server_name":"Synthetic","storage_available":true}""",
@@ -174,7 +192,7 @@ internal static class AdminDashboardNativeFixture
             };
         }
 
-        private static string Session(int i) =>
+        internal static string Session(int i) =>
             "{\"session_id\":\"synthetic-" + i + "\",\"user_id\":\"" + (7 + i) + "\",\"username\":\"viewer" + i + "\",\"profile_id\":\"p" + i + "\",\"profile_name\":\"Profile " + i + "\"," +
             "\"media_file_id\":\"" + (40 + i) + "\",\"requested_media_file_id\":\"" + (40 + i) + "\",\"media_title\":\"Synthetic Title " + i + "\",\"media_type\":\"movie\"," +
             "\"play_method\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"video_decision\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"audio_decision\":\"direct\"," +
@@ -212,6 +230,7 @@ internal static class AdminDashboardNativeFixture
         try
         {
             await DashboardAsync(window, server, auth, realtime);
+            await CurrentUiAsync(window, server, cache);
             if (Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_STATES") == "1")
                 await CaptureQueryStatesAsync(window, server, auth);
         }
