@@ -382,6 +382,7 @@ public partial class App : Application
         services.AddSingleton<AdminMonitorApi>();
         services.AddSingleton<AdminMonitorAuthority>();
         services.AddAdminPlaybackAudit();
+        services.AddAdminSubtitleFiles();
         services.AddSingleton<LogsStreamClient>();
         services.AddSingleton(sp => new ServerActivityStore(
             sp.GetRequiredService<AdminMonitorApi>(), sp.GetRequiredService<AdminMonitorAuthority>(),

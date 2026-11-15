@@ -9,6 +9,16 @@ public enum DashboardWidgetRange { Hour, Day, Week, Month }
 public sealed record DashboardRangeOptions(IReadOnlyList<DashboardWidgetRange> Allowed, DashboardWidgetRange Default);
 
 /// <summary>
+/// The presentations a widget can switch between (WebUI <c>WidgetViewOptions</c>).
+/// Views are opaque ordinal strings; <see cref="Default"/> is what an entry
+/// without a stored view shows.
+/// </summary>
+public sealed record DashboardViewOptions(IReadOnlyList<string> Allowed, string Default)
+{
+    public bool Offers(string? view) => view != null && Allowed.Contains(view, StringComparer.Ordinal);
+}
+
+/// <summary>
 /// A widget's identity and the box it may occupy. Columns and rows are
 /// independent axes; rows are 100px grid rows that only apply from the 1024px
 /// breakpoint up. <see cref="CollapsedRows"/> is the height an idle widget
@@ -25,15 +35,20 @@ public sealed record DashboardWidgetDefinition(
     int MaxRows,
     int DefaultRows,
     int? CollapsedRows = null,
-    DashboardRangeOptions? Ranges = null)
+    DashboardRangeOptions? Ranges = null,
+    DashboardViewOptions? Views = null)
 {
     public string Title => DashboardText.T(TitleKey);
     public string Description => DashboardText.T(DescriptionKey);
     public bool CanResize => MinSpan != MaxSpan || MinRows != MaxRows;
 }
 
-/// <summary>One placed widget. Range is present only for widgets that offer ranges.</summary>
-public sealed record DashboardLayoutEntry(string Id, int Span, int Rows, DashboardWidgetRange? Range = null);
+/// <summary>
+/// One placed widget. Range is present only for widgets that offer ranges.
+/// View is present only once the admin has picked one and is always a view the
+/// widget offers; an absent view and the default view are different stored values.
+/// </summary>
+public sealed record DashboardLayoutEntry(string Id, int Span, int Rows, DashboardWidgetRange? Range = null, string? View = null);
 
 /// <summary>The 28 selectable widgets of the pinned WebUI registry, in registry order.</summary>
 public static class DashboardRegistry
@@ -77,6 +92,11 @@ public static class DashboardRegistry
         [DashboardWidgetRange.Day, DashboardWidgetRange.Week, DashboardWidgetRange.Month],
         DashboardWidgetRange.Week);
 
+    /// <summary>The Egress chart's Total/Nodes switch. No other widget declares views.</summary>
+    public const string EgressViewTotal = "total";
+    public const string EgressViewNodes = "nodes";
+    public static readonly DashboardViewOptions EgressViews = new([EgressViewTotal, EgressViewNodes], EgressViewTotal);
+
     private const string Catalog = "web.admin.dashboard.widgetCatalog.";
 
     private static DashboardWidgetDefinition Stat(string id, string key) =>
@@ -97,7 +117,7 @@ public static class DashboardRegistry
         new(ServerResources, Catalog + "serverResources.title", Catalog + "serverResources.description", 6, 12, 6, 2, 4, 2),
         new(Playback24h, Catalog + "playback24h.title", Catalog + "playback24h.description", 6, 12, 6, 2, 5, 3, Ranges: SampledRanges),
         new(ConcurrentStreams24h, Catalog + "concurrentStreams24h.title", Catalog + "concurrentStreams24h.description", 4, 12, 6, 2, 5, 3, Ranges: SampledRanges),
-        new(Egress24h, Catalog + "egress24h.title", Catalog + "egress24h.description", 4, 12, 6, 2, 5, 3, Ranges: SampledRanges),
+        new(Egress24h, Catalog + "egress24h.title", Catalog + "egress24h.description", 4, 12, 6, 2, 5, 3, Ranges: SampledRanges, Views: EgressViews),
         new(PlaybackReliability, Catalog + "playbackReliability.title", Catalog + "playbackReliability.description", 4, 8, 6, 2, 4, 3, Ranges: SampledRanges),
         new(TopTitles, Catalog + "topTitles.title", Catalog + "topTitles.description", 4, 8, 6, 2, 5, 3, Ranges: LeaderboardRanges),
         new(TopProfiles, Catalog + "topProfiles.title", Catalog + "topProfiles.description", 4, 8, 6, 2, 5, 3, Ranges: LeaderboardRanges),
@@ -147,6 +167,7 @@ public static class DashboardRegistry
         .Select(id => DefaultEntry(Get(id)))
         .ToArray();
 
+    /// <summary>A widget at its defaults. Never writes a view: the default view applies without one.</summary>
     public static DashboardLayoutEntry DefaultEntry(DashboardWidgetDefinition widget)
         => new(widget.Id, widget.DefaultSpan, widget.DefaultRows, widget.Ranges?.Default);
 }

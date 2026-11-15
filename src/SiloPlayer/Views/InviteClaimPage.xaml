@@ -54,7 +54,7 @@
                     <!-- A silo://invite link can name any server; show which one. -->
                     <TextBlock x:Name="ServerOriginText" FontFamily="Consolas" FontSize="12"
                                TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
-                    <TextBlock Text="Choose a password and you’re in. You’ll sign in with your email address." loc:Localized.Text="web.auth.invite.description"
+                    <TextBlock x:Name="DescriptionText" Text="Choose a password and you’re in. You’ll sign in with your email address."
                                FontSize="14" LineHeight="24" TextWrapping="Wrap"
                                Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
@@ -65,10 +65,16 @@
                                Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" FontSize="13" />
                 </Border>
 
-                <StackPanel Spacing="16">
+                <TextBlock x:Name="InvitationNoteText" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" TextWrapping="Wrap"
+                           Foreground="{StaticResource PrimaryTextBrush}"
+                           Visibility="{x:Bind ViewModel.StatusMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" />
+
+                <StackPanel x:Name="ClaimFormFields" Spacing="16">
                     <StackPanel Spacing="6">
                         <TextBlock Text="Email" loc:Localized.Text="web.auth.email" FontSize="14" FontWeight="Medium" />
                         <TextBox x:Name="EmailBox" IsReadOnly="True" IsEnabled="False"
+                                 TextChanged="EmailBox_TextChanged"
                                  Style="{StaticResource DarkTextBoxStyle}" />
                     </StackPanel>
                     <StackPanel Spacing="6">
@@ -87,11 +93,13 @@
                     </StackPanel>
                     <Button x:Name="CreateAccountButton" Content="Create account"
                             Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch"
-                            Padding="16,11" Command="{x:Bind ViewModel.AcceptCommand}"
-                            IsEnabled="{x:Bind ViewModel.IsSubmitting, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                            Padding="16,11" Command="{x:Bind ViewModel.AcceptCommand}" />
                     <ProgressRing IsActive="{x:Bind ViewModel.IsSubmitting, Mode=OneWay}"
                                   Visibility="{x:Bind ViewModel.IsSubmitting, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                                   HorizontalAlignment="Center" Width="24" Height="24" />
+                    <Button x:Name="ReloadInvitationButton" Content="Reload invitation" loc:Localized.Content="web.auth.invite.reload"
+                            Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center"
+                            Visibility="Collapsed" Click="Retry_Click" />
                 </StackPanel>
                 <Button Content="Already set this up? Sign in" loc:Localized.Content="web.auth.invite.alreadySetUp"
                         Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center"

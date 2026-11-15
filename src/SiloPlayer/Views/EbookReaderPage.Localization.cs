@@ -205,6 +205,12 @@ public sealed partial class EbookReaderPage
                 new Dictionary<string, object?> { ["page"] = _chapterIndex + 1, ["total"] = _rendererPageCount }) + " · " + percent
             : percent;
 
+    private static string SearchResultText(int count, bool truncated)
+        => truncated
+            ? T("web.reader.search.truncated", $"Showing the first {count} matches.",
+                new Dictionary<string, object?> { ["count"] = count, ["count_text"] = count.ToString("N0", AppStrings.FormatCulture) })
+            : MatchCountText(count);
+
     private static string MatchCountText(int count)
         => count == 0 ? T("web.search.noMatches", "No matches")
             : T("web.settings.search.matchCount", count == 1 ? "1 match" : $"{count} matches",

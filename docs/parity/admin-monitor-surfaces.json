@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Playback History and Skip Markers read-only pages)",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files page, Playback History and Skip Markers read-only pages)",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminMarkerHistoryApi.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Activity.cs",
@@ -9,12 +9,15 @@
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Restart.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.cs",
     "src/SiloPlayer.Core/Api/AdminPlaybackHistoryApi.cs",
+    "src/SiloPlayer.Core/Api/AdminSubtitlesApi.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminActivity.cs",
+    "src/SiloPlayer.Core/Api/SiloApiClient.AdminSubtitles.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.MonitorLogs.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminActivityModels.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminIndicatorModels.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminMarkerHistoryModels.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminPlaybackHistoryModels.cs",
+    "src/SiloPlayer.Core/Models/Admin/AdminSubtitlesModels.cs",
     "src/SiloPlayer.Core/Models/Admin/DashboardModels.cs",
     "src/SiloPlayer.Core/Models/Admin/DiagnosticsModels.cs",
     "src/SiloPlayer.Core/Models/Admin/LoggingModels.cs",
@@ -32,6 +35,9 @@
     "src/SiloPlayer.Core/Services/Admin/AdminPlaybackAuditText.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPlaybackHistoryController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminRouteCatalog.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSubtitleSessions.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSubtitlesController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSubtitlesText.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminText.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardActivityFeed.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardChartMath.cs",
@@ -86,6 +92,11 @@
     "src/SiloPlayer/Views/Admin/AdminPlaybackHistoryPage.xaml",
     "src/SiloPlayer/Views/Admin/AdminShellPage.cs",
     "src/SiloPlayer/Views/Admin/AdminShellPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.Actions.cs",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.Rows.cs",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesRegistration.cs",
     "src/SiloPlayer/Views/Admin/LogsNativeUi.cs"
   ]
 }
