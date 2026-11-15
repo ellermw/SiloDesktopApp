@@ -65,6 +65,11 @@ public sealed class AdminDashboardLayoutTests
         { "fills default windows", """[{"id":"egress-24h","span":6,"rows":3},{"id":"top-titles","span":6,"rows":3},{"id":"users","span":5,"rows":4}]""", "egress-24h:6x3@Day;top-titles:6x3@Week;users:5x4" },
         { "keeps allowed windows", """[{"id":"egress-24h","span":6,"rows":3,"range":"month"},{"id":"top-titles","span":6,"rows":3,"range":"day"}]""", "egress-24h:6x3@Month;top-titles:6x3@Day" },
         { "replaces disallowed window and drops unranged", """[{"id":"top-titles","span":6,"rows":3,"range":"hour"},{"id":"users","span":5,"rows":4,"range":"week"}]""", "top-titles:6x3@Week;users:5x4" },
+        { "keeps an offered view", """[{"id":"egress-24h","span":6,"rows":3,"range":"day","view":"nodes"}]""", "egress-24h:6x3@Day#nodes" },
+        { "keeps an explicit default view", """[{"id":"egress-24h","span":6,"rows":3,"view":"total"}]""", "egress-24h:6x3@Day#total" },
+        { "drops an unoffered view without substituting the default", """[{"id":"egress-24h","span":6,"rows":3,"view":"sideways"},{"id":"users","span":5,"rows":4,"view":"nodes"}]""", "egress-24h:6x3@Day;users:5x4" },
+        { "drops a non-string view", """[{"id":"egress-24h","span":6,"rows":3,"view":1}]""", "egress-24h:6x3@Day" },
+        { "matches views ordinally", """[{"id":"egress-24h","span":6,"rows":3,"view":"Nodes"}]""", "egress-24h:6x3@Day" },
     };
 
     [Theory]
@@ -205,7 +210,89 @@ public sealed class AdminDashboardLayoutTests
     }
 
     private static string Describe(IReadOnlyList<DashboardLayoutEntry> entries)
-        => string.Join(";", entries.Select(e => $"{e.Id}:{e.Span}x{e.Rows}" + (e.Range is { } r ? "@" + r : "")));
+        => string.Join(";", entries.Select(e => $"{e.Id}:{e.Span}x{e.Rows}" + (e.Range is { } r ? "@" + r : "") + (e.View is { } v ? "#" + v : "")));
+
+    [Fact]
+    public void OnlyTheEgressChartOffersViewsAndNoDefaultEntryStoresOne()
+    {
+        Assert.Equal(["egress-24h"], DashboardRegistry.Widgets.Where(widget => widget.Views != null).Select(widget => widget.Id));
+        var views = DashboardRegistry.Get("egress-24h").Views!;
+        Assert.Equal(["total", "nodes"], views.Allowed);
+        Assert.Equal("total", views.Default);
+        Assert.All(DashboardRegistry.DefaultLayout, entry => Assert.Null(entry.View));
+        Assert.All(DashboardRegistry.Widgets.Select(DashboardRegistry.DefaultEntry), entry => Assert.Null(entry.View));
+        var readded = DashboardLayoutDocument.Add(DashboardLayoutDocument.Remove(DashboardRegistry.DefaultLayout, "egress-24h"), "egress-24h");
+        Assert.Null(readded.Single(entry => entry.Id == "egress-24h").View);
+        Assert.DoesNotContain("\"view\"", DashboardLayoutDocument.Serialize(DashboardRegistry.DefaultLayout));
+    }
+
+    [Fact]
+    public void SerializeWritesAViewAfterTheRangeOnlyWhenPresentAndRoundTripsIt()
+    {
+        DashboardLayoutEntry[] entries =
+        [
+            new("egress-24h", 6, 3, DashboardWidgetRange.Day, "nodes"),
+            new("users", 5, 4),
+        ];
+        var json = DashboardLayoutDocument.Serialize(entries);
+        Assert.Equal("""{"version":1,"entries":[{"id":"egress-24h","span":6,"rows":3,"range":"day","view":"nodes"},{"id":"users","span":5,"rows":4}]}""", json);
+        Assert.Equal<DashboardLayoutEntry>(entries, DashboardLayoutDocument.Sanitize(json)!);
+        Assert.True(DashboardLayoutDocument.SameArrangement(entries, DashboardLayoutDocument.Sanitize(json)!));
+        Assert.False(DashboardLayoutDocument.SameArrangement(entries, [entries[0] with { View = null }, entries[1]]));
+    }
+
+    [Fact]
+    public void SetViewPersistsAViewTheWidgetOffersAndIgnoresOneItDoesNot()
+    {
+        var layout = DashboardLayoutDocument.Sanitize(
+            """{"version":1,"entries":[{"id":"egress-24h","span":6,"rows":3,"range":"day","view":"sideways"},{"id":"users","span":5,"rows":4,"view":"nodes"}]}""")!;
+        Assert.Equal("egress-24h:6x3@Day;users:5x4", Describe(layout));
+
+        // Picking the view already on screen is not an edit: the same list comes back.
+        Assert.Same(layout, DashboardLayoutDocument.SetView(layout, "egress-24h", "total"));
+        Assert.Same(layout, DashboardLayoutDocument.SetView(layout, "egress-24h", "sideways"));
+        Assert.Same(layout, DashboardLayoutDocument.SetView(layout, "users", "nodes"));
+        Assert.Same(layout, DashboardLayoutDocument.SetView(layout, "not-a-widget", "nodes"));
+
+        var nodes = DashboardLayoutDocument.SetView(layout, "egress-24h", "nodes");
+        Assert.Equal("egress-24h:6x3@Day#nodes;users:5x4", Describe(nodes));
+        Assert.Same(nodes, DashboardLayoutDocument.SetView(nodes, "egress-24h", "nodes"));
+        Assert.Equal("egress-24h:6x3@Day#total;users:5x4", Describe(DashboardLayoutDocument.SetView(nodes, "egress-24h", "total")));
+        Assert.Equal(Describe(nodes), Describe(DashboardLayoutDocument.Sanitize(DashboardLayoutDocument.Serialize(nodes))!));
+
+        Assert.Equal("nodes", DashboardLayoutDocument.EffectiveView(nodes[0]));
+        Assert.Equal("total", DashboardLayoutDocument.EffectiveView(layout[0]));
+        Assert.Null(DashboardLayoutDocument.EffectiveView(layout[1]));
+    }
+
+    [Fact]
+    public void TheCachedDocumentCarriesThePendingMarkerAndTheServerDocumentNever()
+    {
+        DashboardLayoutEntry[] entries = [new("users", 7, 4)];
+        var pending = new DashboardLayoutPendingDraft([new DashboardLayoutEntry("users", 5, 4)], "profile-key");
+        var cached = DashboardLayoutDocument.SerializeCached(entries, pending);
+        Assert.Equal(
+            """{"version":1,"entries":[{"id":"users","span":7,"rows":4}],"pending":{"base":[{"id":"users","span":5,"rows":4}],"profileId":"profile-key"}}""",
+            cached);
+        Assert.Equal(DashboardLayoutDocument.Serialize(entries), DashboardLayoutDocument.SerializeCached(entries, null));
+        Assert.DoesNotContain("pending", DashboardLayoutDocument.Serialize(entries));
+        Assert.Equal("users:7x4", Describe(DashboardLayoutDocument.Sanitize(cached)!));
+
+        var read = DashboardLayoutDocument.ReadPending(cached)!;
+        Assert.Equal("profile-key", read.ProfileId);
+        Assert.Equal("users:5x4", Describe(read.Base));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("{not json")]
+    [InlineData("""{"version":1,"entries":[]}""")]
+    [InlineData("""{"version":1,"entries":[],"pending":{"base":[]}}""")]
+    [InlineData("""{"version":1,"entries":[],"pending":{"base":{},"profileId":"p"}}""")]
+    [InlineData("""{"version":1,"entries":[],"pending":{"base":[],"profileId":7}}""")]
+    [InlineData("""{"version":2,"entries":[],"pending":{"base":[],"profileId":"p"}}""")]
+    public void MissingOrMalformedPendingMarkersAreNoDraft(string? json)
+        => Assert.Null(DashboardLayoutDocument.ReadPending(json));
 }
 
 public sealed class AdminDashboardFormattingTests
