@@ -18,8 +18,8 @@ public sealed class LocalizationCatalogTests
     public void ManifestPinsTheAuthoritativeReleaseAndShipsOnlyImportedLanguages()
     {
         var manifest = MessageCatalog.Manifest;
-        Assert.Equal("2026.11.12-ad2447a", manifest.Release);
-        Assert.Equal("0b579aa6192d49d7e8e0921dde5e955ac29ce302", manifest.SourceCommit);
+        Assert.Equal("2026.11.15-5201582", manifest.Release);
+        Assert.Equal("1452ea2d10efbe7d3ea5ce7140fb49756b493670", manifest.SourceCommit);
         Assert.Equal(Shipped, MessageCatalog.ShippedLanguages.Select(language => language.Tag));
         Assert.Equal(["ar"], MessageCatalog.ShippedLanguages.Where(language => language.IsRightToLeft).Select(language => language.Tag));
         Assert.Equal("العربية", MessageCatalog.ShippedLanguages.Single(language => language.Tag == "ar").Endonym);

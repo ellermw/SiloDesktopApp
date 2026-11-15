@@ -458,6 +458,9 @@ public static class AdminText
         ["web.common.activity.method.transcode.label"] = "Transcode",
         ["web.common.activity.method.unknown.description"] = "The server has not reported a recognized playback method.",
         ["web.common.activity.method.unknown.label"] = "Unknown",
+        // Common catalog on purpose (upstream 5a2be566): Activity and the dashboard tile share the line.
+        ["web.common.activity.subtitle.episode"] = "{code} · {series}",
+        ["web.detail.episodeCode"] = "S{season}E{episode}",
         ["web.common.activity.subtitle.movie"] = "Movie",
         ["web.common.activity.subtitle.series"] = "Series",
         ["web.common.activity.title.file"] = "File #{id}",
