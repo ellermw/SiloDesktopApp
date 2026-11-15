@@ -20,6 +20,7 @@ internal sealed class DashboardWidgetContext
     public required Action<DashboardWidgetRange> SetRange { get; init; }
     public required Action<bool> SetCollapsed { get; init; }
     public required Func<DashboardGridMode> Mode { get; init; }
+    public required Func<double> ViewportWidth { get; init; }
     /// <summary>Null when no host handles the destination; links then render as plain text.</summary>
     public required Func<DashboardDestination, Action?> Navigate { get; init; }
     /// <summary>Optional compact session controls supplied by the Activity surface owner.</summary>
@@ -160,18 +161,11 @@ internal abstract class DashboardWidgetView : Grid
     /// <summary>WidgetHeader: a bold 14px title and a right-aligned group (summary, link, picker).</summary>
     protected static FrameworkElement Header(string title, params FrameworkElement?[] trailing)
     {
-        var grid = new Grid { ColumnSpacing = 8 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var titleText = Text(title, 14, Bold, wrap: true);
-        titleText.VerticalAlignment = VerticalAlignment.Center;
-        grid.Children.Add(titleText);
-        var group = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+        var group = new DashboardWrapPanel { Spacing = 8, RowSpacing = 8, JustifyEnd = true };
         foreach (var item in trailing)
             if (item != null) { item.VerticalAlignment = VerticalAlignment.Center; group.Children.Add(item); }
-        Grid.SetColumn(group, 1);
-        grid.Children.Add(group);
-        return grid;
+        return new DashboardWidgetHeader(titleText, group);
     }
 
     protected FrameworkElement? RangePicker()

@@ -111,7 +111,7 @@ internal static class DashboardUi
             TextWrapping = wrap ? TextWrapping.WrapWholeWords : TextWrapping.NoWrap,
             IsTextScaleFactorEnabled = true,
         };
-        if (lineHeight is { } height)
+        if ((lineHeight ?? (size switch { 10 => 15, 11 => 16.5, 12 => 16, 14 => 20, _ => size * 1.5 })) is { } height)
         {
             block.LineHeight = height;
             block.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
@@ -158,7 +158,7 @@ internal static class DashboardUi
         ["user-check"] = "m16 11 2 2 4-4M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" + Circle(9, 7, 4),
         ["film"] = Rect(3, 3, 18, 18, 2) + "M7 3v18M3 7.5h4M3 12h18M3 16.5h4M17 3v18M17 7.5h4M17 16.5h4",
         ["tv"] = "m17 2-5 5-5-5" + Rect(2, 7, 20, 15, 2),
-        ["shield-check"] = "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1zm9 12 2 2 4-4",
+        ["shield-check"] = "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1zM9 12l2 2 4-4",
         ["users"] = "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87" + Circle(9, 7, 4),
         ["hard-drive"] = Line(22, 12, 2, 12) + "M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" + Line(6, 16, 6.01, 16) + Line(10, 16, 10.01, 16),
         ["tag"] = "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" + Circle(7.5, 7.5, .5),
@@ -166,8 +166,8 @@ internal static class DashboardUi
         ["database"] = "M3 5a9 3 0 1 0 18 0a9 3 0 1 0 -18 0M3 5V19A9 3 0 0 0 21 19V5M3 12A9 3 0 0 0 21 12",
         ["server"] = Rect(2, 2, 20, 8, 2) + Rect(2, 14, 20, 8, 2) + Line(6, 6, 6.01, 6) + Line(6, 18, 6.01, 18),
         ["triangle-alert"] = "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01",
-        ["circle-x"] = Circle(12, 12, 10) + "m15 9-6 6m0-6 6 6",
-        ["circle-check"] = Circle(12, 12, 10) + "m9 12 2 2 4-4",
+        ["circle-x"] = Circle(12, 12, 10) + "M15 9l-6 6M9 9l6 6",
+        ["circle-check"] = Circle(12, 12, 10) + "M9 12l2 2 4-4",
         ["circle-slash"] = Circle(12, 12, 10) + Line(9, 15, 15, 9),
         ["circle-pause"] = Circle(12, 12, 10) + Line(10, 15, 10, 9) + Line(14, 15, 14, 9),
         ["scan-line"] = "M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10",
@@ -263,8 +263,22 @@ internal static class DashboardUi
             CornerRadius = new CornerRadius(radius),
             Padding = padding ?? new Thickness(6, 2, 6, 2),
             VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock { Text = text, FontSize = size, FontWeight = weight ?? Semibold, Foreground = B(foreground), TextTrimming = TextTrimming.CharacterEllipsis },
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = new TextBlock { Text = text, FontSize = size, FontWeight = weight ?? Semibold, Foreground = B(foreground), LineHeight = size * 1.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextTrimming = TextTrimming.CharacterEllipsis },
         };
+
+    // CSS rounded-full clamps to half the arranged short edge. WinUI's
+    // oversized CornerRadius otherwise produces an ellipse on short pills.
+    public static T Stadium<T>(T element) where T : FrameworkElement
+    {
+        element.SizeChanged += (_, e) =>
+        {
+            var radius = new CornerRadius(Math.Max(0, Math.Min(e.NewSize.Width, e.NewSize.Height) / 2));
+            if (element is Border border) border.CornerRadius = radius;
+            else if (element is Control control) control.CornerRadius = radius;
+        };
+        return element;
+    }
 
     // ---- Buttons -------------------------------------------------------
 
@@ -389,7 +403,7 @@ internal static class DashboardUi
             option.Click += (_, _) => onChange(value);
             row.Children.Add(option.Button);
         }
-        return new Border
+        return Stadium(new Border
         {
             BorderBrush = B(BorderColor, 0.6),
             BorderThickness = new Thickness(1),
@@ -398,7 +412,7 @@ internal static class DashboardUi
             Padding = new Thickness(2),
             Child = row,
             VerticalAlignment = VerticalAlignment.Center,
-        };
+        });
     }
 
     private sealed class ToggleButton
@@ -413,9 +427,10 @@ internal static class DashboardUi
                 MinHeight = 0,
                 MinWidth = 0,
                 CornerRadius = new CornerRadius(999),
-                BorderThickness = new Thickness(active ? 1 : 0),
+                BorderThickness = new Thickness(0),
                 Content = new TextBlock { Text = label, FontSize = 10, FontWeight = Semibold, LineHeight = 10, LineStackingStrategy = LineStackingStrategy.BlockLineHeight },
             };
+            Stadium(Button);
             if (active) Paint(Button, Alpha(Primary, 0.15), Alpha(Primary, 0.15), Alpha(Primary, 0.15), Foreground, Foreground, Alpha(Primary, 0.4), Alpha(Primary, 0.4));
             else Paint(Button, Colors.Transparent, Alpha(Muted, 0.6), Alpha(Muted, 0.6), MutedForeground, Foreground, Colors.Transparent, Colors.Transparent);
             AutomationProperties.SetName(Button, accessibleName);
