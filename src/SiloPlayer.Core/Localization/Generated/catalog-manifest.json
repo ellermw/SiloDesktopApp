@@ -2,13 +2,13 @@
   "format": 1,
   "generator": "tools/SiloTranslationsImport",
   "catalog_owner": "https://github.com/Silo-Server/silo-translations",
-  "catalog_release": "2026.11.12-ad2447a",
+  "catalog_release": "2026.11.15-5201582",
   "catalog_release_platform": "web",
-  "catalog_release_tarball_sha256": "763d10367514093767e3a109b55bafa5d3b130298ec0dda4c76acef1545f15ed",
+  "catalog_release_tarball_sha256": "6e5f041434f1fda29893b37423e50fee724598c8929bc5d191e4873d72986a64",
   "source_repository": "https://github.com/Silo-Server/silo-server",
-  "source_commit": "0b579aa6192d49d7e8e0921dde5e955ac29ce302",
+  "source_commit": "1452ea2d10efbe7d3ea5ce7140fb49756b493670",
   "source_path": "web/src/locales",
-  "source_keys_sha256": "6025d1515c888bbba2703208f5267517b9f5c51def0e7468b873d41befbe9697",
+  "source_keys_sha256": "1767ccafcda911b2dd3d894a9c97f781e7ca3990102fd76e3da45e9f0a65789d",
   "excluded_key_prefixes": [
     "web.admin."
   ],
@@ -17,81 +17,81 @@
       "tag": "en",
       "name": "English",
       "dir": "ltr",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/en.json",
-      "source_sha256": "ea520a09fed1d0c9931ca3259600abd510e8632a094bf0cff00b2994ada8f6c7",
+      "source_sha256": "1a0119005307e718a6f24dc0718e9edbdeea0b5e623470cf689168bc42cddbd6",
       "output": "en.json",
-      "output_sha256": "495a5db3a8197d580b224db07373a7a413575d27f553b275481ec8ddba8f5931"
+      "output_sha256": "b24e3120be42a74ebbdb72194ebff3105c7f9403cca9f51347f4b6f40a4de6a6"
     },
     {
       "tag": "es",
       "name": "Español",
       "dir": "ltr",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/es.json",
-      "source_sha256": "0cfeea9279f23f1dac3cb11890e0a3a3a466985263ffe54a4c280bd01d9508ea",
+      "source_sha256": "6d3157d6e1c3499f81e3e18a1794bbd4d0eae9e9b08aaf139fc6a80495aa7d16",
       "output": "es.json",
-      "output_sha256": "697fb162a47f9fbd9df9712d95125728e8d1814b775e079a902bae2beb871615"
+      "output_sha256": "72b1db99362ec42df42edd861ec0bd92bd7a73315ce317892a2eec9870b56c88"
     },
     {
       "tag": "de",
       "name": "Deutsch",
       "dir": "ltr",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/de.json",
-      "source_sha256": "eedb703bc6d57e444e8941a443e0c8c3464da2adf2d6a33387d3fba2f32dac0f",
+      "source_sha256": "cbef9ff37e783cf895702622659c3b7361f8ce44df77d5a58046a5e53dfccd9b",
       "output": "de.json",
-      "output_sha256": "9857d059eb6c947cad832cdd63df20ca9e59e46b216d4b02395f210d905a4f1f"
+      "output_sha256": "153cf9d27708a72302daa66d32d821aaa1e16bc3e5b4a0e032a600221f8e4432"
     },
     {
       "tag": "fr",
       "name": "Français",
       "dir": "ltr",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/fr.json",
-      "source_sha256": "9f2a3bc47c9677d8944bf6964c1a736e09b130083c9a46446aac299b51829177",
+      "source_sha256": "526980c212126d9691bc5fa3007808495a1d21b42ed035bfdcdd757bf4be487e",
       "output": "fr.json",
-      "output_sha256": "6da5c74eec06238e73e79ef831f0097cfff2cc7192db19417ced8e675c791894"
+      "output_sha256": "41cfa35049f2be74b0c221d2e2ebb0a4946328b8fda33105220cfbd926aca752"
     },
     {
       "tag": "pt-BR",
       "name": "Português (Brasil)",
       "dir": "ltr",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/pt-BR.json",
-      "source_sha256": "bd196a898fe73f8a1af14a600a4160bf1866a629f23557ac460bbb02ad3274d6",
+      "source_sha256": "bf1206a0ea7ecfaea529ce27b81d8dc486b530d5ba70b47afa58a18b630855f5",
       "output": "pt-BR.json",
-      "output_sha256": "5481cecea26b9a73ec3e2c813ea1195000da8f3358ce6feebb64d203bfb59fbe"
+      "output_sha256": "0fbce62c9292b1a4b7ebfc3378ab2e2141766072c82a53bed72d1d7f2a8874b2"
     },
     {
       "tag": "ja",
       "name": "日本語",
       "dir": "ltr",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/ja.json",
-      "source_sha256": "cda7dd9f2e701f99da8cf72610bbe3623684f4a723f10cb24bd37ed79c2fcf15",
+      "source_sha256": "54b03379069172e6c0e805708a012b79877355173fbdfed9a7ebc0d842a00538",
       "output": "ja.json",
-      "output_sha256": "57aa2522eb127c3412caee23553b82fccb4f13ab9c54a5dd11898bc0b555e351"
+      "output_sha256": "557cab81f8611d201a9ca6b88baedfbe0ee8509c1bc3304d6305ee3ba9b4370c"
     },
     {
       "tag": "zh-Hans",
       "name": "简体中文",
       "dir": "ltr",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/zh-Hans.json",
-      "source_sha256": "881c4110f6a96d5c0b1e846ea3b542de3e5225364fe1c147eaf155efd8ba1060",
+      "source_sha256": "c00ae8f10c5506ec1cf8350e3bb1e00b5dd2e1427c1b920277674d0b3810dc3d",
       "output": "zh-Hans.json",
-      "output_sha256": "0748354076330d917108cebc7c8fab7faa2fb9ae063ed9a58e74228baf34e177"
+      "output_sha256": "028432ff7b4c4af437f8b63611d2d6abffcfdfeac73a7768542c38c825bde1f9"
     },
     {
       "tag": "ar",
       "name": "العربية",
       "dir": "rtl",
-      "messages": 6782,
+      "messages": 6858,
       "source": "web/src/locales/ar.json",
-      "source_sha256": "6808c3d28098ff239733432cc2ff52f4a0ddd071e9cb43dcdabcb4a89b2b633b",
+      "source_sha256": "35aea891a230d910261a52cf500ff9febb00a04071794b1071fb14d3f6457003",
       "output": "ar.json",
-      "output_sha256": "5d4c6f888c4c76d8af00a9e91ebe02562979fe4695407a6f3fab123d6cf1779d"
+      "output_sha256": "b3ad5f71d422a2825c446d20b669fcec348146850326109156c9b035bf7e6844"
     }
   ]
 }

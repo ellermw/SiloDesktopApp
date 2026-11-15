@@ -48,6 +48,7 @@
     "src/SiloPlayer.Core/Services/AdminMonitorAuthority.cs",
     "src/SiloPlayer/Controls/Admin/DashboardCharts.cs",
     "src/SiloPlayer/Controls/Admin/DashboardGrid.cs",
+    "src/SiloPlayer/Controls/Admin/DashboardFlowLayout.cs",
     "src/SiloPlayer/Controls/Admin/DashboardUi.cs",
     "src/SiloPlayer/Controls/Admin/DashboardWidgetView.cs",
     "src/SiloPlayer/Controls/Admin/DashboardWidgets.Insights.cs",
