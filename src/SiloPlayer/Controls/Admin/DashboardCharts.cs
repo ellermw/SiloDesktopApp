@@ -503,7 +503,11 @@ internal sealed class DashboardStackedColumnChart : Grid
     {
         if (_active == index) return;
         _active = index;
-        DrawBars(_bars.ActualHeight);
+        // Keep the focused cell in the tree while changing the readout.
+        foreach (var cell in _bars.Children.OfType<ContentControl>())
+            if (cell.Content is Border background)
+                background.Background = B(_active == Grid.GetColumn(cell) ? Alpha(Foreground, 0.05) : Colors.Transparent);
+        DrawTooltip();
     }
 
     private void DrawTooltip()

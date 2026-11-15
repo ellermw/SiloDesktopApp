@@ -34,8 +34,8 @@ internal static partial class AdminDashboardNativeFixture
             row["media_type"] = "episode"; row["series_name"] = "Show"; row["season_number"] = 3; row["episode_number"] = 13;
             row["episode_name"] = "Synthetic Episode"; row["position_seconds"] = 2832.4; row["file_duration"] = 8980;
         }),
-        CurrentSession(1, row => { row["position_seconds"] = 600; row["file_duration"] = null; }),
-        CurrentSession(2, row => { row["username"] = LongUser; row["position_seconds"] = 65; row["file_duration"] = 0; }),
+        CurrentSession(1, row => { row["media_type"] = "audiobook"; row["position_seconds"] = 600; row["file_duration"] = null; }),
+        CurrentSession(2, row => { row["media_type"] = "episode"; row["username"] = LongUser; row["position_seconds"] = 65; row["file_duration"] = 0; }),
         CurrentSession(3, _ => { }),
     ];
 
@@ -150,6 +150,15 @@ internal static partial class AdminDashboardNativeFixture
             var nowPlaying = WidgetFrame(page, DashboardRegistry.NowPlaying);
             var texts = Descendants(nowPlaying).OfType<TextBlock>().ToArray();
             Check(texts.Any(text => text.Text == "S3E13 · Show"), "episode tile reads S3E13 · Show like Activity");
+            foreach (var index in new[] { 1, 2 })
+            {
+                var session = page.Store!.Get(DashboardDataStore.Sessions).As<IReadOnlyList<DashboardSession>>()![index];
+                var expected = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
+                var title = texts.Single(text => text.Text == DashboardPresentation.SessionTitle(session, "nowPlaying"));
+                var info = (Grid)title.Parent;
+                Check(expected == null && !info.Children.OfType<TextBlock>().Any(text => Grid.GetRow(text) == 1),
+                    $"{session.MediaType} without episode metadata omits the subtitle like Activity");
+            }
             Check(!texts.Any(text => text.Text.Contains(" · E13", StringComparison.Ordinal) || text.Text.Contains(" — Show", StringComparison.Ordinal)), "the old S3 · E13 — Show line is gone");
             TextBlock? Times(string position) => texts.FirstOrDefault(text => AutomationProperties.GetName(text).StartsWith(position + " · ", StringComparison.Ordinal));
             var episodeTimes = Times("47:12 / 2:29:40");
@@ -219,6 +228,7 @@ internal static partial class AdminDashboardNativeFixture
             Check(LastLayoutBody(server) is { } afterReset && StoredEgressView(afterReset) == null && afterReset.Contains("\"egress-24h\"", StringComparison.Ordinal),
                 "the first save after Reset carries the Egress entry without a view");
             await CaptureAsync(frame, "current-ui-after-reset-1440x900.png");
+            await AssertColumnFocusAsync(page);
             window.Content = null;
             await Task.Delay(300);
         }
@@ -229,6 +239,32 @@ internal static partial class AdminDashboardNativeFixture
             server.StoredLayout = null;
             server.SessionRows = null;
             server.LayoutETag = "\"L1\"";
+        }
+    }
+
+    private static async Task AssertColumnFocusAsync(AdminDashboardPage page)
+    {
+        var widget = WidgetFrame(page, DashboardRegistry.Playback24h);
+        widget.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        await Task.Delay(300);
+        var chart = Descendants(widget).Single(element => element.GetType().Name == "DashboardStackedColumnChart");
+        var type = chart.GetType();
+        var bars = (Grid)type.GetField("_bars", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chart)!;
+        var overlay = (Canvas)type.GetField("_overlay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chart)!;
+        var cells = bars.Children.OfType<ContentControl>().ToArray();
+        Check(cells.Length >= 4, "playback chart has columns for keyboard inspection");
+        if (cells.Length < 4) return;
+        foreach (var index in new[] { 2, 3 })
+        {
+            var cell = cells[index];
+            Check(cell.Focus(FocusState.Keyboard), $"column {index} accepts keyboard focus");
+            await Task.Delay(50);
+            chart.UpdateLayout();
+            Check(cell.FocusState == FocusState.Keyboard && ReferenceEquals(bars.Children[index], cell),
+                $"column {index} keeps the same focused cell after GotFocus");
+            Check((int?)type.GetField("_active", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chart) == index
+                && overlay.Children.OfType<Border>().Any(tip => tip.Visibility == Visibility.Visible && tip.ActualWidth > 0),
+                $"column {index} keeps its tooltip visible after keyboard focus");
         }
     }
 

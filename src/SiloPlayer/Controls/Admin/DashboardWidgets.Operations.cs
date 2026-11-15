@@ -299,7 +299,6 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
 
     private FrameworkElement StreamCard(DashboardSession session)
     {
-        var episode = DashboardPresentation.IsEpisode(session);
         var title = DashboardPresentation.SessionTitle(session, "nowPlaying");
         var user = DashboardPresentation.SessionUser(session, "nowPlaying");
         var elapsed = DashboardFormat.RelativeTime(session.StartedAt, Now, floor: true, T("web.admin.dashboard.widgets.nowPlaying.justNow")) ?? "";
@@ -343,12 +342,8 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         // The title links to the catalog item in the WebUI; that is outside Monitor, so it is text.
         info.Children.Add(Text(title, 14, Bold, trim: true));
-        // Same episode line as the Activity page's Stream column (WebUI #4144): "S3E13 · Show".
-        string? subtitle = episode
-            ? AdminActivityPresentation.GetPlaybackSessionSubtitle(session)
-            : !string.IsNullOrEmpty(session.MediaType)
-                ? session.MediaType == "movie" ? T("web.admin.dashboard.widgets.nowPlaying.movie") : T("web.admin.dashboard.widgets.nowPlaying.series")
-                : null;
+        // Same subtitle rule as Activity, including no line for unknown media types.
+        var subtitle = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
         if (subtitle != null)
         {
             var sub = Text(subtitle, 12, color: MutedForeground, trim: true);
