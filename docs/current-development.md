@@ -1,3 +1,32 @@
+# November 14 - Invitation and password-reset server alignment
+
+Aligns account links with official Silo Server/WebUI
+1452ea2d10efbe7d3ea5ce7140fb49756b493670. Fragment and legacy links are
+recognized; current servers receive tokens in request bodies. Capability and
+405 compatibility rules retain older-server transport without replaying an
+acceptance or completion. Unknown invitation outcomes require explicit reload;
+only confirmed accepted responses show account creation. Invitation notes,
+optional email, editing and neutral success presentation follow the reference.
+
+Isolated baseline 6caafd79129daa36f4aedb290c1720b7cde8ac64, version 1.2.1064
+unchanged; Beta pipeline owns stamping. Verification: 146 focused tests and all
+6,731 unit tests passed, Release publish and native host build passed, and the
+security-origins native fixture passed including malformed-success recovery,
+email editing, invitation notes and confirmed-creation presentation. Five new
+malformed-acceptance wire cases failed before response validation and passed
+with it. Independent review findings were addressed before final verification.
+
+Evidence: D:/SiloPlayer-build/server-update-nov14/auth-links/ and
+D:/SiloPlayer-build/results/security-origins-auth-links-reviewed/. No live old
+server, OS protocol handoff or complete authentication visual parity is claimed.
+HTTP links require a launcher forwarding them; installer registration remains
+silo://. The new server-mismatch message has an English fallback. Installed
+player/settings are untouched. Shared generated outputs remain in active use;
+cleanup was not retried after the earlier automatic approval rejection, with
+0 GiB recovered on C: and D:.
+
+---
+
 # November 14 — Dashboard layout intent and current server presentation
 
 Official source pin: 1452ea2d10efbe7d3ea5ce7140fb49756b493670. The relevant
