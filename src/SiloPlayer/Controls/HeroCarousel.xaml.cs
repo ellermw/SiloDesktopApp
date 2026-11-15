@@ -996,7 +996,7 @@ public sealed partial class HeroCarousel : UserControl
             var item = _items[_currentIndex];
             if (item.Type is "movie" or "episode" or "audiobook")
                 App.Services.GetRequiredService<PlayerService>()
-                    .PrefetchWatchDetail(item.ContentId);
+                    .PrefetchWatchDetail(item.ContentId, LibraryId);
         }
     }
 
