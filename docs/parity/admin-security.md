@@ -1,0 +1,55 @@
+# Admin Configure: Security
+
+Reference: official Silo Server/WebUI `c11b0a968f0d5980b7005579fb95acc2d11d8321`, freshly fetched from GitHub main on November 15, 2026 (main unchanged). Read at that explicit SHA: `web/src/pages/admin-settings/SecurityAccessSettings.tsx` and its 10 tests, `web/src/hooks/queries/admin/rateLimits.ts` with its read/write tests, `SettingField.tsx`, `FieldGroup.tsx`, `components/settings/SettingsSubheading.tsx`, `components/ui/{input,select}.tsx`, `styles/admin-settings.css`, the English catalog, `internal/apiv2/admin_rate_limit_{types,reads,write}.go`, `internal/api/handlers/rate_limits.go` and `internal/ratelimit/{config,ratelimit}.go`. Reconciled upstream changes #4309, #4311, #4308, #4287 and #4294 are ancestors of the pin.
+
+Desktop parent: final Email PR174 `4958d221e50b886a815bc1c62d6cba91cc8f3b6e` (runtime `3ab6d459`), which contains General PR173 `905f9ba2`, Beta `a06cc8b3`, PR167 `3f0fe220` and PR171 `3331916b`. PR167's head later moved to pipeline merge `3e4be1a2` of the same Beta `a06cc8b3`; it adds no content beyond textual merge markers. Version `1.2.1081-beta.1` (numeric `1.2.1080.1`) remains under pipeline control.
+
+## Status
+
+Security (C2b) is **In progress**: implemented and verified in its isolated worktree, awaiting the lead's independent review, push and Beta PR. It becomes Done only when pushed to a PR with its link recorded. General (PR173) and Email (PR174) are Done; the remaining 16 leaves are unstarted. No Configure change is merged or released.
+
+## Delivered behavior
+
+`/admin/settings/security` (and the legacy `rate-limiting` tab) is registered through the production `AdminConfigureServices.Add` entry point under Configure > Sign-in & Security. Search finds it by its official setting names. Page transitions stay suppressed. The page uses the full-width gutter scroller with a 1120 settings column.
+
+Two groups, 17 rows, 3 subheadings and 32 controls, in official order:
+
+- **Local network** — "Local servers for every account" (`media_servers.allow_private_destinations`). This is the one batched key. It uses the shared `AdminSettingsForm`/`AdminServerSettingsStore`/`AdminServerSettingsApi` and authority lifetime, and `AdminConfigureServices.Keys` gains only this key. The amber warning follows the **draft**. The toggle row keeps its hairline above the warning, and the group shows "Changes apply after a restart" only if the server lists the key as a restart key. Environment management is honoured generically.
+- **Rate limiting** — Enable rate limiting; Where counters are kept (240 select: This server only / Shared via Redis); Whole-server limit (160 box, "per second" in the reserved 64px unit slot); Per address and account (triad). Then "Per sign-in session": Hourly request quota (Off / Log only / Enforce) and Quota size (Per hour, Burst; both disabled while the draft mode is Off, values kept). Then "API key tiers": Standard and Elevated triads. Then "Sign-in and webhook endpoints": eight per-minute/burst pairs.
+
+Runtime hints come from the last server read, never the draft. "Enabled, but no limiter is running…" appears when the saved config is enabled and the limiter is inactive. The ICU-select drift sentence appears when the running backend differs from the saved one. When `redis_available` is false, the Redis option is disabled (automation `IsEnabled=false`) and the description adds "Set up Redis on the General page first."; an older server without the field leaves it enabled. Rate rows carry no restart chips and neither group shows dirty dots, matching the official page.
+
+RateBox: a 12px muted right-aligned caption above a 96-wide right-aligned tabular input, 4 apart. Lines are right-justified, wrap with a 10px gap and align to the bottom edge. Every row's last box ends on the global input's edge in the side-by-side layout. Every number box has a distinct name, "{row} {caption}" (for example "Standard API keys Per second"); the global box is "Whole-server limit". Subheadings are 12px semibold uppercase with tracking 50, 16 above and 4 below, level-4 headings. The official `.settings-field-list` rule gives these non-row children a bottom hairline, so they have one; the earlier research note that they have none is corrected here. Number boxes and both selects use the ordinary Input/SelectTrigger 3:1 edge `#6A6A74` and render at 50% when disabled. The SettingField/SecretField muted/25 border used by General and Email is unchanged.
+
+## Writers, validators and failure states
+
+- **Reads.** `AdminRateLimitApi.GetAsync` reads config and status in parallel under the captured lease with a 15-second deadline and the shared 8 MiB bound. Either failing fails the read and cancels the other, and both are joined. The config validator must be strong (missing, `*` and `W/` are rejected). Runtime status never affects it. Absent tiers, endpoints, IP members or session quota hydrate the official defaults. Present but malformed members fail the read. Only the 8 visible endpoints are hydrated; the server holds 13.
+- **Failed read.** The Rate limiting group shows a truthful inline error and Retry instead of rows. Editable defaults are never invented. Local network stays usable and saves on its own.
+- **One Save.** The rate intent (deep copy plus validator) is captured before anything is awaited. The batched PUT runs first; any PUT failure skips the PATCH and keeps both drafts. The PATCH then sends the full visible draft once: exact snake-case members, integer bursts, no `null` tokens, the 8 visible endpoints only (the 5 hidden ones survive by merge). It uses `If-Match`, no auth refresh and no replay. `ratelimit.*` keys can never reach the batched PUT: the shared writer rejects keys outside the form before HTTP.
+- **Freeze.** Rate editors are disabled from the Save click through both writes and reconciliation. The local switch stays editable, and later edits stay dirty through the shared form versioning.
+- **Acknowledged PATCH.** The 200 receipt has no validator, so config and status are re-read and adopted as a clean baseline. The toast is "Rate limit settings saved" or "… — restart the server to apply them", and the shell restart status is refreshed. If that re-read fails, the write still counts as saved: rate edits and saves stay blocked with "Reload rate limit settings before editing." until an explicit Reload succeeds.
+- **412.** "Rate limit settings changed. Reload and review them before saving again." Save is disabled and edits stay possible. Reload rebases only the fields changed from the old baseline onto the fresh read, adopts concurrent changes to untouched fields, and says so; then the admin saves.
+- **Unknown outcome** (transport failure, timeout, 408/5xx, or a 200 without a boolean `restart_required`). Sent once and never replayed. Rate editors stay frozen until Reload. Reload treats the outcome as applied when the server equals the intent (clean, saved toast and restart refresh). When it equals the old baseline the intent stays as an unsaved draft. Anything else is rebased as a conflict.
+- **Other failures.** 401 is sent once without refresh. 403, demo-restricted and profile verification map to the existing `configure.native.settings.*` texts. For 400/422 the server's validation sentence is shown inline after `LocalLog.RedactDiagnosticText`, bounded to 300 characters; this is the one narrow exception to the shared sanitizer. Partial success settles the batched key and keeps the rate draft.
+- **Dirty and departure.** The save bar counts batched keys plus one for the whole rate draft. Returning every field to its saved value clears it (#4309). The shared Cancel/Discard dialog guards departure, and leaving is refused during a save. Suspension, departure or authority replacement retire both drafts and cancel owned work. An identical config under a new authority still drops the draft.
+
+Number entry (lead decision): only a plain ASCII integer (optional surrounding white space and leading `+`) within 1..the server bound is accepted: 35,791,394 for the whole-server limit, 2,147,483,647 otherwise. This deliberately differs from WebUI `parseInt` prefix parsing (`12abc`, `1.9`), and full-width digits and overflow are rejected. Invalid text leaves the draft unchanged and reverts on blur or Enter, never during an active IME composition. The quota burst ≤ 168 × per-hour rule stays server-side and its sentence is shown inline. Server values display invariantly with no separators, so an untouched fraction such as 0.5 round-trips unchanged.
+
+## Shared changes
+
+All additions in `AdminSettingsUi` are additive: `UseInputEdge`, `Status`, `Subheading`, `Warning`, `RateBox` and `AdminSettingsRateFlow`. `AdminSettingsRow` gains optional `unit` (an unclipped 64px slot that stacks after the control) and `nameEditor` parameters and `AddStatus`. General and Email call sites are unchanged, and their native groups pass on the same bytes. `AdminServerSettingsApi.SafeCode`/`Sanitize` became `internal` for reuse by the rate API.
+
+## Verification and limits
+
+See `D:/SiloPlayer-build/server-update-nov14/configure-security/final-receipt.json` for exact counts, hashes and captures. Unit coverage is `AdminSecuritySettingsTests` (47 cases): wire shape, validators, hydration, the parse table, ordering, capture-before-await, freeze, partial success, the re-read block, 412 rebase, unknown three-way reconciliation, malformed and transport acknowledgements, 401 no-refresh, authority drop, suspension, late reads, navigation, search and all 49 text keys. A mutation run disabling the PUT-failure skip, the field rebase, the strong-validator check and the unknown mapping turned exactly 8 of these red.
+
+The native `admin-configure-security` group exercises the page through the production shell and Frame on synthetic data at 1440x900, 1440x600, 1920x600 and 800x600. It covers real toggle, number and select interactions for all 32 controls, order, names, Save/Discard, dialogs, recovery states, layout and gutters. A red/green pair covers two fixes: the settings column must keep its full width (a content-sized column could stay stuck in stacked rows after a narrow viewport, and narrowed when only the rate error showed), and the unit text must not be clipped.
+
+Limits:
+
+- IME composition is exercised through the page's composition state, not a real IME, and the Enter-key revert path is not natively driven (the blur path is).
+- Toast display is not observed in the host; the shell status refresh is.
+- Focus visuals use WinUI's native TextBox/ComboBox focus state rather than the 3px 50% ring.
+- High-contrast and animations-off runs were not executed, although the page adds no motion.
+- Popup pixels cannot be captured with `RenderTargetBitmap`, so the disabled Redis item is verified through its realized item and automation peer.
+- Synthetic server only: no live server or real settings values, no all-DPI or complete visual-parity claim, and no Narrator certification.

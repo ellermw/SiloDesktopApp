@@ -3,7 +3,7 @@
   "officialCommit": "c11b0a968f0d5980b7005579fb95acc2d11d8321",
   "statusRule": "Done = verified and pushed to a PR with its link. In progress = implementation/review/testing, not yet pushed. Remaining = unstarted or blocked, with reason. Merged/released are separate.",
   "inventory": "3 topics, 19 leaves, 88 nested feature entries; nested route patterns remain owned by their leaves.",
-  "scopeNote": "General and Email are verified and pushed to PR173 and PR174. Catalog coverage does not establish implementation: the other 17 leaves and their nested functionality remain unfinished.",
+  "scopeNote": "General and Email are verified and pushed to PR173 and PR174. Security is implemented and verified locally (In progress until pushed to a PR). Catalog coverage does not establish implementation: the other 16 leaves and their nested functionality remain unstarted.",
   "dependencies": [
     "https://github.com/ellermw/SiloDesktopApp/pull/167",
     "https://github.com/ellermw/SiloDesktopApp/pull/171",
@@ -275,13 +275,17 @@
       "route": "/admin/settings/security",
       "group": "C2b",
       "nested": [
-        "Local network: local servers for every account",
-        "Rate limiting: enable, where counters kept, whole-server limit, per address/account, API key tiers standard/elevated, sign-in & webhook endpoints",
-        "Rate-limit config uses its own ETag (GET/PATCH /admin/rate-limits/config) + status"
+        "Local network: local servers for every account (shared batched key; draft-driven warning)",
+        "Rate limiting: enable, where counters kept (Redis availability), whole-server limit, per address/account, per sign-in session quota mode + size, API key tiers standard/elevated, 8 sign-in & webhook endpoints",
+        "Rate-limit config uses its own strong ETag (GET/PATCH /admin/rate-limits/config) + status hints; one Save runs PUT then PATCH"
       ],
       "children": [],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Implemented and verified in its isolated worktree (code 1e71c820); awaiting lead review, push and Beta PR.",
+      "verifiedCode": "1e71c820a7c7deb1d91226fb5d47d8698c9c1409",
+      "dependsOn": "https://github.com/ellermw/SiloDesktopApp/pull/174",
+      "merged": false,
+      "released": false
     },
     {
       "id": "apiKeys",
@@ -474,5 +478,5 @@
       "statusReason": "Unstarted; delivered in a separate verified group after General."
     }
   ],
-  "mergedReleasedStatus": "PR173 and PR174 are open and unmerged; no Configure changes released. Pipeline owns review, reconciliation, merge, stamping and packaging."
+  "mergedReleasedStatus": "PR173 and PR174 are open and unmerged (last observed); Security has no PR yet; no Configure changes released. Pipeline owns review, reconciliation, merge, stamping and packaging."
 }

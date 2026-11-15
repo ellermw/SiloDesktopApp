@@ -1,3 +1,21 @@
+# November 15 - Configure Security implemented (In progress, awaiting PR)
+
+Security (C2b) is implemented and verified locally at code 1e71c820a7c7deb1d91226fb5d47d8698c9c1409. It is based on final Email PR174 4958d221 (runtime 3ab6d459), which contains General PR173 905f9ba2, Beta a06cc8b3, PR167 3f0fe220 and PR171 3331916b. The lead owns independent review, push and the Beta PR. It stays In progress until it is pushed to a PR. General (PR173) and Email (PR174) are Done; the remaining 16 leaves are unstarted. PR173/PR174 were open and unmerged when last observed. No Configure change is merged or released.
+
+`/admin/settings/security` is registered under Sign-in & Security with all 32 settings. The local-network key uses the shared settings form/store/API. The 31 rate-limit values use a separate `AdminRateLimitApi`, draft and controller, with their own strong config validator and status hints, and never go through the batched PUT. One Save runs the PUT, then one captured PATCH. A failed PUT skips the PATCH, partial success stays truthful, and the validator-less receipt is followed by a config re-read. A 412 needs an explicit Reload that rebases only the edited fields. An unknown outcome is never replayed and is reconciled on Reload. Lead decisions Q1–Q9 are applied: the failed rate group shows an inline error with Retry, rate editors freeze from the Save click, numbers have distinct accessible names, there are no dirty dots, and number entry accepts plain ASCII integers only.
+
+Official main was freshly fetched at c11b0a968f0d5980b7005579fb95acc2d11d8321 (unchanged). Version remains 1.2.1081-beta.1 (numeric 1.2.1080.1); the pipeline owns stamping and packaging. Final checks on 1e71c820 passed:
+
+- 663 focused Admin/architecture tests and 7,118 full unit tests.
+- Release publish with a matching native host. The product DLL F2609157… is identical in publish, native-reference and host.
+- Native groups on the same bytes: admin-configure-security 374 PASS, admin-configure-email 297, admin-configure-general 183, admin-manage-foundation 36, admin-subtitles 64, admin-monitor 113 and admin-dashboard 184.
+
+A mutation run turned the 8 targeted unit tests red. A native red/green pair covers the full-width settings column and the unclipped unit slot.
+
+See docs/parity/admin-security.md, docs/parity/admin-configure-checklist.json and D:/SiloPlayer-build/server-update-nov14/configure-security/final-receipt.json for exact hashes, captures and limits. Verification used a synthetic server at the current DPI only. No real IME, toast display, high-contrast run, live server, all-DPI or complete visual-parity claim is made. Shared output is about 4.55 GiB; C: 184.69 GiB and D: 474.84 GiB free. No install, restart, push, PR, merge or release action was taken. The installed player and settings are untouched.
+
+---
+
 # November 15 - Neutral opening for playback More
 
 The playback ellipsis menu no longer preselects Playback info (or another
