@@ -1,3 +1,33 @@
+# November 14 — Dashboard layout intent and current server presentation
+
+Official source pin: 1452ea2d10efbe7d3ea5ce7140fb49756b493670. The relevant
+Dashboard source and API contracts are unchanged from the initial 7115ee70 audit.
+Built on ff109bfe (Admin shell/Activity PR #160, dependent on Dashboard PR #159).
+Version 1.2.1064 unchanged; pipeline owns stamping.
+
+Dashboard layout saves preserve the Egress Total/Nodes view. Editing before the
+first server read compares the starting layout with the server rather than
+replacing a changed copy. Pending edits survive leaving during the initial read,
+scoped to account/server/profile; retired authority cannot save or erase them.
+Reload/Reset resolve the pending marker; local metadata never enters server saves.
+Now Playing shows position/duration, uses Activity's episode subtitle, and switches
+between one/two columns at its own 672-DIP width rather than viewport width.
+
+Verification: 152 focused Dashboard tests and 6,665 full unit tests passed.
+Release publish, native host build and the reviewed admin-dashboard native run
+passed. Independent review found no product P0/P1; its four fixture findings
+were corrected (real time-label bounds, per-action DELETE count, cleared shared
+layout cache and DPI-aware sizing in the new cases). Two initial unit failures
+used an invalid nine-column Users layout despite the eight-column cap; fixture
+inputs were corrected without changing the product clamp.
+
+Evidence: D:/SiloPlayer-build/server-update-nov14/dashboard-current-ui/ contains
+lead-focused-corrected.log, lead-publish.log, review-host.log, review-all-units.log
+and independent-review.md. Native receipts/captures are under
+D:/SiloPlayer-build/results/admin-dashboard-dashboard-current-ui-reviewed/.
+Synthetic geometry/state verification does not certify complete visual parity,
+all DPI settings or live-server behavior. Installed player/settings untouched.
+Generated shared payload remains actively used; no cleanup deletion retried.
 # November 14 — Admin Monitor visual follow-up verification
 
 Official WebUI main rechecked at 1a99f7beffcea3850f067df000c319f2704fd23b.

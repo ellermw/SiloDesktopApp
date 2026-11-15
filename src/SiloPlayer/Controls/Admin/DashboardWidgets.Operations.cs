@@ -106,8 +106,11 @@ internal static class DashboardSessionBadges
 /// <summary>
 /// Active streams as cards. An idle server collapses to a one-row strip; a
 /// fixed-height widget shows only whole cards and counts the rest in "+N more".
+/// Cards pair up only when the widget's own content box is wide enough
+/// (WebUI #3726 <c>@container</c> / <c>@2xl:grid-cols-2</c>), independent of the
+/// viewport and the grid mode.
 /// </summary>
-internal sealed class NowPlayingWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
+internal sealed class NowPlayingWidget : DashboardWidgetView
 {
     private const int MaxRenderedStreams = 40;
     private const int StackedStreamLimit = 4;
@@ -117,6 +120,38 @@ internal sealed class NowPlayingWidget(DashboardWidgetContext c) : DashboardWidg
     private FrameworkElement? _more;
     private int _visible = int.MaxValue;
     private int _sessionCount;
+    private double _contentWidth;
+    private bool _widthRenderQueued;
+
+    public NowPlayingWidget(DashboardWidgetContext c) : base(c)
+    {
+        // The widget has no padding of its own, so its arranged width is the
+        // card container's width. The slot width comes from the grid span, never
+        // from the cards, so re-rendering on a threshold crossing cannot feed back.
+        SizeChanged += OnWidthChanged;
+    }
+
+    /// <summary>Card columns the last render used.</summary>
+    public int Columns { get; private set; } = 1;
+
+    /// <summary>The measured content width the column count follows.</summary>
+    public double ContentWidth => _contentWidth;
+
+    private static int ColumnsFor(double contentWidth) => DashboardGridPlacement.NowPlayingColumns(contentWidth);
+
+    private void OnWidthChanged(object sender, SizeChangedEventArgs e)
+    {
+        _contentWidth = e.NewSize.Width;
+        if (ColumnsFor(_contentWidth) == Columns || _widthRenderQueued) return;
+        // Coalesce a drag's burst of sizes into one render that reads the latest
+        // width, outside the layout pass that reported it.
+        _widthRenderQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _widthRenderQueued = false;
+            if (ColumnsFor(_contentWidth) != Columns) Refresh();
+        });
+    }
 
     protected override IEnumerable<string> Keys => [DashboardDataStore.Sessions];
 
@@ -125,6 +160,9 @@ internal sealed class NowPlayingWidget(DashboardWidgetContext c) : DashboardWidg
         var state = Store.Get(DashboardDataStore.Sessions);
         var sessions = state.As<IReadOnlyList<DashboardSession>>() ?? [];
         _sessionCount = sessions.Count;
+        // Width, not grid mode, picks the columns of cards and skeleton alike;
+        // the fixed-rows rule below still follows the viewport (min-width 1024px).
+        Columns = ColumnsFor(_contentWidth > 0 ? _contentWidth : ActualWidth);
         // Only a successful, genuinely empty read earns the strip; loading and errors keep full height.
         var idle = !state.IsLoading && state.Error == null && sessions.Count == 0;
         C.SetCollapsed(idle);
@@ -159,7 +197,7 @@ internal sealed class NowPlayingWidget(DashboardWidgetContext c) : DashboardWidg
             head.Children.Add(all);
         }
         root.Children.Add(head);
-        var columns = Fixed ? 2 : 1;
+        var columns = Columns;
         FrameworkElement body;
         if (state.IsLoading)
         {
@@ -305,10 +343,9 @@ internal sealed class NowPlayingWidget(DashboardWidgetContext c) : DashboardWidg
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         // The title links to the catalog item in the WebUI; that is outside Monitor, so it is text.
         info.Children.Add(Text(title, 14, Bold, trim: true));
+        // Same episode line as the Activity page's Stream column (WebUI #4144): "S3E13 · Show".
         string? subtitle = episode
-            ? !string.IsNullOrEmpty(session.SeriesName)
-                ? T("web.admin.dashboard.widgets.nowPlaying.episodeLineWithSeries", ("season", session.SeasonNumber.ToString()), ("episode", session.EpisodeNumber.ToString()), ("series", session.SeriesName))
-                : T("web.admin.dashboard.widgets.nowPlaying.episodeLine", ("season", session.SeasonNumber.ToString()), ("episode", session.EpisodeNumber.ToString()))
+            ? AdminActivityPresentation.GetPlaybackSessionSubtitle(session)
             : !string.IsNullOrEmpty(session.MediaType)
                 ? session.MediaType == "movie" ? T("web.admin.dashboard.widgets.nowPlaying.movie") : T("web.admin.dashboard.widgets.nowPlaying.series")
                 : null;
@@ -332,7 +369,14 @@ internal sealed class NowPlayingWidget(DashboardWidgetContext c) : DashboardWidg
         name.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(name, 1);
         userRow.Children.Add(name);
-        var time = Text(elapsed, 10, color: MutedForeground);
+        // One line at every width: the name truncates, the times keep their full
+        // width. The position is the last sessions read's value (WebUI #3726).
+        var time = Text("", 10, color: MutedForeground);
+        var position = new Microsoft.UI.Xaml.Documents.Run { Text = AdminActivityPresentation.FormatPlaybackPosition(session) };
+        Microsoft.UI.Xaml.Documents.Typography.SetNumeralAlignment(position, FontNumeralAlignment.Tabular);
+        time.Inlines.Add(position);
+        time.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " · " + elapsed });
+        AutomationProperties.SetName(time, position.Text + " · " + elapsed);
         time.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(time, 2);
         userRow.Children.Add(time);
