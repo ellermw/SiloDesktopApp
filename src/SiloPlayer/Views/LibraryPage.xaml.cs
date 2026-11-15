@@ -465,10 +465,23 @@ public sealed partial class LibraryPage : Page,
             // Falls back to fresh defaults on first visit.
             var edit = _stateEdit;
             var revision = _stateSettings.LibraryPageState.Revision;
+            // The rating-capability read is independent of the page-state
+            // document. Start it first so a cold visit waits for one round
+            // trip instead of two. It never throws, and its owner-scoped
+            // cache gate de-duplicates concurrent callers.
+            var prerequisites = LibraryPerformanceTrace.Measure("library-prerequisites");
+            var ratingsApi = App.Services.GetRequiredService<CatalogApi>();
+            var ratingsContext = ratingsApi.CaptureContext();
+            var shownSources = CatalogSortChoices.LoadShownSourcesAsync(ratingsApi);
             var snapshot = sameLibrary && _stateSettings.LibraryPageState.TryGetConfirmed(library.Id, out var confirmed)
                 ? confirmed : await RestoreLibraryStateAsync(library.Id, visit, identity);
             if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
-            await CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<CatalogApi>());
+            await shownSources;
+            // An access change during the restore retires the early read, so
+            // warm the current authority as the serial order used to.
+            if (!ratingsApi.IsCurrentContext(ratingsContext))
+                await CatalogSortChoices.LoadShownSourcesAsync(ratingsApi);
+            prerequisites.Dispose();
             if (!IsLibraryStateVisitCurrent(visit, identity, library.Id)) return;
             while (revision != _stateSettings.LibraryPageState.Revision)
             {

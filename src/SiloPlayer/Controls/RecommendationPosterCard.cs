@@ -50,12 +50,30 @@ public sealed class RecommendationPosterCard : Grid
         Grid.SetRowSpan(open, 2); Children.Add(open);
         open.Click += (_, _) => App.Services.GetRequiredService<NavigationService>()
             .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(item.ContentId, MediaNavigationContext.LibraryId(this)));
-        open.PointerEntered += (_, _) =>
+        CancellationTokenSource? prefetchDwell = null;
+        void CancelPrefetchDwell()
+        {
+            try { prefetchDwell?.Cancel(); } catch (ObjectDisposedException) { }
+            prefetchDwell?.Dispose();
+            prefetchDwell = null;
+        }
+        open.PointerEntered += async (_, _) =>
         {
             zoom.ScaleX = zoom.ScaleY = 1.05;
-            if (MediaNavigationContext.LibraryId(this) == null) App.Services.GetService<ItemDetailPrefetchCache>()?.Prefetch(item.ContentId);
+            // Match the other cards' hover dwell so pointer travel across a
+            // recommendation row does not start and cancel detail requests.
+            CancelPrefetchDwell();
+            var dwell = prefetchDwell = new CancellationTokenSource();
+            try
+            {
+                await Task.Delay(140, dwell.Token);
+                if (!dwell.IsCancellationRequested)
+                    App.Services.GetService<ItemDetailPrefetchCache>()?.Prefetch(item.ContentId, MediaNavigationContext.LibraryId(this));
+            }
+            catch (OperationCanceledException) { }
         };
-        PointerExited += (_, _) => zoom.ScaleX = zoom.ScaleY = 1;
+        PointerExited += (_, _) => { zoom.ScaleX = zoom.ScaleY = 1; CancelPrefetchDwell(); };
+        Unloaded += (_, _) => CancelPrefetchDwell();
         // v2 catalog cards omit play_content_id for a movie that plays itself.
         var playId = item.PlayContentId ?? (item.Type == "movie" ? item.ContentId : null);
         if (!string.IsNullOrWhiteSpace(playId))
