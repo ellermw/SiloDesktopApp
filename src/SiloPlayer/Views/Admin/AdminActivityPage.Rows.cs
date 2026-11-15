@@ -343,17 +343,26 @@ public sealed partial class AdminActivityPage
         grid.Children.Add(avatar);
         var body = new StackPanel { Spacing = 4 };
 
-        var nameRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var nameRow = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
         nameRow.Children.Add(A.Text(username, 13, A.Foreground, FontWeights.SemiBold));
         if (ProfileChip(s) is { } chip) nameRow.Children.Add(chip);
         if (JellyfinPill(s) is { } pill) nameRow.Children.Add(pill);
         body.Children.Add(nameRow);
 
-        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        titleRow.Children.Add(StreamLink(s, A.Text(P.GetPlaybackSessionTitle(s), 11, A.Muted)));
-        titleRow.Children.Add(A.Text("·", 11, A.Muted));
+        var titleRow = new Grid { ColumnSpacing = 6 };
+        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var titleLink = (FrameworkElement)StreamLink(s, A.Text(P.GetPlaybackSessionTitle(s), 11, A.Muted));
+        titleLink.HorizontalAlignment = HorizontalAlignment.Stretch;
+        if (titleLink is Button titleButton) titleButton.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        titleRow.Children.Add(titleLink);
+        var separator = A.Text("·", 11, A.Muted);
+        Grid.SetColumn(separator, 1);
+        titleRow.Children.Add(separator);
         var elapsedText = A.Text(P.GetElapsed(s.StartedAt, DateTimeOffset.UtcNow), 11, A.Muted);
         elapsedText.FontFamily = A.Mono;
+        Grid.SetColumn(elapsedText, 2);
         titleRow.Children.Add(elapsedText);
         body.Children.Add(titleRow);
 
@@ -362,7 +371,7 @@ public sealed partial class AdminActivityPage
         var meta = StreamMeta(s);
         if (clientLabel.Length > 0 || ip.Length > 0 || meta.Length > 0)
         {
-            var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            var line = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
             if (clientLabel.Length > 0)
             {
                 var client = A.Text(clientLabel, 10, A.Muted);
@@ -377,7 +386,7 @@ public sealed partial class AdminActivityPage
             body.Children.Add(line);
         }
 
-        var stateLine = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var stateLine = new LogsWrapPanel { Spacing = 8, RowSpacing = 4 };
         stateLine.Children.Add(PlayingChip(s, state));
         var position = A.Text(P.FormatPlaybackPosition(s), 10, A.Muted);
         position.FontFamily = A.Mono;

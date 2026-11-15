@@ -968,6 +968,7 @@ public sealed partial class AdminShellPage : Page
     private void RenderRestartBanner()
     {
         _restartBannerHost.Children.Clear();
+        _restartBannerHost.Visibility = Visibility.Collapsed;
         if (_serverStatus is not { RestartRequired: true } status) return;
         var signature = status.RestartMarkCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (_restartDismissedSignature == signature) return;

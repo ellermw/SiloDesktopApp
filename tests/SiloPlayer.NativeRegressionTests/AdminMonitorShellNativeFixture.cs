@@ -71,6 +71,7 @@ internal static class AdminMonitorShellNativeFixture
     {
         public int SessionCount = 3;
         public bool SessionsFail;
+        public bool RestartRequired = true;
         public int AdminReads;
         public TaskCompletionSource<bool>? HeldMessage;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -93,7 +94,7 @@ internal static class AdminMonitorShellNativeFixture
                 "/api/v2/libraries" => "{\"items\":[{\"id\":\"1\",\"name\":\"Movies\",\"type\":\"movies\"}]}",
                 "/api/v2/admin/downloads/preparations" => "{\"counts\":{\"running\":0,\"queued\":1,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[]}",
                 "/api/v2/admin/system/build" => "{\"display\":\"v1.2.3\",\"revision\":\"abc\",\"dirty\":false,\"build_number\":4321,\"available\":true}",
-                "/api/v2/admin/server/status" => "{\"restart_required\":true,\"restart_mark_count\":2,\"restart_requested\":false}",
+                "/api/v2/admin/server/status" => "{\"restart_required\":" + (RestartRequired ? "true" : "false") + ",\"restart_mark_count\":2,\"restart_requested\":false}",
                 "/api/v2/admin/ips" => "{\"items\":[{\"user_id\":\"3\",\"username\":\"synthetic-viewer\",\"first_seen\":\"2026-11-01T00:00:00Z\",\"last_seen\":\"2026-11-13T00:00:00Z\",\"request_count\":1200}],\"page\":{\"has_more\":true,\"next_cursor\":\"n1\"}}",
                 "/api/v2/admin/logs/app" => "{\"items\":[{\"id\":\"9\",\"timestamp\":\"2026-11-14T10:00:00Z\",\"level\":\"info\",\"component\":\"ffmpeg\",\"message\":\"ffmpeg stderr\",\"node_id\":\"gpu-1\",\"attrs\":{\"ffmpeg_line\":\"frame=  120 fps= 48 q=28.0\",\"hw_accel\":\"qsv\",\"restart_count\":1}}],\"page\":{\"has_more\":false}}",
                 _ => "{}",
@@ -256,6 +257,17 @@ internal static class AdminMonitorShellNativeFixture
             if (width is 1362 or 1363) Check(page.IsWideTable == (width == 1363), $"Activity wide rows switch at the reference boundary ({width}px)");
             await CaptureAsync(frame, $"admin-activity-{width}x{height}.png");
         }
+        var stackedTitle = Descendants(table).OfType<TextBlock>().First(text => text.Text.StartsWith("Synthetic Title", StringComparison.Ordinal));
+        var originalTitle = stackedTitle.Text;
+        stackedTitle.Text = new string('W', 200);
+        table.UpdateLayout();
+        await Until(() => stackedTitle.IsTextTrimmed);
+        Check(stackedTitle.IsTextTrimmed, "stacked Activity ellipsizes a long title instead of clipping its tail");
+        var titleRow = stackedTitle.Parent as Grid;
+        Check(titleRow != null && titleRow.Children.OfType<TextBlock>().Any(text => Grid.GetColumn(text) == 2 && text.ActualWidth > 0 && !text.IsTextTrimmed),
+            "stacked Activity reserves space for elapsed time beside a long title");
+        stackedTitle.Text = originalTitle;
+
         var rowStates = (System.Collections.IDictionary)Field(page, "_rowStates")!;
         var firstSession = store.Current.Sessions.First();
         var rowState = rowStates[firstSession.SessionId]!;
@@ -365,6 +377,28 @@ internal static class AdminMonitorShellNativeFixture
         await Task.Delay(100);
         Check(banner.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y < 0,
             "restart notice scrolls away instead of reserving fixed viewport height");
+        async Task RefreshRestartStatusAsync()
+        {
+            await (Task)typeof(AdminShellPage).GetMethod("LoadServerStatusAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(shell, new[] { Field(shell, "_lease")!, (object)true })!;
+        }
+        Invoke(Descendants(banner).OfType<Button>().Single(button =>
+            Descendants(button).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.common.restartBanner.later"))));
+        await Until(() => banner.Visibility == Visibility.Collapsed);
+        Check(banner.Children.Count == 0 && banner.Visibility == Visibility.Collapsed,
+            "Later collapses the restart host so it contributes no page spacing");
+        server.RestartRequired = false;
+        await RefreshRestartStatusAsync();
+        server.RestartRequired = true;
+        await RefreshRestartStatusAsync();
+        Check(banner.Children.Count > 0 && banner.Visibility == Visibility.Visible, "a new restart notice reveals its host again");
+        server.RestartRequired = false;
+        await RefreshRestartStatusAsync();
+        Check(banner.Children.Count == 0 && banner.Visibility == Visibility.Collapsed,
+            "cleared restart requirement collapses the empty notice host");
+        server.RestartRequired = true;
+        await RefreshRestartStatusAsync();
+
         var old = store.Current;
         var states = (System.Collections.IDictionary)Field(page, "_rowStates")!;
         var first = old.Sessions.First();
