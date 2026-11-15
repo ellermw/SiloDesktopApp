@@ -63,6 +63,15 @@ internal static partial class AppUpdateNativeFixture
         if (scenario == "panel-focus") { await CheckPanelFocusAsync(window); return; }
         if (scenario == "panel-focus-return") { await CheckFocusReturnAsync(window); return; }
         if (scenario == "later-notice") { await CheckLaterNoticeAsync(window, updates); return; }
+        if (scenario == "panel-details")
+        {
+            var type = Assembly.LoadFrom(Path.Combine(Program.AppDirectory, "Updater", "SiloPlayer.UpdateHost.dll"))
+                .GetType("SiloPlayer.UpdateHost.UpdateProgressWindow", true)!;
+            var panel = (Window)Activator.CreateInstance(type, true, WinRT.Interop.WindowNative.GetWindowHandle(window).ToInt64())!;
+            try { await CheckFirstDetailsAsync(panel, "helper-view-in-process"); }
+            finally { panel.Close(); }
+            return;
+        }
         if (scenario == "full-success")
         {
             Directory.CreateDirectory(updates.CacheDirectory);

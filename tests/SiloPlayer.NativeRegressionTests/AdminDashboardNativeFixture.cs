@@ -7,6 +7,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
@@ -263,6 +264,7 @@ internal static class AdminDashboardNativeFixture
                  })
             Check(page.Store?.Get(key).IsSuccess == true, $"{key} loaded for its mounted widget");
         Check(page.Store?.ActiveScans.Count == 1, "scanner/libraries read the shared scans channel");
+        await VerifyStableInteractionsAsync(page);
         var apiView = Descendants(page).First(element => element.GetType().Name == "ApiClientsWidget");
         Button ClientButton() => Descendants(apiView).OfType<Button>().First(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Synthetic TV");
         void Click(Button button) => ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(button).GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
@@ -284,27 +286,6 @@ internal static class AdminDashboardNativeFixture
 
         apiView.GetType().GetMethod("SetRange")!.Invoke(apiView, [DashboardWidgetRange.Day]);
         await Task.Delay(150);
-
-        var columnChart = Descendants(page).Single(element => element.GetType().Name == "DashboardStackedColumnChart");
-        columnChart.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
-        await Task.Delay(150);
-        var columnBars = (Grid)columnChart.GetType().GetField("_bars", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(columnChart)!;
-        var columnOverlay = (Canvas)columnChart.GetType().GetField("_overlay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(columnChart)!;
-        var originalCells = columnBars.Children.Cast<ContentControl>().ToArray();
-        Check(originalCells.Length > 1, "playback chart has keyboard-inspectable columns");
-        foreach (var cell in originalCells.Take(2))
-        {
-            Check(cell.Focus(FocusState.Keyboard), "column accepts keyboard focus");
-            await Task.Delay(50);
-            Check(ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), cell),
-                "column inspection retains focus on the original cell");
-            Check(columnBars.Children.SequenceEqual(originalCells) && columnOverlay.Children.Count > 0,
-                "column focus updates the readout without replacing input controls");
-        }
-        ClientButton().Focus(FocusState.Programmatic);
-        ((ScrollViewer)typeof(AdminDashboardPage).GetField("_scroll", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!)
-            .ChangeView(null, 0, null, disableAnimation: true);
-        await Task.Delay(100);
         var resizeStep = 0;
         foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (899, 900), (900, 900), (899, 900), (1023, 768), (800, 900), (1024, 768), (1440, 900) })
         {
@@ -414,6 +395,54 @@ internal static class AdminDashboardNativeFixture
         window.Content = null;
     }
 
+
+    private static async Task VerifyStableInteractionsAsync(AdminDashboardPage page)
+    {
+        var header = (ContentControl)typeof(AdminDashboardPage).GetField("_header", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+        var renderHeader = typeof(AdminDashboardPage).GetMethod("RenderHeader", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var storeChanged = typeof(AdminDashboardPage).GetMethod("OnStoreChanged", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var actions = Descendants(header).OfType<Button>().Where(button => button.IsEnabled && button.Visibility == Visibility.Visible).ToArray();
+        Check(actions.Length >= 3, "header exposes Refresh, Customize and Scan-all actions");
+        foreach (var action in actions)
+        {
+            Check(action.Focus(FocusState.Keyboard), "header action accepts keyboard focus");
+            storeChanged.Invoke(page, [DashboardDataStore.Sessions]);
+            renderHeader.Invoke(page, null); // Same path as the 30s label tick.
+            await Task.Delay(50);
+            Check(Descendants(header).Contains(action) && ReferenceEquals(FocusManager.GetFocusedElement(page.XamlRoot), action),
+                "sessions updates and label ticks retain the focused header action");
+        }
+        var customize = Descendants(header).OfType<Button>().Single(button => Descendants(button).OfType<TextBlock>()
+            .Any(text => text.Text == DashboardText.T("web.admin.dashboard.page.customize")));
+        Check(customize.Focus(FocusState.Keyboard), "Customize accepts keyboard focus before refresh");
+        await page.Store!.RefreshDashboardAsync(manual: true);
+        Check(ReferenceEquals(FocusManager.GetFocusedElement(page.XamlRoot), customize), "data refresh retains Customize focus");
+        page.ToggleCustomize();
+        Check(ReferenceEquals(FocusManager.GetFocusedElement(page.XamlRoot), customize)
+            && Descendants(customize).OfType<TextBlock>().Any(text => text.Text == DashboardText.T("common.done")),
+            "Customize updates to Done without replacing the focused button");
+        page.ToggleCustomize();
+
+        var chart = (FrameworkElement)Descendants(page).First(element => element.GetType().Name == "DashboardStackedColumnChart");
+        chart.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        await Task.Delay(100);
+        var bars = (Grid)chart.GetType().GetField("_bars", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chart)!;
+        var overlay = (Canvas)chart.GetType().GetField("_overlay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chart)!;
+        var cells = bars.Children.OfType<ContentControl>().ToArray();
+        Check(cells.Length >= 2, "stacked chart exposes keyboard-readable columns");
+        foreach (var cell in cells.Take(2))
+        {
+            Check(cell.Focus(FocusState.Keyboard), "stacked column accepts keyboard focus");
+            await Task.Delay(50);
+            Check(ReferenceEquals(FocusManager.GetFocusedElement(page.XamlRoot), cell)
+                && bars.Children.OfType<ContentControl>().SequenceEqual(cells), "column focus does not rebuild cells or lose focus");
+            Check(overlay.Children.Count > 0, "focused column keeps its readout visible");
+        }
+        customize.Focus(FocusState.Programmatic);
+        var scroll = (ScrollViewer)typeof(AdminDashboardPage).GetField("_scroll", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+        scroll.ChangeView(null, 0, null, disableAnimation: true);
+        await Task.Delay(100);
+    }
 
     private static async Task CaptureQueryStatesAsync(Window window, Server server, AuthService auth)
     {
