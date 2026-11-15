@@ -31,6 +31,14 @@ Generated shared payload remains actively used; no cleanup deletion retried.
 
 ---
 
+# November 14 — Refresh offline translations for current server changes
+
+Regenerated the eight shipped offline catalogs with the existing SiloTranslationsImport tool from official Silo Server commit `1452ea2d10efbe7d3ea5ce7140fb49756b493670`, whose vendored translation release is `2026.11.15-5201582`. Each language now contains 6,858 non-admin messages (76 additional keys); the generator records exact source and output checksums. Existing admin-key exclusion and supported language list are retained. The locale source was read from a clean sparse reference; no generated message was edited by hand.
+
+Focused catalog-integrity, reader-key and library-refresh checks: 70 passed. This supplies current message keys; it does not implement all features that consume those keys or establish visual translation parity. Product version remains 1.2.1064, with stamping owned by the Beta pipeline. Evidence: `D:/SiloPlayer-build/server-update-nov14/ebook-search/catalog-import.log` and `review-focused.log`. The installed player and settings were not changed.
+
+---
+
 # November 14 — Admin Monitor visual follow-up verification
 
 Official WebUI main rechecked at 1a99f7beffcea3850f067df000c319f2704fd23b.
