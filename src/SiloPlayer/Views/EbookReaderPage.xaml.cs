@@ -363,7 +363,7 @@ public sealed partial class EbookReaderPage : Page
         _suppressControls = false;
         _initialized = true;
         if (UsesSharedRenderer)
-            ReaderWebView.Source = new Uri($"https://{EbookReaderWebPolicy.ReaderHost}/index.html?generation={_openGeneration}");
+            ReaderWebView.Source = new Uri($"https://{EbookReaderWebPolicy.ReaderHost}/index.html?generation={_openGeneration}&fileId={_fileId}");
         else NavigateToChapter(_chapterIndex, _chapterFraction);
         }
         finally { _opening = false; }
@@ -1126,7 +1126,7 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task RunSearchAsync()
     {
-        if (_opening || _leaving) return;
+        if (_opening || _leaving || (UsesSharedRenderer && !_rendererReady)) return;
         RetireSearch();
         var searchGeneration = _searchGeneration;
         var openGeneration = _openGeneration;
@@ -1134,12 +1134,13 @@ public sealed partial class EbookReaderPage : Page
         var book = _book;
         var query = SearchBox.Text.Trim();
         await ClearRendererSearchAsync();
-        if (_leaving || _opening || searchGeneration != _searchGeneration || openGeneration != _openGeneration || fileId != _fileId) return;
+        if (_leaving || _opening || (UsesSharedRenderer && !_rendererReady) || searchGeneration != _searchGeneration || openGeneration != _openGeneration || fileId != _fileId) return;
         if (book == null || query.Length < 2) { SetSearchStatus(() => "Enter at least two characters."); return; }
         SetSearchStatus(() => T("web.search.searching", "Searching..."));
         if (UsesSharedRenderer)
         {
-            await ReaderWebView.ExecuteScriptAsync($"window.siloReader.find({JsonSerializer.Serialize(query)},{searchGeneration}).then(outcome=>{{if(outcome != null) chrome.webview.postMessage(JSON.stringify({{type:'search-results',hostGeneration:{openGeneration},fileId:{fileId},...outcome}}))}})");
+            // Preserve the page's own identity; only a missing renderer gets a host-scoped failure.
+            await ReaderWebView.ExecuteScriptAsync($"Promise.resolve(window.siloReader?.find({JsonSerializer.Serialize(query)},{searchGeneration})).then(outcome=>{{if(outcome === undefined) outcome={{hostGeneration:{openGeneration},fileId:{fileId},searchId:{searchGeneration},items:[],truncated:false,failed:true}};if(outcome != null) chrome.webview.postMessage(JSON.stringify({{type:'search-results',...outcome}}))}})");
             return;
         }
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);

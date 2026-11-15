@@ -3,6 +3,7 @@ import { Overlayer } from './vendor/foliate-js/overlayer.js';
 import { parseLocation, progressFromRelocate } from './locations.mjs';
 
 const hostGeneration = Number(new URLSearchParams(location.search).get('generation') ?? 0);
+const fileId = Number(new URLSearchParams(location.search).get('fileId') ?? 0);
 const send = message => globalThis.chrome?.webview?.postMessage(JSON.stringify({...message,hostGeneration}));
 let view, book, generation = 0, ready = false, snapshot = null, annotations = [], chapterPaths = [], format;
 let activeSearch = null;
@@ -208,7 +209,7 @@ window.siloReader = {
         const items = [];
         let truncated = false;
         try {
-            if (!activeView?.search) throw new Error("Search renderer unavailable");
+            if (!ready || !activeView?.search) throw new Error("Search renderer unavailable");
             for await (const result of activeView.search({query, limit:SEARCH_RESULT_LIMIT, signal})) {
                 if (signal.aborted || current !== generation || activeView !== view) return null;
                 if (result.truncated) truncated = true;
@@ -216,12 +217,12 @@ window.siloReader = {
             }
         } catch (error) {
             if (signal.aborted || current !== generation || activeView !== view) return null;
-            return {items:[], truncated:false, searchId, failed:true};
+            return {items:[], truncated:false, searchId, hostGeneration, fileId, failed:true};
         } finally {
             if (activeSearch === controller) activeSearch = null;
         }
         if (signal.aborted || current !== generation || activeView !== view) return null;
-        return {items, truncated, searchId};
+        return {items, truncated, searchId, hostGeneration, fileId};
     },
     appearance(s) {
         if (!view?.renderer) return;

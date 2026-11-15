@@ -49,13 +49,13 @@ const deferred = () => {
     return { promise, resolve };
 };
 const bridgeSource = await readFile(new URL('reader.mjs', readerRoot), 'utf8');
-const bridge = (view, overrides = {}) => {
-    const context = vm.createContext({ URLSearchParams, AbortController, SEARCH_RESULT_LIMIT: 1000, location: { search: '?generation=7' },
+const bridge = (view, overrides = {}, isReady = true) => {
+    const context = vm.createContext({ URLSearchParams, AbortController, SEARCH_RESULT_LIMIT: 1000, location: { search: '?generation=7&fileId=42' },
         document: {}, chrome: { webview: { postMessage() {} } }, fetch: async () => { throw new Error('missing'); }, ...overrides });
     context.window = context;
     vm.runInContext(bridgeSource.split(String.fromCharCode(10)).filter(line => !line.startsWith('import ')).join(String.fromCharCode(10))
-        + ';globalThis.attachTestView = value => { view = value; book = { destroy() {} }; };', context);
-    context.attachTestView(view);
+        + ';globalThis.attachTestView = (value, isReady) => { view = value; book = { destroy() {} }; ready = isReady; };', context);
+    context.attachTestView(view, isReady);
     return context.siloReader;
 };
 
@@ -151,6 +151,8 @@ test('native bridge integrates bounded view results and truncation', async () =>
     assert.equal(outcome.items.length, 1000);
     assert.equal(outcome.truncated, true);
     assert.equal(outcome.searchId, 41);
+    assert.equal(outcome.hostGeneration, 7);
+    assert.equal(outcome.fileId, 42);
 });
 
 test('superseded bridge search resolves null even if the old producer ignores abort', async () => {
@@ -259,21 +261,35 @@ test('native message identity predicate rejects stale query, file and open gener
 
 test('native promise bridge suppresses retired outcomes and posts file-scoped results', async () => {
     const host = await readFile(new URL('../../src/SiloPlayer/Views/EbookReaderPage.xaml.cs', import.meta.url), 'utf8');
-    const template = host.match(/ExecuteScriptAsync\(\$"(window.siloReader.find[^\n]+)"\);/)?.[1];
+    const template = host.match(/ExecuteScriptAsync\(\$"(Promise.resolve\(window.siloReader\?\.find[^\n]+)"\);/)?.[1];
     assert.ok(template);
     const script = template.replace('{JsonSerializer.Serialize(query)}', JSON.stringify('needle'))
-        .replace('{searchGeneration}', '8').replace('{openGeneration}', '3').replace('{fileId}', '42')
+        .replaceAll('{searchGeneration}', '8').replaceAll('{openGeneration}', '3').replaceAll('{fileId}', '42')
         .replaceAll('{{', '{').replaceAll('}}', '}');
-    for (const outcome of [null, { items: [{ cfi: 'new-file' }], truncated: true, searchId: 8 }]) {
+    const stale = await bridge({ clearSearch() {}, async *search() {
+        yield { cfi: 'old-file', excerpt: 'old file' };
+    } }, { location: { search: '?generation=2&fileId=41' } }).find('needle', 8);
+    const predicate = host.match(/if \((message.RootElement.GetProperty\("searchId"\)[\s\S]*?)\) return;/)?.[1];
+    assert.ok(predicate);
+    const reject = new Function('message', '_searchGeneration', '_openGeneration', '_fileId', 'return ' + predicate);
+    for (const outcome of [null, undefined,
+        { items: [{ cfi: 'new-file' }], truncated: true, searchId: 8, hostGeneration: 3, fileId: 42 }, stale]) {
         const messages = [];
         await vm.runInNewContext(script, {
-            window: { siloReader: { async find(query, searchId) {
+            window: { siloReader: outcome === undefined ? undefined : { async find(query, searchId) {
                 assert.equal(query, 'needle'); assert.equal(searchId, 8); return outcome;
             } } },
             chrome: { webview: { postMessage: message => messages.push(JSON.parse(message)) } },
         });
-        assert.equal(messages.length, outcome == null ? 0 : 1);
-        if (outcome) assert.deepEqual(messages[0], { type: 'search-results', hostGeneration: 3, fileId: 42, ...outcome });
+        assert.equal(messages.length, outcome === null ? 0 : 1);
+        if (outcome === undefined) assert.deepEqual(messages[0], {
+            type: 'search-results', hostGeneration: 3, fileId: 42, searchId: 8, items: [], truncated: false, failed: true,
+        });
+        else if (outcome) assert.deepEqual(messages[0], JSON.parse(JSON.stringify({ type: 'search-results', ...outcome })));
+        if (outcome === stale) {
+            const message = { RootElement: { GetProperty: name => ({ GetInt32: () => messages[0][name] }) } };
+            assert.equal(reject(message, 8, 3, 42), true, 'an old live page cannot claim the new file identity');
+        }
     }
 });
 
@@ -292,7 +308,30 @@ test('native bridge reports a current search failure and missing renderer', asyn
     const outcome = await reader.find('needle', 43);
     assert.equal(outcome.failed, true);
     assert.equal(outcome.searchId, 43);
+    assert.equal(outcome.hostGeneration, 7);
+    assert.equal(outcome.fileId, 42);
     const missing = await bridge({ clearSearch() {} }).find('needle', 44);
     assert.equal(missing.failed, true);
     assert.equal(missing.searchId, 44);
+});
+
+test('shared search is gated before dispatch and after the asynchronous clear', async () => {
+    const host = await readFile(new URL('../../src/SiloPlayer/Views/EbookReaderPage.xaml.cs', import.meta.url), 'utf8');
+    const runSearch = host.slice(host.indexOf('private async Task RunSearchAsync()'), host.indexOf('private static (List<BookSearchResult>'));
+    assert.match(runSearch, /if \(_opening \|\| _leaving \|\| \(UsesSharedRenderer && !_rendererReady\)\) return;/);
+    assert.match(runSearch, /await ClearRendererSearchAsync\(\);\s*if \([^\n]*\(UsesSharedRenderer && !_rendererReady\)/);
+    const open = host.slice(host.indexOf('private async Task OpenVersionAsync('), host.indexOf('private async Task LoadMangaNavigationAsync()'));
+    assert.ok(open.indexOf('_rendererReady = false;') < open.indexOf('ReaderWebView.Source ='));
+    assert.match(open, /index.html\?generation=\{_openGeneration\}&fileId=\{_fileId\}/);
+});
+
+test('an unready shell fails search without touching its previous or opening view', async () => {
+    let searched = false;
+    const reader = bridge({ clearSearch() {}, async *search() { searched = true; } }, {}, false);
+    const outcome = await reader.find('needle', 45);
+    assert.equal(searched, false);
+    assert.equal(outcome.failed, true);
+    assert.equal(outcome.searchId, 45);
+    assert.equal(outcome.hostGeneration, 7);
+    assert.equal(outcome.fileId, 42);
 });
