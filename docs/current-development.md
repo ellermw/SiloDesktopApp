@@ -1,3 +1,31 @@
+# November 15 — Admin Playback History and Skip Markers
+
+Adds native read-only finalized Playback History and marker edit history on
+PR167's Manage foundation (4b962d5d79c42d0ea27e0c45fd418a14ec54c815).
+Reference: official Silo e61187daaf72e8accad486eb2f632c753ae211d5; this is
+an explicit reference pin, not a claim that every newer change is aligned.
+Version remains 1.2.1064; the Beta pipeline owns stamping and packaging.
+
+History reads one bounded 100-row window, pages locally at 25/50/100, bounds
+account/profile pickers, joins in-flight refreshes, polls only while open and
+visible, and retires/clears on authority changes. Exact positive Int64 account
+IDs are preserved. Unchanged refreshes retain table focus/scroll and update
+relative times in place. Skip Markers is read-only, capped at 100 with explicit
+Refresh. No mutation actions or hidden page loading are introduced.
+
+Final checks: 198 focused checks and 6,793 full units passed (zero failed or
+skipped), Release publish/native host passed, and admin-playback-audit,
+admin-manage-foundation and admin-monitor native groups passed. Reviewed
+captures cover desktop/narrow layouts; synthetic-only limits and review
+resolutions are in docs/parity/admin-manage-playback-audit.md and the delivery
+receipt under D:/SiloPlayer-build/server-update-nov14/manage-playback-audit/.
+No live-server, full visual/DPI/multilingual, performance or newest-server claim.
+Installed player/settings untouched. Shared generated payloads remain active;
+cleanup was not retried after the prior automatic approval rejection and
+0 GiB recovered is claimed on C: and D:.
+
+---
+
 # November 15 — Share library detail reads and bound detail speculation
 
 Library detail navigation now shares item-and-library-scoped requests with card
