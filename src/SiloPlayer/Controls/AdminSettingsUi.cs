@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using Windows.UI;
 
@@ -117,6 +118,88 @@ internal static class AdminSettingsUi
         return input;
     }
 
+    internal static ComboBox Select(string label, string id, IEnumerable<(string Value, string Label)> options)
+    {
+        var select = new ComboBox
+        {
+            Width = 240, MinWidth = 0, MinHeight = 36, Height = 36, FontSize = 14, Padding = new(12, 4, 12, 4), CornerRadius = new(10),
+            Background = Brush("AppBackgroundBrush"), BorderBrush = FieldBorder, HorizontalAlignment = HorizontalAlignment.Right,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, UseSystemFocusVisuals = true,
+        };
+        select.Resources["ComboBoxBorderBrushPointerOver"] = FieldBorder;
+        select.Resources["ComboBoxBorderBrushPressed"] = FieldBorder;
+        select.Resources["ComboBoxBorderBrushFocused"] = FieldBorder;
+        select.Resources["ComboBoxDropDownCornerRadius"] = new CornerRadius(10);
+        foreach (var (value, text) in options)
+        {
+            var item = new ComboBoxItem { Content = text, Tag = value, CornerRadius = new(6), MinHeight = 32 };
+            AutomationProperties.SetName(item, text);
+            select.Items.Add(item);
+        }
+        AutomationProperties.SetName(select, label);
+        AutomationProperties.SetAutomationId(select, id);
+        return select;
+    }
+
+    internal static Border Skeleton(double height, double width = double.NaN) => new()
+    {
+        Height = height, Width = width, CornerRadius = new(10), Background = AdminMonitorUi.Solid(AdminMonitorUi.Muted, .12),
+        HorizontalAlignment = double.IsNaN(width) ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
+    };
+    internal static Border Alert(string message, string? description = null) => Alert(Text(message, description == null ? 13 : 14), description);
+    internal static Border Alert(TextBlock text, string? description = null)
+    {
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var icon = AdminMonitorUi.Icon("alert-triangle", 16, AdminMonitorUi.Red500); icon.VerticalAlignment = VerticalAlignment.Top; icon.Margin = new(0, 2, 0, 0); row.Children.Add(icon);
+        AutomationProperties.SetLiveSetting(text, AutomationLiveSetting.Assertive);
+        var content = new StackPanel { Spacing = 4 }; content.Children.Add(text);
+        if (description != null) { text.FontWeight = FontWeights.Medium; content.Children.Add(Text(description, 13, true)); }
+        else text.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive);
+        Grid.SetColumn(content, 1); row.Children.Add(content);
+        var alert = new Border { Child = row, Padding = new(16), CornerRadius = new(16), BorderThickness = new(1), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Red500, .2), Background = AdminMonitorUi.Solid(AdminMonitorUi.Red500, .05) };
+        AutomationProperties.SetLiveSetting(alert, AutomationLiveSetting.Assertive);
+        return alert;
+    }
+
+    /// <summary>
+    /// The settings pages' dirty-departure dialog. It owns its content-sized Cancel/Discard
+    /// actions, starts on Cancel, treats Escape as Cancel and closes when the owner retires.
+    /// Returns null when no dialog could be shown.
+    /// </summary>
+    internal static async Task<bool?> ConfirmDiscardAsync(FrameworkElement host, MonitorAuthorityLease owner,
+        Func<ContentDialog?> current, Action<ContentDialog?> track)
+    {
+        if (current() != null || !owner.IsCurrent) return null;
+        var confirmed = false;
+        var content = new StackPanel { Spacing = 24 };
+        content.Children.Add(Text(AdminText.T("web.shell.unsavedChanges.description")));
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        Button DialogAction(string key, string style) => new()
+        {
+            Content = AdminText.T(key), Style = (Style)Application.Current.Resources[style],
+            MinWidth = 0, Height = 36, Padding = new(12, 0, 12, 0), CornerRadius = new(10), UseSystemFocusVisuals = true,
+        };
+        var cancel = DialogAction("common.cancel", "OutlineButtonStyle");
+        var discard = DialogAction("web.shell.unsavedChanges.discard", "DestructiveButtonStyle");
+        AutomationProperties.SetName(cancel, AdminText.T("common.cancel"));
+        AutomationProperties.SetName(discard, AdminText.T("web.shell.unsavedChanges.discard"));
+        actions.Children.Add(cancel); actions.Children.Add(discard); content.Children.Add(actions);
+        var dialog = new ContentDialog { XamlRoot = host.XamlRoot, Title = AdminText.T("web.shell.unsavedChanges.title"), Content = content };
+        // Own the two actions so their order and size do not depend on native command
+        // template internals. Escape/light dismissal never confirms a discard.
+        dialog.Resources["ContentDialogMaxWidth"] = 512d;
+        cancel.Click += (_, _) => dialog.Hide();
+        discard.Click += (_, _) => { confirmed = true; dialog.Hide(); };
+        var queue = host.DispatcherQueue;
+        dialog.Opened += (_, _) => queue.TryEnqueue(() => { if (ReferenceEquals(current(), dialog)) cancel.Focus(FocusState.Keyboard); });
+        track(dialog);
+        using var cancelled = owner.Token.Register(() => queue.TryEnqueue(() => { if (ReferenceEquals(current(), dialog)) dialog.Hide(); }));
+        try { await dialog.ShowAsync(); return confirmed; }
+        catch (System.Runtime.InteropServices.COMException) { return null; }
+        finally { if (ReferenceEquals(current(), dialog)) track(null); }
+    }
+
     internal static Border Restart(string label)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
@@ -138,11 +221,14 @@ internal sealed class AdminSettingsSaveBar : Grid
 {
     private readonly TextBlock _count = AdminSettingsUi.Text("", 13);
     private readonly Grid _layout = new() { ColumnSpacing = 8 };
-    internal Button Save { get; } = AdminSettingsUi.Action(AdminText.T("common.save"), "GeneralSave", primary: true, pill: true);
-    internal Button Discard { get; } = AdminSettingsUi.Action(AdminText.T("web.shell.unsavedChanges.discard"), "GeneralDiscard", pill: true);
+    internal Button Save { get; }
+    internal Button Discard { get; }
 
-    internal AdminSettingsSaveBar()
+    /// <param name="automationPrefix">Page prefix for the Save/Discard automation ids, e.g. General or Email.</param>
+    internal AdminSettingsSaveBar(string automationPrefix = "General")
     {
+        Save = AdminSettingsUi.Action(AdminText.T("common.save"), automationPrefix + "Save", primary: true, pill: true);
+        Discard = AdminSettingsUi.Action(AdminText.T("web.shell.unsavedChanges.discard"), automationPrefix + "Discard", pill: true);
         CornerRadius = new(25);
         Background = AdminSettingsUi.Brush("SurfaceBrush");
         BorderBrush = AdminSettingsUi.Brush("BorderBrush"); BorderThickness = new(1);
@@ -187,6 +273,8 @@ internal sealed class AdminSettingsRow : Grid
     private readonly double _editorWidth;
     internal TextBlock Description { get; }
     internal Control? Input => _editor as Control;
+    /// <summary>Raised after each reflow with whether the row uses its wide label/editor columns.</summary>
+    internal event Action<bool>? LayoutChanged;
 
     internal AdminSettingsRow(string label, string description, FrameworkElement editor)
     {
@@ -238,6 +326,7 @@ internal sealed class AdminSettingsRow : Grid
         _editor.HorizontalAlignment = wide ? HorizontalAlignment.Right : HorizontalAlignment.Stretch;
         _editor.VerticalAlignment = VerticalAlignment.Top;
         _editor.Margin = wide ? new(24, 0, 8, 0) : new(0);
+        LayoutChanged?.Invoke(wide);
     }
 }
 
