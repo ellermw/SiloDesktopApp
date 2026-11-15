@@ -47,7 +47,7 @@
       ],
       "children": [],
       "status": "In progress",
-      "statusReason": "Implemented and in final native verification/review; no pushed PR yet."
+      "statusReason": "Implemented, independently reviewed and verified; awaiting push and qualifying Beta PR."
     },
     {
       "id": "appearance",
