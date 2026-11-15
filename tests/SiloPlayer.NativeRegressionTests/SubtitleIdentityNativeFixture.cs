@@ -408,6 +408,54 @@ internal static partial class SubtitleIdentityNativeFixture
                     session.SubtitleUrls.Remove(adopted);
                     Require(Call(service, "ResolveReloadSubtitleChoice", stored, (int?)42) is null,
                         "A missing stored identity borrowed the reused ordinal.");
+                    foreach (var identity in new[] { "id", "key", "both", "id-to-key", "key-to-id" })
+                    {
+                        var positional = new SubtitleTrackInfo { Index = 5, TrackId = "file:42:subtitle:5",
+                            Id = identity is "key" or "key-to-id" ? null : 123,
+                            SyncKey = identity is "id" or "id-to-key" ? null : "stored-123", Source = "downloaded" };
+                        var shifted = new SubtitleTrackInfo { Index = 4, TrackId = "file:42:subtitle:4",
+                            Id = identity == "id-to-key" ? null : identity == "key-to-id" ? 123 : positional.Id,
+                            SyncKey = identity == "key-to-id" ? null : identity == "id-to-key" ? "stored-123" : positional.SyncKey,
+                            Source = "downloaded" };
+                        var replacement = new SubtitleTrackInfo { Index = 5, TrackId = positional.TrackId,
+                            Id = 456, SyncKey = "stored-456", Source = "downloaded" };
+                        var savedTracks = session.SubtitleUrls;
+                        session.SubtitleUrls = [shifted, replacement];
+                        try
+                        {
+                            Require(ReferenceEquals(Call(service, "ResolveReloadSubtitleChoice", positional, (int?)42), shifted),
+                                "A queued sidecar choice borrowed the reused positional TrackId instead of its stored identity: " + identity);
+                            shifted.Unplayable = true;
+                            Require(Call(service, "ResolveReloadSubtitleChoice", positional, (int?)42) is null,
+                                "An unavailable stored sidecar borrowed the positional replacement: " + identity);
+                            shifted.Unplayable = false;
+                            var repeated = new SubtitleTrackInfo { Index = 6, TrackId = "file:42:subtitle:6",
+                                Id = shifted.Id, SyncKey = shifted.SyncKey, Source = "downloaded", Unplayable = true };
+                            session.SubtitleUrls.Add(repeated);
+                            Require(Call(service, "ResolveReloadSubtitleChoice", positional, (int?)42) is null,
+                                "An unavailable duplicate manufactured a unique stored sidecar: " + identity);
+                            session.SubtitleUrls.Remove(repeated);
+                            if (identity == "both")
+                            {
+                                shifted.Id = 456;
+                                Require(Call(service, "ResolveReloadSubtitleChoice", positional, (int?)42) is null,
+                                    "A SyncKey match overrode a conflicting stored Id with positional TrackIds.");
+                                shifted.Id = 123; shifted.SyncKey = "stored-456";
+                                Require(Call(service, "ResolveReloadSubtitleChoice", positional, (int?)42) is null,
+                                    "An Id match overrode a conflicting SyncKey with positional TrackIds.");
+                                shifted.SyncKey = "stored-123";
+                                repeated.Id = 123; repeated.SyncKey = "stored-456";
+                                session.SubtitleUrls.Add(repeated);
+                                Require(Call(service, "ResolveReloadSubtitleChoice", positional, (int?)42) is null,
+                                    "A conflicting duplicate was filtered out to manufacture a unique stored sidecar.");
+                                session.SubtitleUrls.Remove(repeated);
+                            }
+                            session.SubtitleUrls.Remove(shifted);
+                            Require(Call(service, "ResolveReloadSubtitleChoice", positional, (int?)42) is null,
+                                "A deleted stored sidecar borrowed the reused positional route: " + identity);
+                        }
+                        finally { session.SubtitleUrls = savedTracks; }
+                    }
                 }
                 else if (closeout == "async-service")
                 {
@@ -2063,7 +2111,7 @@ internal static partial class SubtitleIdentityNativeFixture
                 await cleared.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 Require(!mpv.IsPaused && Get(service, "_liveSubtitleResumeCts") == null,
                     "Same-file replan stranded the AI buffer pause or timer.");
-                await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, (long?)91, owner)!;
+                await (Task)Call(service, "RefreshSubtitlesAfterAiForOwnerAsync", 42, (long?)91, owner, null, null)!;
                 await active.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 var selected = manager.CurrentSession!.SubtitleUrls.Single(track => track.Id == 91);
                 var sids = (Dictionary<int, int>)Get(service, "_loadedExternalSubtitleSids")!;

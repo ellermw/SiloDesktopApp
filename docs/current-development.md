@@ -1,3 +1,33 @@
+# November 14 — Preserve stored subtitle identity after deletion
+
+A same-file recovery or queued subtitle selection now resolves a stored subtitle by
+its unique stable Id/SyncKey before considering positional track IDs. Deleting an
+earlier subtitle can no longer redirect the selection to the row that reused its
+position. Missing, duplicate, conflicting or unplayable identities are refused.
+Identityless and cross-file behavior, wire contracts and retained-unavailable
+selection policy are preserved. For older malformed/incomplete inventories that
+omit stable identity, the safe result is unavailable rather than a reused position.
+
+Reference: official Silo Server 1452ea2d10efbe7d3ea5ce7140fb49756b493670;
+subtitle deletion behavior audited from #4080. Baseline 6caafd79, version 1.2.1064
+unchanged; the Beta pipeline owns stamping.
+
+Verification on final product source: 6,618 unit tests passed, Release publish
+and native host build passed, focused reload-identity native cases and the broad
+subtitle-identity native group passed. The 17 new identity regressions were first
+shown failing against baseline resolvers. Independent static review found no
+blocking defect. This does not certify live-server or full playback parity.
+
+Two stale native fixture seams were corrected: reflection now supplies all five
+refresh-method arguments, and the cast fallback gate holds the managed read used
+by production. The prior cast-gate timeout reproduced against baseline product;
+the corrected broad fixture passes on baseline and fixed product.
+
+Evidence: D:/SiloPlayer-build/server-update-nov14/subtitle-identity/ final-publish.log,
+final-host.log, final-all-units.log, independent-review.md; native receipts under
+D:/SiloPlayer-build/results/subtitle-identitysubtitle-final-reload-identity/ and
+subtitle-identitysubtitle-final-broad/. The installed player was not touched.
+Shared generated output remains in active use; no cleanup deletion was retried.
 # November 14 — Admin Monitor implemented for Beta
 
 Native Admin Monitor adds an acting-admin-only footer entry above Profile,
