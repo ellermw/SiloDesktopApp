@@ -352,6 +352,8 @@ if ([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PublishRoot 'SiloP
 $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminShellPage.xbf',
     'Views/Admin/AdminDashboardPage.xbf',
+    'Views/Admin/AdminPlaybackHistoryPage.xbf',
+    'Views/Admin/AdminMarkerHistoryPage.xbf',
     'Views/Admin/AdminActivityPage.xbf',
     'Views/Admin/AdminSubtitlesPage.xbf',
     'Views/Admin/AdminLogsPage.xbf',
