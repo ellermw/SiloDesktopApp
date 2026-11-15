@@ -18,6 +18,7 @@ internal static partial class AppUpdateNativeFixture
         public readonly TaskCompletionSource Transferred = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource Finish = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Transfer;
+        public bool ExpandedDetails;
         public long HelperHwnd;
         public Action? BeforeSwap, AfterSwap;
         // Retain the original signature so the same regression fixture can run against frozen Beta bytes.
@@ -54,6 +55,8 @@ internal static partial class AppUpdateNativeFixture
                         validate.Invoke(null,[handle,peer.Id]);
                         HelperHwnd=handle; BeforeSwap?.Invoke(); presentTrustedHelper!(handle); AfterSwap?.Invoke();
                     },ct);
+                    await UpdateHostProtocol.WriteAsync(pipe, new("progress", Text: "check-transferred-details", Completed: ExpandedDetails ? 1 : 0), ct);
+                    if ((await UpdateHostProtocol.ReadAsync(pipe, ct)).Kind != "visible") throw new InvalidOperationException("No details handoff acknowledgement.");
                     await UpdateHostProtocol.WriteAsync(pipe,new("staged"),ct);
                     if((await UpdateHostProtocol.ReadAsync(pipe,ct)).Kind!="visible")throw new InvalidOperationException("No staged presentation acknowledgement.");
                     Transferred.TrySetResult();
@@ -71,7 +74,7 @@ internal static partial class AppUpdateNativeFixture
 
     private static async Task CheckPreparationAsync(MainWindow owner, AppUpdateService updates, string scenario)
     {
-        var installer = new DelayedWindowedInstaller {Transfer=scenario=="preparation-transfer"};
+        var installer = new DelayedWindowedInstaller {Transfer=scenario.StartsWith("preparation-transfer", StringComparison.Ordinal), ExpandedDetails=scenario=="preparation-transfer-details"};
         using var stop = new CancellationTokenSource();
         var release = new AppRelease(new Version(1, 2, 999), "v1.2.999", "", DateTimeOffset.UtcNow,
             new Uri("https://fixture.invalid/unused"), new string('a', 64), 1)
@@ -105,8 +108,17 @@ internal static partial class AppUpdateNativeFixture
             if (status.Text != "Preparing…" || !bar.IsIndeterminate || bar.ActualHeight <= 0)
                 throw new InvalidOperationException("Early feedback must render Preparing… with an indeterminate native progress bar.");
             Program.Log("PASS: actual MainWindow shows Preparing… and animated indeterminate progress while deterministic preparation remains blocked.");
+            if (scenario == "preparation-details") await CheckFirstDetailsAsync(panel, "preparation");
             if(installer.Transfer)
             {
+                if (installer.ExpandedDetails)
+                {
+                    Invoke((HyperlinkButton)type.GetProperty("Details")!.GetValue(panel)!);
+                    await Task.Delay(350);
+                    if (!(bool)type.GetProperty("Model")!.GetValue(panel)!.GetType().GetProperty("ShowsDetails")!.GetValue(type.GetProperty("Model")!.GetValue(panel))!)
+                        throw new InvalidOperationException("Preparation details did not open before the helper transfer.");
+                    await CaptureAsync((FrameworkElement)panel.Content, "update-expanded-before-transfer.png");
+                }
                 var early=WinRT.Interop.WindowNative.GetWindowHandle(panel);
                 var foreground=GetForegroundWindow();
                 installer.BeforeSwap=()=>
@@ -151,7 +163,12 @@ internal static partial class AppUpdateNativeFixture
                 Program.Log("PASS: failed/not-started preparation removes its early panel and returns to Silo.");
             }
         }
-        finally { Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= Presented; dialog.Hide(); stop.Cancel(); installer.Release.TrySetResult(); installer.Finish.TrySetResult(); await run; }
+        finally
+        {
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= Presented;
+            dialog.Hide(); stop.Cancel(); installer.Release.TrySetResult(); installer.Finish.TrySetResult();
+            try { await run; } catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        }
         if (typeof(MainWindow).GetField("_updatePreparationWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(owner) is not null)
             throw new InvalidOperationException("Canceled preparation left a ghost panel.");
     }
@@ -296,6 +313,25 @@ internal static partial class AppUpdateNativeFixture
             await (Task)typeof(App).Assembly.GetType("SiloPlayer.Core.Services.Updates.UpdatePresentationHandoff",true)!.GetMethod("OfferAsync")!
                 .Invoke(null,[pipe,WinRT.Interop.WindowNative.GetWindowHandle(panel).ToInt64(),start,timeout.Token])!;
             var command=await UpdateHostProtocol.ReadAsync(pipe,timeout.Token);
+            if (command.Kind == "progress" && command.Text == "check-transferred-details")
+            {
+                await Task.Delay(400);
+                var model = type.GetProperty("Model")!.GetValue(panel)!;
+                var root = (FrameworkElement)panel.Content;
+                var details = (FrameworkElement)type.GetField("details", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(panel)!;
+                GetClientRect(WinRT.Interop.WindowNative.GetWindowHandle(panel), out var client);
+                var expanded = (bool)model.GetType().GetProperty("ShowsDetails")!.GetValue(model)!;
+                Program.Log($"Transferred details: expanded={expanded}, body={details.Visibility}/{details.ActualHeight}, root={root.ActualHeight}, client={client.Bottom}.");
+                var expectedExpanded = command.Completed == 1;
+                if (expanded != expectedExpanded || details.Visibility != (expectedExpanded ? Visibility.Visible : Visibility.Collapsed)
+                    || (expectedExpanded && details.ActualHeight < 80)
+                    || Math.Abs(root.ActualHeight * root.XamlRoot.RasterizationScale - client.Bottom) > 2)
+                    throw new InvalidOperationException("Helper lost the first Details click during preparation handoff and left expanded native bounds with collapsed content.");
+                await CaptureAsync(root, expectedExpanded ? "update-expanded-after-transfer.png" : "update-collapsed-after-transfer.png");
+                if (expectedExpanded) await CheckFirstDetailsAsync(panel, "cross-process-helper");
+                await UpdateHostProtocol.WriteAsync(pipe, new("visible"), timeout.Token);
+                command = await UpdateHostProtocol.ReadAsync(pipe, timeout.Token);
+            }
             if(command.Kind=="progress" && command.Text=="check-after-owner-close")
             {
                 type.GetMethod("ShowFinishing")!.Invoke(panel,["Finishing and restarting Silo…"]);
