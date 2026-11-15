@@ -94,6 +94,22 @@ test('simple search preserves context and subsequent matches at mid-section node
     ]);
 });
 
+test('simple search retains overlapping matches across a text node boundary', () => {
+    for (const sensitivity of ['variant', 'accent']) {
+        const results = [...search(['aaa', 'a'], 'aa', { ...options, sensitivity })];
+        assert.deepEqual(results.map(result => result.range), [
+            { startIndex: 0, startOffset: 0, endIndex: 0, endOffset: 2 },
+            { startIndex: 0, startOffset: 1, endIndex: 1, endOffset: 0 },
+            { startIndex: 0, startOffset: 2, endIndex: 1, endOffset: 1 },
+        ]);
+        assert.deepEqual(results.map(result => result.excerpt), [
+            { pre: '', match: 'aa', post: 'a' },
+            { pre: 'a', match: 'aa', post: 'a' },
+            { pre: 'aa', match: 'aa', post: '' },
+        ]);
+    }
+});
+
 test('windowed excerpts equal whole-node context including long whitespace runs', () => {
     for (const padding of ['abcd '.repeat(150), 'x' + ' '.repeat(4096), String.fromCharCode(9, 10, 32).repeat(2000) + 'tail']) {
         const result = [...search([padding + 'needle' + padding], 'needle', options)][0];
