@@ -403,8 +403,8 @@
       ],
       "children": [],
       "status": "In progress",
-      "statusReason": "Implemented and verified locally at e7727bbf on General PR173; awaiting lead review and a pushed Beta PR. See docs/parity/admin-email.md.",
-      "verifiedCode": "e7727bbfa2bb77d967b41cde695e526cd2f5a2b7",
+      "statusReason": "Independently reviewed and verified at 3ab6d459a3c06fe7844cc5baaa83723d67cf001a; awaiting pushed Beta PR. See docs/parity/admin-email.md.",
+      "verifiedCode": "3ab6d459a3c06fe7844cc5baaa83723d67cf001a",
       "dependsOn": "https://github.com/ellermw/SiloDesktopApp/pull/173"
     },
     {
