@@ -507,10 +507,13 @@ public partial class LibraryViewModel
         if (LetterIndex is null)
         {
             // Only an index read the rebase retired is requested again here.
-            if (_letterIndexKey is null) _ = EnsureLetterIndexAsync();
+            if (_letterIndexKey is null) _ = EnsureLetterIndexCoreAsync(applyTotal: false);
             return;
         }
         var key = _letterIndexKey = LetterQueryKey();
-        _letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting: true);
+        // The successful refresh keeps its extent until the snapshot's exact
+        // count settles; a cursorless rail reread must not race that count.
+        _letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token,
+            preserveExisting: true, applyTotal: false);
     }
 }

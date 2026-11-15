@@ -1208,6 +1208,13 @@ public sealed class LibraryBackgroundRefreshTests
                 Assert.Equal(2, freshViewportReads.Count);
                 Assert.All(freshViewportReads, read => Assert.False(read.ContainsKey("cursor")));
                 Assert.Null(model.ErrorMessage);
+                if (changes == 1)
+                {
+                    // Let the independent rail reread publish its larger total
+                    // before checking that only the held exact count owns the extent.
+                    await model.EnsureLetterIndexAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                    Assert.Equal(1001, model.LetterIndex!.Total);
+                }
                 Assert.DoesNotContain(0, totals);
                 Assert.Equal(1000, model.TotalCount);
             }
