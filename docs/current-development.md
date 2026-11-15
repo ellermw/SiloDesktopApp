@@ -10,6 +10,55 @@ Regenerated the eight shipped offline catalogs with the existing SiloTranslation
 
 Focused catalog-integrity, reader-key and library-refresh checks: 70 passed. This supplies current message keys; it does not implement all features that consume those keys or establish visual translation parity. Product version remains 1.2.1064, with stamping owned by the Beta pipeline. Evidence: `D:/SiloPlayer-build/server-update-nov14/ebook-search/catalog-import.log` and `review-focused.log`. The installed player and settings were not changed.
 
+# November 14 — Admin Monitor visual follow-up verification
+
+Official WebUI main rechecked at 1a99f7beffcea3850f067df000c319f2704fd23b.
+Follow-ups integrate PR156 source 31bc6b9b, merged to Beta as 74f14630; version remains
+1.2.1056-beta.1 / numeric 1.2.1055.1, with pipeline stamping unchanged.
+The original PR/branch was not pushed by this work.
+
+Final integrated checks: 6,591/6,591 main units, 77/77 focused Logs checks,
+Release publish/native build, and Admin shell/Activity, all-widget Dashboard and
+baseline Logs native groups pass. Across bounded runs all 75 expanded Logs
+scenarios pass, with named functional evidence in 79/81 families. The 162-row
+ledger separates captures/assertions from visual comparison and records gaps.
+
+Changes are grouped into theme tokens, Logs/foundation, Dashboard, and
+shell/Activity follow-ups. PR156 is still a dependency for the Admin groups;
+Logs is aligned to Beta after PR156 merged; Dashboard and shell/Activity remain stacked until their bases reach Beta.
+Final per-cut validation: all three Admin native groups pass; 6,592/6,593 main tests pass on the full run, with the one updater-helper failure passing all three cases on isolated rerun; 77/77 Logs tests pass. The earlier 6,591 result above remains historical integrated evidence. See [verification and limits](parity/2026-11-14-admin-visual-followups.md).
+No complete-parity, live-server, physical-input, all-theme/DPI/locale or full
+playback-overlay certification is claimed. Installed player/settings untouched.
+Earlier automatic approval review rejected cleanup; no deletion was retried and
+0 GiB recovery is claimed on each drive. Local receipt:
+D:/SiloPlayer-build/admin-visual-parity/final-visual-followup-receipt.json.
+
+---
+
+# November 14 — Preserve updater Details across helper handoff
+
+The first Details click during Preparing now carries its expanded state into the
+separate updater helper along with the native window bounds. The helper measures
+against its actual client size, so transferred expanded bounds cannot retain
+collapsed content and leave a black lower rectangle. Version remains 1.2.1064;
+Beta pipeline owns stamping. Source baseline: 6caafd79129daa36f4aedb290c1720b7cde8ac64.
+
+The cross-process regression failed before the fix with expanded=False,
+body=Collapsed/0, root=95, client=221; after the fix it reports expanded=True,
+body=Visible/112, root=221, client=221. Seven final app-updates native runs passed:
+expanded and collapsed transfer, preparation Details, helper Details, cancellation,
+failure, and automatic consent. Physical pointer/pixel checks exercise three
+expand/collapse cycles before progress. Full unit suite: 6,601 passed, zero failed
+or skipped. Evidence: D:/SiloPlayer-build/server-update-nov14/updater-final-*.log
+and D:/SiloPlayer-build/results/app-updates-details-final-*.
+
+Checks use fixture-owned windows and a synthetic installer; no real installation
+or installed-player restart occurred. Physical multi-monitor/DPI combinations are
+not certified. Generated output cleanup remains blocked by the earlier automatic
+policy rejection and was not retried; recovered 0 GiB on C: and D:.
+
+---
+
 # November 14 — Admin Monitor implemented for Beta
 
 Native Admin Monitor adds an acting-admin-only footer entry above Profile,

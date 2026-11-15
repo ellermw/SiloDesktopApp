@@ -20,7 +20,7 @@ internal static class DashboardChartChrome
     public static FrameworkElement? Legend(IReadOnlyList<DashboardLegendEntry> entries, bool lineShape, Thickness margin)
     {
         if (entries.Count < 2) return null;
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Margin = margin };
+        var panel = new DashboardWrapPanel { Spacing = 12, RowSpacing = 4, Margin = margin };
         foreach (var entry in entries)
         {
             var swatch = new Border
@@ -70,7 +70,7 @@ internal static class DashboardChartChrome
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         if (swatch is { } color)
-            grid.Children.Add(new Border { Width = 12, Height = 2, CornerRadius = new CornerRadius(999), Background = B(color), VerticalAlignment = VerticalAlignment.Center });
+            grid.Children.Add(new Border { Width = 12, Height = 2, CornerRadius = new CornerRadius(1.5), Background = B(color), VerticalAlignment = VerticalAlignment.Center });
         var labelText = Text(label, 11, color: MutedForeground);
         Grid.SetColumn(labelText, 1);
         grid.Children.Add(labelText);
@@ -417,6 +417,8 @@ internal sealed class DashboardStackedColumnChart : Grid
     private readonly Grid _bars = new() { ColumnSpacing = 2 };
     private readonly Canvas _overlay = new() { IsHitTestVisible = false };
     private int? _active;
+    private int? _hovered;
+    private int? _focused;
     private double _scaleMax = 1;
 
     public void Build()
@@ -435,8 +437,11 @@ internal sealed class DashboardStackedColumnChart : Grid
         Children.Add(plot);
         AutomationProperties.SetName(this, AccessibleLabel);
         for (var i = 0; i < Columns.Count; i++) _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        plot.SizeChanged += (_, e) => DrawBars(e.NewSize.Height);
-        _bars.PointerExited += (_, _) => SetActive(null);
+        plot.SizeChanged += (_, e) =>
+        {
+            if (_bars.Children.Count == 0 || e.NewSize.Height != e.PreviousSize.Height) DrawBars(e.NewSize.Height);
+            else DrawTooltip();
+        };
 
         var ticks = new Canvas { Height = 14, Margin = new Thickness(0, 6, 0, 0) };
         var stride = Math.Max(1, (int)Math.Ceiling(Columns.Count / 4.0));
@@ -484,15 +489,16 @@ internal sealed class DashboardStackedColumnChart : Grid
             {
                 IsTabStop = true,
                 UseSystemFocusVisuals = true,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 VerticalContentAlignment = VerticalAlignment.Stretch,
                 Content = new Border { CornerRadius = new CornerRadius(4), Background = B(_active == index ? Alpha(Foreground, 0.05) : Colors.Transparent), Child = stack },
             };
             AutomationProperties.SetName(cell, DashboardText.T("web.admin.dashboard.chart.columnReading",
                 ("bucket", FormatBucket(column.T)), ("value", FormatValue(column.Total))));
-            cell.PointerEntered += (_, _) => SetActive(index);
-            cell.GotFocus += (_, _) => SetActive(index);
-            cell.LostFocus += (_, _) => SetActive(null);
+            cell.PointerEntered += (_, _) => { _hovered = index; SetActive(index); };
+            cell.PointerExited += (_, _) => { if (_hovered == index) _hovered = null; SetActive(_hovered ?? _focused); };
+            cell.GotFocus += (_, _) => { _focused = index; SetActive(index); };
+            cell.LostFocus += (_, _) => { if (_focused == index) _focused = null; SetActive(_hovered ?? _focused); };
             Grid.SetColumn(cell, i);
             _bars.Children.Add(cell);
         }
@@ -503,7 +509,11 @@ internal sealed class DashboardStackedColumnChart : Grid
     {
         if (_active == index) return;
         _active = index;
-        DrawBars(_bars.ActualHeight);
+        // Interaction must not remove the focused or hovered column from the tree.
+        foreach (var cell in _bars.Children.OfType<ContentControl>())
+            if (cell.Content is Border background)
+                background.Background = B(Grid.GetColumn(cell) == index ? Alpha(Foreground, 0.05) : Colors.Transparent);
+        DrawTooltip();
     }
 
     private void DrawTooltip()
@@ -580,8 +590,8 @@ internal static class DashboardLoadMeter
     {
         var slot = new Grid { Height = 3, Width = width, VerticalAlignment = VerticalAlignment.Center };
         if (fill is not { } value) return slot;
-        var track = new Border { Background = B(BorderColor, 0.7), CornerRadius = new CornerRadius(999) };
-        var bar = new Border { Background = warning ? B(DashboardUi.Warning) : B(Foreground, 0.55), CornerRadius = new CornerRadius(999), HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 3 };
+        var track = new Border { Background = B(BorderColor, 0.7), CornerRadius = new CornerRadius(1.5) };
+        var bar = new Border { Background = warning ? B(DashboardUi.Warning) : B(Foreground, 0.55), CornerRadius = new CornerRadius(1.5), HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 3 };
         slot.Children.Add(track);
         slot.Children.Add(bar);
         slot.SizeChanged += (_, e) => bar.Width = Math.Max(3, Math.Clamp(value, 0, 100) / 100.0 * e.NewSize.Width);
