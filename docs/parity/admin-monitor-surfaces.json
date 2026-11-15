@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings and shared Server Activity",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; no Manage pages)",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Activity.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Dashboard.cs",
@@ -20,7 +20,11 @@
     "src/SiloPlayer.Core/Services/Admin/AdminActivityIpLookup.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminActivityListState.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminActivityPresentation.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminManageData.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminNavigation.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminPageGuards.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminPageRegistry.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminRouteCatalog.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminText.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardActivityFeed.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardChartMath.cs",
