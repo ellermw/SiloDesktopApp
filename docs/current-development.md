@@ -1,3 +1,51 @@
+# November 15 - Admin Manage Subtitle Files
+
+Adds the registered Subtitle Files page on PR167's Manage foundation: bounded cursor lists,
+URL filters, uploader discovery, guarded metadata editing and deletion, and bounded subtitle
+downloads. The pager remains mounted across reads; row actions bind directly to their row,
+queued renders log failures, and download/uploader-only updates retain rows and keyboard focus.
+
+Official reference: ad7fe63a3428be01bf3da56738ce0e861c871393. Subtitle Files contracts
+and WebUI are unchanged from fd0d8c6c. Base: PR167 head 4b962d5d79c42d0ea27e0c45fd418a14ec54c815;
+version remains 1.2.1064 under Beta pipeline control. This increment depends on PR167.
+
+Verification passed 184 focused tests, 6,785 full unit tests, Release publish/native host build,
+admin-manage-foundation, admin-monitor and three consecutive admin-subtitles native runs,
+including narrow viewport checks. Inspected list and conflict-sheet captures. Evidence:
+D:/SiloPlayer-build/server-update-nov14/manage-subtitle-files/lead-delivery-receipt.json.
+See docs/parity/admin-manage-subtitle-files.md for scope and remaining review limits.
+No live-server, real save-picker, multilingual, all-DPI or complete WebUI parity claim.
+Installed player/settings untouched. Shared reusable build outputs remain active for the
+ongoing parity task (about 1.48 GiB); no cleanup deletion was retried, 0 GiB recovered on C:/D:.
+
+---
+
+# November 14 - Admin Manage navigation and bounded-data foundation
+
+Adds six Manage topics and 21 route identities, immutable nested/query state,
+registered-page-only navigation/search, shared authority and dirty guards,
+request-bound cursor pagination and scope-bound complete collection snapshots.
+This foundation registers no production Manage page. Monitor remains available.
+
+Reference: official WebUI 1452ea2d10efbe7d3ea5ce7140fb49756b493670. A fresh
+fetch at fd0d8c6c09af11aa2b165034e6c553a45334f2fd adds watchsync and player
+marker changes; foundation reference files are unchanged. Version 1.2.1064
+remains under Beta pipeline control. Independent review findings were resolved;
+see docs/parity/admin-manage-foundation.md for the frozen domain contracts.
+
+Focused checks passed 157 tests. Initial full verification passed 6,746 unit
+tests, Release publish/native build, admin-manage-foundation and admin-monitor.
+The native fixture verifies URL replacement/Back, registered badges, generic
+leave guards and outer-page suspension with synthetic data. Final dependency
+reconciliation verification is recorded in the delivery receipt under
+D:/SiloPlayer-build/server-update-nov14/manage-foundation/.
+No finished Manage domain, live-server or full visual/DPI parity claim.
+Installed player/settings untouched. Shared reusable generated payloads remain
+active; cleanup was not retried after the prior automatic approval rejection,
+with 0 GiB recovered on C: and D:.
+
+---
+
 # November 14 — Preserve stored subtitle identity after deletion
 
 A same-file recovery or queued subtitle selection now resolves a stored subtitle by
