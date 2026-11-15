@@ -1258,9 +1258,9 @@ public sealed partial class MainWindow : Window
     {
         _navigationHostLoaded = true;
         if (TryConsumePendingActivation()) return;
-        if (IsResetActivationRoute(_pendingActivationArgument) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl))
+        if ((IsResetActivationRoute(_pendingActivationArgument) || InviteDeepLink.IsServerLinkRoute(_pendingActivationArgument)) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl))
         {
-            // A reset link cannot choose a server or restore an unrelated saved account.
+            // An account link cannot choose a server or restore an unrelated saved account.
             HideMainNavigation();
             _navigationService.Navigate<ServerSelectPage>();
             return;
@@ -1296,7 +1296,7 @@ public sealed partial class MainWindow : Window
     private bool TryConsumePendingActivation()
     {
         var argument = _pendingActivationArgument;
-        if (IsResetActivationRoute(argument) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl)) return false;
+        if ((IsResetActivationRoute(argument) || InviteDeepLink.IsServerLinkRoute(argument)) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl)) return false;
         argument = Interlocked.Exchange(ref _pendingActivationArgument, null);
         if (Uri.TryCreate(argument?.Trim().Trim('"'), UriKind.Absolute, out var callback) &&
             callback.Scheme == "org.siloserver.silo" && callback.Host.Length == 0 && callback.AbsolutePath == "/auth/callback")
@@ -1312,7 +1312,16 @@ public sealed partial class MainWindow : Window
             _navigationService.Navigate<PasswordRecoveryPage>(resetLink);
             return true;
         }
-        if (!InviteDeepLink.TryParse(argument, out var invitation)) return false;
+        if (!InviteDeepLink.TryParse(argument, _apiClient.BaseUrl, out var invitation))
+        {
+            if (InviteDeepLink.IsServerLinkRoute(argument))
+            {
+                App.Services.GetRequiredService<ToastService>().Error(AppStrings.Get("native.auth.invite.serverMismatch",
+                    fallback: "This invitation could not be opened for the selected server. Select the server that issued it and open the link again."));
+                return true;
+            }
+            return false;
+        }
 
         // The WebUI does not let an invitation replace an existing signed-in
         // session. Preserve that account and take it home rather than silently
@@ -1346,10 +1355,8 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static bool IsResetActivationRoute(string? argument)
-        => Uri.TryCreate(argument?.Trim().Trim('"'), UriKind.Absolute, out var link)
-            && link.Scheme is "http" or "https"
-            && link.AbsolutePath.Contains("/reset-password/", StringComparison.Ordinal);
+    // Current reset links carry the token in the fragment (/reset-password#token); older ones in the path.
+    private static bool IsResetActivationRoute(string? argument) => PasswordRecovery.IsResetLinkRoute(argument);
 
     private void OnNavigated_ConsumePendingActivation(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {

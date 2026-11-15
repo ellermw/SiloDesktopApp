@@ -17,15 +17,33 @@ public partial class InviteClaimViewModel(
 {
     private CancellationTokenSource? _lifetime;
     private InviteClaimNavigation? _navigation;
+    // The transport the lookup established: a server that advertises token_in_body only ever sees the token in a body.
+    private bool _tokenInBody;
 
     [ObservableProperty] private InvitationLookupResponse? _invitation;
     [ObservableProperty] private string _password = "";
     [ObservableProperty] private string _confirmPassword = "";
+    // The address a link invitation asks the invitee to enter; unused when the invitation is bound to one.
+    [ObservableProperty] private string _email = "";
     [ObservableProperty] private string? _loginBackgroundUrl;
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isSubmitting;
     [ObservableProperty] private bool _isExpired;
     [ObservableProperty] private string? _errorMessage;
+    [ObservableProperty] private string? _statusMessage;
+    /// <summary>The account exists (acceptance succeeded) but the server did not sign it in; the form is finished.</summary>
+    [ObservableProperty] private bool _accountCreated;
+    /// <summary>
+    /// The outcome is unknown (or the invitation is gone): acceptance stays blocked until the invitation is reloaded,
+    /// so an account that may already exist is never created a second time by a blind retry.
+    /// </summary>
+    [ObservableProperty] private bool _requiresReload;
+    /// <summary>Password sign-in is off on this server; the invitation is unspent but cannot be accepted here.</summary>
+    [ObservableProperty] private bool _localLoginDisabled;
+
+    public bool EmailRequired => Invitation?.EmailRequired == true;
+
+    partial void OnInvitationChanged(InvitationLookupResponse? value) => OnPropertyChanged(nameof(EmailRequired));
 
     public event Action? InvitationAccepted;
 
@@ -37,14 +55,21 @@ public partial class InviteClaimViewModel(
         IsLoading = true;
         IsExpired = false;
         ErrorMessage = null;
+        StatusMessage = null;
         Invitation = null;
+        AccountCreated = false;
+        RequiresReload = false;
+        LocalLoginDisabled = false;
+        Email = "";
         authService.ConfigureServer(navigation.ServerUrl);
 
         try
         {
-            var invitationTask = authApi.GetInvitationAsync(navigation.Token, _lifetime.Token);
+            var invitationTask = authApi.LookupInvitationAsync(navigation.Token, _lifetime.Token);
             var brandingTask = LoadBrandingAsync(_lifetime.Token);
-            Invitation = await invitationTask;
+            var (invitation, tokenInBody) = await invitationTask;
+            _tokenInBody = tokenInBody;
+            Invitation = invitation;
             await brandingTask;
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
@@ -77,11 +102,27 @@ public partial class InviteClaimViewModel(
         }
     }
 
+    // Something before a single "@", no whitespace. The server owns the full rule and answers validation_failed.
+    private static bool LooksLikeEmail(string value)
+    {
+        var at = value.IndexOf('@');
+        return at > 0 && at == value.LastIndexOf('@') && at < value.Length - 1 && !value.Any(char.IsWhiteSpace);
+    }
+
     [RelayCommand]
     private async Task AcceptAsync()
     {
         if (_navigation == null || Invitation == null || IsSubmitting) return;
+        // Blocked states are final until the invitation is reloaded; pressing Create again does not retry them.
+        if (AccountCreated || RequiresReload || LocalLoginDisabled) return;
         ErrorMessage = null;
+        // A link invitation has no address yet: the invitee enters theirs.
+        string? enteredEmail = Invitation.EmailRequired ? Email.Trim() : null;
+        if (enteredEmail != null && !LooksLikeEmail(enteredEmail))
+        {
+            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invalidEmail", fallback: "Enter a valid email address, like name@example.com"));
+            return;
+        }
         if (Password.Length < 8)
         {
             ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters."));
@@ -96,13 +137,22 @@ public partial class InviteClaimViewModel(
         IsSubmitting = true;
         try
         {
+            // Sent exactly once per press. This layer never replays a request whose outcome is unknown.
             var acceptance = await authApi.AcceptInvitationAsync(
                 _navigation.Token,
                 Password,
+                enteredEmail,
+                _tokenInBody,
                 _lifetime?.Token ?? CancellationToken.None);
             if (acceptance.LoginStatus != "signed_in" || acceptance.Tokens is not { } response)
             {
-                ErrorMessage = ShellText(nameof(ErrorMessage), () => "Your account was created. Use Sign in to continue with your new password.");
+                // Committed: the account exists. Finish the form and clear the password; Sign in continues from here.
+                AccountCreated = true;
+                Password = "";
+                ConfirmPassword = "";
+                StatusMessage = ShellText(nameof(StatusMessage), () => AppStrings.Get("web.auth.invite.created",
+                    new Dictionary<string, object?> { ["username"] = acceptance.Username },
+                    $"Your account was created. Sign in as {acceptance.Username} with the password you chose."));
                 return;
             }
             var generation = authService.SetTokens(
@@ -121,24 +171,50 @@ public partial class InviteClaimViewModel(
             InvitationAccepted?.Invoke();
         }
         catch (OperationCanceledException) when (_lifetime?.IsCancellationRequested == true) { }
-        catch (ApiException ex)
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.ErrorCode switch
-            {
-                "weak_password" => AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters."),
-                "already_used" or "not_found" => "This invitation is invalid or has expired.",
-                _ => ex.Message,
-            }));
-        }
         catch (Exception ex)
         {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is HttpRequestException
-                ? "Unable to connect to this Silo server."
-                : ex.Message));
+            ApplyFailure(ex);
         }
         finally
         {
             IsSubmitting = false;
+        }
+    }
+
+    private void ApplyFailure(Exception ex)
+    {
+        switch (InvitationAcceptOutcome.Classify(ex))
+        {
+            case InvitationAcceptFailure.LocalLoginDisabled:
+                LocalLoginDisabled = true;
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, AppStrings.Get("web.auth.invite.localLoginDisabledNoInviter",
+                    fallback: "Password sign-in is turned off on this server, so this invitation cannot create an account. Ask the person who invited you to add you through the server's sign-in provider instead.")));
+                break;
+            case InvitationAcceptFailure.RateLimited:
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.forgotPassword.rateLimited", fallback: "Too many requests from this network. Wait a minute, then try again."));
+                break;
+            case InvitationAcceptFailure.ProfileUnavailable:
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invite.profileUnavailable", fallback: "This server cannot create the profile required by this invitation. Ask the administrator for help."));
+                break;
+            case InvitationAcceptFailure.EmailTaken:
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invite.emailTaken", fallback: "An account already uses this email address. Sign in instead, or use a different address."));
+                break;
+            case InvitationAcceptFailure.Validation:
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is ApiException { ErrorCode: "weak_password" }
+                    ? AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters.")
+                    : ex.Message));
+                break;
+            case InvitationAcceptFailure.LinkUnavailable:
+                // The invitation no longer exists for acceptance; a reload shows the unavailable page.
+                RequiresReload = true;
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invite.unavailable", fallback: "This link may have been used, revoked, or expired. Sign in if you already created your account, or ask for a fresh invitation."));
+                break;
+            default:
+                // A 5xx, timeout or lost response: the account may exist. Block a blind retry until the invitation is reloaded.
+                RequiresReload = true;
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invite.recovery",
+                    fallback: "We could not confirm the result. Your account may have been created. Try signing in, or reload this invitation before making another attempt."));
+                break;
         }
     }
 
