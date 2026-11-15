@@ -1,3 +1,33 @@
+# November 15 — Share library detail reads and bound detail speculation
+
+Library detail navigation now shares item-and-library-scoped requests with card
+intent. Unclaimed detail speculation is limited to one live request, replaces
+older intent, and respects the existing 140 ms hover dwell, 32-entry retention
+and two-minute expiry. Foreground reads adopt matching work or start immediately.
+Saved library state and ratings-capability prerequisites start concurrently.
+
+Scoped detail pages retain ownership of realtime and progress-save reconciliation:
+the cache supplies the initial shared snapshot without issuing a second set of
+corrective reads. Save settlement invalidates synchronously, with cancellation
+callbacks outside the cache lock. Cold reads start without waiting for the UI
+queue. Existing unscoped cache freshness and final-save rules are preserved.
+
+Verification: 490 focused tests; 6,621 full unit tests; Release app publish and
+native host build; retained-library-review and oct20-detail-cards native groups.
+Evidence: D:/SiloPlayer-build/server-update-nov14/background-loading/ and
+D:/SiloPlayer-build/results/*-bounded-detail-reviewed/. Source baseline is
+f1a98408e2865302432dfe2a058f1702ea516b23; version stays 1.2.1064 under pipeline control.
+
+These checks establish sharing, request bounds and freshness with synthetic data.
+They do not measure real-server latency, scrolling traffic, HTTP/1.1 cancellation
+cost or total process memory. Watch-detail speculation remains a separate,
+uncapped path and needs its own follow-up; this is not a claim that all background
+work or full WebUI parity is complete. Shared generated outputs remain in use by
+the ongoing parity task; no cleanup was attempted here, and recovered space is
+0 GiB on C: and D:. The installed player and settings were not changed.
+
+---
+
 # November 14 — Admin Monitor visual follow-up verification
 
 Official WebUI main rechecked at 1a99f7beffcea3850f067df000c319f2704fd23b.
