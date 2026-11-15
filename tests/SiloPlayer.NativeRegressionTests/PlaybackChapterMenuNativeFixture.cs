@@ -150,6 +150,7 @@ internal static class PlaybackChapterMenuNativeFixture
                 owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 460, 700)); video.SynchronizePosition();
             }
             var menu = await Open(requireCompact: more);
+            VerifyPreLoadedActivation(video, menu);
             var list = (ListView)Get(menu, "_list")!;
             if (more)
             {
@@ -443,6 +444,39 @@ internal static class PlaybackChapterMenuNativeFixture
                 var opened = Menu(service)!;
                 foreground.WatchMenu((Window)Get(opened, "_window")!, Hwnd(opened));
                 return opened;
+        }
+    }
+
+    private static void VerifyPreLoadedActivation(MpvVideoWindow video, object prototype)
+    {
+        var type = prototype.GetType();
+        var constructor = type.GetConstructors(Private).Single();
+        var closedType = constructor.GetParameters()[6].ParameterType;
+        var closed = System.Linq.Expressions.Expression.Lambda(closedType,
+            System.Linq.Expressions.Expression.Empty(),
+            System.Linq.Expressions.Expression.Parameter(closedType.GenericTypeArguments[0])).Compile();
+        foreach (var selectOnOpen in new[] { true, false })
+        {
+            var invoked = false;
+            // Construct without ShowAsync so activation deterministically arrives
+            // before Loaded, without racing either native window message pump.
+            var menu = constructor.Invoke(new object?[]
+            {
+                video, Get(prototype, "_anchor"), "Pre-Loaded activation", Get(prototype, "_choices"),
+                (Func<bool>)(() => true), (Action<string>)(_ => invoked = true), closed,
+                null, null, null, false, false,
+            });
+            try
+            {
+                type.GetProperty("SelectOnOpen", Private)!.SetValue(menu, selectOnOpen);
+                var list = (ListView)Get(menu, "_list")!;
+                Require(list.SelectedIndex == -1 && !((TaskCompletionSource)Get(menu, "_loaded")!).Task.IsCompleted,
+                    "Pre-Loaded activation check did not start with an unloaded, unselected menu.");
+                Call(menu, "Input", "activate");
+                Require(!invoked && list.SelectedIndex == -1 && !(bool)Get(menu, "_finished")!,
+                    $"Pre-Loaded activation invoked a hidden choice (SelectOnOpen={selectOnOpen}).");
+            }
+            finally { Call(menu, "Input", "cancel"); }
         }
     }
 

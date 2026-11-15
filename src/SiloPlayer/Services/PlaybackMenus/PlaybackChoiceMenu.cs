@@ -512,7 +512,8 @@ internal class PlaybackChoiceMenu
                 if (_footerIndex < controls.Count && controls[_footerIndex].Tag is Action callback) callback();
             }
             else if (_list.SelectedItem is ListViewItem { Tag: string id }) Select(id);
-            else if (_choices.FirstOrDefault(choice => choice.IsEnabled) is { } first) Select(first.Id);
+            else if (!SelectOnOpen && _loaded.Task.IsCompletedSuccessfully &&
+                _choices.FirstOrDefault(choice => choice.IsEnabled) is { } first) Select(first.Id);
             return;
         }
         var current = _list.SelectedIndex;
