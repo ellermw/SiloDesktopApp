@@ -15,6 +15,7 @@ public enum AdminRouteDescendants
     TaskKey,
     /// <summary>A saved or uploaded backup restore workflow.</summary>
     BackupRestore,
+
 }
 
 /// <summary>A sidebar entry: a leaf page or a collapsible topic.</summary>
@@ -45,6 +46,7 @@ public sealed record AdminNavLeaf(
 public sealed record AdminNavTopic(string Id, string LabelKey, string Icon, IReadOnlyList<AdminNavLeaf> Leaves) : AdminNavEntry;
 
 /// <summary>A sidebar section and its entries in official sidebar order.</summary>
+
 public sealed record AdminNavSection(string Id, string LabelKey, IReadOnlyList<AdminNavEntry> Entries);
 
 /// <summary>Outcome of resolving a WebUI admin href.</summary>
@@ -78,6 +80,7 @@ public sealed record AdminRouteResolution(
 /// c11b0a968f0d5980b7005579fb95acc2d11d8321. Manage has six topics and
 /// twenty-one leaves; Configure has three topics and nineteen leaves.
 /// This table only states identity: whether a leaf is shown
+
 /// or reachable is decided by <see cref="AdminPageRegistry"/>, so a leaf without
 /// a native page is never presented.
 /// </summary>
@@ -120,6 +123,7 @@ public static class AdminRouteCatalog
         ["web.admin.settings.search.logging.label"], []);
 
     /// <summary>The sidebar, in order. Page registration controls visibility.</summary>
+
     public static IReadOnlyList<AdminNavSection> Sections { get; } =
     [
         new("monitor", "web.admin.shell.nav.section.monitor",
@@ -308,6 +312,7 @@ public static class AdminRouteCatalog
                     ["settings", "configuration", "jellyfin", "audiobookshelf", "abs", "proxy", "public url", "server id", "session ttl", "web player"], [], ["web.admin.settings.search.compatibility.setting.jellyfin", "web.admin.settings.search.compatibility.setting.allowJellyfinAppsToConnect", "web.admin.settings.search.compatibility.setting.addressJellyfinAppsShouldUse", "web.admin.settings.search.compatibility.setting.jellyfinWebPlayer", "web.admin.settings.search.compatibility.setting.downloadDetails", "web.admin.settings.search.compatibility.setting.webPlayerVersionToInstall", "web.admin.settings.search.compatibility.setting.webPlayerInstallFolder", "web.admin.settings.search.compatibility.setting.nameShownToJellyfinApps", "web.admin.settings.search.compatibility.setting.serverId", "web.admin.settings.search.compatibility.setting.jellyfinVersionToReport", "web.admin.settings.search.compatibility.setting.staySignedInFor", "web.admin.settings.search.compatibility.setting.endPlaybackSessionsAfter", "web.admin.settings.search.compatibility.setting.audiobookshelf", "web.admin.settings.search.compatibility.setting.allowAudiobookshelfAppsToConnect"]),
             ]),
         ]),
+
     ];
 
     private static readonly IReadOnlyDictionary<AdminRoute, (AdminNavLeaf Leaf, AdminNavTopic? Topic, AdminNavSection Section)> Index = BuildIndex();
@@ -379,6 +384,7 @@ public static class AdminRouteCatalog
             AdminRouteDescendants.TaskKey => segments.Count <= 1,
             AdminRouteDescendants.BackupRestore => segments.Count == 0 || (segments.Count == 2 && segments[1] == "restore")
                 || (segments.Count == 3 && segments[0] == "uploads" && segments[2] == "restore"),
+
             _ => segments.Count == 0,
         };
     }
@@ -398,6 +404,7 @@ public static class AdminRouteCatalog
     private static string QueryString(IReadOnlyDictionary<string, string>? query) =>
         query is not { Count: > 0 } ? "" : "?" + string.Join('&', query.OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)));
+
 
 
     /// <summary>WebUI <c>ADMIN_SETTINGS_NAV</c> ids, first page first.</summary>
@@ -500,6 +507,7 @@ public static class AdminRouteCatalog
         var redirected = raw != id || query.Count > 0;
         var leaf = Leaves.SingleOrDefault(candidate => candidate.Href == canonical);
         if (leaf == null) return new(AdminRouteResolutionKind.Unsupported, null, canonical, redirected);
+
         return new(AdminRouteResolutionKind.Route, new AdminRouteRequest(leaf.Route), canonical, redirected);
     }
 

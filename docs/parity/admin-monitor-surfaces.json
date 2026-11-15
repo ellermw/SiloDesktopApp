@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; no Manage pages); Configure catalog and complete General settings page",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity, the Admin Manage foundation and Subtitle Files, and the Configure catalog and General settings page",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Activity.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Dashboard.cs",
@@ -81,6 +81,17 @@
     "src/SiloPlayer/Services/AdminConfigureServices.cs",
     "src/SiloPlayer/Controls/AdminSettingsUi.cs",
     "src/SiloPlayer/Views/Admin/AdminGeneralSettingsPage.cs",
-    "src/SiloPlayer/Views/Admin/AdminGeneralSettingsPage.xaml"
+    "src/SiloPlayer/Views/Admin/AdminGeneralSettingsPage.xaml",
+    "src/SiloPlayer.Core/Api/AdminSubtitlesApi.cs",
+    "src/SiloPlayer.Core/Api/SiloApiClient.AdminSubtitles.cs",
+    "src/SiloPlayer.Core/Models/Admin/AdminSubtitlesModels.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSubtitleSessions.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSubtitlesController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSubtitlesText.cs",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.Actions.cs",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.Rows.cs",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesRegistration.cs"
   ]
 }

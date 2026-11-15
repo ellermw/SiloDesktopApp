@@ -181,6 +181,7 @@ public sealed partial class AdminShellPage : Page
         if (_active && _lease?.IsCurrent == true) _ = LoadServerStatusAsync(_lease, force: true);
     }
 
+
     /// <summary>
     /// Replaces the shown page's location in place (WebUI <c>navigate(…, {replace: true})</c>):
     /// URL state such as tabs and filters, or Collections <c>/new</c> becoming
@@ -367,6 +368,7 @@ public sealed partial class AdminShellPage : Page
         _request = request;
         var route = request.Route;
         ApplyContentGutter();
+
         AttachRestartBanner();
         AttachLoggingHealth();
         _route = route;

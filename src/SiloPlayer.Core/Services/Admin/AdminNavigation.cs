@@ -7,6 +7,7 @@ namespace SiloPlayer.Core.Services.Admin;
 /// <summary>
 /// Stable admin route identities (WebUI <c>ADMIN_NAV_SECTIONS</c>): the five
 /// Monitor pages, Manage's twenty-one and Configure's nineteen sidebar leaves. A route is an
+
 /// identity, not a promise of a page: the shell shows and opens only routes
 /// with an <see cref="AdminPageRegistration"/>, so no dead navigation ships.
 /// Values are appended only; never renumber.
@@ -87,6 +88,7 @@ public enum AdminRoute
     AiSettings,
     Recommendations,
     CompatibilitySettings,
+
 }
 
 /// <summary>
@@ -225,6 +227,7 @@ public static class AdminNavigation
             return ("web.admin.common.title.header.task", "web.admin.common.title.tab.task");
         if (request.Route == AdminRoute.Plugins && request.Segments.Count > 0)
             return ("web.admin.common.title.header.plugin", "web.admin.common.title.tab.plugin");
+
         var leaf = AdminRouteCatalog.Leaf(request.Route);
         return (leaf.HeaderTitleKey, leaf.TabTitleKey);
     }

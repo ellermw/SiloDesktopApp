@@ -6,6 +6,7 @@ using SiloPlayer.Core.Services.Updates;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Views.Admin;
 using System.IO.Pipes;
 using System.Text;
 
@@ -381,6 +382,8 @@ public partial class App : Application
         services.AddSingleton<AdminMonitorApi>();
         services.AddSingleton<AdminMonitorAuthority>();
         AdminConfigureServices.Add(services);
+        services.AddAdminSubtitleFiles();
+
         services.AddSingleton<LogsStreamClient>();
         services.AddSingleton(sp => new ServerActivityStore(
             sp.GetRequiredService<AdminMonitorApi>(), sp.GetRequiredService<AdminMonitorAuthority>(),

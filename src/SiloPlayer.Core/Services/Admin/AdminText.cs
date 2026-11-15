@@ -430,6 +430,7 @@ public static class AdminText
         // Configure navigation and General: official c11b0a968f0d5980b7005579fb95acc2d11d8321. Compiled message AST restored to ICU.
 
 
+
         // Manage navigation: official WebUI 1452ea2d; keys and ICU patterns preserved.
         ["web.admin.common.title.header.accessGroups"] = "Access Groups",
         ["web.admin.common.title.header.autoscan"] = "Autoscan",
