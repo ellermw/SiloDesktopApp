@@ -4,7 +4,7 @@ Reference: official Silo Server/WebUI `c11b0a968f0d5980b7005579fb95acc2d11d8321`
 
 ## Status
 
-Email (C2a) is **In progress**: implemented, independently reviewed and verified locally, awaiting a pushed Beta PR. It depends on unmerged General PR173. The remaining 17 leaves, including Security (C2b), are unfinished. No Configure change is merged or released.
+Email (C2a) is **Done** by the owner’s delivery definition: independently reviewed, verified and pushed to non-draft Beta [PR174](https://github.com/ellermw/SiloDesktopApp/pull/174). It is open and unmerged. It depends on unmerged General PR173. The remaining 17 leaves, including Security (C2b), are unfinished. No Configure change is merged or released.
 
 ## Delivered behavior
 

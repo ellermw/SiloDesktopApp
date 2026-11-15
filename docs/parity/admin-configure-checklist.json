@@ -3,10 +3,11 @@
   "officialCommit": "c11b0a968f0d5980b7005579fb95acc2d11d8321",
   "statusRule": "Done = verified and pushed to a PR with its link. In progress = implementation/review/testing, not yet pushed. Remaining = unstarted or blocked, with reason. Merged/released are separate.",
   "inventory": "3 topics, 19 leaves, 88 nested feature entries; nested route patterns remain owned by their leaves.",
-  "scopeNote": "General is verified and pushed to PR173. Email (C2a) is implemented and locally verified, in progress until pushed to a PR. Catalog coverage does not establish implementation: the other 17 leaves and their nested functionality remain unfinished.",
+  "scopeNote": "General and Email are verified and pushed to PR173 and PR174. Catalog coverage does not establish implementation: the other 17 leaves and their nested functionality remain unfinished.",
   "dependencies": [
     "https://github.com/ellermw/SiloDesktopApp/pull/167",
-    "https://github.com/ellermw/SiloDesktopApp/pull/171"
+    "https://github.com/ellermw/SiloDesktopApp/pull/171",
+    "https://github.com/ellermw/SiloDesktopApp/pull/173"
   ],
   "carryForward": {
     "source": "Server-sync accounting, November 15, 2026; 183 commits and 18 OpenAPI paths/35 schemas inventoried, not implemented or runtime verified.",
@@ -402,10 +403,11 @@
         "Test email recipient + Send test (POST /admin/email/test)"
       ],
       "children": [],
-      "status": "In progress",
-      "statusReason": "Independently reviewed and verified at 3ab6d459a3c06fe7844cc5baaa83723d67cf001a; awaiting pushed Beta PR. See docs/parity/admin-email.md.",
+      "status": "Done",
+      "statusReason": "Verified and pushed to non-draft Beta PR174; independently reviewed with a native authority-retirement regression.",
       "verifiedCode": "3ab6d459a3c06fe7844cc5baaa83723d67cf001a",
-      "dependsOn": "https://github.com/ellermw/SiloDesktopApp/pull/173"
+      "dependsOn": "https://github.com/ellermw/SiloDesktopApp/pull/173",
+      "pr": "https://github.com/ellermw/SiloDesktopApp/pull/174"
     },
     {
       "id": "notifications",
@@ -472,5 +474,5 @@
       "statusReason": "Unstarted; delivered in a separate verified group after General."
     }
   ],
-  "mergedReleasedStatus": "PR173 is open and unmerged; no Configure changes released. Pipeline owns review, reconciliation, merge, stamping and packaging."
+  "mergedReleasedStatus": "PR173 and PR174 are open and unmerged; no Configure changes released. Pipeline owns review, reconciliation, merge, stamping and packaging."
 }

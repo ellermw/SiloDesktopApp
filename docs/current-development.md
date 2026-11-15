@@ -1,10 +1,10 @@
-# November 15 - Configure Email independently verified for Beta submission
+# November 15 - Configure Email delivered in Beta PR174
 
 Email is implemented, independently reviewed and verified at code 3ab6d459a3c06fe7844cc5baaa83723d67cf001a, based on General PR173 905f9ba2 and Beta a06cc8b3. All eight Email settings, the password Clear/Keep/save states and the saved-settings test-email action are reachable through production Configure navigation. Lead review reproduced and fixed an authority-retirement race: password input awaiting PasswordChanged now clears when the owner retires. The added native regression failed on prior product bytes and passes on final bytes. Shared settings dialog/alert/skeleton/select primitives are also covered by General regression checks.
 
 Final checks pass: 7,071 main unit tests, 616 focused Admin/architecture tests, Release publish/matching native host, and native Email 297 PASS records, General 183, foundation 36, Subtitle Files 64, Monitor 113 and Dashboard 184. Source/payload/log/capture hashes are in D:/SiloPlayer-build/server-update-nov14/configure-email/final-receipt.json; parity details and known failed candidates are in docs/parity/admin-email.md. Layout/state captures cover 1440x900, 1440x600, 1920x600 and 800x600. Synthetic server/current DPI only: no live SMTP, all-DPI/full visual parity, Narrator, wheel-distance or measured performance certification.
 
-Status before PR submission: General Done in open PR173; Email In progress until pushed to its qualifying Beta PR; the other 17 leaves remain unfinished. No Configure changes are merged or released. Official main re-fetched at c11b0a968f0d5980b7005579fb95acc2d11d8321. Version remains 1.2.1081-beta.1 (numeric 1.2.1080.1); pipeline owns stamping/packaging/reconciliation/merge. Final storage preflight: 4.517 GiB generated, C184.87/D474.87 GiB free. Installed player/settings remain untouched.
+Delivery status: General Done in open PR173; Email Done in open non-draft Beta [PR174](https://github.com/ellermw/SiloDesktopApp/pull/174); the other 17 leaves remain unfinished. No Configure changes are merged or released. Official main re-fetched at c11b0a968f0d5980b7005579fb95acc2d11d8321. Version remains 1.2.1081-beta.1 (numeric 1.2.1080.1); pipeline owns stamping/packaging/reconciliation/merge. Final storage preflight: 4.517 GiB generated, C184.87/D474.87 GiB free. Installed player/settings remain untouched.
 
 ---
 
