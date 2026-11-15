@@ -32,9 +32,9 @@
 
 ## Delivery sequence
 
-- [ ] Recover the interrupted audit's existing extracts and thread evidence; produce the complete route/API/UI-state matrix and machine-readable checklist. All leaves start Remaining.
+- [x] Recover the interrupted audit's existing extracts and thread evidence; produce the complete route/API/UI-state matrix and machine-readable checklist. The result tracks 19 leaves, 88 nested feature entries and three descendant groups (four URL patterns). The audit alone finishes no leaf.
 - [x] Reconcile Beta `7e62ef4c562b88d0b16cc4025b3fc74c23a9264e` with PR167 `66926757ff32cd53d92b5e15e8ad89531e381e66` and PR171 `3331916bbf295808fd6169216a67d721e0b70c1e`. Integration source `5cc7a0da3a17906a1cafce81c70d0ae42f01c88a`; 508 focused tests pass. Preserve both development-log records and both shell behaviors.
-- [ ] Select and write a concrete brief for the first small complete page group from the inventory, including its exact route, API operations, nested states and verification cases. Email and Network Access are candidates; confirm against inventory before product edits.
+- [x] Select and write a concrete brief for General plus the reusable guarded settings editor: `D:/SiloPlayer-build/server-update-nov14/configure-scope/general-implementation-brief.md`. Source audit section 5 supplies detailed layout and shared settings contracts.
 - [ ] Implement that brief with failing behavioral tests first, then focused/full units and actual published native controls. Keep one writer per checkout and one implementation assignment at a time.
 - [ ] Independently review the actual final diff against official source and repository standards; fix findings and rerun affected checks on final source.
 - [ ] Record exact source/payload/fixture hashes, tests, captures and limits; verify PR size/identity, commit/push, open a qualifying Beta PR and immediately link it through T3.

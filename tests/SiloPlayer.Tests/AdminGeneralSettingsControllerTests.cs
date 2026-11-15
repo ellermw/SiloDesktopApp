@@ -7,6 +7,51 @@ namespace SiloPlayer.Tests;
 
 public sealed class AdminGeneralSettingsControllerTests
 {
+    [Fact]
+    public async Task AcknowledgedSecretReplacementAndClearUpdatePresenceWithoutRetainingSecret()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminServerSettingsApi(kit.Client);
+        using var store = new AdminServerSettingsStore(api, authority, AdminGeneralSettingsController.Keys, AdminGeneralSettingsController.Secrets);
+        using var controller = new AdminGeneralSettingsController(api, store, authority);
+        var version = 1;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method != HttpMethod.Put) return Task.FromResult(request.RequestUri!.AbsolutePath.EndsWith("sensitive-status")
+                ? AdminMonitorKit.Json("""{"configured":[],"managed_by_env":[]}""") : Read(request));
+            var response = AdminMonitorKit.Json("""{"values":{"redis.db":"2"},"restart_required":false}""");
+            response.Headers.ETag = new($"\"saved-{++version}\""); return Task.FromResult(response);
+        };
+        await controller.OpenAsync();
+        controller.StageRedisUrl("redis://synthetic.invalid"); await controller.SaveAsync();
+        Assert.Contains("redis.url", controller.State.Configured);
+        Assert.Equal("", controller.State.Values["redis.url"]);
+        Assert.DoesNotContain("redis.url", controller.State.PersistedValues.Keys);
+        controller.StageRedisUrl(""); await controller.SaveAsync();
+        Assert.DoesNotContain("redis.url", controller.State.Configured);
+        Assert.Empty(controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task CanonicalValuesStaySeparateFromEditsMadeAfterSaveCapture()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminServerSettingsApi(kit.Client);
+        using var store = new AdminServerSettingsStore(api, authority, AdminGeneralSettingsController.Keys, AdminGeneralSettingsController.Secrets);
+        using var controller = new AdminGeneralSettingsController(api, store, authority);
+        kit.Http.Respond = (request, _) => Task.FromResult(Read(request)); await controller.OpenAsync();
+        var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        kit.Http.Respond = (_, _) => pending.Task;
+        controller.Set("branding.server_name", "First"); var save = controller.SaveAsync();
+        controller.Set("branding.server_name", "Later");
+        var response = AdminMonitorKit.Json("""{"values":{"branding.server_name":"Canonical first"},"restart_required":false}""");
+        response.Headers.ETag = new("\"two\""); pending.SetResult(response); await save;
+        Assert.Equal("Later", controller.State.Values["branding.server_name"]);
+        Assert.Equal("Canonical first", controller.State.PersistedValues["branding.server_name"]);
+        Assert.Contains("branding.server_name", controller.State.DirtyKeys);
+    }
     private static HttpResponseMessage Read(HttpRequestMessage request)
     {
         var path = request.RequestUri!.AbsolutePath;

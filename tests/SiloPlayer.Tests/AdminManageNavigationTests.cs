@@ -36,7 +36,7 @@ public sealed class AdminManageNavigationTests
         var leaves = AdminRouteCatalog.Leaves.ToArray();
         Assert.Equal(Enum.GetValues<AdminRoute>().Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(27, leaves.Length);
+        Assert.Equal(45, leaves.Length);
     }
 
     [Theory]
@@ -159,8 +159,6 @@ public sealed class AdminManageNavigationTests
     [InlineData("/admin/backups/4/restore", "/admin/backups/4/restore")]
     [InlineData("/admin/plugins/arr", "/admin/plugins/arr")]
     [InlineData("/admin/api-keys", "/admin/api-keys")]
-    [InlineData("/admin/settings/providers", "/admin/settings/providers")]
-    [InlineData("/admin/settings/subtitles", "/admin/settings/providers")]
     public void ConfigureAndOtherWebUiPagesAreUnsupportedNotRelabelled(string href, string canonical)
     {
         Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
@@ -285,7 +283,7 @@ public sealed class AdminManageNavigationTests
     {
         Assert.Empty(AdminNavigation.SearchGroups("sonarr", route => AdminNavigation.MonitorRoutes.Contains(route)));
 
-        static bool All(AdminRoute _) => true;
+        static bool All(AdminRoute route) => AdminRouteCatalog.SectionOf(route).Id != "configure";
         var sonarr = AdminNavigation.SearchGroups("sonarr", All);
         Assert.Equal(["web.admin.shell.nav.topic.autoscan", "web.admin.shell.nav.topic.requests"], sonarr.Select(group => group.LabelKey));
         Assert.All(sonarr, group => Assert.Equal("web.admin.shell.nav.item.settings", AdminRouteCatalog.Leaf(Assert.Single(group.Pages).Route).SidebarLabelKey));
@@ -322,7 +320,9 @@ public sealed class AdminManageNavigationTests
     [Fact]
     public void MonitorRoutesHaveCompleteTextAndManageTextIsDeclared()
     {
-        foreach (var route in Enum.GetValues<AdminRoute>()) Assert.Empty(AdminRouteCatalog.MissingTextKeys(route));
+        var missing = Enum.GetValues<AdminRoute>()
+            .SelectMany(route => AdminRouteCatalog.MissingTextKeys(route).Select(key => $"{route}: {key}"));
+        Assert.True(!missing.Any(), string.Join(Environment.NewLine, missing));
         Assert.Contains("web.admin.common.title.tab.user", AdminRouteCatalog.TextKeys(AdminRoute.Users));
         Assert.Contains("web.admin.common.title.tab.collectionEdit", AdminRouteCatalog.TextKeys(AdminRoute.Collections));
         Assert.Contains("web.admin.shell.nav.topic.downloads", AdminRouteCatalog.TextKeys(AdminRoute.DownloadSettings));

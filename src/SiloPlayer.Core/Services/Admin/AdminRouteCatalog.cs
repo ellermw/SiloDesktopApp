@@ -11,6 +11,10 @@ public enum AdminRouteDescendants
     Entity,
     /// <summary><c>/:userId/:deviceId</c> (device detail).</summary>
     UserDevice,
+    /// <summary>A task key beneath Scheduled Tasks.</summary>
+    TaskKey,
+    /// <summary>A saved or uploaded backup restore workflow.</summary>
+    BackupRestore,
 }
 
 /// <summary>A sidebar entry: a leaf page or a collapsible topic.</summary>
@@ -40,7 +44,7 @@ public sealed record AdminNavLeaf(
 /// <summary>A collapsible sidebar topic; <see cref="Id"/> keys the remembered open state.</summary>
 public sealed record AdminNavTopic(string Id, string LabelKey, string Icon, IReadOnlyList<AdminNavLeaf> Leaves) : AdminNavEntry;
 
-/// <summary>A sidebar section (Monitor, Manage) and its entries in sidebar order.</summary>
+/// <summary>A sidebar section and its entries in official sidebar order.</summary>
 public sealed record AdminNavSection(string Id, string LabelKey, IReadOnlyList<AdminNavEntry> Entries);
 
 /// <summary>Outcome of resolving a WebUI admin href.</summary>
@@ -71,8 +75,9 @@ public sealed record AdminRouteResolution(
 /// The admin sidebar and route table (WebUI <c>lib/adminNavigation.ts</c>
 /// <c>ADMIN_NAV_SECTIONS</c>, <c>App.tsx</c> admin routes,
 /// <c>lib/documentTitle.ts</c>), pinned to official Silo
-/// 1452ea2d10efbe7d3ea5ce7140fb49756b493670. Manage is exactly six topics and
-/// twenty-one leaves. This table only states identity: whether a leaf is shown
+/// c11b0a968f0d5980b7005579fb95acc2d11d8321. Manage has six topics and
+/// twenty-one leaves; Configure has three topics and nineteen leaves.
+/// This table only states identity: whether a leaf is shown
 /// or reachable is decided by <see cref="AdminPageRegistry"/>, so a leaf without
 /// a native page is never presented.
 /// </summary>
@@ -222,8 +227,85 @@ public static class AdminRouteCatalog
                 new AdminNavLeaf(AdminRoute.GeneralSettings, "/admin/settings/general", false, "settings-2",
                     "web.admin.settings.search.general.label", "web.admin.settings.search.general.description",
                     "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
-                    ["settings", "configuration", "server name", "login subtitle", "branding name", "public url", "lan discovery", "local network", "local address", "lan address", "multicast", "reverse proxy", "trusted proxies", "x-forwarded-for", "client ip", "redis", "postgres", "database", "pool"],
-                    [], new[] { "identity", "serverName", "loginSubtitle", "network", "siloPublicUrl", "showOnTheLocalNetwork", "localNetworkAddress", "trustedProxies", "database", "maximumPostgresConnections", "redis", "useRedis", "connectionUrl", "databaseNumber", "checkConnection" }.Select(key => "web.admin.settings.search.general.setting." + key).ToArray()),
+                    ["settings", "configuration", "server name", "login subtitle", "branding name", "public url", "lan discovery", "local network", "local address", "lan address", "multicast", "reverse proxy", "trusted proxies", "x-forwarded-for", "client ip", "redis", "postgres", "database", "pool"], [], ["web.admin.settings.search.general.setting.identity", "web.admin.settings.search.general.setting.serverName", "web.admin.settings.search.general.setting.loginSubtitle", "web.admin.settings.search.general.setting.network", "web.admin.settings.search.general.setting.siloPublicUrl", "web.admin.settings.search.general.setting.showOnTheLocalNetwork", "web.admin.settings.search.general.setting.localNetworkAddress", "web.admin.settings.search.general.setting.trustedProxies", "web.admin.settings.search.general.setting.database", "web.admin.settings.search.general.setting.maximumPostgresConnections", "web.admin.settings.search.general.setting.redis", "web.admin.settings.search.general.setting.useRedis", "web.admin.settings.search.general.setting.connectionUrl", "web.admin.settings.search.general.setting.databaseNumber", "web.admin.settings.search.general.setting.checkConnection"]),
+                new AdminNavLeaf(AdminRoute.AppearanceSettings, "/admin/settings/appearance", false, "paintbrush",
+                    "web.admin.settings.search.appearance.label", "web.admin.settings.search.appearance.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "logo", "wordmark", "favicon", "login background", "white label", "brand", "accent color", "app name", "pwa", "overlays", "poster badges", "title art", "logo art", "title logo"], [], ["web.admin.settings.search.appearance.setting.logosAndIcons", "web.admin.settings.search.appearance.setting.logoWordmark", "web.admin.settings.search.appearance.setting.logoIcon", "web.admin.settings.search.appearance.setting.favicon", "web.admin.settings.search.appearance.setting.loginBackground", "web.admin.settings.search.appearance.setting.colors", "web.admin.settings.search.appearance.setting.accentColor", "web.admin.settings.search.appearance.setting.customAccentColor", "web.admin.settings.search.appearance.setting.cardOverlays", "web.admin.settings.search.appearance.setting.showBadgesOnPosterArt", "web.admin.settings.search.appearance.setting.badgeStyle", "web.admin.settings.search.appearance.setting.restoreDefaults", "web.admin.settings.search.appearance.setting.titlePages", "settingsManifest.ui.title_art.label"]),
+                new AdminNavLeaf(AdminRoute.StorageSettings, "/admin/settings/storage", false, "database",
+                    "web.admin.settings.search.storage.label", "web.admin.settings.search.storage.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "s3", "bucket", "storage", "local storage path", "artwork.storage_backend", "artwork.local_path", "endpoint", "region", "access key", "secret key", "infrastructure", "artwork", "image caching", "cache images", "cloudflare", "presigned"], [], ["web.admin.settings.search.storage.setting.storage", "web.admin.settings.search.storage.setting.backend", "web.admin.settings.search.storage.setting.localStoragePath", "web.admin.settings.search.storage.setting.saveProviderArtworkToStorage", "web.admin.settings.search.storage.setting.reviewTransition", "web.admin.settings.search.storage.setting.whatShouldMove", "web.admin.settings.search.storage.setting.publicStorage", "web.admin.settings.search.storage.setting.privateStorage", "web.admin.settings.search.storage.setting.checkConnection", "web.admin.settings.search.storage.setting.endpoint", "web.admin.settings.search.storage.setting.region", "web.admin.settings.search.storage.setting.bucket", "web.admin.settings.search.storage.setting.accessKey", "web.admin.settings.search.storage.setting.secretKey", "web.admin.settings.search.storage.setting.putTheBucketNameInTheUrlPath", "web.admin.settings.search.storage.setting.folderInsideTheBucket", "web.admin.settings.search.storage.setting.howAssetLinksAreAuthorized", "web.admin.settings.search.storage.setting.addressClientsDownloadFrom", "web.admin.settings.search.storage.setting.tokenSecret", "web.admin.settings.search.storage.setting.tokenQueryParameter", "web.admin.settings.search.storage.setting.linkLifetimeSeconds"]),
+                new AdminNavLeaf(AdminRoute.SearchSettings, "/admin/settings/search", false, "search",
+                    "web.admin.settings.search.search.label", "web.admin.settings.search.search.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "meilisearch", "postgres search", "semantic", "typo", "search index", "reindex"], [], ["web.admin.settings.search.search.setting.search", "web.admin.settings.search.search.setting.searchEngine", "web.admin.settings.search.search.setting.meilisearchUrl", "web.admin.settings.search.search.setting.meilisearchApiKey", "web.admin.settings.search.search.setting.checkConnection", "web.admin.settings.search.search.setting.whenASearchHasSeveralWords", "web.admin.settings.search.search.setting.matchByMeaningAsWellAsWords", "web.admin.settings.search.search.setting.indexNamePrefix", "web.admin.settings.search.search.setting.queryTimeoutMs", "web.admin.settings.search.search.setting.itemsSentToTheIndexPerBatch", "web.admin.settings.search.search.setting.meaningBasedShareOfResults", "web.admin.settings.search.search.setting.searchStatus"]),
+                new AdminNavLeaf(AdminRoute.NetworkAccessSettings, "/admin/settings/network-access", false, "network",
+                    "web.admin.settings.search.networkAccess.label", "web.admin.settings.search.networkAccess.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "tailscale", "netbird", "overlay", "tailnet", "vpn", "remote access", "port forwarding", "network access provider", "plugin", "connect", "authorization"], [], []),
+                new AdminNavLeaf(AdminRoute.ScheduledTasks, "/admin/tasks", false, "calendar-clock",
+                    "web.admin.shell.nav.page.scheduledTasks.label", "web.admin.shell.nav.page.scheduledTasks.description",
+                    "web.admin.common.title.header.tasks", "web.admin.common.title.tab.tasks",
+                    ["tasks", "jobs", "scheduler", "sync"], [], [], AdminRouteDescendants.TaskKey),
+                new AdminNavLeaf(AdminRoute.Maintenance, "/admin/maintenance", false, "wrench",
+                    "web.admin.shell.nav.page.maintenance.label", "web.admin.shell.nav.page.maintenance.description",
+                    "web.admin.common.title.header.maintenance", "web.admin.common.title.tab.maintenance",
+                    ["repair", "cleanup", "system maintenance"], [], []),
+                new AdminNavLeaf(AdminRoute.Backups, "/admin/backups", false, "database-backup",
+                    "web.admin.shell.nav.page.backups.label", "web.admin.shell.nav.page.backups.description",
+                    "web.admin.common.title.header.backups", "web.admin.common.title.tab.backups",
+                    ["backup", "back up now", "restore", "recovery", "database dump", "pg_dump", "disaster recovery", "copies to keep", "retention"], [], [], AdminRouteDescendants.BackupRestore),
+            ]),
+            new AdminNavTopic("access", "web.admin.shell.nav.topic.access", "shield",
+            [
+                new AdminNavLeaf(AdminRoute.SignInSettings, "/admin/settings/sign-in", false, "key-round",
+                    "web.admin.settings.search.signIn.label", "web.admin.settings.search.signIn.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "sso", "single sign-on", "oidc", "openid connect", "ldap", "active directory", "authentik", "authelia", "keycloak", "pocket id", "redirect uri", "callback url", "break-glass", "local password", "auto-create accounts", "email match", "provider logout", "rp-initiated logout", "bind dn", "base dn", "issuer", "client id", "signup", "invite", "forgot password", "password reset", "tailscale"], [], ["web.admin.settings.search.signIn.setting.siloPasswords", "web.admin.settings.search.signIn.setting.allowPasswordSignIn", "web.admin.settings.search.signIn.setting.publicSignups", "web.admin.settings.search.signIn.setting.selfServicePasswordReset", "web.admin.settings.search.signIn.setting.manageInviteCodes", "web.admin.settings.search.signIn.setting.singleSignOn", "web.admin.settings.search.signIn.setting.matchExistingAccountsByEmail", "web.admin.settings.search.signIn.setting.redirectUri", "web.admin.settings.search.signIn.setting.postLogoutRedirectUri", "web.admin.settings.search.signIn.setting.issuerUrl", "web.admin.settings.search.signIn.setting.clientId", "web.admin.settings.search.signIn.setting.clientSecret", "web.admin.settings.search.signIn.setting.bindDn", "web.admin.settings.search.signIn.setting.userSearchBaseDn", "web.admin.settings.search.signIn.setting.allowedGroups", "web.admin.settings.search.signIn.setting.adminGroups", "web.admin.settings.search.signIn.setting.createAccountsOnFirstSignIn", "web.admin.settings.search.signIn.setting.testTheConnection", "web.admin.settings.search.signIn.setting.loginButton", "web.admin.settings.search.signIn.setting.networkSignIn", "web.admin.settings.search.signIn.setting.howRolesAndSharingWork"]),
+                new AdminNavLeaf(AdminRoute.SecuritySettings, "/admin/settings/security", false, "shield",
+                    "web.admin.settings.search.security.label", "web.admin.settings.search.security.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "private destinations", "ssrf", "rate limit", "throttle", "429", "api key tier", "security"], [], ["web.admin.settings.search.security.setting.localNetwork", "web.admin.settings.search.security.setting.localServersForEveryAccount", "web.admin.settings.search.security.setting.rateLimiting", "web.admin.settings.search.security.setting.enableRateLimiting", "web.admin.settings.search.security.setting.whereCountersAreKept", "web.admin.settings.search.security.setting.wholeServerLimit", "web.admin.settings.search.security.setting.perAddressAndAccount", "web.admin.settings.search.security.setting.apiKeyTiers", "web.admin.settings.search.security.setting.standardApiKeys", "web.admin.settings.search.security.setting.elevatedApiKeys", "web.admin.settings.search.security.setting.signInAndWebhookEndpoints"]),
+                new AdminNavLeaf(AdminRoute.ApiKeys, "/admin/api-keys", false, "key-round",
+                    "web.admin.shell.nav.page.apiKeys.label", "web.admin.shell.nav.page.apiKeys.description",
+                    "web.admin.common.title.header.apiKeys", "web.admin.common.title.tab.apiKeys",
+                    ["tokens", "keys", "access", "scopes", "rate limit tier"], [], []),
+                new AdminNavLeaf(AdminRoute.Policy, "/admin/policy", false, "shield-check",
+                    "web.admin.shell.nav.page.policy.label", "web.admin.shell.nav.page.policy.description",
+                    "web.admin.common.title.header.policy", "web.admin.common.title.tab.policy",
+                    ["opa", "rego", "authorization", "decision log", "access policy"], [], []),
+            ]),
+            new AdminNavTopic("integrations", "web.admin.shell.nav.topic.integrations", "puzzle",
+            [
+                new AdminNavLeaf(AdminRoute.Plugins, "/admin/plugins", false, "blocks",
+                    "web.admin.shell.nav.page.plugins.label", "web.admin.shell.nav.page.plugins.description",
+                    "web.admin.common.title.header.plugins", "web.admin.common.title.tab.plugins",
+                    ["extensions", "plugin catalog", "repositories"], [], [], AdminRouteDescendants.Entity),
+                new AdminNavLeaf(AdminRoute.ProviderSettings, "/admin/settings/providers", false, "blocks",
+                    "web.admin.settings.search.providers.label", "web.admin.settings.search.providers.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "simkl", "scrobble", "watch providers", "sync", "plugin", "opensubtitles", "subdl", "subsource", "mdblist", "lists", "subtitles", "captions", "api key", "provider credentials", "integrations", "theintrodb", "introdb", "marker providers", "contributions", "markers", "intro", "credits", "metadata"], [], ["web.admin.settings.search.providers.setting.watchProviders", "web.admin.settings.search.providers.setting.subtitleProviders", "web.admin.settings.search.providers.setting.opensubtitles", "web.admin.settings.search.providers.setting.subdl", "web.admin.settings.search.providers.setting.subsource", "web.admin.settings.search.providers.setting.username", "web.admin.settings.search.providers.setting.password", "web.admin.settings.search.providers.setting.apiKey", "web.admin.settings.search.providers.setting.lists", "web.admin.settings.search.providers.setting.mdblist", "web.admin.settings.search.providers.setting.markerProviders", "web.admin.settings.search.providers.setting.theintrodb", "web.admin.settings.search.providers.setting.getMarkersFromThisProvider", "web.admin.settings.search.providers.setting.providerPriority", "web.admin.settings.search.providers.setting.allowSharingWithThisProvider", "web.admin.settings.search.providers.setting.automaticallyShareDetectedIntrosAndCredits", "web.admin.settings.search.providers.setting.minimumConfidenceForAutomaticSharing"]),
+                new AdminNavLeaf(AdminRoute.EmailSettings, "/admin/settings/email", false, "mail",
+                    "web.admin.settings.search.email.label", "web.admin.settings.search.email.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "email", "smtp", "mail", "mail server", "invitations", "password reset", "test email"], [], ["web.admin.settings.search.email.setting.mailServer", "web.admin.settings.search.email.setting.sendEmailFromThisServer", "web.admin.settings.search.email.setting.fromAddress", "web.admin.settings.search.email.setting.fromName", "web.admin.settings.search.email.setting.mailServerAddress", "web.admin.settings.search.email.setting.port", "web.admin.settings.search.email.setting.encryption", "web.admin.settings.search.email.setting.username", "web.admin.settings.search.email.setting.password", "web.admin.settings.search.email.setting.testEmailRecipient", "web.admin.settings.search.email.setting.sendTest"]),
+                new AdminNavLeaf(AdminRoute.NotificationSettings, "/admin/settings/notifications", false, "bell",
+                    "web.admin.settings.search.notifications.label", "web.admin.settings.search.notifications.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "release events", "new episode", "silo push relay", "mobile push", "apns", "fcm", "discord", "web push", "webhooks", "server channels", "digest", "retention", "email"], [], ["web.admin.settings.search.notifications.setting.deliveryChannels", "web.admin.settings.search.notifications.setting.inApp", "web.admin.settings.search.notifications.setting.webPush", "web.admin.settings.search.notifications.setting.siloPushRelay", "web.admin.settings.search.notifications.setting.applePushApns", "web.admin.settings.search.notifications.setting.androidPushFcm", "web.admin.settings.search.notifications.setting.relayUrl", "web.admin.settings.search.notifications.setting.deploymentId", "web.admin.settings.search.notifications.setting.email", "web.admin.settings.search.notifications.setting.letPeoplePickAnEmailPerEpisode", "web.admin.settings.search.notifications.setting.dailySummaryHour", "web.admin.settings.search.notifications.setting.discord", "web.admin.settings.search.notifications.setting.setupGuide", "web.admin.settings.search.notifications.setting.clientId", "web.admin.settings.search.notifications.setting.clientSecret", "web.admin.settings.search.notifications.setting.botToken", "web.admin.settings.search.notifications.setting.letPeoplePickADmPerEpisode", "web.admin.settings.search.notifications.setting.artwork", "web.admin.settings.search.notifications.setting.personalWebhooks", "web.admin.settings.search.notifications.setting.webhooksPerPerson", "web.admin.settings.search.notifications.setting.deliveriesPerPerson", "web.admin.settings.search.notifications.setting.allowWebhooksToPrivateAddresses", "web.admin.settings.search.notifications.setting.serverChannels", "web.admin.settings.search.notifications.setting.addServerChannel", "web.admin.settings.search.notifications.setting.batchWindow", "web.admin.settings.search.notifications.setting.mentionTheRequesterOnDiscord", "web.admin.settings.search.notifications.setting.processing", "web.admin.settings.search.notifications.setting.noticeNewContent", "web.admin.settings.search.notifications.setting.workOutWhoWantsIt", "web.admin.settings.search.notifications.setting.groupingAndFloodControl", "web.admin.settings.search.notifications.setting.settleWindow", "web.admin.settings.search.notifications.setting.maxMessagesPerShow", "web.admin.settings.search.notifications.setting.maxContentAge", "web.admin.settings.search.notifications.setting.retention", "web.admin.settings.search.notifications.setting.readNotifications", "web.admin.settings.search.notifications.setting.unreadNotifications", "web.admin.settings.search.notifications.setting.sentHistory"]),
+                new AdminNavLeaf(AdminRoute.AiSettings, "/admin/settings/ai", false, "sparkles",
+                    "web.admin.settings.search.ai.label", "web.admin.settings.search.ai.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "openai", "ollama", "groq", "openrouter", "gemini", "whisper", "chatgpt", "provider", "api key", "llm", "model", "translation", "transcription", "subtitle translation", "embeddings", "integrations"], [], ["web.admin.settings.search.ai.setting.providers", "web.admin.settings.search.ai.setting.addProvider", "web.admin.settings.search.ai.setting.baseUrl", "web.admin.settings.search.ai.setting.apiKey", "web.admin.settings.search.ai.setting.models", "web.admin.settings.search.ai.setting.textModel", "web.admin.settings.search.ai.setting.provider", "web.admin.settings.search.ai.setting.model", "web.admin.settings.search.ai.setting.reasoningLevel", "web.admin.settings.search.ai.setting.serviceTier", "web.admin.settings.search.ai.setting.fastPriority", "web.admin.settings.search.ai.setting.ultrafast", "web.admin.settings.search.ai.setting.speechToText", "web.admin.settings.search.ai.setting.embeddings", "web.admin.settings.search.ai.setting.features", "web.admin.settings.search.ai.setting.translateSubtitles", "web.admin.settings.search.ai.setting.createSubtitlesFromAudio", "web.admin.settings.search.ai.setting.translateDescriptions", "web.admin.settings.search.ai.setting.descriptionTranslationForViewers", "web.admin.settings.search.ai.setting.serverWideTuning", "web.admin.settings.search.ai.setting.jobsRunningAtOnce", "web.admin.settings.search.ai.setting.subtitleLinesPerRequest", "web.admin.settings.search.ai.setting.surroundingLinesSentForContext", "web.admin.settings.search.ai.setting.audioPerRequest", "web.admin.settings.search.ai.setting.perAccountLimits", "web.admin.settings.search.ai.setting.transcriptionsPerAccount", "web.admin.settings.search.ai.setting.allowanceResets"]),
+                new AdminNavLeaf(AdminRoute.Recommendations, "/admin/recommendations", false, "bot",
+                    "web.admin.shell.nav.page.recommendations.label", "web.admin.shell.nav.page.recommendations.description",
+                    "web.admin.common.title.header.recommendations", "web.admin.common.title.tab.recommendations",
+                    ["taste", "ranking", "recommendation seeds"], [], []),
+                new AdminNavLeaf(AdminRoute.CompatibilitySettings, "/admin/settings/compatibility", false, "plug",
+                    "web.admin.settings.search.compatibility.label", "web.admin.settings.search.compatibility.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "jellyfin", "audiobookshelf", "abs", "proxy", "public url", "server id", "session ttl", "web player"], [], ["web.admin.settings.search.compatibility.setting.jellyfin", "web.admin.settings.search.compatibility.setting.allowJellyfinAppsToConnect", "web.admin.settings.search.compatibility.setting.addressJellyfinAppsShouldUse", "web.admin.settings.search.compatibility.setting.jellyfinWebPlayer", "web.admin.settings.search.compatibility.setting.downloadDetails", "web.admin.settings.search.compatibility.setting.webPlayerVersionToInstall", "web.admin.settings.search.compatibility.setting.webPlayerInstallFolder", "web.admin.settings.search.compatibility.setting.nameShownToJellyfinApps", "web.admin.settings.search.compatibility.setting.serverId", "web.admin.settings.search.compatibility.setting.jellyfinVersionToReport", "web.admin.settings.search.compatibility.setting.staySignedInFor", "web.admin.settings.search.compatibility.setting.endPlaybackSessionsAfter", "web.admin.settings.search.compatibility.setting.audiobookshelf", "web.admin.settings.search.compatibility.setting.allowAudiobookshelfAppsToConnect"]),
             ]),
         ]),
     ];
@@ -294,6 +376,9 @@ public static class AdminRouteCatalog
                 || (segments.Count == 2 && segments[1] == "edit"),
             AdminRouteDescendants.Entity => segments.Count <= 1,
             AdminRouteDescendants.UserDevice => segments.Count is 0 or 2,
+            AdminRouteDescendants.TaskKey => segments.Count <= 1,
+            AdminRouteDescendants.BackupRestore => segments.Count == 0 || (segments.Count == 2 && segments[1] == "restore")
+                || (segments.Count == 3 && segments[0] == "uploads" && segments[2] == "restore"),
             _ => segments.Count == 0,
         };
     }
@@ -314,7 +399,6 @@ public static class AdminRouteCatalog
         query is not { Count: > 0 } ? "" : "?" + string.Join('&', query.OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)));
 
-    private static readonly HashSet<string> ManagedSettingsIds = ["logging", "library", "autoscan", "requests", "playback", "downloads", "general"];
 
     /// <summary>WebUI <c>ADMIN_SETTINGS_NAV</c> ids, first page first.</summary>
     private static readonly string[] SettingsPageIds =
@@ -414,8 +498,8 @@ public static class AdminRouteCatalog
         id ??= SettingsPageIds[0];
         var canonical = "/admin/settings/" + Uri.EscapeDataString(id);
         var redirected = raw != id || query.Count > 0;
-        if (!ManagedSettingsIds.Contains(id)) return new(AdminRouteResolutionKind.Unsupported, null, canonical, redirected);
-        var leaf = Leaves.Single(candidate => candidate.Href == canonical);
+        var leaf = Leaves.SingleOrDefault(candidate => candidate.Href == canonical);
+        if (leaf == null) return new(AdminRouteResolutionKind.Unsupported, null, canonical, redirected);
         return new(AdminRouteResolutionKind.Route, new AdminRouteRequest(leaf.Route), canonical, redirected);
     }
 

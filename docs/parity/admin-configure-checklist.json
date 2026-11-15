@@ -1,0 +1,469 @@
+{
+  "schema": "silo-desktop/configure-delivery-checklist@1",
+  "officialCommit": "c11b0a968f0d5980b7005579fb95acc2d11d8321",
+  "statusRule": "Done = verified and pushed to a PR with its link. In progress = implementation/review/testing, not yet pushed. Remaining = unstarted or blocked, with reason. Merged/released are separate.",
+  "inventory": "3 topics, 19 leaves, 88 nested feature entries; nested route patterns remain owned by their leaves.",
+  "scopeNote": "Catalog coverage does not establish implementation. Only General is registered. Other leaves and their nested functionality remain unstarted.",
+  "dependencies": [
+    "https://github.com/ellermw/SiloDesktopApp/pull/167",
+    "https://github.com/ellermw/SiloDesktopApp/pull/171"
+  ],
+  "carryForward": {
+    "source": "Server-sync accounting, November 15, 2026; 183 commits and 18 OpenAPI paths/35 schemas inventoried, not implemented or runtime verified.",
+    "configureRequirements": [
+      "#4289 stable task interval text/unit/row identity",
+      "#4293 type-specific trigger defaults and save fields",
+      "#4176/#4179 typed plugin multi-select/string/reference values",
+      "#3923 changed staged test-secret reuse",
+      "#4309 return-to-baseline dirty behavior",
+      "Distinct form-field edges; IME-safe forms; reduced motion; accessible names"
+    ],
+    "separateRemainingGaps": [
+      "#4317 Admin topic folding",
+      "#4315 Activity redesign and transcode explanations",
+      "Theme-wide distinct input edges outside the new General controls",
+      "Logging dirty-state restoration",
+      "Concurrent-stream chart views",
+      "/watch prefetch bounds and real performance measurements",
+      "Credits Up Next pause/Auto-play",
+      "Library counts"
+    ]
+  },
+  "leaves": [
+    {
+      "id": "general",
+      "topic": "server",
+      "label": "General",
+      "route": "/admin/settings/general",
+      "group": "C1",
+      "nested": [
+        "Identity: Server name (placeholder 'Silo'), Login subtitle",
+        "Network: Silo public URL, Show on the local network (toggle), Local network address, Trusted proxies (disabled + 'Managed by SILO_TRUSTED_PROXIES.' when env-managed)",
+        "Database: Maximum Postgres connections (number)",
+        "Redis: Use Redis toggle (stages/withdraws URL clear), Connection URL SecretField (no own Clear), Database number (staged with URL), Check Connection (POST check/redis)",
+        "Redis unavailable alert when sensitive-status fails; Redis dirty keys excluded from Save",
+        "Skeleton until effective + sensitive-status ready/failed",
+        "Legacy alias 'database' -> general; bare /admin/settings and unknown ids -> general"
+      ],
+      "children": [],
+      "status": "In progress",
+      "statusReason": "Implemented and in final native verification/review; no pushed PR yet."
+    },
+    {
+      "id": "appearance",
+      "topic": "server",
+      "label": "Appearance",
+      "route": "/admin/settings/appearance",
+      "group": "C6",
+      "nested": [
+        "Logos and icons (wordmark, icon, favicon, login background uploads)",
+        "Colors (accent, custom accent)",
+        "Card overlays",
+        "Badge images",
+        "Title pages (ui.title_art)",
+        "Restore defaults confirm dialog"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "storage",
+      "topic": "server",
+      "label": "Storage",
+      "route": "/admin/settings/storage",
+      "group": "C5",
+      "nested": [
+        "Backend local/S3",
+        "Local storage path",
+        "Save provider artwork",
+        "S3 public/private: endpoint, region, bucket, access/secret keys, path-style, folder",
+        "Asset link authorization/address/token secret/query param/lifetime",
+        "Check connection",
+        "Storage transition review: what should move (start_fresh/preserve_uploads/migrate_all), capabilities, source health (5s poll only while recovery_pending and page active), cancel transition job"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "search",
+      "topic": "server",
+      "label": "Search",
+      "route": "/admin/settings/search",
+      "group": "C4",
+      "nested": [
+        "Search engine postgres/meilisearch",
+        "Meilisearch URL, API key, Check connection",
+        "Multi-word behaviour, semantic toggle, index prefix, query timeout, batch size, semantic share",
+        "Search status panel (2s poll only while rebuild_required and page visible)",
+        "Reindex action"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "network-access",
+      "topic": "server",
+      "label": "Network access",
+      "route": "/admin/settings/network-access",
+      "group": "C7",
+      "nested": [
+        "Provider capabilities (plugin-provided: tailscale/netbird...)",
+        "Per-host rows: role api/proxy node, state pill (disconnected/awaiting_authorization/connecting/connected/error/unavailable), reachable address, auth URL (external open)",
+        "Connect / Disconnect",
+        "No providers empty state",
+        "Status poll only while page active"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "scheduledTasks",
+      "topic": "server",
+      "label": "Scheduled Tasks",
+      "route": "/admin/tasks",
+      "group": "C8",
+      "nested": [
+        "Task list, status badges, run/cancel, metrics",
+        "Child route /admin/tasks/:key (AdminTaskDetail): trigger form, job history, ETag-guarded trigger edit",
+        "Polling only while page active"
+      ],
+      "children": [
+        {
+          "id": "scheduledTaskDetail",
+          "parent": "scheduledTasks",
+          "route": "/admin/tasks/:key",
+          "group": "C8",
+          "status": "Remaining",
+          "official": {
+            "entry": "web/src/pages/AdminTaskDetail.tsx",
+            "pageFiles": [
+              "web/src/components/admin/TaskStatusBadge.tsx",
+              "web/src/pages/AdminTaskDetail.tsx",
+              "web/src/pages/AdminTaskTriggerForm.tsx"
+            ],
+            "pageLoc": 997,
+            "endpoints": [
+              "GET /api/v2/admin/tasks/{key}",
+              "GET /api/v2/admin/tasks/{key}/history",
+              "GET /api/v2/admin/tasks/{key}/metrics",
+              "GET /api/v2/admin/tasks/{key}/triggers",
+              "POST /api/v2/admin/tasks/{key}/cancel",
+              "POST /api/v2/admin/tasks/{key}/run",
+              "PUT /api/v2/admin/tasks/{key}/triggers"
+            ]
+          },
+          "statusReason": "Unstarted; owned by C8 after its page group prerequisites."
+        }
+      ],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "maintenance",
+      "topic": "server",
+      "label": "Maintenance",
+      "route": "/admin/maintenance",
+      "group": "C9",
+      "nested": [
+        "Catalog export jobs + publish",
+        "Catalog import (sources, local sources, import jobs)",
+        "Path rewrites",
+        "Job page controls / job history"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "backups",
+      "topic": "server",
+      "label": "Backups",
+      "route": "/admin/backups",
+      "group": "C10a",
+      "nested": [
+        "Backup table (download, delete confirm)",
+        "Back up now",
+        "Settings: schedule, content, location (local/S3 dialog), command",
+        "Encryption key confirm dialog",
+        "Upload backup dialog + uploaded backups (delete)",
+        "Warning details",
+        "Child routes /admin/backups/:id/restore and /admin/backups/uploads/:uploadId/restore"
+      ],
+      "children": [
+        {
+          "id": "backupRestore",
+          "parent": "backups",
+          "route": "/admin/backups/:id/restore | /admin/backups/uploads/:uploadId/restore",
+          "group": "C10b",
+          "nested": [
+            "Choose, review (left-out groups), users, run with stop confirm",
+            "Upload-source restore"
+          ],
+          "unknownOutcome": "Restore run unknown: never restart; re-read run state",
+          "status": "Remaining",
+          "official": {
+            "entry": "web/src/pages/AdminBackupRestore.tsx",
+            "pageFiles": [
+              "web/src/components/settings/RestartBadge.tsx",
+              "web/src/components/settings/SettingsGroup.tsx",
+              "web/src/pages/AdminBackupRestore.tsx",
+              "web/src/pages/admin-backups/BackupWarningDetails.tsx",
+              "web/src/pages/admin-backups/Disclosure.tsx",
+              "web/src/pages/admin-backups/RestoreChoose.tsx",
+              "web/src/pages/admin-backups/RestoreReview.tsx",
+              "web/src/pages/admin-backups/RestoreRows.tsx",
+              "web/src/pages/admin-backups/RestoreRun.tsx",
+              "web/src/pages/admin-backups/RestoreUsers.tsx",
+              "web/src/pages/admin-backups/backupPresentation.ts",
+              "web/src/pages/admin-backups/restoreGroups.ts",
+              "web/src/pages/admin-backups/restoreModel.ts",
+              "web/src/pages/admin-backups/warningDetails.ts",
+              "web/src/pages/admin-settings/FieldGroup.tsx",
+              "web/src/pages/admin-settings/SettingField.tsx"
+            ],
+            "pageLoc": 4917,
+            "endpoints": [
+              "GET /api/v2/admin/backups",
+              "GET /api/v2/admin/backups/capabilities",
+              "GET /api/v2/admin/backups/uploads",
+              "GET /api/v2/admin/backups/uploads/{upload_id}/restore-set",
+              "GET /api/v2/admin/backups/{id}/restore-set",
+              "GET /api/v2/admin/jobs",
+              "GET /api/v2/admin/jobs/{id}",
+              "GET /api/v2/libraries",
+              "POST /api/v2/admin/backups/uploads/{upload_id}/restore",
+              "POST /api/v2/admin/backups/{id}/restore",
+              "POST /api/v2/admin/jobs/{id}/cancel"
+            ]
+          },
+          "statusReason": "Unstarted; owned by C10b after its page group prerequisites."
+        }
+      ],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "signIn",
+      "topic": "access",
+      "label": "Sign-in",
+      "route": "/admin/settings/sign-in",
+      "group": "C11",
+      "nested": [
+        "Silo passwords: allow password sign-in, public signups, self-service password reset, manage invite codes",
+        "Single sign-on providers OIDC/LDAP: match by email, redirect/post-logout URIs (copy), issuer, client id/secret, bind DN, base DN, allowed/admin groups, create accounts, test connection, login button",
+        "Turn off provider binding confirm",
+        "Network sign-in (Tailscale)",
+        "How roles and sharing work"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "security",
+      "topic": "access",
+      "label": "Security",
+      "route": "/admin/settings/security",
+      "group": "C2b",
+      "nested": [
+        "Local network: local servers for every account",
+        "Rate limiting: enable, where counters kept, whole-server limit, per address/account, API key tiers standard/elevated, sign-in & webhook endpoints",
+        "Rate-limit config uses its own ETag (GET/PATCH /admin/rate-limits/config) + status"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "apiKeys",
+      "topic": "access",
+      "label": "API Keys",
+      "route": "/admin/api-keys",
+      "group": "C12",
+      "nested": [
+        "Key list + capabilities",
+        "Create key dialog (scopes, owner, tier) with one-time token reveal",
+        "Change tier",
+        "Revoke (DELETE) confirm"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "policy",
+      "topic": "access",
+      "label": "Policy",
+      "route": "/admin/policy",
+      "group": "C13",
+      "nested": [
+        "Tabs: Overrides(documents) / Baseline(vendor) / Decisions",
+        "Document list, editor, versions, revision review, activate confirm (active-version)",
+        "Validate, simulate panel",
+        "Decision log + detail"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "plugins",
+      "topic": "integrations",
+      "label": "Plugins",
+      "route": "/admin/plugins",
+      "group": "C14",
+      "nested": [
+        "Tabs installed/catalog",
+        "Community catalog control + hide confirm",
+        "Plugin tiles enable/disable/update confirm",
+        "Plugin upload",
+        "Child /admin/plugins/:pluginId (AdminPluginDetail): config schema form, sections, markdown, uninstall confirm",
+        "Plugin admin apps command-palette group (external)"
+      ],
+      "children": [
+        {
+          "id": "pluginDetail",
+          "parent": "plugins",
+          "route": "/admin/plugins/:pluginId",
+          "group": "C14",
+          "status": "Remaining",
+          "official": {
+            "entry": "web/src/pages/AdminPluginDetail.tsx",
+            "pageFiles": [
+              "web/src/components/admin/ConnectionCheckAction.tsx",
+              "web/src/components/admin/plugins/PluginConfigForm.tsx",
+              "web/src/components/admin/plugins/PluginDetailSections.tsx",
+              "web/src/components/admin/plugins/PluginMarkdown.tsx",
+              "web/src/components/admin/plugins/PluginVisuals.tsx",
+              "web/src/components/admin/plugins/SchemaForm.tsx",
+              "web/src/components/admin/plugins/configSchemaAdminForm.ts",
+              "web/src/components/admin/plugins/schemaFormUtils.ts",
+              "web/src/pages/AdminPluginDetail.tsx"
+            ],
+            "pageLoc": 2635,
+            "endpoints": [
+              "DELETE /api/v2/admin/plugins/installations/{id}",
+              "GET /api/v2/admin/plugins/catalog",
+              "GET /api/v2/admin/plugins/catalog-settings",
+              "GET /api/v2/admin/plugins/catalog-status",
+              "GET /api/v2/admin/plugins/installations",
+              "GET /api/v2/admin/plugins/repositories",
+              "GET /api/v2/auth/providers",
+              "POST /api/v2/admin/plugins/installations",
+              "POST /api/v2/admin/plugins/installations/{id}/config/test",
+              "POST /api/v2/admin/plugins/installations/{id}/restart",
+              "POST /api/v2/admin/plugins/installations/{id}/update",
+              "POST /api/v2/admin/settings/check/{kind}",
+              "POST /api/v2/auth/plugin-launch",
+              "PUT /api/v2/admin/plugins/installations/{id}",
+              "PUT /api/v2/admin/plugins/installations/{id}/auth-binding",
+              "PUT /api/v2/admin/plugins/installations/{id}/config",
+              "PUT /api/v2/admin/plugins/installations/{id}/task-bindings/{capability_id}"
+            ]
+          },
+          "statusReason": "Unstarted; owned by C14 after its page group prerequisites."
+        }
+      ],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "providers",
+      "topic": "integrations",
+      "label": "Providers",
+      "route": "/admin/settings/providers",
+      "group": "C15",
+      "nested": [
+        "Watch providers (Simkl etc.)",
+        "Lists: MDBList",
+        "Subtitle providers: OpenSubtitles/SubDL/SubSource username/password/API key",
+        "Marker providers: TheIntroDB get markers, priority, sharing, auto-share confidence"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "email",
+      "topic": "integrations",
+      "label": "Email",
+      "route": "/admin/settings/email",
+      "group": "C2a",
+      "nested": [
+        "Mail server: send email from this server, from address/name, server address, port, encryption, username, password",
+        "Test email recipient + Send test (POST /admin/email/test)"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "notifications",
+      "topic": "integrations",
+      "label": "Notifications",
+      "route": "/admin/settings/notifications",
+      "group": "C16",
+      "nested": [
+        "Delivery channels: in-app, web push, Silo push relay (APNs/FCM, relay URL, deployment id, clear confirm), email per-episode + daily summary hour, Discord (setup guide, client id/secret, bot token, DM per episode, artwork, clear confirm)",
+        "Personal webhooks limits, private addresses",
+        "Server channels: add/edit ChannelFormDialog, signing secret dialog, delete confirm, batch window, mention requester",
+        "Processing: notice new content, who wants it, grouping/flood control, settle window, max messages, max content age",
+        "Retention: read/unread/sent history"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "ai",
+      "topic": "integrations",
+      "label": "AI",
+      "route": "/admin/settings/ai",
+      "group": "C17",
+      "nested": [
+        "Providers: add/remove dialogs, base URL, API key, models",
+        "ChatGPT connection dialog + welcome (settings transition with before/after ETag)",
+        "Models: text model, provider, model, reasoning level, service tier (fast priority/ultrafast), speech-to-text, embeddings",
+        "Features: translate subtitles, create subtitles from audio, translate descriptions (+viewer setting)",
+        "Server-wide tuning and per-account limits"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "recommendations",
+      "topic": "integrations",
+      "label": "Recommendations",
+      "route": "/admin/recommendations",
+      "group": "C18",
+      "nested": [
+        "Recommendation settings and embedding status (AdminRecommendationsEmbedding)",
+        "Shares AI provider add/remove dialogs",
+        "Reset confirm"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    },
+    {
+      "id": "compatibility",
+      "topic": "integrations",
+      "label": "Compatibility",
+      "route": "/admin/settings/compatibility",
+      "group": "C3",
+      "nested": [
+        "Jellyfin: allow apps, address, web player (download details, version, install folder, install/remove coalescing commands, 409 for opposite kind), name shown, server id, version to report, stay signed in, end sessions after",
+        "PATCH /admin/jellyfin-compat/settings with settings ETag; status",
+        "Audiobookshelf: allow apps"
+      ],
+      "children": [],
+      "status": "Remaining",
+      "statusReason": "Unstarted; delivered in a separate verified group after General."
+    }
+  ]
+}

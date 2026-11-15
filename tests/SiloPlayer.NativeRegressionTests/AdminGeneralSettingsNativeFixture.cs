@@ -1,0 +1,314 @@
+using System.Net;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Graphics.Imaging;
+using Windows.Storage;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Helpers;
+using SiloPlayer.Services;
+using SiloPlayer.Views.Admin;
+
+/// <summary>Production Configure registration and Frame entry using synthetic server data only.</summary>
+internal static class AdminGeneralSettingsNativeFixture
+{
+    private static readonly List<string> Failures = [];
+    private static void Check(bool condition, string label)
+    {
+        Program.Log((condition ? "PASS: " : "FAIL: ") + label);
+        if (!condition) Failures.Add(label);
+    }
+    private static async Task Until(Func<bool> condition, string label, int milliseconds = 6000)
+    {
+        for (var i = 0; i < milliseconds / 25 && !condition(); i++) await Task.Delay(25);
+        if (!condition()) throw new InvalidOperationException("Timed out: " + label);
+    }
+    private sealed class Server : HttpMessageHandler
+    {
+        internal readonly Dictionary<string, string> Values = new()
+        {
+            ["branding.server_name"] = "Synthetic Silo", ["branding.login_subtitle"] = "", ["server.public_url"] = "",
+            ["server.lan_discovery"] = "true", ["server.local_url"] = "", ["clientip.trusted_proxies"] = "",
+            ["database.max_connections"] = "20", ["redis.db"] = "0",
+        };
+        internal int Saves, Checks, Version = 1;
+        internal bool RedisConfigured, SensitiveFailure, Managed, Conflict, ReadForbidden;
+        internal TaskCompletionSource? SaveGate;
+        internal string? LastIfMatch;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (ReadForbidden && path.EndsWith("/effective", StringComparison.Ordinal)) return Json(new { type = "permission_denied", title = "Forbidden", status = 403 }, HttpStatusCode.Forbidden);
+            object body;
+            if (request.Method == HttpMethod.Put)
+            {
+                Saves++; LastIfMatch = request.Headers.IfMatch.SingleOrDefault()?.ToString();
+                using var data = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                if (SaveGate is { } pending) await pending.Task.WaitAsync(cancellationToken);
+                if (Conflict) return Json(new { type = "precondition_failed", title = "Settings changed", status = 412 }, HttpStatusCode.PreconditionFailed);
+                var updated = new Dictionary<string, string>();
+                foreach (var entry in data.RootElement.GetProperty("values").EnumerateObject())
+                {
+                    if (entry.Name == "redis.url") RedisConfigured = entry.Value.GetString()!.Length > 0;
+                    else updated[entry.Name] = Values[entry.Name] = entry.Value.GetString()!;
+                }
+                Version++;
+                body = new { values = updated, restart_required = false };
+            }
+            else if (path.EndsWith("/check/redis", StringComparison.Ordinal)) { Checks++; body = new { success = true, message = "Connection successful." }; }
+            else if (path.EndsWith("/sensitive-status", StringComparison.Ordinal))
+            {
+                if (SensitiveFailure) return Json(new { title = "Status unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable);
+                body = new { configured = RedisConfigured ? new[] { "redis.url" } : [], managed_by_env = Managed ? new[] { "redis.url", "clientip.trusted_proxies" } : [] };
+            }
+            else body = path switch
+            {
+                "/api/v2/admin/settings/effective" => Values,
+                "/api/v2/admin/settings/restart-keys" => new { keys = Array.Empty<string>(), prefixes = new[] { "redis." } },
+                "/api/v2/admin/server/status" => new { restart_required = false, restart_mark_count = 0, restart_requested = false },
+                "/api/v2/admin/system/build" => new { display = "synthetic", available = true, build_number = 1 },
+                _ => new { },
+            };
+            return Json(body);
+        }
+        private HttpResponseMessage Json(object body, HttpStatusCode status = HttpStatusCode.OK)
+        {
+            var response = new HttpResponseMessage(status) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+            response.Headers.ETag = new($"\"general-fixture-v{Version}\""); return response;
+        }
+    }
+
+    internal static async Task RunAsync(Window window)
+    {
+        var server = new Server();
+        using var http = new HttpClient(server);
+        var client = new SiloApiClient(http);
+        client.SetBaseUrl("https://fixture.invalid");
+        using var auth = new AuthService(client, new AuthApi(client));
+        auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+        auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
+        auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
+        using var authority = new AdminMonitorAuthority(client, auth);
+        var navigation = new NavigationService();
+        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority)
+            .AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation)
+            .AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory));
+        // Invoke the same registration entry point as App, rather than registering a test-only page.
+        var registration = typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Services.AdminConfigureServices");
+        registration?.GetMethod("Add", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.Invoke(null, [collection]);
+        await using var services = collection.BuildServiceProvider();
+        var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var previous = field.GetValue(null);
+        var previousContent = window.Content;
+        var previousAppName = DocumentTitle.AppName;
+        new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client)).ApplyTheme("midnight-cinema");
+        Frame? outer = null;
+        try
+        {
+            field.SetValue(null, services);
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            outer = new Frame();
+            window.Content = outer;
+            navigation.Frame = outer;
+            var resolved = AdminShellPage.TryOpenHref("/admin/settings/general");
+            if (resolved is not { Kind: AdminRouteResolutionKind.Route })
+                throw new InvalidOperationException("General is not available through the production Configure registration.");
+            for (var i = 0; i < 160 && outer.Content is not AdminShellPage; i++) await Task.Delay(25);
+            if (outer.Content is not AdminShellPage shell) throw new InvalidOperationException("General did not enter the production Admin shell.");
+            var inner = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!;
+            for (var i = 0; i < 160 && inner.Content?.GetType().Name != "AdminGeneralSettingsPage"; i++) await Task.Delay(25);
+            if (inner.Content?.GetType().Name != "AdminGeneralSettingsPage") throw new InvalidOperationException("General did not activate its production WinUI Page.");
+            var page = (AdminGeneralSettingsPage)inner.Content;
+            await Until(() => page.Controller?.State.Loaded == true && Input(page, "branding.server_name").Text == "Synthetic Silo", "General fields rendered");
+            Check(true, "General activates through production registration, shell and Frame");
+            Check(!Descendants(outer).OfType<TextBlock>().Any(t => t.Text.StartsWith("web.", StringComparison.Ordinal)), "rendered General and navigation labels have catalog text");
+            Check(AdminNavigation.SearchGroups("redis", AdminShellPage.CreateRegistry().IsRegistered).SelectMany(g => g.Pages).Single().Route == AdminRoute.GeneralSettings,
+                "registered General is searchable while other Configure leaves remain absent");
+            var controller = page.Controller!;
+            var toggle = Descendants(page).OfType<ToggleSwitch>().Single(t => AutomationProperties.GetAutomationId(t) == "GeneralRedisEnabled");
+            toggle.IsOn = true; await Task.Delay(150);
+            Check(toggle.IsOn, "Use Redis can be enabled before the first credential edit");
+            if (toggle.IsOn)
+            {
+                var secret = Descendants(page).OfType<PasswordBox>().Single();
+                secret.Password = "redis://fixture.invalid:6379";
+                await Until(() => controller.State.DirtyKeys.Contains("redis.url"), "Redis edit staged");
+                await Click(page, "GeneralCheckRedis");
+                await Until(() => server.Checks == 1 && controller.State.ConnectionResult?.Success == true, "Redis connection check");
+                Check(true, "real Check Connection control uses current staged Redis inputs");
+                await Click(page, "GeneralSave"); await Until(() => !controller.State.Saving && controller.State.DirtyKeys.Count == 0, "Redis saved");
+                await Until(() => secret.Password == "" && toggle.IsEnabled, "acknowledged Redis editor rendered");
+                Check(controller.State.Configured.Contains("redis.url") && secret.Password == "", "acknowledged Redis replacement clears draft and updates configured presence");
+                if (!controller.State.Configured.Contains("redis.url")) { await controller.ReloadAsync(false); await Until(() => toggle.IsOn, "saved presence loaded for remaining checks"); }
+                toggle.IsOn = false; await Task.Delay(100); await Click(page, "GeneralSave");
+                await Until(() => !controller.State.Saving && controller.State.DirtyKeys.Count == 0, "Redis clear saved");
+                Check(!toggle.IsOn && !controller.State.Configured.Contains("redis.url"), "acknowledged Redis clear stays disabled without stale saved presence");
+            }
+
+            var name = Input(page, "branding.server_name");
+            name.Text = "First saved name";
+            await Until(() => controller.State.DirtyKeys.Count > 0, "identity dirty");
+            server.SaveGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var saves = server.Saves;
+            await Click(page, "GeneralSave"); await Until(() => controller.State.Saving && server.Saves > saves, "save in flight");
+            await Until(() => !toggle.IsEnabled && !Button(page, "GeneralSave").IsEnabled, "save state rendered in native controls");
+            Check(!await page.CanLeaveAsync(), "navigation cannot discard or depart during a current save");
+            Check(!toggle.IsEnabled, "Redis editor is frozen during save");
+            name.Text = "Later unsaved name";
+            await Until(() => controller.State.Values["branding.server_name"] == "Later unsaved name", "native edit reached the page controller");
+            server.SaveGate.SetResult(); server.SaveGate = null;
+            await Until(() => !controller.State.Saving && controller.State.DirtyKeys.Count > 0, "late edit retained");
+            await Task.Delay(150);
+            Check(name.Text == "Later unsaved name" && DocumentTitle.AppName == "First saved name", "late editor value stays dirty while branding uses acknowledged value");
+            Check(server.LastIfMatch != null && server.Saves == saves + 1, "native Save sends one version-guarded write");
+
+            shell.Navigate(new(AdminRoute.Activity));
+            await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "dirty leave dialog");
+            var dialog = (ContentDialog)Field(page, "_dialog")!;
+            await CaptureAsync(dialog, "general-discard-dialog.png");
+            var cancelButton = DialogButton(dialog, "Cancel");
+            var discardButton = DialogButton(dialog, "Discard");
+            foreach (var action in new[] { cancelButton, discardButton })
+                Program.Log($"TRACE dialog {action.Name} parent={action.Parent?.GetType().Name} visualParent={VisualTreeHelper.GetParent(action)?.GetType().Name} width={action.ActualWidth} height={action.ActualHeight} column={Grid.GetColumn(action)}");
+            Check(cancelButton.TransformToVisual(dialog).TransformPoint(new(0, 0)).X < discardButton.TransformToVisual(dialog).TransformPoint(new(0, 0)).X,
+                "dirty dialog places Cancel before Discard");
+            Check(cancelButton.ActualWidth < 140 && discardButton.ActualWidth < 140 && cancelButton.ActualHeight == 36 && discardButton.ActualHeight == 36,
+                "dirty dialog actions remain content-sized with reference height");
+            Check(cancelButton.FocusState != FocusState.Unfocused, "dirty dialog starts on the non-destructive Cancel action");
+            Invoke(DialogButton(dialog, "Cancel")); await Task.Delay(150);
+            Check(ReferenceEquals(inner.Content, page) && controller.State.DirtyKeys.Count > 0, "Cancel retains the General page and its draft");
+            await Click(page, "GeneralDiscard");
+            await Until(() => controller.State.DirtyKeys.Count == 0, "discard settled");
+            await Until(() => name.Text == "First saved name", "discard rendered acknowledged identity");
+            Check(name.Text == "First saved name", "Discard restores acknowledged identity");
+
+            foreach (var (width, height) in new[] { (1440, 900), (1440, 600), (1920, 600), (800, 600) })
+            {
+                window.AppWindow.ResizeClient(new(width, height)); await Task.Delay(200); outer.UpdateLayout();
+                var scroller = (ScrollViewer)Field(page, "_scroller")!;
+                Check(scroller.ExtentWidth <= scroller.ViewportWidth + 1, $"General has no horizontal scroll overflow at {width}x{height}");
+                foreach (var edge in new[] { 8d, scroller.ActualWidth - 18 })
+                {
+                    var point = scroller.TransformToVisual(null).TransformPoint(new(edge, scroller.ActualHeight / 2));
+                    DependencyObject? target = VisualTreeHelper.FindElementsInHostCoordinates(point, outer).FirstOrDefault();
+                    while (target != null && target is not ScrollViewer) target = VisualTreeHelper.GetParent(target);
+                    Check(ReferenceEquals(target, scroller), $"General side gutter has the page scrolling ancestor at {width}x{height}");
+                }
+                foreach (var control in Descendants(page).OfType<TextBox>().Where(c => c.IsLoaded))
+                {
+                    var point = control.TransformToVisual(page).TransformPoint(new(0, 0));
+                    Check(point.X >= -1 && point.X + control.ActualWidth <= page.ActualWidth + 1, "General text field stays inside the page viewport");
+                    Check(AutomationProperties.GetName(control).Length > 0, "General input has an accessible name");
+                    Check(control.BorderBrush is SolidColorBrush { Color: { R: 106, G: 106, B: 116 } }, "General input uses the official distinct form-field edge");
+                }
+                name.Text = "Layout draft"; await Task.Delay(100);
+                await CaptureAsync(outer, $"general-{width}x{height}.png");
+                await Click(page, "GeneralDiscard"); await Task.Delay(50);
+            }
+
+            toggle.IsOn = true; await Task.Delay(100);
+            if (toggle.IsOn)
+            {
+                var action = Button(page, "GeneralCheckRedis");
+                var controlScroller = (ScrollViewer)Field(page, "_scroller")!;
+                outer.UpdateLayout(); controlScroller.ChangeView(null, controlScroller.ScrollableHeight, null, true); await Task.Delay(100);
+                Check(action.TransformToVisual(page).TransformPoint(new(0, 0)).Y < page.ActualHeight, "connection button is on screen for visual state captures");
+                foreach (var state in new[] { "Normal", "PointerOver", "Pressed", "Disabled" })
+                {
+                    action.IsEnabled = state != "Disabled";
+                    VisualStateManager.GoToState(action, state, false); await Task.Delay(50);
+                    var border = Descendants(action).OfType<Border>().Single(b => b.Name == "SettingsButtonRoot");
+                    Check(border.CornerRadius.TopLeft == 10 && border.ActualWidth > border.ActualHeight, $"connection button retains rectangular backdrop in {state}");
+                    await CaptureAsync(outer, $"general-control-{state}.png");
+                }
+                action.IsEnabled = true; action.Focus(FocusState.Keyboard); await Task.Delay(50);
+                Check(action.FocusState == FocusState.Keyboard && action.UseSystemFocusVisuals, "connection button exposes keyboard focus");
+                await CaptureAsync(outer, "general-control-keyboard-focus.png");
+            }
+            server.Managed = true; server.RedisConfigured = true; await controller.ReloadAsync(false); await Task.Delay(100);
+            Check(!toggle.IsEnabled && !Input(page, "clientip.trusted_proxies").IsEnabled, "environment-managed Redis and trusted proxies cannot be edited");
+            server.Managed = false; server.SensitiveFailure = true; await controller.ReloadAsync(false); await Task.Delay(100);
+            Check(controller.State.SensitiveStatusError && !toggle.IsEnabled, "protected-status failure holds Redis behind its alert");
+            name.Text = "Non Redis change"; saves = server.Saves;
+            await Until(() => Button(page, "GeneralSave").IsEnabled, "unrelated save enabled after field edit");
+            await Click(page, "GeneralSave");
+            await Until(() => server.Saves > saves && !controller.State.Saving, "unrelated save after status failure");
+            Check(controller.State.DirtyKeys.Count == 0, "unrelated fields remain saveable when protected status fails");
+            await CaptureAsync(outer, "general-sensitive-unavailable.png");
+            server.SensitiveFailure = false; await controller.ReloadAsync(false); await Task.Delay(100);
+            server.Conflict = true; name.Text = "Conflict draft"; await Click(page, "GeneralSave");
+            await Until(() => controller.State.Conflict, "conflict shown"); await Task.Delay(100);
+            Check(!Button(page, "GeneralSave").IsEnabled && name.Text == "Conflict draft", "stale version disables Save and retains the draft");
+            server.Conflict = false; await Click(page, "GeneralReload");
+            await Until(() => !controller.State.Conflict && !controller.State.Loading, "explicit reload");
+            Check(controller.State.DirtyKeys.Count > 0, "explicit reload preserves draft for review");
+            server.ReadForbidden = true; await controller.ReloadAsync(true); await Task.Delay(100);
+            Check(!name.IsEnabled && !Button(page, "GeneralSave").IsEnabled && Descendants(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("Permission to manage", StringComparison.Ordinal)),
+                "permission denial has an actionable state and disables editing and saving");
+            server.ReadForbidden = false; await controller.ReloadAsync(true); await Task.Delay(100);
+            Check(name.IsEnabled && name.Text == "Conflict draft", "restored access reloads without losing the retained draft");
+            shell.Navigate(new(AdminRoute.Activity));
+            await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "discard navigation dialog");
+            Invoke(DialogButton((ContentDialog)Field(page, "_dialog")!, "Discard"));
+            await Until(() => inner.Content is AdminActivityPage, "discard permitted navigation");
+            Check(controller.State.Values.Count == 0, "accepting Discard navigates and retires the page controller");
+            inner.GoBack(); await Until(() => inner.Content is AdminGeneralSettingsPage { Controller.State.Loaded: true }, "Back restored production General");
+            page = (AdminGeneralSettingsPage)inner.Content; controller = page.Controller!; name = Input(page, "branding.server_name");
+            await Until(() => name.Text.Length > 0, "Back fields rendered");
+            Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "General Back navigation keeps transitions suppressed");
+            auth.SetCurrentUser(new UserInfo { Id = "1", Role = "user", Username = "synthetic-admin" }); await Task.Delay(150);
+            Check(controller.State.Values.Count == 0 && name.Text.Length == 0, "authority retirement clears native private values and staged edits");
+        }
+        finally
+        {
+            if (outer != null) { outer.BackStack.Clear(); outer.ForwardStack.Clear(); outer.Content = null; }
+            window.Content = previousContent;
+            await Task.Delay(100);
+            field.SetValue(null, previous);
+            DocumentTitle.SetServerName(previousAppName);
+        }
+        if (Failures.Count > 0) throw new InvalidOperationException("General fixture failures: " + string.Join("; ", Failures));
+    }
+
+    private static object? Field(object value, string name) => value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value);
+    private static TextBox Input(DependencyObject page, string key) => Descendants(page).OfType<TextBox>().Single(c => AutomationProperties.GetAutomationId(c) == "General_" + key);
+    private static Button Button(DependencyObject page, string id) => Descendants(page).OfType<Button>().Single(c => AutomationProperties.GetAutomationId(c) == id);
+    private static Button DialogButton(ContentDialog dialog, string label) => Descendants(dialog).OfType<Button>().First(c => c.Content?.ToString() == label || AutomationProperties.GetName(c) == label);
+    private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+    private static async Task Click(DependencyObject page, string id)
+    {
+        var button = Button(page, id);
+        await Until(() => button.IsEnabled && button.IsLoaded, id + " enabled");
+        Invoke(button);
+    }
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        yield return root;
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            foreach (var child in Descendants(VisualTreeHelper.GetChild(root, index))) yield return child;
+    }
+    private static async Task CaptureAsync(FrameworkElement element, string name)
+    {
+        element.UpdateLayout(); await Task.Delay(60);
+        var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(element);
+        Check(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, name + " rendered");
+        var folder = await StorageFolder.GetFolderFromPathAsync(Path.GetFullPath(Program.ResultDirectory));
+        var file = await folder.CreateFileAsync(name, CreationCollisionOption.ReplaceExisting);
+        using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, (await bitmap.GetPixelsAsync()).ToArray());
+        await encoder.FlushAsync();
+    }
+}

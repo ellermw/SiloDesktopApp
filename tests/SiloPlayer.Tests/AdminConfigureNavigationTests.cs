@@ -4,6 +4,42 @@ namespace SiloPlayer.Tests;
 
 public sealed class AdminConfigureNavigationTests
 {
+    [Fact]
+    public void ConfigureCatalogTracksAllNineteenLeavesWithoutRegisteringPlaceholders()
+    {
+        var topics = AdminRouteCatalog.Sections.Single(section => section.Id == "configure").Entries.Cast<AdminNavTopic>().ToArray();
+        Assert.Equal(["server", "access", "integrations"], topics.Select(topic => topic.Id));
+        Assert.Equal(19, topics.Sum(topic => topic.Leaves.Count));
+        Assert.Equal(45, AdminRouteCatalog.Leaves.Count());
+        var registry = new AdminPageRegistry([]);
+        Assert.All(topics.SelectMany(topic => topic.Leaves), leaf => Assert.False(registry.IsRegistered(leaf.Route)));
+    }
+
+    [Theory]
+    [InlineData("/admin/settings/subtitles", AdminRoute.ProviderSettings, "/admin/settings/providers")]
+    [InlineData("/admin/settings/providers", AdminRoute.ProviderSettings, "/admin/settings/providers")]
+    [InlineData("/admin/settings/branding", AdminRoute.AppearanceSettings, "/admin/settings/appearance")]
+    [InlineData("/admin/settings?tab=jellyfin", AdminRoute.CompatibilitySettings, "/admin/settings/compatibility")]
+    public void ConfigureAliasesKeepTheirOwnIdentityButNeedARegisteredPage(string href, AdminRoute route, string canonical)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
+        Assert.Equal(AdminRouteResolutionKind.Route, resolution.Kind);
+        Assert.Equal(route, resolution.Request!.Route);
+        Assert.Equal(canonical, resolution.CanonicalHref);
+        Assert.False(new AdminPageRegistry([]).CanOpen(resolution.Request));
+    }
+
+    [Fact]
+    public void NestedToolsKeepTheirFullRouteScopeWithoutExposingPages()
+    {
+        Assert.True(AdminRouteCatalog.IsValid(new(AdminRoute.ScheduledTasks) { Segments = ["library-scan"] }));
+        Assert.True(AdminRouteCatalog.IsValid(new(AdminRoute.Plugins) { Segments = ["plugin-1"] }));
+        Assert.True(AdminRouteCatalog.IsValid(new(AdminRoute.Backups) { Segments = ["b1", "restore"] }));
+        Assert.True(AdminRouteCatalog.IsValid(new(AdminRoute.Backups) { Segments = ["uploads", "u1", "restore"] }));
+        Assert.False(AdminRouteCatalog.IsValid(new(AdminRoute.Backups) { Segments = ["u1"] }));
+        Assert.False(AdminRouteCatalog.IsValid(new(AdminRoute.ScheduledTasks) { Segments = ["scan", "edit"] }));
+        Assert.Equal("web.admin.common.title.tab.task", AdminNavigation.TitleKeys(new(AdminRoute.ScheduledTasks) { Segments = ["scan"] }).Tab);
+    }
     [Theory]
     [InlineData("/admin/settings/general")]
     [InlineData("/admin/settings")]

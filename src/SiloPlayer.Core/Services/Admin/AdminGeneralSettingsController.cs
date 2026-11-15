@@ -19,6 +19,8 @@ public sealed record AdminGeneralSettingsState
     public string? ErrorCode { get; init; }
     public AdminFailureKind? Failure { get; init; }
     public IReadOnlyDictionary<string, string> Values { get; init; } = new Dictionary<string, string>();
+    /// <summary>Canonical acknowledged nonsecret values, separate from newer staged edits.</summary>
+    public IReadOnlyDictionary<string, string> PersistedValues { get; init; } = new Dictionary<string, string>();
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> Configured { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
@@ -167,7 +169,14 @@ public sealed class AdminGeneralSettingsController : IDisposable
             {
                 var result = await _api.PutAsync(action, intent.Values, intent.ETag, Keys, Secrets).ConfigureAwait(false);
                 var keys = intent.Values.Keys.ToArray();
-                Update(action, () => { _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired); _state = _state with { Saving = false }; });
+                var secretPresence = intent.Values.Where(entry => Secrets.Contains(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value.Length > 0, StringComparer.Ordinal);
+                Update(action, () =>
+                {
+                    _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired);
+                    var configured = new HashSet<string>(_state.Configured, StringComparer.Ordinal);
+                    foreach (var (key, present) in secretPresence) { if (present) configured.Add(key); else configured.Remove(key); }
+                    _state = _state with { Saving = false, Configured = Array.AsReadOnly(configured.ToArray()) };
+                });
                 if (_lifetime.IsCurrent(action)) { _store.Invalidate(); savedKeys = keys; }
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
@@ -215,7 +224,12 @@ public sealed class AdminGeneralSettingsController : IDisposable
             if (_disposed || !_lifetime.IsCurrent(owner)) return;
             update();
             if (!owner.IsCurrent) { _form?.Discard(); _form = null; _state = new(); }
-            else if (_form != null) _state = _state with { Values = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(key => key, _form.Get, StringComparer.Ordinal)), DirtyKeys = Array.AsReadOnly(_form.DirtyKeys.ToArray()), RestartRequired = _form.RestartRequired };
+            else if (_form != null) _state = _state with
+            {
+                Values = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(key => key, _form.Get, StringComparer.Ordinal)),
+                PersistedValues = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.Except(Secrets, StringComparer.Ordinal).ToDictionary(key => key, _form.GetPersisted, StringComparer.Ordinal)),
+                DirtyKeys = Array.AsReadOnly(_form.DirtyKeys.ToArray()), RestartRequired = _form.RestartRequired,
+            };
         }
         Changed?.Invoke();
     }
