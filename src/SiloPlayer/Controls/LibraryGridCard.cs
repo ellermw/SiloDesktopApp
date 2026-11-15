@@ -586,7 +586,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             return;
 
         var libraryId = MediaNavigationContext.LibraryId(this);
-        if (!libraryId.HasValue) App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(MediaItem.ContentId);
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(MediaItem.ContentId, libraryId);
         App.Services.GetRequiredService<NavigationService>()
             .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, libraryId));
     }
@@ -654,7 +654,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
             {
                 var libraryId = MediaNavigationContext.LibraryId(this);
-                if (!libraryId.HasValue) App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(item.ContentId);
+                App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(item.ContentId, libraryId);
                 if (item.Type is not ("movie" or "episode" or "audiobook"))
                     return;
                 App.Services.GetRequiredService<PlayerService>()

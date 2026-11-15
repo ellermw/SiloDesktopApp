@@ -70,7 +70,7 @@ public partial class LibraryViewModel
 
     public Task EnsureLetterIndexAsync() => EnsureLetterIndexCoreAsync();
 
-    private async Task EnsureLetterIndexCoreAsync(bool force = false, bool preserveExisting = false)
+    private async Task EnsureLetterIndexCoreAsync(bool force = false, bool preserveExisting = false, bool applyTotal = true)
     {
         if (Library is not null) EnsureCatalogScope();
         // The page's viewport owns catch-up priority, not the start of a held window.
@@ -87,10 +87,10 @@ public partial class LibraryViewModel
         _letterIndexKey = key;
         LetterIndexFailed = false;
         IsLetterIndexLoading = true;
-        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting));
+        await (_letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token, preserveExisting, applyTotal));
     }
 
-    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting = false)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct, bool preserveExisting = false, bool applyTotal = true)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -120,7 +120,7 @@ public partial class LibraryViewModel
             {
                 // The index supplies a provisional extent, never authority
                 // over an exact total returned by the catalog itself.
-                ApplyLetterIndexTotal(index.Total);
+                if (applyTotal) ApplyLetterIndexTotal(index.Total);
                 WindowLoaded?.Invoke();
             }
         }
