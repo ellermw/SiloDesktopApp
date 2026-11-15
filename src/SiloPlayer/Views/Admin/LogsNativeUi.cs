@@ -339,7 +339,7 @@ internal sealed class LogsNativeTable : Grid
         child.HorizontalAlignment = HorizontalAlignment.Right;
         if (child is TextBlock text) text.TextAlignment = TextAlignment.Right;
     }
-    internal void Add(IReadOnlyList<UIElement> cells, Action? select = null, string? name = null, bool highlight = false)
+    internal Grid Add(IReadOnlyList<UIElement> cells, Action? select = null, string? name = null, bool highlight = false)
     {
         var grid = Row(cells);
         if (highlight) grid.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(13, 167, 139, 250));
@@ -352,6 +352,7 @@ internal sealed class LogsNativeTable : Grid
         if (_lastRule != null) _lastRule.BorderThickness = new(0, 0, 0, 1);
         _lastRule = Rule(content); _lastRule.BorderThickness = new(0); _rows.Children.Add(_lastRule);
         InvalidateMeasure();
+        return grid;
     }
     internal void AddFull(UIElement content, double height = 112)
     {
