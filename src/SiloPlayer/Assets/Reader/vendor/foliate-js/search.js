@@ -61,7 +61,8 @@ const simpleSearch = function* (strs, query, options = {}) {
             const startIndex = strIndex
             const startOffset = index - (sum - strs[strIndex].length)
             const end = index + needleLength
-            while (sum <= end) sum += strs[++strIndex].length
+            while (sum <= end && strIndex < strs.length - 1)
+                sum += strs[++strIndex].length
             const endIndex = strIndex
             const endOffset = end - (sum - strs[strIndex].length)
             const range = { startIndex, startOffset, endIndex, endOffset }

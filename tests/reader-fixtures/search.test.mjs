@@ -67,6 +67,33 @@ test('cross-node excerpts retain middle text and distinguish equal boundary node
     assert.deepEqual(repeated.range, { startIndex: 0, startOffset: 0, endIndex: 2, endOffset: 4 });
 });
 
+test('simple search retains matches ending at the final text node boundary', () => {
+    for (const sensitivity of ['variant', 'accent']) {
+        for (const [texts, query, range] of [
+            [['The end'], 'end', { startIndex: 0, startOffset: 4, endIndex: 0, endOffset: 7 }],
+            [['same', ' between ', 'same'], 'same between same', { startIndex: 0, startOffset: 0, endIndex: 2, endOffset: 4 }],
+        ]) {
+            const results = [...search(texts, query, { ...options, sensitivity })];
+            assert.equal(results.length, 1);
+            assert.deepEqual(results[0].range, range);
+            assert.equal(results[0].excerpt.match, query);
+            assert.equal(results[0].excerpt.post, '');
+        }
+    }
+});
+
+test('simple search preserves context and subsequent matches at mid-section node boundaries', () => {
+    const results = [...search(['end', ' next end', ' tail'], 'end', options)];
+    assert.deepEqual(results.map(result => result.range), [
+        { startIndex: 0, startOffset: 0, endIndex: 1, endOffset: 0 },
+        { startIndex: 1, startOffset: 6, endIndex: 2, endOffset: 0 },
+    ]);
+    assert.deepEqual(results.map(result => result.excerpt), [
+        { pre: '', match: 'end', post: ' next end' },
+        { pre: 'next ', match: 'end', post: ' tail' },
+    ]);
+});
+
 test('windowed excerpts equal whole-node context including long whitespace runs', () => {
     for (const padding of ['abcd '.repeat(150), 'x' + ' '.repeat(4096), String.fromCharCode(9, 10, 32).repeat(2000) + 'tail']) {
         const result = [...search([padding + 'needle' + padding], 'needle', options)][0];
