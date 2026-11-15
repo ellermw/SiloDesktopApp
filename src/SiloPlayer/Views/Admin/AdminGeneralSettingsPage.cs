@@ -20,7 +20,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
     private sealed class ScrollPosition { internal double Offset; }
     private static readonly ConditionalWeakTable<AdminRouteRequest, ScrollPosition> ScrollPositions = new();
     private readonly Grid _root = new();
-    private readonly ScrollViewer _scroller = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    private readonly ScrollViewer _scroller = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     private readonly StackPanel _scrollContent = new();
     private readonly StackPanel _body = new() { MaxWidth = 1120, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly StackPanel _fields = new() { Spacing = 20 };
@@ -120,6 +120,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _redisUnavailable = Alert(T("web.admin.settings.redis.unavailable.title"), T("web.admin.settings.redis.unavailable.description"));
         _fields.Children.Add(_redisUnavailable); _body.Children.Add(_spacer);
         _scrollContent.Children.Add(_body); _scroller.Content = _scrollContent; _root.Children.Add(_scroller);
+        _scroller.SizeChanged += (_, _) => FitScrollContent();
         var background = AdminMonitorUi.ColorOf("AppBackgroundBrush", Colors.Black);
         _scrim.Background = new LinearGradientBrush
         {
@@ -132,8 +133,17 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _root.Children.Add(_scrim); _root.Children.Add(_saveBar); Content = _root;
         _saveBar.Save.Click += async (_, _) => { if (_controller != null) await _controller.SaveAsync(); };
         _saveBar.Discard.Click += (_, _) => { _redisEnabledOverride = null; _controller?.Discard(); };
-        Loaded += (_, _) => Activate(); Unloaded += (_, _) => Close();
+        Loaded += (_, _) => { FitScrollContent(); Activate(); }; Unloaded += (_, _) => Close();
         SizeChanged += (_, _) => { _saveBar.SetAvailableWidth(ActualWidth); _saveBar.Margin = new(16, 0, 16, (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 ? -8 : 8); };
+    }
+
+    private void FitScrollContent()
+    {
+        // A capped child gives ScrollContentPresenter a narrower desired width.
+        // Give the outer frame its viewport width so the 1120px settings column
+        // starts at the common gutter rather than centering on wide windows.
+        var available = _scroller.ActualWidth - _scrollContent.Margin.Left - _scrollContent.Margin.Right;
+        if (available > 0) _scrollContent.Width = Math.Min(_scrollContent.MaxWidth, available);
     }
 
     private static string T(string key, object? args = null) => AdminText.T(key, args);
@@ -272,7 +282,8 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         AutomationProperties.SetName(_check, _check.Content.ToString());
         _check.IsEnabled = current && state.Loaded && !state.Loading && !accessBlocked && !state.Saving && !state.Checking && !state.SensitiveStatusError;
         _checkResult.Text = state.ConnectionResult?.Message ?? "";
-        _checkResult.Foreground = AdminMonitorUi.Solid(state.ConnectionResult?.Success == true ? AdminMonitorUi.Emerald400 : AdminMonitorUi.Destructive);
+        _checkResult.Foreground = AdminMonitorUi.Solid(state.ConnectionResult?.Success == true
+            ? Windows.UI.Color.FromArgb(255, 0x16, 0xA3, 0x4A) : Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26));
         foreach (var (key, control) in _controls) AutomationProperties.SetHelpText(control, _rows[key].Description.Text);
         var writable = state.DirtyKeys.Any(key => !Managed(key) && (!state.SensitiveStatusError || !key.StartsWith("redis.", StringComparison.Ordinal)));
         _saveBar.State(current ? state.DirtyKeys.Count : 0, state.Saving, current && writable && !state.Loading && !accessBlocked && !state.Conflict && !state.OutcomeUnknown);

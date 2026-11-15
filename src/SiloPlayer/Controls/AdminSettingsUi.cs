@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Services.Admin;
@@ -14,8 +15,8 @@ namespace SiloPlayer.Controls;
 /// <summary>Native counterparts of the official settings row/group primitives. No entrance motion.</summary>
 internal static class AdminSettingsUi
 {
-    // Official app.css --input-base (#4308), distinct from the faint group hairlines.
-    private static Brush FieldBorder => AdminMonitorUi.Solid(Color.FromArgb(255, 106, 106, 116));
+    // SettingField and SecretField explicitly override the global --input token.
+    private static Brush FieldBorder => AdminMonitorUi.Solid(AdminMonitorUi.Muted, .25);
     internal static Brush Accent => new SolidColorBrush(Color.FromArgb(255, 167, 139, 250));
     internal static Brush Brush(string name) => AdminMonitorUi.Brush(name);
     internal static TextBlock Text(string value, double size = 14, bool muted = false) => new()
@@ -86,6 +87,7 @@ internal static class AdminSettingsUi
             HorizontalAlignment = HorizontalAlignment.Right,
         };
         input.Resources["TextControlBorderBrushPointerOver"] = FieldBorder;
+        if (number) input.InputScope = new InputScope { Names = { new InputScopeName(InputScopeNameValue.Number) } };
         AutomationProperties.SetName(input, label);
         AutomationProperties.SetAutomationId(input, id);
         return input;
@@ -168,7 +170,7 @@ internal sealed class AdminSettingsSaveBar : Grid
 internal sealed class AdminSettingsRow : Grid
 {
     private readonly Grid _layout = new() { RowSpacing = 12 };
-    private readonly StackPanel _labels = new() { Spacing = 4, MaxWidth = 520 };
+    private readonly StackPanel _labels = new() { Spacing = 4, MaxWidth = 520, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly Border _dirty = new() { Width = 6, Height = 6, CornerRadius = new(3), Background = AdminSettingsUi.Accent, Visibility = Visibility.Collapsed };
     private readonly Border _restart;
     private readonly FrameworkElement _editor;

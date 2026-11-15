@@ -199,6 +199,14 @@ internal static class AdminGeneralSettingsNativeFixture
                 window.AppWindow.ResizeClient(new(width, height)); await Task.Delay(200); outer.UpdateLayout();
                 var scroller = (ScrollViewer)Field(page, "_scroller")!;
                 Check(scroller.ExtentWidth <= scroller.ViewportWidth + 1, $"General has no horizontal scroll overflow at {width}x{height}");
+                var viewportLeft = scroller.TransformToVisual(null).TransformPoint(new(0, 0)).X;
+                var gutter = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
+                var available = scroller.ActualWidth - 2 * gutter;
+                var expectedLeft = viewportLeft + gutter + Math.Max(0, available - AdminShellPage.ContentMaxWidth) / 2;
+                var bodyLeft = ((FrameworkElement)Field(page, "_body")!).TransformToVisual(null).TransformPoint(new(0, 0)).X;
+                var scrollContent = (FrameworkElement)scroller.Content;
+                Program.Log($"TRACE settings width={width} viewport={scroller.ActualWidth} bodyLeft={bodyLeft} expectedLeft={expectedLeft} contentWidth={scrollContent.ActualWidth} desired={scrollContent.DesiredSize.Width} margin={scrollContent.Margin} alignment={scrollContent.HorizontalAlignment} presenter={scroller.HorizontalContentAlignment}");
+                Check(Math.Abs(bodyLeft - expectedLeft) < 1.5, $"General settings column starts at the shared frame gutter at {width}x{height}");
                 foreach (var edge in new[] { 8d, scroller.ActualWidth - 18 })
                 {
                     var point = scroller.TransformToVisual(null).TransformPoint(new(edge, scroller.ActualHeight / 2));
@@ -206,12 +214,20 @@ internal static class AdminGeneralSettingsNativeFixture
                     while (target != null && target is not ScrollViewer) target = VisualTreeHelper.GetParent(target);
                     Check(ReferenceEquals(target, scroller), $"General side gutter has the page scrolling ancestor at {width}x{height}");
                 }
+                foreach (var control in Descendants(page).OfType<Control>().Where(c => AutomationProperties.GetAutomationId(c).StartsWith("General_", StringComparison.Ordinal)))
+                {
+                    if (AutomationProperties.GetLabeledBy(control) is not FrameworkElement label) continue;
+                    DependencyObject? row = VisualTreeHelper.GetParent(control);
+                    while (row != null && row.GetType().Name != "AdminSettingsRow") row = VisualTreeHelper.GetParent(row);
+                    if (row is UIElement fieldRow)
+                        Check(label.TransformToVisual(fieldRow).TransformPoint(new(0, 0)).X <= 15, "General field labels stay on their row's left edge, including toggle rows");
+                }
                 foreach (var control in Descendants(page).OfType<TextBox>().Where(c => c.IsLoaded))
                 {
                     var point = control.TransformToVisual(page).TransformPoint(new(0, 0));
                     Check(point.X >= -1 && point.X + control.ActualWidth <= page.ActualWidth + 1, "General text field stays inside the page viewport");
                     Check(AutomationProperties.GetName(control).Length > 0, "General input has an accessible name");
-                    Check(control.BorderBrush is SolidColorBrush { Color: { R: 106, G: 106, B: 116 } }, "General input uses the official distinct form-field edge");
+                    Check(control.BorderBrush is SolidColorBrush { Color.A: 64 }, "General input uses the official settings-row border opacity");
                 }
                 name.Text = "Layout draft"; await Task.Delay(100);
                 await CaptureAsync(outer, $"general-{width}x{height}.png");
