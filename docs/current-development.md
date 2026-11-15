@@ -53,6 +53,38 @@ with 0 GiB recovered on C: and D:.
 
 ---
 
+# November 15 — Admin Activity page scrollbar and side-gutter wheel scrolling
+
+Built on Beta 8f01cf8be7f7dc271b5d70294ac6ce8e23ffa66a (1.2.1081-beta.1; pipeline owns
+stamping). Official WebUI reference c11b0a968f0d5980b7005579fb95acc2d11d8321: AdminLayout
+pads the scrolling document with the page gutters, so its scrollbar is at the viewport edge.
+
+Cause, measured natively: Activity's page ScrollViewer lived inside the shell's centred
+max-1560 column, whose margins are the gutters. Its overlay scrollbar therefore sat on the
+column's right edge (1387–1399 at 1440 wide) over the rightmost text (1395.7) and on top of
+the nested streams scrollbar (1386–1398). The gutters hit-tested to the shell root Grid, outside
+any scroller, so wheel input there did nothing. Activity now opts into
+`IAdminGutterScrollPage`: the shell gives its scroller the full content area and applies the
+same gutters/max width to the scroll content. Other Admin pages keep the existing column.
+Content, table and nested-scrollbar bounds are unchanged; no requests, timers or transitions added.
+
+The admin-monitor native fixture's new `activity-scroll` case (also in the default run) measures
+1440x600, 1920x600 and 800x600. It went red on unchanged Beta and passes after the fix. It checks
+page and nested scrollbar separation, rightmost-text clearance, preserved centred layout and nested
+bar placement. It also checks gutter hit-test ownership and that probes across an unstriped nested
+row stay with the nested panel, plus Logs/Activity route restoration. Wheel routing is evidenced by
+hit-test ownership. WinAppSDK input did not consume posted or sent WM_MOUSEWHEEL, and global
+SendInput was not used, so no real wheel delta was measured.
+
+Final: 356 focused Admin/architecture units passed; Release publish (SiloPlayer.dll
+089E6363302C1F102F2E3F631A15CD1B3DD05A0B442E812649D1FE16BC2572B9), native host, admin-monitor
+(all cases) and admin-dashboard passed. admin-monitor-logs fails identically on unchanged Beta
+(Logging restart-save/profile-verification and dialog-collision checks; 208 passes, 10 failures);
+not addressed here. Evidence: D:/SiloPlayer-build/server-update-nov14/activity-scrolling/report.md.
+Installed player and settings untouched; no cleanup deletion attempted.
+
+---
+
 # November 14 — Dashboard layout intent and current server presentation
 
 Official source pin: 1452ea2d10efbe7d3ea5ce7140fb49756b493670. The relevant

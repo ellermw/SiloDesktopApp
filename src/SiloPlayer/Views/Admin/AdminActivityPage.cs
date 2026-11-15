@@ -21,8 +21,10 @@ namespace SiloPlayer.Views.Admin;
 /// current <see cref="MonitorAuthorityLease"/> before any dialog and publishes
 /// only while that lease is current.
 /// </summary>
-public sealed partial class AdminActivityPage : Page
+public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
 {
+    FrameworkElement IAdminGutterScrollPage.ScrollContent => _page;
+
     /// <summary>977px of column minimums plus 4rem of gaps/padding and the two table borders.</summary>
     public const double WideTableMinWidth = 977 + 64 + 2;
     private static readonly TimeSpan RefreshSpinnerMinimum = TimeSpan.FromSeconds(1);
