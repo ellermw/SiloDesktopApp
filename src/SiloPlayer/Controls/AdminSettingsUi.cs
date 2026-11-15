@@ -200,6 +200,82 @@ internal static class AdminSettingsUi
         finally { if (ReferenceEquals(current(), dialog)) track(null); }
     }
 
+    /// <summary>
+    /// The global input token edge (#4308 <c>--input</c>, 3:1 on the page) for controls that, unlike
+    /// SettingField/SecretField, use the ordinary Input/SelectTrigger border: Security's RateBox, number
+    /// and select controls. Disabled renders the normal chrome at 50% opacity, as the official controls do.
+    /// High-contrast themes keep their system brushes.
+    /// </summary>
+    internal static T UseInputEdge<T>(T control) where T : Control
+    {
+        void Dim() => control.Opacity = control.IsEnabled ? 1 : .5;
+        control.IsEnabledChanged += (_, _) => Dim(); Dim();
+        if (new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast) return control;
+        var edge = new SolidColorBrush(InputEdgeColor);
+        control.BorderBrush = edge;
+        foreach (var key in new[] { "TextControlBorderBrushPointerOver", "TextControlBorderBrushDisabled", "ComboBoxBorderBrushPointerOver",
+                     "ComboBoxBorderBrushPressed", "ComboBoxBorderBrushFocused", "ComboBoxBorderBrushDisabled" })
+            control.Resources[key] = edge;
+        foreach (var key in new[] { "TextControlBackgroundDisabled", "ComboBoxBackgroundDisabled" }) control.Resources[key] = Brush("AppBackgroundBrush");
+        foreach (var key in new[] { "TextControlForegroundDisabled", "ComboBoxForegroundDisabled" }) control.Resources[key] = Brush("PrimaryTextBrush");
+        return control;
+    }
+    internal static readonly Color InputEdgeColor = Color.FromArgb(255, 0x6A, 0x6A, 0x74);
+    // The app ships only the dark midnight-cinema appearance (ThemeService.IsLightAppearance), so status lines use amber-400.
+    private static readonly Color StatusWarn = AdminMonitorUi.Amber400;
+
+    /// <summary>Official SettingFieldStatus (tone warn): 13px amber line with a 14px triangle, 6 below the description.</summary>
+    internal static Grid Status(string text, string id)
+    {
+        var line = new Grid { ColumnSpacing = 6, Margin = new(0, 2, 0, 0), Visibility = Visibility.Collapsed };
+        line.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var icon = AdminMonitorUi.Icon("alert-triangle", 14, StatusWarn); icon.VerticalAlignment = VerticalAlignment.Top; icon.Margin = new(0, 2, 0, 0);
+        var label = Text(text, 13); label.Foreground = AdminMonitorUi.Solid(StatusWarn); label.LineHeight = 17.875;
+        AutomationProperties.SetAutomationId(label, id);
+        AutomationProperties.SetLiveSetting(label, AutomationLiveSetting.Polite);
+        line.Children.Add(icon); Grid.SetColumn(label, 1); line.Children.Add(label);
+        return line;
+    }
+
+    /// <summary>Official SettingsSubheading: 12px semibold uppercase tracking-wider, 16 above and 4 below, heading level 4. Field-list rules give it a hairline.</summary>
+    internal static Border Subheading(string text)
+    {
+        var heading = Text(text.ToUpper(System.Globalization.CultureInfo.CurrentCulture), 12, true);
+        heading.FontWeight = FontWeights.SemiBold; heading.CharacterSpacing = 50;
+        AutomationProperties.SetName(heading, text);
+        AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level4);
+        return new Border { Child = heading, Padding = new(0, 16, 0, 4), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .6) };
+    }
+
+    /// <summary>A non-row notice in a field list (official Security local-network warning): 12px amber-500 text, 16px icon, 8 gap, 12 vertical padding.</summary>
+    internal static Border Warning(string text, string id)
+    {
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var icon = AdminMonitorUi.Icon("alert-triangle", 16, AdminMonitorUi.Amber500); icon.VerticalAlignment = VerticalAlignment.Top; icon.Margin = new(0, 2, 0, 0);
+        var label = Text(text, 12); label.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Amber500);
+        AutomationProperties.SetAutomationId(label, id);
+        AutomationProperties.SetLiveSetting(label, AutomationLiveSetting.Polite);
+        row.Children.Add(icon); Grid.SetColumn(label, 1); row.Children.Add(label);
+        return new Border { Child = row, Padding = new(0, 12, 0, 12), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .6), Visibility = Visibility.Collapsed };
+    }
+
+    /// <summary>
+    /// Official RateBox: a 12px muted caption above a 96-wide right-aligned number input, 4 apart. Every box
+    /// carries a distinct "{row} {caption}" name rather than only the per-minute box naming its row.
+    /// </summary>
+    internal static (StackPanel Box, TextBox Input) RateBox(string caption, string name, string id)
+    {
+        var input = UseInputEdge(Input(name, id, number: true));
+        input.Width = 96; input.TextAlignment = TextAlignment.Right;
+        Microsoft.UI.Xaml.Documents.Typography.SetNumeralAlignment(input, Microsoft.UI.Xaml.FontNumeralAlignment.Tabular);
+        var label = Text(caption, 12, true); label.TextAlignment = TextAlignment.Right; label.HorizontalAlignment = HorizontalAlignment.Right;
+        AutomationProperties.SetAccessibilityView(label, AccessibilityView.Raw);
+        var box = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+        box.Children.Add(label); box.Children.Add(input);
+        return (box, input);
+    }
+
     internal static Border Restart(string label)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
@@ -270,13 +346,16 @@ internal sealed class AdminSettingsRow : Grid
     private readonly Border _dirty = new() { Width = 6, Height = 6, CornerRadius = new(3), Background = AdminSettingsUi.Accent, Visibility = Visibility.Collapsed };
     private readonly Border _restart;
     private readonly FrameworkElement _editor;
+    private readonly FrameworkElement? _unit;
     private readonly double _editorWidth;
     internal TextBlock Description { get; }
     internal Control? Input => _editor as Control;
     /// <summary>Raised after each reflow with whether the row uses its wide label/editor columns.</summary>
     internal event Action<bool>? LayoutChanged;
 
-    internal AdminSettingsRow(string label, string description, FrameworkElement editor)
+    /// <param name="unit">Text for the reserved 64px unit slot (official SettingFieldRow <c>unit</c>).</param>
+    /// <param name="nameEditor">False for a composite editor whose inner controls carry their own names.</param>
+    internal AdminSettingsRow(string label, string description, FrameworkElement editor, string? unit = null, bool nameEditor = true)
     {
         _editor = editor;
         _editorWidth = editor.Width;
@@ -300,13 +379,27 @@ internal sealed class AdminSettingsRow : Grid
         _labels.Children.Add(Description);
         _layout.Children.Add(_labels);
         Grid.SetColumn(editor, 1); _layout.Children.Add(editor);
+        if (unit != null)
+        {
+            // The official slot is 64 wide with nowrap text that may overflow it; a Canvas keeps the slot width without clipping.
+            var unitText = AdminSettingsUi.Text(unit, 13, true); unitText.TextWrapping = TextWrapping.NoWrap; unitText.VerticalAlignment = VerticalAlignment.Top;
+            Canvas.SetTop(unitText, (36 - unitText.LineHeight) / 2);
+            _unit = new Canvas { Width = 64, Height = 36, VerticalAlignment = VerticalAlignment.Top, Children = { unitText } };
+            Grid.SetColumn(_unit, 2); _layout.Children.Add(_unit);
+        }
         Children.Add(_layout);
-        AutomationProperties.SetName(editor, label);
-        if (description.Length > 0) AutomationProperties.SetHelpText(editor, description);
-        AutomationProperties.SetLabeledBy(editor, text);
+        if (nameEditor)
+        {
+            AutomationProperties.SetName(editor, label);
+            if (description.Length > 0) AutomationProperties.SetHelpText(editor, description);
+            AutomationProperties.SetLabeledBy(editor, text);
+        }
         SizeChanged += (_, _) => Reflow();
         Loaded += (_, _) => Reflow();
     }
+
+    /// <summary>Adds an official status line under the description.</summary>
+    internal void AddStatus(UIElement status) => _labels.Children.Add(status);
 
     internal void State(bool dirty, bool restart)
     {
@@ -321,7 +414,14 @@ internal sealed class AdminSettingsRow : Grid
         Grid.SetRow(_editor, wide ? 0 : 1);
         Grid.SetColumnSpan(_editor, wide ? 1 : 3);
         Grid.SetColumnSpan(_labels, wide ? 1 : 3);
-        _layout.ColumnDefinitions[2].Width = wide ? new(64) : new(0);
+        _layout.ColumnDefinitions[2].Width = wide ? new(64) : _unit != null ? GridLength.Auto : new(0);
+        if (_unit != null)
+        {
+            // Stacked: [control fills][unit], as the official row's flex line.
+            Grid.SetColumnSpan(_editor, wide ? 1 : 2);
+            Grid.SetRow(_unit, wide ? 0 : 1);
+            _unit.Margin = wide ? new(0) : new(8, 0, 0, 0);
+        }
         _editor.Width = wide && double.IsFinite(_editorWidth) ? _editorWidth : double.NaN;
         _editor.HorizontalAlignment = wide ? HorizontalAlignment.Right : HorizontalAlignment.Stretch;
         _editor.VerticalAlignment = VerticalAlignment.Top;
@@ -444,6 +544,53 @@ internal sealed class AdminSettingsActionContent : Panel
         _button.Arrange(new(0, 0, _button.DesiredSize.Width, _button.DesiredSize.Height));
         _result.Arrange(new(_wrap ? 0 : _button.DesiredSize.Width + 12, _wrap ? _button.DesiredSize.Height + 12 : Math.Max(0, (_button.DesiredSize.Height - _result.DesiredSize.Height) / 2),
             Math.Max(0, _wrap ? final.Width : final.Width - _button.DesiredSize.Width - 12), _result.DesiredSize.Height));
+        return final;
+    }
+}
+
+/// <summary>
+/// The official RateBox line (<c>flex flex-wrap items-end justify-end gap-2.5</c>): right-justified, wrapping
+/// only when the row is too narrow, each line bottom-aligned, 10 apart in both directions.
+/// </summary>
+internal sealed class AdminSettingsRateFlow : Panel
+{
+    private const double Gap = 10;
+    private readonly List<(int Start, int End, double Width, double Height)> _lines = [];
+    protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size available)
+    {
+        _lines.Clear();
+        int start = 0; double width = 0, height = 0, total = 0, widest = 0;
+        var visible = Children.Where(child => child.Visibility == Visibility.Visible).ToArray();
+        for (var index = 0; index < visible.Length; index++)
+        {
+            visible[index].Measure(new(double.PositiveInfinity, double.PositiveInfinity));
+            var size = visible[index].DesiredSize;
+            var next = width == 0 ? size.Width : width + Gap + size.Width;
+            if (width > 0 && next > available.Width)
+            {
+                _lines.Add((start, index, width, height)); total += height + Gap; widest = Math.Max(widest, width);
+                start = index; width = size.Width; height = size.Height;
+            }
+            else { width = next; height = Math.Max(height, size.Height); }
+        }
+        if (visible.Length > 0) { _lines.Add((start, visible.Length, width, height)); total += height; widest = Math.Max(widest, width); }
+        return new(double.IsFinite(available.Width) ? Math.Min(available.Width, widest) : widest, total);
+    }
+    protected override Windows.Foundation.Size ArrangeOverride(Windows.Foundation.Size final)
+    {
+        var visible = Children.Where(child => child.Visibility == Visibility.Visible).ToArray();
+        double top = 0;
+        foreach (var (start, end, width, height) in _lines)
+        {
+            var left = Math.Max(0, final.Width - width);
+            for (var index = start; index < end && index < visible.Length; index++)
+            {
+                var size = visible[index].DesiredSize;
+                visible[index].Arrange(new(left, top + height - size.Height, size.Width, size.Height));
+                left += size.Width + Gap;
+            }
+            top += height + Gap;
+        }
         return final;
     }
 }

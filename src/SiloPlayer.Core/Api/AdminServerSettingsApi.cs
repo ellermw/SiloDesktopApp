@@ -163,11 +163,11 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         return linked;
     }
 
-    private static string SafeCode(string? code) => code is "permission_denied" or "profile_unverified" or "profile_verification_required"
+    internal static string SafeCode(string? code) => code is "permission_denied" or "profile_unverified" or "profile_verification_required"
         or "demo_restricted" or "dependency_unavailable" or "validation_failed" or "precondition_required" or "precondition_failed"
         or "capability_disabled" or "capability_not_configured" or "capability_unsupported" or "rate_limited" or "authentication_required"
         ? code : "unknown";
-    private static ApiException Sanitize(ApiException error) => new(SafeCode(error.ErrorCode), "Settings request failed.", error.StatusCode)
+    internal static ApiException Sanitize(ApiException error) => new(SafeCode(error.ErrorCode), "Settings request failed.", error.StatusCode)
     {
         ProblemType = SafeCode(error.ProblemType) is var code && code != "unknown" ? code : null
     };

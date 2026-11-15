@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
   "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files page, Playback History and Skip Markers read-only pages), and the Configure catalog with the General and Email settings pages",
+=======
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity, the Admin Manage foundation and Subtitle Files, and the Configure catalog with the General, Email and Security settings pages",
+>>>>>>> 1e71c820 (Add Configure Security settings page)
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminMarkerHistoryApi.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Activity.cs",
@@ -98,6 +102,12 @@
     "src/SiloPlayer.Core/Services/Admin/AdminEmailSettingsController.cs",
     "src/SiloPlayer/Views/Admin/AdminEmailSettingsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminEmailSettingsPage.xaml",
+    "src/SiloPlayer.Core/Api/AdminRateLimitApi.cs",
+    "src/SiloPlayer.Core/Models/Admin/AdminRateLimitModels.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminRateLimitDraft.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSecuritySettingsController.cs",
+    "src/SiloPlayer/Views/Admin/AdminSecuritySettingsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminSecuritySettingsPage.xaml",
     "src/SiloPlayer.Core/Api/AdminSubtitlesApi.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminSubtitles.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminSubtitlesModels.cs",
