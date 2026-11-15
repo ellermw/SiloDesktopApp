@@ -34,9 +34,19 @@ public sealed class UpdateProgressWindow : Window
     private readonly Stopwatch clock=Stopwatch.StartNew();
     private TaskCompletionSource<bool>? answer;
     private bool presentationEnabled;
+    private const string DetailsHandoffProperty = "SiloPlayer.UpdatePanel.DetailsExpanded";
 
     /// <summary>The authenticated client has atomically exchanged the two windows; now follow the owner.</summary>
-    public void StartTracking() { presentationEnabled=true; Track(); }
+    public void StartTracking()
+    {
+        // TransferTo runs after the caller authenticates this helper and its HWND.
+        // Keep this presentation-only bit with the native bounds being transferred;
+        // no package, privilege or installation decision is carried by the property.
+        var expanded=RemoveProp(WinRT.Interop.WindowNative.GetWindowHandle(this),DetailsHandoffProperty);
+        if(expanded!=IntPtr.Zero && Model.DetailsExpanded!=(expanded==(IntPtr)2))Model.ToggleDetails();
+        presentationEnabled=true;
+        Refresh();
+    }
 
     /// <summary>Keep the Check Update dialog until this view participates in a real rendering frame.</summary>
     public async Task WaitForPresentationAsync(CancellationToken ct)
@@ -57,6 +67,10 @@ public sealed class UpdateProgressWindow : Window
         var self=WinRT.Interop.WindowNative.GetWindowHandle(this);
         var target=(IntPtr)trustedWindow;
         if(!GetWindowRect(self,out var bounds))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        // The helper has measured its own collapsed view while hidden. Its first
+        // tracking pass must adopt our Details choice along with these bounds.
+        if(!SetProp(target,DetailsHandoffProperty,(IntPtr)(Model.ShowsDetails ? 2 : 1)))
+            Trace.WriteLine($"Update panel Details preference could not transfer (Win32 {Marshal.GetLastWin32Error()}); continuing with helper defaults.");
         var batch=BeginDeferWindowPos(2);
         if(batch==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         // The helper is still hidden and not tracking. Give it the exact painted preparation bounds.
@@ -290,7 +304,6 @@ public sealed class UpdateProgressWindow : Window
     private bool? dwmOutline;
     private bool outlineTraced;
     private PanelRect? anchor;
-    private SizeInt32 clientSize;
     private RectInt32 lastBounds;
     /// <summary>Fixtures that render the panel off-screen keep it shown; placement still follows the owner.</summary>
     public bool ManagesVisibility { get; set; } = true;
@@ -316,7 +329,10 @@ public sealed class UpdateProgressWindow : Window
                 root.Measure(new Windows.Foundation.Size(UpdatePanelPlacement.PanelWidth,double.PositiveInfinity));
                 var height=Math.Max(64,root.DesiredSize.Height);
                 var size=new SizeInt32((int)Math.Ceiling(UpdatePanelPlacement.PanelWidth*scale),(int)Math.Ceiling(height*scale));
-                if(size.Width!=clientSize.Width || size.Height!=clientSize.Height){AppWindow.ResizeClient(size);clientSize=size;}
+                // A handoff can change the HWND size outside this view. Compare the
+                // actual client area, not the last size this instance requested.
+                var clientSize=AppWindow.ClientSize;
+                if(size.Width!=clientSize.Width || size.Height!=clientSize.Height)AppWindow.ResizeClient(size);
                 layoutDirty=false;
             }
             var outer=AppWindow.Size;
@@ -461,6 +477,8 @@ public sealed class UpdateProgressWindow : Window
     [DllImport("user32.dll")]private static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
     [DllImport("user32.dll")]private static extern IntPtr GetWindow(IntPtr hwnd,uint command);
     [DllImport("user32.dll",SetLastError=true)]private static extern IntPtr BeginDeferWindowPos(int windows);
+    [DllImport("user32.dll",EntryPoint="SetPropW",CharSet=CharSet.Unicode,SetLastError=true)]private static extern bool SetProp(IntPtr hwnd,string name,IntPtr value);
+    [DllImport("user32.dll",EntryPoint="RemovePropW",CharSet=CharSet.Unicode)]private static extern IntPtr RemoveProp(IntPtr hwnd,string name);
     [DllImport("user32.dll",SetLastError=true)]private static extern IntPtr DeferWindowPos(IntPtr batch,IntPtr hwnd,IntPtr after,int x,int y,int cx,int cy,uint flags);
     [DllImport("user32.dll",SetLastError=true)]private static extern bool EndDeferWindowPos(IntPtr batch);
     [DllImport("user32.dll")]private static extern bool GetClientRect(IntPtr hwnd,out Rect rect);
