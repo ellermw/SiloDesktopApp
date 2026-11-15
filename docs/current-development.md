@@ -27,7 +27,7 @@ cleanup was not retried after the earlier automatic approval rejection, with
 
 ---
 
-# November 14 â€” Admin Monitor implemented for Beta
+# November 14 — Admin Monitor implemented for Beta
 
 Native Admin Monitor adds an acting-admin-only footer entry above Profile,
 Dashboard (all 28 widgets), Activity, Server Log, Client Diagnostics and Logging
@@ -704,16 +704,16 @@ Generated output is reused in the existing directory. Cleanup is still blocked
 by the earlier automatic approval review rejection; no deletion was retried,
 and 0 GiB has been reclaimed on either drive during this follow-up.
 
-# November 12 â€” PR #145 regional picker and dialog follow-up
+# November 12 — PR #145 regional picker and dialog follow-up
 
 Based on integrated review head `159f31654a7400f761e594b4d6efe25cf0fab2c6`.
 Supported regional profile tags now select their shipped language option without
-adding a duplicate or rewriting storage: de-DEâ†’de, es-MXâ†’es, pt-PTâ†’pt-BR.
+adding a duplicate or rewriting storage: de-DE→de, es-MX→es, pt-PT→pt-BR.
 Unsupported zh-TW retains its separate option and warning. Activate Device uses
 its bundled document-title key. The webhook editor resolves its title with the
 raw name argument and refreshes it while open without discarding drafts.
 
-Native testing also reproduced a real Settings â†’ Notifications construction
+Native testing also reproduced a real Settings → Notifications construction
 failure: NotificationSettingsControl required SettingsGroupStyle from the
 SettingsPage-only scope. The control now owns that style and border brush with
 the same five setter values as SettingsPage. The normal Settings entry point
@@ -740,7 +740,7 @@ owned. The installed player stays open. Cleanup remains blocked by the earlier
 automatic approval rejection; no deletion was retried and recovered space is
 still 0 GiB on both C: and D:. Generated output is about 1.1 GiB.
 
-# November 12 â€” PR #145 integrated review corrections
+# November 12 — PR #145 integrated review corrections
 
 The candidate integrates pipeline `c8f5fb28b9652c220be521eba6031ccaa855c5e6`
 with the local section-navigation and legacy-series corrections. All **35**
@@ -784,7 +784,7 @@ was retried; recovered space remains **0 GiB C: / 0 GiB D:**. Reused generated
 output is about **1.08 GiB**, with approximately **192 GiB free C:** and
 **481 GiB free D:**. Source, receipts and owner AGENTS.md edits are preserved.
 
-# November 12 â€” PR #145 subtitle appearance review correction
+# November 12 — PR #145 subtitle appearance review correction
 
 PR #145 remains the localization delivery candidate. Its review found that
 `Localized.Header` did not support Slider, which prevented the subtitle
@@ -813,7 +813,7 @@ no deletion was retried in this review correction. Recovered space remains
 The installed player remains running. Existing live-interoperability and visual
 verification limits below still apply.
 
-# November 12 â€” Interface localization candidate on Beta 1015
+# November 12 — Interface localization candidate on Beta 1015
 
 The server-alignment branch integrates Beta `a82fc9e5` with the reviewed shell,
 Settings, Collections, Reader/Watch Party, media and playback localization.
@@ -835,7 +835,7 @@ All 2,009 frozen authored inputs were checked. Only extra failure diagnostics
 in the Collections native fixture changed after the full run; no product input
 changed. Evidence: `D:/SiloPlayer-build/verification-receipt.json`,
 `verified-source-inputs.json`, `verified-units.log`, `detached-publish.log` and
-`results/`. Engine remains pinned to `04E4D27Dâ€¦`.
+`results/`. Engine remains pinned to `04E4D27D…`.
 
 Official GitHub main was fetched directly at
 `fb165fa931ea0f9e99b9a3a6f339af3322bc5524`; subsequent scanner/matching and
@@ -899,7 +899,7 @@ drives. Receipt: D:/SiloPlayer-build/download-delete-receipt.json.
 
 ---
 
-# November 12 â€” Playback HUD final Beta stamp refresh
+# November 12 — Playback HUD final Beta stamp refresh
 
 Verified source commit: `88a9041bd2ec020b5f3fc1e5ea57c8f27049eec7` on `codex/player-hud-server-nov12`, merged with Beta `1a341042bb2e64ee37f6a065726776af08acf285` (including #143 and the pipeline stamp), after preserving #138 transport controls and #141 updater staging. Source **1.2.1007-beta.1**, numeric **1.2.1006.1**, inherited unchanged. Final documentation/PR head is bound in `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-1a341042/delivery-receipt.json`.
 
@@ -907,11 +907,11 @@ The native HUD now keeps the finishing video beside Playing Next, uses segmented
 
 Final verification: **6067/6067 serialized full units**, **477 focused tests**, **107 current source/API/runner guards**, fresh self-contained x64 Release, and **18 actual native groups including all 23 real transport-reload cases**, zero failures/skips in these final runs. **1901 tracked inputs** match; app/Core/Player/native/unit PE/PDB/source bindings have zero mismatches. App SHA256 `D7DC32AAEB36546C10712B55B8DC91CC8813181797578D3B3D3D832DD8864577`. Exact receipts, captures, source hashes and retained original failures: `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-1a341042`; detailed report: `.codex-tmp/server-align-nov12/task-2-completion-report.md`.
 
-Independent Task2 approval applies to c28705ac (no P0â€“P2); the refreshed delivery enters pipeline review. Nonblocking Speed text scaling, fade I/O/refade, reconnect cosmetics, still debug URL, post-roll/EOF and late-Next advisories remain in the report, along with historical full Audio/Chapters/Speed fixture limits. Scoped checks do not certify full parity, physical DPI, live accounts/server persistence or real room/phone interoperability. Versioning and packaging remain pipeline-owned; the installed player and production controls were untouched.
+Independent Task2 approval applies to c28705ac (no P0–P2); the refreshed delivery enters pipeline review. Nonblocking Speed text scaling, fade I/O/refade, reconnect cosmetics, still debug URL, post-roll/EOF and late-Next advisories remain in the report, along with historical full Audio/Chapters/Speed fixture limits. Scoped checks do not certify full parity, physical DPI, live accounts/server persistence or real room/phone interoperability. Versioning and packaging remain pipeline-owned; the installed player and production controls were untouched.
 
 ---
 
-# November 12 â€” Playback HUD and unattended autoplay Beta submission
+# November 12 — Playback HUD and unattended autoplay Beta submission
 
 Verified source commit: `c9504d1fb30b19bed90c3c19270362da6c717711` on `codex/player-hud-server-nov12`, merged with Beta `f22764d957e7e07401a06a9dc60311d838942c5c` (#143), after preserving #138 transport controls and #141 updater staging. Source **1.2.1003-beta.1**, numeric **1.2.1002.1**, inherited unchanged. Final documentation/PR head is bound in `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-f227/delivery-receipt.json`.
 
@@ -919,11 +919,11 @@ The native HUD now keeps the finishing video beside Playing Next, uses segmented
 
 Final verification: **6067/6067 serialized full units**, **477 focused tests**, **107 current source/API/runner guards**, fresh self-contained x64 Release, and **18 actual native groups including all 23 real transport-reload cases**, zero failures/skips in these final runs. **1901 tracked inputs** match; app/Core/Player/native/unit PE/PDB/source bindings have zero mismatches. App SHA256 `2156C99C67B46059ABD491950B0E121174B251709DB54A47EC190AE584C7E39E`. Exact receipts, captures, source hashes and retained original failures: `D:/SiloPlayer/.codex-tmp/server-align-nov12/task-2-beta-delivery/beta-f227`; detailed report: `.codex-tmp/server-align-nov12/task-2-completion-report.md`.
 
-Independent Task2 approval applies to c28705ac (no P0â€“P2); the refreshed delivery enters pipeline review. Nonblocking Speed text scaling, fade I/O/refade, reconnect cosmetics, still debug URL, post-roll/EOF and late-Next advisories remain in the report, along with historical full Audio/Chapters/Speed fixture limits. Scoped checks do not certify full parity, physical DPI, live accounts/server persistence or real room/phone interoperability. Versioning and packaging remain pipeline-owned; the installed player and production controls were untouched.
+Independent Task2 approval applies to c28705ac (no P0–P2); the refreshed delivery enters pipeline review. Nonblocking Speed text scaling, fade I/O/refade, reconnect cosmetics, still debug URL, post-roll/EOF and late-Next advisories remain in the report, along with historical full Audio/Chapters/Speed fixture limits. Scoped checks do not certify full parity, physical DPI, live accounts/server persistence or real room/phone interoperability. Versioning and packaging remain pipeline-owned; the installed player and production controls were untouched.
 
 ---
 
-# November 12 â€” Beta 1007 and localization integration in progress
+# November 12 — Beta 1007 and localization integration in progress
 
 Published Beta **1.2.1007-beta.1** (`1a341042bb2e64ee37f6a065726776af08acf285`) includes household contracts and Featured hero PR **#143**, merged as `f22764d957e7e07401a06a9dc60311d838942c5c` and published November 12 at 17:00:32 UTC. The pipeline's final PR head was `420a43cc568e66babb912b96f320074fa276fcdf`. Its corrections preserve committed webhook/reset results through transport-only catch-up and keep reset confirmation usable while capability reloads. The earlier updater fix (#141) remains included. This publication was observed through authenticated GitHub PR/ref/release reads; no local installer or installed-player action ran.
 
@@ -935,7 +935,7 @@ Shell review regressions reproduced typed-problem summary loss, uppercase-label 
 
 Settings `6b0df091`, Collections `ff578688` and Reader/Watch Party `60ff09fb` candidates have been applied to this working integration. Their independent source reviews are pending. Test selectors are composed so each original group remains reachable. The owner clarified that server-update passes cover all customer-facing WebUI/API additions, changes and removals while preserving Desktop soft navigation, retained state and native improvements. The remaining parity work is active under that scope. No complete localization, visual parity, live interoperability or final delivery claim is made by this checkpoint.
 
-# November 12 â€” Current Beta integrated with server-alignment foundation
+# November 12 — Current Beta integrated with server-alignment foundation
 
 Integrated Beta `47d5da976cc23797272b779b5519fb20315c4f92` into the local server-alignment branch after `5a056300`, preserving the staged updater from PR #141 and continuing transport controls from PR #138 alongside the reviewed household/hero/localization foundation and original HUD work. Pipeline-owned source version remains **1.2.1003-beta.1** (numeric **1.2.1002.1**). This is a local integration checkpoint; the remaining localization rollout and HUD completion are still separate work.
 
@@ -948,11 +948,11 @@ Focused delivery **PR #143** (`codex/server-contracts-hero-nov12`, head `b90c3f6
 Official server recheck: newest successful Docker build **2212**, `d9a6cbb9f53cb7a0b444d70a12f526fba70c9254`, completed November 12, 2026 at 15:14:02 UTC. The only change beyond the previously checked `5327ba36` is WebUI seek-bar marker-region colors (#4033); no API drift. The runtime/API audit remains pinned to `0b579aa6`. Exact marker palette alignment is with the focused HUD delivery. Receipts for builds 2211 and 2212 are preserved under `.codex-tmp/upstream-review-2026-11-12/`.
 
 Compiler/analyzer warnings and known historical fixture limitations remain recorded. This checkpoint does not certify live accounts/server playback, SiloCast phone or Watch Party interoperability, OS text scaling/high DPI, complete visual parity, installers, or installed-app behavior. The installed player and real settings remain untouched.
-# November 12 â€” Focused household contracts and Featured hero Beta submission
+# November 12 — Focused household contracts and Featured hero Beta submission
 
 Selected Beta base `47d5da976cc23797272b779b5519fb20315c4f92`; verified product-source snapshot `1fd6db5e30cc93fcd4acee29e683db389b3e90dc` on `codex/server-contracts-hero-nov12`. Integrated commits `bd45bebc7a1f5c904cede5d85058328c568ddce6`, `e50337d0abe7c335fcbe90d29ed327723abc47b2`, and `1fd6db5e30cc93fcd4acee29e683db389b3e90dc` reproduce reviewed workers `7caf93e7`, `47b4f6f8`, and `d7369cee`. The 17-file source/test diff matches reviewed worker blobs except for the two native Program selector integrations. Existing product `1.2.1003-beta.1` and file/assembly `1.2.1002.1` stamps are unchanged. The documentation commit adds this receipt without changing tested product source. Official reference remains the supplied, unmodified `0b579aa6192d49d7e8e0921dde5e955ac29ce302`.
 
-Scope: household-manager gating across Webhook Sync entry points, captured request ownership and secret retirement; capability-bound atomic metadata reset with accurate target-lock/descendant semantics and labelled legacy unlock/quick-refresh; idle reconnect draft preservation, curator reset and item-specific copy; content-sized Featured heroes with Home/Library minimums, wrapping actions, retained navigation/counter and obsolete eyebrow removal. This submission excludes unfinished localization and playback/HUD work. Independent Task1 re-review and Task3 review approved with no P0â€“P2 findings.
+Scope: household-manager gating across Webhook Sync entry points, captured request ownership and secret retirement; capability-bound atomic metadata reset with accurate target-lock/descendant semantics and labelled legacy unlock/quick-refresh; idle reconnect draft preservation, curator reset and item-specific copy; content-sized Featured heroes with Home/Library minimums, wrapping actions, retained navigation/counter and obsolete eyebrow removal. This submission excludes unfinished localization and playback/HUD work. Independent Task1 re-review and Task3 review approved with no P0–P2 findings.
 
 Fresh verification on that product-source snapshot: **5,992/5,992 full unit tests**, zero failures/skips; fresh self-contained win-x64 Release publish; **15/15 actual native groups**, each exit 0 plus completion sentinel: all 11 household-contract groups (including four review follow-ups), profiles-metadata, current-caption-metadata in metadata mode, oct24-hero (22 Home/Library sizing cases plus four existing overview cases), and home-row-window. A generated hero screenshot was inspected. All dotnet/publish/native runs held `SiloOct18Build` and verified the bundled engine; native launches additionally verified the published engine and identical host-side product DLL. Compiler/analyzer warnings remain in receipts: nullable, unreachable-code, MVVMTK and xUnit warnings; native build reports 37 warnings and zero errors. No product verification run failed. A temporary PowerShell harness-edit parse error occurred before any write/invocation, was corrected, and is recorded in `harness-preparation-note.txt`. No repeated full-suite run was needed because product/test source remained unchanged.
 
@@ -962,7 +962,7 @@ Review follow-up after that snapshot (its source, tests, hashes and receipts abo
 
 Retained review limits: a household read cancelled without a catch-up (for example a timeout) can still leave a loading state; switch tabs or reopen to reload. Failed capability reload requires reopening; atomic-path 422 wording may misidentify unrelated validation failures. Idle reconnect preservation is tested separately and does not certify those in-flight cases. Other original P3 advisories remain in the preserved review. Hero narrow Library/counter clearance intentionally adds height relative to the web; text enlargement is synthetic, not physical DPI/OS text-scale certification. The original broader collection route passed hero effects/layout before an unrelated `CardMenuSharesTheActionsAsync` menu failure, also reproduced on its untouched baseline; this submission does not claim that whole collection route passes. Existing red and diagnostic failures remain in the original Task1/Task3 evidence directories. No live provider persistence, real PIN/Plex/account testing, completed server-job or complete pixel-parity certification is implied. The installed player and real settings remain untouched. The Beta pipeline owns exact-head reviews, QA, merge, stamps and packaging.
 
-# November 12 â€” Beta 981 updater focus and completed-installation readiness
+# November 12 — Beta 981 updater focus and completed-installation readiness
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
@@ -978,7 +978,7 @@ Fresh verification: **5,816/5,816 full unit tests**, **38/38 side-by-side instal
 
 App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE`; native fixture SHA256 `D6736EFBCFDA5224EA6A4B81975D46BA5404A9BBD7BFC1D1D3531B07FFB431D1`. Evidence, preserved red cases and review: `D:/SiloPlayer/.codex-tmp/updater-focus-nov12/`. The existing isolated checkout was reused; no additional worktree. No real UAC, registered-installation update, installed-player closure/restart, live account/settings access or physical-input certification. Synthetic filesystem transactions and isolated native windows establish the stated coverage. Beta pipeline owns subsequent QA, integration and packaging.
 
-# Continuing playback transport controls â€” November 11, 2026
+# Continuing playback transport controls — November 11, 2026
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
@@ -994,7 +994,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 ---
 
-# November 11 â€” Next Episode above the timeline
+# November 11 — Next Episode above the timeline
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
@@ -1006,13 +1006,13 @@ The end-of-episode floating Next Episode pill now anchors 12 scaled pixels above
 
 The credits countdown card uses the same anchor, so the card and its Play Now and Cancel buttons no longer cover the seek target. This follow-up and its runtime regression were added after the verification below and are not covered by it.
 
-Verification: **376 OSC tests passed**, zero failures/skips, including real bundled-libmpv execution of the production Lua, rendered ASS and pointer routing across 1920Ã—1080, 960Ã—550, 640Ã—360, 3840Ã—2160, 1280Ã—720 and a return to 1920Ã—1080. The new regression failed before the fix when a timeline gesture did not enter seek handling; final checks require a gap above the complete seek target and successful timeline/button-bottom-edge clicks. Receipts and the preserved failed run are in `D:/SiloPlayer/.codex-tmp/next-episode-nov11/`. All checks hold `SiloOct18Build` and verify the engine pin.
+Verification: **376 OSC tests passed**, zero failures/skips, including real bundled-libmpv execution of the production Lua, rendered ASS and pointer routing across 1920×1080, 960×550, 640×360, 3840×2160, 1280×720 and a return to 1920×1080. The new regression failed before the fix when a timeline gesture did not enter seek handling; final checks require a gap above the complete seek target and successful timeline/button-bottom-edge clicks. Receipts and the preserved failed run are in `D:/SiloPlayer/.codex-tmp/next-episode-nov11/`. All checks hold `SiloOct18Build` and verify the engine pin.
 
 This Lua-only layout fix does not claim a full unit/native suite, physical pointer/display certification, new app publish or installer run. The installed player and real settings/accounts remain untouched. The Beta pipeline owns integration, packaging and publication.
 
 ---
 
-# Personal profile data transfer â€” November 11, 2026
+# Personal profile data transfer — November 11, 2026
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
@@ -1028,7 +1028,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 ---
 
-# November 11 â€” Fit OSC popups to content and remove native frames
+# November 11 — Fit OSC popups to content and remove native frames
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
@@ -1038,15 +1038,15 @@ These are the existing stamps after that merge; this change alters none. The ver
 
 The shared native OSC popup now measures its real wrapped rows and visible footer instead of reserving 102 pixels per choice. Quality's collapsed error footer no longer selects the taller Subtitle cap. Loaded typography and live list-size changes trigger coalesced placement; the existing playback/work-area clamp remains in force. Residual classic window-frame styles and the DWM outline are removed, leaving the app's single rounded outline. A two-choice popup shrank from 256 to 163 pixels, and the unwanted 3-pixel frame is absent.
 
-Verification: fresh Release app/helper, **99/99 focused unit tests**, and five native groups passed with exit 0 and the completion marker: eight-case popup layout/frame matrix, actual OSC Quality, actual Subtitle selection/footer, live menu growth, and resize/wheel selection. Matrix covers 1/2/7/24 choices, 460Ã—300 playback, 1.25Ã— text, and a partially offscreen owner. App/helper/native/unit PE/PDB/source bindings have zero mismatches. Independent Claude review found no actionable issues in the product and popup fixture. A later one-line Speed fixture correction reads the current string-ID wire contract; the lead verified it.
+Verification: fresh Release app/helper, **99/99 focused unit tests**, and five native groups passed with exit 0 and the completion marker: eight-case popup layout/frame matrix, actual OSC Quality, actual Subtitle selection/footer, live menu growth, and resize/wheel selection. Matrix covers 1/2/7/24 choices, 460×300 playback, 1.25× text, and a partially offscreen owner. App/helper/native/unit PE/PDB/source bindings have zero mismatches. Independent Claude review found no actionable issues in the product and popup fixture. A later one-line Speed fixture correction reads the current string-ID wire contract; the lead verified it.
 
-Verification limit: the extra Speed regression stopped first on its outdated numeric-ID fixture; after that test-only correction, its same-owner version/pause assertion fails identically against both untouched Beta and the corrected app. Neither run is counted as passing. The full unit suite was not rerun for this scoped UI change. No installed-player, live account/settings, physical input or system DPI changes occurred; 1.25Ã— is text scaling, not simulated monitor DPI.
+Verification limit: the extra Speed regression stopped first on its outdated numeric-ID fixture; after that test-only correction, its same-owner version/pause assertion fails identically against both untouched Beta and the corrected app. Neither run is counted as passing. The full unit suite was not rerun for this scoped UI change. No installed-player, live account/settings, physical input or system DPI changes occurred; 1.25× is text scaling, not simulated monitor DPI.
 
 Receipts, original failures, baseline comparison, screenshots and review: `D:/SiloPlayer/.codex-tmp/playback-popup-nov11/`. App DLL SHA256 `3D77C5B39E32DF2986C9FE43EF0782DA78BEA53B37BFDFD2F09B900C40C59626`. The existing isolated checkout was reused; no new worktree was created. Beta pipeline owns integration and packaging.
 
 ---
 
-# November 11 â€” Align viewer actions and smart collection behavior with Server main (Beta candidate)
+# November 11 — Align viewer actions and smart collection behavior with Server main (Beta candidate)
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
@@ -1094,18 +1094,18 @@ Limits: Synthetic API, real libmpv/Lua and native controls verified. No live ser
 
 ---
 
-## November 11 â€” version-aware batch download candidate
+## November 11 — version-aware batch download candidate
 
 Native series, season and Specials download actions now support official batch-version templates and optional bulk quality. Aggregate items need no Versions list: templates come from readable episode versions, with automatic per-episode selection available. Cursor creation retains one batch id and owner; closing the picker cancels future pages, duplicate activation is single flight, and effective capability refusals remain authoritative. A partial failure directs the viewer to Downloads for reconciliation.
 
-Source is Beta `3f098c88ca4770db6f71e84e0e2290df42f8ec2c`, version 1.2.970, compared with official Server `4a9e527a432e8ef3a15dcd568802a45c15169039`. Verification: 41 focused and 5,327 full unit tests; fresh Release publish; six passing native groups for series/season/Specials selection, cancellation, duplicate activation and effective/legacy capabilities. App DLL SHA256 `B0727098C6FCBCED87D281E02677F017B1CC53E734139FA023C410861307492E`; 739 app and 181 fixture authored PDB documents match source. Independent review accepts with no P0â€“P2 findings; pathological template discovery may require many reads.
+Source is Beta `3f098c88ca4770db6f71e84e0e2290df42f8ec2c`, version 1.2.970, compared with official Server `4a9e527a432e8ef3a15dcd568802a45c15169039`. Verification: 41 focused and 5,327 full unit tests; fresh Release publish; six passing native groups for series/season/Specials selection, cancellation, duplicate activation and effective/legacy capabilities. App DLL SHA256 `B0727098C6FCBCED87D281E02677F017B1CC53E734139FA023C410861307492E`; 739 app and 181 fixture authored PDB documents match source. Independent review accepts with no P0–P2 findings; pathological template discovery may require many reads.
 
-Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-batch-fixes/`, `reopened-batch-corrections.md`, `reopened-batch-final-review.md`. The reviewerâ€™s pending-full-suite note is superseded by `full-final-a`; its table incorrectly marks `native-green-a` as passingâ€”the preserved run failed on a WinRT callback defect, corrected before publish-c/native-green-b. The native route checks real More-menu availability and invokes the picker method; it does not certify physical pointer/keyboard input or live-server interoperability. No installed player, account, settings, installer or version stamp was changed. Beta pipeline owns subsequent QA and delivery.
+Evidence: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-batch-fixes/`, `reopened-batch-corrections.md`, `reopened-batch-final-review.md`. The reviewer’s pending-full-suite note is superseded by `full-final-a`; its table incorrectly marks `native-green-a` as passing—the preserved run failed on a WinRT callback defect, corrected before publish-c/native-green-b. The native route checks real More-menu availability and invokes the picker method; it does not certify physical pointer/keyboard input or live-server interoperability. No installed player, account, settings, installer or version stamp was changed. Beta pipeline owns subsequent QA and delivery.
 
 ---
 ---
 
-# November 11 â€” Finish update installation before offering Restart now or Later
+# November 11 — Finish update installation before offering Restart now or Later
 
 Based on fresh Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`; source remains **1.2.973-beta.1** (Windows file version **1.2.972.1**). These identify the same Beta build; the installed DLL confirmed both values. Version stamps remain pipeline-owned.
 
@@ -1119,7 +1119,7 @@ App DLL SHA256: `6B60137E847DAA690813CEC7AE74BFDDBAB8070441AFED8D6D251B60626EC36
 
 No real UAC prompt, registered-installation update, installed-player closure/restart, live account/settings access or physical-input certification occurred. Filesystem transaction tests use isolated synthetic installations; native tests use owned fixture windows and authenticated synthetic peers. Independent Claude review approved the final source with verification limits and two nonblocking observations; no corrections were required. The lead checked final full/native/binding receipts after review. Beta submission is recorded in the adjacent delivery report. The existing Beta pipeline owns combined QA, integration, versioning and packaging.
 
-# November 11, 2026 â€” device-login session binding
+# November 11, 2026 — device-login session binding
 
 Official Server/WebUI reviewed at 4a9e527a432e8ef3a15dcd568802a45c15169039; fresh Beta base 3f098c88ca4770db6f71e84e0e2290df42f8ec2c, unchanged version 1.2.970. Native login negotiates session binding with one random in-memory setup secret, uses the exact SHA256/base64url start and poll fields, retires changed owners, and preserves manual approval and temporary SiloCast handoff behavior. Secrets are neither persisted nor exposed in transport diagnostics.
 
@@ -1163,7 +1163,7 @@ Limits: No actual UAC prompt, installation, restart or registered-installation u
 
 ---
 
-# November 10 â€” request removal and library-link alignment (Beta candidate)
+# November 10 — request removal and library-link alignment (Beta candidate)
 
 Deliberate base: Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`. Reviewed official Silo main through `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`; the fresh `4a9e527a432e8ef3a15dcd568802a45c15169039` follow-up changes WebUI localization without request/server contract changes. The commit containing this record binds the scoped source; version assignment, review, QA, merge and packaging remain with the Beta pipeline.
 
@@ -1182,7 +1182,7 @@ Official Server/WebUI reference `4a9e527a432e8ef3a15dcd568802a45c15169039`; sour
 Verified on the reviewed dependency foundation: 5,443/5,443 full units, Release publish-b, native-green-b exit0 plus completion sentinel, app744/native182 authored PDB documents match. App DLL SHA256 AE162B630EF13FA6FAB3CF5FE1F702D72C0D6C1B6A662816F5C1560411FEB27E. Independent review approves all three corrected P2 findings with no new correctness finding. Evidence: D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-undo-fixes and reopened-undo-final-review.md. Earlier failed native teardown is retained as failed, not acceptance.
 
 Integrated current Beta97cc284a and PR131 successor98fa4dc8. Final integrated source passes5,452/5,452 full units; integration-native-b exits0 with the exact completion marker, including Undo races, off-prefix count/TV-only identity, and current smart-wizard guidance. Integration-final-binding confirms app744/native182 authored documents with zero mismatches. The prior integration-native-a had passing behavior but exit1 on teardown; it remains failed. The fixture now closes its owned Window and clears Frame history before draining callbacks/restoring services. Synthetic verification does not certify live-server interoperability or complete pixel parity. No installed-player/settings/account control, installer or version stamping occurred.
-# Server alignment â€” profiles and metadata (November 10, 2026)
+# Server alignment — profiles and metadata (November 10, 2026)
 
 Base: freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, version `1.2.970`; stamps remain pipeline-owned. Official Server/WebUI reviewed at `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039` (additional WebUI localization only).
 
@@ -1196,7 +1196,7 @@ Synthetic fixtures do not establish live-server persistence or complete visual p
 
 This branch starts directly at fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`; only the scoped advanced overlay commit is applied. The earlier dependency-base verification below remains historical. Delivery-branch full suite passed5,396/5,396; after the final NumberBox callback correction,143 affected evaluator/wire/revision/source tests and the fresh Release advanced-overlays native route pass. Border width uses integer steps and normalizes typed fractions in the original callback because WinUI suppresses reentrant ValueChanged. Final app745/native182 authored PDB documents match with zero mismatches. App DLL SHA2569C59435CF7059A4E00480F3910C94D316D53BBB85D19ADDD8E3585C1350554D9. Receipts: D:/SiloPlayer/.codex-tmp/server-review-nov10/advanced-overlays-beta/normalization-*; prior failed boundary/binding runs are preserved, not counted green. Version remains 1.2.970. Installed app untouched.
 
-# Reopened A1 â€” advanced card overlays (November 11, 2026)
+# Reopened A1 — advanced card overlays (November 11, 2026)
 
 Local uncommitted candidate in `t3/complete-a1-card-overlays`, deliberately retaining dependency base `90aa029a3d2969be7b10ef25c0b12dd52f6dd279`. Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Source stamps remain **1.2.970** / **1.2.970.0**; no rebase onto the lead's newer fetched Beta or delivery action occurred.
 
@@ -1213,7 +1213,7 @@ Official Server/WebUI reviewed at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Th
 
 Original candidate checks:45 focused and5,327 full units, fresh Release and native dialogs/menus, independently reviewed with zero P0-P2 findings. Those receipts predate this Beta integration. Final integrated verification is recorded under `.codex-tmp/title-allowances-beta/review-fixed-*`: 5,387/5,387 full units, fresh Release, native route exit0 with completion sentinel (including held-read revoke/add/collection races), and matching app749/native183 authored PDB documents with zero mismatches. App DLL SHA256 A027FDCAA6BEAF4A88E388205440B94F52DB20D5478116D3F0CB0F517A7C0485. The post-write read ownership correction is independently source-accepted; its earlier native red reproduction is preserved. Reports: `D:/SiloPlayer/.codex-tmp/server-review-nov10/reopened-title-allowances-{implementation,review}.md`. Evidence is synthetic; live persistence and complete visual parity are not certified. Installed app and real settings/accounts untouched; pipeline owns versioning and release.
 
-# Overlay review corrections â€” November 10, 2026
+# Overlay review corrections — November 10, 2026
 
 Official main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`; Beta base remains `370ada819d2675a9e98f76a6aff7fe3994b67407`. The revision 25/26 implementation below now also maps catalog watchlist cards to effective rails/corners, clears optimistic episode counts with rejected-write rollback, preserves stored positions and badges when capabilities fail (a save retries capabilities before serializing), and recomputes status reservations/legacy corner shifts on quick actions.
 
@@ -1221,7 +1221,7 @@ Final source: 107 focused tests, 5,306 full unit tests, Release publish, expande
 
 The deferred rendering/style/image/bottom-row items below remain disclosed. No live-server or complete visual-parity claim, version stamps, installation or installed-player changes.
 
-# November 10 â€” card overlays revisions 25/26 (local, uncommitted candidate)
+# November 10 — card overlays revisions 25/26 (local, uncommitted candidate)
 
 Base: Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`, branch `t3/card-overlay-revisions`. Source remains `1.2.970` / `1.2.970.0`, targeting .NET 10; no version, README or installer stamps changed. Official Silo main is `4a0aba6167265f13d60e7dc6db50428fa78ec0bd`, confirmed directly with GitHub `git ls-remote` and against the supplied read-only official clone. No commit, push, PR, release, installer, installed-player or production action occurred.
 
@@ -1246,7 +1246,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 ---
 
-# Current source identity â€” native Chapters and compact More (PR #91)
+# Current source identity — native Chapters and compact More (PR #91)
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
@@ -1254,7 +1254,7 @@ Source version: `1.2.1064`; numeric version: `1.2.1064.0`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
-## PR #90 â€” historical source identity (QA correction)
+## PR #90 — historical source identity (QA correction)
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
@@ -1262,7 +1262,7 @@ Source version: `1.2.1064`; numeric version: `1.2.1064.0`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
-## PR #87 â€” historical source identity (QA correction)
+## PR #87 — historical source identity (QA correction)
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
@@ -1270,19 +1270,19 @@ Source version: `1.2.1064`; numeric version: `1.2.1064.0`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
-## November 3 â€” safe retained Library activation (local Beta candidate)
+## November 3 — safe retained Library activation (local Beta candidate)
 
 This task deliberately starts from Beta `f6442fd8de1b2b015d2d45a15681e20ba30de025`; source version remains **1.2.544-beta.1** and the pipeline owns stamps/delivery. Official Silo main for this pass is `bb1ee4352b1bec38b4a6441ba81e61a92da81d54` (parent's direct fetch, verified with pinned `git show`). No installer, installed-player restart, push, release or production action occurred.
 
 Valid retained Library activation now uses its current tab, filters, audiobook axis/search and position without another blocking settings restore. One confirmed settings document belongs to the actual injected SettingsApi and current profile/device/session owner. Relevant realtime/local mutations and access/reconnect/language changes retire that shortcut; indistinguishable events use coalesced authoritative reads, pending local writes settle first, and equal own echoes do not reapply the view. Serialized writes preserve other libraries and skip unchanged documents. Opt-out preserves current visible input, prevents saves and uses defaults on the next unqualified activation. Explicit tab/genre navigation wins and reloads its actual catalog query. Visit/edit guards retire obsolete reads, failures and malformed saved queries; metadata still revalidates.
 
-Independent review of `ca1aa138df7737dd118b3699613f3175d8e691ce` found two additional orderings, reproduced against protected app `67D4â€¦`: failed revalidation lost a known opt-out, and a held save could report an error after a newer edit. The correction preserves known false through repeated failed reads for the same owner, retires that knowledge on owner change, and requires the producing edit to own a save-error notification. Explicit tab/genre still wins, unknown successor preference does not inherit the old owner's opt-out, and current save failures still notify.
+Independent review of `ca1aa138df7737dd118b3699613f3175d8e691ce` found two additional orderings, reproduced against protected app `67D4…`: failed revalidation lost a known opt-out, and a held save could report an error after a newer edit. The correction preserves known false through repeated failed reads for the same owner, retires that knowledge on owner change, and requires the producing edit to own a save-error notification. Explicit tab/genre still wins, unknown successor preference does not inherit the old owner's opt-out, and current save failures still notify.
 
-Final round-1 verification: **25 focused cases**, **3,479 full unit tests**, successful fresh Release publish, **30 actual-control conditions** (original21 plus9 review regressions), existing saved-query/author-axis/profile/drawer native regression and cursor checks at 1920Ã—1080, 3440Ã—1440 and 3840Ã—2160. Passing native routes contain the literal completion sentinel. One full attempt was interrupted without TRX/receipt or surviving test process; its preserved log is not a pass or a proven test hang. The single bounded recovery completed3479/3479 normally. Existing alphabet route previously failed its Z-clamp/current-letter condition at `LibraryLettersNativeFixture.cs:86` identically on original candidate67D4 and preserved baseline528721. That separate alphabet limitation was not re-run or fixed in this review round; no combined runtime claim with the companion alphabet correction is made.
+Final round-1 verification: **25 focused cases**, **3,479 full unit tests**, successful fresh Release publish, **30 actual-control conditions** (original21 plus9 review regressions), existing saved-query/author-axis/profile/drawer native regression and cursor checks at 1920×1080, 3440×1440 and 3840×2160. Passing native routes contain the literal completion sentinel. One full attempt was interrupted without TRX/receipt or surviving test process; its preserved log is not a pass or a proven test hang. The single bounded recovery completed3479/3479 normally. Existing alphabet route previously failed its Z-clamp/current-letter condition at `LibraryLettersNativeFixture.cs:86` identically on original candidate67D4 and preserved baseline528721. That separate alphabet limitation was not re-run or fixed in this review round; no combined runtime claim with the companion alphabet correction is made.
 
 Final app DLL SHA256: `EF8F37B3FF513A8168B81EA64C83E5F3413CB3C71716B3ADA6C4408162C5B1EF`. DLL/PDB identities match; all677 authored product PDB documents match the final source. Evidence, red/green commands, original/final fixture hashes, exact source/compiler/artifact bindings, final commit and remaining limits: `D:/SiloPlayer/.codex-tmp/browse-polish-nov02/retained-library-task-report.md`. Existing compiler/analyzer warnings remain. This is synthetic owned-window evidence, not a claim about physical input, observed frame pacing or complete WebUI visual parity. Parent owns scoped re-review and Beta delivery.
 
-## November 3 â€” immediate Library alphabet feedback candidate
+## November 3 — immediate Library alphabet feedback candidate
 
 Focused Task4a branch `codex/nov02-letter-feedback` starts from Beta `ac51554902c252814191dd88cf4b1d991efdfea6`; source remains `1.2.544-beta.1`, numeric assembly/file version `1.2.543.1`. Parent's official server main reference is `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. This is a local candidate, not a release or installer. Retained Library activation is the separate Task4b.
 
@@ -1290,17 +1290,17 @@ Letter choices now show immediate selected/pending feedback, retain current quer
 
 Review round1 corrects signed-cursor letter recovery and the second deferred native scroll boundary. A rejected signed scope discards its cards/cursors/index before transferring only the current semantic letter to a fresh exact index; failed or missing fresh targets cannot restore old-scope cards. Scoped Retry survives automatic debounce/fill/resize. Deferred scroll requests retain visit, request, query/context and native-origin authority until `ChangeView` dispatches.
 
-Synthetic verification through the pinned-engine/mutex parent runner: focused **115/115**, full **3,466/3,466**, fresh Release publish, actual signed letter recovery and both-dispatch-boundary checks, expanded letter-feedback and original letter controls at1280Ã—1000 /960Ã—550, and existing cursor controls at1920Ã—1080 /3440Ã—1440 /3840Ã—2160. All selected native groups log the completion sentinel. Final app DLL SHA256: `D9B9F81F01E99F2803C762D21E83311E3227525DCE569FB988C594A0971FC4AA`. The original E0C999 candidate and its evidence remain historical. Pending/error screenshots remain readable; the synthetic audiobook item-type mismatch and invalid-cursor problem-URI correction are fixture-only records.
+Synthetic verification through the pinned-engine/mutex parent runner: focused **115/115**, full **3,466/3,466**, fresh Release publish, actual signed letter recovery and both-dispatch-boundary checks, expanded letter-feedback and original letter controls at1280×1000 /960×550, and existing cursor controls at1920×1080 /3440×1440 /3840×2160. All selected native groups log the completion sentinel. Final app DLL SHA256: `D9B9F81F01E99F2803C762D21E83311E3227525DCE569FB988C594A0971FC4AA`. The original E0C999 candidate and its evidence remain historical. Pending/error screenshots remain readable; the synthetic audiobook item-type mismatch and invalid-cursor problem-URI correction are fixture-only records.
 
 Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-polish-nov02/letters-task-report.md`, `letters/review-r1-bindings.json` and historical `letters/final-bindings.json`. The first full run's24 unrelated updater Win32 path failures remain preserved; parent corrected its deep D: TEMP path and demonstrated unchanged updater/protocol inputs passing68/68 before the passing full rerun. Existing compiler/analyzer warnings remain. No complete visual parity, hardware input or all-native-suite claim; the inherited Home-row completion baseline is outside4a. Parent owns independent Standards/Spec reviews and Beta delivery. No version stamps, installed player, real account, updater product code, installer or production state changed.
 
-## Current source identity â€” native Quality menu (PR #89)
+## Current source identity — native Quality menu (PR #89)
 
 Source version: `1.2.1064`; numeric version: `1.2.1064.0`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
-# Historical development â€” OSC feedback and input ownership (PR #86)
+# Historical development — OSC feedback and input ownership (PR #86)
 
 Reviewed source head: `96e6011aa9957717749ec51c88f27ca7b9a427fe`; Beta base: `aeebcf4bf9e15c61d29931ec730bd412ac1c8665`.
 
@@ -1318,15 +1318,15 @@ Actual native RED against exact544 bytes reproduces the missing Direction contro
 
 Evidence: `D:/SiloPlayer/.codex-tmp/server-align-nov02/collection-direction`, including scoped original red and focus red, preserved first/final publishes, native receipts and screenshots. Every .NET command holds SiloOct18Build after pinned engine verification. New source/builds stay below D:/SiloPlayer as requested; C originals/frozen evidence were preserved and copied input hashes verified. All accounts/APIs/data are synthetic; no setup, installed player, user credentials or production were controlled. This is local candidate verification, not a published release or full visual-parity certification. Independent reviews and the Beta PR receipt are recorded before final delivery. Original handoffs below preserve their historical context.
 
-## November 2 â€” account playback-limit Beta candidate
+## November 2 — account playback-limit Beta candidate
 
 Fresh Beta base `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af` (source `1.2.544-beta.1`) and official server/WebUI `bf53b65450244751013a2965b39da4111d9a0f72`. This local candidate distinguishes account streaming/conversion allowances from server capacity using current WebUI titles and trimmed viewer guidance, with the existing retryability intact. It adds no automatic retry or version-stamp change. A new start after either account terminal uses a different playback attempt ID.
 
 Test-first: eight presentation assertions fail against the unchanged base; both synthetic start-after-limit tests already pass. Corrected focused tests pass 45/45 and full suite 3,068/3,068, zero failed/skipped. Evidence: `D:/SiloPlayer/.codex-tmp/server-align-nov02/limits/{focused-red,focused-green,full-green}`; exact verified input hashes in `verified-inputs.json`. All .NET work holds SiloOct18Build after pinned native-engine hash verification. Generated outputs were moved to D with their original paths junctioned back after C filled; failed unrelated build evidence is preserved. No installer or installed app was used. This pure Core presentation change awaits independent source review/Beta PR delivery; pipeline owns application build, stamps and packaging. Historical handoffs below retain their original context.
 
-# Current development â€” 1.2.519
+# Current development — 1.2.519
 
-## November 2 â€” episode series-overview Beta candidate
+## November 2 — episode series-overview Beta candidate
 
 Approved PR4 source `7154651d4f6a4a0cb88ff6411b6bcda894ecd0fc` on `codex/nov02-episode-overview` starts from freshly fetched Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af`. Its deliberately newer source version remains **1.2.544-beta.1**, with unchanged FileVersion/AssemblyVersion **1.2.543.1**. Official server/WebUI reference is `bf53b65450244751013a2965b39da4111d9a0f72`. This is an unpublished focused candidate; the pipeline owns review integration, version stamps, packaging and Beta publication.
 
@@ -1346,7 +1346,7 @@ Updater wording is separate [PR #64](https://github.com/ellermw/SiloDesktopApp/p
 
 The current branch adds the owner-approved Library alphabet rail. Official server/WebUI main is pinned to `63ef34b236b88dc77acca1a9a3ed90235377691f`. See the [comparison and proposed PR boundaries](research/2026-11-01-server-desktop-gap-analysis.md), [design](superpowers/specs/2026-11-01-library-letter-navigation-design.md) and [plan](superpowers/plans/2026-11-01-library-letter-navigation.md). This is a focused source comparison, not a claim of complete visual parity or that every follow-up is implemented. The alphabet uses the capability-gated server index for exact positions, keeps query/profile/language ownership, and preserves bounded card virtualization.
 
-Verified product head: `e344727663e8aa47a707a41b2ef3075aebfd3783`. Final main suite: **2,817 passed**, including 19 letter-navigation cases. Final isolated Release publish succeeds; five native cases pass: alphabet interaction/layout at 1280Ã—1000 and 960Ã—550, plus existing cursor scrolling at 1920Ã—1080, 3440Ã—1440 and 3840Ã—2160. These exercise synthetic data and actual native controls. Independent Standards/Spec re-review has zero remaining findings. Existing nullable/analyzer warnings remain. Pre-review regressions reproduced slow-index blocking and independent count races; focused red/green receipts and the full rerun are preserved.
+Verified product head: `e344727663e8aa47a707a41b2ef3075aebfd3783`. Final main suite: **2,817 passed**, including 19 letter-navigation cases. Final isolated Release publish succeeds; five native cases pass: alphabet interaction/layout at 1280×1000 and 960×550, plus existing cursor scrolling at 1920×1080, 3440×1440 and 3840×2160. These exercise synthetic data and actual native controls. Independent Standards/Spec re-review has zero remaining findings. Existing nullable/analyzer warnings remain. Pre-review regressions reproduced slow-index blocking and independent count races; focused red/green receipts and the full rerun are preserved.
 
 Diagnostic client `.codex-tmp/library-client-r3` remains version 1.2.519; it is not a release package and must not be uploaded. Its app SHA256 is `7647C4A35BAE68987B324B9E668358BD660DA997C65F5C2523B46893B9A153F2`. Final receipt: `D:\SiloPlayer\.codex-tmp\desktop-nov01\library-final3-receipt.json`; unit TRX: `library-tests-final2-results/main.trx`. Native receipts are under this worktree's `.codex-tmp/native-artwork-tests/2cdcc4d8990347e4a71c5a31ff19d18f` (letters) and `cf5978cde4fe43f18637b6a29468df3e` (cursor). The native runner stages the actual published Updates content in its own reference folder to satisfy WinUI content imports; original/final runner hashes and failed/corrected fixtures remain in `native-runner-correction.json`. Product publish outputs were not modified by fixtures. Subsequent documentation-only commits do not change these tested inputs.
 
@@ -1354,7 +1354,7 @@ Local evidence is under `D:\SiloPlayer\.codex-tmp\desktop-nov01`. An initial ful
 
 ## Historical 1.2.517 channel implementation
 
-## Password session revocation â€” 2026-11-01 task handoff
+## Password session revocation — 2026-11-01 task handoff
 
 Task branch `codex/server-password-sessions` deliberately starts from the approved newer source `a15621a0d6d5960d6b31a620a23ae259d734dedb`, stamped **1.2.519**. This section is a task handoff, not a new release or installer receipt. Official server/WebUI reference is `63ef34b236b88dc77acca1a9a3ed90235377691f` (`internal/apiv2/account.go` and `web/src/pages/settings/AccountSettings.tsx`).
 
@@ -1392,7 +1392,7 @@ The update dialog retains its bounded scrolling body and fixed actions. Channel 
 
 The [1.2.516 release ledger](releases/1.2.516.md), [1.2.515 handoff](archive/2026-10-29-release-1.2.515-handoff.md), [1.2.514 handoff](archive/2026-10-29-release-1.2.514-handoff.md) and [earlier handoffs](archive/2026-10-29-development-handoffs.md) describe historical releases, not this PR's source identity or verification status.
 
-## November 1 â€” cross-device series/season state refresh (task B)
+## November 1 — cross-device series/season state refresh (task B)
 
 This task deliberately starts from Beta source `a15621a0d6d5960d6b31a620a23ae259d734dedb`, version **1.2.519**, newer than the historical 1.2.517 context above. It is an isolated implementation handoff, not a published release or installer receipt. Official server/WebUI main was inspected at `63ef34b236b88dc77acca1a9a3ed90235377691f`, including originating series-event change `20b1d359c95d73ca17720ed95013c268c667fdd1`.
 
@@ -1408,13 +1408,13 @@ Task B final sustained-input correction (supersedes the earlier candidate receip
 
 Task B independent review follow-up (base 2431f182; supersedes the candidate readiness statement above): production cache registration still allowed raw ticks to starve shared-prefetch mounted reads, while coalesced generations could discard slow owned reads and lose active episode/catch-up scope. Seven backend-controlled regressions reproduced those cases plus initial scoped null-Item event loss, local final-progress regression and sibling /watch exhaustion. Mounted refresh now owns its catalog transport and may finish while unioned trailing work waits; initial invalidations are retained, and local watched/progress ownership still retires stale snapshots. Aggregate series naming is separated from playable-leaf revisions. Immediate global speculative cache invalidation remains enabled. The preserved 66CF candidate also failed a new actual-control season target availability test; mounted season actions now recompute null/playable transitions. `review-green-focused` passed 122 affected tests after earlier cache-only fixtures were migrated to HTTP backend ownership. Fresh full/Release/native results are recorded in the task report; previous outputs and receipts remain frozen historical evidence. Version stays 1.2.519 and no installation, installed app control or publication is authorized by this verification.
 
-Final review correction verification: `review-full-unit` passes all 2,839 tests, zero failures/skips. New Release DLL `637F11276FDA9055728ED073B76BB9CD317EAA44B210C268F8B73F6A9202DA88` passes both `review-green-season-native` (real series/season controls, including season target nullâ†’playableâ†’nullâ†’playable) and `review-native-watched` (existing series/season/episode local mark, unmark and rejection). All use the same new isolated app output. `review-final-source-binding.json` records 1,006 tracked product input hashes unchanged since Publish began at 10:02:52Z; receipts retain the then-uncommitted base HEAD2431f182 and the final commit is bound in that manifest. The prior 66CF and 1E4B app outputs remain preserved; no installer or release publication is claimed.
+Final review correction verification: `review-full-unit` passes all 2,839 tests, zero failures/skips. New Release DLL `637F11276FDA9055728ED073B76BB9CD317EAA44B210C268F8B73F6A9202DA88` passes both `review-green-season-native` (real series/season controls, including season target null→playable→null→playable) and `review-native-watched` (existing series/season/episode local mark, unmark and rejection). All use the same new isolated app output. `review-final-source-binding.json` records 1,006 tracked product input hashes unchanged since Publish began at 10:02:52Z; receipts retain the then-uncommitted base HEAD2431f182 and the final commit is bound in that manifest. The prior 66CF and 1E4B app outputs remain preserved; no installer or release publication is claimed.
 
 Material barrier follow-up from dc8a7c13: a failed local final-save task remained faulted inside Task.WhenAll and blocked every later remote read, even after a newer successful save. `barrier-red` reproduced canonical aggregate2 remaining0 with actual registrations, both local saves, a raw/coalesced event and an older held episode response. The read barrier now observes write settlement independently of success, retires completed predecessor barriers and rechecks when a newer save joins during an await. Write failure reporting remains with the write owner; local generation/context/navigation guards still reject old snapshots. `barrier-green-focused` passes123 and `barrier-full-unit` passes2,840, zero failures/skips. Fresh app/native/source binding evidence follows in the task report; the 637F output and all earlier evidence remain frozen. Version remains1.2.519; no installer, installed-player action or publication.
 
 Final barrier source verification: Release DLL `5169E2C32429414CACC83E9BADE6D1D56DD88E54CC106953BC8C304D9DF6810C` passes `barrier-native-series` and `barrier-native-watched` against the same new isolated output. `barrier-final-source-binding.json` records all1,006 tracked product inputs unchanged since Publish began at10:15:36Z (completed10:16:06Z), and binds the final commit after commit. Focused123/full2,840 are current. Older637F/66CF/1E4B outputs remain preserved; no publication or installer is claimed.
 
-## Approved Beta Task E â€” bounded Home rows (2026-11-01)
+## Approved Beta Task E — bounded Home rows (2026-11-01)
 
 Task E deliberately uses Beta base `a15621a0d6d5960d6b31a620a23ae259d734dedb`, whose unchanged source version is **1.2.519**, newer than the historical 1.2.517 context above. Branch `codex/server-home-window` implements advertised first-20 Home row reads and complete recovery against official Silo main `63ef34b236b88dc77acca1a9a3ed90235377691f`. Featured and expanded rows read whole. Stable completion preserves order, removals, duplicate priority, cache ownership and Undo boundaries.
 
@@ -1422,17 +1422,17 @@ The final full unit suite passed **2,817/2,817**, the fresh Release app publish 
 
 See [Task E handoff](superpowers/handoffs/2026-11-01-bounded-home-rows.md). Detailed receipts and exact committed source identity are under `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-e-report.md`. This candidate has not been pushed, packaged as an installer, published, installed or used to restart the installed player. Historical release receipts remain unchanged.
 
-### Task E review corrections â€” current local candidate
+### Task E review corrections — current local candidate
 
 Independent review of `6a5c331b` identified queued-read ownership, cached hero promotion, stale Undo refresh, mixed metadata-language completion, capability timeout fallback and unseen series-member dismissal gaps. All were reproduced on the frozen earlier candidate, then corrected without changing source version 1.2.519. Queued reads carry their initiating API context and language through context-bound sends; the layout owns featured reads; Undo retires earlier section generations; completion replaces stale-language text and filters the whole-show dismissal predicate across pending reads.
 
-Current verification: **2,819/2,819 unit tests**, fresh Release publish, eight review-path native cases (including the same-account token-refresh negative control), and existing row/current-Home/real Next Up dismissal native suites passed. Current `SiloPlayer.dll` SHA256: `B803FC4EDF0BF79A374D62E71118675B9A92FF72770679B7293D903C4B25F3F3`. Receipts: `task-e/review-full-green`, `task-e/review-final-release-publish`, `task-e/review-session-green`. Earlier `EAD30AC0â€¦` artifacts and receipts remain frozen historical evidence. No remote mutation, installer or installed-player control occurred.
+Current verification: **2,819/2,819 unit tests**, fresh Release publish, eight review-path native cases (including the same-account token-refresh negative control), and existing row/current-Home/real Next Up dismissal native suites passed. Current `SiloPlayer.dll` SHA256: `B803FC4EDF0BF79A374D62E71118675B9A92FF72770679B7293D903C4B25F3F3`. Receipts: `task-e/review-full-green`, `task-e/review-final-release-publish`, `task-e/review-session-green`. Earlier `EAD30AC0…` artifacts and receipts remain frozen historical evidence. No remote mutation, installer or installed-player control occurred.
 
-### PR68 cloud follow-up â€” current local candidate
+### PR68 cloud follow-up — current local candidate
 
 The four exact cloud findings on reviewed head `abb6223c` were reproduced and corrected: JSON null section responses preserve mounted row/hero fallback, null optional capability documents use uncapped reads, transient capability fallback is shared across pending/queued rows until the next layout refresh, and queued mounted-collection checks run on the UI dispatcher. The existing owner, language, cancellation, generation and reconciliation guards remain in force. Source remains **1.2.519**; parent owns the Beta PR's remote delivery.
 
-Fresh verification passed **2,825/2,825 unit tests**, Release publish and the native `home-row-review` run (11 review cases plus existing carousel, Home ownership/hero and real menu/Undo suites). Current app DLL SHA256: `EBD01E208EAA49DC20869316306EC7C232C51A702400735C63F81F4B4FC26CFA`. Receipts are `home/cloud-full-green`, `home/cloud-release-publish` and `home/cloud-native-green` below `D:/SiloPlayer/.codex-tmp/server-align-nov01`. The same published bytes are verified in the native runner; final source/product fingerprints still match. Frozen `B803FC4Eâ€¦` and `EAD30AC0â€¦` apps and receipts remain unchanged. Detailed thread dispositions, red evidence, original/final fixture hashes and final commit binding are in `task-e-report.md`. No installer, startup/receiver/updater, real account, user data or installed-player control was used.
+Fresh verification passed **2,825/2,825 unit tests**, Release publish and the native `home-row-review` run (11 review cases plus existing carousel, Home ownership/hero and real menu/Undo suites). Current app DLL SHA256: `EBD01E208EAA49DC20869316306EC7C232C51A702400735C63F81F4B4FC26CFA`. Receipts are `home/cloud-full-green`, `home/cloud-release-publish` and `home/cloud-native-green` below `D:/SiloPlayer/.codex-tmp/server-align-nov01`. The same published bytes are verified in the native runner; final source/product fingerprints still match. Frozen `B803FC4E…` and `EAD30AC0…` apps and receipts remain unchanged. Detailed thread dispositions, red evidence, original/final fixture hashes and final commit binding are in `task-e-report.md`. No installer, startup/receiver/updater, real account, user data or installed-player control was used.
 
 ## November 1 episode still quick-play candidate
 
@@ -1450,17 +1450,17 @@ Frozen corrected source passed **2,800/2,800** unit tests (`quickplay/reviewed-f
 
 All .NET work used the external mutex runner with fresh worktree-local outputs. The isolated native shell used synthetic in-memory APIs, result-root settings, disabled SiloCast discovery and no updater/installer service. Intermediate failures, including the untouched synthetic updater parent-identity check, remain in the task report; the final complete suite passed. Review P3 click-to-first-frame timing is deferred (no authorization/resume/room-flow impact). Source stamp remains pipeline-owned 1.2.519; no release, installer, production or installed-player action occurred.
 
-## 2026-11-01 â€” Match / Split library scope source handoff
+## 2026-11-01 — Match / Split library scope source handoff
 
 Task C retains source **1.2.519**, deliberately newer than the historical release context above, on `codex/server-match-scope` from `a15621a0d6d5960d6b31a620a23ae259d734dedb`. Official server/WebUI reference: `63ef34b236b88dc77acca1a9a3ed90235377691f`, including the library-scope behavior introduced by `cb73e114bd09ba0bc748a156f0f129b4bd12822e`. See the [scope specification](superpowers/specs/2026-11-01-match-split-scope.md) and [implementation plan](superpowers/plans/2026-11-01-match-split-scope.md).
 
 Detail Match launches now pass their library. Administrator Match and Split derive choices from complete item file inventory, carry one captured scope through search/selection/apply or preview/commit, and retire stale candidates/plans on membership, selection, profile/account, permission or navigation departure. Curator Match retains supplied/unscoped server resolution without reading administrator inventory; Split requires acting-admin, matching the authoritative endpoint policy. Successful empty inventory preserves the server's unscoped default behavior; failed reads and explicitly departed page scopes block operations. Inventory is revalidated at operation boundaries and through an explicit Refresh command; there is no new periodic poll.
 
-Fresh verification under `SiloOct18Build`: **2,815/2,815 unit tests passed** (`match/full-unit-final`); Release app publish succeeded (`match/publish-final`); actual-control `match-split-scope` plus existing media-tools native fixtures passed (`match/native-final-02`). The native run includes delayed replies/permission revoke-and-restore, Split commit owner departure, 2,500-file virtualization and narrow footer bounds (Split shell 428Ã—626). The same published `SiloPlayer.dll` SHA256 was verified by publish and native receipts: `D92E323C876ECE88FDD0C514B85BCEC064A9460FC310C9E7AACC8C71A2513CB1`.
+Fresh verification under `SiloOct18Build`: **2,815/2,815 unit tests passed** (`match/full-unit-final`); Release app publish succeeded (`match/publish-final`); actual-control `match-split-scope` plus existing media-tools native fixtures passed (`match/native-final-02`). The native run includes delayed replies/permission revoke-and-restore, Split commit owner departure, 2,500-file virtualization and narrow footer bounds (Split shell 428×626). The same published `SiloPlayer.dll` SHA256 was verified by publish and native receipts: `D92E323C876ECE88FDD0C514B85BCEC064A9460FC310C9E7AACC8C71A2513CB1`.
 
-Full local evidence and the preserved red/green history are in `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-c-report.md`, with receipts below its `match` directory. An earlier full run had an unrelated synthetic update-fixture â€œWrong parent identityâ€ failure; the final full run passed it. Existing nullable/compiler analyzer warnings remain documented in the logs. These are local synthetic source checks, not a release or real-server interoperability certification. No installer, real metadata operation, installed-player control, push, merge or publication occurred.
+Full local evidence and the preserved red/green history are in `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-c-report.md`, with receipts below its `match` directory. An earlier full run had an unrelated synthetic update-fixture “Wrong parent identity” failure; the final full run passed it. Existing nullable/compiler analyzer warnings remain documented in the logs. These are local synthetic source checks, not a release or real-server interoperability certification. No installer, real metadata operation, installed-player control, push, merge or publication occurred.
 
-## 2026-11-01 â€” Match / Split independent review corrections
+## 2026-11-01 — Match / Split independent review corrections
 
 The first source handoff above remains historical. Independent review at `4a4736b6` identified five supported behavior issues, reproduced by six actual-control cases against that first published app. The corrections separate unmatched Split inventory/selection validity from identity-search eligibility; bind card Match to its launching surface through delayed reads and Apply; use the definitive detail reload after mutation; expose library choices only where they can affect scope; and preserve initial inventory retry with readiness recovery. Split now reuses the canonical captured-context Match search entry point rather than duplicating its route.
 
@@ -1468,13 +1468,13 @@ Current corrected source has **40/40 focused tests** and **2,817/2,817 full unit
 
 The full native rerun **passed**: `match/review-native-02`, against `.codex-tmp/match-review-publish-client`. It passed the original scope cases, all six review cases and existing media-tools virtualization/footer checks, with the completion sentinel and the identical `BDED834862A2DB9FD4870B6C72B8BDC61D60DB485937A00BD51B354942CF856D` app DLL hash. The prior recovery-test realization failure was corrected with a bounded row wait in test code only. The native run completed during parent handoff; no further verification was queued. The runner/receipts and detailed supported-finding responses remain in `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-c-report.md`. No further checks are queued by this implementer. No push, release, installer or installed-player action occurred.
 
-## 2026-11-01 â€” Match / Split spec-axis corrections
+## 2026-11-01 — Match / Split spec-axis corrections
 
 The independent spec review at `8a325bd1` identified three further supported lifecycle boundaries: Search could adopt a library/selection changed during its initial inventory GET; card launch could survive same-user curation revocation/restoration during the pre-dialog GET; and inventory pagination could continue after admin demotion. The focused correction captures and validates the click scope before preflight, observes card authorization before dispatch, and cancels permanently retired dialog lifetimes so existing per-page cancellation checks stop the next admin GET. Only MatchItemDialog, SplitVersionsDialog and MediaItemMenu product code changed.
 
 Fresh verification: **40/40 focused tests**, **2,817/2,817 full unit tests** (zero skipped), successful Release publish (`match/spec-publish`), and complete native PASS (`match/spec-native-02`). The native log explicitly contains all six new spec PASS cases, all six prior review PASS cases, the original scope PASS, media-tools PASS and completion sentinel. Publish and native verified the identical app DLL SHA256 `F6AF58939D128D610DA2F2AC7F1F1C5326852BD3D14DFD8466AEB019488DB5E1`. Product inputs are frozen in `D:/SiloPlayer/.codex-tmp/server-align-nov01/match/spec-source-inputs.json`; first and second artifact generations remain preserved. Source version stays 1.2.519. This is synthetic lifecycle evidence; no real metadata operation, publication, installer or installed-player control occurred. Parent reviews this correction source and red/green evidence without another generic review loop.
 
-## 2026-11-01 â€” PR #67 external inline corrections
+## 2026-11-01 — PR #67 external inline corrections
 
 All three external inline findings at `27bd4ca2` were reproduced and corrected. Successful empty/no-readable-library inventory now permits unscoped Match even from a scoped detail page; positive membership only in other libraries still blocks that departed scope, and failed reads/permission gates remain blocked. Match also permanently retires when a loaded LandscapeCard or PosterCard changes its bound item, including replacement and restoration during the initial read or Apply. Inventory revisions now compare all six fields of the pinned upstream AdminItemFile contract, so a same-ID/library path, root or episode change updates file rows and retires Split's accepted preview before commit.
 
@@ -1482,7 +1482,7 @@ Test-first evidence against the preserved `F6AF...` app: five unit regressions a
 
 Remote Task C head was checked before mutation; official GitHub main remained `63ef34b236b88dc77acca1a9a3ed90235377691f`. Source version remains 1.2.519. Product inputs are frozen in `D:/SiloPlayer/.codex-tmp/server-align-nov01/match/online-source-inputs.json`; report and all earlier artifact generations remain preserved. These synthetic checks do not represent real-server metadata operations or a published release. The implementer commits locally only; parent owns final source review, PR replies/resolution and remote delivery. No installer or installed-player action occurred.
 
-## 2026-11-01 â€” Concurrent Task C pipeline reconciliation
+## 2026-11-01 — Concurrent Task C pipeline reconciliation
 
 The remote branch advanced independently to `a1c23df2b5d74b19380ff956540a9e76922498d9` while the verified external correction was local at `0b079803d725a1f4c9df253188f2de41aa9530d6`. Both histories were preserved with a merge. Complete inventory comparison now consumes the pipeline's readable unique snapshot; loaded-card item ownership remains alongside pipeline series/context invalidation. A dispatched Match finishes independently of surface cancellation and invalidates shared source/replacement detail while departed local UI stays retired. Pipeline timeout reporting, Split HTTP search/page fallback, duplicate-row normalization and unmatched preview recovery were retained and verified. No separate seven-finding reviewer discussion was available beyond the pipeline commit message/source/tests and saved three-thread GitHub snapshot.
 
@@ -1490,7 +1490,7 @@ Fresh merged-source checks: **57/57 focused tests**, **2,829/2,829 full unit tes
 
 Source remains 1.2.519. Prior BF238/F6AF and earlier evidence remain frozen. No push/reset/rebase, PR replies/resolution, production metadata, installer, installed-app or real account action occurred in this reconciliation. Parent owns the final remote-head gate and delivery; local synthetic checks establish only this combined source's tested behavior.
 
-## November 1 â€” marker source/confidence Beta PR candidate
+## November 1 — marker source/confidence Beta PR candidate
 
 Independent candidate on `codex/server-marker-details`, based on Beta `a15621a0` and official server/WebUI `63ef34b236b88dc77acca1a9a3ed90235377691f`. Source stamps remain 1.2.519; the Beta pipeline owns release stamping. This is not a published release.
 
@@ -1499,7 +1499,7 @@ Current watch `start_seconds/end_seconds` now deserialize alongside legacy range
 Verification under `D:/SiloPlayer/.codex-tmp/server-align-nov01/markers`: actual wire red/green; Lua3 missing-handler/raw-markup red then escaped rendering/clear-state green; focused18 passed; full-main-final **2817 passed, zero failed/skipped**. Release app publish `corrected-native-app` passed, DLL SHA256 `E2429EC86563B580B441E9FAA29B65AA06C48FABA239930AFC1382BE5D888BF6`. Actual synthetic native controls in `native-corrected` pass setting persistence, queued same/different-key failure rollback, repeated/manual/absent marker data, profile retirement and label rendering. The native screenshot was visually inspected: the details line fits above Skip Intro. The initial native fixture's authoritative-position setup was corrected; its original/final hashes and the reproduced rapid-toggle defect are retained in the task report. No product input changed after the corrected Release build; only fixture checks and documentation followed.
 
 All .NET commands held SiloOct18Build and used fresh isolated outputs after pinned native dependency verification. Known existing warnings remain. Independent Standards/Spec review and Beta submission are next. No installer, installed app, real account/media or production endpoint was used; this does not certify complete visual parity or physical-device behavior.
-## November 1 â€” marker-details review corrections
+## November 1 — marker-details review corrections
 
 This follow-up supersedes the earlier task-D readiness statement. Independent Standards/Spec review found cached Settings visits retaining another profile's controls, early edits being dropped under unrelated bulk loading, cosmetic preference reads delaying skip initialization, nested multipart files using the primary file's metadata, timing-only live snapshots losing provenance, and cosmetic republishes clearing undo. These were reproduced against the preserved E2429 candidate and corrected. Settings now owns a separate visit, accepted writes may finish and notify the same current profile after navigation, queued retired-visit writes stop, and optional preference reads do not gate playback. Marker timing and display ownership use the actual selected multipart file; unchanged timing-only broadcasts preserve provenance, while explicit replacements and withdrawals still apply. OSC validates content/file/load/preference generations and compares timing independently of cosmetic payload changes, preserving pending skip/countdown/undo.
 
@@ -1509,7 +1509,7 @@ Production video uses the existing Lua OSC. The legacy WinUI PlayerOverlay remai
 
 Final marker review verification: all three fresh native routes passed against the same 980819... app: review-native-final (actual cached Settings controls, nested selected file, nonblocking cosmetic reads, early edits, retired queued writes and accepted off-page notification), review-native-original-final (existing marker preference/rendering compatibility) and review-playback-final (actual libmpv Lua/seek/quality/room-intent checks). The final 2,823-test suite includes all six new timing/provenance/OSC ownership regressions. review-final-source-binding.json records all 1,011 tracked product inputs unchanged since Publish began at 10:17:58Z; its exact final commit is bound after committing. Native fixture-only corrections are separately fingerprinted in the task report. Source self-review and diff checks passed; delivery gates and PR receipt remain in the external report.
 
-## Approved Beta PR3 â€” bounded busy subtitle reads (November 2, 2026)
+## Approved Beta PR3 — bounded busy subtitle reads (November 2, 2026)
 
 Local product source 9e05c6a2fa2b1ae5e19fb21eaa57757a51ef4e4e on codex/nov02-subtitle-busy deliberately starts from freshly selected Beta 6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af. Inherited source version 1.2.544-beta.1 and File/Assembly 1.2.543.1 are unchanged. This is a local source handoff, not a release or installer receipt.
 
@@ -1522,7 +1522,7 @@ Fresh verification: focused 95/95; full 3075/3075; successful self-contained Rel
 Official playback source remains pinned to bf53b65450244751013a2965b39da4111d9a0f72. Root later observed 90f88f2d6076daefb8b5ae77893a41e9de6e20d9 calendar-only drift with unchanged playback/subtitle contracts; the refresh receipt is preserved. Identity PR75 concurrently advanced to 09572257348eb6237eca6e78e0fe48894f1c6683 and has not been imported. Independent Standards/Spec review and combined validation against the corrected identity source that actually reaches Beta remain required before pipeline readiness. Tests use synthetic data/local HTTP and actual libmpv/UI dispatcher, not live server/account interoperability or complete WebUI visual parity. No push, merge, installer, setup, installed-player control, production change or version stamp occurred. Earlier outputs/evidence and canonical dirty source remain preserved.
 
 
-## November 2 subtitle identity candidate â€” 1.2.544-beta.1
+## November 2 subtitle identity candidate — 1.2.544-beta.1
 
 Focused product/test source `803cf6ab2f9ad94bd2ea4956fe59f50a73db395d` on `codex/nov02-subtitle-identity` starts from freshly fetched Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af`; source version remains **1.2.544-beta.1**, owned by the Beta pipeline. All final source/build work uses `D:/SiloPlayer/.codex-tmp/server-align-nov02/worktrees/subtitle-identity`. Official server/WebUI main was pinned and rechecked at `bf53b65450244751013a2965b39da4111d9a0f72`. See the [approved scope](superpowers/specs/2026-11-02-server-parity-design.md) and [focused execution record](superpowers/plans/2026-11-02-subtitle-identity.md).
 
@@ -1572,23 +1572,23 @@ Parent may submit this complete tested stack as a separate Beta PR dependent on7
 
 Independent review and correction: Spec **0 findings** at b6a7833e; Standards' sole P3 duplicated spoiler predicate is consolidated at 0f17cf7bec051ca4b2b2e213b0883148d4ade8f2 and its scoped re-review has **0 remaining findings**. Fresh corrected full suite **3077/3077**, Release and complete episode-overview native checks all pass. Final app SHA256 **1547F5A9EAC3CB7D8F640F617639E3B04A896CD6B994096D8FF4D93F7688289C**; compact/wide captures inspected. Evidence overview/{d-review-full,d-review-publish,d-review-native,review-source-inputs.json}; original/final source hashes retain the earlier C59398 candidate separately. Version stamps and verification limits above remain unchanged; Beta pipeline owns subsequent merge, versioning and packaging.
 
-## Approved PR7 â€” grouped Library local candidate (2026-11-02)
+## Approved PR7 — grouped Library local candidate (2026-11-02)
 
 Branch `codex/nov02-grouped-library` deliberately uses fresh Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af` plus independently reviewed foundation PR74 `abba1d7655128f090f96a26685ef114b7f07b706`, combined locally at `48e04f74ca58347c43e1a0d23432689cff7af2ca`. The scheduling ruling permits local preparation; submission/readiness remains blocked until foundation actually reaches Beta and parent reconciles fresh Beta. Official GitHub main was fetched directly and remains `bf53b65450244751013a2965b39da4111d9a0f72`. Version stamps remain **1.2.544-beta.1**, File/Assembly **1.2.543.1**.
 
 Enabled movie/mixed libraries with advertised `box_sets` use the server's `group=box_set` across GET, large POST, counts, cursors/seeks, query/window identity and matching alphabet requests. Grouped letters require both `box_sets` and `letter_index`. Typed `MediaItem.BoxSet` already exists in the foundation and is verified through actual wire reads; this source has no separate `CatalogItemV2` adapter. The custom virtual Library poster grid now uses the reusable aggregate card, returned-library detail navigation, fallback artwork/progress and bounded responsive slots. Ordinary title menus, watched/favorite mutations and playback intent cannot receive aggregate IDs. Grouped windows retire on library disable/replacement and refresh through existing catalog/watched/final-write mechanisms.
 
-Test-first evidence is preserved under `D:/SiloPlayer/.codex-tmp/server-align-nov02/grouped-library`: request/model RED **7 failed / 6 passed**, actual virtual-card RED against frozen foundation DLL `6CBA330â€¦959FB`, and refresh RED **1 failed / 13 passed**. Focused GREEN **107/107** includes existing alphabet, window, cursor and prefetch cases. Fresh Release publish succeeds; candidate `.codex-tmp/grouped-library-release-one-client` DLL SHA256 is `051BFFA816563C632821B7D559D88FCFFCBA4D46B6B3141D08AE40CB1AD751A4`, PRI `A73C052A29E7A1DDA777A9E97044D90CA264C3EE1158F05729507C0B212047AF`. That initial publish remains frozen historical evidence; the final verified candidate and source binding are recorded below and in `grouped-library-report.md` outside the checkout.
+Test-first evidence is preserved under `D:/SiloPlayer/.codex-tmp/server-align-nov02/grouped-library`: request/model RED **7 failed / 6 passed**, actual virtual-card RED against frozen foundation DLL `6CBA330…959FB`, and refresh RED **1 failed / 13 passed**. Focused GREEN **107/107** includes existing alphabet, window, cursor and prefetch cases. Fresh Release publish succeeds; candidate `.codex-tmp/grouped-library-release-one-client` DLL SHA256 is `051BFFA816563C632821B7D559D88FCFFCBA4D46B6B3141D08AE40CB1AD751A4`, PRI `A73C052A29E7A1DDA777A9E97044D90CA264C3EE1158F05729507C0B212047AF`. That initial publish remains frozen historical evidence; the final verified candidate and source binding are recorded below and in `grouped-library-report.md` outside the checkout.
 
-All .NET checks hold `SiloOct18Build` and use the pinned `04E4D27Dâ€¦` engine with fresh isolated D: outputs and synthetic fixtures. Earlier artifacts, canonical dirty source and the installed player are preserved. No installer, remote submission, release publication, real account/media or installed-player control occurs in this task. Parent owns independent review and delivery gates; this is not release or real-server interoperability evidence.
+All .NET checks hold `SiloOct18Build` and use the pinned `04E4D27D…` engine with fresh isolated D: outputs and synthetic fixtures. Earlier artifacts, canonical dirty source and the installed player are preserved. No installer, remote submission, release publication, real account/media or installed-player control occurs in this task. Parent owns independent review and delivery gates; this is not release or real-server interoperability evidence.
 
 Final PR7 verification: **3,108/3,108 full unit tests**, zero failures/skips, successful fresh Release publish and complete combined native PASS. Final app is `.codex-tmp/grouped-library-release-pixel-final-client`; DLL SHA256 `C4C79475EB6A3BA658A58F4123CDA00AA42238C09F3409531D41F7902CBBC790`, PRI `A73C052A29E7A1DDA777A9E97044D90CA264C3EE1158F05729507C0B212047AF`. `full-pixel-final`, `release-pixel-final` and `native-pixel-final` receipts bind those results. `pixel-final-source-inputs.json` and the full published-file manifest are preserved externally; product and fixture fingerprints match after verification.
 
-The final native run includes aggregate keyboard/destination/fallback/recycling and120/170/240-DIP slot bounds, grouped movie1280Ã—1000/mixed960Ã—550 exact distant and bottom-letter jumps, reverse filtered requests, settled watched/final-write counts, library disable, old ordinary movie/audiobook letter cases and three existing cursor geometries. Both captures were inspected after all card bindings settled. Two source corrections were test-first: same-object library disable during capability loading, and an inherited asynchronous ChangeView stale-offset read that lost the final chosen letter. Compact inspection also reproduced fractional row-boundary mis-highlighting; only current-letter row selection tolerates **0.5 logical WinUI DIP**. Virtualization, server seek positions and scroll geometry do not use that tolerance. Native evidence covers the current host configuration, without certifying alternate DPI behavior. All earlier failed/intermediate candidates and fixture generations remain frozen and explained in the task report. Parent independent review, actual foundation-in-Beta and fresh reconciliation gates remain required before submission.
+The final native run includes aggregate keyboard/destination/fallback/recycling and120/170/240-DIP slot bounds, grouped movie1280×1000/mixed960×550 exact distant and bottom-letter jumps, reverse filtered requests, settled watched/final-write counts, library disable, old ordinary movie/audiobook letter cases and three existing cursor geometries. Both captures were inspected after all card bindings settled. Two source corrections were test-first: same-object library disable during capability loading, and an inherited asynchronous ChangeView stale-offset read that lost the final chosen letter. Compact inspection also reproduced fractional row-boundary mis-highlighting; only current-letter row selection tolerates **0.5 logical WinUI DIP**. Virtualization, server seek positions and scroll geometry do not use that tolerance. Native evidence covers the current host configuration, without certifying alternate DPI behavior. All earlier failed/intermediate candidates and fixture generations remain frozen and explained in the task report. Parent independent review, actual foundation-in-Beta and fresh reconciliation gates remain required before submission.
 
-### PR7 independent Spec correction â€” grouped cursor recovery
+### PR7 independent Spec correction — grouped cursor recovery
 
-The reviewed `c9d269a4` / `C4C79475â€¦` candidate above remains frozen. Independent Standards review found no breaches; Spec identified invalid-cursor recovery starting a new query and retrying the core loader before restoring grouping. The focused correction resolves grouping and checks the recovery query owner before the existing one-bound retry. A retired window releases its loading reservation while the optional grouping preflight runs. No other product code or version stamps changed.
+The reviewed `c9d269a4` / `C4C79475…` candidate above remains frozen. Independent Standards review found no breaches; Spec identified invalid-cursor recovery starting a new query and retrying the core loader before restoring grouping. The focused correction resolves grouping and checks the recovery query owner before the existing one-bound retry. A retired window releases its loading reservation while the optional grouping preflight runs. No other product code or version stamps changed.
 
 Real signed HTTP RED reproduced missing group on GET/large POST retries and counts, plus premature dispatch before held preflight ownership checks. The actual native RED reproduced the grouped-to-flat query fingerprint after a retired cursor. Final verification: **115/115 scoped**, **3,115/3,115 full units**, successful fresh Release and complete native PASS, including injected cursor retirement followed by grouped count/index and far-letter/continuation paths in both layouts. The prior ordinary letters/cursor matrix remains passing. Original fixture/setup-error receipts are preserved and distinguished in the external task report.
 
@@ -1618,7 +1618,7 @@ Clean product integration `649729ed3ad4b3dadcce50bd09d0ca44f1400f64` combines gr
 
 Fresh combined verification passes **538/538 focused**, **3,146/3,146 full units**, Release and all eight native routes on identical DLL SHA256 `433429F51ACFF06A54F3A784BFA7743FB9C3EEDBB7DA84A3BAD444B354D2BA3D`, owned `.codex-tmp/grouped-library-admission-publish-client`. Routes cover grouped/ordinary alphabets and cursors, new menu admission and lifecycle controls, existing menu scope/owner checks, foundation/unscoped navigation, full episode quick-play lifecycle/room transport and box-set room actions. All five held admission boundaries reject departed viewers; same-viewer access refresh, accepted unload, active room, queue behind scoped preparation and ordinary close retain their expected behavior. Fresh wide/compact grouped captures retain activeM, current watched counts and fitting cards/rail. Earlier room evidence does not substitute after the PlayerService change; both relevant room routes ran on4334.
 
-The first full quick-play run was blocked in five fixture setup calls using nonpublic reflection for the already-public SetState method, also confirmed in the original Beta source. Central fixture-only `abc34b8b8cbaa353b332213404a00e6af0f28031` replaces those five calls with direct public setup; no assertions change. Corrected full quick-play passes on the unchanged app. Original failed run/fixture, raw hashes0A4388FB...â†’97D036D5... and Git blobs are preserved externally. `admission-fixed-source-inputs.json` proves one changed native fixture and no product/libs changes; the seven unaffected native routes and unit results remain valid without repeats. Final committed binding and full app manifest record exact equality after commit.
+The first full quick-play run was blocked in five fixture setup calls using nonpublic reflection for the already-public SetState method, also confirmed in the original Beta source. Central fixture-only `abc34b8b8cbaa353b332213404a00e6af0f28031` replaces those five calls with direct public setup; no assertions change. Corrected full quick-play passes on the unchanged app. Original failed run/fixture, raw hashes0A4388FB...→97D036D5... and Git blobs are preserved externally. `admission-fixed-source-inputs.json` proves one changed native fixture and no product/libs changes; the seven unaffected native routes and unit results remain valid without repeats. Final committed binding and full app manifest record exact equality after commit.
 
 All original candidates, receipts and source copies remain frozen. Version stamps remain **1.2.544-beta.1** / **1.2.543.1**; official GitHub main was freshly confirmed at90f88f2d6076daefb8b5ae77893a41e9de6e20d9. Verification uses the pinned engine, shared mutex, isolated D: outputs and synthetic APIs/settings; no release, setup, real credentials/media, production, remote or installed-player control occurs. Parent owns final independent integration/dependency review and delivery gates; synthetic/host-DPI limitations remain.
 
@@ -1634,7 +1634,7 @@ Final reviewed delivery binding and exact heads: D:/SiloPlayer/.codex-tmp/server
 
 The independent Spec review reproduced a pre-existing adapter substitution that changed missing/blank account-limit server text into generic route advice before the new mapper saw it. Sixteen actual synthetic HTTP start/replan cases now cover null, empty, whitespace and padded server messages for both codes; twelve fail for the intended fallback before the correction and four custom-message cases pass. The adapter now retains an absent message for these two reasons, preserving other terminal behavior. Corrected focused suite is 61/61 and fresh D: full suite is 3,084/3,084 with zero failed/skipped (limits/d-full-final). Independent Standards and Spec correction reviews both have zero remaining findings. The earlier3,068 result above belongs to the pre-review candidate, not this corrected source. No app version changes, installer or installed-player control.
 
-## November 2 â€” motion-aware artwork candidate (Task 3)
+## November 2 — motion-aware artwork candidate (Task 3)
 
 Branch `codex/nov02-artwork-motion` starts from Beta `ac51554902c252814191dd88cf4b1d991efdfea6`, retaining pipeline-owned version **1.2.544-beta.1** / Windows **1.2.543.1**. A per-viewport policy pauses new library/shared-card artwork work during rapid movement, preserves cheap decoded hits, and resumes after slow movement or settling. Library slots and background warmup retire on hidden-tab/departure; retained DTO artwork keeps its original profile owner across unload/reload. Direct audiobook group return resumes the existing books-grid slots. Home first-content publication gains no await or barrier. See the [Task 3 specification](superpowers/specs/2026-11-02-artwork-motion.md) and [plan](superpowers/plans/2026-11-02-artwork-motion.md).
 
@@ -1644,7 +1644,7 @@ Broader existing detail-card, shared-control and Home lifecycle/cache suites pas
 
 Observed fast-motion measures are HTTP requests, new `Image.Source` assignments and `ImageOpened` events. They do not establish fresh CPU/GPU decoder invocation counts, physical-input smoothness, FPS or a historic buffering fix. PR80 `11058ededd75a8e4b4dcd5c20132dc130835b3bf` uses bespoke sibling episode still cards under its `ScrollView`; those remain outside this shared-card scheduler. No version stamp, installer, installed-player control, production change, push or release publication occurred. Parent owns independent reviews and Beta delivery.
 
-### Task3 artwork review corrections â€” local verification
+### Task3 artwork review corrections — local verification
 
 Fix round1 against6e905f6e adds retained Recommended shared-card visibility/navigation cancellation and current-bind resume, plus context/cancellation/motion gates between spoiler file/native processing stages. A native IsLoaded guard covers the queued-Unloaded interval; Loaded retries a delayed initial missing source with its original DTO owner. Version remains1.2.544-beta.1 /1.2.543.1; no push/publication/installed-player action.
 
@@ -1652,7 +1652,7 @@ Final fresh Release DLL SHA256 A900E4CD065D2D4D80742DC8EA3E77E591032A79721D76C7E
 
 Source/artifact/fixture hashes, exact commands, red/green receipts and limits: D:/SiloPlayer/.codex-tmp/browse-polish-nov02/artwork-task-report.md and artwork/review-ready-bindings.json.1625 source/test inputs unchanged through final native checks;808 local PDB documents match; all final native reference bytes match. Observed native API-completion continuations are not CPU/GPU decode counts or FPS evidence. Independent scoped re-review pending; P3 helper naming suggestion deferred.
 
-## Approved PR6 â€” box-set foundation (2026-11-02)
+## Approved PR6 — box-set foundation (2026-11-02)
 
 Branch `codex/nov02-boxset-foundation` starts from freshly fetched Beta `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af`. The inherited header above is historical: this deliberately newer source retains **1.2.544-beta.1**, File/Assembly **1.2.543.1**. No version stamps, installer or release assets change here. Official viewer reference is `bf53b65450244751013a2965b39da4111d9a0f72`.
 
@@ -1672,7 +1672,7 @@ The final owned diagnostic app is `.codex-tmp/nov02-boxsets-d-review-publish-cli
 
 Independent corrected-source review: Standards **0 remaining findings** and Spec **0 remaining findings** over a68a53a through fixture head eb4f104. The shared eligibility advisory, actual Frame activation failure, post-write invalidation during a held read and room-action routing are resolved. Final product remains b020850; final Release/native SHA256 is 6CBA330BA8F169931BDB0B6C27736D668ACE976A3D643DE487C811B0D18959FB. Parent submission retains these source fingerprints; Beta pipeline owns subsequent changes, merge and packaging.
 
-## Approved PR8 â€” optional full and quick box-set search (2026-11-02)
+## Approved PR8 — optional full and quick box-set search (2026-11-02)
 
 Local preparation on codex/nov02-boxset-search deliberately starts from Beta6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af with the exact independently reviewed foundationabba1d7655128f090f96a26685ef114b7f07b706 merged locally at4de014edc0d7439abff0a272df899b277d42e166. The parent explicitly allows preparation while the foundation queues externally. This is not a Beta-ready or published candidate: foundation must reach Beta, then the parent must reconcile fresh Beta and perform independent review before submission. Stamps remain1.2.544-beta.1 / File-Assembly1.2.543.1. Implementation reference is bf53b65450244751013a2965b39da4111d9a0f72. Final direct official fetch advanced to 90f88f2d6076daefb8b5ae77893a41e9de6e20d9 (movie calendar digital/disc releases); the PR8 box-set/search source files remain unchanged. Exact drift is recorded in the external report.
 
@@ -1688,9 +1688,9 @@ These are synthetic transport/native controls, not live-server/account/media int
 
 Independent PR8 review at4390d26a: Standards **0 findings**, Spec **0 findings**. Parent rechecked all1634 source inputs,574 published files and five receipt digests; full3123 and three native suites remain bound to app03E80255B994F38C3799AE0F6FC4813871E3A3617EB40547C499534AE707ABDE. Compact full-section and wide quick-search captures inspected. This candidate is locally reviewed, **not Beta-ready**: foundation74 must reach current Beta and the resulting source must be reconciled/verified before push. Source stamps unchanged; no publication or installed-player action.
 
-### PR74 pipeline companion â€” unscoped movie membership
+### PR74 pipeline companion — unscoped movie membership
 
-This focused correction starts from pipeline head `8071bdb32483ca05146b96eed1f7408106ea2c47`, retaining its source/version stamps **1.2.544-beta.1** / **1.2.543.1**. The pipeline's null-library rejection removed the optional row from ordinary Home/global-search detail routes. Real HTTP/view-model and actual native PosterCard â†’ Frame â†’ ItemDetail navigation reproduce that regression on a fresh unchanged 807 publish. The correction preserves the absent query, gates discovery on eligible viewer libraries and validates the response against its own enabled accessible library. Explicit scopes still require exact equality; current profile/access, item, library, language and departure guards remain in force.
+This focused correction starts from pipeline head `8071bdb32483ca05146b96eed1f7408106ea2c47`, retaining its source/version stamps **1.2.544-beta.1** / **1.2.543.1**. The pipeline's null-library rejection removed the optional row from ordinary Home/global-search detail routes. Real HTTP/view-model and actual native PosterCard → Frame → ItemDetail navigation reproduce that regression on a fresh unchanged 807 publish. The correction preserves the absent query, gates discovery on eligible viewer libraries and validates the response against its own enabled accessible library. Explicit scopes still require exact equality; current profile/access, item, library, language and departure guards remain in force.
 
 Fresh focused tests pass **66/66**, full units **3,124/3,124**, zero failed/skipped. Product source `091defe98c0ea49604fe2839236de4fb1451f2de` has a successful fresh Release publish and passing foundation/unscoped plus room native suites against identical bytes. DLL SHA256 is `865962D457262443F308C0D8CFBAD992B243D4BE9B7443F373C3FA34928E7DBD`. Final hashes, fixture commit, red/green receipts and verification limits are recorded in `D:/SiloPlayer/.codex-tmp/server-align-nov02/foundation-pipeline-companion-report.md`. A preserved native diagnostic found the pipeline capability-error check traversed an unloaded page despite a correct Transient model; the fixture now observes Loaded/layout before asserting error/retry controls. The new fixture also observes the queued movie-row render before checking its native cards.
 
@@ -1704,7 +1704,7 @@ Local reconciliation incorporates corrected PR74 foundation7617ddf2d5a90b5ea0a0e
 
 ### PR74 restart menu scope correction
 
-Product `64bd63e00231fa93e5d23ea33d282f3be01679a5` and fixtures `620cd53660b80b4200751023e4c91ad4cd4dca1d` correct the additional menu finding after the 7617 review. Actual More â†’ Play from Beginning commands now retain the member card's captured returned library. Retained commands reject changed item/scope, departure or viewer identity before entering the existing ordinary playback path. Menu closure does not cancel accepted playback; fromStart and room authority policy remain unchanged.
+Product `64bd63e00231fa93e5d23ea33d282f3be01679a5` and fixtures `620cd53660b80b4200751023e4c91ad4cd4dca1d` correct the additional menu finding after the 7617 review. Actual More → Play from Beginning commands now retain the member card's captured returned library. Retained commands reject changed item/scope, departure or viewer identity before entering the existing ordinary playback path. Menu closure does not cancel accepted playback; fromStart and room authority policy remain unchanged.
 
 Fresh focused units **414/414**, corrected full **3,124/3,124**, Release publish and four native routes pass against the same diagnostic DLL SHA256 `BB82FAFBC565F7A169EEA7AA9ACCE75A4C2BCCE845951659B51B1C5C3268C8E0`. Actual dedicated/membership/unscoped popup requests verify library, authorized file/profile and explicit zero restart. Retained-menu negatives cover recycled/scope-changed/departed/other-profile owners; a same-viewer access refresh still works. Existing foundation/unscoped and room suites also pass. The initial complete run's obsolete exact-call source assertion is replaced by this actual native behavior coverage; its failed receipt remains preserved.
 
@@ -1728,7 +1728,7 @@ Final fixture `abc34b8b8cbaa353b332213404a00e6af0f28031` corrects five inherited
 
 Source stamps remain **1.2.544-beta.1** / **1.2.543.1**. All verification is mutex guarded, isolated under D: and synthetic. Earlier apps and reports remain frozen; no installer, installed-player, credentials, production or remote action occurred. Live interoperability and complete visual parity remain unverified. Parent owns scoped re-review and final delivery gates.
 
-## November 8 â€” library box-set grouping removed
+## November 8 — library box-set grouping removed
 
 The official server's catalog accepts only `group=work` (silo-server `internal/apiv2/catalog_items.go`; Granary's contract agrees), so PR7's `group=box_set` library browse could never activate there. Each session paid one refused 422 read before #100/#101 fell back to ungrouped browsing. The owner chose removal on 2026-11-08.
 
