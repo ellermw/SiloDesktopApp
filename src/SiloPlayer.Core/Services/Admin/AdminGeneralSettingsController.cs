@@ -59,6 +59,8 @@ public sealed class AdminGeneralSettingsController : IDisposable
         MonitorAuthorityLease owner;
         try { _lifetime.Resume(); owner = _lifetime.Open(); }
         catch (OperationCanceledException) { Clear(); return; }
+        // Other pages or admin sessions may have changed values and the shared ETag.
+        _store.Invalidate();
         lock (_gate) { _form?.Discard(); _form = null; _revision++; _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke();
         await LoadAsync(owner, false, false).ConfigureAwait(false);

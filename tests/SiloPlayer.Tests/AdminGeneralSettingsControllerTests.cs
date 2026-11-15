@@ -8,6 +8,47 @@ namespace SiloPlayer.Tests;
 public sealed class AdminGeneralSettingsControllerTests
 {
     [Fact]
+    public async Task ReopeningRefreshesCachedValuesAndUsesTheFreshETagForSave()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminServerSettingsApi(kit.Client);
+        using var store = new AdminServerSettingsStore(api, authority, AdminGeneralSettingsController.Keys, AdminGeneralSettingsController.Secrets);
+        using var controller = new AdminGeneralSettingsController(api, store, authority);
+        kit.Http.Respond = (request, _) => Task.FromResult(Read(request));
+        await controller.OpenAsync();
+        Assert.Equal("Silo", controller.State.Values["branding.server_name"]);
+        controller.Suspend();
+
+        string? ifMatch = null;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Put)
+            {
+                ifMatch = request.Headers.IfMatch.ToString();
+                var saved = AdminMonitorKit.Json("""{"values":{"branding.server_name":"Edited"},"restart_required":false}""");
+                saved.Headers.ETag = new("\"three\"");
+                return Task.FromResult(saved);
+            }
+            if (request.RequestUri!.AbsolutePath.EndsWith("effective"))
+            {
+                var updated = AdminMonitorKit.Json("""{"branding.server_name":"Updated elsewhere","redis.db":"2"}""");
+                updated.Headers.ETag = new("\"two\"");
+                return Task.FromResult(updated);
+            }
+            return Task.FromResult(Read(request));
+        };
+        await controller.OpenAsync();
+        Assert.Equal(2, kit.Http.Requests.Count(request => request == "GET /api/v2/admin/settings/effective"));
+        Assert.Equal("Updated elsewhere", controller.State.Values["branding.server_name"]);
+        Assert.Equal("Updated elsewhere", controller.State.PersistedValues["branding.server_name"]);
+        controller.Set("branding.server_name", "Edited");
+        await controller.SaveAsync();
+        Assert.Equal("\"two\"", ifMatch);
+        Assert.Empty(controller.State.DirtyKeys);
+    }
+
+    [Fact]
     public async Task AcknowledgedSecretReplacementAndClearUpdatePresenceWithoutRetainingSecret()
     {
         using var kit = AdminMonitorKit.Create();
