@@ -3,6 +3,17 @@
 Intermediate C1 backend on inherited dd96e055, version 1.2.1081-beta.1 unchanged, pinned to official server/WebUI c11b0a968f0d5980b7005579fb95acc2d11d8321. Adds guarded settings transport, authority-scoped single-flight snapshots, a redacted draft and General controller. General is not yet registered or visually verified. Lead is integrating the native page, Configure catalog, shell/cache refresh and production registration; no push, release, installer or installed-player action was performed. See docs/parity/admin-general-backend.md and D:/SiloPlayer-build/server-update-nov14/configure-general/implementation-report.md for scope and verification.
 
 ---
+
+---
+
+# November 14 — Bound and retire ebook searches
+
+Ebook search follows official Silo Server `7115ee7028c7c9bde9e201fd5f54e87ea70de3a7`: a whole-book 1,000-result limit, cooperative cancellation and corrected cross-node excerpts. New queries, clearing, file changes and leaving retire pending work. Native result adoption checks search, open and file identities. The native list joins excerpt parts as readable text, uses the current eight-language truncation message, and reports current renderer search failures. The relevant upstream vendor search files are unchanged through `1452ea2d10efbe7d3ea5ce7140fb49756b493670`.
+
+Final validation: all 6,601 unit tests passed, 18 Node reader tests passed, Release app publish and native host build succeeded, and the published `reader-interop` native group passed. Regression tests reproduced the raw-JSON excerpt and rejected-search failures before their fixes. Static independent review is retained at `D:/SiloPlayer-build/server-update-nov14/ebook-search/independent-review.md`; missing catalog and excerpt findings were corrected. Existing shared-reader script-execution and fully rendered EPUB/PDF/FB2 interaction/visual coverage remain limited; fixture and synthetic-DOM checks do not establish complete visual parity. Product version stays 1.2.1064; Beta owns stamping. Translation dependency: PR #162. No live server request, install, restart or settings change.
+
+---
+
 # November 14 - Invitation and password-reset server alignment
 
 Aligns account links with official Silo Server/WebUI
