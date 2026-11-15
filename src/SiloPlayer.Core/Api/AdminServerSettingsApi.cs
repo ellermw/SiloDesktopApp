@@ -102,7 +102,18 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         if (response.Body.Success == null || response.Body.Message == null) throw new InvalidDataException("Invalid connection result.");
         var message = LocalLog.RedactDiagnosticText(response.Body.Message);
         if (values.TryGetValue("redis.url", out var secret) && !string.IsNullOrEmpty(secret))
-            message = message.Replace(secret, "<redacted>", StringComparison.Ordinal);
+        {
+            var secrets = new List<string> { secret };
+            if (Uri.TryCreate(secret, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo))
+            {
+                // Servers may echo credentials separately, either escaped or decoded.
+                secrets.Add(uri.UserInfo);
+                secrets.AddRange(uri.UserInfo.Split(':', 2));
+                secrets.AddRange(secrets.ToArray().Select(Uri.UnescapeDataString));
+            }
+            foreach (var component in secrets.Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
+                message = message.Replace(component, "<redacted>", StringComparison.Ordinal);
+        }
         return new(response.Body.Success.Value, message);
     }
 
