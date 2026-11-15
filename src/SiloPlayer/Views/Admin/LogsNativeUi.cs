@@ -292,7 +292,14 @@ internal sealed class LogsActionFeedback : ContentControl
     {
         var message = error ?? notice;
         if (message == _last) return;
+        // Expiry dismisses the toast, not the controller outcome. Only cleared state rearms it.
         _last = message;
+        Show(error, notice);
+    }
+    internal void Show(string? error, string? notice)
+    {
+        // Imperative outcomes (such as picker/download failures) are new events on every call.
+        var message = error ?? notice;
         if (message == null) return;
         _home ??= Parent as Panel;
         for (DependencyObject? ancestor = _owner; ancestor != null; ancestor = VisualTreeHelper.GetParent(ancestor))

@@ -78,10 +78,9 @@ public class ThemeService
             PrimaryForeground = "#141417",
             Secondary = "#232328",
             SecondaryForeground = "#D0D0D6",
-            // Current WebUI midnight-cinema token. The old #6E6E78 value made
-            // admin subtitles, navigation, table metadata, and button text
-            // visibly dimmer than the live UI.
-            MutedForeground = "#9696A0",
+            // Official WebUI midnight-cinema tokens (1a99f7be). Secondary
+            // text and categorical series share these app-wide resources.
+            MutedForeground = "#A4A4AE",
             Border = "#28282E",
             Input = "#1C1C20",
             Sidebar = "#0F0F12",
@@ -98,11 +97,11 @@ public class ThemeService
             DestructiveForeground = "#FFFFFF",
             Muted = "#1C1C20",
             Ring = "#E8E8EC",
-            Chart1 = "#8B9CF7",
-            Chart2 = "#7EC8E3",
-            Chart3 = "#81C995",
-            Chart4 = "#E8A87C",
-            Chart5 = "#C78DBD",
+            Chart1 = "#5F74EE",
+            Chart2 = "#169E88",
+            Chart3 = "#BF7F22",
+            Chart4 = "#C2578F",
+            Chart5 = "#3F97CF",
             SidebarForeground = "#E8E8EC",
             SidebarPrimary = "#E8E8EC",
             SidebarPrimaryForeground = "#0F0F12",

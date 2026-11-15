@@ -73,6 +73,7 @@ public sealed partial class AdminDiagnosticsPage : Page
     private FrameworkElement Filter(string label, string key, double width, string? placeholder = null)
     {
         var input = Input(placeholder ?? D("filters." + label), "DiagnosticsFilter_" + key, width, key == "short"); _filters[key] = input;
+        AutomationProperties.SetName(input, D("filters." + label));
         input.KeyDown += async (_, args) => { if (args.Key == VirtualKey.Enter) { args.Handled = true; await ApplyAsync(); } }; var field = Labelled(D("filters." + label), input, key != "user");
         if (key == "user") input.InputScope = new Microsoft.UI.Xaml.Input.InputScope { Names = { new Microsoft.UI.Xaml.Input.InputScopeName { NameValue = Microsoft.UI.Xaml.Input.InputScopeNameValue.Number } } };
         if (key == "short") input.CharacterCasing = CharacterCasing.Upper;
@@ -233,7 +234,7 @@ public sealed partial class AdminDiagnosticsPage : Page
             action.ThrowIfRetired();
         }
         catch (OperationCanceledException) { }
-        catch (Exception) { if (action != null && ReferenceEquals(controller, _controller) && controller.IsActionCurrent(action)) _feedback.Present(D("detail.downloadFailed"), null); }
+        catch (Exception) { if (action != null && ReferenceEquals(controller, _controller) && controller.IsActionCurrent(action)) _feedback.Show(D("detail.downloadFailed"), null); }
         finally { if (ReferenceEquals(_download, cancellation)) _download = null; cancellation?.Dispose(); action?.Dispose(); }
     }
     private static void AddMetric(LogsMetricGrid panel, string key, string value) { var metric = Metric(D("detail." + key), value.Length == 0 ? "—" : value, key is "profile" or "reportId"); panel.Add(metric); }
