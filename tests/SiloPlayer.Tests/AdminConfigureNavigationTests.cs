@@ -69,4 +69,22 @@ public sealed class AdminConfigureNavigationTests
         var registry = new AdminPageRegistry([new(request.Route, typeof(object))]);
         Assert.Equal(AdminRoute.GeneralSettings, Assert.Single(Assert.Single(AdminNavigation.SearchGroups(query, registry.IsRegistered)).Pages).Route);
     }
+
+    [Theory]
+    [InlineData("smtp")]
+    [InlineData("test email")]
+    [InlineData("mail server")]
+    public void EmailIsAnIntegrationsLeafSearchableOnlyWhenRegistered(string query)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/settings/email", out var resolution));
+        Assert.Equal(AdminRoute.EmailSettings, resolution.Request!.Route);
+        var topic = AdminRouteCatalog.Sections.Single(section => section.Id == "configure").Entries.Cast<AdminNavTopic>()
+            .Single(entry => entry.Leaves.Any(leaf => leaf.Route == AdminRoute.EmailSettings));
+        Assert.Equal("integrations", topic.Id);
+        Assert.False(new AdminPageRegistry([]).CanOpen(resolution.Request));
+        Assert.Empty(AdminNavigation.SearchGroups(query, new AdminPageRegistry([]).IsRegistered));
+        var registry = new AdminPageRegistry([new(AdminRoute.EmailSettings, typeof(object))]);
+        Assert.True(registry.CanOpen(resolution.Request));
+        Assert.Equal(AdminRoute.EmailSettings, Assert.Single(Assert.Single(AdminNavigation.SearchGroups(query, registry.IsRegistered)).Pages).Route);
+    }
 }

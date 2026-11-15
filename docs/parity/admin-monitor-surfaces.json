@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity, the Admin Manage foundation and Subtitle Files, and the Configure catalog and General settings page",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity, the Admin Manage foundation and Subtitle Files, and the Configure catalog with the General and Email settings pages",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Activity.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Dashboard.cs",
@@ -82,6 +82,9 @@
     "src/SiloPlayer/Controls/AdminSettingsUi.cs",
     "src/SiloPlayer/Views/Admin/AdminGeneralSettingsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminGeneralSettingsPage.xaml",
+    "src/SiloPlayer.Core/Services/Admin/AdminEmailSettingsController.cs",
+    "src/SiloPlayer/Views/Admin/AdminEmailSettingsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminEmailSettingsPage.xaml",
     "src/SiloPlayer.Core/Api/AdminSubtitlesApi.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminSubtitles.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminSubtitlesModels.cs",
