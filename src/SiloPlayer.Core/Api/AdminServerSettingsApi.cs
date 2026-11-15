@@ -18,6 +18,13 @@ public sealed record AdminSettingsConnectionResult(bool Success, string Message)
 {
     public override string ToString() => nameof(AdminSettingsConnectionResult);
 }
+/// <summary>A test-email acknowledgement. <see cref="Message"/> is redacted, bounded server text.</summary>
+public sealed record AdminEmailTestResult(bool Ok, long DurationMs, string? Message)
+{
+    public override string ToString() => nameof(AdminEmailTestResult);
+}
+/// <summary>The test command may have reached the server, but no valid acknowledgement arrived. It is never resent.</summary>
+public sealed class AdminEmailTestOutcomeUnknownException() : Exception("The test email outcome is unknown.");
 public sealed class AdminSettingsConflictException() : Exception("Settings changed on the server. Reload and review your changes.");
 public sealed class AdminSettingsOutcomeUnknownException() : Exception("The save outcome is unknown. Reload and review before saving again.");
 
@@ -117,6 +124,38 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         return new(response.Body.Success.Value, message);
     }
 
+    /// <summary>
+    /// Sends one synchronous SMTP test through the server's SAVED settings. The body
+    /// carries only the trimmed recipient. There is no authentication replay or retry;
+    /// a timeout or malformed acknowledgement is an unknown outcome.
+    /// </summary>
+    public async Task<AdminEmailTestResult> SendTestEmailAsync(MonitorAuthorityLease lease, string recipient, CancellationToken ct = default)
+    {
+        var to = AdminEmailAddress.Trim(recipient);
+        if (!AdminEmailAddress.IsValid(to)) throw new ArgumentException("Invalid test email recipient.", nameof(recipient));
+        lease.ThrowIfRetired();
+        using var timeout = Timeout(lease, ct, TimeSpan.FromSeconds(45)); // server SMTP send deadline is 30s
+        ApiResponse<EmailTestResponse> response;
+        try
+        {
+            response = await client.MonitorLogsSendAsync<EmailTestResponse>(lease, HttpMethod.Post,
+                "/api/v2/admin/email/test", new { to }, ct: timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!lease.IsCurrent || ct.IsCancellationRequested) { throw; }
+        catch (ApiException error) when (error.StatusCode is 408 or 502 or 504) { throw new AdminEmailTestOutcomeUnknownException(); }
+        catch (ApiException error) { throw Sanitize(error); }
+        catch (Exception) { throw new AdminEmailTestOutcomeUnknownException(); }
+        var body = response.Body;
+        if (body.Ok == null || body.DurationMs is not { } duration || duration < 0) throw new AdminEmailTestOutcomeUnknownException();
+        string? message = null;
+        if (!string.IsNullOrWhiteSpace(body.Message))
+        {
+            message = LocalLog.RedactDiagnosticText(body.Message.Trim());
+            if (message.Length > 500) message = message[..500] + "…";
+        }
+        return new(body.Ok.Value, duration, message);
+    }
+
     private static CancellationTokenSource Timeout(MonitorAuthorityLease lease, CancellationToken ct, TimeSpan? deadline = null)
     {
         var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
@@ -150,5 +189,6 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
     private sealed record SensitiveResponse { public string[]? Configured { get; init; } public string[]? ManagedByEnv { get; init; } }
     private sealed record RestartResponse { public string[]? Keys { get; init; } public string[]? Prefixes { get; init; } }
     private sealed record SaveResponse { public Dictionary<string, JsonElement>? Values { get; init; } public bool? RestartRequired { get; init; } }
+    private sealed record EmailTestResponse { public bool? Ok { get; init; } public long? DurationMs { get; init; } public string? Message { get; init; } }
     private sealed record ConnectionResponse { public bool? Success { get; init; } public string? Message { get; init; } }
 }

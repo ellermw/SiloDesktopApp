@@ -38,7 +38,8 @@
 - [x] Implement that brief with failing behavioral tests first, then focused/full units and actual published native controls. Keep one writer per checkout and one implementation assignment at a time. Final General code c0a3a2cc; native General/Manage foundation/Monitor/Dashboard pass on candidate m. Main/Core unit source remains unchanged after the 6,980-test full run; final focused run passes 525 tests.
 - [x] Independently review the actual final diff against official source and repository standards. Claude review at bad7dc82; lead fixed Redis erasure, indicators, live-region events and Reload focus. Final code54afa5d4 includes refreshed Beta a06cc8b3 and passes7,019 full units,564 focused tests, Release publish and General/foundation/SubtitleFiles/Monitor/Dashboard native checks.
 - [x] Record exact source/payload/fixture hashes, tests, captures and limits. Qualifying non-draft Beta PR173 is pushed and linked through T3; 35 files/43 commits at initial submission. General is Done, separately unmerged/unreleased.
-- [ ] Update the persistent route checklist with PR-linked Done entries; refresh Beta and continue the next independent group. Do not wait for the whole section before delivery.
+- [x] Deliver Email (C2a) as independent non-draft Beta PR174 on General PR173. Final code 3ab6d459 passes 7,071 full units, 616 focused tests, Release publish/matching host and six native groups; Email records 297 PASS including the lead’s red/green authority-retirement password regression. General and Email are Done by delivery definition, separately unmerged/unreleased.
+- [ ] Continue Security (C2b) using the completed security-implementation-brief.md and the final Email dependency. Track all remaining 17 leaves and nested functionality. Do not wait for the whole section before delivery.
 
 ## Execution rulings
 

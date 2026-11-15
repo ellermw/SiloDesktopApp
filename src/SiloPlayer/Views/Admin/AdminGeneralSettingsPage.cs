@@ -156,22 +156,9 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
     }
 
     private static string T(string key, object? args = null) => AdminText.T(key, args);
-    private static Border Skeleton(double height, double width = double.NaN) => new() { Height = height, Width = width, CornerRadius = new(10), Background = AdminMonitorUi.Solid(AdminMonitorUi.Muted, .12), HorizontalAlignment = double.IsNaN(width) ? HorizontalAlignment.Stretch : HorizontalAlignment.Left };
-    private static Border Alert(string message, string? description = null) => Alert(U.Text(message, description == null ? 13 : 14), description);
-    private static Border Alert(TextBlock text, string? description = null)
-    {
-        var row = new Grid { ColumnSpacing = 12 };
-        row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        var icon = AdminMonitorUi.Icon("alert-triangle", 16, AdminMonitorUi.Red500); icon.VerticalAlignment = VerticalAlignment.Top; icon.Margin = new(0, 2, 0, 0); row.Children.Add(icon);
-        AutomationProperties.SetLiveSetting(text, AutomationLiveSetting.Assertive);
-        var content = new StackPanel { Spacing = 4 }; content.Children.Add(text);
-        if (description != null) { text.FontWeight = Microsoft.UI.Text.FontWeights.Medium; content.Children.Add(U.Text(description, 13, true)); }
-        else text.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive);
-        Grid.SetColumn(content, 1); row.Children.Add(content);
-        var alert = new Border { Child = row, Padding = new(16), CornerRadius = new(16), BorderThickness = new(1), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Red500, .2), Background = AdminMonitorUi.Solid(AdminMonitorUi.Red500, .05) };
-        AutomationProperties.SetLiveSetting(alert, AutomationLiveSetting.Assertive);
-        return alert;
-    }
+    private static Border Skeleton(double height, double width = double.NaN) => U.Skeleton(height, width);
+    private static Border Alert(string message, string? description = null) => U.Alert(message, description);
+    private static Border Alert(TextBlock text, string? description = null) => U.Alert(text, description);
 
     private AdminSettingsGroup Group(string section, string[] keys)
     {
@@ -340,42 +327,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
     public Task<bool> CanLeaveAsync()
     {
         if (_controller?.State is { Saving: true, Owner.IsCurrent: true }) return Task.FromResult(false);
-        return _leave?.CanLeaveAsync(async owner =>
-    {
-        if (_dialog != null || !owner.IsCurrent) return null;
-        var confirmed = false;
-        var content = new StackPanel { Spacing = 24 };
-        content.Children.Add(U.Text(T("web.shell.unsavedChanges.description")));
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
-        Button Action(string key, string style) => new()
-        {
-            Content = T(key), Style = (Style)Application.Current.Resources[style],
-            MinWidth = 0, Height = 36, Padding = new(12, 0, 12, 0), CornerRadius = new(10), UseSystemFocusVisuals = true,
-        };
-        var cancel = Action("common.cancel", "OutlineButtonStyle");
-        var discard = Action("web.shell.unsavedChanges.discard", "DestructiveButtonStyle");
-        AutomationProperties.SetName(cancel, T("common.cancel"));
-        AutomationProperties.SetName(discard, T("web.shell.unsavedChanges.discard"));
-        actions.Children.Add(cancel); actions.Children.Add(discard); content.Children.Add(actions);
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot, Title = T("web.shell.unsavedChanges.title"), Content = content,
-        };
-        // Own the two actions so their order and size do not depend on native command
-        // template internals. Escape/light dismissal never confirms a discard.
-        dialog.Resources["ContentDialogMaxWidth"] = 512d;
-        cancel.Click += (_, _) => dialog.Hide();
-        discard.Click += (_, _) => { confirmed = true; dialog.Hide(); };
-        dialog.Opened += (_, _) => DispatcherQueue.TryEnqueue(() =>
-        {
-            if (ReferenceEquals(_dialog, dialog)) cancel.Focus(FocusState.Keyboard);
-        });
-        _dialog = dialog;
-        using var cancelled = owner.Token.Register(() => DispatcherQueue.TryEnqueue(() => { if (ReferenceEquals(_dialog, dialog)) dialog.Hide(); }));
-        try { await dialog.ShowAsync(); return confirmed; }
-        catch (System.Runtime.InteropServices.COMException) { return null; }
-        finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
-        }) ?? Task.FromResult(true);
+        return _leave?.CanLeaveAsync(owner => U.ConfirmDiscardAsync(this, owner, () => _dialog, dialog => _dialog = dialog)) ?? Task.FromResult(true);
     }
 
     public void SuspendAdminPage() => Close();
