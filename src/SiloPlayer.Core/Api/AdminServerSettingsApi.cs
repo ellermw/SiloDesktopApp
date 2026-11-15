@@ -71,7 +71,7 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         try
         {
             var response = await client.MonitorLogsSendAsync<SaveResponse>(lease, HttpMethod.Put,
-                "/api/v2/admin/settings", new { values }, etag, timeout.Token).ConfigureAwait(false);
+                "/api/v2/admin/settings", new Dictionary<string, object?> { ["values"] = values }, etag, timeout.Token).ConfigureAwait(false);
             AdminSettingsForm.RequireStrongETag(response.ETag);
             if (response.Body.Values == null || response.Body.RestartRequired == null) throw new InvalidDataException("Invalid settings acknowledgement.");
             return new(new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Project(response.Body.Values, keys, secrets)), response.ETag!, response.Body.RestartRequired.Value);
@@ -94,7 +94,7 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         try
         {
             response = await client.MonitorLogsSendAsync<ConnectionResponse>(lease, HttpMethod.Post,
-                "/api/v2/admin/settings/check/redis", new { values, dirty_keys = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
+                "/api/v2/admin/settings/check/redis", new Dictionary<string, object?> { ["values"] = values, ["dirty_keys"] = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ApiException error) { throw Sanitize(error); }

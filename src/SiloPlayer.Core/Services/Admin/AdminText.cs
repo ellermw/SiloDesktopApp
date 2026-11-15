@@ -28,6 +28,7 @@ public static class AdminText
         ["configure.native.settings.invalidResponse"] = "The server returned an invalid settings response. Reload before saving.",
         ["configure.native.settings.transportFailed"] = "The settings request did not finish. Check the connection and reload.",
         ["configure.native.settings.serverFailed"] = "Server settings are temporarily unavailable. Try reloading again shortly.",
+        ["configure.native.settings.managedStatusUnavailable"] = "Environment-managed status could not be loaded. Reload this page to edit this setting.",
         // General navigation: official WebUI c11b0a96.
         ["web.admin.settings.search.general.description"] = "The server\u0027s name and public address, the proxies in front of it, and Redis.",
         ["web.admin.settings.search.general.label"] = "General",

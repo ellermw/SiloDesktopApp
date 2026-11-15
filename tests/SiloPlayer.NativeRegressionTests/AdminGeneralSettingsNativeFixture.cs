@@ -47,6 +47,8 @@ internal static class AdminGeneralSettingsNativeFixture
         internal bool RedisConfigured, SensitiveFailure, Managed, Conflict, ReadForbidden;
         internal TaskCompletionSource? SaveGate;
         internal string? LastIfMatch;
+        internal string[] LastSavedKeys = [];
+        internal JsonElement LastCheckBody;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -56,6 +58,7 @@ internal static class AdminGeneralSettingsNativeFixture
             {
                 Saves++; LastIfMatch = request.Headers.IfMatch.SingleOrDefault()?.ToString();
                 using var data = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                LastSavedKeys = data.RootElement.GetProperty("values").EnumerateObject().Select(entry => entry.Name).ToArray();
                 if (SaveGate is { } pending) await pending.Task.WaitAsync(cancellationToken);
                 if (Conflict) return Json(new { type = "precondition_failed", title = "Settings changed", status = 412 }, HttpStatusCode.PreconditionFailed);
                 var updated = new Dictionary<string, string>();
@@ -67,7 +70,12 @@ internal static class AdminGeneralSettingsNativeFixture
                 Version++;
                 body = new { values = updated, restart_required = false };
             }
-            else if (path.EndsWith("/check/redis", StringComparison.Ordinal)) { Checks++; body = new { success = true, message = "Connection successful." }; }
+            else if (path.EndsWith("/check/redis", StringComparison.Ordinal))
+            {
+                using var data = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                LastCheckBody = data.RootElement.Clone();
+                Checks++; body = new { success = true, message = "Connection successful." };
+            }
             else if (path.EndsWith("/sensitive-status", StringComparison.Ordinal))
             {
                 if (SensitiveFailure) return Json(new { title = "Status unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable);
@@ -154,10 +162,15 @@ internal static class AdminGeneralSettingsNativeFixture
                 await Until(() => controller.State.Values.GetValueOrDefault("redis.url", "") != "", "Redis replacement restaged");
                 await Click(page, "GeneralCheckRedis");
                 await Until(() => server.Checks == 1 && controller.State.ConnectionResult?.Success == true, "Redis connection check");
-                Check(true, "real Check Connection control uses current staged Redis inputs");
+                var checkValues = server.LastCheckBody.GetProperty("values");
+                Check(checkValues.GetProperty("redis.url").GetString() == "redis://fixture.invalid:6379" &&
+                    checkValues.GetProperty("redis.db").GetString() == "0" &&
+                    server.LastCheckBody.GetProperty("dirty_keys").EnumerateArray().Select(key => key.GetString()).Order().SequenceEqual(new[] { "redis.db", "redis.url" }),
+                    "published Check Connection wire body contains paired Redis values and dirty_keys");
                 await Click(page, "GeneralSave"); await Until(() => !controller.State.Saving && controller.State.DirtyKeys.Count == 0, "Redis saved");
                 await Until(() => secret.Password == "" && toggle.IsEnabled, "acknowledged Redis editor rendered");
                 Check(controller.State.Configured.Contains("redis.url") && secret.Password == "", "acknowledged Redis replacement clears draft and updates configured presence");
+                Check(server.LastSavedKeys.Order().SequenceEqual(new[] { "redis.db", "redis.url" }), "published settings PUT wire body contains paired Redis values");
                 if (!controller.State.Configured.Contains("redis.url")) { await controller.ReloadAsync(false); await Until(() => toggle.IsOn, "saved presence loaded for remaining checks"); }
                 toggle.IsOn = false; await Task.Delay(100); await Click(page, "GeneralSave");
                 await Until(() => !controller.State.Saving && controller.State.DirtyKeys.Count == 0, "Redis clear saved");
@@ -260,17 +273,27 @@ internal static class AdminGeneralSettingsNativeFixture
                 Check(action.FocusState == FocusState.Keyboard && action.UseSystemFocusVisuals, "connection button exposes keyboard focus");
                 await CaptureAsync(outer, "general-control-keyboard-focus.png");
             }
+            server.Values["clientip.trusted_proxies"] = "10.0.0.0/8";
             server.Managed = true; server.RedisConfigured = true; await controller.ReloadAsync(false); await Task.Delay(100);
             Check(!toggle.IsEnabled && !Input(page, "clientip.trusted_proxies").IsEnabled, "environment-managed Redis and trusted proxies cannot be edited");
-            server.Managed = false; server.SensitiveFailure = true; await controller.ReloadAsync(false); await Task.Delay(100);
+            server.SensitiveFailure = true; await controller.ReloadAsync(false); await Task.Delay(100);
             Check(controller.State.SensitiveStatusError && !toggle.IsEnabled, "protected-status failure holds Redis behind its alert");
+            var proxies = Input(page, "clientip.trusted_proxies");
+            Check(!proxies.IsEnabled && proxies.Text == "10.0.0.0/8" &&
+                AutomationProperties.GetHelpText(proxies) == AdminText.T("configure.native.settings.managedStatusUnavailable"),
+                "failed protected status keeps environment-supplied trusted proxies read-only with an unavailable notice");
+            controller.Set("clientip.trusted_proxies", "127.0.0.1");
+            Check(!controller.State.DirtyKeys.Contains("clientip.trusted_proxies"), "unknown trusted-proxy management rejects retained edit actions");
             name.Text = "Non Redis change"; saves = server.Saves;
             await Until(() => Button(page, "GeneralSave").IsEnabled, "unrelated save enabled after field edit");
             await Click(page, "GeneralSave");
             await Until(() => server.Saves > saves && !controller.State.Saving, "unrelated save after status failure");
             Check(controller.State.DirtyKeys.Count == 0, "unrelated fields remain saveable when protected status fails");
+            Check(server.LastSavedKeys.SequenceEqual(new[] { "branding.server_name" }) && server.Values["clientip.trusted_proxies"] == "10.0.0.0/8",
+                "failed protected status excludes trusted proxies and Redis from the published settings PUT");
             await CaptureAsync(outer, "general-sensitive-unavailable.png");
-            server.SensitiveFailure = false; await controller.ReloadAsync(false); await Task.Delay(100);
+            server.Managed = false; server.SensitiveFailure = false; await controller.ReloadAsync(false); await Task.Delay(100);
+            Check(proxies.IsEnabled, "trusted proxies become editable only after management status is available");
             server.Conflict = true; name.Text = "Conflict draft"; await Click(page, "GeneralSave");
             await Until(() => controller.State.Conflict, "conflict shown"); await Task.Delay(100);
             Check(!Button(page, "GeneralSave").IsEnabled && name.Text == "Conflict draft", "stale version disables Save and retains the draft");

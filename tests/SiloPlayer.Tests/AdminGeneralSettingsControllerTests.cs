@@ -151,6 +151,49 @@ public sealed class AdminGeneralSettingsControllerTests
     }
 
     [Fact]
+    public async Task FailedSensitiveStatusDoesNotMakeEffectiveTrustedProxiesWritable()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminServerSettingsApi(kit.Client);
+        using var store = new AdminServerSettingsStore(api, authority, AdminGeneralSettingsController.Keys, AdminGeneralSettingsController.Secrets);
+        using var controller = new AdminGeneralSettingsController(api, store, authority);
+        var unavailable = true;
+        var managed = true;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("sensitive-status"))
+                return Task.FromResult(unavailable ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable)
+                    : AdminMonitorKit.Json(managed ? """{"configured":[],"managed_by_env":["clientip.trusted_proxies"]}""" : """{"configured":[],"managed_by_env":[]}"""));
+            if (request.RequestUri.AbsolutePath.EndsWith("effective"))
+            {
+                var effective = AdminMonitorKit.Json("""{"branding.server_name":"Silo","clientip.trusted_proxies":"10.0.0.0/8"}""");
+                effective.Headers.ETag = new("\"one\"");
+                return Task.FromResult(effective);
+            }
+            return Task.FromResult(Read(request));
+        };
+        await controller.OpenAsync();
+        Assert.True(controller.State.SensitiveStatusError);
+        Assert.Empty(controller.State.ManagedByEnv);
+        controller.Set("clientip.trusted_proxies", "127.0.0.1");
+        Assert.Equal("10.0.0.0/8", controller.State.Values["clientip.trusted_proxies"]);
+        Assert.Empty(controller.State.DirtyKeys);
+        await controller.SaveAsync();
+        Assert.DoesNotContain(kit.Http.Requests, request => request.StartsWith("PUT"));
+
+        unavailable = false;
+        await controller.ReloadAsync(true);
+        Assert.False(controller.State.SensitiveStatusError);
+        controller.Set("clientip.trusted_proxies", "127.0.0.1");
+        Assert.Empty(controller.State.DirtyKeys);
+        managed = false;
+        await controller.ReloadAsync(true);
+        controller.Set("clientip.trusted_proxies", "127.0.0.1");
+        Assert.Contains("clientip.trusted_proxies", controller.State.DirtyKeys);
+    }
+
+    [Fact]
     public async Task ManagedRedisCannotBeEditedButChecksTheSavedEffectiveConfiguration()
     {
         using var kit = AdminMonitorKit.Create();
@@ -245,6 +288,7 @@ public sealed class AdminGeneralSettingsControllerTests
         kit.Http.Respond = (request, _) => Task.FromResult(Read(request));
         await controller.OpenAsync();
         controller.StageRedisUrl("redis://draft");
+        controller.Set("clientip.trusted_proxies", "127.0.0.1");
         controller.Set("branding.server_name", "Changed");
         kit.Http.Respond = (request, _) =>
         {
@@ -265,6 +309,9 @@ public sealed class AdminGeneralSettingsControllerTests
         Assert.True(values.TryGetProperty("branding.server_name", out _));
         Assert.False(values.TryGetProperty("redis.url", out _));
         Assert.False(values.TryGetProperty("redis.db", out _));
+        Assert.False(values.TryGetProperty("clientip.trusted_proxies", out _));
+        Assert.Contains("clientip.trusted_proxies", controller.State.DirtyKeys);
+        Assert.Equal("127.0.0.1", controller.State.Values["clientip.trusted_proxies"]);
         Assert.Contains("redis.url", controller.State.DirtyKeys);
         Assert.Equal("redis://draft", controller.State.Values["redis.url"]);
     }
