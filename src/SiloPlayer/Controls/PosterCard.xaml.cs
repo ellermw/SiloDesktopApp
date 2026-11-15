@@ -714,7 +714,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
         }
 
         var libraryId = MediaNavigationContext.LibraryId(this);
-        if (!libraryId.HasValue) App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(MediaItem.ContentId);
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(MediaItem.ContentId, libraryId);
 
         App.Services.GetRequiredService<NavigationService>()
             .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, libraryId));
@@ -784,12 +784,14 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             await Task.Delay(140, ct);
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
             {
+                // Warm the same library scope the click will navigate with.
+                var libraryId = MediaNavigationContext.LibraryId(this);
                 App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                    .Prefetch(item.ContentId);
+                    .Prefetch(item.ContentId, libraryId);
                 if (item.Type is not ("movie" or "episode" or "audiobook"))
                     return;
                 App.Services.GetRequiredService<PlayerService>()
-                    .PrefetchWatchDetail(item.ContentId, MediaNavigationContext.LibraryId(this));
+                    .PrefetchWatchDetail(item.ContentId, libraryId);
             }
         }
         catch (OperationCanceledException) { }

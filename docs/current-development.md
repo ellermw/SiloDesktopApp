@@ -14,6 +14,36 @@ Intermediate C1 backend on inherited dd96e055, version 1.2.1081-beta.1 unchanged
 
 ---
 
+# November 15 — Share library detail reads and bound detail speculation
+
+Library detail navigation now shares item-and-library-scoped requests with card
+intent. Unclaimed detail speculation is limited to one live request, replaces
+older intent, and respects the existing 140 ms hover dwell, 32-entry retention
+and two-minute expiry. Foreground reads adopt matching work or start immediately.
+Saved library state and ratings-capability prerequisites start concurrently.
+
+Scoped detail pages retain ownership of realtime and progress-save reconciliation:
+the cache supplies the initial shared snapshot without issuing a second set of
+corrective reads. Save settlement invalidates synchronously, with cancellation
+callbacks outside the cache lock. Cold reads start without waiting for the UI
+queue. Existing unscoped cache freshness and final-save rules are preserved.
+
+Verification: 490 focused tests; 6,621 full unit tests; Release app publish and
+native host build; retained-library-review and oct20-detail-cards native groups.
+Evidence: D:/SiloPlayer-build/server-update-nov14/background-loading/ and
+D:/SiloPlayer-build/results/*-bounded-detail-reviewed/. Source baseline is
+f1a98408e2865302432dfe2a058f1702ea516b23; version stays 1.2.1064 under pipeline control.
+
+These checks establish sharing, request bounds and freshness with synthetic data.
+They do not measure real-server latency, scrolling traffic, HTTP/1.1 cancellation
+cost or total process memory. Watch-detail speculation remains a separate,
+uncapped path and needs its own follow-up; this is not a claim that all background
+work or full WebUI parity is complete. Shared generated outputs remain in use by
+the ongoing parity task; no cleanup was attempted here, and recovered space is
+0 GiB on C: and D:. The installed player and settings were not changed.
+
+---
+
 # November 15 - Admin Manage Subtitle Files
 
 Adds the registered Subtitle Files page on PR167's Manage foundation: bounded cursor lists,
@@ -59,6 +89,43 @@ No finished Manage domain, live-server or full visual/DPI parity claim.
 Installed player/settings untouched. Shared reusable generated payloads remain
 active; cleanup was not retried after the prior automatic approval rejection,
 with 0 GiB recovered on C: and D:.
+
+---
+
+# November 14 — Preserve stored subtitle identity after deletion
+
+A same-file recovery or queued subtitle selection now resolves a stored subtitle by
+its unique stable Id/SyncKey before considering positional track IDs. Deleting an
+earlier subtitle can no longer redirect the selection to the row that reused its
+position. Missing, duplicate, conflicting or unplayable identities are refused.
+Identityless and cross-file behavior, wire contracts and retained-unavailable
+selection policy are preserved. Older plans that omit stored keys may rebind by
+unique, available TrackId only when that row has no stored identity and no stored
+identity match exists. A row carrying a different stored identity is still refused.
+
+Reference: official Silo Server 1452ea2d10efbe7d3ea5ce7140fb49756b493670;
+subtitle deletion behavior audited from #4080. Baseline 6caafd79, version 1.2.1064
+unchanged; the Beta pipeline owns stamping.
+
+The older-plan compatibility follow-up adds unit and native regression coverage;
+builds and tests for that follow-up are deferred to the pipeline.
+
+Verification before the compatibility follow-up: 6,618 unit tests passed, Release publish
+and native host build passed, focused reload-identity native cases and the broad
+subtitle-identity native group passed. The 17 new identity regressions were first
+shown failing against baseline resolvers. Independent static review found no
+blocking defect. This does not certify live-server or full playback parity.
+
+Two stale native fixture seams were corrected: reflection now supplies all five
+refresh-method arguments, and the cast fallback gate holds the managed read used
+by production. The prior cast-gate timeout reproduced against baseline product;
+the corrected broad fixture passes on baseline and fixed product.
+
+Evidence: D:/SiloPlayer-build/server-update-nov14/subtitle-identity/ final-publish.log,
+final-host.log, final-all-units.log, independent-review.md; native receipts under
+D:/SiloPlayer-build/results/subtitle-identitysubtitle-final-reload-identity/ and
+subtitle-identitysubtitle-final-broad/. The installed player was not touched.
+Shared generated output remains in active use; no cleanup deletion was retried.
 
 
 ---
@@ -1187,7 +1254,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1203,7 +1270,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1219,7 +1286,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1237,7 +1304,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1253,7 +1320,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1271,7 +1338,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -1471,7 +1538,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -1479,7 +1546,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -1487,7 +1554,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -1517,7 +1584,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1081-beta.1`; numeric version: `1.2.1080.1`.
+Source version: `1.2.1100-beta.1`; numeric version: `1.2.1099.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

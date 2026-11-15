@@ -1195,8 +1195,8 @@ public sealed class LibraryBackgroundRefreshTests
             wire.ChangeSnapshotAt = 560;
             wire.SnapshotChangesRemaining = changes;
             // A completed retry starts independent exact-count and letter-index reads.
-            // Either can update the extent, so hold both until the retained-extent
-            // assertion has run. The fresh index legitimately supplies a provisional total.
+            // Hold both initially, then release only the rail to prove its fresh
+            // total cannot change the retained extent before the exact count settles.
             wire.HoldCount = wire.HoldLetters = true;
             var requests = wire.Requests.Count;
             Reconnect(wire);
@@ -1209,6 +1209,14 @@ public sealed class LibraryBackgroundRefreshTests
                 Assert.Equal(2, freshViewportReads.Count);
                 Assert.All(freshViewportReads, read => Assert.False(read.ContainsKey("cursor")));
                 Assert.Null(model.ErrorMessage);
+                if (changes == 1)
+                {
+                    // Let the independent rail reread publish its larger total
+                    // before checking that only the held exact count owns the extent.
+                    wire.ReleaseLetters.TrySetResult();
+                    await model.EnsureLetterIndexAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                    Assert.Equal(1001, model.LetterIndex!.Total);
+                }
                 Assert.DoesNotContain(0, totals);
                 Assert.Equal(1000, model.TotalCount);
             }
