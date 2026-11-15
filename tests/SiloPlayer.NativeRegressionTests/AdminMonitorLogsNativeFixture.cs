@@ -61,6 +61,32 @@ internal static partial class AdminMonitorLogsNativeFixture
             foreach (var mode in new[] { "empty", "error", "loading" }) { server.Mode = mode; _ = logs.Controller!.ReconnectAsync(); await Task.Delay(400); await Capture(frame, "admin-logs-" + mode + ".png"); } server.Mode = "populated";
             frame.Navigate(typeof(AdminDiagnosticsPage), new AdminRouteRequest(AdminRoute.ClientDiagnostics)); var diagnostics = (AdminDiagnosticsPage)frame.Content; await Until(() => diagnostics.Controller?.State.Reports.Count == 1); Check(sockets.All(socket => socket.Aborted), "unloading Server Log aborts all sockets");
             Check(ReferenceEquals(((Grid)diagnostics.Content).Children.OfType<ScrollViewer>().Single().Content, diagnostics.MonitorScrollContent), "Diagnostics restart insertion seam is in the main scroll body");
+            await Until(() => diagnostics.Controller!.State is { Loading: false, StatusLoading: false });
+            await Task.Delay(100); // Drain initial queued renders before exercising imperative feedback alone.
+            var feedback = Find<ContentControl>(diagnostics, "LogsActionFeedback");
+            var presentFeedback = feedback.GetType().GetMethod("Present", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            foreach (var isError in new[] { false, true })
+            {
+                object?[] outcome = isError ? ["Synthetic conflict", null] : [null, "Synthetic saved"];
+                presentFeedback.Invoke(feedback, outcome);
+                Check(feedback.Visibility == Visibility.Visible, "new controller outcome shows feedback");
+                await ExpireFeedback(feedback);
+                presentFeedback.Invoke(feedback, outcome);
+                Check(feedback.Visibility == Visibility.Collapsed, "unchanged controller outcome stays dismissed after expiry");
+                presentFeedback.Invoke(feedback, new object?[] { null, null });
+                presentFeedback.Invoke(feedback, outcome);
+                Check(feedback.Visibility == Visibility.Visible, "cleared controller state rearms identical feedback");
+            }
+            var showFeedback = feedback.GetType().GetMethod("Show", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            showFeedback.Invoke(feedback, new object?[] { "Synthetic download failure", null });
+            Check(feedback.Visibility == Visibility.Visible, "imperative action failure shows feedback");
+            await ExpireFeedback(feedback);
+            showFeedback.Invoke(feedback, new object?[] { "Synthetic download failure", null });
+            Check(feedback.Visibility == Visibility.Visible, "identical imperative failure shows feedback again after expiry without a render");
+            await ExpireFeedback(feedback);
+            presentFeedback.Invoke(feedback, new object?[] { "Synthetic conflict", null });
+            Check(feedback.Visibility == Visibility.Collapsed, "imperative feedback does not rearm a lasting controller outcome");
+            feedback.GetType().GetMethod("Clear", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(feedback, null);
             await CaptureSizes(window, frame, "admin-diagnostics-populated"); await diagnostics.Controller!.SelectAsync("report-1"); await Task.Delay(100); Check(All(diagnostics).OfType<TextBlock>().Any(text => text.Text.Contains("Synthetic Device")), "diagnostic detail renders device manifest"); await Capture(frame, "admin-diagnostics-ready.png");
             Invoke(Find<Button>(diagnostics, "LogsDetailClose")); server.Receiving = true; await diagnostics.Controller.SelectAsync("report-1"); await Task.Delay(100); Check(!Find<Button>(diagnostics, "DiagnosticsDownload").IsEnabled, "receiving diagnostic report cannot download"); await Capture(frame, "admin-diagnostics-receiving.png"); Invoke(Find<Button>(diagnostics, "LogsDetailClose")); server.Receiving = false;
             var user = Find<TextBox>(diagnostics, "DiagnosticsFilter_user"); user.Text = "1e2"; Invoke(Find<Button>(diagnostics, "DiagnosticsApply")); await Task.Delay(100); Check(diagnostics.Controller.State.Query.UserId == null, "invalid filter does not replace applied query"); user.Text = "12"; Invoke(Find<Button>(diagnostics, "DiagnosticsApply")); await Until(() => diagnostics.Controller.State.Query.UserId == "12");
@@ -92,6 +118,13 @@ internal static partial class AdminMonitorLogsNativeFixture
             await CaptureSizes(window, frame, "admin-logging-clean"); var days = Find<TextBox>(logging, "LoggingField_opslog.retention_days"); days.Text = "14"; await Task.Delay(100); Check(logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days"), "retention control registers dirty state"); Invoke(Find<Button>(logging, "LoggingAdvanced_server")); await Task.Delay(100); Find<TextBox>(logging, "LoggingField_server.log_quiet").Text = "metadata, scanner"; await Task.Delay(100); Check(logging.Controller.State.ServerAdvancedOpen, "dirty advanced fields remain discoverable"); await Capture(frame, "admin-logging-dirty.png");
             Invoke(Find<Button>(logging, "LoggingSave")); await Until(() => !logging.Controller.State.Saving && logging.Controller.State.DirtyKeys.Count == 0); Check(server.BatchWrites == 1, "Logging saves all dirty values in one batch");
             await Until(() => days.Text == "14" && logging.Controller!.State.DirtyKeys.Count == 0);
+            var savedFeedback = Find<ContentControl>(logging, "LogsActionFeedback");
+            await Until(() => savedFeedback.Visibility == Visibility.Visible);
+            Check(logging.Controller.State.Notice != null, "successful save retains its controller notice");
+            await ExpireFeedback(savedFeedback);
+            Invoke(Find<Button>(logging, "LoggingAdvanced_server"));
+            await Task.Delay(100); // Allow the disclosure's queued render to run.
+            Check(savedFeedback.Visibility == Visibility.Collapsed, "toggling Advanced does not replay an expired Saved toast");
             days.Text = "21"; await Until(() => logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days") && logging.Controller.State.Values["opslog.retention_days"] == "21"); var leave = logging.CanLeaveAsync(); await Task.Delay(100); auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" }); Check(await leave, "authority retirement releases unsaved navigation without accepting the retired draft"); await Task.Delay(100); Check(logging.Controller.State.Values.Count == 0, "admin loss clears every sensitive draft");
             await Capture(frame, "admin-logging-retired.png");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
@@ -126,6 +159,28 @@ internal static partial class AdminMonitorLogsNativeFixture
             var shell = (AdminShellPage)frame.Content;
             var settingsPage = All(shell).OfType<AdminLoggingSettingsPage>().Single();
             await Until(() => settingsPage.Controller?.State.Values.Count > 0);
+            foreach (var verifyProfile in new[] { false, true })
+            {
+                server.RestartRequired = false;
+                var previousOwner = settingsPage.Controller!.State.Owner!;
+                if (verifyProfile)
+                {
+                    var context = previousOwner.Context;
+                    auth.HandleProfileVerificationRequired(new(context.AuthenticationGeneration, context.RequestContextGeneration, context.ProfileId));
+                }
+                else client.InvalidateAccessContext();
+                await Until(() => settingsPage.Controller.State.Owner is { IsCurrent: true } owner && !ReferenceEquals(owner, previousOwner) && settingsPage.SettingsHealth is { Loaded: true, RestartRequired: false });
+                await Until(() => typeof(AdminShellPage).GetField("_serverStatus", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell) != null);
+                var statusReads = server.ServerStatusReads;
+                server.RestartRequired = true;
+                settingsPage.Controller.Set("server.log_level", "debug");
+                await Until(() => settingsPage.SettingsHealth.DirtyCount == 1);
+                Invoke(Find<Button>(settingsPage, "LoggingSave"));
+                await Until(() => settingsPage.SettingsHealth.RestartRequired && server.ServerStatusReads > statusReads);
+                Check(ReferenceEquals(settingsPage, All(shell).OfType<AdminLoggingSettingsPage>().Single()), "authority recapture observes restart saves on the same Logging page");
+                await Until(() => All(shell).OfType<TextBlock>().Any(text => text.Text == LogsText.T("web.admin.common.restartBanner.title")));
+            }
+            server.RestartRequired = false;
             Find<TextBox>(settingsPage, "LoggingField_opslog.retention_days").Text = "23";
             await Until(() => shell.RequiresLeaveConfirmation);
             var otherDialog = new ContentDialog { XamlRoot = shell.XamlRoot, Content = "Another admin dialog", CloseButtonText = "Cancel" };
@@ -172,6 +227,17 @@ internal static partial class AdminMonitorLogsNativeFixture
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject => All(root).OfType<T>().First(element => AutomationProperties.GetAutomationId(element) == id);
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Until(Func<bool> condition) { for (var attempt = 0; attempt < 200 && !condition(); attempt++) await Task.Delay(25); Check(condition(), "bounded native state transition completed"); }
+    private static async Task ExpireFeedback(ContentControl feedback)
+    {
+        var timer = (DispatcherTimer)feedback.GetType().GetField("_timer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(feedback)!;
+        var interval = timer.Interval;
+        try
+        {
+            timer.Stop(); timer.Interval = TimeSpan.FromMilliseconds(100); timer.Start();
+            await Until(() => feedback.Visibility == Visibility.Collapsed);
+        }
+        finally { timer.Stop(); timer.Interval = interval; }
+    }
     private static void Check(bool condition, string label) { Program.Log((condition ? "PASS: " : "FAIL: ") + label); if (!condition) Failures.Add(label); }
     private static async Task CaptureSizes(Window window, FrameworkElement element, string prefix)
     {
@@ -183,6 +249,8 @@ internal static partial class AdminMonitorLogsNativeFixture
                 var user = Find<TextBox>(element, "DiagnosticsFilter_user");
                 Check(All((DependencyObject)user.Parent).OfType<TextBlock>().Any(t => t.Text == "USER"), $"{width}px Diagnostics User label resolves correctly");
                 Check(user.PlaceholderText == "Any", "Diagnostics User placeholder matches reference");
+                Check(AutomationProperties.GetName(user) == LogsText.T("web.admin.diagnostics.filters.user"), "Diagnostics User accessible name describes the field, not its placeholder");
+                Check(AutomationProperties.GetName(Find<TextBox>(element, "DiagnosticsFilter_short")) == LogsText.T("web.admin.diagnostics.filters.shortId"), "Diagnostics Short ID retains its accessible field name");
                 Check(!Find<Button>(element, "DiagnosticsClear").IsEnabled, "Diagnostics Clear is disabled without applied filters");
                 if (width == 1440)
                 {
@@ -265,6 +333,8 @@ internal static partial class AdminMonitorLogsNativeFixture
         public string Mode = "populated";
         public bool Receiving;
         public int BatchWrites;
+        public bool RestartRequired;
+        public int ServerStatusReads;
         public ReferenceData? Reference;
         public Socket? LatestSocket;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -273,7 +343,8 @@ internal static partial class AdminMonitorLogsNativeFixture
             if (Mode == "loading") await Task.Delay(Timeout.Infinite, cancellationToken);
             if (Mode == "error") return Json("{}", HttpStatusCode.ServiceUnavailable);
             var path = request.RequestUri!.AbsolutePath;
-            if (request.Method == HttpMethod.Put) { BatchWrites++; var result = Json("{\"values\":{\"opslog.retention_days\":\"14\",\"server.log_quiet\":\"metadata, scanner\"},\"restart_required\":false}"); result.Headers.ETag = new("\"two\""); return result; }
+            if (request.Method == HttpMethod.Put) { BatchWrites++; var result = Json(RestartRequired ? "{\"values\":{\"server.log_level\":\"debug\"},\"restart_required\":true}" : "{\"values\":{\"opslog.retention_days\":\"14\",\"server.log_quiet\":\"metadata, scanner\"},\"restart_required\":false}"); result.Headers.ETag = new("\"two\""); return result; }
+            if (path == "/api/v2/admin/server/status") { ServerStatusReads++; return Json(RestartRequired ? "{\"restart_required\":true,\"restart_mark_count\":1}" : "{\"restart_required\":false,\"restart_mark_count\":0}"); }
             var body = path switch
             {
                 "/api/v2/admin/logs/ws-ticket" => "{\"ticket\":\"" + new string('c', 43) + "\",\"expires_in\":30,\"max_connection_seconds\":300,\"protocol\":\"silo.admin-logs.v2\"}",
