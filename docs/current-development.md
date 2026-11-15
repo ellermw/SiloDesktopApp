@@ -31,6 +31,42 @@ within the 10 GiB limit with over 50 GiB free on both drives.
 
 ---
 
+# November 15 - Configure Email delivered in Beta PR174
+
+Email is implemented, independently reviewed and verified at code 3ab6d459a3c06fe7844cc5baaa83723d67cf001a, based on General PR173 905f9ba2 and Beta a06cc8b3. All eight Email settings, the password Clear/Keep/save states and the saved-settings test-email action are reachable through production Configure navigation. Lead review reproduced and fixed an authority-retirement race: password input awaiting PasswordChanged now clears when the owner retires. The added native regression failed on prior product bytes and passes on final bytes. Shared settings dialog/alert/skeleton/select primitives are also covered by General regression checks.
+
+Final checks pass: 7,071 main unit tests, 616 focused Admin/architecture tests, Release publish/matching native host, and native Email 297 PASS records, General 183, foundation 36, Subtitle Files 64, Monitor 113 and Dashboard 184. Source/payload/log/capture hashes are in D:/SiloPlayer-build/server-update-nov14/configure-email/final-receipt.json; parity details and known failed candidates are in docs/parity/admin-email.md. Layout/state captures cover 1440x900, 1440x600, 1920x600 and 800x600. Synthetic server/current DPI only: no live SMTP, all-DPI/full visual parity, Narrator, wheel-distance or measured performance certification.
+
+Delivery status: General Done in open PR173; Email Done in open non-draft Beta [PR174](https://github.com/ellermw/SiloDesktopApp/pull/174); the other 17 leaves remain unfinished. No Configure changes are merged or released. Official main re-fetched at c11b0a968f0d5980b7005579fb95acc2d11d8321. Version remains 1.2.1081-beta.1 (numeric 1.2.1080.1); pipeline owns stamping/packaging/reconciliation/merge. Final storage preflight: 4.517 GiB generated, C184.87/D474.87 GiB free. Installed player/settings remain untouched.
+
+---
+
+# November 15 - Configure Email implemented (in progress)
+
+Email (Configure > Integrations, C2a) is implemented on General PR173 head 905f9ba2 and registered through the production Configure entry point. It reuses General's guarded settings API, shared snapshot store, form and settings UI. All eight email.* keys stay visible whatever the enable toggle says. Encryption shows STARTTLS for an empty saved value without staging an edit. The write-only SMTP password supports erase-to-keep, explicit Clear/Keep and a freeze during saves. Environment-managed keys are protected, and a failed password-status read offers Retry instead of being treated as no password. Send test is a one-shot POST /api/v2/admin/email/test with only the trimmed recipient; it uses saved settings and the official lib/email.ts validation. An ambiguous or malformed acknowledgement is reported as unknown and never resent.
+
+Status: **In progress** until the lead verifies it and pushes it to a Beta PR; General remains Done in PR173 (open, unmerged). Security and the other 17 leaves are unfinished. Nothing is released. Official main is unchanged at c11b0a968f0d5980b7005579fb95acc2d11d8321 and Beta at a06cc8b3. Version stays 1.2.1081-beta.1; the pipeline owns stamping.
+
+Code e7727bbf passes 7,071 full units and 616 focused Admin/architecture tests. Release publish and the matching host build succeed. Native admin-configure-email records 296 PASS and was captured at 1440x900, 1440x600, 1920x600 and 800x600. The same bytes pass General 183, foundation 36, Subtitle Files 64, Monitor 113 and Dashboard 184. Product DLL E529A1C9…; one earlier full run had an unrelated DirectHttpReader temp-file lock and is recorded separately. See docs/parity/admin-email.md and D:/SiloPlayer-build/server-update-nov14/configure-email/implementation-report.md. All checks used a synthetic server at the current DPI; no live mail server, all-DPI, Narrator or performance claim. Shared output is about 4.5 GiB, with C 185/D 474 GiB free. Installed player and settings are untouched.
+
+---
+
+# November 15 - Configure General verified for Beta submission
+
+General is implemented and registered through production Admin navigation, search and Back. It includes Identity, Network, Database and Redis, guarded ETag saves, secret keep/clear semantics, managed/protected-state recovery, connection checks, dirty/restart indicators and Cancel/Discard departure. The full Configure inventory remains 3 topics, 19 leaves and 88 nested feature entries. General is Done by the owner's delivery definition: verified and pushed to non-draft Beta [PR173](https://github.com/ellermw/SiloDesktopApp/pull/173). The other 18 leaves remain unstarted at this delivery checkpoint. PR173 is open and unmerged; no Configure change is released. Email is the next independent group.
+
+Official main freshly fetched at c11b0a968f0d5980b7005579fb95acc2d11d8321; Beta a06cc8b3 (Subtitle Files PR169) and required PR167 3f0fe220 / PR171 3331916b are reconciled. Version remains 1.2.1081-beta.1 (numeric 1.2.1080.1); the pipeline owns stamping/packaging. Final code 54afa5d4 passes 7,019 full units and 564 focused Admin/architecture tests, Release publish/matching host, native General 183 PASS records, Manage foundation 36, Subtitle Files 64, Monitor 113 and Dashboard 184. Captures cover 1440x900, 1440x600, 1920x600 and 800x600, real controls/dialogs, alignment and gutter hit-testing. Independent Claude findings are fixed; new native Redis erasure and Reload focus/error regressions failed on prior bytes and pass on final bytes. Dynamic status texts raise explicit automation events; Narrator itself was not certified.
+
+See docs/parity/admin-general.md, docs/parity/admin-configure-checklist.json and D:/SiloPlayer-build/server-update-nov14/configure-general/final-receipt.json for exact source/payload/capture hashes and limits. Synthetic backend/current DPI only; no complete visual/all-DPI parity, live-server, measured wheel delta or performance claim. Historical Monitor Logs failures remain separate. Shared output about 4.47 GiB, C185/D474 GiB free. No cleanup deletion, install, restart, manual PR merge or release action. Installed player/settings remain untouched.
+
+---
+
+# November 15 - Configure General backend (intermediate)
+
+Intermediate C1 backend on inherited dd96e055, version 1.2.1081-beta.1 unchanged, pinned to official server/WebUI c11b0a968f0d5980b7005579fb95acc2d11d8321. Adds guarded settings transport, authority-scoped single-flight snapshots, a redacted draft and General controller. General is not yet registered or visually verified. Lead is integrating the native page, Configure catalog, shell/cache refresh and production registration; no push, release, installer or installed-player action was performed. See docs/parity/admin-general-backend.md and D:/SiloPlayer-build/server-update-nov14/configure-general/implementation-report.md for scope and verification.
+
+---
+
 # November 15 — Admin Playback History and Skip Markers
 
 Adds native read-only finalized Playback History and marker edit history on
@@ -172,6 +208,7 @@ D:/SiloPlayer-build/results/subtitle-identitysubtitle-final-reload-identity/ and
 subtitle-identitysubtitle-final-broad/. The installed player was not touched.
 Shared generated output remains in active use; no cleanup deletion was retried.
 
+
 ---
 
 # November 14 — Bound and retire ebook searches
@@ -208,6 +245,64 @@ silo://. The new server-mismatch message has an English fallback. Installed
 player/settings are untouched. Shared generated outputs remain in active use;
 cleanup was not retried after the earlier automatic approval rejection, with
 0 GiB recovered on C: and D:.
+
+---
+
+# November 14 - Admin Manage navigation and bounded-data foundation
+
+Adds six Manage topics and 21 route identities, immutable nested/query state,
+registered-page-only navigation/search, shared authority and dirty guards,
+request-bound cursor pagination and scope-bound complete collection snapshots.
+This foundation registers no production Manage page. Monitor remains available.
+
+Reference: official WebUI 1452ea2d10efbe7d3ea5ce7140fb49756b493670. A fresh
+fetch at fd0d8c6c09af11aa2b165034e6c553a45334f2fd adds watchsync and player
+marker changes; foundation reference files are unchanged. Version 1.2.1064
+remains under Beta pipeline control. Independent review findings were resolved;
+see docs/parity/admin-manage-foundation.md for the frozen domain contracts.
+
+Focused checks passed 157 tests. Initial full verification passed 6,746 unit
+tests, Release publish/native build, admin-manage-foundation and admin-monitor.
+The native fixture verifies URL replacement/Back, registered badges, generic
+leave guards and outer-page suspension with synthetic data. Final dependency
+reconciliation verification is recorded in the delivery receipt under
+D:/SiloPlayer-build/server-update-nov14/manage-foundation/.
+No finished Manage domain, live-server or full visual/DPI parity claim.
+Installed player/settings untouched. Shared reusable generated payloads remain
+active; cleanup was not retried after the prior automatic approval rejection,
+with 0 GiB recovered on C: and D:.
+
+---
+
+# November 15 — Admin Activity page scrollbar and side-gutter wheel scrolling
+
+Built on Beta 8f01cf8be7f7dc271b5d70294ac6ce8e23ffa66a (1.2.1081-beta.1; pipeline owns
+stamping). Official WebUI reference c11b0a968f0d5980b7005579fb95acc2d11d8321: AdminLayout
+pads the scrolling document with the page gutters, so its scrollbar is at the viewport edge.
+
+Cause, measured natively: Activity's page ScrollViewer lived inside the shell's centred
+max-1560 column, whose margins are the gutters. Its overlay scrollbar therefore sat on the
+column's right edge (1387–1399 at 1440 wide) over the rightmost text (1395.7) and on top of
+the nested streams scrollbar (1386–1398). The gutters hit-tested to the shell root Grid, outside
+any scroller, so wheel input there did nothing. Activity now opts into
+`IAdminGutterScrollPage`: the shell gives its scroller the full content area and applies the
+same gutters/max width to the scroll content. Other Admin pages keep the existing column.
+Content, table and nested-scrollbar bounds are unchanged; no requests, timers or transitions added.
+
+The admin-monitor native fixture's new `activity-scroll` case (also in the default run) measures
+1440x600, 1920x600 and 800x600. It went red on unchanged Beta and passes after the fix. It checks
+page and nested scrollbar separation, rightmost-text clearance, preserved centred layout and nested
+bar placement. It also checks gutter hit-test ownership and that probes across an unstriped nested
+row stay with the nested panel, plus Logs/Activity route restoration. Wheel routing is evidenced by
+hit-test ownership. WinAppSDK input did not consume posted or sent WM_MOUSEWHEEL, and global
+SendInput was not used, so no real wheel delta was measured.
+
+Final: 356 focused Admin/architecture units passed; Release publish (SiloPlayer.dll
+089E6363302C1F102F2E3F631A15CD1B3DD05A0B442E812649D1FE16BC2572B9), native host, admin-monitor
+(all cases) and admin-dashboard passed. admin-monitor-logs fails identically on unchanged Beta
+(Logging restart-save/profile-verification and dialog-collision checks; 208 passes, 10 failures);
+not addressed here. Evidence: D:/SiloPlayer-build/server-update-nov14/activity-scrolling/report.md.
+Installed player and settings untouched; no cleanup deletion attempted.
 
 ---
 
@@ -1684,7 +1779,7 @@ Task B independent review follow-up (base 2431f182; supersedes the candidate rea
 
 Final review correction verification: `review-full-unit` passes all 2,839 tests, zero failures/skips. New Release DLL `637F11276FDA9055728ED073B76BB9CD317EAA44B210C268F8B73F6A9202DA88` passes both `review-green-season-native` (real series/season controls, including season target null→playable→null→playable) and `review-native-watched` (existing series/season/episode local mark, unmark and rejection). All use the same new isolated app output. `review-final-source-binding.json` records 1,006 tracked product input hashes unchanged since Publish began at 10:02:52Z; receipts retain the then-uncommitted base HEAD2431f182 and the final commit is bound in that manifest. The prior 66CF and 1E4B app outputs remain preserved; no installer or release publication is claimed.
 
-Material barrier follow-up from dc8a7c13: a failed local final-save task remained faulted inside Task.WhenAll and blocked every later remote read, even after a newer successful save. `barrier-red` reproduced canonical aggregate2 remaining0 with actual registrations, both local saves, a raw/coalesced event and an older held episode response. The read barrier now observes write settlement independently of success, retires completed predecessor barriers and rechecks when a newer save joins during an await. Write failure reporting remains with the write owner; local generation/context/navigation guards still reject old snapshots. `barrier-green-focused` passes123 and `barrier-full-unit` passes2,840, zero failures/skips. Fresh app/native/source binding evidence follows in the task report; the 637F output and all earlier evidence remain frozen. Version remains1.2.519; no installer, installed-player action or publication.
+Material barrier follow-up from dc8a7c13: a failed local final-save task remained faulted inside Task.WhenAll and blocked every later remote read, even after a newer successful save. `barrier-red` reproduced canonical aggregate2 remaining0 with actual registrations, both local saves, a raw/coalesced event and an older held episode response. The read barrier now observes write settlement independently of success, retires completed predecessor barriers and rechecks when a newer save joins during an await. Write failure reporting remains with the write owner; local generation/context/navigation guards still reject old snapshots. `barrier-green-focused` passes123 and `barrier-full-unit` passes2,840, zero failures/skips. Fresh app/native/source binding evidence follows in the task report; the 637F output and all earlier evidence remain frozen. Version remains 1.2.519; no installer, installed-player action or publication.
 
 Final barrier source verification: Release DLL `5169E2C32429414CACC83E9BADE6D1D56DD88E54CC106953BC8C304D9DF6810C` passes `barrier-native-series` and `barrier-native-watched` against the same new isolated output. `barrier-final-source-binding.json` records all1,006 tracked product inputs unchanged since Publish began at10:15:36Z (completed10:16:06Z), and binds the final commit after commit. Focused123/full2,840 are current. Older637F/66CF/1E4B outputs remain preserved; no publication or installer is claimed.
 
@@ -1920,7 +2015,7 @@ Observed fast-motion measures are HTTP requests, new `Image.Source` assignments 
 
 ### Task3 artwork review corrections — local verification
 
-Fix round1 against6e905f6e adds retained Recommended shared-card visibility/navigation cancellation and current-bind resume, plus context/cancellation/motion gates between spoiler file/native processing stages. A native IsLoaded guard covers the queued-Unloaded interval; Loaded retries a delayed initial missing source with its original DTO owner. Version remains1.2.544-beta.1 /1.2.543.1; no push/publication/installed-player action.
+Fix round1 against6e905f6e adds retained Recommended shared-card visibility/navigation cancellation and current-bind resume, plus context/cancellation/motion gates between spoiler file/native processing stages. A native IsLoaded guard covers the queued-Unloaded interval; Loaded retries a delayed initial missing source with its original DTO owner. Version remains 1.2.544-beta.1 /1.2.543.1; no push/publication/installed-player action.
 
 Final fresh Release DLL SHA256 A900E4CD065D2D4D80742DC8EA3E77E591032A79721D76C7EE45B4AA43618BFE. Exact frozen app: D:/SiloPlayer/.codex-tmp/browse-polish-nov02/worktrees/artwork/.codex-tmp/artwork-review-ready-publish-client. Five review-ready native groups pass: artwork-first-mount, artwork-motion, oct24-home, shared-controls, oct20-detail-cards. review-final-full passed3449/0/0 before only the final two-control Loaded retry and native-fixture additions; Core/Player/unit inputs unchanged. The earlier0E4E Home line177 failure is a corrected first-mount regression, distinct from the two historical baseline failures recorded above.
 

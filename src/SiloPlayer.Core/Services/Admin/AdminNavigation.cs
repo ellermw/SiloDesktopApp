@@ -6,7 +6,8 @@ namespace SiloPlayer.Core.Services.Admin;
 
 /// <summary>
 /// Stable admin route identities (WebUI <c>ADMIN_NAV_SECTIONS</c>): the five
-/// Monitor pages and Manage's twenty-one sidebar leaves. A route is an
+/// Monitor pages, Manage's twenty-one and Configure's nineteen sidebar leaves. A route is an
+
 /// identity, not a promise of a page: the shell shows and opens only routes
 /// with an <see cref="AdminPageRegistration"/>, so no dead navigation ships.
 /// Values are appended only; never renumber.
@@ -66,6 +67,28 @@ public enum AdminRoute
     PreparedFiles,
     /// <summary>/admin/settings/downloads (Downloads › Settings)</summary>
     DownloadSettings,
+
+    /// <summary>/admin/settings/general (Configure › Server › General)</summary>
+    GeneralSettings,
+    AppearanceSettings,
+    StorageSettings,
+    SearchSettings,
+    NetworkAccessSettings,
+    ScheduledTasks,
+    Maintenance,
+    Backups,
+    SignInSettings,
+    SecuritySettings,
+    ApiKeys,
+    Policy,
+    Plugins,
+    ProviderSettings,
+    EmailSettings,
+    NotificationSettings,
+    AiSettings,
+    Recommendations,
+    CompatibilitySettings,
+
 }
 
 /// <summary>
@@ -200,6 +223,11 @@ public static class AdminNavigation
             return ("web.admin.common.title.tab.collectionEdit", "web.admin.common.title.tab.collectionEdit");
         if (request.Route == AdminRoute.Users && request.Segments.Count > 0)
             return ("web.admin.common.title.header.user", "web.admin.common.title.tab.user");
+        if (request.Route == AdminRoute.ScheduledTasks && request.Segments.Count > 0)
+            return ("web.admin.common.title.header.task", "web.admin.common.title.tab.task");
+        if (request.Route == AdminRoute.Plugins && request.Segments.Count > 0)
+            return ("web.admin.common.title.header.plugin", "web.admin.common.title.tab.plugin");
+
         var leaf = AdminRouteCatalog.Leaf(request.Route);
         return (leaf.HeaderTitleKey, leaf.TabTitleKey);
     }
