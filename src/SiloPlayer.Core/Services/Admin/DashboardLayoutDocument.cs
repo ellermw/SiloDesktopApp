@@ -8,7 +8,8 @@ namespace SiloPlayer.Core.Services.Admin;
 /// 1 with rows and per-widget windows: both are additive, and sanitizing fills
 /// an absent value from the widget's defaults. Server and cache documents are
 /// sanitized identically; unknown ids drop, renamed ids resolve, duplicates
-/// collapse onto the first, spans/rows clamp to the registry.
+/// collapse onto the first, spans/rows clamp to the registry. A view is kept
+/// only while the widget still offers it and is never filled from a default.
 /// </summary>
 public static class DashboardLayoutDocument
 {
@@ -19,21 +20,7 @@ public static class DashboardLayoutDocument
         if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number
             || !version.TryGetDouble(out var versionNumber) || versionNumber != 1) return null;
         if (!root.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array) return null;
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var result = new List<DashboardLayoutEntry>();
-        foreach (var entry in entries.EnumerateArray())
-        {
-            if (entry.ValueKind != JsonValueKind.Object || !entry.TryGetProperty("id", out var idElement)
-                || idElement.ValueKind != JsonValueKind.String) continue;
-            var widget = DashboardRegistry.Find(idElement.GetString());
-            if (widget == null || !seen.Add(widget.Id)) continue;
-            result.Add(new DashboardLayoutEntry(
-                widget.Id,
-                ClampAxis(entry, "span", widget.MinSpan, widget.MaxSpan, widget.DefaultSpan),
-                ClampAxis(entry, "rows", widget.MinRows, widget.MaxRows, widget.DefaultRows),
-                SanitizeRange(entry.TryGetProperty("range", out var range) ? range : null, widget)));
-        }
-        return result;
+        return SanitizeEntries(entries);
     }
 
     public static IReadOnlyList<DashboardLayoutEntry>? Sanitize(string? json)
@@ -50,8 +37,41 @@ public static class DashboardLayoutDocument
         }
     }
 
-    /// <summary>The document as sent to the server and the cache: {"version":1,"entries":[...]}.</summary>
-    public static string Serialize(IReadOnlyList<DashboardLayoutEntry> entries)
+    /// <summary>
+    /// The unsaved pre-read edit marker of a cached document, or null when the
+    /// document carries none (or a malformed one). Only the local cache ever
+    /// holds it; <see cref="Serialize"/> never writes it.
+    /// </summary>
+    public static DashboardLayoutPendingDraft? ReadPending(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (Sanitize(root) == null) return null;
+            if (!root.TryGetProperty("pending", out var pending) || pending.ValueKind != JsonValueKind.Object) return null;
+            if (!pending.TryGetProperty("profileId", out var profile) || profile.ValueKind != JsonValueKind.String) return null;
+            if (!pending.TryGetProperty("base", out var baseEntries) || baseEntries.ValueKind != JsonValueKind.Array) return null;
+            return new DashboardLayoutPendingDraft(SanitizeEntries(baseEntries), profile.GetString()!);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The document as sent to the server: {"version":1,"entries":[...]}. Never carries a pending marker.</summary>
+    public static string Serialize(IReadOnlyList<DashboardLayoutEntry> entries) => Write(entries, null);
+
+    /// <summary>
+    /// The local cache document: the server shape plus, while the entries hold an
+    /// unsaved pre-read edit, <c>"pending":{"base":[...],"profileId":"..."}</c>.
+    /// </summary>
+    public static string SerializeCached(IReadOnlyList<DashboardLayoutEntry> entries, DashboardLayoutPendingDraft? pending)
+        => Write(entries, pending);
+
+    private static string Write(IReadOnlyList<DashboardLayoutEntry> entries, DashboardLayoutPendingDraft? pending)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -59,19 +79,54 @@ public static class DashboardLayoutDocument
             writer.WriteStartObject();
             writer.WriteNumber("version", 1);
             writer.WriteStartArray("entries");
-            foreach (var entry in entries)
+            WriteEntries(writer, entries);
+            writer.WriteEndArray();
+            if (pending != null)
             {
-                writer.WriteStartObject();
-                writer.WriteString("id", entry.Id);
-                writer.WriteNumber("span", entry.Span);
-                writer.WriteNumber("rows", entry.Rows);
-                if (entry.Range is { } range) writer.WriteString("range", DashboardRanges.WireName(range));
+                writer.WriteStartObject("pending");
+                writer.WriteStartArray("base");
+                WriteEntries(writer, pending.Base);
+                writer.WriteEndArray();
+                writer.WriteString("profileId", pending.ProfileId);
                 writer.WriteEndObject();
             }
-            writer.WriteEndArray();
             writer.WriteEndObject();
         }
         return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void WriteEntries(Utf8JsonWriter writer, IReadOnlyList<DashboardLayoutEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("id", entry.Id);
+            writer.WriteNumber("span", entry.Span);
+            writer.WriteNumber("rows", entry.Rows);
+            if (entry.Range is { } range) writer.WriteString("range", DashboardRanges.WireName(range));
+            if (entry.View is { } view) writer.WriteString("view", view);
+            writer.WriteEndObject();
+        }
+    }
+
+    private static List<DashboardLayoutEntry> SanitizeEntries(JsonElement entries)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<DashboardLayoutEntry>();
+        foreach (var entry in entries.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object || !entry.TryGetProperty("id", out var idElement)
+                || idElement.ValueKind != JsonValueKind.String) continue;
+            var widget = DashboardRegistry.Find(idElement.GetString());
+            if (widget == null || !seen.Add(widget.Id)) continue;
+            result.Add(new DashboardLayoutEntry(
+                widget.Id,
+                ClampAxis(entry, "span", widget.MinSpan, widget.MaxSpan, widget.DefaultSpan),
+                ClampAxis(entry, "rows", widget.MinRows, widget.MaxRows, widget.DefaultRows),
+                SanitizeRange(entry.TryGetProperty("range", out var range) ? range : null, widget),
+                SanitizeView(entry.TryGetProperty("view", out var view) ? view : null, widget)));
+        }
+        return result;
     }
 
     public static bool SameArrangement(IReadOnlyList<DashboardLayoutEntry> left, IReadOnlyList<DashboardLayoutEntry> right)
@@ -123,6 +178,25 @@ public static class DashboardLayoutDocument
         return changed ? next : entries;
     }
 
+    /// <summary>
+    /// Changes a widget's presentation. A view the widget does not offer is
+    /// ignored, and picking the view already shown (an absent view shows the
+    /// default) returns the same list so nothing is saved.
+    /// </summary>
+    public static IReadOnlyList<DashboardLayoutEntry> SetView(IReadOnlyList<DashboardLayoutEntry> entries, string id, string view)
+    {
+        var widget = DashboardRegistry.Find(id);
+        if (widget == null || widget.Views is not { } views || !views.Offers(view)) return entries;
+        var changed = false;
+        var next = entries.Select(entry =>
+        {
+            if (entry.Id != widget.Id || string.Equals(entry.View ?? views.Default, view, StringComparison.Ordinal)) return entry;
+            changed = true;
+            return entry with { View = view };
+        }).ToArray();
+        return changed ? next : entries;
+    }
+
     public static IReadOnlyList<DashboardLayoutEntry> Remove(IReadOnlyList<DashboardLayoutEntry> entries, string id)
         => entries.Any(entry => entry.Id == id) ? entries.Where(entry => entry.Id != id).ToArray() : entries;
 
@@ -150,6 +224,12 @@ public static class DashboardLayoutDocument
     public static DashboardWidgetRange EffectiveRange(DashboardLayoutEntry entry)
         => entry.Range ?? DashboardRegistry.Find(entry.Id)?.Ranges?.Default ?? DashboardWidgetRange.Day;
 
+    /// <summary>The view to render: the entry's stored one, else the widget's default; null for widgets without views.</summary>
+    public static string? EffectiveView(DashboardLayoutEntry entry)
+        => DashboardRegistry.Find(entry.Id)?.Views is { } views
+            ? (views.Offers(entry.View) ? entry.View : views.Default)
+            : null;
+
     private static int ClampAxis(JsonElement entry, string name, int min, int max, int fallback)
     {
         if (!entry.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number)
@@ -166,4 +246,19 @@ public static class DashboardLayoutDocument
             return range;
         return widget.Ranges.Default;
     }
+
+    /// <summary>A stored view the widget still offers, else absent so the default applies. Never substitutes the default.</summary>
+    private static string? SanitizeView(JsonElement? value, DashboardWidgetDefinition widget)
+    {
+        if (widget.Views == null || value is not { ValueKind: JsonValueKind.String } text) return null;
+        var view = text.GetString();
+        return widget.Views.Offers(view) ? view : null;
+    }
 }
+
+/// <summary>
+/// An edit made before the first server read that is not saved yet: the
+/// arrangement it started from and the acting profile key it was made under.
+/// Lives only in the local cache document; never sent to the server.
+/// </summary>
+public sealed record DashboardLayoutPendingDraft(IReadOnlyList<DashboardLayoutEntry> Base, string ProfileId);

@@ -1,5 +1,6 @@
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 
@@ -40,6 +41,33 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
     }
 
     private void Debounce() => _time.Advance(DashboardLayoutSync.SaveDebounce + TimeSpan.FromMilliseconds(1));
+
+    private const string EgressOnly = """{"version":1,"entries":[{"id":"egress-24h","span":6,"rows":3,"range":"day"}]}""";
+    private const string EgressNodes = """{"version":1,"entries":[{"id":"egress-24h","span":6,"rows":3,"range":"day","view":"nodes"}]}""";
+
+    private static string Users(int span, int rows = 4) => $$"""{"version":1,"entries":[{"id":"users","span":{{span}},"rows":{{rows}}}]}""";
+
+    private static string AccountScope => DashboardLayoutSync.Scope(Origin, "1");
+
+    private DashboardLayoutPendingDraft? StoredPending() => DashboardLayoutDocument.ReadPending(_cache.Read(AccountScope));
+
+    /// <summary>
+    /// Opens the dashboard with <paramref name="cached"/> in this account's cache and the
+    /// first layout read held, then makes an edit (by default users span 5 to 7) before it returns.
+    /// </summary>
+    private (DashboardLayoutSync Sync, Task Load, TaskCompletionSource<DashboardLayoutRead> Read) OpenWithReadHeld(
+        string cached = UsersOnly, Action<DashboardLayoutSync>? edit = null)
+    {
+        SynchronizationContext.SetSynchronizationContext(null);
+        _cache.Write(AccountScope, cached);
+        var read = new TaskCompletionSource<DashboardLayoutRead>();
+        _server.OnRead = _ => read.Task;
+        var sync = new DashboardLayoutSync(_authority.Capture(), _server, _cache, Origin, _time);
+        var load = sync.LoadAsync();
+        edit ??= s => s.ResizeWidget("users", 7, null);
+        edit(sync);
+        return (sync, load, read);
+    }
 
     [Fact]
     public async Task AdoptsServerLayoutAndMirrorsItToTheAccountScopedCache()
@@ -294,10 +322,42 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
         Assert.Empty(_server.Saves);
     }
 
+    // ---- Pre-read edits (WebUI 6cfa95e3 / #4167): saved only over the base or no layout ----
+
     [Theory]
     [InlineData(UsersOnly)]
     [InlineData(null)]
-    public async Task AnEditMadeBeforeTheServerReadArrivesIsNotOverwrittenAndIsSaved(string? serverJson)
+    [InlineData("""{"version":2,"entries":[]}""")]
+    public async Task SavesAnEditMadeBeforeTheFirstReadAgainstTheVersionThatReadReturns(string? serverJson)
+    {
+        var (sync, load, read) = OpenWithReadHeld();
+        // Like the WebUI, an edit waiting for the first read is not reported as unsaved.
+        Assert.False(sync.ServerSaveBlocked);
+        Assert.NotNull(StoredPending());
+        Debounce();
+        Assert.Empty(_server.Saves);
+
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", serverJson));
+        await load;
+        Assert.Equal(7, sync.Entries[0].Span);
+        Assert.False(sync.ServerSaveBlocked);
+        Assert.Null(StoredPending());
+        Debounce();
+        await sync.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal("\"A\"", save.ETag);
+        Assert.Equal(Users(7), save.Document);
+
+        sync.ResizeWidget("users", 8, null);
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Equal(2, _server.Saves.Count);
+        Assert.Equal("\"S1\"", _server.Saves[1].ETag);
+        Assert.False(sync.ServerSaveBlocked);
+    }
+
+    [Fact]
+    public async Task WithoutACacheTheDefaultLayoutIsTheBaseOfAPreReadEdit()
     {
         var read = new TaskCompletionSource<DashboardLayoutRead>();
         _server.OnRead = _ => read.Task;
@@ -305,27 +365,323 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
         var sync = new DashboardLayoutSync(_authority.Capture(), _server, _cache, Origin, _time);
         var load = sync.LoadAsync();
         sync.RemoveWidget("users");
-        Assert.True(sync.ServerSaveBlocked);
-        var resumed = false;
-        sync.Changed += () => { if (!sync.ServerSaveBlocked) resumed = true; };
-        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", serverJson));
+        Assert.Equal(DashboardRegistry.DefaultLayout, StoredPending()!.Base);
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", DashboardLayoutDocument.Serialize(DashboardRegistry.DefaultLayout)));
         await load;
-        Assert.DoesNotContain(sync.Entries, entry => entry.Id == "users");
-        Assert.Contains(sync.Entries, entry => entry.Id == "libraries");
-        Assert.False(sync.ServerSaveBlocked);
-        Assert.True(resumed);
         Debounce();
         await sync.PendingWrites;
         var save = Assert.Single(_server.Saves);
         Assert.Equal("\"A\"", save.ETag);
-        Assert.Equal(DashboardLayoutDocument.Serialize(sync.Entries), save.Document);
+        Assert.DoesNotContain("\"users\"", save.Document);
+    }
 
-        sync.RemoveWidget("libraries");
+    [Fact]
+    public async Task DoesNotOverwriteADifferentServerLayoutWithAnEditMadeBeforeTheFirstRead()
+    {
+        var (sync, load, read) = OpenWithReadHeld();
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", Users(8)));
+        await load;
         Debounce();
         await sync.PendingWrites;
-        Assert.Equal(2, _server.Saves.Count);
-        Assert.Equal("\"S1\"", _server.Saves[1].ETag);
+        Assert.Empty(_server.Saves);
+        Assert.Equal(7, sync.Entries[0].Span);
+        Assert.True(sync.ServerSaveBlocked);
+        Assert.NotNull(StoredPending());
+
+        // A later edit also sends nothing and keeps the draft marked as unsaved.
+        sync.ResizeWidget("users", null, 5);
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.Equal((7, 5), (sync.Entries[0].Span, sync.Entries[0].Rows));
+        Assert.Equal("users:5x4", string.Join(";", StoredPending()!.Base.Select(e => $"{e.Id}:{e.Span}x{e.Rows}")));
+
+        // Reload adopts the server copy, clears the marker and resumes saving under its validator.
+        _server.OnRead = _ => Task.FromResult(DashboardFakeLayoutServer.Layout("\"C\"", Users(8)));
+        await sync.ReloadServerLayoutAsync();
         Assert.False(sync.ServerSaveBlocked);
+        Assert.Equal(8, sync.Entries[0].Span);
+        Assert.Null(StoredPending());
+        Assert.Equal(Users(8), _cache.Read(AccountScope));
+        sync.ResizeWidget("users", 6, null);
+        Debounce();
+        await sync.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal("\"C\"", save.ETag);
+        Assert.Equal(Users(6), save.Document);
+    }
+
+    [Fact]
+    public async Task AServerLayoutThatDiffersOnlyInItsViewIsADifferentLayout()
+    {
+        var (sync, load, read) = OpenWithReadHeld(EgressNodes, s => s.SetWidgetRange("egress-24h", DashboardWidgetRange.Month));
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", EgressOnly));
+        await load;
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.True(sync.ServerSaveBlocked);
+        Assert.Equal(new DashboardLayoutEntry("egress-24h", 6, 3, DashboardWidgetRange.Month, "nodes"), sync.Entries[0]);
+    }
+
+    [Fact]
+    public async Task DoesNotSendAnEditMadeBeforeTheFirstReadUnderAnAuthorityThatRetired()
+    {
+        var (sync, load, read) = OpenWithReadHeld();
+        _kit.SetRole("user");
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", UsersOnly));
+        await load;
+        Debounce();
+        await sync.DepartAsync();
+        Assert.Empty(_server.Saves);
+        Assert.False(sync.IsLoaded);
+        // The retired owner neither sends nor consumes the account's unsaved draft.
+        Assert.NotNull(StoredPending());
+        Assert.Contains("\"span\":7", _cache.Read(AccountScope));
+    }
+
+    [Fact]
+    public async Task ReportsAnEditMadeBeforeAFailedFirstReadAsUnsaved()
+    {
+        var (sync, load, read) = OpenWithReadHeld();
+        read.SetException(new ApiException("unavailable", "down", 503));
+        await load;
+        Assert.True(sync.ServerSaveBlocked);
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.Equal(7, sync.Entries[0].Span);
+        Assert.NotNull(StoredPending());
+    }
+
+    // ---- Leaving during the first read (WebUI 419c1175 / #4227): reconciled on the next visit ----
+
+    [Fact]
+    public async Task SavesAnEditMadeBeforeTheFirstReadOnceTheDashboardIsOpenedAgain()
+    {
+        var (first, firstLoad, firstRead) = OpenWithReadHeld();
+        await first.DepartAsync();
+        Assert.Empty(_server.Saves);
+        Assert.NotNull(StoredPending());
+
+        // The departed visit's read arriving late neither writes nor consumes the draft.
+        firstRead.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", UsersOnly));
+        await firstLoad;
+        Assert.Empty(_server.Saves);
+        Assert.NotNull(StoredPending());
+
+        var (second, _) = await Loaded(UsersOnly);
+        Assert.Equal(7, second.Entries[0].Span);
+        Assert.False(second.ServerSaveBlocked);
+        Assert.Null(StoredPending());
+        Debounce();
+        await second.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal("\"A\"", save.ETag);
+        Assert.Equal(Users(7), save.Document);
+        Assert.DoesNotContain("pending", save.Document);
+    }
+
+    [Fact]
+    public async Task ReportsAnEditMadeBeforeTheFirstReadAsUnsavedOnReturnWhenTheServerLayoutChanged()
+    {
+        var (first, _, _) = OpenWithReadHeld();
+        await first.DepartAsync();
+
+        var (second, _) = await Loaded(Users(9), "\"C\"");
+        Debounce();
+        await second.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.Equal(7, second.Entries[0].Span);
+        Assert.True(second.ServerSaveBlocked);
+
+        // Leaving without reloading keeps reporting the edit rather than adopting over it.
+        await second.DepartAsync();
+        var (third, _) = await Loaded(Users(9), "\"C\"");
+        Debounce();
+        await third.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.Equal(7, third.Entries[0].Span);
+        Assert.True(third.ServerSaveBlocked);
+        Assert.NotNull(StoredPending());
+    }
+
+    [Fact]
+    public async Task ReportsAnEarlierVisitsDraftAsUnsavedWhenTheNextFirstReadFails()
+    {
+        var (first, _, _) = OpenWithReadHeld();
+        await first.DepartAsync();
+        SynchronizationContext.SetSynchronizationContext(null);
+        _server.OnRead = _ => Task.FromException<DashboardLayoutRead>(new ApiException("unavailable", "down", 503));
+        var second = new DashboardLayoutSync(_authority.Capture(), _server, _cache, Origin, _time);
+        Assert.Equal(7, second.Entries[0].Span);
+        await second.LoadAsync();
+        Assert.True(second.ServerSaveBlocked);
+        Debounce();
+        await second.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.NotNull(StoredPending());
+    }
+
+    [Fact]
+    public async Task KeepsAnEarlierVisitsEditUnsavedUnderADifferentProfile()
+    {
+        var (first, _, _) = OpenWithReadHeld();
+        await first.DepartAsync();
+
+        _kit.Auth.SelectProfile("p2", null, new Profile { Id = "p2", Name = "Other", IsPrimary = true });
+        var (other, _) = await Loaded(UsersOnly);
+        Debounce();
+        await other.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.Equal(7, other.Entries[0].Span);
+        Assert.True(other.ServerSaveBlocked);
+
+        // The other profile's own edit neither saves nor drops the pending one.
+        other.ResizeWidget("users", null, 5);
+        Debounce();
+        await other.DepartAsync();
+        Assert.Empty(_server.Saves);
+        Assert.NotNull(StoredPending());
+
+        _kit.Auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
+        var (back, _) = await Loaded(UsersOnly);
+        Debounce();
+        await back.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal(Users(7, 5), save.Document);
+        Assert.Equal("\"A\"", save.ETag);
+    }
+
+    [Fact]
+    public async Task SavesTheEditAnotherWindowLeftPendingNotThisWindowsOlderCopy()
+    {
+        SynchronizationContext.SetSynchronizationContext(null);
+        _cache.Write(AccountScope, UsersOnly);
+        var held = new List<TaskCompletionSource<DashboardLayoutRead>>();
+        _server.OnRead = _ =>
+        {
+            var pending = new TaskCompletionSource<DashboardLayoutRead>();
+            held.Add(pending);
+            return pending.Task;
+        };
+        var waiting = new DashboardLayoutSync(_authority.Capture(), _server, _cache, Origin, _time);
+        var waitingLoad = waiting.LoadAsync();
+        var editing = new DashboardLayoutSync(_authority.Capture(), _server, _cache, Origin, _time);
+        _ = editing.LoadAsync();
+        editing.ResizeWidget("users", 7, null);
+        await editing.DepartAsync();
+        Assert.Equal(5, waiting.Entries[0].Span);
+
+        held[0].SetResult(DashboardFakeLayoutServer.Layout("\"A\"", null));
+        await waitingLoad;
+        Debounce();
+        await waiting.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal(Users(7), save.Document);
+        Assert.Equal(7, waiting.Entries[0].Span);
+    }
+
+    [Fact]
+    public async Task AnotherAccountNeverReconcilesOrUploadsAPendingEdit()
+    {
+        var (first, _, _) = OpenWithReadHeld();
+        await first.DepartAsync();
+
+        using var otherKit = AdminMonitorKit.Create(accountId: "2");
+        using var otherAuthority = new AdminMonitorAuthority(otherKit.Client, otherKit.Auth);
+        SynchronizationContext.SetSynchronizationContext(null);
+        _server.OnRead = _ => Task.FromResult(DashboardFakeLayoutServer.Layout("\"A\"", null));
+        var other = new DashboardLayoutSync(otherAuthority.Capture(), _server, _cache, Origin, _time);
+        Assert.Equal(DashboardRegistry.DefaultLayout, other.Entries);
+        await other.LoadAsync();
+        Debounce();
+        await other.PendingWrites;
+        Assert.Empty(_server.Saves);
+        Assert.False(other.ServerSaveBlocked);
+        Assert.Equal(DashboardRegistry.DefaultLayout, other.Entries);
+        Assert.NotNull(StoredPending());
+    }
+
+    [Fact]
+    public async Task ResetRemovesAHeldDraftAndSavesWithoutAMarker()
+    {
+        var (sync, load, read) = OpenWithReadHeld();
+        read.SetResult(DashboardFakeLayoutServer.Layout("\"A\"", Users(9)));
+        await load;
+        Assert.NotNull(StoredPending());
+        _server.OnRead = _ => Task.FromResult(DashboardFakeLayoutServer.Layout("\"R\"", null));
+        sync.ResetLayout();
+        Assert.Null(_cache.Read(AccountScope));
+        await sync.PendingWrites;
+        Assert.Equal(1, _server.Resets);
+        Assert.False(sync.ServerSaveBlocked);
+        sync.ResizeWidget("users", 6, null);
+        Debounce();
+        await sync.PendingWrites;
+        var save = Assert.Single(_server.Saves);
+        Assert.Equal("\"R\"", save.ETag);
+        Assert.DoesNotContain("pending", save.Document);
+        Assert.Null(StoredPending());
+    }
+
+    [Fact]
+    public async Task AnOlderCacheDocumentWithoutAMarkerIsAdoptedOverAsBefore()
+    {
+        _cache.Write(AccountScope, UsersOnly);
+        var (sync, _) = await Loaded(Users(8));
+        Assert.Equal(8, sync.Entries[0].Span);
+        Assert.False(sync.ServerSaveBlocked);
+        Assert.Empty(_server.Saves);
+        Assert.Equal(Users(8), _cache.Read(AccountScope));
+    }
+
+    // ---- Per-entry views (WebUI 2c062d9c / #4062) ----
+
+    [Fact]
+    public async Task ViewChangesRideOneDebouncedSaveAndPickingTheShownViewSavesNothing()
+    {
+        var (sync, _) = await Loaded(EgressOnly);
+        var shown = sync.Entries;
+        sync.SetWidgetView("egress-24h", DashboardRegistry.EgressViewTotal);
+        Assert.Same(shown, sync.Entries);
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Empty(_server.Saves);
+
+        sync.SetWidgetView("egress-24h", DashboardRegistry.EgressViewNodes);
+        sync.SetWidgetView("egress-24h", "sideways");
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Equal(EgressNodes, Assert.Single(_server.Saves).Document);
+        Assert.Equal(EgressNodes, _cache.Read(AccountScope));
+
+        // The next visit paints the stored view from the cache.
+        var reopened = new DashboardLayoutSync(_authority.Capture(), _server, _cache, Origin, _time);
+        Assert.Equal("nodes", reopened.Entries[0].View);
+    }
+
+    [Fact]
+    public async Task EditsOnAServerLayoutThatStoresAViewKeepTheView()
+    {
+        const string server = """{"version":1,"entries":[{"id":"egress-24h","span":6,"rows":3,"range":"day","view":"nodes"},{"id":"users","span":5,"rows":4}]}""";
+        var (sync, _) = await Loaded(server);
+        Assert.Equal("nodes", sync.Entries[0].View);
+        sync.MoveWidget("users", "egress-24h");
+        Debounce();
+        await sync.PendingWrites;
+        sync.SetWidgetRange("egress-24h", DashboardWidgetRange.Month);
+        Debounce();
+        await sync.PendingWrites;
+        sync.ResizeWidget("egress-24h", 8, null);
+        sync.AddWidget("scanner");
+        Debounce();
+        await sync.PendingWrites;
+        Assert.Equal(3, _server.Saves.Count);
+        Assert.All(_server.Saves, save => Assert.Contains("\"view\":\"nodes\"", save.Document));
+        Assert.Equal(
+            """{"version":1,"entries":[{"id":"users","span":5,"rows":4},{"id":"egress-24h","span":8,"rows":3,"range":"month","view":"nodes"},{"id":"scanner","span":4,"rows":3}]}""",
+            _server.Saves[^1].Document);
     }
 
     [Fact]

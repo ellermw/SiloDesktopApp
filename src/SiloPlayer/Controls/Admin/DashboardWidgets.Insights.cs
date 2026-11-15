@@ -59,17 +59,21 @@ internal sealed class ConcurrentStreamsWidget(DashboardWidgetContext c) : Timese
     }
 }
 
-/// <summary>Egress in Mbps: total line, a downloads overlay when measured, and a Total/Nodes stacked view.</summary>
+/// <summary>
+/// Egress in Mbps: total line, a downloads overlay when measured, and a
+/// Total/Nodes stacked view. The view is stored with the placement (WebUI
+/// #4062), so Nodes survives a reload and another device's choice is kept; a
+/// stored Nodes without node bands draws the total line and keeps the value.
+/// </summary>
 internal sealed class EgressWidget(DashboardWidgetContext c) : TimeseriesWidget(c)
 {
-    private bool _byNode;
-
     protected override FrameworkElement Render()
     {
         var state = Store.Get(SeriesKey);
         var series = state.As<DashboardTimeseries>();
         var bands = DashboardChartMath.EgressBands(series);
-        var showBands = _byNode && bands != null;
+        var byNode = View == DashboardRegistry.EgressViewNodes;
+        var showBands = byNode && bands != null;
         var hasDownloads = (series?.Points ?? []).Any(point => (point.DownloadEgressKbps ?? 0) > 0);
         var points = DashboardChartMath.TimeseriesPoints(series, point => point.EgressKbps / 1000d);
         var downloads = hasDownloads ? DashboardChartMath.TimeseriesPoints(series, point => (point.DownloadEgressKbps ?? 0) / 1000d) : [];
@@ -82,7 +86,8 @@ internal sealed class EgressWidget(DashboardWidgetContext c) : TimeseriesWidget(
         FrameworkElement? toggle = bands == null ? null : Segmented(
             [(false, T("web.admin.dashboard.widgets.egress.viewTotal"), T("web.admin.dashboard.widgets.egress.viewTotalLabel")),
              (true, T("web.admin.dashboard.widgets.egress.viewNodes"), T("web.admin.dashboard.widgets.egress.viewNodesLabel"))],
-            _byNode, value => { _byNode = value; RenderNow(); });
+            // Redraws when the layout echoes the stored view back (SetView), not before.
+            byNode, value => C.SetView(value ? DashboardRegistry.EgressViewNodes : DashboardRegistry.EgressViewTotal));
         var header = Header(DashboardRanges.Title(T("web.admin.dashboard.widgets.egress.title"), Range),
             totalLabel, Muted11(T("web.admin.dashboard.widgets.egress.peak", ("value", DashboardFormat.Mbps(peak)))), toggle, RangePicker());
         var body = ChartBody(state, points, T("web.admin.dashboard.widgets.egress.seriesLabel"),

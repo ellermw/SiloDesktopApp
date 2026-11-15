@@ -89,6 +89,9 @@ public sealed class ServerActivityDashboardFeed : IDashboardActivityFeed, IDispo
         EpisodeNumber = session.EpisodeNumber,
         EpisodeName = session.EpisodeName,
         StartedAt = DateTimeOffset.TryParse(session.StartedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var started) ? started : null,
+        // Carried as read: the tile shows the last observation and never ticks it.
+        PositionSeconds = session.PositionSeconds,
+        FileDuration = session.FileDuration,
         IsPaused = session.IsPaused,
         HasPlaybackControl = session.HasPlaybackControl,
         PlayMethod = session.PlayMethod,

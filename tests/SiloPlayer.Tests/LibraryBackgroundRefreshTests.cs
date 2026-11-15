@@ -1194,9 +1194,10 @@ public sealed class LibraryBackgroundRefreshTests
             wire.Titles.Insert(450, ("new-title", "Brand New"));
             wire.ChangeSnapshotAt = 560;
             wire.SnapshotChangesRemaining = changes;
-            // A completed retry starts an independent exact-count read. Hold it so
-            // the retained-extent assertion cannot race the correct new total.
-            wire.HoldCount = true;
+            // A completed retry starts independent exact-count and letter-index reads.
+            // Either can update the extent, so hold both until the retained-extent
+            // assertion has run. The fresh index legitimately supplies a provisional total.
+            wire.HoldCount = wire.HoldLetters = true;
             var requests = wire.Requests.Count;
             Reconnect(wire);
             try
@@ -1218,7 +1219,11 @@ public sealed class LibraryBackgroundRefreshTests
                 Assert.DoesNotContain(0, totals);
                 Assert.Equal(1000, model.TotalCount);
             }
-            finally { wire.ReleaseCount.TrySetResult(); }
+            finally
+            {
+                wire.ReleaseCount.TrySetResult();
+                wire.ReleaseLetters.TrySetResult();
+            }
             if (changes == 1)
             {
                 Assert.All(held, index => Assert.NotNull(model.GetWindowItem(index)));

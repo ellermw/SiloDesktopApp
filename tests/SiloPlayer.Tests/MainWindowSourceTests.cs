@@ -3,6 +3,26 @@ namespace SiloPlayer.Tests;
 public sealed class MainWindowSourceTests
 {
     [Fact]
+    public void RejectedWebInvitationDoesNotShortCircuitStartupRestore()
+    {
+        var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "MainWindow.xaml.cs"));
+        var rejected = shell[shell.IndexOf("if (!InviteDeepLink.TryParse(argument, _apiClient.BaseUrl, out var invitation))", StringComparison.Ordinal)..];
+        rejected = rejected[..rejected.IndexOf("// The WebUI", StringComparison.Ordinal)];
+        Assert.Contains("native.auth.invite.serverMismatch", rejected);
+        Assert.Contains("return false;", rejected);
+        Assert.DoesNotContain("return true;", rejected);
+        Assert.DoesNotContain("_autoLoginAttempted = true", rejected);
+
+        var loaded = shell[shell.IndexOf("private async void NavView_Loaded", StringComparison.Ordinal)..];
+        loaded = loaded[..loaded.IndexOf("private void SidebarBrandHost_Tapped", StringComparison.Ordinal)];
+        Assert.Contains("if (TryConsumePendingActivation()) return;", loaded);
+        Assert.Contains("await TryAutoLoginAsync();", loaded);
+        // A saved server bypasses the no-server branch and reaches the normal restore/page routing.
+        Assert.Contains("string.IsNullOrWhiteSpace(_apiClient.BaseUrl)", loaded);
+        Assert.Contains("_navigationService.Navigate<ServerSelectPage>();", loaded);
+    }
+
+    [Fact]
     public void UpdateStartupRecordsReadinessButRefusesMismatchedIdentityBeforeConfirmation()
     {
         var startup = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "MainWindow.UpdateStartup.cs"));
