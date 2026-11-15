@@ -35,6 +35,8 @@ public sealed class AdminGeneralSettingsController : IDisposable
     public static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(new[] { "branding.server_name", "branding.login_subtitle", "server.public_url", "server.lan_discovery", "server.local_url", "clientip.trusted_proxies", "database.max_connections", "redis.url", "redis.db" });
     public static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(new[] { "redis.url" });
     private static readonly string[] Redis = ["redis.url", "redis.db"];
+    // General keys whose credential or environment-managed state requires sensitive-status.
+    public static IReadOnlyList<string> SensitiveStatusKeys { get; } = Array.AsReadOnly(new[] { "redis.url", "redis.db", "clientip.trusted_proxies" });
     private readonly AdminServerSettingsApi _api;
     private readonly AdminServerSettingsStore _store;
     private readonly AdminAuthorityLifetime _lifetime;
@@ -59,6 +61,8 @@ public sealed class AdminGeneralSettingsController : IDisposable
         MonitorAuthorityLease owner;
         try { _lifetime.Resume(); owner = _lifetime.Open(); }
         catch (OperationCanceledException) { Clear(); return; }
+        // Other pages or admin sessions may have changed values and the shared ETag.
+        _store.Invalidate();
         lock (_gate) { _form?.Discard(); _form = null; _revision++; _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke();
         await LoadAsync(owner, false, false).ConfigureAwait(false);
@@ -137,7 +141,7 @@ public sealed class AdminGeneralSettingsController : IDisposable
         Update(owner, () => { if (_form == null || !CanEdit("redis.url")) return; _form.Reset("redis.url"); _form.Reset("redis.db"); _revision++; _state = _state with { ConnectionResult = null }; });
     }
     private bool CanEdit(string key) => !_state.Loading && !(_state.Saving && Redis.Contains(key)) &&
-        !(_state.SensitiveStatusError && Redis.Contains(key)) &&
+        !(_state.SensitiveStatusError && SensitiveStatusKeys.Contains(key)) &&
         !(_state.ManagedByEnv.Contains(key) || (Redis.Contains(key) && Redis.Any(_state.ManagedByEnv.Contains)));
 
     public void Discard()
@@ -157,7 +161,7 @@ public sealed class AdminGeneralSettingsController : IDisposable
             lock (_gate)
             {
                 if (!_lifetime.IsCurrent(action) || _form == null || _state.Loading || _state.Saving || _state.Conflict || _state.OutcomeUnknown) return;
-                var excluded = _state.SensitiveStatusError || Redis.Any(_state.ManagedByEnv.Contains) ? Redis : [];
+                IEnumerable<string> excluded = _state.SensitiveStatusError ? SensitiveStatusKeys : Redis.Any(_state.ManagedByEnv.Contains) ? Redis : [];
                 intent = _form.CaptureSave(excluded.Concat(_state.ManagedByEnv));
                 if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
                 _revision++;

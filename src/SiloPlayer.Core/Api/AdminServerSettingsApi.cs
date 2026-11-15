@@ -78,7 +78,7 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         try
         {
             var response = await client.MonitorLogsSendAsync<SaveResponse>(lease, HttpMethod.Put,
-                "/api/v2/admin/settings", new { values }, etag, timeout.Token).ConfigureAwait(false);
+                "/api/v2/admin/settings", new Dictionary<string, object?> { ["values"] = values }, etag, timeout.Token).ConfigureAwait(false);
             AdminSettingsForm.RequireStrongETag(response.ETag);
             if (response.Body.Values == null || response.Body.RestartRequired == null) throw new InvalidDataException("Invalid settings acknowledgement.");
             return new(new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Project(response.Body.Values, keys, secrets)), response.ETag!, response.Body.RestartRequired.Value);
@@ -101,7 +101,7 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         try
         {
             response = await client.MonitorLogsSendAsync<ConnectionResponse>(lease, HttpMethod.Post,
-                "/api/v2/admin/settings/check/redis", new { values, dirty_keys = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
+                "/api/v2/admin/settings/check/redis", new Dictionary<string, object?> { ["values"] = values, ["dirty_keys"] = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ApiException error) { throw Sanitize(error); }
@@ -109,7 +109,18 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         if (response.Body.Success == null || response.Body.Message == null) throw new InvalidDataException("Invalid connection result.");
         var message = LocalLog.RedactDiagnosticText(response.Body.Message);
         if (values.TryGetValue("redis.url", out var secret) && !string.IsNullOrEmpty(secret))
-            message = message.Replace(secret, "<redacted>", StringComparison.Ordinal);
+        {
+            var secrets = new List<string> { secret };
+            if (Uri.TryCreate(secret, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo))
+            {
+                // Servers may echo credentials separately, either escaped or decoded.
+                secrets.Add(uri.UserInfo);
+                secrets.AddRange(uri.UserInfo.Split(':', 2));
+                secrets.AddRange(secrets.ToArray().Select(Uri.UnescapeDataString));
+            }
+            foreach (var component in secrets.Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
+                message = message.Replace(component, "<redacted>", StringComparison.Ordinal);
+        }
         return new(response.Body.Success.Value, message);
     }
 

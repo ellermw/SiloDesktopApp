@@ -146,7 +146,7 @@
           "official": {
             "entry": "web/src/pages/AdminTaskDetail.tsx",
             "pageFiles": [
-              "web/src/components/admin/TaskStatusBadge.tsx",
+              "web/sr…adge.tsx",
               "web/src/pages/AdminTaskDetail.tsx",
               "web/src/pages/AdminTaskTriggerForm.tsx"
             ],
@@ -213,7 +213,7 @@
           "official": {
             "entry": "web/src/pages/AdminBackupRestore.tsx",
             "pageFiles": [
-              "web/src/components/settings/RestartBadge.tsx",
+              "web/sr…adge.tsx",
               "web/src/components/settings/SettingsGroup.tsx",
               "web/src/pages/AdminBackupRestore.tsx",
               "web/src/pages/admin-backups/BackupWarningDetails.tsx",

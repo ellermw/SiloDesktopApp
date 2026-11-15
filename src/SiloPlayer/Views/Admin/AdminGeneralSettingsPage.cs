@@ -239,6 +239,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         }
         bool Dirty(string key) => state.DirtyKeys.Contains(key);
         bool Managed(string key) => state.ManagedByEnv.Contains(key);
+        bool StatusUnknown(string key) => state.SensitiveStatusError && AdminGeneralSettingsController.SensitiveStatusKeys.Contains(key);
         var redisManaged = Managed("redis.url") || Managed("redis.db");
         var redisEnabled = _redisEnabledOverride ?? (state.Configured.Contains("redis.url") || !string.IsNullOrWhiteSpace(state.Values.GetValueOrDefault("redis.url", "")));
         _syncing = true;
@@ -250,7 +251,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
                 if (control is TextBox text && text.Text != value) text.Text = value;
                 else if (control is PasswordBox secret && secret.Password != value) secret.Password = value;
                 else if (control is ToggleSwitch toggle) toggle.IsOn = value == "true";
-                control.IsEnabled = current && state.Loaded && !state.Loading && !accessBlocked && !Managed(key) && (!key.StartsWith("redis.", StringComparison.Ordinal) || (!state.Saving && !redisManaged && !state.SensitiveStatusError));
+                control.IsEnabled = current && state.Loaded && !state.Loading && !accessBlocked && !Managed(key) && !StatusUnknown(key) && (!key.StartsWith("redis.", StringComparison.Ordinal) || (!state.Saving && !redisManaged && !state.SensitiveStatusError));
             }
             _redisToggle.IsOn = redisEnabled;
             _redisToggle.IsEnabled = current && state.Loaded && !state.Loading && !accessBlocked && !state.Saving && !redisManaged && !state.SensitiveStatusError;
@@ -260,7 +261,8 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _rows["redis.url"].Description.Text = redisManaged ? T("web.admin.settings.redis.url.managed") : "redis://host:6379";
         _rows["redis.db"].Description.Text = T(redisManaged ? "web.admin.settings.redis.setByEnv" : "web.admin.settings.redis.db.description");
         _rows["redis.enabled"].Description.Text = T(redisManaged ? "web.admin.settings.redis.setByEnv" : "web.admin.settings.redis.enabled.description");
-        _rows["clientip.trusted_proxies"].Description.Text = T(Managed("clientip.trusted_proxies") ? "web.admin.settings.general.network.trustedProxies.managed" : "web.admin.settings.general.network.trustedProxies.description");
+        _rows["clientip.trusted_proxies"].Description.Text = T(StatusUnknown("clientip.trusted_proxies") ? "configure.native.settings.managedStatusUnavailable"
+            : Managed("clientip.trusted_proxies") ? "web.admin.settings.general.network.trustedProxies.managed" : "web.admin.settings.general.network.trustedProxies.description");
         foreach (var (group, keys) in _groups)
         {
             var allRestart = keys.All(state.RestartKeys.Has);
@@ -280,7 +282,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _checkResult.Foreground = AdminMonitorUi.Solid(state.ConnectionResult?.Success == true
             ? Windows.UI.Color.FromArgb(255, 0x16, 0xA3, 0x4A) : Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26));
         foreach (var (key, control) in _controls) AutomationProperties.SetHelpText(control, _rows[key].Description.Text);
-        var writable = state.DirtyKeys.Any(key => !Managed(key) && (!state.SensitiveStatusError || !key.StartsWith("redis.", StringComparison.Ordinal)));
+        var writable = state.DirtyKeys.Any(key => !Managed(key) && !StatusUnknown(key) && (!key.StartsWith("redis.", StringComparison.Ordinal) || !redisManaged));
         _saveBar.State(current ? state.DirtyKeys.Count : 0, state.Saving, current && writable && !state.Loading && !accessBlocked && !state.Conflict && !state.OutcomeUnknown);
         _saveBar.SetAvailableWidth(ActualWidth);
         _spacer.Visibility = _scrim.Visibility = _saveBar.Visibility;

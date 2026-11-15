@@ -78,6 +78,33 @@ public sealed class AdminServerSettingsApiTests
         Assert.DoesNotContain("fixture-secret-value", result.ToString());
     }
 
+    [Theory]
+    [InlineData(":hunter2", "hunter2", false)]
+    [InlineData(":hunter2", ":hunter2", false)]
+    [InlineData(":hunter2", "hunter2", true)]
+    [InlineData("fixture-user:hunter2", "fixture-user", false)]
+    [InlineData("fixture-user:hunter2", "fixture-user:hunter2", false)]
+    [InlineData("fixture%2Duser:hun%3Ater%40two", "hun%3Ater%40two", false)]
+    [InlineData("fixture%2Duser:hun%3Ater%40two", "hun:ter@two", false)]
+    [InlineData("fixture%2Duser:hun%3Ater%40two", "fixture-user:hun:ter@two", false)]
+    [InlineData("fixture%2Duser:hun%3Ater%40two", "fixture-user", false)]
+    public async Task ConnectionResponseRedactsCredentialComponents(string userInfo, string echoed, bool success)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            success,
+            message = "dial host:6379: credential " + echoed
+        })));
+        var result = await new AdminServerSettingsApi(kit.Client).CheckConnectionAsync(lease, "redis",
+            new Dictionary<string, string> { ["redis.url"] = "redis://" + userInfo + "@host:6379" }, ["redis.url"]);
+        Assert.Equal(success, result.Success);
+        Assert.Equal("dial host:6379: credential <redacted>", result.Message);
+        Assert.DoesNotContain(echoed, result.Message);
+    }
+
     [Fact]
     public async Task UnauthorizedWriteDoesNotRefreshOrReplay()
     {
