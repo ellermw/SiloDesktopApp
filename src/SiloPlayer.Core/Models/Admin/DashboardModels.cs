@@ -477,6 +477,14 @@ public sealed class DashboardSession
     [JsonPropertyName("episode_number")] public long? EpisodeNumber { get; set; }
     [JsonPropertyName("episode_name")] public string? EpisodeName { get; set; }
     [JsonPropertyName("started_at")] public DateTimeOffset? StartedAt { get; set; }
+    /// <summary>Seconds into what <see cref="FileDuration"/> measures, as of the last sessions read; never advanced locally.</summary>
+    [JsonPropertyName("position_seconds")] public double PositionSeconds { get; set; }
+    /// <summary>
+    /// Seconds of what the position is measured against: the file, or the whole
+    /// book for a multi-file audiobook. Null when unknown; null or not positive
+    /// shows the position alone.
+    /// </summary>
+    [JsonPropertyName("file_duration")] public long? FileDuration { get; set; }
     [JsonPropertyName("is_paused")] public bool IsPaused { get; set; }
     [JsonPropertyName("has_playback_control")] public bool HasPlaybackControl { get; set; }
     [JsonPropertyName("play_method")] public string? PlayMethod { get; set; }

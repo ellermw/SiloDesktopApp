@@ -146,6 +146,17 @@ public sealed partial class AdminDashboardPage : Page
     public IReadOnlyList<(string Id, double Width, double Height)> PlacedWidgets()
         => _frames.Values.OrderBy(frame => frame.Order).Select(frame => (frame.Id, frame.ActualWidth, frame.ActualHeight)).ToArray();
 
+    /// <summary>The view a placed widget renders (null without views or when not placed).</summary>
+    public string? WidgetView(string id) => _frames.TryGetValue(id, out var frame) ? frame.View.View : null;
+
+    /// <summary>A placed widget's completed render count, for settle checks.</summary>
+    public int WidgetRenderCount(string id) => _frames.TryGetValue(id, out var frame) ? frame.View.RenderCount : 0;
+
+    /// <summary>Now Playing's card columns and the measured content width that chose them; null when not placed.</summary>
+    public (int Columns, double ContentWidth)? NowPlayingLayout()
+        => _frames.TryGetValue(DashboardRegistry.NowPlaying, out var frame) && frame.View is NowPlayingWidget widget
+            ? (widget.Columns, widget.ContentWidth) : null;
+
     /// <summary>The Customize/Done toggle and the Add widget button, for fixtures and keyboard parity.</summary>
     public void ToggleCustomize() => ToggleCustomizing();
     public void OpenAddSheet() => SetSheetOpen(_sync?.IsCustomizing == true);
@@ -564,6 +575,10 @@ public sealed partial class AdminDashboardPage : Page
                     Id = entry.Id,
                     Range = DashboardLayoutDocument.EffectiveRange(entry),
                     SetRange = range => _sync?.SetWidgetRange(entry.Id, range),
+                    View = DashboardLayoutDocument.EffectiveView(entry),
+                    // Through the layout owner only: it ignores unoffered and already-shown views,
+                    // debounces the save and echoes the stored view back via SyncFrames.
+                    SetView = view => _sync?.SetWidgetView(entry.Id, view),
                     SetCollapsed = collapsed => created?.SetCollapsed(collapsed),
                     Mode = () => _grid.Mode,
                     ViewportWidth = () => _viewportWidth,
@@ -583,6 +598,8 @@ public sealed partial class AdminDashboardPage : Page
             frame.Rows = entry.Rows;
             frame.TabIndex = i;
             frame.View.SetRange(DashboardLayoutDocument.EffectiveRange(entry));
+            // Every layout change (pick, adoption, Reload, Reset) reaches a reused widget here.
+            frame.View.SetView(DashboardLayoutDocument.EffectiveView(entry));
         }
         _grid.InvalidateMeasure();
     }

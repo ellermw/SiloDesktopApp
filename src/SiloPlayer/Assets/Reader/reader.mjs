@@ -1,10 +1,17 @@
-import { makeBook } from './vendor/foliate-js/view.js';
+import { makeBook, SEARCH_RESULT_LIMIT } from './vendor/foliate-js/view.js';
 import { Overlayer } from './vendor/foliate-js/overlayer.js';
 import { parseLocation, progressFromRelocate } from './locations.mjs';
 
 const hostGeneration = Number(new URLSearchParams(location.search).get('generation') ?? 0);
+const fileId = Number(new URLSearchParams(location.search).get('fileId') ?? 0);
 const send = message => globalThis.chrome?.webview?.postMessage(JSON.stringify({...message,hostGeneration}));
 let view, book, generation = 0, ready = false, snapshot = null, annotations = [], chapterPaths = [], format;
+let activeSearch = null;
+const clearSearch = () => {
+    activeSearch?.abort();
+    activeSearch = null;
+    view?.clearSearch();
+};
 const contents = () => view?.renderer?.getContents?.() ?? [];
 // Use the publication's navigation document, not its reading-order spine.
 const tableOfContents = (items = book?.toc ?? [], depth = 0, entries = []) => {
@@ -93,6 +100,7 @@ window.siloReader = {
         if (typeof payload?.language === 'string' && payload.language) document.documentElement.lang = payload.language;
     },
     async open(options) {
+        clearSearch();
         const current = ++generation;
         ready = false; snapshot = null;
         view?.close(); view?.remove(); book?.destroy?.();
@@ -192,13 +200,29 @@ window.siloReader = {
         if (current !== generation) return;
         annotations = values; await drawAnnotations();
     },
-    async find(query) {
-        const results = [];
-        for await (const result of view.search({query})) {
-            for (const hit of result.subitems ?? [result]) if (hit.cfi) results.push({cfi:hit.cfi,snippet:typeof hit.excerpt === 'string' ? hit.excerpt : JSON.stringify(hit.excerpt),chapterTitle:result.label ?? result.section?.label ?? ''});
-            if (results.length >= 200) break;
+    clearSearch,
+    async find(query, searchId) {
+        clearSearch();
+        const activeView = view, current = generation, controller = new AbortController();
+        activeSearch = controller;
+        const { signal } = controller;
+        const items = [];
+        let truncated = false;
+        try {
+            if (!ready || !activeView?.search) throw new Error("Search renderer unavailable");
+            for await (const result of activeView.search({query, limit:SEARCH_RESULT_LIMIT, signal})) {
+                if (signal.aborted || current !== generation || activeView !== view) return null;
+                if (result.truncated) truncated = true;
+                for (const hit of result.subitems ?? [result]) if (hit.cfi) items.push({cfi:hit.cfi,snippet:typeof hit.excerpt === 'string' ? hit.excerpt : [hit.excerpt?.pre, hit.excerpt?.match, hit.excerpt?.post].join(''),chapterTitle:result.label ?? result.section?.label ?? ''});
+            }
+        } catch (error) {
+            if (signal.aborted || current !== generation || activeView !== view) return null;
+            return {items:[], truncated:false, searchId, hostGeneration, fileId, failed:true};
+        } finally {
+            if (activeSearch === controller) activeSearch = null;
         }
-        return results;
+        if (signal.aborted || current !== generation || activeView !== view) return null;
+        return {items, truncated, searchId, hostGeneration, fileId};
     },
     appearance(s) {
         if (!view?.renderer) return;
@@ -212,6 +236,6 @@ window.siloReader = {
         if (s.flow==='scrolled') r.setAttribute('flow','scrolled'); else r.removeAttribute('flow');
         void r.render?.();
     },
-    close() { ++generation; ready=false; snapshot=null; view?.close(); view?.remove(); book?.destroy?.(); }
+    close() { clearSearch(); ++generation; ready=false; snapshot=null; view?.close(); view?.remove(); book?.destroy?.(); }
 };
 send({type:'shell-ready'});

@@ -51,8 +51,17 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         var householdPage = ReadRepoFile("src", "SiloPlayer", "Views", "HouseholdSetupPage.xaml.cs");
         var installer = ReadRepoFile("installer", "SiloInstaller.iss");
 
+        // Deprecated path forms remain for servers that predate token_in_body; the body forms are the contract.
         Assert.Contains("/api/v2/invitations/{Uri.EscapeDataString(token)}", authApi);
         Assert.Contains("/accept", authApi);
+        Assert.Contains("\"/api/v2/invitations/lookup\"", authApi);
+        Assert.Contains("\"/api/v2/invitations/accept\"", authApi);
+        Assert.Contains("\"/api/v2/invitations/capabilities\"", authApi);
+        Assert.Contains("TokenInBody", authApi);
+        var shell = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
+        Assert.Contains("InviteDeepLink.TryParse(argument, _apiClient.BaseUrl, out var invitation)", shell);
+        Assert.Contains("InviteDeepLink.IsServerLinkRoute(argument)", shell);
+        Assert.Contains("PasswordRecovery.IsResetLinkRoute(argument)", shell);
         Assert.Contains("uri.Scheme, \"silo\"", deepLink);
         Assert.Contains("uri.Host, \"invite\"", deepLink);
         Assert.Contains("x:Name=\"WelcomeTitle\"", invite);

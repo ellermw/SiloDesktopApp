@@ -27,6 +27,7 @@ public sealed class PasswordRecovery
     private readonly ApiRequestContext _context;
     private string? _verifiedToken;
     private bool _busy;
+    private bool _legacyTransport;
     public bool NeedsReload { get; private set; }
 
     public PasswordRecovery(AuthService auth, SiloApiClient client)
@@ -55,21 +56,22 @@ public sealed class PasswordRecovery
             return false;
         }
     }
+    /// <summary>
+    /// Whether an activation argument is an http(s) reset link (fragment or old path form, any server), so the shell can
+    /// hold it until a server is selected. This says nothing about whether the link is acceptable.
+    /// </summary>
+    public static bool IsResetLinkRoute(string? argument) => AccountLinkToken.LooksLikeLink(argument, AccountLinkToken.ResetPage);
+
+    /// <summary>
+    /// Accepts a current fragment link (<c>/reset-password#token</c>) or a legacy path link
+    /// (<c>/reset-password/token</c>) on the selected server, or a bare token.
+    /// </summary>
     public static string ParseToken(string value, string server)
     {
-        value = value.Trim();
-        if (Uri.TryCreate(value, UriKind.Absolute, out var link))
-        {
-            var origin = new Uri(server.TrimEnd('/') + "/");
-            var prefix = origin.AbsolutePath.TrimEnd('/') + "/reset-password/";
-            if (link.Scheme != origin.Scheme || link.Authority != origin.Authority ||
-                !link.AbsolutePath.StartsWith(prefix, StringComparison.Ordinal) || link.UserInfo.Length != 0)
-                throw new InvalidOperationException("Use a reset link from the selected server.");
-            value = Uri.UnescapeDataString(link.AbsolutePath[prefix.Length..]);
-        }
-        if (value.Length == 0 || value.Length > 1024 || value.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
-            throw new InvalidOperationException("Paste a valid password reset link or token.");
-        return value;
+        if (AccountLinkToken.TryParse(value, AccountLinkToken.ResetPage, server, out var token, out var failure)) return token;
+        throw new InvalidOperationException(failure == AccountLinkFailure.WrongServer
+            ? "Use a reset link from the selected server."
+            : "Paste a valid password reset link or token.");
     }
     public async Task<bool> CanRequestAsync(CancellationToken ct = default)
     {
@@ -87,9 +89,25 @@ public sealed class PasswordRecovery
     }
     public async Task<PasswordResetLookup> LookupAsync(string link, CancellationToken ct = default)
     {
-        Check(ct); _verifiedToken = null;
+        Check(ct); _verifiedToken = null; _legacyTransport = false;
         var token = ParseToken(link, _context.BaseUrl);
-        var result = await _client.GetUnauthenticatedAsync<PasswordResetLookup>($"/api/v2/password-resets/{Uri.EscapeDataString(token)}", ct);
+        PasswordResetLookup result;
+        try
+        {
+            // The token travels in the body so it never reaches a proxy's request line.
+            result = await _client.PostUnauthenticatedAsync<PasswordResetLookup>(_context.BaseUrl,
+                "/api/v2/password-resets/lookup", new Dictionary<string, object?> { ["token"] = token }, ct);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 405)
+        {
+            // A server that predates the body operations answers 405 for the unregistered method at this path
+            // (404 stays a dead link). Nothing was read or spent, so the idempotent path lookup is safe; the same
+            // transport then carries the completion. The deprecated path form is still served by current servers.
+            Check(ct);
+            _legacyTransport = true;
+            result = await _client.GetUnauthenticatedAsync<PasswordResetLookup>(_context.BaseUrl,
+                $"/api/v2/password-resets/{Uri.EscapeDataString(token)}", ct);
+        }
         Check(ct);
         if (string.IsNullOrWhiteSpace(result.Username) || string.IsNullOrWhiteSpace(result.ServerName) ||
             !DateTimeOffset.TryParse(result.ExpiresAt, out _)) throw new InvalidOperationException("The server returned an incomplete reset link.");
@@ -106,8 +124,14 @@ public sealed class PasswordRecovery
         _busy = true;
         try
         {
-            var result = await _client.PostUnauthenticatedAsync<PasswordResetCompletion>(_context.BaseUrl,
-                $"/api/v2/password-resets/{Uri.EscapeDataString(_verifiedToken)}/complete", new { password }, ct);
+            // The write is sent once, over the transport the lookup established, and is never retried on another route.
+            var result = _legacyTransport
+                ? await _client.PostUnauthenticatedAsync<PasswordResetCompletion>(_context.BaseUrl,
+                    $"/api/v2/password-resets/{Uri.EscapeDataString(_verifiedToken)}/complete",
+                    new Dictionary<string, object?> { ["password"] = password }, ct)
+                : await _client.PostUnauthenticatedAsync<PasswordResetCompletion>(_context.BaseUrl,
+                    "/api/v2/password-resets/complete",
+                    new Dictionary<string, object?> { ["token"] = _verifiedToken, ["password"] = password }, ct);
             Check(ct);
             NeedsReload = true; _verifiedToken = null;
             if (result.Status != "completed" || string.IsNullOrEmpty(result.Username))
