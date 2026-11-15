@@ -6,6 +6,7 @@ using SiloPlayer.Core.Services.Updates;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Views.Admin;
 using System.IO.Pipes;
 using System.Text;
 
@@ -380,6 +381,7 @@ public partial class App : Application
         // The Admin Monitor placements share one authority owner and event-channel lease.
         services.AddSingleton<AdminMonitorApi>();
         services.AddSingleton<AdminMonitorAuthority>();
+        services.AddAdminPlaybackAudit();
         services.AddSingleton<LogsStreamClient>();
         services.AddSingleton(sp => new ServerActivityStore(
             sp.GetRequiredService<AdminMonitorApi>(), sp.GetRequiredService<AdminMonitorAuthority>(),
