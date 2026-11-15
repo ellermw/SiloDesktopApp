@@ -45,6 +45,17 @@ public static class DashboardGridPlacement
         _ => 1,
     };
 
+    /// <summary>
+    /// Now Playing pairs its cards from this width of the widget's own content
+    /// box: Tailwind v4 <c>@2xl</c> is <c>@container (width >= 42rem)</c>, and the
+    /// pinned WebUI (7115ee70 app.css) keeps the root at 100% (16px) and overrides
+    /// no <c>--container-*</c> size.
+    /// </summary>
+    public const double NowPlayingTwoColumnMinWidth = 672;
+
+    /// <summary>Now Playing card columns for a measured content width (inclusive threshold), independent of the viewport and grid mode.</summary>
+    public static int NowPlayingColumns(double contentWidth) => contentWidth >= NowPlayingTwoColumnMinWidth ? 2 : 1;
+
     /// <summary>`.admin-widget-wide`: span 6 or more keeps the full row on tablets.</summary>
     public static bool IsWide(int span) => span >= 6;
 

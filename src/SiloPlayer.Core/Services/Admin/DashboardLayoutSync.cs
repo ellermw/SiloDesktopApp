@@ -41,7 +41,8 @@ public sealed class DashboardMemoryLayoutCache : IDashboardLayoutCache
 
 /// <summary>
 /// One JSON file of hashed scopes to layout documents. Only arrangements are
-/// stored: never credentials, profile proofs or server data.
+/// stored, plus an unsaved pre-read edit's base arrangement and a hashed acting
+/// profile key: never credentials, profile proofs or server data.
 /// </summary>
 public sealed class DashboardFileLayoutCache(string path) : IDashboardLayoutCache
 {
@@ -106,7 +107,12 @@ public sealed class DashboardFileLayoutCache(string path) : IDashboardLayoutCach
 /// <summary>
 /// Owns the admin's widget arrangement for one captured authority lease.
 /// The cache paints instantly; the server row is the source of truth and is
-/// adopted once, never over an edit made in this session. Edits debounce into
+/// adopted once, never over an edit made in this session. An edit made before
+/// the first read records the arrangement it started from (also in the cache,
+/// so a visit that ends first is reconciled by the next one) and is saved only
+/// when the server holds that arrangement or none, under the acting profile
+/// that made it; otherwise it stays local with saving blocked until Reload or
+/// Reset (WebUI useDashboardLayout draft/held-draft rules). Edits debounce into
 /// a single 800ms write carrying the validator of the read they started from;
 /// only an acknowledged write advances that validator. Writes and resets run
 /// one at a time in order, so a reset can never be resurrected by an older
@@ -128,8 +134,9 @@ public sealed class DashboardLayoutSync : IDisposable
         ? TaskScheduler.FromCurrentSynchronizationContext() : TaskScheduler.Default;
     private Task _writeChain = Task.CompletedTask;
     private ITimer? _debounce;
+    private readonly string? _profileKey;
     private bool _settled;
-    private bool _edited;
+    private bool _firstReadFailed;
     private bool _blocked;
     private bool _resetPending;
     private bool _disposed;
@@ -139,6 +146,10 @@ public sealed class DashboardLayoutSync : IDisposable
     private string? _baseline;
     private SaveIntent? _pending;
     private SaveIntent? _inFlight;
+    // The pre-read edit of this visit (or the stored one it continued), until the first read settles.
+    private DashboardLayoutPendingDraft? _draft;
+    // A draft that settling left unsaved; the cache keeps marking it pending until Reload or Reset.
+    private DashboardLayoutPendingDraft? _held;
 
     private sealed record SaveIntent(string Document, string ETag);
 
@@ -150,11 +161,30 @@ public sealed class DashboardLayoutSync : IDisposable
         _cache = cache;
         _time = time ?? TimeProvider.System;
         _scope = Scope(serverOrigin, lease.AccountId);
+        _profileKey = CaptureProfileKey(lease);
         Entries = ReadCache() ?? DashboardRegistry.DefaultLayout;
     }
 
     public static string Scope(string serverOrigin, string accountId)
         => (serverOrigin ?? "").TrimEnd('/').ToLowerInvariant() + "|" + accountId;
+
+    /// <summary>
+    /// The acting profile a pre-read edit is attributed to, hashed for the cache:
+    /// the lease's selected profile, or none. Null when the lease is already
+    /// retired, which refuses edits (fail closed).
+    /// </summary>
+    private static string? CaptureProfileKey(MonitorAuthorityLease lease)
+    {
+        try
+        {
+            var profile = lease.Context.ProfileId ?? "";
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("dashboard-layout-profile|" + profile)));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 
     public IReadOnlyList<DashboardLayoutEntry> Entries { get; private set; }
     public bool IsCustomizing { get; private set; }
@@ -192,27 +222,53 @@ public sealed class DashboardLayoutSync : IDisposable
         }
         catch (Exception)
         {
-            // Without a validator every server write stays blocked until a reload succeeds.
+            // Without a validator every server write stays blocked until a reload
+            // succeeds; an unsaved edit (this visit's or an earlier one's) shows the banner.
+            ReportUnsavedAfterFailedRead();
             return;
         }
         if (_disposed || !_lease.IsCurrent || read.Value == null) return;
-        bool edited;
+        var server = DashboardLayoutDocument.Sanitize(read.Value.Layout);
+        DashboardLayoutPendingDraft? draft;
+        DashboardLayoutPendingDraft? held = null;
+        IReadOnlyList<DashboardLayoutEntry>? restored = null;
         lock (_gate)
         {
             if (_settled) return;
             _settled = true;
             _baseline = read.Value.ETag;
-            edited = _edited;
+            draft = _draft;
+            _draft = null;
+            // A draft an earlier visit left is reconciled with the entries stored
+            // with it, which may be newer than this page's copy (another window).
+            if (draft == null && ReadStoredDraft() is { } stored)
+            {
+                draft = stored.Draft;
+                restored = stored.Entries;
+            }
+            if (draft != null)
+            {
+                // Saved only by the profile that made it, and only when the server
+                // still holds the arrangement the edit started from, or none.
+                var unsaved = !string.Equals(draft.ProfileId, _profileKey, StringComparison.Ordinal)
+                    || (server != null && !DashboardLayoutDocument.SameArrangement(server, draft.Base));
+                held = unsaved ? draft : null;
+                _held = held;
+                if (unsaved) _blocked = true;
+            }
             if (!_blocked) ServerSaveBlocked = false;
         }
-        if (edited)
+        if (draft != null)
         {
-            // The first read supplies the validator, not a replacement for session edits.
-            ScheduleSave(Entries);
+            // The read supplies the validator, not a replacement for the edit.
+            var edited = restored ?? Entries;
+            Entries = edited;
+            WriteCache(edited, held);
+            if (held != null) ServerSaveBlocked = true;
+            else ScheduleSave(edited);
             RaiseChanged();
             return;
         }
-        var server = DashboardLayoutDocument.Sanitize(read.Value.Layout);
         if (server != null)
         {
             Entries = server;
@@ -230,6 +286,8 @@ public sealed class DashboardLayoutSync : IDisposable
     public void MoveWidget(string id, string? beforeId) => Update(entries => DashboardLayoutDocument.Move(entries, id, beforeId));
     public void ResizeWidget(string id, int? span, int? rows) => Update(entries => DashboardLayoutDocument.Resize(entries, id, span, rows));
     public void SetWidgetRange(string id, DashboardWidgetRange range) => Update(entries => DashboardLayoutDocument.SetRange(entries, id, range));
+    /// <summary>Changes a widget's view (Egress Total/Nodes); rides the same debounced save as a range.</summary>
+    public void SetWidgetView(string id, string view) => Update(entries => DashboardLayoutDocument.SetView(entries, id, view));
     public void RemoveWidget(string id) => Update(entries => DashboardLayoutDocument.Remove(entries, id));
     public void AddWidget(string id, string? beforeId = null) => Update(entries => DashboardLayoutDocument.Add(entries, id, beforeId));
 
@@ -245,7 +303,6 @@ public sealed class DashboardLayoutSync : IDisposable
             reset = ++_resetSequence;
             _baseline = null;
             _blocked = true;
-            _edited = true;
             _settled = true;
             _resetPending = true;
         }
@@ -314,9 +371,9 @@ public sealed class DashboardLayoutSync : IDisposable
             _baseline = read.Value.ETag;
             _blocked = false;
             _settled = true;
-            _edited = false;
         }
         Entries = loaded;
+        // Without a pending marker: an explicit reload discards any unsaved draft.
         WriteCache(loaded);
         ServerSaveBlocked = false;
         RaiseChanged();
@@ -331,17 +388,35 @@ public sealed class DashboardLayoutSync : IDisposable
 
     private void Update(Func<IReadOnlyList<DashboardLayoutEntry>, IReadOnlyList<DashboardLayoutEntry>> updater)
     {
-        if (_disposed || _departing || !_lease.IsCurrent) return;
-        var next = updater(Entries);
-        if (ReferenceEquals(next, Entries)) return;
+        var profileKey = _profileKey;
+        if (_disposed || _departing || profileKey == null || !_lease.IsCurrent) return;
+        var previous = Entries;
+        var next = updater(previous);
+        if (ReferenceEquals(next, previous)) return;
         Entries = next;
+        bool settled, readFailed;
+        DashboardLayoutPendingDraft? marker;
         lock (_gate)
         {
-            _edited = true;
             _editSequence++;
+            settled = _settled;
+            readFailed = _firstReadFailed;
+            if (!settled)
+            {
+                // Before the first read the edit cannot be saved yet. Its base is
+                // the arrangement it started from; an unsaved draft an earlier
+                // visit left keeps that visit's base and profile.
+                _draft ??= ReadStoredDraft()?.Draft ?? new DashboardLayoutPendingDraft(previous, profileKey);
+                marker = _draft;
+            }
+            else
+            {
+                marker = _held;
+            }
         }
-        WriteCache(next);
-        ScheduleSave(next);
+        WriteCache(next, marker);
+        if (settled) ScheduleSave(next);
+        else if (readFailed) ServerSaveBlocked = true;
         RaiseChanged();
     }
 
@@ -431,11 +506,14 @@ public sealed class DashboardLayoutSync : IDisposable
         }
     }
 
+    /// <summary>Drops the queued write and any in-memory draft; the cache marker is rewritten by the caller.</summary>
     private void CancelPending_NoLock()
     {
         _debounce?.Dispose();
         _debounce = null;
         _pending = null;
+        _draft = null;
+        _held = null;
     }
 
     private IReadOnlyList<DashboardLayoutEntry>? ReadCache()
@@ -444,9 +522,40 @@ public sealed class DashboardLayoutSync : IDisposable
         catch (Exception) { return null; }
     }
 
-    private void WriteCache(IReadOnlyList<DashboardLayoutEntry> entries)
+    /// <summary>The unsaved pre-read draft an earlier visit left in this account's cache, with its entries.</summary>
+    private (DashboardLayoutPendingDraft Draft, IReadOnlyList<DashboardLayoutEntry> Entries)? ReadStoredDraft()
     {
-        try { _cache.Write(_scope, DashboardLayoutDocument.Serialize(entries)); } catch (Exception) { }
+        try
+        {
+            var json = _cache.Read(_scope);
+            var pending = DashboardLayoutDocument.ReadPending(json);
+            var entries = DashboardLayoutDocument.Sanitize(json);
+            return pending != null && entries != null ? (pending, entries) : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private void ReportUnsavedAfterFailedRead()
+    {
+        if (_disposed || !_lease.IsCurrent) return;
+        bool report;
+        lock (_gate)
+        {
+            if (_settled) return;
+            _firstReadFailed = true;
+            report = _draft != null || ReadStoredDraft() != null;
+        }
+        if (!report || ServerSaveBlocked) return;
+        ServerSaveBlocked = true;
+        RaiseChanged();
+    }
+
+    private void WriteCache(IReadOnlyList<DashboardLayoutEntry> entries, DashboardLayoutPendingDraft? pending = null)
+    {
+        try { _cache.Write(_scope, DashboardLayoutDocument.SerializeCached(entries, pending)); } catch (Exception) { }
     }
 
     private void ClearCache()
