@@ -37,7 +37,7 @@
 - [x] Select and write a concrete brief for General plus the reusable guarded settings editor: `D:/SiloPlayer-build/server-update-nov14/configure-scope/general-implementation-brief.md`. Source audit section 5 supplies detailed layout and shared settings contracts.
 - [x] Implement that brief with failing behavioral tests first, then focused/full units and actual published native controls. Keep one writer per checkout and one implementation assignment at a time. Final General code c0a3a2cc; native General/Manage foundation/Monitor/Dashboard pass on candidate m. Main/Core unit source remains unchanged after the 6,980-test full run; final focused run passes 525 tests.
 - [x] Independently review the actual final diff against official source and repository standards. Claude review at bad7dc82; lead fixed Redis erasure, indicators, live-region events and Reload focus. Final code54afa5d4 includes refreshed Beta a06cc8b3 and passes7,019 full units,564 focused tests, Release publish and General/foundation/SubtitleFiles/Monitor/Dashboard native checks.
-- [ ] Record exact source/payload/fixture hashes, tests, captures and limits; verify PR size/identity, commit/push, open a qualifying Beta PR and immediately link it through T3.
+- [x] Record exact source/payload/fixture hashes, tests, captures and limits. Qualifying non-draft Beta PR173 is pushed and linked through T3; 35 files/43 commits at initial submission. General is Done, separately unmerged/unreleased.
 - [ ] Update the persistent route checklist with PR-linked Done entries; refresh Beta and continue the next independent group. Do not wait for the whole section before delivery.
 
 ## Execution rulings
