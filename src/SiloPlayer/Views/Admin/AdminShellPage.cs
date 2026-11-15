@@ -67,6 +67,7 @@ public sealed partial class AdminShellPage : Page
     private int _sessionCount;
     private bool _active;
     private bool _narrow;
+    private double _gutter;
     private ContentDialog? _restartDialog;
     private bool _restartPending;
 
@@ -261,6 +262,7 @@ public sealed partial class AdminShellPage : Page
     private void OnFrameNavigated(object sender, NavigationEventArgs e)
     {
         var route = (e.Parameter as AdminRouteRequest)?.Route ?? AdminRoute.Dashboard;
+        ApplyContentGutter();
         AttachRestartBanner();
         AttachLoggingHealth();
         _route = route;
@@ -503,13 +505,35 @@ public sealed partial class AdminShellPage : Page
         if (!narrow) CloseDrawer();
 
         // Gutter: 1rem / 1.5rem (≥640) / 2rem (≥1024) / 2.5rem (≥1280); lg:pt-16 lg:pb-8; ms-[240px].
-        var gutter = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
+        _gutter = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
         _contentHost.Margin = narrow ? new Thickness(0) : new Thickness(SidebarWidth, 0, 0, 0);
-        _contentColumn.Margin = narrow
-            ? new Thickness(gutter, 16, gutter, 16)
-            : new Thickness(gutter, 64, gutter, 32);
+        ApplyContentGutter();
         if (changed) RebuildSidebars();
         if (_restartBannerHost.Parent != null) RenderRestartBanner();
+    }
+
+    /// <summary>
+    /// WebUI pads its scrolling document with the gutters, so the scrollbar sits at the viewport
+    /// edge and wheel input over a gutter scrolls the page. An <see cref="IAdminGutterScrollPage"/>
+    /// gets the full content-area width: its scroller spans the gutters while its content keeps
+    /// the same centred max-width column. Other pages keep the gutter outside their frame.
+    /// </summary>
+    private void ApplyContentGutter()
+    {
+        var top = _narrow ? 16 : 64;
+        var bottom = _narrow ? 16 : 32;
+        if (_frame.Content is IAdminGutterScrollPage page)
+        {
+            _contentColumn.MaxWidth = double.PositiveInfinity;
+            _contentColumn.Margin = new Thickness(0, top, 0, bottom);
+            page.ScrollContent.MaxWidth = ContentMaxWidth;
+            page.ScrollContent.Margin = new Thickness(_gutter, 0, _gutter, 0);
+        }
+        else
+        {
+            _contentColumn.MaxWidth = ContentMaxWidth;
+            _contentColumn.Margin = new Thickness(_gutter, top, _gutter, bottom);
+        }
     }
 
     private void OpenDrawer()
@@ -1023,4 +1047,13 @@ public sealed partial class AdminShellPage : Page
         finally { _root.SizeChanged -= reposition; Close(); }
 
     }
+}
+
+/// <summary>
+/// An Admin page whose root vertical scroller should span the shell gutters, as WebUI's
+/// document scroll does; the shell applies the gutters and max width to <see cref="ScrollContent"/>.
+/// </summary>
+internal interface IAdminGutterScrollPage
+{
+    FrameworkElement ScrollContent { get; }
 }
