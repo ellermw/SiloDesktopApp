@@ -177,7 +177,7 @@ internal static partial class SubtitleIdentityNativeFixture
             finally { operations.Release(); }
         }
         var writes = wire.PreferenceWrites;
-        var held = server.HoldNextNative();
+        var held = server.HoldNext();
         try
         {
             await ControlAsync(new() { ["name"] = "select_subtitle_track", ["trackId"] = track.Index + 1 }).WaitAsync(TimeSpan.FromSeconds(2));

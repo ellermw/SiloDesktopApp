@@ -249,6 +249,8 @@ public partial class PlaybackManager
         if (_viewerSubtitle == null) return null;
         var inventory = CurrentSession?.SubtitleUrls ?? [];
         var sameFile = CurrentSession?.MediaFileId == _viewerSubtitleFile;
+        if (sameFile && SubtitleStoredIdentity.HasIdentity(_viewerSubtitle))
+            return SubtitleStoredIdentity.Resolve(_viewerSubtitle, inventory);
         var hasIdentity = !string.IsNullOrWhiteSpace(_viewerSubtitle.TrackId);
         if (hasIdentity)
         {
@@ -261,22 +263,11 @@ public partial class PlaybackManager
         {
             // The exact accepted row needs no identity bridge. Legacy servers
             // may omit both TrackId and the stored key until the next plan.
-            if (SubtitleStoredKey(_viewerSubtitle) == null && inventory.Contains(_viewerSubtitle))
+            if (inventory.Contains(_viewerSubtitle))
                 return _viewerSubtitle.Unplayable ? null : _viewerSubtitle;
-            // Refreshed downloads and plan rows share a stored ID/sync key even
-            // when only one inventory supplies TrackId. Never use list position
-            // to bridge that identity boundary.
-            var key = SubtitleStoredKey(_viewerSubtitle);
-            if (key != null)
-            {
-                var stored = inventory.Where(t => Equal(t.Source, _viewerSubtitle.Source) &&
-                    SubtitleStoredKey(t) == key).Take(2).ToArray();
-                if (stored.Length > 0)
-                    return stored.Length == 1 && !stored[0].Unplayable ? stored[0] : null;
-            }
             // An identified download must not fall back to metadata or a
             // reused index when its stable identity is missing.
-            if (hasIdentity || key != null) return null;
+            if (hasIdentity) return null;
             // Fully identityless legacy rows may use the strict metadata/index
             // fallback below, but cannot bridge to a newly identified download.
             inventory = inventory.Where(t => string.IsNullOrWhiteSpace(t.TrackId) &&

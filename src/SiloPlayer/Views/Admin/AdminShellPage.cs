@@ -16,15 +16,18 @@ using A = SiloPlayer.Controls.AdminMonitorUi;
 namespace SiloPlayer.Views.Admin;
 
 /// <summary>
-/// The Admin Monitor shell (WebUI <c>AdminLayout</c> + <c>AdminSidebar</c>). It
+/// The Admin shell (WebUI <c>AdminLayout</c> + <c>AdminSidebar</c>). It
 /// replaces the whole app shell: MainWindow hides its 260px sidebar and phone
 /// header while this page owns the frame. Desktop (≥1024): fixed 240px sidebar
-/// with logo, scoped search, the Monitor section only (Dashboard, Activity with
-/// live badge, Logs topic → Server Log / Client Diagnostics / Settings), build
-/// card and Back to App; Server Activity top-right, always shown. Narrow: glass
-/// header (menu, ▶ tile, ADMIN eyebrow + title, search, 44px Server Activity)
-/// and a 320px drawer. Admin pages load in the inner frame with an
-/// <see cref="AdminRouteRequest"/> and swap in place (no entrance animation).
+/// with logo, scoped search, the Monitor section (Dashboard, Activity with
+/// live badge, Logs topic → Server Log / Client Diagnostics / Settings), the
+/// Manage section's registered pages only (<see cref="AdminPageRegistry"/>;
+/// a topic appears with its first registered page), build card and Back to
+/// App; Server Activity top-right, always shown. Narrow: glass header (menu,
+/// ▶ tile, ADMIN eyebrow + title, search, 44px Server Activity) and a 320px
+/// drawer. Admin pages load in the inner frame with an
+/// <see cref="AdminRouteRequest"/> and swap in place (no entrance animation);
+/// <see cref="TryReplace"/> keeps a page's URL state for Back without remounting it.
 /// </summary>
 public sealed partial class AdminShellPage : Page
 {
@@ -54,6 +57,8 @@ public sealed partial class AdminShellPage : Page
     private readonly ServerActivityButton _desktopActivity = new();
     private readonly ServerActivityButton _narrowActivity = new() { ButtonSize = 44 };
     private readonly AdminNavTopicState _topics;
+    private readonly AdminPageRegistry _registry;
+    private readonly IReadOnlyList<IAdminNavBadgeSource> _badgeSources;
     private MonitorAuthorityLease? _lease;
     private IDisposable? _reads;
     private AdminRoute _route = AdminRoute.Dashboard;
@@ -84,6 +89,11 @@ public sealed partial class AdminShellPage : Page
             _settings = App.Services.GetService<SettingsService>();
         }
         catch (InvalidOperationException) { }
+        _registry = CreateRegistry();
+        IEnumerable<IAdminNavBadgeSource> badgeSources = [];
+        try { badgeSources = App.Services.GetServices<IAdminNavBadgeSource>(); }
+        catch (InvalidOperationException) { }
+        _badgeSources = badgeSources.Where(source => _registry.IsRegistered(source.Route)).ToArray();
         _topics = new AdminNavTopicState(ReadTopics, WriteTopics, null);
         _frame.Navigated += OnFrameNavigated;
         BuildLayout();
@@ -95,16 +105,88 @@ public sealed partial class AdminShellPage : Page
     /// <summary>The route currently shown (tests and MainWindow chrome).</summary>
     public AdminRoute CurrentRoute => _route;
 
-    /// <summary>Opens a Monitor route: in the shell when it is showing, otherwise enters Admin.</summary>
+    /// <summary>The shown location, including URL state a page replaced in place.</summary>
+    public AdminRouteRequest CurrentRequest => _request;
+
+    /// <summary>The built-in Monitor pages; Manage pages arrive only through DI <see cref="AdminPageRegistration"/>s.</summary>
+    private static readonly AdminPageRegistration[] MonitorPages =
+    [
+        new(AdminRoute.Dashboard, typeof(AdminDashboardPage)),
+        new(AdminRoute.Activity, typeof(AdminActivityPage)),
+        new(AdminRoute.ServerLog, typeof(AdminLogsPage)),
+        new(AdminRoute.ClientDiagnostics, typeof(AdminDiagnosticsPage)),
+        new(AdminRoute.LoggingSettings, typeof(AdminLoggingSettingsPage)),
+    ];
+
+    /// <summary>The Monitor pages plus every registered Manage page; a registration that is not a Page fails here.</summary>
+    public static AdminPageRegistry CreateRegistry()
+    {
+        IEnumerable<AdminPageRegistration> registrations = [];
+        try { registrations = App.Services.GetServices<AdminPageRegistration>(); }
+        catch (InvalidOperationException) { }
+        var registry = new AdminPageRegistry(MonitorPages, registrations);
+        foreach (var route in registry.Routes)
+        {
+            if (!typeof(Page).IsAssignableFrom(registry.PageTypeOf(route)))
+                throw new InvalidOperationException($"Admin route {route} is not registered with a Page type.");
+            // A message key must never render as a sidebar label, title or search entry.
+            if (AdminRouteCatalog.MissingTextKeys(route) is { Count: > 0 } missing)
+                throw new InvalidOperationException($"Admin route {route} is registered without catalog text: {string.Join(", ", missing)}.");
+        }
+        return registry;
+    }
+
+    /// <summary>Whether a location has a native page (registered route, valid descendant path).</summary>
+    public static bool CanOpen(AdminRouteRequest request) =>
+        App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell
+            ? shell._registry.CanOpen(request) : CreateRegistry().CanOpen(request);
+
+    /// <summary>Opens an admin location: in the shell when it is showing, otherwise enters Admin. False when it has no native page.</summary>
     public static bool Open(AdminRouteRequest request)
     {
         var navigation = App.Services.GetService<NavigationService>();
         if (navigation?.Frame?.Content is AdminShellPage shell)
         {
+            if (!shell._registry.CanOpen(request)) return false;
             shell.Navigate(request);
             return true;
         }
+        if (!CreateRegistry().CanOpen(request)) return false;
         return navigation?.Navigate(typeof(AdminShellPage), request) == true;
+    }
+
+    /// <summary>
+    /// Opens a WebUI admin href (a cross-link or server-provided link) through
+    /// the WebUI's redirects, showing a moved tab's notice. Returns the
+    /// resolution so a caller can present an unsupported or unavailable target
+    /// truthfully; nothing opens unless it has a native page.
+    /// </summary>
+    public static AdminRouteResolution? TryOpenHref(string href)
+    {
+        if (!AdminRouteCatalog.TryResolve(href, out var resolution)) return null;
+        if (resolution.IsCatchAll) return resolution with { Kind = AdminRouteResolutionKind.Unsupported, Request = null };
+        if (resolution is { Kind: AdminRouteResolutionKind.Route, Request: { } request } && Open(request) && resolution.NoticeTitleKey is { } title)
+            App.Services.GetService<SiloPlayer.Services.ToastService>()?.Info(
+                AdminText.T(title) + (resolution.NoticeDescriptionKey is { } description ? " " + AdminText.T(description) : ""));
+        return resolution;
+    }
+
+    /// <summary>
+    /// Replaces the shown page's location in place (WebUI <c>navigate(…, {replace: true})</c>):
+    /// URL state such as tabs and filters, or Collections <c>/new</c> becoming
+    /// <c>/:id/edit</c>. The page stays mounted and Back later returns to the
+    /// replaced location. Only the shown page may replace, and only within its route.
+    /// </summary>
+    public static bool TryReplace(Page owner, AdminRouteRequest request) =>
+        App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell && shell.ReplaceRequest(owner, request);
+
+    public bool ReplaceRequest(Page owner, AdminRouteRequest request)
+    {
+        if (!_active || !ReferenceEquals(_frame.Content, owner) || request.Route != _route || !_registry.CanOpen(request)) return false;
+        if (request.Equals(_request)) return true;
+        _request = request;
+        ApplyRouteTitles();
+        return true;
     }
 
     /// <summary>Back within admin pages first (Alt+Left, mouse back, gamepad B).</summary>
@@ -112,9 +194,19 @@ public sealed partial class AdminShellPage : Page
     private AdminLoggingSettingsPage? _loggingHealthSource;
     private bool _loggingRestartObserved;
 
-    public bool RequiresLeaveConfirmation => _frame.Content is AdminLoggingSettingsPage logging && logging.SettingsHealth.DirtyCount > 0;
+    public bool RequiresLeaveConfirmation => _frame.Content switch
+    {
+        AdminLoggingSettingsPage logging => logging.SettingsHealth.DirtyCount > 0,
+        IAdminNavigationGuard guard => guard.RequiresLeaveConfirmation,
+        _ => false,
+    };
 
-    public Task<bool> CanLeaveAsync() => _frame.Content is IAdminLoggingNavigationGuard guard ? guard.CanLeaveAsync() : Task.FromResult(true);
+    public Task<bool> CanLeaveAsync() => _frame.Content switch
+    {
+        IAdminLoggingNavigationGuard logging => logging.CanLeaveAsync(),
+        IAdminNavigationGuard guard => guard.CanLeaveAsync(),
+        _ => Task.FromResult(true),
+    };
 
     public bool TryGoBack()
     {
@@ -148,8 +240,10 @@ public sealed partial class AdminShellPage : Page
         }
         _authority.AvailabilityChanged += OnAvailabilityChanged;
         if (_store != null) _store.Changed += OnStoreChanged;
+        foreach (var source in _badgeSources) source.Changed += OnBadgeChanged;
         Recapture();
-        Navigate(e.Parameter as AdminRouteRequest ?? new AdminRouteRequest(AdminRoute.Dashboard));
+        // Like the WebUI catch-all, a location without a native page lands on the Dashboard.
+        Navigate(e.Parameter is AdminRouteRequest requested && _registry.CanOpen(requested) ? requested : new AdminRouteRequest(AdminRoute.Dashboard));
         ApplyResponsiveLayout(ActualWidth > 0 ? ActualWidth : App.MainWindowInstance?.Bounds.Width ?? 1440);
     }
 
@@ -164,11 +258,13 @@ public sealed partial class AdminShellPage : Page
             case AdminLogsPage page: page.SuspendMonitor(); break;
             case AdminDiagnosticsPage page: page.SuspendMonitor(); break;
             case AdminLoggingSettingsPage page: page.SuspendMonitor(); break;
+            case IAdminPageSuspension page: page.SuspendAdminPage(); break;
         }
         Retire();
         _active = false;
         if (_authority != null) _authority.AvailabilityChanged -= OnAvailabilityChanged;
         if (_store != null) _store.Changed -= OnStoreChanged;
+        foreach (var source in _badgeSources) source.Changed -= OnBadgeChanged;
         _desktopActivity.Eligible = false;
         _narrowActivity.Eligible = false;
     }
@@ -242,37 +338,73 @@ public sealed partial class AdminShellPage : Page
 
     public async void Navigate(AdminRouteRequest request)
     {
-        if (!_active || !await CanLeaveAsync() || !_active) return;
+        // A route without a native page is never opened and never falls back to another page.
+        if (!_active || PageType(request) is not { } type) return;
+        if (!await CanLeaveAsync() || !_active) return;
         CloseDrawer();
-        _request = request;
-        var type = PageType(request.Route);
-        _frame.Navigate(type, request, new SuppressNavigationTransitionInfo());
+        // A fresh instance per entry lets a replaced location find its own stack entry.
+        _frame.Navigate(type, request with { }, new SuppressNavigationTransitionInfo());
     }
 
-    /// <summary>The five Monitor routes; nothing outside Monitor is reachable from the shell.</summary>
-    public static Type PageType(AdminRoute route) => route switch
-    {
-        AdminRoute.Activity => typeof(AdminActivityPage),
-        AdminRoute.ServerLog => typeof(AdminLogsPage),
-        AdminRoute.ClientDiagnostics => typeof(AdminDiagnosticsPage),
-        AdminRoute.LoggingSettings => typeof(AdminLoggingSettingsPage),
-        _ => typeof(AdminDashboardPage),
-    };
+    /// <summary>The registered page of a location, or null when it has none.</summary>
+    public Type? PageType(AdminRouteRequest request) => _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
 
     private void OnFrameNavigated(object sender, NavigationEventArgs e)
     {
-        var route = (e.Parameter as AdminRouteRequest)?.Route ?? AdminRoute.Dashboard;
+        PersistDepartedLocation();
+        var request = e.Parameter as AdminRouteRequest ?? new AdminRouteRequest(AdminRoute.Dashboard);
+        _shownParameter = e.Parameter as AdminRouteRequest;
+        _request = request;
+        var route = request.Route;
         ApplyContentGutter();
         AttachRestartBanner();
         AttachLoggingHealth();
         _route = route;
         _topics.Arrive(AdminNavigation.TopicOf(route));
-        _narrowTitle.Text = AdminNavigation.HeaderTitle(route);
-        App.MainWindowInstance?.SetDynamicTitle(AdminNavigation.TabTitle(route));
+        ApplyRouteTitles();
         RebuildSidebars();
         RouteChanged?.Invoke(route);
         if (_lease != null) _ = LoadServerStatusAsync(_lease, force: false);
     }
+
+    private AdminRouteRequest? _shownParameter;
+
+    private void ApplyRouteTitles()
+    {
+        _narrowTitle.Text = AdminNavigation.HeaderTitle(_request);
+        App.MainWindowInstance?.SetDynamicTitle(AdminNavigation.TabTitle(_request));
+    }
+
+    /// <summary>
+    /// The departed page's stack entry still holds the location it was opened
+    /// with; give it the location the page last replaced in place, so Back and
+    /// Forward return to the same tab, filter or editor id.
+    /// </summary>
+    private void PersistDepartedLocation()
+    {
+        if (_shownParameter is not { } original || ReferenceEquals(original, _request)) return;
+        // The entry carries this exact instance; value equality is only a fallback should the
+        // parameter come back as another instance.
+        if (!Replace(_frame.BackStack, byReference: true) && !Replace(_frame.ForwardStack, byReference: true)
+            && !Replace(_frame.BackStack, byReference: false)) Replace(_frame.ForwardStack, byReference: false);
+
+        bool Replace(IList<PageStackEntry> stack, bool byReference)
+        {
+            for (var index = stack.Count - 1; index >= 0; index--)
+            {
+                var entry = stack[index];
+                if (byReference ? !ReferenceEquals(entry.Parameter, original) : !original.Equals(entry.Parameter as AdminRouteRequest)) continue;
+                stack[index] = new PageStackEntry(entry.SourcePageType, _request, entry.NavigationTransitionInfo);
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private void OnBadgeChanged() => DispatcherQueue?.TryEnqueue(() =>
+    {
+        if (_active && _lease?.IsCurrent == true) RebuildSidebars();
+    });
 
     private void AttachLoggingHealth()
     {
@@ -637,17 +769,27 @@ public sealed partial class AdminShellPage : Page
             grid.Children.Add(search);
         }
 
-        // Monitor section.
-        var nav = new StackPanel { Margin = new Thickness(12, 0, 12, 0) };
-        var heading = A.Eyebrow(AdminText.T("web.admin.shell.nav.section.monitor"), A.Muted, 180);
-        heading.Margin = new Thickness(8, 0, 8, 8);
-        nav.Children.Add(heading);
-        var list = new StackPanel { Spacing = 2 };
-        list.Children.Add(NavItem(AdminRoute.Dashboard, "layout-dashboard", null, embedded));
-        list.Children.Add(NavItem(AdminRoute.Activity, "radio",
-            _sessionCount > 0 ? A.LiveBadge(AdminText.T("web.admin.shell.sidebar.liveSessions", AdminText.Count(_sessionCount)), false) : null, embedded));
-        list.Children.Add(LogsTopic(embedded));
-        nav.Children.Add(list);
+        // Sections (space-y-5): Monitor, then Manage with only its registered pages.
+        var nav = new StackPanel { Margin = new Thickness(12, 0, 12, 0), Spacing = 20 };
+        foreach (var section in AdminRouteCatalog.Sections)
+        {
+            var entries = section.Entries.Where(entry => entry switch
+            {
+                AdminNavLeaf leaf => _registry.IsRegistered(leaf.Route),
+                AdminNavTopic topic => _registry.HasAny(topic),
+                _ => false,
+            }).ToArray();
+            if (entries.Length == 0) continue;
+            var block = new StackPanel();
+            var heading = A.Eyebrow(AdminText.T(section.LabelKey), A.Muted, 180);
+            heading.Margin = new Thickness(8, 0, 8, 8);
+            block.Children.Add(heading);
+            var list = new StackPanel { Spacing = 2 };
+            foreach (var entry in entries)
+                list.Children.Add(entry is AdminNavTopic topic ? TopicEntry(topic, embedded) : NavItem((AdminNavLeaf)entry, embedded));
+            block.Children.Add(list);
+            nav.Children.Add(block);
+        }
         var scroller = new ScrollViewer { Content = nav, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroller, 2);
         grid.Children.Add(scroller);
@@ -684,8 +826,56 @@ public sealed partial class AdminShellPage : Page
 
     private static Color AccentFill => A.ColorOf("SurfaceHoverColor", A.Surface);
 
-    private FrameworkElement NavItem(AdminRoute route, string icon, UIElement? badge, bool embedded)
+    /// <summary>A leaf's badge: Activity keeps its live-session pill; other routes come from their registered source.</summary>
+    private AdminNavBadge? BadgeOf(AdminRoute route)
     {
+        if (route == AdminRoute.Activity)
+            return _sessionCount > 0
+                ? new AdminNavBadge(AdminNavBadgeKind.Live, _sessionCount, AdminText.T("web.admin.shell.sidebar.liveSessions", AdminText.Count(_sessionCount)))
+                : null;
+        if (_lease?.IsCurrent != true) return null;
+        foreach (var source in _badgeSources)
+            if (source.Route == route && source.Current is { } badge) return badge;
+        return null;
+    }
+
+    private static FrameworkElement? BadgeView(AdminNavBadge? badge)
+    {
+        if (badge == null) return null;
+        switch (badge.Kind)
+        {
+            case AdminNavBadgeKind.Live: return A.LiveBadge(badge.AccessibleLabel, false);
+            case AdminNavBadgeKind.Attention:
+            {
+                // SideNavAttentionDot: h-2 w-2 rounded-full bg-amber-400 with a screen-reader label.
+                var dot = new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = A.Solid(A.Amber400), VerticalAlignment = VerticalAlignment.Center };
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dot, badge.AccessibleLabel);
+                return dot;
+            }
+            default:
+            {
+                // bg-primary text-primary-foreground rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums.
+                var pill = new Border
+                {
+                    CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 1, 6, 1), Background = A.Solid(A.Primary), VerticalAlignment = VerticalAlignment.Center,
+                    Child = new TextBlock
+                    {
+                        Text = AdminText.FormatNumber(badge.Count), FontSize = 10, FontWeight = FontWeights.SemiBold,
+                        Foreground = A.Solid(A.ColorOf("AccentForegroundColor", Windows.UI.Color.FromArgb(255, 0x14, 0x14, 0x17))),
+                    },
+                };
+                pill.SizeChanged += (_, _) => pill.CornerRadius = new CornerRadius(Math.Min(pill.ActualWidth, pill.ActualHeight) / 2);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(pill, badge.AccessibleLabel);
+                return pill;
+            }
+        }
+    }
+
+    private FrameworkElement NavItem(AdminNavLeaf leaf, bool embedded)
+    {
+        var route = leaf.Route;
+        var icon = leaf.Icon;
+        var badge = BadgeView(BadgeOf(route));
         var active = _route == route;
         var color = active ? A.Primary : A.Muted;
         var grid = new Grid { ColumnSpacing = 10 };
@@ -721,39 +911,43 @@ public sealed partial class AdminShellPage : Page
         return host;
     }
 
-    private FrameworkElement LogsTopic(bool embedded)
+    /// <summary>A collapsible topic (SideNavTopic) listing only its registered pages; closed, it shows its first child badge.</summary>
+    private FrameworkElement TopicEntry(AdminNavTopic topic, bool embedded)
     {
-        var open = _topics.IsOpen(AdminNavigation.LogsTopicId);
+        var open = _topics.IsOpen(topic.Id);
         var grid = new Grid { ColumnSpacing = 10 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var color = open ? A.Foreground : A.Muted;
-        grid.Children.Add(A.Icon("scroll-text", 18, color));
-        var label = A.Text(AdminText.T("web.admin.shell.nav.topic.logs"), 13, color, FontWeights.Medium);
+        grid.Children.Add(A.Icon(topic.Icon, 18, color));
+        var label = A.Text(AdminText.T(topic.LabelKey), 13, color, FontWeights.Medium);
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
-        var chevron = A.Icon(open ? "chevron-down" : "chevron-right", 14, A.Muted);
-        Grid.SetColumn(chevron, 2);
-        grid.Children.Add(chevron);
-        var heading = A.Plain(grid, AdminText.T("web.admin.shell.nav.topic.logs"), new Thickness(12, 10, 12, 10));
+        // ms-auto flex items-center gap-2: the folded badge, then the chevron.
+        var trailing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        if (BadgeView(AdminNavigation.TopicBadge(topic, open, _registry.IsRegistered, BadgeOf)) is { } folded) trailing.Children.Add(folded);
+        trailing.Children.Add(A.Icon(open ? "chevron-down" : "chevron-right", 14, A.Muted));
+        Grid.SetColumn(trailing, 2);
+        grid.Children.Add(trailing);
+        var heading = A.Plain(grid, AdminText.T(topic.LabelKey), new Thickness(12, 10, 12, 10));
         heading.CornerRadius = new CornerRadius(12);
         heading.HorizontalAlignment = HorizontalAlignment.Stretch;
         if (embedded) heading.MinHeight = 44;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(heading, open ? "expanded" : "collapsed");
         heading.Click += (_, _) =>
         {
-            _topics.Toggle(AdminNavigation.LogsTopicId);
+            _topics.Toggle(topic.Id);
             RebuildSidebars();
         };
 
-        var topic = new StackPanel { Children = { heading } };
+        var entry = new StackPanel { Children = { heading } };
         if (open)
         {
             var children = new StackPanel { Spacing = 1 };
-            foreach (var route in new[] { AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings })
-                children.Children.Add(SubItem(route, embedded));
-            topic.Children.Add(new Border
+            foreach (var leaf in topic.Leaves.Where(leaf => _registry.IsRegistered(leaf.Route)))
+                children.Children.Add(SubItem(leaf.Route, embedded));
+            entry.Children.Add(new Border
             {
                 Margin = new Thickness(21, 2, 0, 6),
                 Padding = new Thickness(12, 0, 0, 0),
@@ -762,18 +956,30 @@ public sealed partial class AdminShellPage : Page
                 Child = children,
             });
         }
-        return topic;
+        return entry;
     }
 
     private FrameworkElement SubItem(AdminRoute route, bool embedded)
     {
+        // Descendant pages (account detail, collection editor, device detail) keep their leaf selected.
         var active = _route == route;
         var label = A.Text(AdminNavigation.SidebarLabel(route), 12.5, active ? A.Primary : A.Muted,
             active ? FontWeights.Medium : FontWeights.Normal);
-        var button = A.Plain(label, AdminNavigation.SidebarLabel(route), new Thickness(10, 6, 10, 6));
+        FrameworkElement content = label;
+        if (BadgeView(BadgeOf(route)) is { } badge)
+        {
+            var row = new Grid { ColumnSpacing = 8 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.Children.Add(label);
+            Grid.SetColumn(badge, 1);
+            row.Children.Add(badge);
+            content = row;
+        }
+        var button = A.Plain(content, AdminNavigation.SidebarLabel(route), new Thickness(10, 6, 10, 6));
         button.CornerRadius = new CornerRadius(8);
         button.HorizontalAlignment = HorizontalAlignment.Stretch;
-        button.HorizontalContentAlignment = HorizontalAlignment.Left;
+        button.HorizontalContentAlignment = content == label ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
         if (embedded) button.MinHeight = 44;
         if (active) button.Background = A.Solid(AccentFill);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, active ? "current page" : "");
@@ -989,7 +1195,10 @@ public sealed partial class AdminShellPage : Page
         }
         void Render()
         {
-            matches = AdminNavigation.Search(query.Text); buttons.Clear(); results.Children.Clear();
+            // Registered pages only, grouped by section loose pages and by topic, so "Settings" always reads under its topic.
+            var groups = AdminNavigation.SearchGroups(query.Text, _registry.IsRegistered);
+            var groupOf = groups.SelectMany(found => found.Pages.Select(page => (page.Route, found.LabelKey))).ToDictionary(pair => pair.Route, pair => pair.LabelKey);
+            matches = groups.SelectMany(found => found.Pages).ToArray(); buttons.Clear(); results.Children.Clear();
             if (matches.Count == 0)
             {
                 var empty = A.Text(AdminText.T("web.admin.homeRows.commandDialog.noMatches"), 14, A.Muted);
@@ -1002,7 +1211,7 @@ public sealed partial class AdminShellPage : Page
                 for (var index = 0; index < matches.Count; index++)
                 {
                     var page = matches[index]; var targetIndex = index;
-                    var section = page.Route is AdminRoute.Dashboard or AdminRoute.Activity ? "web.admin.shell.nav.section.monitor" : "web.admin.shell.nav.topic.logs";
+                    var section = groupOf[page.Route];
                     if (group != section)
                     {
                         results.Children.Add(new Border { Padding = new Thickness(8, group == null ? 0 : 8, 8, 4), Child = A.Text(AdminText.T(section), 12, A.Muted, FontWeights.Medium) });
