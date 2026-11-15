@@ -27,6 +27,32 @@ cleanup was not retried after the earlier automatic approval rejection, with
 
 ---
 
+# November 14 - Admin Manage navigation and bounded-data foundation
+
+Adds six Manage topics and 21 route identities, immutable nested/query state,
+registered-page-only navigation/search, shared authority and dirty guards,
+request-bound cursor pagination and scope-bound complete collection snapshots.
+This foundation registers no production Manage page. Monitor remains available.
+
+Reference: official WebUI 1452ea2d10efbe7d3ea5ce7140fb49756b493670. A fresh
+fetch at fd0d8c6c09af11aa2b165034e6c553a45334f2fd adds watchsync and player
+marker changes; foundation reference files are unchanged. Version 1.2.1064
+remains under Beta pipeline control. Independent review findings were resolved;
+see docs/parity/admin-manage-foundation.md for the frozen domain contracts.
+
+Focused checks passed 157 tests. Initial full verification passed 6,746 unit
+tests, Release publish/native build, admin-manage-foundation and admin-monitor.
+The native fixture verifies URL replacement/Back, registered badges, generic
+leave guards and outer-page suspension with synthetic data. Final dependency
+reconciliation verification is recorded in the delivery receipt under
+D:/SiloPlayer-build/server-update-nov14/manage-foundation/.
+No finished Manage domain, live-server or full visual/DPI parity claim.
+Installed player/settings untouched. Shared reusable generated payloads remain
+active; cleanup was not retried after the prior automatic approval rejection,
+with 0 GiB recovered on C: and D:.
+
+---
+
 # November 14 — Dashboard layout intent and current server presentation
 
 Official source pin: 1452ea2d10efbe7d3ea5ce7140fb49756b493670. The relevant
