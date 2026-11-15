@@ -452,9 +452,13 @@ internal static class AdminEmailSettingsNativeFixture
             Check(recipient.Text.Length == 0 && TestResult(page).Text.Length == 0, "Back starts without the previous recipient or result");
             recipient.Text = "admin@example.test"; await Click(page, "EmailSendTest");
             await Until(() => !controller.State.TestPending && controller.State.TestResult != null, "post-back test");
+            // PasswordChanged is deferred: retirement must clear typing even before the controller sees it.
+            secret = Descendants(page).OfType<PasswordBox>().Single();
+            secret.Password = "synthetic-retirement-race";
             auth.SetCurrentUser(new UserInfo { Id = "1", Role = "user", Username = "synthetic-admin" }); await Task.Delay(200);
             Check(controller.State.Values.Count == 0 && name.Text.Length == 0 && recipient.Text.Length == 0 && TestResult(page).Text.Length == 0,
                 "authority retirement clears values, recipient and test result");
+            Check(secret.Password.Length == 0, "authority retirement clears password typing awaiting PasswordChanged");
         }
         finally
         {

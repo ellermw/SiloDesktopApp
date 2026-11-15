@@ -275,7 +275,8 @@ public sealed partial class AdminEmailSettingsPage : Page, IAdminGutterScrollPag
                 if (control is TextBox text && text.Text != value) text.Text = value;
                 else if (control is PasswordBox secret)
                 {
-                    if (secret.Password != value && secret.Password == _passwordSynced) { secret.Password = value; _passwordSynced = value; }
+                    // Retirement always clears private text, including a PasswordChanged event still in flight.
+                    if (secret.Password != value && (!current || secret.Password == _passwordSynced)) { secret.Password = value; _passwordSynced = value; }
                 }
                 else if (control is ToggleSwitch toggle) toggle.IsOn = value == "true";
                 else if (control is ComboBox select) SetSelected(select, C.DisplaySecurity(value));
