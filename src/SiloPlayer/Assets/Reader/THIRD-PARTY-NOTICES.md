@@ -21,6 +21,11 @@ the exact Silo reference, rather than a newly resolved dependency build.
 
 Local adaptations:
 
+- `search.js`, `view.js`: port excerpt windows, cross-node excerpt indices,
+  1000-result search cap, cooperative yields, abort checks and truncation from
+  official Silo Server commit `7115ee7028c7c9bde9e201fd5f54e87ea70de3a7`
+  (`web/vendor/foliate-js`; upstream change #3323 / `8ef7dd85`). Other Foliate
+  functionality retains the September reference and the adaptations below.
 - `pdf.js`: replace bundler-only PDF.js alias/global and public paths with local
   relative ES module, worker, stylesheet, CMap, font and WASM paths.
 - `pdf.js`: present the actual PDF.js page bitmap as an inert PNG image in the

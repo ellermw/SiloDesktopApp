@@ -1194,9 +1194,9 @@ public sealed class LibraryBackgroundRefreshTests
             wire.Titles.Insert(450, ("new-title", "Brand New"));
             wire.ChangeSnapshotAt = 560;
             wire.SnapshotChangesRemaining = changes;
-            // A completed retry restarts both the exact-count and letter-index reads.
+            // A completed retry starts independent exact-count and letter-index reads.
             // Either can update the extent, so hold both until the retained-extent
-            // assertion has checked the state before those optional reads complete.
+            // assertion has run. The fresh index legitimately supplies a provisional total.
             wire.HoldCount = wire.HoldLetters = true;
             var requests = wire.Requests.Count;
             Reconnect(wire);
