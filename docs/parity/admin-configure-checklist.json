@@ -3,7 +3,7 @@
   "officialCommit": "c11b0a968f0d5980b7005579fb95acc2d11d8321",
   "statusRule": "Done = verified and pushed to a PR with its link. In progress = implementation/review/testing, not yet pushed. Remaining = unstarted or blocked, with reason. Merged/released are separate.",
   "inventory": "3 topics, 19 leaves, 88 nested feature entries; nested route patterns remain owned by their leaves.",
-  "scopeNote": "General is verified and pushed to PR173. Catalog coverage does not establish implementation: other18 leaves and their nested functionality remain unfinished.",
+  "scopeNote": "General is verified and pushed to PR173. Email (C2a) is implemented and locally verified, in progress until pushed to a PR. Catalog coverage does not establish implementation: the other 17 leaves and their nested functionality remain unfinished.",
   "dependencies": [
     "https://github.com/ellermw/SiloDesktopApp/pull/167",
     "https://github.com/ellermw/SiloDesktopApp/pull/171"
@@ -402,8 +402,10 @@
         "Test email recipient + Send test (POST /admin/email/test)"
       ],
       "children": [],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Implemented and verified locally at e7727bbf on General PR173; awaiting lead review and a pushed Beta PR. See docs/parity/admin-email.md.",
+      "verifiedCode": "e7727bbfa2bb77d967b41cde695e526cd2f5a2b7",
+      "dependsOn": "https://github.com/ellermw/SiloDesktopApp/pull/173"
     },
     {
       "id": "notifications",
