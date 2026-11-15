@@ -1,0 +1,154 @@
+using System.Globalization;
+using SiloPlayer.Core.Localization;
+
+namespace SiloPlayer.Core.Services.Admin;
+
+/// <summary>
+/// Interface text for Admin › Playback › History and Skip Markers. The shared
+/// silo-translations catalog excludes <c>web.admin.*</c>, so those keys and
+/// their English ICU patterns are copied verbatim from official Silo
+/// e61187daaf72e8accad486eb2f632c753ae211d5 <c>web/src/locales/en.json</c>, as
+/// the other Admin domains do. Every other key (<c>web.markers.kind.*</c>,
+/// <c>web.common.*</c>) is read from the shipped catalog in the interface
+/// language through <see cref="AppStrings"/>. <c>admin.native.*</c> keys are
+/// native-only English for states the WebUI does not have (bounded pickers and
+/// windows) and must never be presented as official catalog text.
+/// </summary>
+public static class AdminPlaybackAuditText
+{
+    private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["web.admin.activity.page.refresh"] = "Refresh",
+        ["web.admin.activity.page.refreshing"] = "Refreshing...",
+        ["web.admin.activity.row.ffmpegLogs"] = "FFmpeg Logs",
+        ["web.admin.activity.row.viewLogs"] = "View Logs",
+        ["web.admin.activity.userFallback"] = "User #{id}",
+        ["web.admin.errors.playbackHistoryInvalid"] = "Invalid playback history page. Reload the page.",
+        ["web.admin.errors.userPaginationInvalid"] = "Invalid user pagination. Reload the list.",
+        ["web.admin.history.column.ended"] = "Ended",
+        ["web.admin.history.column.logs"] = "Logs",
+        ["web.admin.history.column.media"] = "Media",
+        ["web.admin.history.column.method"] = "Method",
+        ["web.admin.history.column.profile"] = "Profile",
+        ["web.admin.history.column.status"] = "Status",
+        ["web.admin.history.column.user"] = "User",
+        ["web.admin.history.column.watchTime"] = "Watch Time",
+        ["web.admin.history.duration.hoursMinutes"] = "{hours}h {minutes}m",
+        ["web.admin.history.duration.minutesSeconds"] = "{minutes}m {seconds}s",
+        ["web.admin.history.duration.none"] = "0m",
+        ["web.admin.history.duration.seconds"] = "{seconds}s",
+        ["web.admin.history.empty.body"] = "No playback history matches the current filters. Try adjusting the user, profile, or completion filters.",
+        ["web.admin.history.empty.title"] = "No playback history",
+        ["web.admin.history.filter.allAttempts"] = "All attempts",
+        ["web.admin.history.filter.allProfiles"] = "All profiles",
+        ["web.admin.history.filter.allUsers"] = "All users",
+        ["web.admin.history.filter.chooseUserFirst"] = "Choose a user first",
+        ["web.admin.history.filter.completed"] = "Completed",
+        ["web.admin.history.filter.partial"] = "Partial",
+        ["web.admin.history.filter.reset"] = "Reset",
+        ["web.admin.history.itemFilterActive"] = "Item filter active",
+        ["web.admin.history.loadError"] = "Failed to load playback history",
+        ["web.admin.history.mediaType.episode"] = "episode",
+        ["web.admin.history.mediaType.movie"] = "movie",
+        ["web.admin.history.mediaType.series"] = "series",
+        ["web.admin.history.mediaType.unknown"] = "unknown",
+        ["web.admin.history.pagination.next"] = "Next",
+        ["web.admin.history.pagination.pageSize"] = "{count, plural, one {# row} other {# rows}}",
+        ["web.admin.history.pagination.previous"] = "Previous",
+        ["web.admin.history.pagination.range"] = "Showing {from}-{to} of {total}",
+        ["web.admin.history.recent.autoRefreshing"] = "Auto-refreshing",
+        ["web.admin.history.recent.heading"] = "Recent Playback",
+        ["web.admin.history.row.completed"] = "Completed",
+        ["web.admin.history.row.estimatedDuration"] = "≈ {duration}",
+        ["web.admin.history.row.estimatedTitle"] = "Estimated: recorded before watch time was measured",
+        ["web.admin.history.row.meta"] = "{media_type} · session {session}",
+        ["web.admin.history.row.ofDuration"] = "of {duration}",
+        ["web.admin.history.row.partial"] = "Partial",
+        ["web.admin.history.row.started"] = "started {time}",
+        ["web.admin.history.stats.completed"] = "Completed",
+        ["web.admin.history.stats.partial"] = "Partial",
+        ["web.admin.history.stats.visibleRows"] = "Visible Rows",
+        ["web.admin.history.subtitle"] = "Finalized playback attempts across all users and profiles.",
+        ["web.admin.history.title"] = "Playback History",
+        ["web.admin.markers.history.actionCleared"] = "Cleared",
+        ["web.admin.markers.history.actionSet"] = "Set",
+        ["web.admin.markers.history.column.actor"] = "Actor",
+        ["web.admin.markers.history.column.change"] = "Change",
+        ["web.admin.markers.history.column.item"] = "Item",
+        ["web.admin.markers.history.column.request"] = "Request",
+        ["web.admin.markers.history.column.segment"] = "Segment",
+        ["web.admin.markers.history.column.when"] = "When",
+        ["web.admin.markers.history.empty"] = "No marker edits recorded.",
+        ["web.admin.markers.history.fileFallback"] = "File {id}",
+        ["web.admin.markers.history.impersonatedVia"] = "via {name}",
+        ["web.admin.markers.history.itemWithType"] = "{title} ({type})",
+        ["web.admin.markers.history.limitLabel"] = "History limit",
+        ["web.admin.markers.history.limitOption"] = "{count, plural, one {# row} other {# rows}}",
+        ["web.admin.markers.history.loadFailed"] = "Failed to load marker history.",
+        ["web.admin.markers.history.mediaFileFallback"] = "Media file {id}",
+        ["web.admin.markers.history.noRequestId"] = "No request id",
+        ["web.admin.markers.history.rangeChange"] = "{before} -> {after}",
+        ["web.admin.markers.history.rangeNone"] = "none",
+        ["web.admin.markers.history.refresh"] = "Refresh",
+        ["web.admin.markers.history.subtitle"] = "Recent manual intro, recap, credits, and preview marker edits across the server.",
+        ["web.admin.markers.history.title"] = "Marker History",
+        ["web.admin.markers.history.unknownUser"] = "Unknown user",
+        ["web.admin.users.detail.common.episodeCode"] = "S{season}E{episode}",
+
+        // Native-only English (no official equivalent): bounded reads must say they are bounded.
+        ["admin.native.playbackAudit.usersTruncated"] = "Only the first {count_text} accounts are listed.",
+        ["admin.native.playbackAudit.profilesTruncated"] = "Only the first {count_text} profiles are listed.",
+        ["admin.native.playbackAudit.windowBounded"] = "Showing the {count_text} most recent matching attempts. Older attempts are not loaded.",
+        ["admin.native.playbackAudit.userFilterLabel"] = "User",
+        ["admin.native.playbackAudit.profileFilterLabel"] = "Profile",
+        ["admin.native.playbackAudit.completionFilterLabel"] = "Completion",
+        ["admin.native.playbackAudit.pageSizeLabel"] = "Rows per page",
+        ["admin.native.playbackAudit.loading"] = "Loading",
+    };
+
+    /// <summary>Keys from the shared catalog this domain shows (localized there).</summary>
+    public static IReadOnlyList<string> CatalogKeys { get; } =
+    [
+        "web.markers.kind.intro", "web.markers.kind.recap", "web.markers.kind.credits", "web.markers.kind.preview",
+        "web.common.activity.title.file", "web.common.date.justNow", "web.common.date.minutesAgo", "web.common.date.hoursAgo",
+        "web.common.date.daysAgo",
+    ];
+
+    /// <summary>Keys copied from the official English catalog (excluding native-only keys).</summary>
+    public static IReadOnlyCollection<string> OfficialKeys { get; } = English.Keys.Where(key => key.StartsWith("web.", StringComparison.Ordinal)).ToArray();
+
+    public static bool Has(string key) => English.ContainsKey(key);
+
+    /// <summary>The English pattern of a copied key (catalog-coverage tests), or null.</summary>
+    public static string? EnglishPattern(string key) => English.TryGetValue(key, out var value) ? value : null;
+
+    /// <summary>Formats a domain key; any other key is read from the shared catalog in the interface language.</summary>
+    public static string T(string key, params (string Name, object? Value)[] values)
+    {
+        var arguments = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (name, value) in values) arguments[name] = value;
+        if (English.TryGetValue(key, out var pattern)) return AdminText.Format(pattern, arguments);
+        return AppStrings.Get(key, arguments, fallback: key);
+    }
+
+    /// <summary>A count with its interface-locale text, as WebUI <c>localeCount</c>.</summary>
+    public static (string, object?)[] Count(long count) => [("count", count), ("count_text", count.ToString("N0", CultureInfo.CurrentCulture))];
+
+    /// <summary>WebUI <c>formatRelativeTime(value, {rounding: "floor"})</c>; null when unparsable.</summary>
+    public static string? Relative(string? value, DateTimeOffset now)
+    {
+        if (!TryParseInstant(value, out var date)) return null;
+        var diff = (now - date).TotalMilliseconds;
+        var minutes = Math.Floor(diff / 60_000);
+        if (minutes < 1) return T("web.common.date.justNow");
+        if (minutes < 60) return T("web.common.date.minutesAgo", Count((long)minutes));
+        var hours = Math.Floor(diff / 3_600_000);
+        if (hours < 24) return T("web.common.date.hoursAgo", Count((long)hours));
+        return T("web.common.date.daysAgo", Count((long)Math.Floor(diff / 86_400_000)));
+    }
+
+    /// <summary>Parses an RFC 3339 instant from the server; false for anything else.</summary>
+    public static bool TryParseInstant(string? value, out DateTimeOffset instant) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out instant)
+        && !string.IsNullOrWhiteSpace(value);
+}
