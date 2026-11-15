@@ -72,6 +72,35 @@ internal static class ServerOriginSecurityNativeFixture
                 CheckAccessible(label); CheckBounds(label, page);
                 await MediaParityNativeFixture.CaptureAsync(page, $"security-invite-origin-{width}.png");
             }
+            wire.EmailRequired = true;
+            await page.ViewModel.LoadAsync(new InviteClaimNavigation(Origin, "synthetic-invite"));
+            await Until(() => ((TextBox)page.FindName("EmailBox")).IsEnabled);
+            var email = (TextBox)page.FindName("EmailBox");
+            email.Text = "typed@example.invalid";
+            await Until(() => page.ViewModel.Email == email.Text);
+            page.ViewModel.ErrorMessage = "Synthetic state refresh";
+            await Task.Delay(100);
+            Check(email.Text == "typed@example.invalid", "A state refresh overwrote the editable address.");
+            Check(((TextBlock)page.FindName("InvitationNoteText")).Text == "Synthetic invitation note", "Link invitation note is missing.");
+            Check(email.PlaceholderText.Length > 0, "Link invitation email placeholder is missing.");
+            page.ViewModel.Password = "synthetic-password";
+            page.ViewModel.ConfirmPassword = "synthetic-password";
+            wire.AcceptanceBody = "{}";
+            await page.ViewModel.AcceptCommand.ExecuteAsync(null);
+            await Until(() => page.ViewModel.RequiresReload);
+            Check(!page.ViewModel.AccountCreated && wire.Acceptances == 1, "Malformed success was shown as account creation or replayed.");
+            await page.ViewModel.LoadAsync(new InviteClaimNavigation(Origin, "synthetic-invite"));
+            page.ViewModel.Email = "typed@example.invalid";
+            page.ViewModel.Password = "synthetic-password";
+            page.ViewModel.ConfirmPassword = "synthetic-password";
+            wire.AcceptanceBody = "{\"status\":\"accepted\",\"login_status\":\"sign_in_required\",\"username\":\"synthetic-viewer\"}";
+            await page.ViewModel.AcceptCommand.ExecuteAsync(null);
+            await Until(() => page.ViewModel.AccountCreated && ((StackPanel)page.FindName("ClaimFormFields")).Visibility == Visibility.Collapsed);
+            Check(page.ViewModel.ErrorMessage == null && page.ViewModel.StatusMessage?.Contains("synthetic-viewer", StringComparison.Ordinal) == true,
+                "Confirmed creation lacks neutral localized status.");
+            Check(wire.Acceptances == 2, "Invitation acceptance was replayed.");
+            await MediaParityNativeFixture.CaptureAsync(page, "security-invitation-created.png");
+            Program.Log("PASS: invitation editing, note, malformed-success recovery and neutral confirmed-creation status.");
             Program.Log("PASS: parameterless/mismatched login and invitation expose the actual credential target, HTTP warning and native accessible name at narrow/desktop widths; synthetic password request matches the displayed origin.");
         }
         finally { frame.Content = null; parent.Children.Remove(frame); field.SetValue(null, previous); }
@@ -95,13 +124,23 @@ internal static class ServerOriginSecurityNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public string? LoginTarget;
+        public bool EmailRequired;
+        public int Acceptances;
+        public string AcceptanceBody = "{}";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "credential-target.invalid") throw new InvalidOperationException("Origin fixture attempted unintended networking.");
             var path = request.RequestUri.AbsolutePath;
             if (request.Method == HttpMethod.Post && path.Contains("login", StringComparison.Ordinal))
             { LoginTarget = request.RequestUri.GetLeftPart(UriPartial.Authority); return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent("{}") }); }
-            var body = path.Contains("invitations/", StringComparison.Ordinal) ? """{"email":"fixture@example.invalid","server_name":"Trusted-looking branding","acceptance_available":true}"""
+            if (request.Method == HttpMethod.Post && path.EndsWith("/accept", StringComparison.Ordinal))
+            {
+                Acceptances++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AcceptanceBody, System.Text.Encoding.UTF8, "application/json") });
+            }
+            var body = path.EndsWith("/invitations/capabilities", StringComparison.Ordinal) ? "{\"state\":\"available\",\"token_in_body\":true}"
+                : path.Contains("invitations/", StringComparison.Ordinal) && EmailRequired ? "{\"email_required\":true,\"note\":\"Synthetic invitation note\",\"server_name\":\"Trusted-looking branding\",\"acceptance_available\":true}"
+                : path.Contains("invitations/", StringComparison.Ordinal) ? """{"email":"fixture@example.invalid","server_name":"Trusted-looking branding","acceptance_available":true}"""
                 : path.Contains("providers", StringComparison.Ordinal) ? "[]"
                 : path.Contains("branding", StringComparison.Ordinal) ? """{"server_name":"Trusted-looking branding"}"""
                 : "{}";

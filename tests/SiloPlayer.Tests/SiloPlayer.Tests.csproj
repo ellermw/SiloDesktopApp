@@ -50,6 +50,7 @@
     <Compile Include="..\..\src\SiloPlayer\Helpers\EpisodeRailNavigation.cs" Link="Production\EpisodeRailNavigation.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\ServerOriginDisplay.cs" Link="Production\ServerOriginDisplay.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Helpers\InviteDeepLink.cs" Link="Production\InviteDeepLink.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\EbookPackageExtractor.cs" Link="Production\EbookPackageExtractor.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\CardOverlayService.cs" Link="Production\CardOverlayService.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\UICustomizationService.cs" Link="Production\UICustomizationService.cs" />

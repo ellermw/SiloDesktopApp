@@ -12,6 +12,7 @@ namespace SiloPlayer.Views;
 public sealed partial class InviteClaimPage : Page
 {
     private InviteClaimNavigation? _navigation;
+    private SiloPlayer.Core.Models.Auth.InvitationLookupResponse? _displayedInvitation;
     public InviteClaimViewModel ViewModel { get; }
 
     public InviteClaimPage()
@@ -57,7 +58,22 @@ public sealed partial class InviteClaimPage : Page
             ViewModel.Invitation == null ? Visibility.Visible : Visibility.Collapsed;
         if (ViewModel.Invitation is { } invitation)
         {
-            EmailBox.Text = invitation.Email;
+            // A link invitation is bound to no address: the invitee types theirs. Otherwise it is shown read-only.
+            var emailRequired = invitation.EmailRequired;
+            EmailBox.IsReadOnly = !emailRequired;
+            EmailBox.IsEnabled = emailRequired && !ViewModel.AccountCreated && !ViewModel.IsSubmitting;
+            // Initialize once per lookup; property changes must not overwrite an in-progress edit.
+            if (!ReferenceEquals(_displayedInvitation, invitation))
+            {
+                _displayedInvitation = invitation;
+                EmailBox.Text = emailRequired ? ViewModel.Email : invitation.Email;
+            }
+            EmailBox.PlaceholderText = emailRequired ? AppStrings.Get("web.auth.invite.emailPlaceholder", fallback: "you@example.com") : "";
+            DescriptionText.Text = emailRequired
+                ? AppStrings.Get("web.auth.invite.descriptionEmailRequired", fallback: "Enter your email address and choose a password. You’ll sign in with your email address.")
+                : AppStrings.Get("web.auth.invite.description", fallback: "Choose a password and you’re in. You’ll sign in with your email address.");
+            InvitationNoteText.Text = invitation.Note ?? "";
+            InvitationNoteText.Visibility = string.IsNullOrWhiteSpace(invitation.Note) ? Visibility.Collapsed : Visibility.Visible;
             WelcomeTitle.Text = AppStrings.Get("web.auth.invite.title", new Dictionary<string, object?> { ["server"] = invitation.ServerName }, $"Welcome to {invitation.ServerName}");
             InviterText.Text = string.IsNullOrWhiteSpace(invitation.InviterName)
                 ? ""
@@ -68,6 +84,20 @@ public sealed partial class InviteClaimPage : Page
         }
         ConnectionErrorText.Text = ViewModel.ErrorMessage ?? "The invitation could not be loaded.";
         CreateAccountButton.Content = ViewModel.IsSubmitting ? AppStrings.Get("web.auth.passwordRules.creatingAccount") : AppStrings.Get("web.auth.createAccount");
+        // Blocked outcomes stay blocked until the invitation is reloaded; an uncertain acceptance is never retried blindly.
+        CreateAccountButton.IsEnabled = !ViewModel.IsSubmitting && !ViewModel.RequiresReload && !ViewModel.LocalLoginDisabled && !ViewModel.AccountCreated;
+        ReloadInvitationButton.Visibility = ViewModel.RequiresReload ? Visibility.Visible : Visibility.Collapsed;
+        ClaimFormFields.Visibility = ViewModel.AccountCreated ? Visibility.Collapsed : Visibility.Visible;
+        if (ViewModel.AccountCreated)
+        {
+            PasswordBox.Password = "";
+            ConfirmPasswordBox.Password = "";
+        }
+    }
+
+    private void EmailBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (ViewModel.EmailRequired && ViewModel.Email != EmailBox.Text) ViewModel.Email = EmailBox.Text;
     }
 
     private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)

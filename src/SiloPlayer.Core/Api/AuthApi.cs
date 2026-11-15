@@ -156,15 +156,84 @@ public partial class AuthApi(SiloApiClient client)
 
     // ===== Emailed invitations =====
 
+    public Task<InvitationCapabilitiesResponse> GetInvitationCapabilitiesAsync(CancellationToken ct = default)
+        => client.GetUnauthenticatedAsync<InvitationCapabilitiesResponse>("/api/v2/invitations/capabilities", ct);
+
+    /// <summary>
+    /// Reads an invitation over the transport the server supports and reports which one it used, so acceptance
+    /// follows the same transport. Servers that advertise <c>token_in_body</c> never see the token in a URL;
+    /// servers that omit it (or lack the capability route) are read through the deprecated path form.
+    /// A 404 from a lookup is always a dead invitation, never a hint that the server is old.
+    /// </summary>
+    public async Task<(InvitationLookupResponse Invitation, bool TokenInBody)> LookupInvitationAsync(string token, CancellationToken ct = default)
+    {
+        var capabilities = await TryGetInvitationCapabilitiesAsync(ct).ConfigureAwait(false);
+        if (capabilities != null &&
+            !string.Equals(capabilities.State, "available", StringComparison.Ordinal))
+            throw new InvalidOperationException("Invitation acceptance is unavailable.");
+        var tokenInBody = capabilities?.TokenInBody == true;
+        var invitation = tokenInBody
+            ? await LookupInvitationLinkAsync(token, ct).ConfigureAwait(false)
+            : await GetInvitationAsync(token, ct).ConfigureAwait(false);
+        return (invitation, tokenInBody);
+    }
+
+    private async Task<InvitationCapabilitiesResponse?> TryGetInvitationCapabilitiesAsync(CancellationToken ct)
+    {
+        try { return await GetInvitationCapabilitiesAsync(ct).ConfigureAwait(false); }
+        // No capability route at all: a server from before the capability existed. Anything else (transport, 5xx)
+        // is a real failure the caller reports rather than silently downgrading to a URL-token request.
+        catch (ApiException ex) when (ex.StatusCode is 404 or 405) { return null; }
+    }
+
+    /// <summary><c>POST /api/v2/invitations/lookup</c> with <c>{ token }</c>: an idempotent read.</summary>
+    public Task<InvitationLookupResponse> LookupInvitationLinkAsync(string token, CancellationToken ct = default)
+        => client.PostUnauthenticatedAsync<InvitationLookupResponse>(
+            "/api/v2/invitations/lookup",
+            new Dictionary<string, object?> { ["token"] = token },
+            ct);
+
+    /// <summary><c>POST /api/v2/invitations/accept</c> with <c>{ token, password, email? }</c>. Never replayed by this layer.</summary>
+    public async Task<InvitationAcceptanceResponse> AcceptInvitationLinkAsync(string token, string password, string? email = null, CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?> { ["token"] = token };
+        if (email != null) body["email"] = email;
+        body["password"] = password;
+        return ConfirmAcceptance(await client.PostUnauthenticatedAsync<InvitationAcceptanceResponse>("/api/v2/invitations/accept", body, ct));
+    }
+
+    /// <summary>Accepts through the lookup's transport: the body operation, or the deprecated path form on older servers.</summary>
+    public Task<InvitationAcceptanceResponse> AcceptInvitationAsync(
+        string token, string password, string? email, bool tokenInBody, CancellationToken ct = default)
+        => tokenInBody
+            ? AcceptInvitationLinkAsync(token, password, email, ct)
+            : AcceptInvitationAsync(token, password, email, ct);
+
+    /// <summary>Deprecated path-token lookup, kept for servers that predate <c>token_in_body</c>.</summary>
     public Task<InvitationLookupResponse> GetInvitationAsync(string token, CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<InvitationLookupResponse>(
             $"/api/v2/invitations/{Uri.EscapeDataString(token)}", ct);
 
+    /// <summary>Deprecated path-token acceptance, kept for servers that predate <c>token_in_body</c>.</summary>
     public Task<InvitationAcceptanceResponse> AcceptInvitationAsync(string token, string password, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<InvitationAcceptanceResponse>(
-            $"/api/v2/invitations/{Uri.EscapeDataString(token)}/accept",
-            new AcceptInvitationRequest { Password = password },
-            ct);
+        => AcceptInvitationAsync(token, password, null, ct);
+
+    /// <summary>Deprecated path-token acceptance with the address a link invitation asks for.</summary>
+    public async Task<InvitationAcceptanceResponse> AcceptInvitationAsync(string token, string password, string? email, CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?>();
+        if (email != null) body["email"] = email;
+        body["password"] = password;
+        return ConfirmAcceptance(await client.PostUnauthenticatedAsync<InvitationAcceptanceResponse>(
+            $"/api/v2/invitations/{Uri.EscapeDataString(token)}/accept", body, ct));
+    }
+
+    private static InvitationAcceptanceResponse ConfirmAcceptance(InvitationAcceptanceResponse response)
+    {
+        if (response.Status != "accepted" || string.IsNullOrWhiteSpace(response.Username))
+            throw new InvalidDataException("The invitation acceptance result could not be confirmed.");
+        return response;
+    }
 
     // ===== Setup =====
 
