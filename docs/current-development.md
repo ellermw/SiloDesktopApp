@@ -1,3 +1,8 @@
+# November 15 - Configure General backend (intermediate)
+
+Intermediate C1 backend on inherited dd96e055, version 1.2.1081-beta.1 unchanged, pinned to official server/WebUI c11b0a968f0d5980b7005579fb95acc2d11d8321. Adds guarded settings transport, authority-scoped single-flight snapshots, a redacted draft and General controller. General is not yet registered or visually verified. Lead is integrating the native page, Configure catalog, shell/cache refresh and production registration; no push, release, installer or installed-player action was performed. See docs/parity/admin-general-backend.md and D:/SiloPlayer-build/server-update-nov14/configure-general/implementation-report.md for scope and verification.
+
+---
 # November 14 - Invitation and password-reset server alignment
 
 Aligns account links with official Silo Server/WebUI

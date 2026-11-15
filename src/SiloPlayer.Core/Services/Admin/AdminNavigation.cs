@@ -66,6 +66,9 @@ public enum AdminRoute
     PreparedFiles,
     /// <summary>/admin/settings/downloads (Downloads › Settings)</summary>
     DownloadSettings,
+
+    /// <summary>/admin/settings/general (Configure › Server › General)</summary>
+    GeneralSettings,
 }
 
 /// <summary>

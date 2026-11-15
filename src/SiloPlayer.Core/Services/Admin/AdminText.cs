@@ -19,6 +19,26 @@ public static class AdminText
 {
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        // General navigation: official WebUI c11b0a96.
+        ["web.admin.settings.search.general.description"] = "The server\u0027s name and public address, the proxies in front of it, and Redis.",
+        ["web.admin.settings.search.general.label"] = "General",
+        ["web.admin.settings.search.general.setting.checkConnection"] = "Check connection",
+        ["web.admin.settings.search.general.setting.connectionUrl"] = "Connection URL",
+        ["web.admin.settings.search.general.setting.database"] = "Database",
+        ["web.admin.settings.search.general.setting.databaseNumber"] = "Database number",
+        ["web.admin.settings.search.general.setting.identity"] = "Identity",
+        ["web.admin.settings.search.general.setting.localNetworkAddress"] = "Local network address",
+        ["web.admin.settings.search.general.setting.loginSubtitle"] = "Login subtitle",
+        ["web.admin.settings.search.general.setting.maximumPostgresConnections"] = "Maximum Postgres connections",
+        ["web.admin.settings.search.general.setting.network"] = "Network",
+        ["web.admin.settings.search.general.setting.redis"] = "Redis",
+        ["web.admin.settings.search.general.setting.serverName"] = "Server name",
+        ["web.admin.settings.search.general.setting.showOnTheLocalNetwork"] = "Show on the local network",
+        ["web.admin.settings.search.general.setting.siloPublicUrl"] = "Silo public URL",
+        ["web.admin.settings.search.general.setting.trustedProxies"] = "Trusted proxies",
+        ["web.admin.settings.search.general.setting.useRedis"] = "Use Redis",
+        ["web.admin.shell.nav.section.configure"] = "Configure",
+        ["web.admin.shell.nav.topic.server"] = "Server",
         // Manage navigation: official WebUI 1452ea2d; keys and ICU patterns preserved.
         ["web.admin.common.title.header.accessGroups"] = "Access Groups",
         ["web.admin.common.title.header.autoscan"] = "Autoscan",

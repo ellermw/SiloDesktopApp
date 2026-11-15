@@ -114,7 +114,7 @@ public static class AdminRouteCatalog
         ["settings", "configuration", "log level", "log retention", "quiet log prefixes", "permission checks"],
         ["web.admin.settings.search.logging.label"], []);
 
-    /// <summary>The sidebar, in order. Configure is intentionally absent from this native scope.</summary>
+    /// <summary>The sidebar, in order. Page registration controls visibility.</summary>
     public static IReadOnlyList<AdminNavSection> Sections { get; } =
     [
         new("monitor", "web.admin.shell.nav.section.monitor",
@@ -215,6 +215,17 @@ public static class AdminRouteCatalog
                      "preparedFileDirectory", "filesPreparedAtOnce", "defaultStorageBudgetPerLocation", "keepCachedFilesFor", "diskCeiling"]),
             ]),
         ]),
+        new("configure", "web.admin.shell.nav.section.configure",
+        [
+            new AdminNavTopic("server", "web.admin.shell.nav.topic.server", "settings-2",
+            [
+                new AdminNavLeaf(AdminRoute.GeneralSettings, "/admin/settings/general", false, "settings-2",
+                    "web.admin.settings.search.general.label", "web.admin.settings.search.general.description",
+                    "web.admin.common.title.header.settings", "web.admin.common.title.tab.settings",
+                    ["settings", "configuration", "server name", "login subtitle", "branding name", "public url", "lan discovery", "local network", "local address", "lan address", "multicast", "reverse proxy", "trusted proxies", "x-forwarded-for", "client ip", "redis", "postgres", "database", "pool"],
+                    [], new[] { "identity", "serverName", "loginSubtitle", "network", "siloPublicUrl", "showOnTheLocalNetwork", "localNetworkAddress", "trustedProxies", "database", "maximumPostgresConnections", "redis", "useRedis", "connectionUrl", "databaseNumber", "checkConnection" }.Select(key => "web.admin.settings.search.general.setting." + key).ToArray()),
+            ]),
+        ]),
     ];
 
     private static readonly IReadOnlyDictionary<AdminRoute, (AdminNavLeaf Leaf, AdminNavTopic? Topic, AdminNavSection Section)> Index = BuildIndex();
@@ -303,7 +314,7 @@ public static class AdminRouteCatalog
         query is not { Count: > 0 } ? "" : "?" + string.Join('&', query.OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)));
 
-    private static readonly HashSet<string> ManagedSettingsIds = ["logging", "library", "autoscan", "requests", "playback", "downloads"];
+    private static readonly HashSet<string> ManagedSettingsIds = ["logging", "library", "autoscan", "requests", "playback", "downloads", "general"];
 
     /// <summary>WebUI <c>ADMIN_SETTINGS_NAV</c> ids, first page first.</summary>
     private static readonly string[] SettingsPageIds =

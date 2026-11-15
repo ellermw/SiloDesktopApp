@@ -27,7 +27,7 @@ public sealed class AdminManageNavigationTests
             "playback:/admin/history", "playback:/admin/marker-history", "playback:/admin/nodes", "playback:/admin/settings/playback",
             "downloads:/admin/downloads", "downloads:/admin/settings/downloads",
         ], topics.SelectMany(topic => topic.Leaves.Select(leaf => $"{topic.Id}:{leaf.Href}")));
-        Assert.Equal(["monitor", "manage"], AdminRouteCatalog.Sections.Select(section => section.Id));
+        Assert.Equal(["monitor", "manage", "configure"], AdminRouteCatalog.Sections.Select(section => section.Id));
     }
 
     [Fact]
@@ -36,7 +36,7 @@ public sealed class AdminManageNavigationTests
         var leaves = AdminRouteCatalog.Leaves.ToArray();
         Assert.Equal(Enum.GetValues<AdminRoute>().Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(26, leaves.Length);
+        Assert.Equal(27, leaves.Length);
     }
 
     [Theory]
@@ -159,11 +159,8 @@ public sealed class AdminManageNavigationTests
     [InlineData("/admin/backups/4/restore", "/admin/backups/4/restore")]
     [InlineData("/admin/plugins/arr", "/admin/plugins/arr")]
     [InlineData("/admin/api-keys", "/admin/api-keys")]
-    [InlineData("/admin/settings/general", "/admin/settings/general")]
     [InlineData("/admin/settings/providers", "/admin/settings/providers")]
     [InlineData("/admin/settings/subtitles", "/admin/settings/providers")]
-    [InlineData("/admin/settings", "/admin/settings/general")]
-    [InlineData("/admin/settings/retired-id", "/admin/settings/general")]
     public void ConfigureAndOtherWebUiPagesAreUnsupportedNotRelabelled(string href, string canonical)
     {
         Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
