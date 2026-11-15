@@ -116,8 +116,41 @@ internal static class PlaybackChapterMenuNativeFixture
             mpv.SendScriptMessage("osc-show");
             await Task.Delay(150);
 
-            if (more) { owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 460, 700)); video.SynchronizePosition(); }
-            var menu = await Open();
+            if (more)
+            {
+                // Match the full-width menu in the owner report through the
+                // real OSC pointer opener, before testing compact overflow.
+                var wideMenu = await Open();
+                var wideList = (ListView)Get(wideMenu, "_list")!;
+                Require(string.Join(",", wideList.Items.OfType<ListViewItem>().Select(row => (string)row.Tag)) ==
+                    "stats,pip,fill", "Wide More did not expose the reported three actions.");
+                Require(wideList.SelectedIndex == -1 && !wideList.Items.OfType<ListViewItem>().Any(row => row.IsSelected),
+                    "Opening More visually preselected Playback info before any action was chosen.");
+                Require(Get(service, "_playbackInfoShownOn") == null && mpv.IsPaused,
+                    "Opening More activated Playback info or changed pause.");
+                await Capture(wideMenu, "more-wide-initial.png");
+                Call(wideMenu, "Input", "down");
+                Require(wideList.SelectedIndex == 0, "First Down skipped Playback info in the unselected action menu.");
+                Call(wideMenu, "Input", "cancel");
+                wideMenu = await Open(); wideList = (ListView)Get(wideMenu, "_list")!;
+                Call(wideMenu, "Input", "up");
+                Require(wideList.SelectedIndex == 2, "First Up did not reach the last action in the unselected menu.");
+                Call(wideMenu, "Input", "cancel");
+                wideMenu = await Open();
+                Call(wideMenu, "Select", "stats", true);
+                await Until(() => Menu(service) == null && ReferenceEquals(Get(service, "_playbackInfoShownOn"), mpv),
+                    "Invoking the initially unselected Playback info row did not open its actual panel.");
+                wideMenu = await Open(); wideList = (ListView)Get(wideMenu, "_list")!;
+                Require(wideList.SelectedIndex == -1 && AutomationProperties.GetName((ListViewItem)wideList.Items[0]).Contains("shown"),
+                    "An active Playback info panel preselected its More action or lost its state label.");
+                Call(wideMenu, "Input", "activate");
+                await Until(() => Menu(service) == null && Get(service, "_playbackInfoShownOn") == null,
+                    "Keyboard activation did not hide Playback info.");
+                Program.Log("PASS: wide More opens with no selection, first Down/Up reach first/last actions, pointer selection opens Playback info and Enter from neutral hides it.");
+                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 460, 700)); video.SynchronizePosition();
+            }
+            var menu = await Open(requireCompact: more);
+            VerifyPreLoadedActivation(video, menu);
             var list = (ListView)Get(menu, "_list")!;
             if (more)
             {
@@ -125,7 +158,9 @@ internal static class PlaybackChapterMenuNativeFixture
                     "audio,chapters,stats,pip,fill,volume-down,volume-up,mute", "Native More changed existing action order or omitted controls.");
                 Require(!((ListViewItem)list.Items[0]).IsEnabled && ((ListViewItem)list.Items[1]).IsEnabled,
                     "More audio/chapter availability differs from current source inventory.");
-                Require(list.SelectedIndex == 1, "More initially focuses an unavailable row instead of its first available action.");
+                Require(list.SelectedIndex == -1, "Compact More visually preselected an action on opening.");
+                Call(menu, "Input", "down");
+                Require(list.SelectedIndex == 1, "First Down did not reach the first available action in compact More.");
                 var disabledAudio = (ListViewItem)list.Items[0];
                 Require(((FrameworkElement)disabledAudio.Content).Opacity < .8 &&
                     Descendants<TextBlock>(disabledAudio).Any(text => text.Text == "Only one audio track"),
@@ -374,7 +409,7 @@ internal static class PlaybackChapterMenuNativeFixture
             try { mpv.SendScriptMessage("osc-chapters-fixture-query", id, more ? "more" : "chapters"); return await completion.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
             finally { queries.TryRemove(id, out _); }
         }
-        async Task<object> Open()
+        async Task<object> Open(bool requireCompact = false)
         {
             mpv.SendScriptMessage("osc-show");
             var state = await Query();
@@ -382,7 +417,8 @@ internal static class PlaybackChapterMenuNativeFixture
             // on separate pumps. Drive the visible compact opener only after
             // it exists; never issue/replay a click at the previous layout.
             var geometryWait = Stopwatch.StartNew();
-            while (more && (!state.GetProperty("more_available").GetBoolean() || !state.GetProperty("scope_present").GetBoolean()))
+            while (more && (!state.GetProperty("more_available").GetBoolean() || !state.GetProperty("scope_present").GetBoolean()
+                || (requireCompact && state.GetProperty("width").GetInt32() >= 600)))
             {
                 if (geometryWait.Elapsed > TimeSpan.FromSeconds(8))
                     throw new InvalidOperationException("The compact More opener did not become available after owner resize.");
@@ -408,6 +444,39 @@ internal static class PlaybackChapterMenuNativeFixture
                 var opened = Menu(service)!;
                 foreground.WatchMenu((Window)Get(opened, "_window")!, Hwnd(opened));
                 return opened;
+        }
+    }
+
+    private static void VerifyPreLoadedActivation(MpvVideoWindow video, object prototype)
+    {
+        var type = prototype.GetType();
+        var constructor = type.GetConstructors(Private).Single();
+        var closedType = constructor.GetParameters()[6].ParameterType;
+        var closed = System.Linq.Expressions.Expression.Lambda(closedType,
+            System.Linq.Expressions.Expression.Empty(),
+            System.Linq.Expressions.Expression.Parameter(closedType.GenericTypeArguments[0])).Compile();
+        foreach (var selectOnOpen in new[] { true, false })
+        {
+            var invoked = false;
+            // Construct without ShowAsync so activation deterministically arrives
+            // before Loaded, without racing either native window message pump.
+            var menu = constructor.Invoke(new object?[]
+            {
+                video, Get(prototype, "_anchor"), "Pre-Loaded activation", Get(prototype, "_choices"),
+                (Func<bool>)(() => true), (Action<string>)(_ => invoked = true), closed,
+                null, null, null, false, false,
+            });
+            try
+            {
+                type.GetProperty("SelectOnOpen", Private)!.SetValue(menu, selectOnOpen);
+                var list = (ListView)Get(menu, "_list")!;
+                Require(list.SelectedIndex == -1 && !((TaskCompletionSource)Get(menu, "_loaded")!).Task.IsCompleted,
+                    "Pre-Loaded activation check did not start with an unloaded, unselected menu.");
+                Call(menu, "Input", "activate");
+                Require(!invoked && list.SelectedIndex == -1 && !(bool)Get(menu, "_finished")!,
+                    $"Pre-Loaded activation invoked a hidden choice (SelectOnOpen={selectOnOpen}).");
+            }
+            finally { Call(menu, "Input", "cancel"); }
         }
     }
 

@@ -153,6 +153,10 @@ internal class PlaybackChoiceMenu
 
     internal IntPtr Hwnd { get; }
 
+    // Action menus have no current choice. Keep their opening presentation
+    // neutral while retaining selection for subsequent keyboard navigation.
+    internal bool SelectOnOpen { get; init; } = true;
+
     private void BuildChoices()
     {
         foreach (var choice in _choices) _list.Items.Add(BuildChoice(choice));
@@ -310,7 +314,8 @@ internal class PlaybackChoiceMenu
             var selected = (_list.SelectedItem as ListViewItem)?.Tag as string;
             foreach (ListViewItem row in _list.Items) row.Loaded -= OnRowLoaded;
             _list.Items.Clear(); BuildChoices();
-            _list.SelectedIndex = Math.Max(0, choices.ToList().FindIndex(choice => choice.Id == selected));
+            _list.SelectedIndex = selected == null && !SelectOnOpen ? -1
+                : Math.Max(0, choices.ToList().FindIndex(choice => choice.Id == selected));
             if (_shown) ScrollSelectionIntoView();
         }
         if (_shown) QueueLayout(placement: true);
@@ -345,7 +350,8 @@ internal class PlaybackChoiceMenu
         var selected = _choices.ToList().FindIndex(c => c.IsCurrent && (c.IsEnabled || _allowDisabledTraversal));
         if (selected < 0) selected = _choices.ToList().FindIndex(c => c.IsEnabled || _allowDisabledTraversal);
         selected = Math.Max(0, selected);
-        _list.SelectedIndex = selected;
+        _list.SelectedIndex = SelectOnOpen ? selected : -1;
+        if (!SelectOnOpen) _list.IsTabStop = true;
         ScrollSelectionIntoView();
         if (_focusOnLoad) FocusSelection(FocusState.Programmatic);
         _loaded.TrySetResult();
@@ -506,9 +512,11 @@ internal class PlaybackChoiceMenu
                 if (_footerIndex < controls.Count && controls[_footerIndex].Tag is Action callback) callback();
             }
             else if (_list.SelectedItem is ListViewItem { Tag: string id }) Select(id);
+            else if (!SelectOnOpen && _loaded.Task.IsCompletedSuccessfully &&
+                _choices.FirstOrDefault(choice => choice.IsEnabled) is { } first) Select(first.Id);
             return;
         }
-        var current = Math.Max(0, _list.SelectedIndex);
+        var current = _list.SelectedIndex;
         var buttons = FooterButtons();
         if (_footerIndex >= 0 && action is "up" or "left" or "down" or "right")
         {
@@ -524,7 +532,7 @@ internal class PlaybackChoiceMenu
         var next = action switch
         {
             "home" => 0, "end" => _list.Items.Count - 1,
-            "up" or "left" => Math.Max(0, current - 1),
+            "up" or "left" => current < 0 ? _list.Items.Count - 1 : Math.Max(0, current - 1),
             "down" or "right" => Math.Min(_list.Items.Count - 1, current + 1), _ => current,
         };
         var step = action is "end" or "up" or "left" ? -1 : 1;
@@ -540,7 +548,7 @@ internal class PlaybackChoiceMenu
         if (_list.SelectedItem is ListViewItem { IsEnabled: true } item) item.Focus(state);
         // A read-only inventory still needs a keyboard receiver while its
         // selected row cannot receive focus or be activated.
-        else if (_allowDisabledTraversal) _list.Focus(state);
+        else if (_allowDisabledTraversal || _list.SelectedIndex < 0) _list.Focus(state);
     }
 
     private bool IsInFooter(DependencyObject? source)
@@ -599,6 +607,7 @@ internal class PlaybackChoiceMenu
 
     private void ScrollSelectionIntoView()
     {
+        if (_list.SelectedItem == null) return;
         _list.ScrollIntoView(_list.SelectedItem, ScrollIntoViewAlignment.Leading);
         // Realizing a variable-height row can change the virtualized extent.
         // Re-align after that row has its measured wrapped-text height.
