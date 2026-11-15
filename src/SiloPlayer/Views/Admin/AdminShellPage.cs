@@ -165,11 +165,22 @@ public sealed partial class AdminShellPage : Page
     {
         if (!AdminRouteCatalog.TryResolve(href, out var resolution)) return null;
         if (resolution.IsCatchAll) return resolution with { Kind = AdminRouteResolutionKind.Unsupported, Request = null };
-        if (resolution is { Kind: AdminRouteResolutionKind.Route, Request: { } request } && Open(request) && resolution.NoticeTitleKey is { } title)
-            App.Services.GetService<SiloPlayer.Services.ToastService>()?.Info(
-                AdminText.T(title) + (resolution.NoticeDescriptionKey is { } description ? " " + AdminText.T(description) : ""));
+        if (resolution is { Kind: AdminRouteResolutionKind.Route, Request: { } request })
+        {
+            if (!Open(request)) return resolution with { Kind = AdminRouteResolutionKind.Unsupported, Request = null };
+            if (resolution.NoticeTitleKey is { } title)
+                App.Services.GetService<SiloPlayer.Services.ToastService>()?.Info(
+                    AdminText.T(title) + (resolution.NoticeDescriptionKey is { } description ? " " + AdminText.T(description) : ""));
+        }
         return resolution;
     }
+
+    /// <summary>A settings acknowledgement invalidates the shell's short-lived restart snapshot.</summary>
+    internal void RefreshSettingsStatus()
+    {
+        if (_active && _lease?.IsCurrent == true) _ = LoadServerStatusAsync(_lease, force: true);
+    }
+
 
     /// <summary>
     /// Replaces the shown page's location in place (WebUI <c>navigate(…, {replace: true})</c>):
@@ -357,6 +368,7 @@ public sealed partial class AdminShellPage : Page
         _request = request;
         var route = request.Route;
         ApplyContentGutter();
+
         AttachRestartBanner();
         AttachLoggingHealth();
         _route = route;

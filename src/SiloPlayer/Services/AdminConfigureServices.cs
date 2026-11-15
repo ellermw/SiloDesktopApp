@@ -1,0 +1,26 @@
+using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Views.Admin;
+
+namespace SiloPlayer.Services;
+
+/// <summary>Production registrations shared by App startup and the native synthetic host.</summary>
+internal static class AdminConfigureServices
+{
+    /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
+    internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).ToArray());
+    internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).ToArray());
+
+    internal static void Add(IServiceCollection services)
+    {
+        services.AddSingleton<AdminServerSettingsApi>();
+        services.AddSingleton(sp => new AdminServerSettingsStore(sp.GetRequiredService<AdminServerSettingsApi>(),
+            sp.GetRequiredService<AdminMonitorAuthority>(), Keys, Secrets));
+        services.AddTransient<AdminGeneralSettingsController>();
+        services.AddTransient<AdminEmailSettingsController>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.GeneralSettings, typeof(AdminGeneralSettingsPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.EmailSettings, typeof(AdminEmailSettingsPage)));
+    }
+}

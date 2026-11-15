@@ -67,6 +67,8 @@ internal static class AdminMonitorUi
     /// <summary>Lucide icon path data (24-unit grid, stroke 2, round caps).</summary>
     private static string IconPath(string name) => name switch
     {
+        // lucide-icons/lucide 0.576.0 icons/settings-2.svg, circles expressed as native arcs.
+        "settings-2" => "M14 17H5 M19 7h-9 M20 17A3 3 0 1 1 14 17A3 3 0 1 1 20 17Z M10 7A3 3 0 1 1 4 7A3 3 0 1 1 10 7Z",
         // Lucide 0.576.0 SVG geometry; absolute starts keep concatenated paths independent.
         // After converting an initial 'm' to 'M', retain implicit relative lines with 'l'.
         "library" => "M16 6l4 14 M12 6v14 M8 8v12 M4 4v16",

@@ -25,6 +25,10 @@ public partial class SiloApiClient
                 throw new LoggingSettingsConflictException(response.Headers.ETag?.ToString());
             if (!response.IsSuccessStatusCode)
             {
+                // Problem bodies are untrusted too; apply the same bound before parsing.
+                var errorBytes = await MonitorLogsReadBoundedAsync(response.Content, lease, 8 * 1024 * 1024, linked.Token).ConfigureAwait(false);
+                response.Content.Dispose();
+                response.Content = new ByteArrayContent(errorBytes);
                 await ThrowApiException(response, request, linked.Token).ConfigureAwait(false);
                 lease.ThrowIfRetired();
             }
