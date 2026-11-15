@@ -284,6 +284,27 @@ internal static class AdminDashboardNativeFixture
 
         apiView.GetType().GetMethod("SetRange")!.Invoke(apiView, [DashboardWidgetRange.Day]);
         await Task.Delay(150);
+
+        var columnChart = Descendants(page).Single(element => element.GetType().Name == "DashboardStackedColumnChart");
+        columnChart.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        await Task.Delay(150);
+        var columnBars = (Grid)columnChart.GetType().GetField("_bars", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(columnChart)!;
+        var columnOverlay = (Canvas)columnChart.GetType().GetField("_overlay", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(columnChart)!;
+        var originalCells = columnBars.Children.Cast<ContentControl>().ToArray();
+        Check(originalCells.Length > 1, "playback chart has keyboard-inspectable columns");
+        foreach (var cell in originalCells.Take(2))
+        {
+            Check(cell.Focus(FocusState.Keyboard), "column accepts keyboard focus");
+            await Task.Delay(50);
+            Check(ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), cell),
+                "column inspection retains focus on the original cell");
+            Check(columnBars.Children.SequenceEqual(originalCells) && columnOverlay.Children.Count > 0,
+                "column focus updates the readout without replacing input controls");
+        }
+        ClientButton().Focus(FocusState.Programmatic);
+        ((ScrollViewer)typeof(AdminDashboardPage).GetField("_scroll", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!)
+            .ChangeView(null, 0, null, disableAnimation: true);
+        await Task.Delay(100);
         var resizeStep = 0;
         foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (899, 900), (900, 900), (899, 900), (1023, 768), (800, 900), (1024, 768), (1440, 900) })
         {

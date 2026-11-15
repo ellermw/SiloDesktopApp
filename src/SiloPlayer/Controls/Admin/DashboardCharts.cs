@@ -503,7 +503,11 @@ internal sealed class DashboardStackedColumnChart : Grid
     {
         if (_active == index) return;
         _active = index;
-        DrawBars(_bars.ActualHeight);
+        // Keep the input controls in the tree so hover/focus never destroys its owner.
+        for (var i = 0; i < _bars.Children.Count; i++)
+            if (_bars.Children[i] is ContentControl { Content: Border background })
+                background.Background = B(_active == i ? Alpha(Foreground, 0.05) : Colors.Transparent);
+        DrawTooltip();
     }
 
     private void DrawTooltip()
