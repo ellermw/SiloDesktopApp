@@ -417,6 +417,8 @@ internal sealed class DashboardStackedColumnChart : Grid
     private readonly Grid _bars = new() { ColumnSpacing = 2 };
     private readonly Canvas _overlay = new() { IsHitTestVisible = false };
     private int? _active;
+    private int? _hovered;
+    private int? _focused;
     private double _scaleMax = 1;
 
     public void Build()
@@ -435,8 +437,11 @@ internal sealed class DashboardStackedColumnChart : Grid
         Children.Add(plot);
         AutomationProperties.SetName(this, AccessibleLabel);
         for (var i = 0; i < Columns.Count; i++) _bars.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        plot.SizeChanged += (_, e) => DrawBars(e.NewSize.Height);
-        _bars.PointerExited += (_, _) => SetActive(null);
+        plot.SizeChanged += (_, e) =>
+        {
+            if (_bars.Children.Count == 0 || e.NewSize.Height != e.PreviousSize.Height) DrawBars(e.NewSize.Height);
+            else DrawTooltip();
+        };
 
         var ticks = new Canvas { Height = 14, Margin = new Thickness(0, 6, 0, 0) };
         var stride = Math.Max(1, (int)Math.Ceiling(Columns.Count / 4.0));
@@ -490,9 +495,10 @@ internal sealed class DashboardStackedColumnChart : Grid
             };
             AutomationProperties.SetName(cell, DashboardText.T("web.admin.dashboard.chart.columnReading",
                 ("bucket", FormatBucket(column.T)), ("value", FormatValue(column.Total))));
-            cell.PointerEntered += (_, _) => SetActive(index);
-            cell.GotFocus += (_, _) => SetActive(index);
-            cell.LostFocus += (_, _) => SetActive(null);
+            cell.PointerEntered += (_, _) => { _hovered = index; SetActive(index); };
+            cell.PointerExited += (_, _) => { if (_hovered == index) _hovered = null; SetActive(_hovered ?? _focused); };
+            cell.GotFocus += (_, _) => { _focused = index; SetActive(index); };
+            cell.LostFocus += (_, _) => { if (_focused == index) _focused = null; SetActive(_hovered ?? _focused); };
             Grid.SetColumn(cell, i);
             _bars.Children.Add(cell);
         }
@@ -503,10 +509,10 @@ internal sealed class DashboardStackedColumnChart : Grid
     {
         if (_active == index) return;
         _active = index;
-        // Keep the focused cell in the tree while changing the readout.
+        // Interaction must not remove the focused or hovered column from the tree.
         foreach (var cell in _bars.Children.OfType<ContentControl>())
             if (cell.Content is Border background)
-                background.Background = B(_active == Grid.GetColumn(cell) ? Alpha(Foreground, 0.05) : Colors.Transparent);
+                background.Background = B(Grid.GetColumn(cell) == index ? Alpha(Foreground, 0.05) : Colors.Transparent);
         DrawTooltip();
     }
 

@@ -37,6 +37,15 @@ public sealed partial class AdminDashboardPage : Page
     private readonly ScrollViewer _scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Disabled };
     private readonly StackPanel _content = new();
     private readonly ContentControl _header = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
+    private StackPanel _headerGroup = null!;
+    private StackPanel _headerActions = null!;
+    private Button _hiddenNotices = null!;
+    private TextBlock _hiddenNoticesText = null!;
+    private TextBlock _updatedLabel = null!;
+    private Button _refreshButton = null!;
+    private Button _customizeButton = null!;
+    private Button _scanAllButton = null!;
+    private Storyboard? _refreshAnimation;
     private readonly ContentControl _attention = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
     private readonly ContentControl _customizeBar = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
     private readonly ContentControl _saveBlocked = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
@@ -349,79 +358,99 @@ public sealed partial class AdminDashboardPage : Page
 
     private void RenderHeader()
     {
+        if (_header.Content == null) CreateHeader();
         var store = _store;
         var sync = _sync;
         var small = _viewportWidth < DashboardGridPlacement.SmallBreakpoint;
         var attention = store?.Attention();
         var hiddenCount = attention?.HiddenCount ?? 0;
-        var group = new StackPanel { Orientation = small ? Orientation.Vertical : Orientation.Horizontal, Spacing = 8 };
-        if (hiddenCount > 0)
-        {
-            var chip = new Button
-            {
-                Padding = new Thickness(10, 4, 10, 4), MinHeight = 0, CornerRadius = new CornerRadius(999), BorderThickness = new Thickness(1),
-                IsEnabled = store?.AttentionSaving != true, HorizontalAlignment = HorizontalAlignment.Left,
-                Content = Row(6, Icon("triangle-alert", 14, DashboardUi.Warning), new TextBlock
-                {
-                    Text = DashboardText.T("web.admin.dashboard.page.hiddenNoticesChip", ("count", (long)hiddenCount)), FontSize = 12, FontWeight = Medium,
-                }),
-            };
-            chip.Resources["ButtonBackground"] = B(DashboardUi.Warning, 0.08);
-            chip.Resources["ButtonBackgroundPointerOver"] = B(DashboardUi.Warning, 0.15);
-            chip.Resources["ButtonBackgroundPressed"] = B(DashboardUi.Warning, 0.15);
-            chip.Resources["ButtonForeground"] = B(DashboardUi.Warning);
-            chip.Resources["ButtonForegroundPointerOver"] = B(DashboardUi.Warning);
-            chip.Resources["ButtonBorderBrush"] = B(DashboardUi.Warning, 0.35);
-            chip.Resources["ButtonBorderBrushPointerOver"] = B(DashboardUi.Warning, 0.35);
-            chip.Background = B(DashboardUi.Warning, 0.08);
-            chip.Foreground = B(DashboardUi.Warning);
-            chip.BorderBrush = B(DashboardUi.Warning, 0.35);
-            AutomationProperties.SetName(chip, DashboardText.T("web.admin.dashboard.page.showHiddenNoticesLabel", ("count", (long)hiddenCount)));
-            ToolTipService.SetToolTip(chip, DashboardText.T("web.admin.dashboard.page.showHiddenNoticesHint"));
-            chip.Click += (_, _) => _store?.RestoreAllAttention();
-            group.Children.Add(chip);
-        }
+        _hiddenNotices.Visibility = hiddenCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _hiddenNotices.IsEnabled = store?.AttentionSaving != true;
+        _hiddenNoticesText.Text = DashboardText.T("web.admin.dashboard.page.hiddenNoticesChip", ("count", (long)hiddenCount));
+        AutomationProperties.SetName(_hiddenNotices, DashboardText.T("web.admin.dashboard.page.showHiddenNoticesLabel", ("count", (long)hiddenCount)));
+        _updatedLabel.Visibility = store?.LastUpdatedAt != null && store.HasDashboardData ? Visibility.Visible : Visibility.Collapsed;
         if (store?.LastUpdatedAt is { } updated && store.HasDashboardData)
-        {
-            var label = Text(DashboardFormat.UpdatedLabel(store.Now, updated), 12, color: MutedForeground);
-            label.VerticalAlignment = VerticalAlignment.Center;
-            group.Children.Add(label);
-        }
+            _updatedLabel.Text = DashboardFormat.UpdatedLabel(store.Now, updated);
+
         var pending = store?.ManualRefreshPending == true;
-        var refresh = OutlineButton(pending ? DashboardText.T("web.admin.dashboard.page.refreshing") : DashboardText.T("web.admin.dashboard.page.refresh"),
+        SetHeaderButtonText(_refreshButton, DashboardText.T(pending ? "web.admin.dashboard.page.refreshing" : "web.admin.dashboard.page.refresh"));
+        _refreshButton.IsEnabled = store != null && !pending;
+        AutomationProperties.SetItemStatus(_refreshButton, pending ? "busy" : "");
+        if (pending && _refreshAnimation == null && _refreshButton.Content is StackPanel { Children.Count: > 0 } refreshContent && refreshContent.Children[0] is FrameworkElement spinner)
+            _refreshAnimation = Spin(spinner);
+        else if (!pending)
+        {
+            _refreshAnimation?.Stop();
+            _refreshAnimation = null;
+        }
+        var customizing = sync?.IsCustomizing == true;
+        SetHeaderButtonText(_customizeButton, DashboardText.T(customizing ? "common.done" : "web.admin.dashboard.page.customize"));
+        _customizeButton.IsEnabled = sync != null;
+        AutomationProperties.SetItemStatus(_customizeButton, customizing ? "pressed" : "");
+        var libraries = store?.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>() ?? [];
+        _scanAllButton.IsEnabled = store != null && !store.ScanAllPending && libraries.Count > 0;
+        foreach (var button in new[] { _refreshButton, _customizeButton, _scanAllButton })
+        {
+            button.HorizontalAlignment = small ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            button.MinHeight = small ? 44 : 0;
+        }
+        _headerGroup.Orientation = small ? Orientation.Vertical : Orientation.Horizontal;
+        _headerActions.Orientation = small ? Orientation.Vertical : Orientation.Horizontal;
+        _headerActions.HorizontalAlignment = small ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+    }
+
+    private static void SetHeaderButtonText(Button button, string text)
+        => ((StackPanel)button.Content).Children.OfType<TextBlock>().Single().Text = text;
+
+    private void CreateHeader()
+    {
+        // Keep the action controls mounted through polling, label ticks and resizing.
+        _headerGroup = new StackPanel { Spacing = 8 };
+        _hiddenNoticesText = new TextBlock { FontSize = 12, FontWeight = Medium };
+        var chip = new Button
+        {
+            Padding = new Thickness(10, 4, 10, 4), MinHeight = 0, CornerRadius = new CornerRadius(999), BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Content = Row(6, Icon("triangle-alert", 14, DashboardUi.Warning), _hiddenNoticesText),
+        };
+        chip.Resources["ButtonBackground"] = B(DashboardUi.Warning, 0.08);
+        chip.Resources["ButtonBackgroundPointerOver"] = B(DashboardUi.Warning, 0.15);
+        chip.Resources["ButtonBackgroundPressed"] = B(DashboardUi.Warning, 0.15);
+        chip.Resources["ButtonForeground"] = B(DashboardUi.Warning);
+        chip.Resources["ButtonForegroundPointerOver"] = B(DashboardUi.Warning);
+        chip.Resources["ButtonBorderBrush"] = B(DashboardUi.Warning, 0.35);
+        chip.Resources["ButtonBorderBrushPointerOver"] = B(DashboardUi.Warning, 0.35);
+        chip.Background = B(DashboardUi.Warning, 0.08);
+        chip.Foreground = B(DashboardUi.Warning);
+        chip.BorderBrush = B(DashboardUi.Warning, 0.35);
+        ToolTipService.SetToolTip(chip, DashboardText.T("web.admin.dashboard.page.showHiddenNoticesHint"));
+        chip.Click += (_, _) => _store?.RestoreAllAttention();
+        _hiddenNotices = chip;
+        _headerGroup.Children.Add(chip);
+        _updatedLabel = Text("", 12, color: MutedForeground);
+        _updatedLabel.VerticalAlignment = VerticalAlignment.Center;
+        _headerGroup.Children.Add(_updatedLabel);
+        var refresh = OutlineButton(DashboardText.T("web.admin.dashboard.page.refresh"),
             "refresh-cw", async (_, _) => { if (_store is { } s) await s.RefreshDashboardAsync(manual: true); });
         refresh.MinWidth = 132;
-        refresh.IsEnabled = store != null && !pending;
-        AutomationProperties.SetItemStatus(refresh, pending ? "busy" : "");
-        if (pending && refresh.Content is StackPanel { Children.Count: > 0 } refreshContent && refreshContent.Children[0] is FrameworkElement spinner)
-            Spin(spinner);
-        var customizing = sync?.IsCustomizing == true;
-        var customize = OutlineButton(customizing ? DashboardText.T("common.done") : DashboardText.T("web.admin.dashboard.page.customize"),
+        var customize = OutlineButton(DashboardText.T("web.admin.dashboard.page.customize"),
             "layout-dashboard", (_, _) => ToggleCustomizing());
-        customize.IsEnabled = sync != null;
-        AutomationProperties.SetItemStatus(customize, customizing ? "pressed" : "");
-        var libraries = store?.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>() ?? [];
         var scanAll = PrimaryButton(DashboardText.T("web.admin.dashboard.page.scanAllLibraries"), "scan-line", async (_, _) =>
         {
             if (_store is { } s && (s.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>()?.Count ?? 0) > 0)
                 await s.ScanAllLibrariesAsync();
         });
-        scanAll.IsEnabled = store != null && !store.ScanAllPending && libraries.Count > 0;
-        foreach (var button in new[] { refresh, customize, scanAll })
-        {
-            if (small) { button.HorizontalAlignment = HorizontalAlignment.Stretch; button.MinHeight = 44; }
-        }
-        group.Children.Add(refresh);
-        group.Children.Add(customize);
-        var actions = small ? Column(8, group, scanAll) : Row(8, group, scanAll);
-        actions.HorizontalAlignment = small ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
-        if (small) scanAll.HorizontalAlignment = HorizontalAlignment.Stretch;
-
-        var header = new LogsPageHeader(DashboardText.T("web.admin.dashboard.page.title"), DashboardText.T("web.admin.dashboard.page.subtitle"), actions);
+        _refreshButton = refresh;
+        _customizeButton = customize;
+        _scanAllButton = scanAll;
+        _headerGroup.Children.Add(refresh);
+        _headerGroup.Children.Add(customize);
+        _headerActions = Row(8, _headerGroup, scanAll);
+        var header = new LogsPageHeader(DashboardText.T("web.admin.dashboard.page.title"), DashboardText.T("web.admin.dashboard.page.subtitle"), _headerActions);
         _header.Content = header;
     }
 
-    private static void Spin(FrameworkElement element)
+    private static Storyboard Spin(FrameworkElement element)
     {
         element.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
         var rotate = new RotateTransform();
@@ -432,6 +461,7 @@ public sealed partial class AdminDashboardPage : Page
         var storyboard = new Storyboard();
         storyboard.Children.Add(animation);
         storyboard.Begin();
+        return storyboard;
     }
 
     private void ToggleCustomizing()
