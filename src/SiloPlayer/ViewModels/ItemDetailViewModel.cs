@@ -68,8 +68,13 @@ public partial class ItemDetailViewModel : ObservableObject,
             && Item?.ContentId == contentId && LibraryId == libraryId && _catalogApi.IsCurrentIdentityContext(owner))
             _ = RefreshBoxSetAfterProgressSaveAsync(pendingProgressSave!);
     }
-    private Task<MediaItemDetail> ReadDetailAsync(string contentId, CancellationToken ct) => LibraryId.HasValue
-        ? _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct) : _detailPrefetchCache.GetAsync(contentId, ct);
+    // Library-scoped reads share the same bounded cache as card intent when it
+    // can serve that scope; the scope is part of the key, never interchangeable.
+    private Task<MediaItemDetail> ReadDetailAsync(string contentId, CancellationToken ct) => LibraryId is not { } libraryId
+        ? _detailPrefetchCache.GetAsync(contentId, ct)
+        : _detailPrefetchCache.SupportsLibraryScope
+            ? _detailPrefetchCache.GetSnapshotAsync(contentId, libraryId, ct)
+            : _catalogApi.GetItemDetailAsync(contentId, libraryId, ct);
 
     private long _overviewRevision;
     private MediaItemDetail? _overviewEpisode, _seriesOverview;

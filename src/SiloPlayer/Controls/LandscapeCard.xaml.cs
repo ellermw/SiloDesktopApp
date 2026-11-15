@@ -576,13 +576,14 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     {
         if (MediaItem == null) return;
         e.Handled = true;
+        var libraryId = MediaNavigationContext.LibraryId(this);
         App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-            .Prefetch(MediaItem.ContentId);
+            .Prefetch(MediaItem.ContentId, libraryId);
         var navigationService = App.Services.GetRequiredService<NavigationService>();
         // Always play the actual content_id on the card — the server resolves
         // episode → file; we don't rewrite to series_id here (that would break
         // resume for the specific episode the card represents).
-        navigationService.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)));
+        navigationService.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, libraryId));
     }
 
     private void OnCardKeyDown(object sender, KeyRoutedEventArgs e)
@@ -593,10 +594,11 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             || MediaItem == null)
             return;
 
+        var libraryId = MediaNavigationContext.LibraryId(this);
         App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-            .Prefetch(MediaItem.ContentId);
+            .Prefetch(MediaItem.ContentId, libraryId);
         App.Services.GetRequiredService<NavigationService>()
-            .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)));
+            .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, libraryId));
         e.Handled = true;
     }
 
@@ -636,8 +638,9 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             && (MediaItem.SeasonNumber.HasValue && MediaItem.EpisodeNumber.HasValue
                 || MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase));
         var contentId = headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId;
-        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(contentId);
-        nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(contentId, MediaNavigationContext.LibraryId(this)));
+        var libraryId = MediaNavigationContext.LibraryId(this);
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(contentId, libraryId);
+        nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(contentId, libraryId));
     }
 
     private void OnMetadataClick(object sender, RoutedEventArgs e)
@@ -650,9 +653,10 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId, LibraryId: MediaNavigationContext.LibraryId(this)));
         else
         {
+            var libraryId = MediaNavigationContext.LibraryId(this);
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                .Prefetch(MediaItem.ContentId);
-            nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)));
+                .Prefetch(MediaItem.ContentId, libraryId);
+            nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, libraryId));
         }
     }
 
@@ -724,12 +728,14 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             await Task.Delay(140, ct);
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
             {
+                // Warm the same library scope the click and Play will use.
+                var libraryId = MediaNavigationContext.LibraryId(this);
                 App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                    .Prefetch(item.ContentId);
+                    .Prefetch(item.ContentId, libraryId);
                 if (item.Type is not ("movie" or "episode" or "audiobook"))
                     return;
                 App.Services.GetRequiredService<Services.PlayerService>()
-                    .PrefetchWatchDetail(item.ContentId);
+                    .PrefetchWatchDetail(item.ContentId, libraryId);
             }
         }
         catch (OperationCanceledException) { }
