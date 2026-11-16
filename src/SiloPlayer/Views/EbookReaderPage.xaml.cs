@@ -936,6 +936,15 @@ public sealed partial class EbookReaderPage : Page
         }
     }
 
+    private async Task ReloadAnnotationsAfterCancellationAsync()
+    {
+        if (_leaving || _lifetime.IsCancellationRequested || !_ebooksApi.IsCurrentIdentityContext(_readerIdentity)) return;
+        // A canceled POST may already have committed. Reconcile instead of retrying it.
+        try { await LoadAnnotationsAsync(); }
+        catch (OperationCanceledException) { }
+        catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex); }
+    }
+
     private async void Bookmark_Click(object sender, RoutedEventArgs e)
     {
         if (_leaving || _book == null || UsesSharedRenderer && !_rendererReady) return;
@@ -952,7 +961,7 @@ public sealed partial class EbookReaderPage : Page
         await LoadAnnotationsAsync();
         OpenPanel("annotations");
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { await ReloadAnnotationsAfterCancellationAsync(); }
         catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex); }
     }
 
@@ -1132,7 +1141,7 @@ public sealed partial class EbookReaderPage : Page
         }, ReaderRequestContext, _lifetime.Token);
         await LoadAnnotationsAsync();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { await ReloadAnnotationsAfterCancellationAsync(); }
         catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex); }
     }
 
@@ -1509,7 +1518,8 @@ public sealed partial class EbookReaderPage : Page
         {
             url = $"https://{EbookReaderWebPolicy.BookHost}/reader-source.{_book.Format}",
             format = _book.Format, location = _restoreProgress?.Location, progress = _restoreProgress?.Progress,
-            chapters = _book.Chapters.Select(chapter => chapter.RelativePath), settings = SharedSettings(), annotations = _annotations
+            chapters = _book.LegacyChapterPaths ?? _book.Chapters.Select(chapter => chapter.RelativePath).ToArray(),
+            settings = SharedSettings(), annotations = _annotations
         };
         await ReaderWebView.ExecuteScriptAsync($"window.siloReader.open({JsonSerializer.Serialize(options, ReaderJsonOptions)}).catch(e=>chrome.webview.postMessage(JSON.stringify({{type:'reader-open-error',hostGeneration:{_openGeneration},message:e.message}})))");
     }

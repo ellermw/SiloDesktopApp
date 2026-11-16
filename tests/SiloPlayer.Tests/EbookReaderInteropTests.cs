@@ -45,6 +45,105 @@ public sealed class EbookReaderInteropTests
     }
 
     [Fact]
+    public async Task ReaderPreferencesSurviveTransportCatchUpDuringOpen()
+    {
+        SiloApiClient? client = null;
+        var handler = new Handler(_ =>
+        {
+            Assert.True(client!.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
+            var response = Json("""{"config":{"theme":"sepia"}}""");
+            response.Headers.ETag = new("\"config-revision\"");
+            return Task.FromResult(response);
+        });
+        client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+        var owner = api.CaptureIdentityContext();
+
+        var result = await api.GetReaderConfigAsync("book");
+
+        Assert.Equal("sepia", result.Config["theme"].GetString());
+        Assert.True(api.IsCurrentIdentityContext(owner));
+        Assert.True(api.HasReaderConfigRevision("book"));
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task ReaderAnnotationsSurviveTransportCatchUpAcrossPagesDuringOpen()
+    {
+        SiloApiClient? client = null;
+        var page = 0;
+        var handler = new Handler(request =>
+        {
+            if (request.Method == HttpMethod.Delete)
+            {
+                Assert.Equal("\"first\"", request.Headers.IfMatch.Single().ToString());
+                return Task.FromResult(Json("{}"));
+            }
+            Assert.True(client!.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
+            page++;
+            if (page == 1)
+                return Task.FromResult(Json("""{"items":[{"id":"first","etag":"\"first\""}],"page":{"has_more":true,"next_cursor":"next"}}"""));
+            Assert.Contains("cursor=next", request.RequestUri!.Query);
+            return Task.FromResult(Json("""{"items":[{"id":"second","etag":"\"second\""}],"page":{"has_more":false}}"""));
+        });
+        client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+
+        var result = await api.GetAnnotationsAsync("book");
+
+        Assert.Equal(new[] { "first", "second" }, result.Select(annotation => annotation.Id));
+        await api.DeleteAnnotationAsync("book", "first");
+        Assert.Equal(3, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData("config")]
+    [InlineData("annotations")]
+    [InlineData("create")]
+    public async Task ReaderResponsesAreRejectedIfIdentityChangesDuringTheOperation(string operation)
+    {
+        SiloApiClient? client = null;
+        var handler = new Handler(_ =>
+        {
+            client!.SetProfile("replacement");
+            return Task.FromResult(Json(operation == "annotations" ? """{"items":[]}""" : """{"id":"created","config":{}}"""));
+        });
+        client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            if (operation == "config") await api.GetReaderConfigAsync("book");
+            else if (operation == "annotations") await api.GetAnnotationsAsync("book");
+            else await api.CreateAnnotationAsync("book", new(), api.CaptureContext());
+        });
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task CommittedAnnotationSurvivesRequestRetirementWithoutRepeatingThePost()
+    {
+        SiloApiClient? client = null;
+        var handler = new Handler(request =>
+        {
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.True(client!.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
+            return Task.FromResult(Json("""{"id":"created","kind":"bookmark","etag":"\"created\""}"""));
+        });
+        client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+
+        var annotation = await api.CreateAnnotationAsync("book", new() { Location = "fraction:0.5" }, api.CaptureContext());
+
+        Assert.Equal("created", annotation.Id);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
     public async Task DownloadCannotStartWithARetiredProfileContext()
     {
         var handler = new Handler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));

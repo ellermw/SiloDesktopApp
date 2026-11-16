@@ -44,6 +44,18 @@ public sealed class EbookPackageExtractorTests : IDisposable
     }
 
     [Fact]
+    public void LegacyComicPathsPreserveBaseWindowsOrderAndImageSetWithoutSvgWrappers()
+    {
+        var book = EbookPackageExtractor.Extract(Comic(
+            "Chapter 1/001.jpg", "Chapter 10/001.jpg", "Chapter 1/000.AVIF",
+            "Chapter 1/002.JXL", "Chapter 1/003.svg"), Path.Combine(_root, "legacy-comic"), "cbz");
+
+        Assert.Equal(new[] { "Chapter 10/001.jpg", "Chapter 1/001.jpg", "Chapter 1/003.svg" }, book.LegacyChapterPaths);
+        Assert.Equal(5, book.Chapters.Count);
+        Assert.Contains(book.Chapters, chapter => chapter.RelativePath.EndsWith(".html", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ReextractingIntoTheSameDirectoryDropsPagesFromThePreviousPackage()
     {
         var target = Path.Combine(_root, "book");

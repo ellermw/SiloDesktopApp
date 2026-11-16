@@ -7,6 +7,11 @@ const fileId = Number(new URLSearchParams(location.search).get('fileId') ?? 0);
 const send = message => globalThis.chrome?.webview?.postMessage(JSON.stringify({...message,hostGeneration}));
 let view, book, generation = 0, ready = false, snapshot = null, annotations = [], chapterPaths = [], format;
 let activeSearch = null;
+let unresolvedRestore = false, recoverOnRelocate = false;
+const turn = direction => {
+    if (unresolvedRestore) recoverOnRelocate = true;
+    return view?.[direction]();
+};
 const clearSearch = () => {
     activeSearch?.abort();
     activeSearch = null;
@@ -45,16 +50,15 @@ async function navigate(location) {
             // Native FB2 chapter numbers do not identify foliate sections.
             // Only open() has saved overall progress to migrate these safely.
             return false;
-        } else if (format !== 'epub') {
-            resolved = {index:target.index, anchor:target.anchor};
-        } else {
-        // Old desktop chapters omit non-HTML spine items. Resolve by path rather than
-        // treating the old chapter number as an EPUB spine number.
-        const path = paths[target.index];
-        const index = activeBook.sections.findIndex(s => s.id === path || decodeURI(String(s.id)) === path);
-        if (index < 0) return false;
-        resolved = {index, anchor:target.anchor};
-        }
+        } else if (format === 'epub' || format === 'cbz' || format === 'cbr') {
+            // Native EPUB chapters omit non-HTML items; native comic chapters
+            // used Windows path order and the base image extension set.
+            const path = paths[target.index];
+            if (typeof path !== 'string') return false;
+            const index = activeBook.sections.findIndex(s => s.id === path || decodeURI(String(s.id)) === path);
+            if (index < 0) return false;
+            resolved = {index, anchor:target.anchor};
+        } else resolved = {index:target.index, anchor:target.anchor};
     } else resolved = await activeView.resolveNavigation(target);
     if (current !== generation || !resolved || !Number.isInteger(resolved.index) || !activeBook.sections[resolved.index]) return false;
     // Foliate's public goTo catches errors and can leave the old page in place.
@@ -113,6 +117,7 @@ window.siloReader = {
         clearSearch();
         const current = ++generation;
         ready = false; snapshot = null;
+        unresolvedRestore = false; recoverOnRelocate = false;
         view?.close(); view?.remove(); book?.destroy?.();
         annotations = options.annotations ?? []; chapterPaths = options.chapters ?? []; format = options.format;
         // A missing or blocked local book rejects fetch itself; word both failures the same way.
@@ -146,6 +151,10 @@ window.siloReader = {
             const index = detail.section?.current ?? activeView.renderer.primaryIndex ?? 0;
             const chapterIndex = chapterPaths.findIndex(path => path === nextBook.sections[index]?.id || path === decodeURI(String(nextBook.sections[index]?.id)));
             snapshot = {...progress,index,chapterIndex,count:nextBook.sections.length};
+            if (recoverOnRelocate) {
+                ready = true; unresolvedRestore = false; recoverOnRelocate = false;
+                send({type:'reader-ready',count:nextBook.sections.length,toc:tableOfContents()});
+            }
             if (ready) send({type:'relocate',...snapshot});
         });
         await activeView.open(nextBook);
@@ -156,6 +165,7 @@ window.siloReader = {
             ? `fraction:${options.progress}` : options.location;
         if (legacyFb2) {
             if (!Number.isFinite(options.progress) || options.progress < 0 || options.progress > 1) {
+                unresolvedRestore = true;
                 send({type:'reader-error',message:locationUnresolved(),count:book.sections.length,toc:tableOfContents()});
                 return false;
             }
@@ -163,6 +173,7 @@ window.siloReader = {
         } else if (location) {
             if (!await navigate(location)) {
                 if (current !== generation) return false;
+                unresolvedRestore = true;
                 send({type:'reader-error',message:locationUnresolved(),count:book.sections.length,toc:tableOfContents()});
                 return false;
             }
@@ -181,7 +192,8 @@ window.siloReader = {
         try {
             if (!await navigate(location)) { if (current === generation) error(locationUnavailable()); return false; }
             if (current !== generation) return false;
-            ready = true; if (snapshot) send({type:'relocate',...snapshot});
+            ready = true; unresolvedRestore = false; recoverOnRelocate = false;
+            if (snapshot) send({type:'relocate',...snapshot});
             send({type:'reader-ready',count:book.sections.length,toc:tableOfContents()});
             return true;
         } catch { if (current === generation) error(locationUnavailable()); return false; }
@@ -191,13 +203,13 @@ window.siloReader = {
         if (!book?.sections[index]) return false;
         await activeView.renderer.goTo({index,anchor:0});
         if (current !== generation) return false;
-        ready = true;
+        ready = true; unresolvedRestore = false; recoverOnRelocate = false;
         send({type:'reader-ready',count:book.sections.length,toc:tableOfContents()});
         if (snapshot) send({type:'relocate',...snapshot});
         return true;
     },
     snapshot: () => ready ? snapshot : null,
-    next: () => view?.next(), prev: () => view?.prev(),
+    next: () => turn('next'), prev: () => turn('prev'),
     selection() {
         for (const {doc,index} of contents()) {
             const selection = doc.getSelection();
@@ -253,6 +265,6 @@ window.siloReader = {
         if (s.flow==='scrolled') r.setAttribute('flow','scrolled'); else r.removeAttribute('flow');
         void r.render?.();
     },
-    close() { clearSearch(); ++generation; ready=false; snapshot=null; view?.close(); view?.remove(); book?.destroy?.(); }
+    close() { clearSearch(); ++generation; ready=false; snapshot=null; unresolvedRestore=false; recoverOnRelocate=false; view?.close(); view?.remove(); book?.destroy?.(); }
 };
 send({type:'shell-ready'});

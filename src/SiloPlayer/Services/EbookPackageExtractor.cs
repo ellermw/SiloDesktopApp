@@ -7,7 +7,10 @@ using SharpCompress.Readers;
 namespace SiloPlayer.Services;
 
 internal sealed record EbookReaderChapter(string Title, string RelativePath);
-internal sealed record ExtractedEbook(string RootDirectory, IReadOnlyList<EbookReaderChapter> Chapters, string Format);
+internal sealed record ExtractedEbook(string RootDirectory, IReadOnlyList<EbookReaderChapter> Chapters, string Format)
+{
+    public IReadOnlyList<string>? LegacyChapterPaths { get; init; }
+}
 
 internal static class EbookPackageExtractor
 {
@@ -217,14 +220,22 @@ internal static class EbookPackageExtractor
 
     private static ExtractedEbook ReadComicArchive(string root)
     {
-        var chapters = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+        var pages = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Where(path => ImageExtensions.Contains(Path.GetExtension(path)))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select((path, index) => new EbookReaderChapter($"Page {index + 1}", ComicPage(root, path, index)))
             .ToList();
+        // Base desktop indices used Windows path ordering and did not include
+        // AVIF/JXL. Keep original image paths (not SVG wrappers) for migration.
+        var legacyPaths = pages
+            .Where(path => !Path.GetExtension(path).Equals(".avif", StringComparison.OrdinalIgnoreCase)
+                && !Path.GetExtension(path).Equals(".jxl", StringComparison.OrdinalIgnoreCase))
+            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
+            .OrderBy(path => path.Replace('/', '\\'), StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var chapters = pages.Select((path, index) => new EbookReaderChapter($"Page {index + 1}", ComicPage(root, path, index))).ToList();
         if (chapters.Count == 0)
             throw new InvalidDataException("The comic archive contains no readable images.");
-        return new ExtractedEbook(root, chapters, "cbz");
+        return new ExtractedEbook(root, chapters, "cbz") { LegacyChapterPaths = legacyPaths };
     }
 
     // The reader navigates straight to each page on its trusted origin. An SVG
