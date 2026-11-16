@@ -29,7 +29,7 @@ public sealed partial class AdminDownloadSettingsPage
             Unlimited = new CheckBox
             {
                 Content = AdminText.T("web.settings.limitField.unlimited"), MinWidth = 0, MinHeight = 36, Padding = new(8, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center, UseSystemFocusVisuals = true,
+                VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center, UseSystemFocusVisuals = true,
             };
             AutomationProperties.SetName(Unlimited, AdminText.T("web.settings.limitField.unlimited"));
             AutomationProperties.SetHelpText(Unlimited, label);
