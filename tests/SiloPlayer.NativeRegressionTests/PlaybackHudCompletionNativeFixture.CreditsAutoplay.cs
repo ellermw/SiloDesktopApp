@@ -39,6 +39,57 @@ internal static partial class PlaybackHudCompletionNativeFixture
         Program.Log("PASS: actual Settings property saves notify active credits after device-override cleanup in both directions.");
         wire.AutoPlay=false; await Refresh(); await Expect("false");
 
+        var reads=wire.AutoPlayReads;
+        wire.AutoPlayEndpointMissing=true;
+        await Refresh(); await Expect("true");
+        Check(wire.AutoPlayReads==reads+1,"An unsupported effective endpoint did not resolve the enabled default immediately.");
+        wire.AutoPlayEndpointMissing=false;
+        wire.AutoPlayReadFailures=1;
+        reads=wire.AutoPlayReads;
+        await Refresh(); await Expect("false");
+        Check(wire.AutoPlayReads==reads+2,"A transient autoplay failure was not retried to the explicit disabled value.");
+        wire.ThrowAutoPlayReads=true;
+        reads=wire.AutoPlayReads;
+        await Refresh(); await Expect("false");
+        Check(wire.AutoPlayReads==reads+3,"Persistent autoplay failures did not stop after the bounded retry budget.");
+        wire.ThrowAutoPlayReads=false;
+        Program.Log("PASS: unsupported autoplay defaults on; transient errors retry and exhausted errors resolve to manual play.");
+
+        // Cancellation of the loaded-media settings pipeline must not strand
+        // its independent playback-owned autoplay read when no new file loads.
+        wire.AutoPlayReadEntered=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var initializerRelease=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.AutoPlayReadRelease=initializerRelease;
+        using(var initializerCancellation=new CancellationTokenSource())
+        {
+            var initialization=(Task)Call(service,"SendAutoSkipSettingsToOscAsync",initializerCancellation.Token)!;
+            await wire.AutoPlayReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            await Expect("unknown");
+            initializerCancellation.Cancel();
+            wire.AutoPlayReadRelease=null;
+            initializerRelease.TrySetResult();
+            try { await initialization; }
+            catch(OperationCanceledException) when(initializerCancellation.IsCancellationRequested) { }
+            await Expect("false");
+        }
+
+        // An access revision must cause a fresh read, never publication of the
+        // old enabled response or a permanently unresolved preference.
+        wire.AutoPlay=true;
+        wire.AutoPlayReadEntered=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var contextRelease=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.AutoPlayReadRelease=contextRelease;
+        reads=wire.AutoPlayReads;
+        var contextRefresh=Refresh();
+        await wire.AutoPlayReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+        service.ActiveAuthority.ApiClient.InvalidateAccessContext();
+        wire.AutoPlay=false; wire.AutoPlayReadRelease=null;
+        contextRelease.TrySetResult();
+        await contextRefresh; await Expect("false");
+        Check(wire.AutoPlayReads==reads+2,"An access revision did not re-arm the current playback's preference read.");
+        Program.Log("PASS: initializer cancellation without a successor and access-context revisions both resolve current autoplay.");
+
+        wire.AutoPlayReadCancellations=0;
         wire.AutoPlayReadEntered=new(TaskCreationOptions.RunContinuationsAsynchronously);
         var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         wire.AutoPlayReadRelease=release;

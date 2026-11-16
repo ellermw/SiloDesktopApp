@@ -317,7 +317,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
         internal bool? AutoPlayDeviceOverride;
         internal bool AutoPlay {get=>AutoPlayDeviceOverride ?? AutoPlayProfile;set{AutoPlayProfile=value;AutoPlayDeviceOverride=null;}}
         internal int AutoPlayProfileWrites, AutoPlayOverrideDeletes;
-        internal int AutoPlayReadCancellations;
+        internal int AutoPlayReadCancellations, AutoPlayReads, AutoPlayReadFailures;
+        internal bool AutoPlayEndpointMissing, ThrowAutoPlayReads;
         internal TaskCompletionSource? AutoPlayReadEntered, AutoPlayReadRelease;
         internal byte[] StillPng=[];
         internal readonly TaskCompletionSource StillEntered=new(TaskCreationOptions.RunContinuationsAsynchronously),StillRelease=new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -363,6 +364,16 @@ internal static partial class PlaybackHudCompletionNativeFixture
             }
             if(path=="/api/v2/settings/values/effective")
             {
+                if(request.RequestUri.Query.Contains("playback.auto_play_next",StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref AutoPlayReads);
+                    if(AutoPlayEndpointMissing) return new(HttpStatusCode.NotFound){Content=new StringContent("{}")};
+                    if(ThrowAutoPlayReads || AutoPlayReadFailures>0)
+                    {
+                        if(AutoPlayReadFailures>0) Interlocked.Decrement(ref AutoPlayReadFailures);
+                        throw new HttpRequestException("Synthetic autoplay read failure.");
+                    }
+                }
                 var autoPlay=AutoPlay;
                 var release=AutoPlayReadRelease;
                 if(request.RequestUri.Query.Contains("playback.auto_play_next",StringComparison.Ordinal) && release is not null)
