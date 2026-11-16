@@ -506,13 +506,29 @@ public sealed partial class AdminLibrariesControllerTests
             server.Override = request => request.RequestUri!.AbsolutePath == "/api/v2/libraries/provider-defaults" ? AdminMonitorKit.Json(Defaults) : null;
             using var session = AdminLibraryEditorSession.Begin(controller, null);
             await session.LoadAsync();
+            // Hold the response: a fast defaults read can otherwise finish before SetType returns.
+            var releaseDefaults = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var respond = kit.Http.Respond;
+            kit.Http.Respond = async (request, ct) =>
+            {
+                if (request.RequestUri!.PathAndQuery == "/api/v2/libraries/provider-defaults?library_type=series")
+                    await releaseDefaults.Task.WaitAsync(ct);
+                return await respond(request, ct);
+            };
             session.ToggleProvider("movie", 0);
             Assert.True(session.State.ChainDirty);
-            session.SetType("series");
-            Assert.False(session.State.ChainDirty);
-            Assert.True(session.State.ChainLoading);
-            await Until(() => kit.Http.Requests.Contains("GET /api/v2/libraries/provider-defaults?library_type=series"));
-            Assert.Equal(["series", "season", "episode"], session.State.ContentLevels);
+            try
+            {
+                session.SetType("series");
+                Assert.False(session.State.ChainDirty);
+                Assert.True(session.State.ChainLoading);
+                await Until(() => kit.Http.Requests.Contains("GET /api/v2/libraries/provider-defaults?library_type=series"));
+                Assert.Equal(["series", "season", "episode"], session.State.ContentLevels);
+            }
+            finally { releaseDefaults.TrySetResult(); }
+            await Until(() => !session.State.ChainLoading);
+            Assert.False(session.State.ChainFailed);
+            Assert.Equal("series", session.State.DefaultsType);
         }
     }
 
