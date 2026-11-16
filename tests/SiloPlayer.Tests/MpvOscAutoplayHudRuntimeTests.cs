@@ -75,7 +75,7 @@ public sealed partial class MpvOscRuntimeTests
                 'Unknown autoplay advanced or consumed the countdown')
             assert(#sent_matching('silo-next-episode') == 0, 'Unknown autoplay navigated')
             assert(not s.next_ep_countdown_overlay.data:find('Up next in', 1, true), 'Unknown autoplay displayed a timer')
-            assert(s.next_ep_countdown_overlay.data:find('Up Next', 1, true), 'Waiting card lost its plain Up Next label')
+            assert(s.next_ep_countdown_overlay.data:find('Up next', 1, true), 'Waiting card lost its plain Up next label')
             handlers['osc-set-locale']('2','de','ltr','web.player.upNext.heading','Als Nächstes')
             assert(s.next_ep_countdown_overlay.data:find('Als Nächstes', 1, true), 'Waiting card ignored the localized heading')
             handlers['osc-set-auto-play-next']('false')

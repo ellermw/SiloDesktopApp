@@ -1,4 +1,54 @@
-# November 15 - Server review and credits autoplay increment
+# November 16 — Credits follow-up verified for PR176
+
+Official Server main was fetched directly again unchanged at
+`abd85d0cadac28f4ab7db6821dad9634fc114790`. Fresh Beta is
+`40ab7889ef1d015a8ee07ef1962870763f95f66c` (pipeline stamp 1.2.1151-beta.1).
+This Credits follow-up was verified as source atop pipeline Beta-merge head
+`12e510bd7918cc437da95e60945be78e137f5169`. Its version remains
+1.2.1145-beta.1 / numeric 1.2.1144.1; the Beta pipeline owns subsequent stamping.
+
+Credits Up next now respects autoplay and pause, survives routine event-socket
+reconnects, and uses WebUI's enabled default after bounded optional settings-read
+failures. Genuine account/profile/device/access/playback/file retirement still
+rejects stale responses. Native tests exercise actual Settings writes in both
+directions, initializer cancellation, access-change retry and successor playback.
+
+Both reconnect/failure regressions first failed against prior native bytes.
+The 06:49:17.4418184Z–06:51:48.1016177Z lease then passed nonincremental
+unit/app/host builds, actual xUnit source-root proof, PDB document/checksum and
+publish/reference/host byte binding, and all five native cases (19 PASS, zero
+FAIL): credits-autoplay, credits-autoplay-reconnect, credits-autoplay-failure,
+autoplay and postroll. Product SHA256:
+`F979769FD851C41F9ED83583A88CD06987539375145EE809B5828EA6AC8B9A32`.
+
+That chain's focused units stopped on a new HTTP test returning `settings`
+instead of the contract's `items`. Only that fixture JSON changed afterward.
+The assigned final unit-only lease ran 06:58:27.6808250Z–07:01:37.7719166Z:
+fresh nonincremental units, source/PDB proofs, 727 focused tests and all 7,239
+full-suite tests passed, zero failures/skips. Guards confirm product/native
+sources still exactly match the five passing native runs. Independent final
+source review found no blocking findings. Receipts:
+`.codex-tmp/credits-final-units-20261116T0658-receipt.json` and
+`.codex-tmp/credits-review-green-20261116T0650-stopped-receipt.json`.
+
+Reader doctype follow-up is separately submitted in qualifying Beta PR178,
+head `2809dcd1d50e4a6a0b1cf0b06d94cfccbd12fb48`, with an executed red then
+42 renderer and 26 Node checks passing. No shared .NET output was touched.
+
+Credits has released its lease with no waiter or requeue. All .NET/native work
+uses shared `D:/SiloPlayer-build/{artifacts,publish,native-reference}` under
+`SiloOct18Build`; native stages retain continuous ownership and source/byte
+binding. The installed player/settings remain preserved. No direct merge,
+release or installer action occurred. Synthetic tests do not certify live
+household, Narrator, every DPI or full visual parity.
+
+Admin Manage/Configure remains with its existing lead. Monitor/shared shell,
+request permissions, audiobooks, localization, metadata and the remaining
+viewer increments continue independently; this is not whole-rollout completion.
+
+---
+
+November 15 - Server review and credits autoplay increment
 
 Reviewed official Silo Server main `abd85d0cadac28f4ab7db6821dad9634fc114790`
 against Beta `2c33599f751e1bb7e18a56ee378ffe918710d74d`. The 222-commit

@@ -9,8 +9,8 @@ public partial class PlayerService
 {
     private const string AutoPlayNextSettingKey = "playback.auto_play_next";
     private readonly object _creditsAutoPlayGate = new();
-    private sealed record CreditsAutoPlayOwner(PlaybackAuthorityScope Authority, ApiRequestContext Context,
-        ApiIdentityContext Identity, long Playback, long File, long Revision);
+    private sealed record CreditsAutoPlayOwner(PlaybackAuthorityScope Authority, SettingsIdentityContext Identity,
+        long AccessGeneration, long Playback, long File, long Revision);
     private CreditsAutoPlayOwner? _creditsAutoPlayOwner;
     private long _creditsAutoPlayRevision;
     private bool? _creditsAutoPlay;
@@ -18,20 +18,21 @@ public partial class PlayerService
 
     private bool OwnsCreditsAutoPlay(CreditsAutoPlayOwner owner) => !_closing &&
         owner.Revision == _creditsAutoPlayRevision && ReferenceEquals(owner.Authority, _activeAuthority) &&
-        owner.Authority.ApiClient.IsCurrentIdentityContext(owner.Identity) &&
+        owner.Authority.SettingsApi.IsCurrentSettingsIdentityContext(owner.Identity) &&
         owner.Playback == Volatile.Read(ref _playRequestGeneration) &&
         owner.File == Volatile.Read(ref _fileLoadGeneration);
 
     private bool IsCreditsAutoPlayCurrent(CreditsAutoPlayOwner owner) =>
-        OwnsCreditsAutoPlay(owner) && owner.Authority.ApiClient.IsCurrentContext(owner.Context);
+        OwnsCreditsAutoPlay(owner) &&
+        owner.AccessGeneration == owner.Authority.ApiClient.CaptureContext().AccessGeneration;
 
     private CreditsAutoPlayOwner BeginCreditsAutoPlayRefresh()
     {
         lock (_creditsAutoPlayGate)
         {
             var authority = _activeAuthority;
-            var owner = new CreditsAutoPlayOwner(authority, authority.ApiClient.CaptureContext(),
-                authority.ApiClient.CaptureIdentityContext(), Volatile.Read(ref _playRequestGeneration),
+            var owner = new CreditsAutoPlayOwner(authority, authority.SettingsApi.CaptureSettingsIdentityContext(),
+                authority.ApiClient.CaptureContext().AccessGeneration, Volatile.Read(ref _playRequestGeneration),
                 Volatile.Read(ref _fileLoadGeneration), ++_creditsAutoPlayRevision);
             _creditsAutoPlayOwner = owner;
             _creditsAutoPlay = null;
@@ -84,9 +85,9 @@ public partial class PlayerService
                 lock (_creditsAutoPlayGate)
                 {
                     if (!OwnsCreditsAutoPlay(owner)) return;
-                    // Access/transport revisions retire a response, not playback's
-                    // preference read. Retry under fresh context for the same identity.
-                    owner = owner with { Context = owner.Authority.ApiClient.CaptureContext() };
+                    // Keep genuine access changes authoritative while reconnects
+                    // leave the account/profile/device preference owner intact.
+                    owner = owner with { AccessGeneration = owner.Authority.ApiClient.CaptureContext().AccessGeneration };
                     _creditsAutoPlayOwner = owner;
                 }
                 bool? enabled = null;
@@ -94,11 +95,11 @@ public partial class PlayerService
                 deadline.CancelAfter(TimeSpan.FromSeconds(5));
                 try
                 {
-                    if (string.IsNullOrWhiteSpace(owner.Context.ProfileId)) enabled = true;
+                    if (string.IsNullOrWhiteSpace(owner.Identity.Identity.ProfileId)) enabled = true;
                     else
                     {
                         var effective = await owner.Authority.SettingsApi.GetContractEffectiveSettingsAsync(
-                            owner.Context, [AutoPlayNextSettingKey], ct: deadline.Token).ConfigureAwait(false);
+                            owner.Identity, [AutoPlayNextSettingKey], ct: deadline.Token).ConfigureAwait(false);
                         enabled = ReadCreditsAutoPlay(effective);
                     }
                 }
@@ -123,11 +124,9 @@ public partial class PlayerService
             lock (_creditsAutoPlayGate)
             {
                 if (!OwnsCreditsAutoPlay(owner)) return;
-                owner = owner with { Context = owner.Authority.ApiClient.CaptureContext() };
-                _creditsAutoPlayOwner = owner;
-                // Exhausted transient failures resolve conservatively to manual
-                // Play now, never to an unverified enabled/stale preference.
-                CompleteCreditsAutoPlayRefresh(owner, false, read.Token);
+                // The effective preference is optional; WebUI defaults autoplay
+                // on when its read fails. Retired identities never publish here.
+                CompleteCreditsAutoPlayRefresh(owner, true, read.Token);
             }
         }
         catch (OperationCanceledException) when (read.IsCancellationRequested) { }

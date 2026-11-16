@@ -1,6 +1,7 @@
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Core.Api;
 
 internal static partial class PlaybackHudCompletionNativeFixture
 {
@@ -17,6 +18,30 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 await Task.Delay(25);
             }
             throw new InvalidOperationException("Current autoplay preference did not reach production OSC: "+expected);
+        }
+
+        var mode=Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE");
+        var api=SiloPlayer.App.Services.GetRequiredService<SiloApiClient>();
+        if(mode=="credits-autoplay-failure")
+        {
+            wire.FailAutoPlayRead=true;
+            await Refresh();await Expect("true");
+            Program.Log("PASS: optional failed autoplay read resolves to the WebUI enabled default.");
+            return;
+        }
+        if(mode=="credits-autoplay-reconnect")
+        {
+            wire.AutoPlay=false;await Refresh();await Expect("false");
+            Check(api.TryInvalidateAccessContext(api.CaptureContext(),out _,transportCatchUp:true),"Transport catch-up was not accepted.");
+            Call(service,"PublishPlaybackHudPreferences",mpv);await Expect("false");
+            wire.AutoPlayReadEntered=new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pendingRelease=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.AutoPlayReadRelease=pendingRelease;
+            var pendingRead=Refresh();await wire.AutoPlayReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            Check(api.TryInvalidateAccessContext(api.CaptureContext(),out _,transportCatchUp:true),"In-flight transport catch-up was not accepted.");
+            pendingRelease.TrySetResult();await pendingRead;await Expect("false");
+            Program.Log("PASS: cached and in-flight autoplay preferences survive routine transport catch-up.");
+            return;
         }
 
         service.SetNextEpisodeHint(service.ContentId!,"episode-2","Next","Synthetic Show",null,null,seasonNumber:1,episodeNumber:2);
@@ -50,10 +75,10 @@ internal static partial class PlaybackHudCompletionNativeFixture
         Check(wire.AutoPlayReads==reads+2,"A transient autoplay failure was not retried to the explicit disabled value.");
         wire.ThrowAutoPlayReads=true;
         reads=wire.AutoPlayReads;
-        await Refresh(); await Expect("false");
+        await Refresh(); await Expect("true");
         Check(wire.AutoPlayReads==reads+3,"Persistent autoplay failures did not stop after the bounded retry budget.");
         wire.ThrowAutoPlayReads=false;
-        Program.Log("PASS: unsupported autoplay defaults on; transient errors retry and exhausted errors resolve to manual play.");
+        Program.Log("PASS: unsupported autoplay defaults on; transient errors retry and exhausted errors use the WebUI enabled default.");
 
         // Cancellation of the loaded-media settings pipeline must not strand
         // its independent playback-owned autoplay read when no new file loads.

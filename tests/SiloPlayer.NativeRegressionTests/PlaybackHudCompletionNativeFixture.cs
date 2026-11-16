@@ -157,7 +157,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 var starts=wire.Starts; await Task.Delay(300);
                 Check(wire.Starts==starts,"Retired credits intent advanced a newer preparation owner.");
             }
-            else if(mode=="credits-autoplay") await VerifyCreditsAutoPlay(service,wire);
+            else if(mode.StartsWith("credits-autoplay",StringComparison.Ordinal)) await VerifyCreditsAutoPlay(service,wire);
             else if(mode=="metadata")
             {
                 await (Task)Call(service,"AutoDetectNextEpisodeAsync",CancellationToken.None)!;
@@ -314,6 +314,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
         internal bool FailStart, FailAdvance, HoldAdvance, HasEpisodes;
         internal bool HideImages=true, HoldStill;
         internal bool AutoPlayProfile=true;
+        internal bool FailAutoPlayRead;
         internal bool? AutoPlayDeviceOverride;
         internal bool AutoPlay {get=>AutoPlayDeviceOverride ?? AutoPlayProfile;set{AutoPlayProfile=value;AutoPlayDeviceOverride=null;}}
         internal int AutoPlayProfileWrites, AutoPlayOverrideDeletes;
@@ -368,6 +369,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 {
                     Interlocked.Increment(ref AutoPlayReads);
                     if(AutoPlayEndpointMissing) return new(HttpStatusCode.NotFound){Content=new StringContent("{}")};
+                    if(FailAutoPlayRead) return new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{}")};
                     if(ThrowAutoPlayReads || AutoPlayReadFailures>0)
                     {
                         if(AutoPlayReadFailures>0) Interlocked.Decrement(ref AutoPlayReadFailures);

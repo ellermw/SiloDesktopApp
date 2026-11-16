@@ -1,12 +1,54 @@
 # Credits Up next: autoplay and pause
 
-Reference: official Silo Server main `abd85d0cadac28f4ab7db6821dad9634fc114790`, including #4278 `87d6425`. Desktop baseline: Beta `2c33599f751e1bb7e18a56ee378ffe918710d74d`, 1.2.1145-beta.1 / numeric 1.2.1144.1, unchanged for pipeline stamping.
+Reference: official Silo Server main `abd85d0cadac28f4ab7db6821dad9634fc114790`,
+including #4278 `87d6425`. Original Beta baseline `2c33599f`; task now
+includes pipeline merge `12e510bd` of Beta `aa6b8b86`. Version remains
+1.2.1145-beta.1 / numeric 1.2.1144.1 pending pipeline stamping.
 
-The production libmpv credits card now counts only while the effective autoplay preference is resolved/enabled and playback is running. Unknown/off keeps a localized Up Next heading and manual Play now, with no numeric countdown or progress stripe. Pausing or toggling autoplay preserves eligible elapsed time. Seeking outside the credits range closes the card; reentry starts a fresh ten seconds unless the viewer cancelled it. Still-watching protection and content/load/playback-owned navigation remain intact.
+## Current verified review follow-up
 
-The initial preference shares the existing auto-skip effective-settings read. A failed read leaves credits waiting for the viewer; a successful response omitting the setting retains the established enabled default. Current profile-setting changes refresh the preference, cancel superseded reads and reject responses from retired read/playback/file/authority contexts. Lua also rejects preference messages from a different load owner. There is no new poll, whole-library read or account-setting write.
+The reconnect and HTTP503 fallback regressions actually
+failed on the earlier source-bound native payload (evidence under
+`.codex-tmp/native-results/credits-review-red-9719-retry1/`). Source now uses a
+settings identity owned by account/profile/device rather than the event request
+context. Genuine access revisions still retire responses and re-arm the read.
+The existing three-attempt/five-second-per-attempt budget is retained, and
+exhausted optional errors use WebUI's enabled default. Retired account, profile,
+device, authority, file or playback owners cannot publish. No poll or setting
+write is added by the read path.
 
-## Verification
+The latest bounded green chain ran 06:49:17.4418184Z–06:51:48.1016177Z on
+November 16 UTC. Nonincremental unit/app/host builds, actual xUnit source-root
+proof, PDB document paths/checksums, publish/reference and byte binding passed.
+All five native cases completed with 19 PASS records and zero FAIL:
+credits-autoplay, credits-autoplay-reconnect, credits-autoplay-failure, autoplay
+and postroll. Product SHA256 is
+`F979769FD851C41F9ED83583A88CD06987539375145EE809B5828EA6AC8B9A32`.
+
+Focused units stopped at 726 passed / one failed; full units were not reached.
+The failing new captured-profile/device test returned a synthetic `settings`
+array where the current contract requires `items`. That fixture JSON is now
+corrected, without changing product or native-fixture source. Six additional
+ownership cases passed in this run. The fixture-only correction was then verified in the assigned final unit-only
+lease (06:58:27.6808250Z–07:01:37.7719166Z): nonincremental build, PDB/source
+proofs, all 727 focused tests and all 7,239 full-suite tests passed, zero
+failures/skips. Exact runtime/native-source guards passed before and after;
+no app/publish/reference/native output was rewritten in this second turn.
+Independent final source review found no blocking findings. Final unit receipt:
+`.codex-tmp/credits-final-units-20261116T0658-receipt.json`.
+Evidence: `.codex-tmp/credits-review-green-20261116T0650-stopped-receipt.json`,
+per-stage logs and matching native-results directory. Earlier stopped/passing
+receipts retain their exact historical source scope.
+
+The credits card counts only while the effective preference is resolved/enabled
+and playback is running. Unknown/off shows the localized heading and manual
+Play now with no numeric timer or stripe. Pause and setting changes preserve
+eligible elapsed time. Seeking out closes the card; reentry starts ten seconds
+unless cancelled. Still-watching and content/load/playback guards remain.
+
+## Historical verification (original candidate only)
+
+The receipts below predate the current review follow-up and do not certify it.
 
 - All three new production-Lua runtime regressions failed against the original source: unknown autoplay consumed time, pause consumed time, and seeking out left the countdown open. All pass after the fix.
 - Fresh full main unit suite: 7,180 passed, zero failed/skipped. The later explicit localized-heading assertion was covered by the final 443 passing OSC/localization tests.
