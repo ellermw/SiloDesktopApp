@@ -230,12 +230,22 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
         _scales[key] = scale;
         var row = Place(group, key, label, hintKey, editor, unitKey.Length > 0 ? T(unitKey) : "");
         row.LayoutChanged += editor.SetWide;
-        editor.Box.TextChanging += (_, _) => Set(key, R.ToStoredUnits(editor.Box.Text, scale));
+        editor.Box.TextChanging += (_, _) =>
+        {
+            if (_syncing || _controller?.State is not { Loaded: true } || editor.Unlimited.IsChecked == true) return;
+            var value = R.ToStoredUnits(editor.Box.Text, scale);
+            // Only the checkbox may stage Unlimited. A zero (including a sub-byte value rounded to zero)
+            // is an incomplete limit, not permission to silently remove the server's cap.
+            var staged = R.IsUnlimited(value) ? "" : value;
+            editor.DraftValue = staged;
+            Set(key, staged);
+        };
         // Checked/Unchecked rather than Click so a keyboard, pointer or automation toggle all reach the same path; programmatic sync is guarded.
         void ToggleUnlimited(object? sender, RoutedEventArgs args)
         {
             if (_syncing || _controller?.State is not { Loaded: true } state) return;
             var current = state.Values.GetValueOrDefault(key, "");
+            editor.DraftValue = null;
             if (editor.Unlimited.IsChecked == true)
             {
                 editor.LastLimit = R.IsUnlimited(current) ? "" : current;
@@ -415,12 +425,15 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
     private void RenderLimit(LimitEditor limit, string key, string value, bool enabled)
     {
         var scale = _scales[key];
+        if (limit.DraftValue != value) limit.DraftValue = null;
         var unlimited = R.IsUnlimited(value);
+        // Remember canonical units, not the rounded display, for programmatic Unlimited transitions too.
+        if (!unlimited) limit.LastLimit = value;
         if (limit.Unlimited.IsChecked != unlimited) limit.Unlimited.IsChecked = unlimited;
         limit.Unlimited.IsEnabled = enabled;
         var wanted = unlimited ? ""
-            // Keeps what was typed while it still round-trips to the stored value, so "1." and "1.50" survive mid-keystroke.
-            : R.ToStoredUnits(limit.Box.Text, scale) == value ? limit.Box.Text : R.ToDisplayUnits(value, scale);
+            // Keep incomplete/zero drafts too: a keystroke must never check Unlimited or disable the box.
+            : limit.DraftValue == value || R.ToStoredUnits(limit.Box.Text, scale) == value ? limit.Box.Text : R.ToDisplayUnits(value, scale);
         if (limit.Box.Text != wanted) limit.Box.Text = wanted;
         limit.Box.PlaceholderText = unlimited ? T("web.settings.limitField.unlimited") : "";
         limit.Box.IsEnabled = enabled && !unlimited;
@@ -494,7 +507,7 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
                 {
                     case TextBox text: text.Text = ""; text.IsEnabled = false; break;
                     case ToggleSwitch toggle: toggle.IsOn = false; toggle.IsEnabled = false; break;
-                    case LimitEditor limit: limit.Box.Text = ""; limit.Unlimited.IsChecked = false; limit.LastLimit = ""; limit.Box.IsEnabled = limit.Unlimited.IsEnabled = false; break;
+                    case LimitEditor limit: limit.Box.Text = ""; limit.Unlimited.IsChecked = false; limit.LastLimit = ""; limit.DraftValue = null; limit.Box.IsEnabled = limit.Unlimited.IsEnabled = false; break;
                     case PathEditor path: path.Box.Text = ""; path.Reset.Visibility = Visibility.Collapsed; path.Box.IsEnabled = false; break;
                 }
             }

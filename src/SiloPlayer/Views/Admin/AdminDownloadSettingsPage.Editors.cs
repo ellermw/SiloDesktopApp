@@ -20,6 +20,8 @@ public sealed partial class AdminDownloadSettingsPage
         internal TextBox Box { get; }
         /// <summary>The limit Unlimited replaced, restored when it is unchecked (never the unlimited sentinel itself).</summary>
         internal string LastLimit { get; set; } = "";
+        /// <summary>Stored value of the current text draft; null when rendering an external value.</summary>
+        internal string? DraftValue { get; set; }
 
         internal LimitEditor(string label, string key)
         {

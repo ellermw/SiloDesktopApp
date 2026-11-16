@@ -198,6 +198,31 @@ internal static class AdminDownloadSettingsNativeFixture
             Check(budget.Text == "53.687" && !Descendants(page).OfType<TextBlock>().Any(t => t.Text.Contains("53687091200", StringComparison.Ordinal)),
                 "the byte budget is shown as decimal GB, never as raw bytes");
             Check(UnitLabel(page, budget) == "GB", "the budget row shows its GB unit in the trailing slot");
+            var budgetZeroUnlimited = Unlimited(page, R.ArtifactMaxBytes)!;
+            budget.Focus(FocusState.Programmatic);
+            foreach (var draft in new[] { "0", "0.", "0.5" })
+            {
+                budget.Text = draft;
+                await Task.Delay(120); // Let the queued render run between individual keystrokes.
+                Check(budget.Text == draft && budget.IsEnabled && budgetZeroUnlimited.IsChecked == false,
+                    $"typing {draft} GB preserves the draft without selecting Unlimited");
+            }
+            Check(controller.State.Values[R.ArtifactMaxBytes] == "500000000" && !controller.State.Errors.ContainsKey(R.ArtifactMaxBytes),
+                "typing 0.5 GB one keystroke at a time stages a finite half-GB cap");
+            foreach (var draft in new[] { "0.0000000004", "-0.0000000004" })
+            {
+                budget.Text = draft;
+                await Task.Delay(120);
+                Check(budget.Text == draft && budget.IsEnabled && budgetZeroUnlimited.IsChecked == false &&
+                    controller.State.Errors.ContainsKey(R.ArtifactMaxBytes) && !Button(page, "DownloadsSave").IsEnabled,
+                    $"sub-byte draft {draft} is rejected inline, never converted to Unlimited");
+                var savesBeforeZero = server.Saves;
+                await controller.SaveAsync();
+                Check(server.Saves == savesBeforeZero, "a rounded-to-zero limit cannot be saved");
+            }
+            await Click(page, "DownloadsDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0, "discard zero drafts");
+            await Task.Delay(120);
+            Check(budget.Text == "53.687" && budgetZeroUnlimited.IsChecked == false, "Discard clears an invalid zero draft");
             budget.Text = "100"; await Until(() => controller.State.Values[R.ArtifactMaxBytes] == "100000000000", "typed GB stored as bytes");
             budget.Text = "1.5"; await Until(() => controller.State.Values[R.ArtifactMaxBytes] == "1500000000", "fraction stored exactly");
             await Task.Delay(120);
@@ -280,6 +305,28 @@ internal static class AdminDownloadSettingsNativeFixture
             Check(Box(page, R.UserBandwidth)!.Text == "50" && UnitLabel(page, Box(page, R.UserBandwidth)!) == "Mbps" && Box(page, R.MaxConcurrentPerUser)!.Text == "3" &&
                 Unlimited(page, R.MaxPerPeriod)!.IsChecked == true && Box(page, R.PeriodDuration)!.Text == "24h" && Toggle(page, R.LocalTranscodeFallback).IsOn && Box(page, R.CacheHours)!.Text == "72",
                 "every advanced field shows its saved value");
+            var userBandwidth = Box(page, R.UserBandwidth)!;
+            var userUnlimited = Unlimited(page, R.UserBandwidth)!;
+            userBandwidth.Focus(FocusState.Programmatic);
+            userBandwidth.Text = "10"; await Task.Delay(120);
+            userBandwidth.Select(0, 1);
+            userBandwidth.SelectedText = ""; // Delete the leading 1, leaving 0 between edits.
+            await Task.Delay(120);
+            Check(userBandwidth.Text == "0" && userBandwidth.IsEnabled && userUnlimited.IsChecked == false &&
+                controller.State.Errors.ContainsKey(R.UserBandwidth) && !Button(page, "DownloadsSave").IsEnabled,
+                "deleting 10 down to 0 keeps the limit editor enabled and blocks a silent Unlimited save");
+            prepares.Focus(FocusState.Programmatic); await Task.Delay(120);
+            Check(userBandwidth.Text == "0" && userUnlimited.IsChecked == false,
+                "leaving a zero draft does not silently select Unlimited");
+            userBandwidth.Text = "50"; await Until(() => !controller.State.DirtyKeys.Contains(R.UserBandwidth), "finish bandwidth edit");
+            userBandwidth.Text = "10"; await Task.Delay(120);
+            controller.Set(R.UserBandwidth, R.Unlimited); await Task.Delay(120);
+            Check(userUnlimited.IsChecked == true && !userBandwidth.IsEnabled, "an external Unlimited value renders normally");
+            Invoke(userUnlimited); await Task.Delay(120);
+            Check(userBandwidth.Text == "10" && userBandwidth.IsEnabled && controller.State.Values[R.UserBandwidth] == "10",
+                "unchecking a programmatically selected Unlimited restores the previous limit");
+            await Click(page, "DownloadsDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0, "discard bandwidth regression edits");
+            await Task.Delay(120);
             var cacheBox = Box(page, R.CacheHours)!;
             Check(Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Rolling window each user's count is measured over, e.g. 24h or 168h."), "period length shows its official description");
             Invoke(disclosure); await Until(() => Rail(page).Visibility == Visibility.Collapsed, "manual collapse");
