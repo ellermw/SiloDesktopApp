@@ -111,6 +111,7 @@ internal sealed class NetworkAccessProviderView
 
     internal void Render(AdminNetworkAccessProviderState state)
     {
+        Group.SetTitle(state.Summary.DisplayName);
         Group.State(false, X.T("web.admin.settings.network.provider.description", new { name = state.Summary.DisplayName }));
         var hosts = state.Status?.Hosts ?? [];
         var mode = state.Loading ? 0 : state.Failure != null ? 1 : hosts.Count == 0 ? 2 : 3;
@@ -325,6 +326,7 @@ internal sealed class NetworkAccessHostRow : Grid
         var unavailable = host.State == AdminNetworkAccessHostStatus.Unavailable;
         var focused = _connect.Button.FocusState != FocusState.Unfocused ? _connect.Button.FocusState
             : _disconnect.Button.FocusState != FocusState.Unfocused ? _disconnect.Button.FocusState : FocusState.Unfocused;
+        var actionChanged = _disconnect.Button.Visibility != (disconnect ? Visibility.Visible : Visibility.Collapsed);
         _disconnect.Button.Visibility = disconnect ? Visibility.Visible : Visibility.Collapsed;
         _connect.Button.Visibility = disconnect ? Visibility.Collapsed : Visibility.Visible;
         _disconnect.Button.IsEnabled = !busy;
@@ -336,7 +338,7 @@ internal sealed class NetworkAccessHostRow : Grid
         // A disabled button receives no pointer input, so the title lives on its wrapper (official title attribute).
         ToolTipService.SetToolTip(_actionHost, unavailable && !disconnect ? hint : null);
         var started = busy && !_spinning;
-        if (_spinning != busy)
+        if (_spinning != busy || actionChanged)
         {
             _spinning = busy;
             var visible = disconnect ? _disconnect : _connect;
@@ -379,8 +381,8 @@ internal sealed class NetworkAccessHostRow : Grid
 }
 
 /// <summary>
-/// The row's <c>flex flex-wrap justify-between gap-x-6 gap-y-3</c>: details and actions share a line while the details'
-/// natural width fits beside the actions, otherwise the actions wrap below, left-aligned.
+/// The row's <c>min-w-0 flex-1</c> details shrink beside the nonshrinking actions. Actions wrap below only
+/// when the action and horizontal gap cannot fit in the row.
 /// </summary>
 internal sealed class NetworkAccessFlexRow : Panel
 {
@@ -393,10 +395,8 @@ internal sealed class NetworkAccessFlexRow : Panel
     {
         var width = double.IsInfinity(available.Width) ? 100000 : available.Width;
         _actions.Measure(new(width, double.PositiveInfinity));
-        _info.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
-        var natural = _info.DesiredSize.Width;
         var actions = _actions.DesiredSize;
-        _wrap = actions.Width > 0 && natural + 24 + actions.Width > width;
+        _wrap = actions.Width > 0 && 24 + actions.Width > width;
         var infoWidth = _wrap || actions.Width == 0 ? width : Math.Max(0, width - 24 - actions.Width);
         _info.Measure(new(infoWidth, double.PositiveInfinity));
         var height = _wrap ? _info.DesiredSize.Height + 12 + actions.Height : Math.Max(_info.DesiredSize.Height, actions.Height);

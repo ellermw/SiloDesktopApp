@@ -41,6 +41,7 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
     private readonly Dictionary<string, NetworkAccessProviderView> _views = new(StringComparer.Ordinal);
     private readonly AdminMonitorAuthority _authority;
     private AdminNetworkAccessController? _controller;
+    private MonitorAuthorityLease? _renderOwner;
     private AdminRouteRequest? _location;
     private double? _restoreOffset;
     private bool _active, _navigated, _hostVisible = true, _hostFocused = true, _opening;
@@ -189,13 +190,14 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
     private void Render(AdminNetworkAccessState state)
     {
         var current = state.Owner?.IsCurrent == true && state.IsOpen;
+        if (!ReferenceEquals(_renderOwner, state.Owner)) { ClearRows(); _renderOwner = state.Owner; }
         _loading.Visibility = current && state.CapabilitiesLoading ? Visibility.Visible : Visibility.Collapsed;
         var failed = current && state.CapabilitiesFailure != null;
         _alert.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
         if (failed) U.UpdateLiveText(_alertText, CapabilitiesMessage(state));
         _retry.IsEnabled = failed && !state.CapabilitiesLoading;
         _empty.Visibility = current && state.CapabilitiesLoaded && state.Providers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        RenderProviders(current ? state.Providers : []);
+        RenderProviders(current ? state.Providers : [], current ? state.Owner : null);
         if (current && state.CapabilitiesLoaded && _restoreOffset is { } offset)
         {
             _restoreOffset = null;
@@ -203,7 +205,7 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
         }
     }
 
-    private void RenderProviders(IReadOnlyList<AdminNetworkAccessProviderState> providers)
+    private void RenderProviders(IReadOnlyList<AdminNetworkAccessProviderState> providers, MonitorAuthorityLease? owner)
     {
         var wanted = providers.Select(provider => provider.Summary.Provider).ToHashSet(StringComparer.Ordinal);
         foreach (var gone in _views.Keys.Where(key => !wanted.Contains(key)).ToArray())
@@ -217,7 +219,9 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
             var provider = providers[index];
             if (!_views.TryGetValue(provider.Summary.Provider, out var view))
             {
-                view = new NetworkAccessProviderView(provider.Summary, OnCommand, OnLink);
+                view = new NetworkAccessProviderView(provider.Summary,
+                    (providerId, hostId, kind) => OnCommand(owner, providerId, hostId, kind),
+                    (providerId, hostId, link) => OnLink(owner, providerId, hostId, link));
                 _views[provider.Summary.Provider] = view;
             }
             // Move a group only when the server's order changed; unchanged groups keep their elements and focus.
@@ -231,27 +235,30 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
         }
     }
 
-    private async void OnCommand(string provider, string hostId, AdminNetworkAccessCommandKind kind)
+    private bool IsRenderedOwnerCurrent(MonitorAuthorityLease? owner) =>
+        _active && owner?.IsCurrent == true && ReferenceEquals(owner, _controller?.State.Owner);
+
+    private async void OnCommand(MonitorAuthorityLease? owner, string provider, string hostId, AdminNetworkAccessCommandKind kind)
     {
         var controller = _controller;
-        if (!_active || controller == null) return;
-        if (kind == AdminNetworkAccessCommandKind.Connect) await controller.ConnectAsync(provider, hostId);
-        else await controller.DisconnectAsync(provider, hostId);
+        if (controller == null || !IsRenderedOwnerCurrent(owner)) return;
+        if (kind == AdminNetworkAccessCommandKind.Connect) await controller.ConnectAsync(provider, hostId, owner);
+        else await controller.DisconnectAsync(provider, hostId, owner);
     }
 
     /// <summary>
     /// A deliberate link activation. The URL is re-read from the current owner's state at click time, must still be
     /// a safe HTTP(S) link (and, for enrollment, belong to a host waiting for authorization), and is never logged.
     /// </summary>
-    private async void OnLink(string provider, string hostId, NetworkAccessLink link)
+    private async void OnLink(MonitorAuthorityLease? owner, string provider, string hostId, NetworkAccessLink link)
     {
         var controller = _controller;
-        if (!_active || controller == null) return;
+        if (controller == null || !IsRenderedOwnerCurrent(owner)) return;
         Uri uri;
         var allowed = link == NetworkAccessLink.Enrollment
             ? controller.TryGetEnrollmentUri(provider, hostId, out uri)
             : controller.TryGetOriginUri(provider, hostId, out uri);
-        if (!allowed) return;
+        if (!allowed || !IsRenderedOwnerCurrent(owner)) return;
         try { await Launcher(uri); } catch (Exception) { /* A launcher failure exposes nothing and changes no state. */ }
     }
 
@@ -260,7 +267,7 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
         var controller = _controller;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_active || !ReferenceEquals(controller, _controller) || controller?.State.Owner?.IsCurrent != true) return;
+            if (!ReferenceEquals(controller, _controller) || !IsRenderedOwnerCurrent(feedback.Owner)) return;
             App.Services.GetService<ToastService>()?.Error(CommandMessage(feedback));
         });
     }

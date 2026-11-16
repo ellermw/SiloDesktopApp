@@ -1,10 +1,8 @@
-# Admin Configure: Network access
+# Configure Network Access — C7
 
-Reference: official Silo Server/WebUI `abd85d0cadac28f4ab7db6821dad9634fc114790`, freshly fetched from GitHub main on November 15, 2026. `NetworkAccessSettings.tsx`, its test, `hooks/queries/admin/networkAccess.ts` (and test), `usePageActivity.ts`, `internal/apiv2/network_access.go`, the network-access contract fixtures and the English catalog are unchanged since `c11b0a968f0d5980b7005579fb95acc2d11d8321`. Read at the explicit SHA, not the clone's historical HEAD. Desktop baseline is Beta `2c33599f751e1bb7e18a56ee378ffe918710d74d` (`1.2.1145-beta.1`, numeric `1.2.1144.1`); the pipeline owns stamping.
+Status: **Final local GREEN verified; independent Standards and Spec reviews clear; qualifying Beta PR submission ready.** The complete feature is reconciled with Beta `3350f1b90073af39762f9be849bc5949dbc79c50` (1.2.1162-beta.1; numeric 1.2.1161.1). Official Silo Server main was fetched directly on November 16, 2026 and remains `abd85d0cadac28f4ab7db6821dad9634fc114790`. The pipeline owns version changes.
 
-## Status
-
-Network access (C7) is **In progress**: implemented and verified locally, not yet pushed. The lead reviews it and opens the Beta PR. It is independent of Security PR175. The other Configure leaves remain unfinished. Nothing here is merged or released.
+The earlier r6 behavioral RED established two capability-priority defects and a retained provider-heading defect. Their repairs preserve background admission and update the retained visible/accessibility heading in place. Historical r8 completed all eight native groups (1,591 PASS, zero FAIL). Later specification review identified early action wrapping; r10 on November 16, 09:13:59.4118378–09:16:20.0811558 UTC produced exactly four expected action-placement failures at 1440×900, 1440×600, 1920×600 and 800×600. The narrow measure repair now lets details shrink beside the nonshrinking action whenever the action and gap fit. Final r14 verifies that repair on the reconciled source. A later Standards finding identified feedback that claimed a queued status read had already completed. The corrected r13 fixture produced exactly six complete-message assertion failures; the three messages now say that a status refresh was requested.
 
 ## Delivered behavior
 
@@ -37,4 +35,16 @@ The page-owned controller runs at most two status reads at once, coalesces a pro
 
 ## Verification and limits
 
-See `docs/current-development.md` and `D:/SiloPlayer-build/server-update-nov14/configure-network-access/` for exact test counts, hashes, captures and limits. All checks use a synthetic server at this machine's DPI. There is no live Tailscale/NetBird plugin, live server, complete visual or all-DPI parity, Narrator certification or measured performance claim.
+Final r14 held one continuous nonblocking build lease on November 16, 2026, **10:13:24.3001843–10:20:55.7413531 UTC**. Nonincremental unit, app and native-host builds completed with zero compiler errors. The actual xUnit source-root probe passed 1/1; 952 focused and 7,465 full unit tests passed with zero failures/skips. The full run excludes only the separately executed source-root probe. PDB checksum binding verified 519 test, 476 Core, 15 Player, 986 app and 238 fixture source documents.
+
+Eight native groups completed with **1,602 PASS / zero FAIL**: Network Access 346, Security 374, Email 297, General 188, Manage foundation 36, Subtitles 64, Monitor 113 and Dashboard 184. Result hashes, completion sentinels and final authority-retirement assertions were independently read back. All 2,206 frozen runtime inputs remained unchanged. Current publish/reference/host DLL and PDB bytes matched; product DLL SHA256 is `6A1789F06CF6B98D26DEF83BCB1EF1827B35A842FDA112AF823DF97DFCBBB102`.
+
+The root reviewed synthetic captures at 1440×900, 1440×600, 1920×600 and 800×600, including the long-detail/action layout. Receipt and immutable logs remain under `D:/SiloPlayer-build/server-update-nov14/configure-network-access/network-final-green-beta3350-r14-receipt.json`. The r14 seal's inherited review inventory contains four stale hashes, recorded explicitly in `network-r14-root-postrelease-readback.json`; its separate complete runtime inventory matches the tested files. Final reviews use a fresh per-path inventory. Historical Security input failures remain unclassified; this successful run does not establish their cause.
+
+All checks use a synthetic server at this machine's DPI. There is no live Tailscale/NetBird plugin, live server, complete visual or all-DPI parity, IME, Narrator certification or measured performance claim.
+
+## Final source review and submission
+
+On November 16, 2026, independent Standards and complete-Spec reviews each cleared the final 23-path candidate against Beta `3350f1b90073af39762f9be849bc5949dbc79c50` and official `abd85d0cadac28f4ab7db6821dad9634fc114790`. Both verified all 2,206 runtime inputs and 23 review-path hashes before and after review. The root rechecked those sources and all eight native result hashes/completion sentinels before submission. Only this scoped record and the Configure checklist changed after those reviews; no tested runtime input changed.
+
+Current remote Beta `5afc579310fae248d1249ef590578b8ababb74c6` differs from the tested baseline only in README content. Version stamps and shared development history remain under pipeline ownership. The qualifying PR and exact submitted head are recorded in the external delivery receipt; merge and release are separate pipeline outcomes.

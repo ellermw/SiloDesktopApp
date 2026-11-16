@@ -166,8 +166,14 @@ public sealed class AdminNetworkAccessControllerTests
         fixture.Time.Advance(TimeSpan.FromSeconds(14));
         await Task.Delay(30);
         Assert.Equal(1, fixture.Count(StubStatus));
+        var initialStub = Provider(fixture.Controller, "stub").Status;
+        var initialDown = Provider(fixture.Controller, "down").Status;
         fixture.Time.Advance(TimeSpan.FromSeconds(1));
-        await Until(() => fixture.Count(StubStatus) == 2 && fixture.Count(DownStatus) == 2, "first poll");
+        // The wire records request admission. Wait for both controller receipts before advancing the clock:
+        // a response that settles after the hidden interval is correctly fresh on reactivation.
+        await Until(() => fixture.Count(StubStatus) == 2 && fixture.Count(DownStatus) == 2 &&
+            !ReferenceEquals(Provider(fixture.Controller, "stub").Status, initialStub) &&
+            !ReferenceEquals(Provider(fixture.Controller, "down").Status, initialDown), "first poll settled");
         Assert.Equal(1, fixture.Count(CapabilitiesRead));
 
         fixture.Controller.SetActive(false);
@@ -178,13 +184,42 @@ public sealed class AdminNetworkAccessControllerTests
         Assert.Equal(1, fixture.Count(CapabilitiesRead));
 
         // Genuine activation refreshes only what is stale: statuses (15 s) and capabilities (30 s).
+        var polledStub = Provider(fixture.Controller, "stub").Status;
+        var polledDown = Provider(fixture.Controller, "down").Status;
         fixture.Controller.SetActive(true);
-        await Until(() => fixture.Count(StubStatus) == 3 && fixture.Count(CapabilitiesRead) == 2, "stale activation refresh");
+        await Until(() => fixture.Count(StubStatus) == 3 && fixture.Count(CapabilitiesRead) == 2 &&
+            !fixture.Controller.State.CapabilitiesLoading &&
+            !ReferenceEquals(Provider(fixture.Controller, "stub").Status, polledStub) &&
+            !ReferenceEquals(Provider(fixture.Controller, "down").Status, polledDown), "stale activation refresh settled");
         fixture.Controller.SetActive(false);
         fixture.Controller.SetActive(true);
         await Task.Delay(40);
         Assert.Equal(3, fixture.Count(StubStatus));
         Assert.Equal(2, fixture.Count(CapabilitiesRead));
+    }
+
+    [Fact]
+    public async Task PollThatSettlesWhileHiddenIsFreshWhenThePageReactivates()
+    {
+        using var fixture = await OpenedAsync();
+        var admitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var original = Provider(fixture.Controller, "stub").Status;
+        fixture.Routes[StubStatus] = async (_, ct) =>
+        {
+            admitted.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(AdminNetworkAccessApiTests.StatusOk);
+        };
+        fixture.Time.Advance(AdminNetworkAccessController.PollInterval);
+        await admitted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        fixture.Controller.SetActive(false);
+        fixture.Time.Advance(TimeSpan.FromMinutes(5));
+        release.TrySetResult();
+        await Until(() => !ReferenceEquals(Provider(fixture.Controller, "stub").Status, original), "hidden response settled");
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Count(CapabilitiesRead) == 2 && !fixture.Controller.State.CapabilitiesLoading, "stale capabilities refreshed");
+        Assert.Equal(2, fixture.Count(StubStatus));
     }
 
     [Fact]
@@ -195,6 +230,112 @@ public sealed class AdminNetworkAccessControllerTests
         fixture.Time.Advance(TimeSpan.FromMinutes(1));
         await Task.Delay(30);
         Assert.Equal(1, fixture.Count(StubStatus));
+    }
+
+    [Fact]
+    public async Task ReactivationDefersStaleBackgroundReadsDuringForegroundLoading()
+    {
+        using var fixture = await OpenedAsync();
+        fixture.Controller.SetActive(false);
+        fixture.Time.Advance(TimeSpan.FromSeconds(31));
+        fixture.Defer = true;
+        fixture.Controller.SetActive(true);
+        await Task.Delay(60);
+        Assert.Equal(1, fixture.Count(CapabilitiesRead));
+        Assert.Equal(1, fixture.Count(StubStatus));
+        Assert.Equal(1, fixture.Count(DownStatus));
+        fixture.Defer = false;
+        fixture.Time.Advance(AdminNetworkAccessController.PollInterval);
+        await Until(() => fixture.Count(StubStatus) == 2 && fixture.Count(CapabilitiesRead) == 2, "background refresh resumes");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DiscoveredProviderKeepsTheHeldCapabilityRefreshBackgroundPriority(bool deactivate)
+    {
+        using var fixture = await OpenedAsync();
+        var response = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes[CapabilitiesRead] = async (_, ct) =>
+        {
+            await response.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json("""
+                {"state":"available","allowed":true,"providers":[
+                  {"provider":"stub","display_name":"Stub Overlay"},
+                  {"provider":"down","display_name":"Down Overlay"},
+                  {"provider":"new","display_name":"New Overlay"}]}
+                """);
+        };
+        const string discoveredStatus = "GET /api/v2/admin/network-access/new/status";
+        fixture.Routes[discoveredStatus] = (_, _) => Fixture.Json("""{"provider":"new","hosts":[]}""");
+        fixture.Controller.SetActive(false);
+        fixture.Time.Advance(TimeSpan.FromSeconds(31));
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Count(CapabilitiesRead) == 2, "stale capability refresh held");
+        if (deactivate) fixture.Controller.SetActive(false);
+        else fixture.Defer = true;
+        response.SetResult();
+        await Until(() => !fixture.Controller.State.CapabilitiesLoading && fixture.Controller.State.Providers.Count == 3,
+            "held capability response admitted the new provider");
+        await Task.Delay(60);
+        Assert.Equal(0, fixture.Count(discoveredStatus));
+        Assert.Null(Provider(fixture.Controller, "new").Status);
+        if (deactivate) fixture.Controller.SetActive(true);
+        else
+        {
+            fixture.Defer = false;
+            fixture.Time.Advance(AdminNetworkAccessController.PollInterval);
+        }
+        await Until(() => Provider(fixture.Controller, "new").Status != null, "new provider resumes after priority gate clears");
+        Assert.Equal(1, fixture.Count(discoveredStatus));
+    }
+
+    [Fact]
+    public async Task QueuedPollReadsWaitWhenForegroundLoadingBeginsAfterDispatch()
+    {
+        var providers = string.Join(",", Enumerable.Range(0, 3).Select(i => $$"""{"provider":"p{{i}}","display_name":"P{{i}}"}"""));
+        using var fixture = new Fixture($$"""{"state":"available","allowed":true,"providers":[{{providers}}]}""");
+        for (var i = 0; i < 3; i++)
+        {
+            var index = i;
+            fixture.Routes[$"GET /api/v2/admin/network-access/p{i}/status"] = (_, _) => Fixture.Json($$"""{"provider":"p{{index}}","hosts":[]}""");
+        }
+        fixture.Controller.SetActive(true);
+        Assert.True(fixture.Controller.Open());
+        await Until(() => fixture.Controller.State.Providers.Count == 3 && fixture.Controller.State.Providers.All(p => p.Status != null), "initial statuses");
+        var previous = fixture.Controller.State.Providers.Take(2).Select(p => p.Status).ToArray();
+        var gates = Enumerable.Range(0, 3).Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        for (var i = 0; i < 3; i++)
+        {
+            var index = i;
+            fixture.Routes[$"GET /api/v2/admin/network-access/p{i}/status"] = async (_, ct) =>
+            {
+                await gates[index].Task.WaitAsync(ct);
+                return AdminMonitorKit.Json($$"""{"provider":"p{{index}}","hosts":[]}""");
+            };
+        }
+        fixture.Time.Advance(AdminNetworkAccessController.PollInterval);
+        await Until(() => fixture.Count("GET /api/v2/admin/network-access/p0/status") == 2 && fixture.Count("GET /api/v2/admin/network-access/p1/status") == 2, "two poll reads running");
+        fixture.Defer = true;
+        gates[0].SetResult(); gates[1].SetResult();
+        await Until(() => !ReferenceEquals(previous[0], Provider(fixture.Controller, "p0").Status) && !ReferenceEquals(previous[1], Provider(fixture.Controller, "p1").Status), "running poll reads settled");
+        await Task.Delay(40);
+        Assert.Equal(1, fixture.Count("GET /api/v2/admin/network-access/p2/status"));
+        fixture.Defer = false;
+        fixture.Time.Advance(AdminNetworkAccessController.PollInterval);
+        await Until(() => fixture.Count("GET /api/v2/admin/network-access/p2/status") == 2, "queued poll resumes");
+        gates[2].SetResult();
+    }
+
+    [Fact]
+    public async Task CommandReconciliationBypassesBackgroundDeferral()
+    {
+        using var fixture = await OpenedAsync();
+        fixture.Defer = true;
+        fixture.Routes["POST /api/v2/admin/network-access/stub/connect"] = (_, _) => Fixture.Json(AdminNetworkAccessApiTests.ConnectAccepted, HttpStatusCode.Accepted);
+        await fixture.Controller.ConnectAsync("stub", "api");
+        await Until(() => fixture.Count(StubStatus) == 2, "explicit command reconciliation");
+        Assert.Equal(1, fixture.Count(DownStatus));
     }
 
     [Fact]
@@ -299,6 +440,57 @@ public sealed class AdminNetworkAccessControllerTests
         Assert.Empty(Provider(fixture.Controller, "stub").BusyHosts);
     }
 
+    [Theory]
+    [InlineData(AdminNetworkAccessCommandKind.Connect, false, false)]
+    [InlineData(AdminNetworkAccessCommandKind.Connect, false, true)]
+    [InlineData(AdminNetworkAccessCommandKind.Disconnect, false, false)]
+    [InlineData(AdminNetworkAccessCommandKind.Disconnect, false, true)]
+    [InlineData(AdminNetworkAccessCommandKind.Connect, true, false)]
+    [InlineData(AdminNetworkAccessCommandKind.Connect, true, true)]
+    public async Task FailureFeedbackRequestsARefreshWithoutClaimingItCompleted(AdminNetworkAccessCommandKind kind, bool unknownHost, bool failRefresh)
+    {
+        using var fixture = await OpenedAsync();
+        var refresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes[StubStatus] = async (_, ct) =>
+        {
+            await refresh.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable);
+        };
+        var command = $"POST /api/v2/admin/network-access/stub/{(kind == AdminNetworkAccessCommandKind.Connect ? "connect" : "disconnect")}";
+        fixture.Routes[command] = (_, _) => unknownHost
+            ? Fixture.Json("""{"type":"https://siloserver.org/docs/api/v2/problems/validation_failed","title":"x","status":422}""", HttpStatusCode.UnprocessableEntity)
+            : Task.FromException<HttpResponseMessage>(new HttpRequestException("reset"));
+        AdminNetworkAccessCommandFeedback? feedback = null;
+        fixture.Controller.CommandFailed += value => feedback = value;
+
+        if (kind == AdminNetworkAccessCommandKind.Connect) await fixture.Controller.ConnectAsync("stub", "api");
+        else await fixture.Controller.DisconnectAsync("stub", "api");
+        await Until(() => fixture.Count(StubStatus) == 2, "held reconciliation read");
+        Assert.NotNull(feedback);
+        Assert.Equal(kind, feedback.Kind);
+        Assert.Equal(unknownHost ? AdminNetworkAccessCommandOutcome.Rejected : AdminNetworkAccessCommandOutcome.Unknown, feedback.Outcome);
+        Assert.Equal<AdminFailureKind?>(unknownHost ? AdminFailureKind.Validation : null, feedback.Failure);
+        Assert.False(refresh.Task.IsCompleted);
+        Assert.Equal("disconnected", Provider(fixture.Controller, "stub").Status!.Hosts.Single().State);
+        Assert.Equal(1, fixture.Count(command));
+
+        if (failRefresh)
+        {
+            refresh.SetResult();
+            await Until(() => !Provider(fixture.Controller, "stub").Loading && Provider(fixture.Controller, "stub").Failure != null, "failed reconciliation read");
+            Assert.Equal("disconnected", Provider(fixture.Controller, "stub").Status!.Hosts.Single().State);
+            Assert.Equal(1, fixture.Count(command));
+        }
+        var key = unknownHost ? "configure.native.network.unknownHost"
+            : kind == AdminNetworkAccessCommandKind.Connect ? "configure.native.network.connectUnknown" : "configure.native.network.disconnectUnknown";
+        var expected = unknownHost
+            ? "This host is no longer known to the provider. A status refresh was requested; check the result before trying again."
+            : kind == AdminNetworkAccessCommandKind.Connect
+                ? "The connect request may or may not have reached the provider. A status refresh was requested; check the result before trying again."
+                : "The disconnect request may or may not have reached the provider. A status refresh was requested; check the result before trying again.";
+        Assert.Equal(expected, AdminText.T(key));
+    }
+
     [Fact]
     public async Task UnauthorizedCommandIsNotRetriedAndKeepsTheLastKnownState()
     {
@@ -335,6 +527,37 @@ public sealed class AdminNetworkAccessControllerTests
         await fixture.Controller.ConnectAsync("stub", "node:99");
         await fixture.Controller.ConnectAsync("missing", "api");
         Assert.DoesNotContain(fixture.Kit.Http.Requests, r => r.StartsWith("POST", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RetiredCommandCannotReleaseReplacementOwnersBusyHost()
+    {
+        using var fixture = await OpenedAsync();
+        var oldResponse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newResponse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sent = 0;
+        fixture.Routes["POST /api/v2/admin/network-access/stub/connect"] = async (_, _) =>
+        {
+            var request = Interlocked.Increment(ref sent);
+            await (request == 1 ? oldResponse.Task : newResponse.Task);
+            return AdminMonitorKit.Json(AdminNetworkAccessApiTests.ConnectAccepted, HttpStatusCode.Accepted);
+        };
+        var oldCommand = fixture.Controller.ConnectAsync("stub", "api");
+        await Until(() => Volatile.Read(ref sent) == 1, "old command sent");
+        fixture.Kit.Auth.SetCurrentUser(new UserInfo { Id = "2", Username = "replacement", Role = "admin" });
+        Assert.True(fixture.Controller.Open());
+        await Until(() => fixture.Controller.State.Providers.Count == 2 && fixture.Controller.State.Providers.All(p => p.Status != null), "replacement owner loaded");
+        var newCommand = fixture.Controller.ConnectAsync("stub", "api");
+        await Until(() => Volatile.Read(ref sent) == 2, "replacement command sent");
+        oldResponse.SetResult();
+        await oldCommand;
+        Assert.Contains("api", Provider(fixture.Controller, "stub").BusyHosts);
+        var duplicate = fixture.Controller.ConnectAsync("stub", "api");
+        Assert.True(duplicate.IsCompleted, "A repeated click must coalesce with the replacement command.");
+        Assert.Equal(2, Volatile.Read(ref sent));
+        newResponse.SetResult();
+        await newCommand;
+        await Until(() => Provider(fixture.Controller, "stub").BusyHosts.Count == 0, "replacement command settled");
     }
 
     [Fact]

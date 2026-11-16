@@ -1,12 +1,107 @@
-# November 15 - Configure Network access implemented (in progress)
+# November 16 — Preserve legacy HTML chapter doctypes
 
-Configure > Server > Network access (C7) is implemented on Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d against official abd85d0cadac28f4ab7db6821dad9634fc114790 (Network sources unchanged since c11b0a96). It is registered through the production Configure entry point. It shows installed overlay-network providers, each host's state, origin, addresses, enrollment link, error and last-heard time, and per-host Connect/Disconnect. A separate domain API bounds every read and command (leases, deadlines, 1 MiB responses, explicit list limits) and sends one captured host per command without authentication replay. Ambiguous outcomes are reconciled by a status read, never resent. At most two status reads run at once; the 15 s poll runs only while the page and window are active, and activation refreshes only stale data. Enrollment URLs stay in memory, are never logged and open only through the guarded HTTP(S) launcher. See docs/parity/admin-network-access.md.
+Reader HTML fallback now serializes the complete existing doctype before the
+HTML document element. Legacy public/system identifiers survive, alongside the
+inline CSS child selectors and ampersands preserved by PR177. The synthetic
+chapter remains in the script-disabled reader sandbox.
 
-Status: **In progress** until the lead reviews it and opens the Beta PR; General and Email remain in their PRs, Security is in PR175 and the other leaves are unfinished. Nothing is merged or released. Version stays 1.2.1145-beta.1; the pipeline owns stamping.
-
-Verified code 16f67885 passes 736 focused Admin/architecture tests and 7,239 full units. One build-lock hold covered Release publish and the matching host (product DLL C0A0F1E2…5EFE in publish, reference and host) and native groups: network access 332 PASS, Email 297, General 188, Manage foundation 36, Subtitle Files 64, Monitor 113 and Dashboard 184. Captures cover 1440x900, 1440x600, 1920x600 and 800x600 plus loading, error, empty, busy and control states. Receipt: D:/SiloPlayer-build/server-update-nov14/configure-network-access/final-receipt.json. Synthetic server/plugin data at current DPI only: no live plugin, Narrator, all-DPI or performance claim. Storage about 4.67 GiB generated, C 185/D 474 GiB free; cleanup not attempted. Installed player and settings untouched.
+This source-only asset follow-up is based on Beta 40ab7889ef1d015a8ee07ef1962870763f95f66c;
+version 1.2.1151-beta.1 stays under pipeline control. The new renderer assertion
+failed on PR177 bytes and passes after the one-line serializer correction.
+Verification: 42 Chromium EPUB/PDF renderer checks and 26 Node reader checks
+passed. No .NET build, native WinUI fixture, installer, installed-player or
+settings action occurred for this increment. Shared output was not touched.
+See [scope and evidence](parity/2026-11-16-reader-doctype.md).
 
 ---
+
+# November 16 — Credits follow-up verified for PR176
+
+Official Server main was fetched directly again unchanged at
+`abd85d0cadac28f4ab7db6821dad9634fc114790`. Fresh Beta is
+`40ab7889ef1d015a8ee07ef1962870763f95f66c` (pipeline stamp 1.2.1151-beta.1).
+This Credits follow-up was verified as source atop pipeline Beta-merge head
+`12e510bd7918cc437da95e60945be78e137f5169`. Its version remains
+1.2.1145-beta.1 / numeric 1.2.1144.1; the Beta pipeline owns subsequent stamping.
+
+Credits Up next now respects autoplay and pause, survives routine event-socket
+reconnects, and uses WebUI's enabled default after bounded optional settings-read
+failures. Genuine account/profile/device/access/playback/file retirement still
+rejects stale responses. Native tests exercise actual Settings writes in both
+directions, initializer cancellation, access-change retry and successor playback.
+
+Both reconnect/failure regressions first failed against prior native bytes.
+The 06:49:17.4418184Z–06:51:48.1016177Z lease then passed nonincremental
+unit/app/host builds, actual xUnit source-root proof, PDB document/checksum and
+publish/reference/host byte binding, and all five native cases (19 PASS, zero
+FAIL): credits-autoplay, credits-autoplay-reconnect, credits-autoplay-failure,
+autoplay and postroll. Product SHA256:
+`F979769FD851C41F9ED83583A88CD06987539375145EE809B5828EA6AC8B9A32`.
+
+That chain's focused units stopped on a new HTTP test returning `settings`
+instead of the contract's `items`. Only that fixture JSON changed afterward.
+The assigned final unit-only lease ran 06:58:27.6808250Z–07:01:37.7719166Z:
+fresh nonincremental units, source/PDB proofs, 727 focused tests and all 7,239
+full-suite tests passed, zero failures/skips. Guards confirm product/native
+sources still exactly match the five passing native runs. Independent final
+source review found no blocking findings. Receipts:
+`.codex-tmp/credits-final-units-20261116T0658-receipt.json` and
+`.codex-tmp/credits-review-green-20261116T0650-stopped-receipt.json`.
+
+Reader doctype follow-up is separately submitted in qualifying Beta PR178,
+head `2809dcd1d50e4a6a0b1cf0b06d94cfccbd12fb48`, with an executed red then
+42 renderer and 26 Node checks passing. No shared .NET output was touched.
+
+Credits has released its lease with no waiter or requeue. All .NET/native work
+uses shared `D:/SiloPlayer-build/{artifacts,publish,native-reference}` under
+`SiloOct18Build`; native stages retain continuous ownership and source/byte
+binding. The installed player/settings remain preserved. No direct merge,
+release or installer action occurred. Synthetic tests do not certify live
+household, Narrator, every DPI or full visual parity.
+
+Admin Manage/Configure remains with its existing lead. Monitor/shared shell,
+request permissions, audiobooks, localization, metadata and the remaining
+viewer increments continue independently; this is not whole-rollout completion.
+
+---
+
+November 15 - Server review and credits autoplay increment
+
+Reviewed official Silo Server main `abd85d0cadac28f4ab7db6821dad9634fc114790`
+against Beta `2c33599f751e1bb7e18a56ee378ffe918710d74d`. The 222-commit
+inventory and remaining work are recorded in
+[the upstream review](parity/2026-11-15-server-abd85d0.md). Request restrictions,
+Activity and audiobook changes are independent work; Configure Security and
+Network access remain with the existing Configure lead.
+
+The first increment aligns production credits Up next with autoplay and pause:
+unresolved/off waits for manual Play now, eligible elapsed time survives holds,
+range exit/reentry and cancellation behave correctly, and stale preference reads
+cannot affect a successor. Initial reads share the current settings request;
+live refreshes cancel superseded HTTP work. Version remains pipeline-owned
+1.2.1145-beta.1 / 1.2.1144.1.
+
+Full main suite: 7,180 passed. Final 443 OSC/localization checks, Release publish,
+matching native host and credits-autoplay/autoplay/postroll native groups pass.
+The three original Lua regressions and a subsequent native cancellation
+regression failed before their corrections. Final app DLL SHA256
+`018293C7D8633F04D4EEAE352DCBA1645DFC688CDD83331DB8A5666FCAF0EEE0`.
+See [scope and exact verification](parity/2026-11-15-credits-autoplay.md).
+PR176 review identified a missing notification from the actual Settings writer.
+An added native property-toggle regression failed before correction; the writer
+now captures profile authority and notifies after device-override cleanup. Final
+publish/host, 443 focused checks and all three native groups passed again; the
+preceding full 7,180 run retains its original scope. Latest evidence is task-local
+`.codex-tmp/credits-settings-save-final-receipt.json` and adjacent logs. The prior
+`credits-final` candidate/receipt remains historical evidence.
+
+All later .NET/native runs hold `SiloOct18Build`; shared Configure binaries are
+untouched. Reusable task output is about 1 GiB. No installed-player/settings,
+installer, direct merge or release action occurred. This is synthetic/offscreen
+verification, not complete live/visual/physical-device parity certification.
+
+---
+
 # November 15 - Configure Security delivered in Beta PR175
 
 Security alone is replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d in branch t3/configure-security-beta. Original commits 1e71c820 and fe5a29b4 remain preserved at preserve/configure-security-fe5a29b4; their receipt and logs remain unchanged. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1. Version remains 1.2.1145-beta.1 under pipeline control.
@@ -1390,7 +1485,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1406,7 +1501,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1422,7 +1517,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1440,7 +1535,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1456,7 +1551,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1474,7 +1569,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -1674,7 +1769,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -1682,7 +1777,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -1690,7 +1785,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -1720,7 +1815,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1145-beta.1`; numeric version: `1.2.1144.1`.
+Source version: `1.2.1162-beta.1`; numeric version: `1.2.1161.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

@@ -48,8 +48,9 @@ internal static class AdminNetworkAccessNativeFixture
     {
         internal readonly ConcurrentQueue<string> Requests = new();
         internal readonly ConcurrentQueue<string> Bodies = new();
-        internal TaskCompletionSource? CapabilitiesGate, CommandGate;
-        internal bool NetbirdFails = true, CommandServerError, CapabilitiesFail = true, NoProviders;
+        internal TaskCompletionSource? CapabilitiesGate, CommandGate, StatusGate;
+        internal bool NetbirdFails = true, CommandServerError, CapabilitiesFail = true, NoProviders, StatusFails;
+        internal string TailscaleDisplayName = "Tailscale";
         internal readonly Dictionary<string, string> States = new(StringComparer.Ordinal)
         {
             ["api"] = "connected", ["node:10"] = "disconnected", ["node:12"] = "awaiting_authorization",
@@ -73,12 +74,14 @@ internal static class AdminNetworkAccessNativeFixture
                         revision = "fixture", state = "available", allowed = true,
                         providers = new[]
                         {
-                            new { provider = "tailscale", display_name = "Tailscale", installation_id = "7" },
+                            new { provider = "tailscale", display_name = TailscaleDisplayName, installation_id = "7" },
                             new { provider = "netbird", display_name = "NetBird", installation_id = "8" },
                             new { provider = "headscale", display_name = "Headscale", installation_id = "9" },
                         },
                     });
-                case "/api/v2/admin/network-access/tailscale/status": return Json(Status());
+                case "/api/v2/admin/network-access/tailscale/status":
+                    if (StatusGate is { } statusGate) await statusGate.Task.WaitAsync(cancellationToken);
+                    return StatusFails ? Json(new { title = "Unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable) : Json(Status());
                 case "/api/v2/admin/network-access/netbird/status":
                     return NetbirdFails ? Json(new { title = "Unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable) : Json(new { provider = "netbird", hosts = Array.Empty<object>() });
                 case "/api/v2/admin/network-access/headscale/status": return Json(new { provider = "headscale", hosts = Array.Empty<object>() });
@@ -290,6 +293,14 @@ internal static class AdminNetworkAccessNativeFixture
             Check(Button(page, "NetworkAccessDisconnect_tailscale_api").IsEnabled && Button(page, "NetworkAccessDisconnect_tailscale_node:12").IsEnabled,
                 "other hosts' actions stay enabled while one command is pending");
             await CaptureAsync(outer, "network-connect-busy.png");
+            // A status poll may change the visible action while the original request is still pending.
+            server.States["node:10"] = "connecting";
+            typeof(AdminNetworkAccessController).GetMethod("OnPoll", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(controller, null);
+            await Until(() => Button(page, "NetworkAccessDisconnect_tailscale_node:10").Visibility == Visibility.Visible, "pending Connect switches to Disconnect");
+            var switchedDisconnect = Button(page, "NetworkAccessDisconnect_tailscale_node:10");
+            Check(!switchedDisconnect.IsEnabled && Descendants(switchedDisconnect).OfType<Viewbox>().Any(), "pending Connect spinner follows the visible Disconnect action after a poll");
+            Check(!Descendants(connect).OfType<Viewbox>().Any(), "the collapsed Connect action releases its spinner");
+            await CaptureAsync(outer, "network-connect-busy-transition.png");
             server.CommandGate.SetResult(); server.CommandGate = null;
             var disconnect10 = Button(page, "NetworkAccessDisconnect_tailscale_node:10");
             await Until(() => disconnect10.Visibility == Visibility.Visible && disconnect10.IsEnabled, "acknowledged state applied");
@@ -299,12 +310,23 @@ internal static class AdminNetworkAccessNativeFixture
             Check(disconnect10.FocusState != FocusState.Unfocused, "focus returns to the host's action after its command");
 
             // Disconnect, and an unknown outcome that reconciles without a resend.
+            server.CommandGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Invoke(Button(page, "NetworkAccessDisconnect_tailscale_api"));
-            await Until(() => Button(page, "NetworkAccessConnect_tailscale_api").Visibility == Visibility.Visible, "disconnect applied");
+            await Until(() => !Button(page, "NetworkAccessDisconnect_tailscale_api").IsEnabled, "Disconnect pending");
+            server.States["api"] = "disconnected";
+            typeof(AdminNetworkAccessController).GetMethod("OnPoll", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(controller, null);
+            await Until(() => Button(page, "NetworkAccessConnect_tailscale_api").Visibility == Visibility.Visible, "pending Disconnect switches to Connect");
+            var switchedConnect = Button(page, "NetworkAccessConnect_tailscale_api");
+            Check(!switchedConnect.IsEnabled && Descendants(switchedConnect).OfType<Viewbox>().Any(), "pending Disconnect spinner follows the visible Connect action after a poll");
+            Check(!Descendants(Button(page, "NetworkAccessDisconnect_tailscale_api")).OfType<Viewbox>().Any(), "the collapsed Disconnect action releases its spinner");
+            await CaptureAsync(outer, "network-disconnect-busy-transition.png");
+            server.CommandGate.SetResult(); server.CommandGate = null;
+            await Until(() => Button(page, "NetworkAccessConnect_tailscale_api").Visibility == Visibility.Visible && Button(page, "NetworkAccessConnect_tailscale_api").IsEnabled, "disconnect applied and command settled");
             Check(server.Bodies.Last() == """{"hosts":["api"]}""" || server.Bodies.Contains("""{"hosts":["api"]}"""), "Disconnect posts exactly the clicked host");
             AdminNetworkAccessCommandFeedback? feedback = null;
             controller.CommandFailed += value => feedback = value;
             server.CommandServerError = true;
+            server.StatusGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
             statusReads = server.Count("GET /api/v2/admin/network-access/tailscale/status");
             var posts = server.Count("POST /api/v2/admin/network-access/tailscale/connect");
             Invoke(Button(page, "NetworkAccessConnect_tailscale_api"));
@@ -312,8 +334,21 @@ internal static class AdminNetworkAccessNativeFixture
             await Until(() => server.Count("GET /api/v2/admin/network-access/tailscale/status") > statusReads, "reconciliation read");
             Check(feedback?.Outcome == AdminNetworkAccessCommandOutcome.Unknown && server.Count("POST /api/v2/admin/network-access/tailscale/connect") == posts + 1,
                 "an ambiguous failure reconciles with a status read and is not resent");
-            Check(AdminNetworkAccessSettingsPage_CommandMessage(feedback!).StartsWith("The connect request may or may not have reached", StringComparison.Ordinal), "unknown outcome has truthful wording");
-            server.CommandServerError = false;
+            const string requestedRefresh = "The connect request may or may not have reached the provider. A status refresh was requested; check the result before trying again.";
+            Check(server.StatusGate?.Task.IsCompleted == false,
+                "unknown command feedback arrives while its reconciliation read is held");
+            Check(AdminNetworkAccessSettingsPage_CommandMessage(feedback!) == requestedRefresh, "unknown outcome reports only a requested status refresh while held");
+            server.StatusFails = true;
+            server.StatusGate.SetResult(); server.StatusGate = null;
+            await Until(() => controller.State.Providers.Single(provider => provider.Summary.Provider == "tailscale").Failure != null, "reconciliation read failed");
+            Check(AdminNetworkAccessSettingsPage_CommandMessage(feedback!) == requestedRefresh, "unknown outcome does not claim a completed status refresh after read failure");
+            Check(AdminNetworkAccessSettingsPage_CommandMessage(new("tailscale", "api", AdminNetworkAccessCommandKind.Disconnect, AdminNetworkAccessCommandOutcome.Unknown)) ==
+                "The disconnect request may or may not have reached the provider. A status refresh was requested; check the result before trying again.", "disconnect unknown outcome has complete truthful feedback");
+            Check(AdminNetworkAccessSettingsPage_CommandMessage(new("tailscale", "api", AdminNetworkAccessCommandKind.Connect, AdminNetworkAccessCommandOutcome.Rejected, AdminFailureKind.Validation)) ==
+                "This host is no longer known to the provider. A status refresh was requested; check the result before trying again.", "unknown host rejection has complete truthful feedback");
+            server.CommandServerError = false; server.StatusFails = false;
+            typeof(AdminNetworkAccessController).GetMethod("OnPoll", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(controller, null);
+            await Until(() => controller.State.Providers.Single(provider => provider.Summary.Provider == "tailscale") is { Loading: false, Failure: null }, "status read recovered");
             await Until(() => Button(page, "NetworkAccessConnect_tailscale_api").IsEnabled, "api action released");
 
             // Control states: rectangular template in every state, visible focus, no oval backdrop.
@@ -346,6 +381,8 @@ internal static class AdminNetworkAccessNativeFixture
             await Until(() => server.Count("GET /api/v2/admin/network-access/tailscale/status") > statusReads, "15 s poll", 20000);
             await Task.Delay(200);
             Check(ReferenceEquals(Row(page, "node:12"), focusRow) && focusButton.FocusState == FocusState.Keyboard, "a poll keeps the row element and keyboard focus");
+            var retainedProvider = Descendants(page).OfType<FrameworkElement>().Single(e => AutomationProperties.GetAutomationId(e) == "NetworkAccessProvider_tailscale");
+            server.TailscaleDisplayName = "Renamed Overlay";
             var capabilityReads = server.Count("GET /api/v2/network-access/capabilities");
             page.SetHostActivity(visible: true, focused: false);
             Check(!controller.IsPolling, "deactivated window stops the poll timer");
@@ -355,12 +392,18 @@ internal static class AdminNetworkAccessNativeFixture
             page.SetHostActivity(visible: true, focused: true);
             await Until(() => server.Count("GET /api/v2/admin/network-access/tailscale/status") > statusReads, "stale activation refresh");
             Check(controller.IsPolling && server.Count("GET /api/v2/network-access/capabilities") == capabilityReads + 1, "activation refreshes stale statuses and capabilities once");
+            await Until(() => !controller.State.CapabilitiesLoading && controller.State.Providers.Any(p => p.Summary.DisplayName == server.TailscaleDisplayName), "provider display name refresh settled");
+            await Task.Delay(100);
+            Check(Texts(retainedProvider).Contains(server.TailscaleDisplayName) && AutomationProperties.GetName(retainedProvider) == server.TailscaleDisplayName,
+                "capability refresh updates the retained provider heading and automation name");
+            Check(ReferenceEquals(retainedProvider, Descendants(page).OfType<FrameworkElement>().Single(e => AutomationProperties.GetAutomationId(e) == "NetworkAccessProvider_tailscale")) &&
+                ReferenceEquals(focusRow, Row(page, "node:12")), "provider display name refresh preserves the group and host row");
             page.SetHostActivity(visible: false, focused: true);
             Check(!controller.IsPolling, "hidden window stops the poll timer");
             page.SetHostActivity(visible: true, focused: true);
             server.NetbirdFails = false;
 
-            // Layout at the required viewports: no overflow, gutter ownership, wrapped actions on narrow widths.
+            // Layout at the required viewports: details shrink beside actions, with no overflow and shared gutters.
             foreach (var (width, height) in new[] { (1440, 900), (1440, 600), (1920, 600), (800, 600) })
             {
                 window.AppWindow.ResizeClient(new(width, height)); await Task.Delay(300); outer.UpdateLayout();
@@ -390,7 +433,7 @@ internal static class AdminNetworkAccessNativeFixture
                         var at = button.TransformToVisual(page).TransformPoint(new(0, 0));
                         Check(at.X >= -1 && at.X + button.ActualWidth <= page.ActualWidth + 1 && button.ActualWidth > 60, $"{AutomationProperties.GetAutomationId(button)} stays visible at {width}x{height}");
                     }
-                    foreach (var text in Descendants(row).OfType<TextBlock>().Where(t => t.Visibility == Visibility.Visible && t.ActualWidth > 0))
+                    foreach (var text in Descendants(row).OfType<TextBlock>().Where(t => Visible(t) && t.ActualWidth > 0))
                     {
                         var at = text.TransformToVisual(page).TransformPoint(new(0, 0));
                         Check(at.X + text.ActualWidth <= page.ActualWidth + 1, $"text in {AutomationProperties.GetAutomationId(row)} wraps inside the viewport at {width}x{height}");
@@ -399,7 +442,13 @@ internal static class AdminNetworkAccessNativeFixture
                 var flex = Descendants(Row(page, "node:10")).First(d => d.GetType().Name == "NetworkAccessFlexRow");
                 var wrapped = (bool)flex.GetType().GetProperty("IsWrapped", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flex)!;
                 Program.Log($"TRACE network width={width} longRowWrapped={wrapped} body={Field<StackPanel>(page, "_body").ActualWidth}");
-                if (width == 800) Check(wrapped, "long host details wrap the action below at 800x600");
+                var layout = (Panel)flex;
+                var details = (FrameworkElement)layout.Children[0];
+                var actions = (FrameworkElement)layout.Children[1];
+                Check(actions.ActualWidth + 24 < layout.ActualWidth, $"host action plus gap fits at {width}x{height}");
+                var actionOrigin = actions.TransformToVisual(layout).TransformPoint(new(0, 0));
+                Check(!wrapped && actionOrigin.X >= details.ActualWidth + 23 && Math.Abs(actionOrigin.Y) < 1,
+                    $"long host details shrink beside the action at {width}x{height}");
                 await CaptureAsync(outer, $"network-{width}x{height}.png");
                 scroller.ChangeView(null, scroller.ScrollableHeight, null, true); await Task.Delay(150);
                 await CaptureAsync(outer, $"network-{width}x{height}-bottom.png");
@@ -434,6 +483,34 @@ internal static class AdminNetworkAccessNativeFixture
             page = (AdminNetworkAccessSettingsPage)inner.Content; page.Launcher = uri => { launched.Enqueue(uri); return Task.FromResult(true); };
             await Until(() => page.Controller!.State.Providers.All(p => !p.Loading) && page.Controller.State.Providers.Count == 3, "providers again");
             await Task.Delay(150);
+
+            // Capture the actual row callback; retaining a detached link must not redirect to a replacement owner's URL.
+            var retainedClick = Field<Delegate>(Row(page, "node:12"), "_link");
+            server.CommandServerError = true;
+            AdminNetworkAccessCommandFeedback? queuedFeedback = null;
+            page.Controller!.CommandFailed += value => queuedFeedback = value;
+            await page.Controller.ConnectAsync("tailscale", "api");
+            await Until(() => queuedFeedback != null, "old owner failure feedback captured");
+            var toast = new SiloPlayer.Controls.ToastContainer();
+            var toastService = services.GetRequiredService<ToastService>();
+            toastService.Register(toast, page.DispatcherQueue);
+            var toastStack = (StackPanel)toast.FindName("ToastStack");
+            // Queue the old failure, then replace the admin and reopen before the UI dispatcher delivers it.
+            typeof(AdminNetworkAccessSettingsPage).GetMethod("OnCommandFailed", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [queuedFeedback]);
+            auth.SetCurrentUser(new UserInfo { Id = "2", Role = "admin", Username = "replacement-admin" });
+            typeof(AdminNetworkAccessSettingsPage).GetMethod("OpenController", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+            await Until(() => page.Controller?.State.Owner?.AccountId == "2" && page.Controller.State.Providers.Count == 3 && page.Controller.State.Providers.All(p => !p.Loading), "replacement admin fully loaded");
+            await Task.Delay(150);
+            Check(toastStack.Children.Count == 0, "queued command feedback from a retired owner is not shown in the replacement session");
+            var beforeRetained = launched.Count;
+            var linkType = typeof(AdminNetworkAccessSettingsPage).Assembly.GetType("SiloPlayer.Views.Admin.NetworkAccessLink")!;
+            retainedClick.DynamicInvoke("tailscale", "node:12", Enum.Parse(linkType, "Enrollment"));
+            await Task.Delay(150);
+            Check(launched.Count == beforeRetained, "a retained row callback cannot launch the replacement admin's enrollment URL");
+            await page.Controller!.ConnectAsync("tailscale", "api");
+            await Until(() => toastStack.Children.Count > 0, "replacement owner's own feedback still displays");
+            Check(true, "current owner command feedback remains visible");
+            toastService.Unregister(); server.CommandServerError = false;
 
             // Authority retirement clears rows and enrollment links; a retained link cannot launch for a replacement owner.
             var retainedLink = AuthorizeLink(Row(page, "node:12"))!;
@@ -474,8 +551,10 @@ internal static class AdminNetworkAccessNativeFixture
         if (!invoked)
         {
             var linkType = typeof(AdminNetworkAccessSettingsPage).Assembly.GetType("SiloPlayer.Views.Admin.NetworkAccessLink")!;
-            typeof(AdminNetworkAccessSettingsPage).GetMethod("OnLink", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(page, [provider, hostId, Enum.Parse(linkType, kind)]);
+            var handler = typeof(AdminNetworkAccessSettingsPage).GetMethod("OnLink", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            handler.Invoke(page, handler.GetParameters().Length == 4
+                ? [page.Controller?.State.Owner, provider, hostId, Enum.Parse(linkType, kind)]
+                : [provider, hostId, Enum.Parse(linkType, kind)]);
         }
         Program.Log("TRACE link activation path=" + (invoked ? "automation" : "page handler"));
         await Task.Delay(150);

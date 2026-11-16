@@ -8,7 +8,11 @@ public enum AdminNetworkAccessCommandOutcome { Rejected, Unknown }
 
 /// <summary>A command that did not take effect (or may not have). Holds no server or plugin text.</summary>
 public sealed record AdminNetworkAccessCommandFeedback(string Provider, string HostId, AdminNetworkAccessCommandKind Kind,
-    AdminNetworkAccessCommandOutcome Outcome, AdminFailureKind? Failure = null);
+    AdminNetworkAccessCommandOutcome Outcome, AdminFailureKind? Failure = null)
+{
+    /// <summary>The stable page owner that produced this feedback, retained through UI dispatch.</summary>
+    public MonitorAuthorityLease? Owner { get; init; }
+}
 
 /// <summary>One installed provider's group: its status read and the hosts with a command in flight.</summary>
 public sealed record AdminNetworkAccessProviderState(AdminNetworkAccessProvider Summary)
@@ -64,11 +68,11 @@ public sealed class AdminNetworkAccessController : IDisposable
         public AdminNetworkAccessStatus? Status;
         public AdminFailureKind? Failure;
         public int? Limit;
-        public bool Queued, Running;
+        public bool Queued, Running, Background;
         public CancellationTokenSource? Read;
         public long Sequence;
         public DateTimeOffset LastRead = DateTimeOffset.MinValue;
-        public readonly HashSet<string> Busy = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, object> Busy = new(StringComparer.Ordinal);
     }
 
     private readonly AdminNetworkAccessApi _api;
@@ -88,7 +92,7 @@ public sealed class AdminNetworkAccessController : IDisposable
     private int? _capabilitiesLimit;
     private int _running;
     private ITimer? _poll;
-    private bool _active, _open, _disposed;
+    private bool _active, _open, _disposed, _capabilitiesRefreshPending;
     private long _revision;
 
     /// <param name="deferBackground">True while foreground navigation or playback start should not share the network with a poll.</param>
@@ -159,14 +163,15 @@ public sealed class AdminNetworkAccessController : IDisposable
                 _poll?.Dispose(); _poll = null;
                 foreach (var slot in _queue) slot.Queued = false;
                 _queue.Clear();
+                _capabilitiesRefreshPending = false;
                 PublishLocked();
             }
             else if (_open && _lease is { } lease)
             {
                 StartPollLocked();
                 var now = _time.GetUtcNow();
-                if (!_capabilitiesLoading && now - _capabilitiesReadAt >= CapabilitiesStaleTime) StartCapabilitiesLocked(lease);
-                foreach (var slot in _slots.Where(slot => !slot.Running && now - slot.LastRead >= PollInterval)) EnqueueLocked(slot);
+                if (!_capabilitiesLoading && now - _capabilitiesReadAt >= CapabilitiesStaleTime) _capabilitiesRefreshPending = true;
+                foreach (var slot in _slots.Where(slot => !slot.Running && now - slot.LastRead >= PollInterval)) EnqueueLocked(slot, background: true);
                 PumpLocked(lease, start);
                 PublishLocked();
             }
@@ -188,8 +193,8 @@ public sealed class AdminNetworkAccessController : IDisposable
         return Task.CompletedTask;
     }
 
-    public Task ConnectAsync(string provider, string hostId) => CommandAsync(provider, hostId, AdminNetworkAccessCommandKind.Connect);
-    public Task DisconnectAsync(string provider, string hostId) => CommandAsync(provider, hostId, AdminNetworkAccessCommandKind.Disconnect);
+    public Task ConnectAsync(string provider, string hostId, MonitorAuthorityLease? owner = null) => CommandAsync(provider, hostId, AdminNetworkAccessCommandKind.Connect, owner);
+    public Task DisconnectAsync(string provider, string hostId, MonitorAuthorityLease? owner = null) => CommandAsync(provider, hostId, AdminNetworkAccessCommandKind.Disconnect, owner);
 
     /// <summary>The enrollment page for a host the current owner sees waiting for authorization, if it is a safe web URL.</summary>
     public bool TryGetEnrollmentUri(string provider, string hostId, out Uri uri)
@@ -217,17 +222,21 @@ public sealed class AdminNetworkAccessController : IDisposable
 
     // ── Commands ─────────────────────────────────────────────
 
-    private async Task CommandAsync(string provider, string hostId, AdminNetworkAccessCommandKind kind)
+    private async Task CommandAsync(string provider, string hostId, AdminNetworkAccessCommandKind kind, MonitorAuthorityLease? expectedOwner)
     {
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
         using (action)
         {
+            Slot commandSlot;
+            MonitorAuthorityLease commandOwner;
+            var operation = new object();
             lock (_gate)
             {
-                var slot = _open && _lifetime.IsCurrent(action) ? Find(provider) : null;
+                var slot = _open && _lifetime.IsCurrent(action) && (expectedOwner == null || ReferenceEquals(_lease, expectedOwner)) ? Find(provider) : null;
                 // Only a host the owner can see, once at a time; a stale click for another host list is ignored.
-                if (slot?.Status?.Hosts.Any(host => host.Host.Id == hostId) != true || !slot.Busy.Add(hostId)) return;
+                if (slot?.Status?.Hosts.Any(host => host.Host.Id == hostId) != true || !slot.Busy.TryAdd(hostId, operation)) return;
+                commandSlot = slot; commandOwner = _lease!;
                 PublishLocked();
             }
             Raise();
@@ -240,7 +249,8 @@ public sealed class AdminNetworkAccessController : IDisposable
                     : await _api.DisconnectAsync(action, provider, hostId).ConfigureAwait(false);
                 lock (_gate)
                 {
-                    if (!Current(action) || Find(provider) is not { } slot) return;
+                    if (!Current(action) || !ReferenceEquals(Find(provider), commandSlot)) return;
+                    var slot = commandSlot;
                     slot.Busy.Remove(hostId);
                     // The acknowledgement is newer than any read already running; that read is discarded.
                     CancelReadLocked(slot);
@@ -255,13 +265,14 @@ public sealed class AdminNetworkAccessController : IDisposable
             {
                 lock (_gate)
                 {
-                    if (!Current(action) || Find(provider) is not { } slot) return;
+                    if (!Current(action) || !ReferenceEquals(Find(provider), commandSlot)) return;
+                    var slot = commandSlot;
                     slot.Busy.Remove(hostId);
                     CancelReadLocked(slot);
                     EnqueueLocked(slot);
                     PumpLocked(_lease!, start);
                     PublishLocked();
-                    feedback = new(provider, hostId, kind, AdminNetworkAccessCommandOutcome.Unknown);
+                    feedback = new(provider, hostId, kind, AdminNetworkAccessCommandOutcome.Unknown) { Owner = commandOwner };
                 }
             }
             catch (Exception error)
@@ -269,18 +280,26 @@ public sealed class AdminNetworkAccessController : IDisposable
                 var failure = AdminFailures.Classify(error, action);
                 lock (_gate)
                 {
-                    if (!Current(action) || Find(provider) is not { } slot) return;
+                    if (!Current(action) || !ReferenceEquals(Find(provider), commandSlot)) return;
+                    var slot = commandSlot;
                     slot.Busy.Remove(hostId);
                     // An unknown host or provider means this list is stale: re-read it (a read, never a resend).
                     if (failure is AdminFailureKind.Validation or AdminFailureKind.NotFound) { EnqueueLocked(slot); PumpLocked(_lease!, start); }
                     PublishLocked();
-                    feedback = new(provider, hostId, kind, AdminNetworkAccessCommandOutcome.Rejected, failure);
+                    feedback = new(provider, hostId, kind, AdminNetworkAccessCommandOutcome.Rejected, failure) { Owner = commandOwner };
                 }
             }
             finally
             {
-                // A command ended without reaching a state update above (retired owner or provider gone): release its host.
-                lock (_gate) if (Find(provider) is { } slot && slot.Busy.Remove(hostId)) PublishLocked();
+                // Release only this operation: a replacement owner or a later command may already use the same host.
+                lock (_gate)
+                {
+                    if (commandSlot.Busy.TryGetValue(hostId, out var pending) && ReferenceEquals(pending, operation))
+                    {
+                        commandSlot.Busy.Remove(hostId);
+                        if (ReferenceEquals(_lease, commandOwner) && _slots.Contains(commandSlot)) PublishLocked();
+                    }
+                }
             }
             Launch(start);
             Raise();
@@ -297,18 +316,19 @@ public sealed class AdminNetworkAccessController : IDisposable
 
     // ── Reads ────────────────────────────────────────────────
 
-    private void StartCapabilitiesLocked(MonitorAuthorityLease lease)
+    private void StartCapabilitiesLocked(MonitorAuthorityLease lease, bool background = false)
     {
         try { _capabilitiesRead?.Cancel(); } catch (ObjectDisposedException) { }
         var cts = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
         _capabilitiesRead = cts;
+        _capabilitiesRefreshPending = false;
         var sequence = ++_capabilitiesSequence;
         _capabilitiesLoading = true;
         _capabilitiesFailure = null; _capabilitiesLimit = null;
-        _ = Task.Run(() => RunCapabilitiesAsync(lease, sequence, cts));
+        _ = Task.Run(() => RunCapabilitiesAsync(lease, sequence, cts, background));
     }
 
-    private async Task RunCapabilitiesAsync(MonitorAuthorityLease lease, long sequence, CancellationTokenSource cts)
+    private async Task RunCapabilitiesAsync(MonitorAuthorityLease lease, long sequence, CancellationTokenSource cts, bool background)
     {
         AdminNetworkAccessCapabilities? result = null;
         Exception? failure = null;
@@ -336,7 +356,7 @@ public sealed class AdminNetworkAccessController : IDisposable
                 foreach (var provider in result.Providers)
                 {
                     var slot = Find(provider.Provider);
-                    if (slot == null) { slot = new Slot(provider); EnqueueLocked(slot); }
+                    if (slot == null) { slot = new Slot(provider); EnqueueLocked(slot, background); }
                     else slot.Summary = provider;
                     next.Add(slot);
                 }
@@ -350,10 +370,16 @@ public sealed class AdminNetworkAccessController : IDisposable
         Raise();
     }
 
-    private void EnqueueLocked(Slot slot)
+    private void EnqueueLocked(Slot slot, bool background = false)
     {
-        if (slot.Queued || slot.Running) return;
-        slot.Queued = true;
+        if (slot.Running) return;
+        if (slot.Queued)
+        {
+            // Explicit command reconciliation can promote a queued background refresh.
+            if (!background) slot.Background = false;
+            return;
+        }
+        slot.Queued = true; slot.Background = background;
         _queue.AddLast(slot);
     }
 
@@ -367,10 +393,15 @@ public sealed class AdminNetworkAccessController : IDisposable
     /// <summary>Starts queued reads up to the concurrency bound. Cancelled reads still count until they return.</summary>
     private void PumpLocked(MonitorAuthorityLease lease, List<(Slot Slot, long Sequence, CancellationTokenSource Cts)> start)
     {
-        while (_running < MaxConcurrentStatusReads && _queue.First is { } first)
+        // A stale activation is admitted once foreground work finishes, rather than polling capabilities.
+        if (_active && _capabilitiesRefreshPending && !_capabilitiesLoading && !_deferBackground()) StartCapabilitiesLocked(lease, background: true);
+        while (_running < MaxConcurrentStatusReads)
         {
-            var slot = first.Value;
-            _queue.RemoveFirst();
+            var next = _queue.First;
+            while (next != null && next.Value.Background && (!_active || _deferBackground())) next = next.Next;
+            if (next == null) break;
+            var slot = next.Value;
+            _queue.Remove(next);
             slot.Queued = false;
             if (!_slots.Contains(slot)) continue;
             slot.Running = true;
@@ -440,7 +471,7 @@ public sealed class AdminNetworkAccessController : IDisposable
             if (_disposed || !_active || !_open || _lease is not { } lease || !_lifetime.IsCurrent(lease)) return;
             // Foreground navigation or playback start keeps the network; the next tick tries again.
             if (_deferBackground()) return;
-            foreach (var slot in _slots) EnqueueLocked(slot);
+            foreach (var slot in _slots) EnqueueLocked(slot, background: true);
             PumpLocked(lease, start);
             if (start.Count > 0) PublishLocked();
         }
@@ -473,7 +504,7 @@ public sealed class AdminNetworkAccessController : IDisposable
         _capabilitiesLoading = _capabilitiesLoaded = false;
         _capabilitiesFailure = null; _capabilitiesLimit = null;
         _capabilitiesReadAt = DateTimeOffset.MinValue;
-        _lease = null; _open = false;
+        _lease = null; _open = false; _capabilitiesRefreshPending = false;
     }
 
     private void PublishLocked()
@@ -489,7 +520,7 @@ public sealed class AdminNetworkAccessController : IDisposable
             {
                 Loading = slot.Status == null && slot.Failure == null,
                 Status = slot.Status, Failure = slot.Failure, Limit = slot.Limit,
-                BusyHosts = Array.AsReadOnly(slot.Busy.ToArray()),
+                BusyHosts = Array.AsReadOnly(slot.Busy.Keys.ToArray()),
             }).ToArray()) : [],
             Revision = ++_revision,
         };
