@@ -62,6 +62,7 @@ internal static class MediaParityNativeFixture
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "guest-mode") { await WatchPartyActionsNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "volume-paint") { await MediaVolumePaintNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "volume-visible") { await MediaVolumePaintNativeFixture.RunVisibleAsync(parent); return; }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "now-listening-focus") { await NowListeningFocusNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "party-presentation") { await MediaPartyPresentationNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "tv-populated" or "tv-visual" or "tv-landscape" or "tv-copy") { await MediaTvPopulatedNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "settings-actions") { await AudiobookSettingsActionsNativeFixture.RunAsync(parent); return; }
