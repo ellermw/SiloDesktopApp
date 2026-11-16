@@ -971,7 +971,7 @@ class Loader {
             // Silo: HTML-parsed chapters are consumed as HTML again. XML
             // serialization escapes `>` and `&` inside raw-text style rules.
             const result = item.mediaType === MIME.HTML
-                ? (doc.doctype ? `<!DOCTYPE ${doc.doctype.name}>` : '')
+                ? (doc.doctype ? new XMLSerializer().serializeToString(doc.doctype) : '')
                     + doc.documentElement.outerHTML
                 : new XMLSerializer().serializeToString(doc)
             return this.createURL(href, result, item.mediaType, parent)
