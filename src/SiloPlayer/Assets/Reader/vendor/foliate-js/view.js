@@ -9,6 +9,7 @@ const NOTE_PREFIX = 'foliate-note:'
 
 export const SEARCH_RESULT_LIMIT = 1000
 const SEARCH_YIELD_INTERVAL = 100
+const SEARCH_TIME_BUDGET = 25
 const yieldToEventLoop = () => new Promise(resolve => setTimeout(resolve))
 
 const isZip = async file => {
@@ -592,12 +593,19 @@ export class View extends HTMLElement {
     async * #matchSection(matcher, query, index, doc, limit, signal) {
         let count = 0
         if (limit <= 0) return
-        for (const { range, excerpt } of matcher(doc, query)) {
-            yield { cfi: this.getCFI(index, range), excerpt }
-            if (++count >= limit) return
-            if (count % SEARCH_YIELD_INTERVAL === 0) {
+        let resumed = performance.now()
+        for (const result of matcher(doc, query)) {
+            let pause = false
+            if (!result.checkpoint) {
+                const { range, excerpt } = result
+                yield { cfi: this.getCFI(index, range), excerpt }
+                if (++count >= limit) return
+                pause = count % SEARCH_YIELD_INTERVAL === 0
+            }
+            if (pause || performance.now() - resumed >= SEARCH_TIME_BUDGET) {
                 await yieldToEventLoop()
                 if (signal?.aborted) return
+                resumed = performance.now()
             }
         }
     }

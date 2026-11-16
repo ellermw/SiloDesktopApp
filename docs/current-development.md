@@ -56,6 +56,27 @@ within the 10 GiB limit with over 50 GiB free on both drives.
 
 ---
 
+# November 15 - Reader cooperative search and inline CSS increment
+
+Independent Beta baseline `2c33599f751e1bb7e18a56ee378ffe918710d74d`, unchanged
+1.2.1145-beta.1 / 1.2.1144.1. Ports official #4331's segment checkpoints and 25 ms
+search-yield budget, preserving bounded results and the desktop overlap fix.
+Ports #4325's applicable HTML chapter serialization so CSS containing `>` and
+`&` survives invalid-XHTML fallback. Official reference is
+`abd85d0cadac28f4ab7db6821dad9634fc114790`.
+
+The three Node regressions and native CSS-selector regression failed before
+their corrections. Final 26 Node search/location checks, 43 related main tests,
+Release publish/matching host and native WebView2 reader interoperability pass.
+Packaged runtime files match source; app SHA256
+`9C26BA933CF59CBF313F1177F597206239D606B77A93B9EC31C6AA1C10B82297`.
+See [scope and exact evidence](parity/2026-11-15-reader-responsiveness.md) and
+task-local `.codex-tmp/reader-final-receipt.json`. All .NET/native runs held
+`SiloOct18Build`; shared Configure outputs and the installed player were
+untouched. No direct merge, release or installer action.
+
+---
+
 # November 15 - Configure Email delivered in Beta PR174
 
 Email is implemented, independently reviewed and verified at code 3ab6d459a3c06fe7844cc5baaa83723d67cf001a, based on General PR173 905f9ba2 and Beta a06cc8b3. All eight Email settings, the password Clear/Keep/save states and the saved-settings test-email action are reachable through production Configure navigation. Lead review reproduced and fixed an authority-retirement race: password input awaiting PasswordChanged now clears when the owner retires. The added native regression failed on prior product bytes and passes on final bytes. Shared settings dialog/alert/skeleton/select primitives are also covered by General regression checks.

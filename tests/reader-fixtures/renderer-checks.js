@@ -1,6 +1,7 @@
 // Executed unchanged in Chromium and the native WebView2 fixture host.
 window.runReaderChecks = async function(fixtureRoot) {
-    const check=(condition,message)=>{if(!condition)throw new Error(message);};
+    let checks=0;
+    const check=(condition,message)=>{checks++;if(!condition)throw new Error(message);};
     const settle=()=>new Promise(resolve=>setTimeout(resolve,180));
     const reader=window.siloReader;
     const options={url:fixtureRoot+'/unequal.epub',format:'epub',chapters:['OPS/short.xhtml','OPS/long.xhtml'],settings:{flow:'scrolled',spread:'none'},annotations:[]};
@@ -33,6 +34,39 @@ window.runReaderChecks = async function(fixtureRoot) {
     const webAnnotation=independentView.getCFI(1,webRange);
     check(await reader.go(webAnnotation),'independently generated WebUI CFI opens in desktop');
     independentView.close();independentBook.destroy();
+    const styledBook=await makeBook(new File([await (await fetch(fixtureRoot+'/inline-styles.epub')).blob()],'inline-styles.epub'));
+    const styledURL=await styledBook.sections[0].load();
+    const markup=await (await fetch(styledURL)).text();
+    check(markup.includes('body > p'),'HTML chapter serialization preserves CSS child selectors');
+    check(markup.includes('A & B'),'HTML chapter serialization preserves CSS ampersands');
+    const cssFrame=document.createElement('iframe');
+    cssFrame.setAttribute('sandbox','allow-same-origin');
+    cssFrame.style.cssText='position:absolute;left:-10000px;top:-10000px;width:300px;height:300px';
+    const cssLoaded=new Promise(resolve=>cssFrame.addEventListener('load',resolve,{once:true}));
+    cssFrame.srcdoc=markup;document.body.append(cssFrame);
+    try {
+        await Promise.race([cssLoaded,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Inline CSS frame did not load')),3000))]);
+        const paragraph=cssFrame.contentDocument.getElementById('rule');
+        check(cssFrame.contentWindow.getComputedStyle(paragraph).color==='rgb(17, 34, 51)','preserved child selector applies in native HTML frame');
+        check(cssFrame.contentWindow.getComputedStyle(paragraph,'::after').content.includes('A & B'),'preserved CSS string applies in native HTML frame');
+        check(window.__inlineStyleScriptExecuted!==true,'CSS serialization does not enable book scripts');
+    } finally {cssFrame.remove();styledBook.destroy();}
+    const cooperativeView=document.createElement('foliate-view');
+    cooperativeView.book={sections:[{createDocument:async()=>new DOMParser().parseFromString('<html><body><p>'+ 'ordinary '.repeat(1500)+'</p></body></html>','text/html')}]};
+    const controller=new AbortController();
+    const clockDescriptor=Object.getOwnPropertyDescriptor(performance,'now');
+    let clock=0;
+    Object.defineProperty(performance,'now',{configurable:true,value:()=>clock+=26});
+    const abortTimer=setTimeout(()=>controller.abort(),0);
+    try {
+        const results=[];
+        for await(const result of cooperativeView.search({query:'missing',matchWholeWords:true,signal:controller.signal}))results.push(result);
+        check(controller.signal.aborted,'native no-match search yields to cancellation on the time budget');
+        check(results.length===0,'native cancelled search exposes no checkpoint or stale result');
+    } finally {
+        clearTimeout(abortTimer);
+        if(clockDescriptor)Object.defineProperty(performance,'now',clockDescriptor);else delete performance.now;
+    }
     await reader.annotations([{kind:'highlight',cfiRange:annotation.cfi,color:'#facc15'}]);
     check(await reader.go(annotation.cfi),'CFI range bookmark navigates');
     check(await reader.go('chapter:1;fraction:0.25'),'legacy chapter bookmark preserved');await settle();check(reader.snapshot().index===1,'legacy bookmark retains chapter');
@@ -56,5 +90,5 @@ window.runReaderChecks = async function(fixtureRoot) {
     await reader.chapter(0);const pdfOk=await reader.go(pdf.location);await settle();check(reader.snapshot().index===2,'PDF bookmark restores page three '+JSON.stringify({pdf,pdfOk,current:reader.snapshot()}));
     reader.close();await reader.open({url:fixtureRoot+'/four-pages.pdf',format:'pdf',location:pdf.location,settings:{spread:'none'}});await settle();check(reader.snapshot().index===2,'PDF reopen resumes page three');
     reader.close();
-    return {epubCfi:cfi,annotationCfi:annotation.cfi,pdfLocation:pdf.location,pdfProgress:pdf.progress,checks:29};
+    return {epubCfi:cfi,annotationCfi:annotation.cfi,pdfLocation:pdf.location,pdfProgress:pdf.progress,checks};
 };
