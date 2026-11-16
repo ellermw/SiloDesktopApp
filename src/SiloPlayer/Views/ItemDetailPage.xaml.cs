@@ -3248,6 +3248,59 @@ public sealed partial class ItemDetailPage : Page
         catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
     }
 
+    /// <summary>
+    /// Opens Edit Metadata on a fresh detail read (#4241), guarded by the visit, identity and
+    /// authority. Shared by the generic More menu and the audiobook layout's curator menu.
+    /// </summary>
+    private async Task OpenFreshEditMetadataAsync(MediaItemDetail item, MenuFlyoutItem trigger)
+    {
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var authority = client.CaptureContext();
+        var identity = client.CaptureIdentityContext();
+        var auth = App.Services.GetRequiredService<AuthService>();
+        var navigation = _navigationCts;
+        if (navigation == null || !IsCurrentDetail(item.ContentId) || !AuthorizationPolicy.CanCurateMetadata(auth)) return;
+        using var loading = CancellationTokenSource.CreateLinkedTokenSource(navigation.Token);
+        loading.CancelAfter(TimeSpan.FromSeconds(30));
+        bool IdentityCurrent() => ReferenceEquals(_navigationCts, navigation) && !navigation.IsCancellationRequested
+            && IsCurrentDetail(item.ContentId) && client.IsCurrentIdentityContext(identity)
+            && client.CaptureContext().AccessGeneration == authority.AccessGeneration && AuthorizationPolicy.CanCurateMetadata(auth);
+        bool OwnerCurrent() => IdentityCurrent() && client.IsCurrentContext(authority);
+        bool Current() => !loading.IsCancellationRequested && OwnerCurrent();
+        void RetireRead() { if (!OwnerCurrent()) loading.Cancel(); }
+        void DetachRead()
+        {
+            client.ContextInvalidated -= RetireRead;
+            auth.UserChanged -= RetireRead; auth.LoggedOut -= RetireRead;
+        }
+        client.ContextInvalidated += RetireRead;
+        auth.UserChanged += RetireRead; auth.LoggedOut += RetireRead;
+        trigger.IsEnabled = false;
+        var writeRevision = App.Services.GetRequiredService<MediaMaintenanceApi>().PendingWrites.Revision;
+        try
+        {
+            var detail = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(item.ContentId, loading.Token);
+            if (!Current()) return;
+            DetachRead();
+            var dialog = new SiloPlayer.Views.Dialogs.EditMetadataDialog(detail, writeRevision) { XamlRoot = XamlRoot };
+            // The timeout bounds the opening read, not time spent editing.
+            loading.CancelAfter(Timeout.InfiniteTimeSpan);
+            await dialog.ShowAsync();
+            if (dialog.HasSaved && IdentityCurrent())
+            { await ViewModel.ReloadAsync(item.ContentId); if (IdentityCurrent()) UpdateUI(); }
+        }
+        catch (OperationCanceledException) when (!IdentityCurrent()) { }
+        catch (Exception ex)
+        {
+            if (IdentityCurrent()) App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
+        }
+        finally
+        {
+            DetachRead();
+            trigger.IsEnabled = true;
+        }
+    }
+
     private void BuildMoreFlyout()
     {
         MoreFlyout.Items.Clear();
@@ -3267,7 +3320,7 @@ public sealed partial class ItemDetailPage : Page
             };
             MoreFlyout.Items.Add(shuffle); hasOverflowActions = true;
         }
-        if (_tvViewport != null && ActualWidth < 1024)
+        if (_tvViewport != null && ActualWidth < 1024 && item.Type != "audiobook")
         {
             if (item.Type != "season")
             {
@@ -3297,58 +3350,11 @@ public sealed partial class ItemDetailPage : Page
             }
             hasOverflowActions = true;
         }
-        if (item.Type is "movie" or "series" or "season" or "episode" &&
-            AuthorizationPolicy.CanCurateMetadata(App.Services.GetRequiredService<AuthService>()))
+        if (ItemMaintenanceActionPolicy.CanEditDetail(
+            AuthorizationPolicy.CanCurateMetadata(App.Services.GetRequiredService<AuthService>()), item.Type))
         {
             var edit = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Edit Metadata", Icon = new FontIcon { Glyph = "\uE70F" } }, text: "web.detail.actions.editMetadata");
-            edit.Click += async (_, _) =>
-            {
-                var client = App.Services.GetRequiredService<SiloApiClient>();
-                var authority = client.CaptureContext();
-                var identity = client.CaptureIdentityContext();
-                var auth = App.Services.GetRequiredService<AuthService>();
-                var navigation = _navigationCts;
-                if (navigation == null || !IsCurrentDetail(item.ContentId) || !AuthorizationPolicy.CanCurateMetadata(auth)) return;
-                using var loading = CancellationTokenSource.CreateLinkedTokenSource(navigation.Token);
-                loading.CancelAfter(TimeSpan.FromSeconds(30));
-                bool IdentityCurrent() => ReferenceEquals(_navigationCts, navigation) && !navigation.IsCancellationRequested
-                    && IsCurrentDetail(item.ContentId) && client.IsCurrentIdentityContext(identity)
-                    && client.CaptureContext().AccessGeneration == authority.AccessGeneration && AuthorizationPolicy.CanCurateMetadata(auth);
-                bool OwnerCurrent() => IdentityCurrent() && client.IsCurrentContext(authority);
-                bool Current() => !loading.IsCancellationRequested && OwnerCurrent();
-                void RetireRead() { if (!OwnerCurrent()) loading.Cancel(); }
-                void DetachRead()
-                {
-                    client.ContextInvalidated -= RetireRead;
-                    auth.UserChanged -= RetireRead; auth.LoggedOut -= RetireRead;
-                }
-                client.ContextInvalidated += RetireRead;
-                auth.UserChanged += RetireRead; auth.LoggedOut += RetireRead;
-                edit.IsEnabled = false;
-                var writeRevision = App.Services.GetRequiredService<MediaMaintenanceApi>().PendingWrites.Revision;
-                try
-                {
-                    var detail = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(item.ContentId, loading.Token);
-                    if (!Current()) return;
-                    DetachRead();
-                    var dialog = new SiloPlayer.Views.Dialogs.EditMetadataDialog(detail, writeRevision) { XamlRoot = XamlRoot };
-                    // The timeout bounds the opening read, not time spent editing.
-                    loading.CancelAfter(Timeout.InfiniteTimeSpan);
-                    await dialog.ShowAsync();
-                    if (dialog.HasSaved && IdentityCurrent())
-                    { await ViewModel.ReloadAsync(item.ContentId); if (IdentityCurrent()) UpdateUI(); }
-                }
-                catch (OperationCanceledException) when (!IdentityCurrent()) { }
-                catch (Exception ex)
-                {
-                    if (IdentityCurrent()) App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
-                }
-                finally
-                {
-                    DetachRead();
-                    edit.IsEnabled = true;
-                }
-            };
+            edit.Click += async (_, _) => await OpenFreshEditMetadataAsync(item, edit);
             MoreFlyout.Items.Add(edit); hasOverflowActions = true;
         }
         if (item.Type is "movie" or "series" or "season" or "episode")

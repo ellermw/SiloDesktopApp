@@ -50,6 +50,8 @@ internal static class ConditionalEditorsNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 900)); await Task.Delay(120);
             await CaseAsync("metadata unchanged save", () => UnchangedAsync(new EditMetadataDialog(Movie()), owner, wire));
             await CaseAsync("metadata tag entry duplicate removal and save", () => TagsAsync(owner, wire));
+            await CaseAsync("audiobook form fields hidden controls and owned save", () => AudiobookAsync(owner, wire));
+            await CaseAsync("audiobook generic provider search and match", () => AudiobookMatchAsync(owner, wire, auth));
             await CaseAsync("person unchanged save", () => UnchangedAsync(new EditPersonDialog(Person()), owner, wire));
             await CaseAsync("metadata diff clear pending rejection retry", () => MetadataSaveAsync(owner, wire));
             await CaseAsync("person diff clear pending rejection retry", () => PersonSaveAsync(owner, wire));
@@ -459,6 +461,71 @@ internal static class ConditionalEditorsNativeFixture
         }
         finally { dialog.Hide(); await showing; }
     }
+    private static async Task AudiobookAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Reset(); wire.TranslationTotal = 3;
+        var book = new MediaItemDetail { ContentId = "fixture-audiobook", Type = "audiobook", Title = "Fixture Book", Year = 2019, ReleaseDate = "2019-01-02", Genres = ["Fiction"], LockedFields = [10, 42] };
+        wire.DetailItem = book;
+        var dialog = new EditMetadataDialog(book) { XamlRoot = owner.XamlRoot }; var showing = dialog.ShowAsync(); await Task.Delay(140);
+        try
+        {
+            var sections = Field<Dictionary<string, StackPanel>>(dialog, "_sections");
+            Check(sections.Keys.Order().SequenceEqual(new[] { "dates", "general", "tags" }), "audiobook exposes video IDs or image sections");
+            var text = Field<Dictionary<string, TextBox>>(dialog, "_textInputs");
+            Check(text.Keys.Order().SequenceEqual(new[] { "content_rating", "original_title", "overview", "release_date", "sort_title", "tagline", "title" }), "audiobook text field set differs from upstream");
+            var numbers = Field<Dictionary<string, NumberBox>>(dialog, "_numberInputs");
+            Check(numbers.Keys.SequenceEqual(new[] { "year" }), "audiobook exposes video ratings, runtime or episode numbers");
+            var tags = Field<Dictionary<string, MetadataTagsInput>>(dialog, "_tagInputs");
+            Check(tags.Keys.Order().SequenceEqual(new[] { "countries", "genres", "studios" }), "audiobook tag field set differs from upstream");
+            var reset = Field<Button>(dialog, "_reset");
+            Check(reset.Visibility == Visibility.Collapsed && !reset.IsEnabled, "audiobook exposes Reset to Provider");
+            Check(!wire.Reads.Any(path => path.Contains("metadata-ai") || path.EndsWith("/images") || path.EndsWith("/catalog/capabilities")), "audiobook requested a hidden video-only capability");
+            await CaptureAsync(dialog, "edit-metadata-audiobook-general.png");
+            text["title"].Text = "Edited Book";
+            Section(dialog, "Dates & Ratings"); numbers["year"].Value = 2001; text["release_date"].Text = "";
+            await CaptureAsync(dialog, "edit-metadata-audiobook-dates.png");
+            Section(dialog, "Tags & Genres");
+            Descendants<TextBox>(tags["genres"]).Single().Text = "Fantasy,";
+            await CaptureAsync(dialog, "edit-metadata-audiobook-tags.png");
+            Save(dialog); await UntilAsync(() => wire.Writes.Count == 1 && dialog.HasSaved); await showing;
+            var write = wire.Writes.Single();
+            Check(write.Path == "/api/v2/admin/items/fixture-audiobook/metadata", "audiobook saved to the wrong item");
+            Check(write.Body.EnumerateObject().Select(value => value.Name).Order().SequenceEqual(new[] { "genres", "locked_fields", "release_date", "title", "year" }), "audiobook save includes hidden or unchanged fields");
+            Check(write.Body.GetProperty("title").GetString() == "Edited Book" && write.Body.GetProperty("year").GetInt32() == 2001 && write.Body.GetProperty("release_date").ValueKind == JsonValueKind.Null, "audiobook edits did not reach the PATCH");
+            Check(write.Body.GetProperty("genres").EnumerateArray().Select(value => value.GetString()).SequenceEqual(new[] { "Fiction", "Fantasy" }), "audiobook tag edit did not reach the PATCH");
+            Check(write.Body.GetProperty("locked_fields").EnumerateArray().Select(value => value.GetInt32()).SequenceEqual(new[] { 0, 2, 10, 13, 42 }), "audiobook save lost automatic or foreign locks");
+        }
+        finally { dialog.Hide(); await showing; wire.TranslationTotal = null; }
+    }
+    private static async Task AudiobookMatchAsync(FrameworkElement owner, Wire wire, AuthService auth)
+    {
+        wire.Reset();
+        // Curators search without the admin-only file inventory, retaining the page's library scope.
+        auth.SetCurrentUser(new() { Id = "fixture", Role = "user", Permissions = [AuthorizationPolicy.MetadataCuration] });
+        var dialog = new MatchItemDialog("fixture-audiobook", "Fixture Book", 2019, "audiobook", 7, [], []) { XamlRoot = owner.XamlRoot };
+        var showing = dialog.ShowAsync();
+        try
+        {
+            await UntilAsync(() => ((Button)dialog.FindName("SearchButton")).IsEnabled);
+            Check(((FrameworkElement)dialog.FindName("VideoSearchFields")).Visibility == Visibility.Collapsed && ((FrameworkElement)dialog.FindName("GenericSearchFields")).Visibility == Visibility.Visible, "audiobook Match uses video provider fields");
+            ((TextBox)dialog.FindName("GenericTitleBox")).Text = "Book Search";
+            ((TextBox)dialog.FindName("GenericYearBox")).Text = "2001";
+            var providerFields = Descendants<TextBox>((StackPanel)dialog.FindName("ProviderIdsPanel")).ToArray();
+            providerFields[0].Text = " ISBN "; providerFields[1].Text = " 9781234567890 ";
+            await (Task)typeof(MatchItemDialog).GetMethod("DoSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            var search = wire.Writes.Single(write => write.Path.EndsWith("/match/search")).Body;
+            Check(search.GetProperty("title").GetString() == "Book Search" && search.GetProperty("year").GetInt32() == 2001 && search.GetProperty("library_id").GetString() == "7", "audiobook search lost title/year/library scope");
+            Check(search.GetProperty("provider_ids").GetProperty("isbn").GetString() == "9781234567890" && !search.TryGetProperty("imdb_id", out _) && !search.TryGetProperty("tmdb_id", out _) && !search.TryGetProperty("tvdb_id", out _), "audiobook search lost the generic provider contract");
+            Invoke(((StackPanel)dialog.FindName("ResultsPanel")).Children.OfType<Button>().Single());
+            await CaptureAsync(dialog, "match-audiobook-provider.png");
+            Invoke((Button)dialog.FindName("ApplyMatchButton"));
+            await UntilAsync(() => dialog.HasAppliedMatch); await showing;
+            var apply = wire.Writes.Single(write => write.Path.EndsWith("/match/apply")).Body;
+            Check(apply.GetProperty("library_id").GetString() == "7" && apply.GetProperty("provider_ids").GetProperty("isbn").GetString() == "9781234567890", "audiobook apply lost candidate provider IDs/library scope");
+            Check(dialog.AppliedContentId == "audiobook-isbn-9781234567890", "audiobook match discarded replacement identity");
+        }
+        finally { dialog.Hide(); await showing; Admin(auth); }
+    }
     private static async Task TranslationVisibilityAsync(FrameworkElement owner, Wire wire)
     {
         wire.Reset(); wire.TranslationTotal = 0;
@@ -537,29 +604,36 @@ internal static class ConditionalEditorsNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         private readonly List<Write> _writes = []; private bool _applied;
+        private readonly List<string> _reads = [];
         public IReadOnlyList<Write> Writes { get { lock (_writes) return _writes.ToArray(); } }
+        public IReadOnlyList<string> Reads { get { lock (_reads) return _reads.ToArray(); } }
+        public MediaItemDetail? DetailItem;
         public TaskCompletionSource<HttpResponseMessage>? PatchGate, ImageGate, DetailGate;
         public int DetailReads;
         public int? TranslationTotal;
-        public void Reset() { lock (_writes) _writes.Clear(); _applied = false; PatchGate = ImageGate = DetailGate = null; DetailReads = 0; }
+        public void Reset() { lock (_writes) _writes.Clear(); lock (_reads) _reads.Clear(); _applied = false; PatchGate = ImageGate = DetailGate = null; DetailReads = 0; DetailItem = null; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "editors-fixture.invalid") throw new InvalidOperationException("Fixture attempted external networking");
             var path = request.RequestUri.AbsolutePath;
+            if (request.Method == HttpMethod.Get) { lock (_reads) _reads.Add(path); }
             if (request.Method == HttpMethod.Patch || request.Method == HttpMethod.Post)
             {
                 using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); lock (_writes) _writes.Add(new(path, document.RootElement.Clone()));
+                if (path.EndsWith("/match/search")) return Response(HttpStatusCode.OK, """{"candidates":[{"title":"Book Result","content_type":"audiobook","provider_ids":{"isbn":"9781234567890"},"sources":["books"]}]}""");
+                if (path.EndsWith("/match/apply")) return Response(HttpStatusCode.OK, """{"content_id":"audiobook-isbn-9781234567890","updated":true}""");
                 if (path.EndsWith("/metadata-translation")) return Response(HttpStatusCode.OK, "{\"id\":\"fixture-translation\",\"status\":\"queued\"}");
                 if (path.EndsWith("/images/apply")) { _applied = true; if (ImageGate != null) return await ImageGate.Task.WaitAsync(ct); return Response(HttpStatusCode.OK, "{}"); }
                 if (request.Method == HttpMethod.Patch && PatchGate != null) return await PatchGate.Task.WaitAsync(ct);
             }
+            if (path.EndsWith("/match/hints")) return Response(HttpStatusCode.OK, """{"title":"Fixture Book","year":2019,"provider_ids":{}}""");
             if (path.EndsWith("/images")) return Response(HttpStatusCode.OK, """{"items":[{"type":"poster","url":"","original_url":"https://fixture.invalid/old-poster","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-1","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-2","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/new-poster","provider_id":"fixture","language":"en"}],"current":{"poster_url":"https://fixture.invalid/old-poster"},"provider_errors":{},"page":{"has_more":false,"next_cursor":""}}""");
             if (path.EndsWith("/metadata-translation/jobs")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(new { jobs = new[] { new { id = "fixture-translation", status = "completed", fields_total = TranslationTotal ?? 0, fields_done = TranslationTotal ?? 0 } } }, Json));
             if (path.Contains("metadata-ai")) return Response(HttpStatusCode.OK, TranslationTotal == null ? "{\"state\":\"disabled\"}" : "{\"state\":\"available\"}");
             if (path.Contains("/people/")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(Person(), Json));
             if (request.Method == HttpMethod.Get && path.StartsWith("/api/v2/catalog/items/") && DetailGate != null)
             { Interlocked.Increment(ref DetailReads); return await DetailGate.Task.WaitAsync(ct); }
-            var movie = Movie(); if (_applied) movie.LockedFields = [3, 10];
+            var movie = DetailItem ?? Movie(); if (_applied) movie.LockedFields = [3, 10];
             return Response(HttpStatusCode.OK, JsonSerializer.Serialize(movie, Json));
         }
     }
