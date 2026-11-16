@@ -116,7 +116,16 @@ compiled ICU catalog, five `web.common.sortable.*` announcements the generated c
 
 ## Verification and limits
 
-Synthetic server, current DPI, dark theme. Fresh verification on the reconciled Beta candidate:
+The evidence below applies only to the earlier reconciled candidate on Beta base 173c3797,
+using a synthetic server, current DPI and dark theme; it does not verify head afef78f98544.
+Later fixes c4192cde, 53fa9ca7 and afef78f9 changed production code for matcher summary polling,
+last-page ignore/restore, scan hydration on open and controller channel locking, and added
+regression tests including concurrency coverage. These fixes are source-reviewed only: no builds
+or tests were run for them. The 7,576-unit count excludes the later regression tests. Updated
+source awaits pipeline verification; the historical counts, receipts and hashes below are not
+current-head evidence.
+
+Historical verification:
 
 - `beta-173c-units-r1`: 7,576 passed, zero failed/skipped, including 108 Libraries/folder-browser
   cases and `TaskSourceResolutionProbe.SharedOutputResolvesTheExpectedTaskSource`. Unit PDB
@@ -129,8 +138,9 @@ Synthetic server, current DPI, dark theme. Fresh verification on the reconciled 
 - `beta-173c-native-r2-binding-correction`: corrected app/host binding passed, then the new
   snapshot-replacement keyboard regression timed out. The fixture had accepted the still-loaded
   old grip before the queued render replaced it, then tried to focus that detached control.
-  The sole subsequent source change waits for the actual new rendered snapshot, loaded/enabled
-  replacement grip and real keyboard focus; every existing behavioral assertion remains.
+  The fixture correction for that historical continuation waited for the actual new rendered
+  snapshot, loaded/enabled replacement grip and real keyboard focus; every existing behavioral
+  assertion remained.
 - `beta-173c-native-r3-current-render`: source-delta admission stopped before any process because
   Windows PowerShell 5 wrapped the decoded JSON array. Correcting that helper-only defect passed
   a positive one-fixture delta control and rejected absent/extra product changes before relaunch.
@@ -140,17 +150,17 @@ Synthetic server, current DPI, dark theme. Fresh verification on the reconciled 
   one suite-completion marker, no FAIL lines, empty stderr and numeric exit 0. All seven capture
   receipts match inline/disk and verify empty jobs and retained-member termination signals.
 
-The final continuation reused the qualified 7,576-unit result only after proving the sole source
-delta was the sealed native fixture. All production and unit-test bytes are unchanged. App PDB
-binding checked 1,007 source documents including linked Core/Player; host PDB binding checked
-240. Released readback rehashed all 2,233 source entries and all 666 published app files exactly.
-Independent source review of the complete Beta-to-working diff found no blocking P0/P1/P2 issues.
+That historical continuation reused the 7,576-unit result after checking its fixture-only source
+delta. App PDB binding checked 1,007 source documents including linked Core/Player; host PDB
+binding checked 240. Released readback rehashed 2,233 source entries and 666 published app files
+for that earlier candidate, not the later production and test changes. Its source review reported
+no blocking P0/P1/P2 issues at that time; this is not a review result for the current head.
 
-Actual final lease: `2026-11-16T16:37:47.9426263Z` to `2026-11-16T16:39:59.8164148Z`.
-Final receipt SHA256: `DB4A061FE7043E50AF112175FD11FD7D01BD5FDEC556C8523434DB230F8A6216`.
+Historical final lease: `2026-11-16T16:37:47.9426263Z` to `2026-11-16T16:39:59.8164148Z`.
+Historical final receipt SHA256: `DB4A061FE7043E50AF112175FD11FD7D01BD5FDEC556C8523434DB230F8A6216`.
 Released audit SHA256: `FC6439AB785B9738A169FB7BD918B96489DC8B8D7028E2517668EADF9B21D376`.
 Evidence root: `.codex-tmp/admin-libraries-reliability-20261116T153001Z/`.
-The historical 7,245-unit/168-native evidence remains historical, not this candidate's result.
+The older 7,245-unit/168-native evidence also remains historical, not a current-head result.
 Red evidence includes the reliability regressions failing against the prior transport/state
 implementation, plus the earlier reorder-serialization and create-to-update negative controls.
 
