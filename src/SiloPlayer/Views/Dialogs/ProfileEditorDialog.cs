@@ -82,6 +82,15 @@ public sealed partial class ProfileEditorDialog
     private readonly TextBlock _pinLabel = new() { FontSize = 14, Height = 14, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Medium };
     private readonly Button _clearPinButton = new() { Content = "Remove PIN", Height = 28, MinHeight = 0, FontSize = 12, Padding = new Thickness(8, 3, 8, 3) };
     private readonly ToggleSwitch _kidsToggle = new();
+    private readonly ToggleSwitch _requestsAllowed = new();
+    private Border? _requestsAllowedRow;
+    private bool _requestsAllowedSupported;
+    private bool _requestsTouched;
+    private void ConfigureRequestsPermission(bool supported)
+    {
+        _requestsAllowedSupported = supported;
+        if (_requestsAllowedRow != null) _requestsAllowedRow.Visibility = supported ? Visibility.Visible : Visibility.Collapsed;
+    }
     private readonly ComboBox _ratingBox = new() { Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ComboBox _advisoryBox = new() { Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ToggleSwitch _requireAdvisory = new();
@@ -220,6 +229,7 @@ public sealed partial class ProfileEditorDialog
             await libraryTask,
             profileResponse.AvatarUploadEnabled,
             authApi, profileResponse.MaxAdvisoryAgeSupported, profileResponse.RequireAdvisoryAgeSupported, profileResponse.Profiles.Count == 0);
+        editor.ConfigureRequestsPermission(profileResponse.RequestsAllowedSupported);
         await editor._dialog.ShowAsync();
         return new ProfileEditorResult(editor.SavedProfile, editor.SubmittedPin);
     }
@@ -231,6 +241,7 @@ public sealed partial class ProfileEditorDialog
         var editor = new ProfileEditorDialog(xamlRoot, null, session.Libraries, capabilities.AvatarUploadEnabled,
             App.Services.GetRequiredService<AuthApi>(), capabilities.MaxAdvisoryAgeSupported, capabilities.RequireAdvisoryAgeSupported)
         { _addSession = session };
+        editor.ConfigureRequestsPermission(capabilities.RequestsAllowedSupported);
         using var registration = session.CancellationToken.Register(() => editor._dialog.DispatcherQueue.TryEnqueue(() => editor._dialog.Hide()));
         await editor._dialog.ShowAsync();
         return session.IsCurrent ? new(editor.SavedProfile, editor.SubmittedPin) : new(null, "");
@@ -242,6 +253,8 @@ public sealed partial class ProfileEditorDialog
         RefreshPinText();
         _clearPinButton.Visibility = _profile?.HasPin == true ? Visibility.Visible : Visibility.Collapsed;
         _kidsToggle.IsOn = _profile?.IsChild ?? false;
+        _requestsAllowed.IsOn = _profile?.RequestsAllowed ?? true;
+        _requestsAllowed.Toggled += (_, _) => { if (!_applyingKidsPreset) _requestsTouched = true; };
         _restrictLibrariesToggle.IsOn = !_isPrimary && (_profile?.LibraryRestrictionsEnabled ?? false);
         _libraryRows.Visibility = _restrictLibrariesToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
 
@@ -447,9 +460,14 @@ public sealed partial class ProfileEditorDialog
         }
         limits.SizeChanged += (_, _) => ReflowLimits(); _viewportReflows.Add(ReflowLimits);
         body.Children.Add(limits);
+        _requestsAllowedRow = ToggleRow("Allow requests",
+            "Lets this profile discover titles not in the library and request them. Maximum content rating limits these titles by US ratings only, and maximum advisory age does not apply to them.",
+            _requestsAllowed, "web.profiles.editor.requestsAllowed", "web.profiles.editor.requestsAllowedHint");
+        _requestsAllowedRow.Visibility = Visibility.Collapsed;
         if (_isPrimary)
         {
             body.Children.Add(new TextBlock { Text = "This profile sees every library your account allows. Hide libraries in Settings.", TextWrapping = TextWrapping.Wrap, Foreground = Brush("SecondaryTextBrush") });
+            body.Children.Add(_requestsAllowedRow);
             return section;
         }
         var libraryGroup = new StackPanel { Spacing = 12 };
@@ -457,6 +475,7 @@ public sealed partial class ProfileEditorDialog
         libraryToggle.BorderThickness = new Thickness(0); libraryToggle.Padding = new Thickness(0);
         libraryGroup.Children.Add(libraryToggle); libraryGroup.Children.Add(_libraryRows);
         body.Children.Add(new Border { BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12), Child = libraryGroup });
+        body.Children.Add(_requestsAllowedRow);
         body.Children.Add(BuildAllowanceManagement());
         return section;
     }
@@ -744,6 +763,7 @@ public sealed partial class ProfileEditorDialog
                 MaxAdvisoryAgeSupported = _ageSupported, RequireAdvisoryAgeSupported = _requireAgeSupported,
                 MaxAdvisoryAge = _advisoryBox.SelectedIndex > 0 ? _advisoryBox.SelectedIndex : null,
                 RequireAdvisoryAge = _requireAdvisory.IsOn,
+                RequestsAllowedSupported = _requestsAllowedSupported, RequestsAllowed = _requestsAllowed.IsOn,
                 MaxPlaybackQuality = QualityOptions[Math.Max(0, _qualityBox.SelectedIndex)].Value,
                 IsPrimary = _isPrimary,
                 LibraryRestrictionsEnabled = !_isPrimary && _restrictLibrariesToggle.IsOn,
@@ -852,6 +872,7 @@ public sealed partial class ProfileEditorDialog
         {
             if (_kidsToggle.IsOn)
             {
+                if (!_requestsTouched) _requestsAllowed.IsOn = false;
                 if (!_contentRatingTouched && _ratingBox.SelectedIndex == 0) _ratingBox.SelectedIndex = 2;
                 if (!_isPrimary && !_libraryAccessTouched && !_restrictLibrariesToggle.IsOn)
                 {
@@ -867,6 +888,7 @@ public sealed partial class ProfileEditorDialog
             foreach (var check in _libraryChecks.Values) check.IsOn = false;
             _contentRatingTouched = false;
             _libraryAccessTouched = false;
+            _requestsAllowed.IsOn = true; _requestsTouched = false;
         }
         finally
         {

@@ -1847,7 +1847,7 @@ _webhookPlexAuthCts?.Cancel();
             WatchlistAutoRequestToggle.IsOn = value;
             _suppressRequestSetting = false;
             WatchlistAutoRequestToggle.IsEnabled = true;
-            var show = RequestViewerPolicy.ShowAutoRequestControl(status, value);
+            var show = App.Services.GetRequiredService<RequestsApi>().ProfileRequestsAllowed && RequestViewerPolicy.ShowAutoRequestControl(status, value);
             WatchlistAutoRequestToggle.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
             WatchlistRequestSettingStatus.Text = show ? "" : status.RequestsEnabled ? "Automatic watchlist requests are unavailable for this profile or server." : L("web.settings.requests.disabledOnServer", "Requests are turned off on this server.");
         }
@@ -1859,7 +1859,7 @@ _webhookPlexAuthCts?.Cancel();
         if (_suppressRequestSetting || !WatchlistAutoRequestToggle.IsEnabled) return;
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var context = _requestSettingContext;
-        if (!client.IsCurrentContext(context)) return;
+        if (!client.IsCurrentContext(context) || !App.Services.GetRequiredService<RequestsApi>().SubmissionAllowed) return;
         var enabled = WatchlistAutoRequestToggle.IsOn;
         WatchlistAutoRequestToggle.IsEnabled = false;
         try
@@ -6394,7 +6394,7 @@ _webhookPlexAuthCts?.Cancel();
             _ => L("web.profiles.helpers.access.anyQuality", "Any quality"),
         };
         var age = profile.MaxAdvisoryAge.HasValue ? $"Advisory age {profile.MaxAdvisoryAge} and under{(profile.RequireAdvisoryAge ? "; rated titles only" : "")}" : null;
-        return string.Join(" · ", new[] { rating, age, libraries, quality }.Where(value => value != null));
+        return string.Join(" · ", new[] { rating, age, libraries, quality, profile.RequestsAllowed ? null : L("web.profiles.helpers.access.noRequests", "No requests") }.Where(value => value != null));
     }
 
     private async Task UseProfileAsync(SiloPlayer.Core.Models.Auth.Profile profile)

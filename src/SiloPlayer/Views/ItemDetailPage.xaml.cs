@@ -3832,7 +3832,7 @@ public sealed partial class ItemDetailPage : Page
             var api = App.Services.GetRequiredService<RequestsApi>();
             var status = await api.GetStatusAsync(ct);
             if (!current()) return false;
-            if (!status.RequestsEnabled || status.Allowed == false || !status.SeasonRequestsSupported || !status.MissingSeasonsRequestable) return true;
+            if (!App.Services.GetRequiredService<RequestsApi>().DiscoveryAllowed || !status.RequestsEnabled || status.Allowed == false || !status.SeasonRequestsSupported || !status.MissingSeasonsRequestable) return true;
             var detail = await api.GetDetailAsync("series", tmdbId, ct);
             if (!current()) return false;
             if (detail.Request.Requestable && (detail.Seasons?.Any(RequestViewerPolicy.SeasonRequestable) ?? false))
@@ -3850,14 +3850,16 @@ public sealed partial class ItemDetailPage : Page
         try
         {
             var api = App.Services.GetRequiredService<RequestsApi>();
+            if (!api.SubmissionAllowed) return;
+            var requestOwner = api.CaptureDiscoveryOwner();
             var detail = await api.GetDetailAsync("series", tmdbId, token);
-            if (!IsCurrentDetail(item.ContentId) || token.IsCancellationRequested) return;
+            if (!IsCurrentDetail(item.ContentId) || token.IsCancellationRequested || !api.IsCurrentDiscoveryOwner(requestOwner)) return;
             var selected = await Dialogs.RequestSeasonsDialog.PickAsync(XamlRoot, detail, async seasons =>
             {
-                if (!IsCurrentDetail(item.ContentId) || token.IsCancellationRequested) throw new OperationCanceledException(token);
+                if (!IsCurrentDetail(item.ContentId) || token.IsCancellationRequested || !api.IsCurrentDiscoveryOwner(requestOwner) || !api.SubmissionAllowed) throw new OperationCanceledException(token);
                 await api.CreateAsync(new Core.Models.Requests.CreateMediaRequestInput { MediaType = "series", TmdbId = tmdbId, Title = detail.Title, Seasons = seasons }, token);
             });
-            if (selected == null || !IsCurrentDetail(item.ContentId) || token.IsCancellationRequested) return;
+            if (selected == null || !IsCurrentDetail(item.ContentId) || token.IsCancellationRequested || !api.IsCurrentDiscoveryOwner(requestOwner)) return;
             App.Services.GetRequiredService<ToastService>().Success("Season request submitted.");
             _requestSeasonsContentId = null;
             BuildMoreFlyout();

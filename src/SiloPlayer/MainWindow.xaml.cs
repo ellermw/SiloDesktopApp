@@ -1857,6 +1857,7 @@ public sealed partial class MainWindow : Window
         _ = RunShellWorkAsync("access_ui_customization", () => LoadSidebarCustomizationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
+        _ = RunShellWorkAsync("access_profile_display", () => UpdateProfileDisplayAsync(shellKey, token));
         // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
         // Box sets consume LibraryCacheInvalidated in place. Re-navigation would
         // retire the visit (and accepted playback still preparing in Idle/Minimized).
@@ -2227,7 +2228,7 @@ public sealed partial class MainWindow : Window
         var profileId = _authService.SelectedProfileId ?? "";
         var profileName = _authService.SelectedProfile?.Name ?? "";
         var profileFlags = _authService.SelectedProfile is { } profile
-            ? $"{profile.IsPrimary}:{profile.IsChild}:{profile.MaxContentRating}:{profile.MaxPlaybackQuality}"
+            ? $"{profile.IsPrimary}:{profile.IsChild}:{profile.MaxContentRating}:{profile.MaxPlaybackQuality}:{profile.RequestsAllowed}"
             : "";
         var server = _authService.ConfiguredServerUrl ?? "";
         var context = _apiClient.CaptureIdentityContext();
@@ -2256,7 +2257,9 @@ public sealed partial class MainWindow : Window
             var requestStatus = await _requestsApi.GetStatusAsync(cancellationToken);
             if (!IsCurrentShellHydration(shellKey, cancellationToken))
                 return;
-            RequestsNavItem.Visibility = requestStatus.RequestsEnabled
+            var showRequests = await _requestsApi.ShouldShowNavigationAsync(requestStatus, cancellationToken);
+            if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+            RequestsNavItem.Visibility = showRequests
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
@@ -2266,6 +2269,7 @@ public sealed partial class MainWindow : Window
         }
         catch
         {
+            if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
             // WebUI keeps Requests hidden until the capability explicitly says
             // it is enabled.
             RequestsNavItem.Visibility = Visibility.Collapsed;
@@ -2710,6 +2714,8 @@ public sealed partial class MainWindow : Window
                             ? Visibility.Collapsed
                             : Visibility.Visible;
                     _ = ApplyProfileAvatarAsync(profile.AvatarUrl);
+                    // Metadata changes can start a new shell hydration; commit them after this read's presentation.
+                    _authService.RefreshSelectedProfile(profile);
                 });
             }
         }
