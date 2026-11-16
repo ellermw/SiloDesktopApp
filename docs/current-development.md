@@ -1,3 +1,36 @@
+# November 15 - Server review and credits autoplay increment
+
+Reviewed official Silo Server main `abd85d0cadac28f4ab7db6821dad9634fc114790`
+against Beta `2c33599f751e1bb7e18a56ee378ffe918710d74d`. The 222-commit
+inventory and remaining work are recorded in
+[the upstream review](parity/2026-11-15-server-abd85d0.md). Request restrictions,
+Activity and audiobook changes are independent work; Configure Security and
+Network access remain with the existing Configure lead.
+
+The first increment aligns production credits Up next with autoplay and pause:
+unresolved/off waits for manual Play now, eligible elapsed time survives holds,
+range exit/reentry and cancellation behave correctly, and stale preference reads
+cannot affect a successor. Initial reads share the current settings request;
+live refreshes cancel superseded HTTP work. Version remains pipeline-owned
+1.2.1145-beta.1 / 1.2.1144.1.
+
+Full main suite: 7,180 passed. Final 443 OSC/localization checks, Release publish,
+matching native host and credits-autoplay/autoplay/postroll native groups pass.
+The three original Lua regressions and a subsequent native cancellation
+regression failed before their corrections. Final app DLL SHA256
+`2AEE3E1F224B01CE89EB43D2E40277D5BD6C715E5EE4BD8FA6CE6D3F5CB57678`.
+See [scope and exact verification](parity/2026-11-15-credits-autoplay.md).
+Evidence is task-local `.codex-tmp/credits-final-receipt.json` and adjacent logs.
+The test-only localized-heading assertion was verified by the final focused run;
+the preceding full run retains its original scope.
+
+All later .NET/native runs hold `SiloOct18Build`; shared Configure binaries are
+untouched. Reusable task output is about 1 GiB. No installed-player/settings,
+installer, direct merge or release action occurred. This is synthetic/offscreen
+verification, not complete live/visual/physical-device parity certification.
+
+---
+
 # November 15 - Neutral opening for playback More
 
 The playback ellipsis menu no longer preselects Playback info (or another

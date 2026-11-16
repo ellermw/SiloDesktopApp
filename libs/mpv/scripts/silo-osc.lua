@@ -116,6 +116,7 @@ i18n.text_default = {
     ["marker.skipCredits"] = "Skip Credits",
     ["web.player.nextEpisode.seasonEpisode"] = "Season {season} · Episode {episode}",
     ["web.player.nextEpisode.playNow"] = "Play now",
+    ["web.player.upNext.heading"] = "Up Next",
     ["common.cancel"] = "Cancel",
     ["common.retry"] = "Retry",
     ["common.loading"] = "Loading",
@@ -531,6 +532,8 @@ local state = {
     next_ep_countdown_active = false,
     next_ep_countdown_cancelled = false,
     next_ep_countdown_started_at = 0,
+    next_ep_countdown_held_at = nil,
+    auto_play_next = nil,          -- unresolved until the current playback owner publishes its preference
     next_ep_countdown_remaining = 10,
     next_ep_countdown_overlay = nil,
     next_ep_countdown_actions = {},
@@ -4862,7 +4865,8 @@ end
 check_next_episode_countdown = function()
     if not state.next_ep_available or not state.next_ep_detail or
        state.post_roll_active or state.next_ep_countdown_cancelled or
-       not credits_marker_is_plausible() then
+       not credits_marker_is_plausible() or
+       state.time_pos < state.credits_start or state.time_pos >= state.credits_end then
         if state.next_ep_countdown_active then
             state.next_ep_countdown_active = false
             render_next_episode_countdown()
@@ -4878,16 +4882,25 @@ check_next_episode_countdown = function()
         if state.autoplay_gated then return end
         state.next_ep_countdown_active = true
         state.next_ep_countdown_started_at = mp.get_time()
+        state.next_ep_countdown_held_at = nil
         state.next_ep_countdown_remaining = 10
         started_now = true
     end
 
     local previous_remaining = state.next_ep_countdown_remaining
-    local elapsed = math.max(0, mp.get_time() - state.next_ep_countdown_started_at)
+    local now = mp.get_time()
+    local counting = state.auto_play_next == true and not state.pause
+    if not counting then
+        state.next_ep_countdown_held_at = state.next_ep_countdown_held_at or now
+    elseif state.next_ep_countdown_held_at then
+        state.next_ep_countdown_started_at = state.next_ep_countdown_started_at + now - state.next_ep_countdown_held_at
+        state.next_ep_countdown_held_at = nil
+    end
+    local elapsed = math.max(0, (state.next_ep_countdown_held_at or now) - state.next_ep_countdown_started_at)
     local remaining = math.max(0, math.ceil(10 - elapsed))
     state.next_ep_countdown_remaining = remaining
 
-    if remaining <= 0 then
+    if counting and remaining <= 0 then
         state.next_ep_countdown_active = false
         state.next_ep_available = false
         state.next_ep_visible = false
@@ -4972,11 +4985,14 @@ render_next_episode_countdown = function()
             state.next_ep_still_rect = {x=image_x,y=image_y,w=image_w,h=image_h}
         end
     else remove_next_episode_still() end
-    -- "Up next in Ns" from the catalog, with its count in the accent.
+    -- Off/unresolved autoplay leaves the same manual card without a timer.
     local remaining = tostring(state.next_ep_countdown_remaining)
     local label_size = math.floor(12 * sc)
-    local lead_text = truncate_display_text(TN("web.player.nextEpisode.upNextIn", state.next_ep_countdown_remaining), text_w, label_size)
-    local count_at, count_end = lead_text:find(remaining, 1, true)
+    local lead_text = truncate_display_text(state.auto_play_next == true
+        and TN("web.player.nextEpisode.upNextIn", state.next_ep_countdown_remaining)
+        or T("web.player.upNext.heading"), text_w, label_size)
+    local count_at, count_end
+    if state.auto_play_next == true then count_at, count_end = lead_text:find(remaining, 1, true) end
     local lead = count_at and (ass_escape_text(lead_text:sub(1, count_at - 1)) .. "{" .. ass_color(config.accent_color) .. "}" ..
         remaining .. "{" .. ass_color("B3BABD") .. "}" .. ass_escape_text(lead_text:sub(count_end + 1)))
         or ass_escape_text(lead_text)
@@ -5009,10 +5025,12 @@ render_next_episode_countdown = function()
         math.floor(13 * sc), "EFF3F5", "00", 1.0, 5, nil, true)
 
     local bar_y = card_y + card_h - bar_h
-    draw_rect(ass, card_x, bar_y, card_x + card_w, card_y + card_h, "FFFFFF", "E6", 1.0)
     local elapsed = clamp(1 - (tonumber(state.next_ep_countdown_remaining) or 10) / 10, 0, 1)
-    if elapsed > 0 then
-        draw_rect(ass, card_x, bar_y, card_x + card_w * elapsed, card_y + card_h, config.accent_color, "00", 1.0)
+    if state.auto_play_next == true then
+        draw_rect(ass, card_x, bar_y, card_x + card_w, card_y + card_h, "FFFFFF", "E6", 1.0)
+        if elapsed > 0 then
+            draw_rect(ass, card_x, bar_y, card_x + card_w * elapsed, card_y + card_h, config.accent_color, "00", 1.0)
+        end
     end
 
     state.next_ep_countdown_actions = {
@@ -6472,6 +6490,7 @@ local function observe_properties()
 
     mp.observe_property("pause", "bool", function(_, val)
         state.pause = val or false
+        check_next_episode_countdown()
         show_osc()  -- Show OSC on any pause state change
         render_pause_indicator()
     end)
@@ -6629,6 +6648,16 @@ local function observe_properties()
         request_tick()
     end)
 
+    mp.register_script_message("osc-set-auto-play-next", function(value, play_generation, load_generation)
+        if play_generation and (tonumber(play_generation) ~= (tonumber(state.marker_play_generation) or 0) or
+            tonumber(load_generation) ~= (tonumber(state.marker_load_generation) or 0)) then return end
+        state.auto_play_next = nil
+        if value == "true" or value == "1" then state.auto_play_next = true
+        elseif value == "false" or value == "0" then state.auto_play_next = false end
+        check_next_episode_countdown()
+        render_next_episode_countdown()
+    end)
+
     mp.register_script_message("osc-set-autoplay-gate", function(value)
         state.autoplay_gated = (value == "true" or value == "1")
         if state.autoplay_gated and state.next_ep_countdown_active then
@@ -6657,6 +6686,8 @@ local function observe_properties()
             local owner_changed = content_changed
                 or state.marker_file_id ~= tonumber(data.file_id)
                 or state.marker_load_generation ~= tonumber(data.load_generation)
+                or state.marker_play_generation ~= tonumber(data.play_generation)
+            if owner_changed then state.auto_play_next = nil end
             local changed = content_changed or state.marker_file_id ~= tonumber(data.file_id)
             -- check_skip_markers projects the singular state ranges onto the
             -- active segment. Compare payloads, not that mutable projection.

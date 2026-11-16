@@ -69,6 +69,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
             Call(service, "StopPlaybackStallWatchdog");
             await LoadProductionOsc(service.Mpv);
             Call(service,"SendMarkersToOsc"); await WaitForOscOwner(service);
+            Call(service,"PublishPlaybackHudPreferences",service.Mpv);
             if (mode.StartsWith("mini-prepare", StringComparison.Ordinal))
                 await VerifyMiniPreparation(service, wire, api, window, mode);
             else if (mode == "postroll")
@@ -156,6 +157,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 var starts=wire.Starts; await Task.Delay(300);
                 Check(wire.Starts==starts,"Retired credits intent advanced a newer preparation owner.");
             }
+            else if(mode=="credits-autoplay") await VerifyCreditsAutoPlay(service,wire);
             else if(mode=="metadata")
             {
                 await (Task)Call(service,"AutoDetectNextEpisodeAsync",CancellationToken.None)!;
@@ -311,6 +313,9 @@ internal static partial class PlaybackHudCompletionNativeFixture
         internal int Stops, Starts, Advances;
         internal bool FailStart, FailAdvance, HoldAdvance, HasEpisodes;
         internal bool HideImages=true, HoldStill;
+        internal bool AutoPlay=true;
+        internal int AutoPlayReadCancellations;
+        internal TaskCompletionSource? AutoPlayReadEntered, AutoPlayReadRelease;
         internal byte[] StillPng=[];
         internal readonly TaskCompletionSource StillEntered=new(TaskCreationOptions.RunContinuationsAsynchronously),StillRelease=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<string> WatchQueries=[];
@@ -338,7 +343,21 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 return new(HttpStatusCode.OK){Content=new ByteArrayContent(StillPng)};
             }
             if(path=="/api/v2/settings/contract/capabilities") return Json(new {api_version=1,manifest_revision=17,supports_batched_effective=true});
-            if(path=="/api/v2/settings/values/effective") return Json(new {items=new[]{new {key="catalog.hide_unwatched_episode_images",value=HideImages}}});
+            if(path=="/api/v2/settings/values/effective")
+            {
+                var autoPlay=AutoPlay;
+                var release=AutoPlayReadRelease;
+                if(request.RequestUri.Query.Contains("playback.auto_play_next",StringComparison.Ordinal) && release is not null)
+                {
+                    AutoPlayReadEntered?.TrySetResult();
+                    using var cancellation=ct.Register(()=>Interlocked.Increment(ref AutoPlayReadCancellations));
+                    // Deliberately finish an old response even after cancellation;
+                    // the product must also reject it by playback/read ownership.
+                    await release.Task;
+                }
+                return Json(new {items=new[]{new {key="catalog.hide_unwatched_episode_images",value=HideImages},
+                    new {key="playback.auto_play_next",value=autoPlay}}});
+            }
             if (path.EndsWith("/capabilities") && path.Contains("/playback/")) return Json(new { allowed = true, state = "available", installation_id = "fixture-install", protocol_versions = new[] { 3 }, features = new[] { "fixed_media_file_v1" } });
             if(path.Contains("/shuffles"))
             {

@@ -7984,6 +7984,8 @@ public partial class PlayerService : IDisposable
 
     private async Task SendAutoSkipSettingsToOscAsync(CancellationToken ct)
     {
+        var autoPlayOwner = BeginCreditsAutoPlayRefresh();
+        bool? autoPlay = null;
         _ = RefreshMarkerDetailsPreferencesAsync(ct);
         await RefreshSeekPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;
@@ -8013,8 +8015,9 @@ public partial class PlayerService : IDisposable
             try
             {
                 var effective = await _settingsApi.GetEffectiveSettingsAsync(
-                    [AutoSkipIntroSettingKey, AutoSkipCreditsSettingKey, AutoSkipRecapSettingKey],
+                    [AutoSkipIntroSettingKey, AutoSkipCreditsSettingKey, AutoSkipRecapSettingKey, AutoPlayNextSettingKey],
                     ct).ConfigureAwait(false);
+                autoPlay = ReadCreditsAutoPlay(effective);
                 intro = ResolveEffectiveBool(effective, AutoSkipIntroSettingKey, intro);
                 credits = ResolveEffectiveBool(effective, AutoSkipCreditsSettingKey, credits);
                 recap = ResolveEffectiveBool(effective, AutoSkipRecapSettingKey, recap);
@@ -8031,6 +8034,8 @@ public partial class PlayerService : IDisposable
         }
 
         ct.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(profileId)) autoPlay = true;
+        CompleteCreditsAutoPlayRefresh(autoPlayOwner, autoPlay, ct);
         try
         {
             var settings = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.intro_skip_mode"], ct: ct);
