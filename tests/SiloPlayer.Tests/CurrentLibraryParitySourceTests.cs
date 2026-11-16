@@ -178,6 +178,42 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("Height = cardWidth,", skeletons);
     }
 
+    [Fact]
+    public void AudiobookGroupActivationReloadsMissingStaleOrInterruptedQueries()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var tabs = Slice(page, "private async void Tab_Click(", "private async Task EnsureLibraryCatalogLoadedAsync(");
+        // Both a tab change and a deliberate retry must activate groups, not the books catalog.
+        Assert.Equal(2, tabs.Split("await EnsureAudiobookGroupsLoadedAsync();").Length - 1);
+        var activation = Slice(page, "private async Task EnsureAudiobookGroupsLoadedAsync(", "private async Task LoadAudiobookGroupsAsync(");
+        Assert.Contains("_audiobookGroupsKey == CurrentAudiobookGroupsKey()", activation);
+        Assert.Contains("if (_audiobookGroupsLoadCompleted)", activation);
+        Assert.Contains("if (_isLoadingAudiobookGroups) return;", activation);
+        Assert.Contains("await LoadAudiobookGroupsAsync(reset: true);", activation);
+
+        var key = Slice(page, "private AudiobookGroupsKey CurrentAudiobookGroupsKey()", "private void ResetAudiobookGroups(");
+        Assert.Contains("ViewModel.Library?.Id", key);
+        Assert.Contains("_currentAudiobookAxis", key);
+        Assert.Contains("AudiobookGroupSearchBox.Text", key);
+        Assert.Contains("AudiobookGroupSortComboBox.SelectedItem", key);
+        var reset = Slice(page, "private void ResetAudiobookGroups(", "private async Task EnsureAudiobookGroupsLoadedAsync(");
+        Assert.Contains("AudiobookGroupsHost.Children.Clear();", reset);
+        Assert.Contains("_audiobookGroupsOffset = 0;", reset);
+        Assert.Contains("_audiobookGroupsTotal = 0;", reset);
+        Assert.Contains("_audiobookGroupsHasMore = false;", reset);
+        Assert.Contains("_audiobookGroupsLoadCompleted = false;", reset);
+        Assert.Contains("ResetRecommendedContent();\n                ResetAudiobookGroups();", page.Replace("\r\n", "\n"));
+
+        var departure = Slice(page, "protected override void OnNavigatedFrom(", "private void UICustomization_Changed(");
+        Assert.Contains("if (_isLoadingAudiobookGroups) _audiobookGroupsLoadCompleted = false;", departure);
+        var covers = Slice(page, "private void ResumeAudiobookSeriesCovers(", "private FrameworkElement CreateAudiobookSeriesCover(");
+        Assert.Contains("if (!_audiobookGroupsLoadCompleted || _audiobookGroupsKey != CurrentAudiobookGroupsKey()) return;", covers);
+        var load = Slice(page, "private async Task LoadAudiobookGroupsAsync(", "private FrameworkElement CreateAudiobookGroupCard(");
+        Assert.Contains("reset |= _audiobookGroupsKey != key || !_audiobookGroupsLoadCompleted;", load);
+        Assert.Contains("key != CurrentAudiobookGroupsKey()", load);
+        Assert.Contains("_audiobookGroupsLoadCompleted = true;", load);
+    }
+
     private static string Slice(string source, string start, string end)
     {
         var from = source.IndexOf(start, StringComparison.Ordinal);

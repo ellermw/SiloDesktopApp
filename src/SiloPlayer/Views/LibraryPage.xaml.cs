@@ -129,6 +129,9 @@ public sealed partial class LibraryPage : Page,
     private bool _audiobookGroupsTotalExact;
     private bool _audiobookGroupsHasMore;
     private bool _isLoadingAudiobookGroups;
+    private sealed record AudiobookGroupsKey(int LibraryId, string Axis, string Search, string Sort);
+    private AudiobookGroupsKey? _audiobookGroupsKey;
+    private bool _audiobookGroupsLoadCompleted;
     private double _collectionCardWidth;
     private DispatcherTimer? _visibleRangeDebounceTimer;
     private CancellationTokenSource? _libraryReadAheadCts;
@@ -427,6 +430,7 @@ public sealed partial class LibraryPage : Page,
             {
                 if (!returningLibrary) _libraryFlagsDirty = false;
                 ResetRecommendedContent();
+                ResetAudiobookGroups();
                 ViewModel.CancelCatalogLoads();
                 ClearVirtualCards();
                 _currentFirstRow = 0;
@@ -757,6 +761,8 @@ public sealed partial class LibraryPage : Page,
         _audiobookGroupSearchTimer?.Stop();
         _collectionsResizeTimer.Stop();
         CancelIncompleteRecommendedContent();
+        if (_isLoadingAudiobookGroups) _audiobookGroupsLoadCompleted = false;
+        _isLoadingAudiobookGroups = false;
         _audiobookGroupLoadCts?.Cancel();
         _audiobookGroupLoadCts?.Dispose();
         _audiobookGroupLoadCts = null;
@@ -2279,9 +2285,49 @@ public sealed partial class LibraryPage : Page,
 
     private async void AudiobookGroupsPanel_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (!_audiobookGroupsHasMore || _isLoadingAudiobookGroups) return;
+        if (!_isNavigated || _currentTab != "Library" || !_audiobookGroupsHasMore || _isLoadingAudiobookGroups) return;
         if (AudiobookGroupsPanel.ScrollableHeight - AudiobookGroupsPanel.VerticalOffset < 360)
             await LoadAudiobookGroupsAsync(reset: false);
+    }
+
+    private AudiobookGroupsKey CurrentAudiobookGroupsKey() => new(
+        ViewModel.Library?.Id ?? 0,
+        _currentAudiobookAxis,
+        AudiobookGroupSearchBox.Text,
+        (AudiobookGroupSortComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "name");
+
+    private void ResetAudiobookGroups()
+    {
+        _audiobookGroupLoadCts?.Cancel();
+        _audiobookGroupLoadCts?.Dispose();
+        _audiobookGroupLoadCts = null;
+        _audiobookGroupsKey = null;
+        _audiobookGroupsLoadCompleted = false;
+        _isLoadingAudiobookGroups = false;
+        _audiobookGroupsOffset = 0;
+        _audiobookGroupsTotal = 0;
+        _audiobookGroupsTotalExact = false;
+        _audiobookGroupsHasMore = false;
+        AudiobookGroupsHost.Children.Clear();
+        AudiobookGroupCountText.Text = "";
+        AudiobookGroupsEmpty.Visibility = Visibility.Collapsed;
+        AudiobookGroupsLoading.IsActive = false;
+        AudiobookGroupsLoading.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task EnsureAudiobookGroupsLoadedAsync()
+    {
+        if (!_isNavigated || ViewModel.Library == null || _currentAudiobookAxis == "books") return;
+        if (_audiobookGroupsKey == CurrentAudiobookGroupsKey())
+        {
+            if (_audiobookGroupsLoadCompleted)
+            {
+                if (_currentAudiobookAxis == "series") ResumeAudiobookSeriesCovers();
+                return;
+            }
+            if (_isLoadingAudiobookGroups) return;
+        }
+        await LoadAudiobookGroupsAsync(reset: true);
     }
 
     private async Task LoadAudiobookGroupsAsync(bool reset)
@@ -2289,40 +2335,38 @@ public sealed partial class LibraryPage : Page,
         if (ViewModel.Library == null || _currentAudiobookAxis == "books" || (_isLoadingAudiobookGroups && !reset))
             return;
 
+        var key = CurrentAudiobookGroupsKey();
+        // Never append with a cursor belonging to another query or an interrupted load.
+        reset |= _audiobookGroupsKey != key || !_audiobookGroupsLoadCompleted;
         if (reset)
         {
-            _audiobookGroupLoadCts?.Cancel();
-            _audiobookGroupLoadCts?.Dispose();
-            _audiobookGroupLoadCts = new CancellationTokenSource();
-            _audiobookGroupsOffset = 0;
-            _audiobookGroupsHasMore = false;
-            AudiobookGroupsHost.Children.Clear();
-            AudiobookGroupsEmpty.Visibility = Visibility.Collapsed;
+            ResetAudiobookGroups();
             BuildAudiobookGroupSkeletons(_currentAudiobookAxis == "series");
         }
+        _audiobookGroupsKey = key;
+        _audiobookGroupsLoadCompleted = false;
 
         _audiobookGroupLoadCts ??= new CancellationTokenSource();
         var owner = _audiobookGroupLoadCts;
         var ct = owner.Token;
-        var axis = _currentAudiobookAxis;
-        var libraryId = ViewModel.Library.Id;
-        var search = AudiobookGroupSearchBox.Text;
+        var axis = key.Axis;
+        var libraryId = key.LibraryId;
+        var search = key.Search;
         _isLoadingAudiobookGroups = true;
         AudiobookGroupsLoading.IsActive = true;
         AudiobookGroupsLoading.Visibility = reset ? Visibility.Collapsed : Visibility.Visible;
 
         try
         {
-            var sort = (AudiobookGroupSortComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "name";
             var response = await App.Services.GetRequiredService<CatalogApi>().GetAudiobookGroupsAsync(
                 libraryId,
                 axis,
-                sort,
+                key.Sort,
                 search,
                 offset: _audiobookGroupsOffset,
                 includeTotal: reset,
                 ct: ct);
-            if (ct.IsCancellationRequested || !ReferenceEquals(_audiobookGroupLoadCts, owner) || ViewModel.Library?.Id != libraryId || axis != _currentAudiobookAxis) return;
+            if (ct.IsCancellationRequested || !ReferenceEquals(_audiobookGroupLoadCts, owner) || key != CurrentAudiobookGroupsKey()) return;
 
             if (reset)
             {
@@ -2335,6 +2379,7 @@ public sealed partial class LibraryPage : Page,
 
             _audiobookGroupsOffset += response.Groups.Count;
             _audiobookGroupsHasMore = response.HasMore;
+            _audiobookGroupsLoadCompleted = true;
             var noun = AudiobookGroupNoun(axis);
             SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookGroupCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get(_audiobookGroupsTotalExact ? (_audiobookGroupsOffset == _audiobookGroupsTotal ? "web.audiobooks.groups.countAll" : "web.audiobooks.groups.countPartial") : _audiobookGroupsHasMore ? "web.audiobooks.groups.countAtLeast" : "web.audiobooks.groups.countAll", new Dictionary<string, object?> { ["group_by"] = axis, ["count"] = _audiobookGroupsTotalExact ? _audiobookGroupsTotal : _audiobookGroupsOffset, ["total"] = (_audiobookGroupsTotalExact ? _audiobookGroupsTotal : _audiobookGroupsOffset).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture), ["shown"] = _audiobookGroupsOffset.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture), ["loaded"] = _audiobookGroupsOffset.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
             SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookGroupsEmpty, "Text", element => element.Text = string.IsNullOrWhiteSpace(AudiobookGroupSearchBox.Text) ? SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.empty", new Dictionary<string, object?> { ["group_by"] = axis }) : SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.noMatch", new Dictionary<string, object?> { ["group_by"] = axis, ["filter"] = AudiobookGroupSearchBox.Text.Trim() }));
@@ -2658,6 +2703,7 @@ public sealed partial class LibraryPage : Page,
 
     private void ResumeAudiobookSeriesCovers()
     {
+        if (!_audiobookGroupsLoadCompleted || _audiobookGroupsKey != CurrentAudiobookGroupsKey()) return;
         foreach (var card in AudiobookGroupsHost.Children.OfType<Button>())
         {
             if (card.Content is not StackPanel { Children.Count: > 0 } content
@@ -3360,6 +3406,11 @@ public sealed partial class LibraryPage : Page,
                 // A deliberate retry is separate from opening the saved tab,
                 // which must not repeat a failed policy read in this visit.
                 if (_libraryFlagsDirty) await RefreshLibraryFlagsAsync();
+                if (_currentAudiobookAxis != "books")
+                {
+                    await EnsureAudiobookGroupsLoadedAsync();
+                    return;
+                }
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
             }
@@ -3386,6 +3437,11 @@ public sealed partial class LibraryPage : Page,
 
         if (tag == "Library")
         {
+            if (_currentAudiobookAxis != "books")
+            {
+                await EnsureAudiobookGroupsLoadedAsync();
+                return;
+            }
             await EnsureLibraryCatalogLoadedAsync();
             await FillViewportAsync();
         }

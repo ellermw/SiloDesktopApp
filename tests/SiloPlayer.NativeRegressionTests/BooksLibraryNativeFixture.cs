@@ -207,6 +207,12 @@ internal static class BooksLibraryNativeFixture
                 var group = new AudiobookGroup { Name = "Pending Series", PosterUrls = [$"https://covers.invalid/pending-{index}"] };
                 host.Children.Add((Button)Invoke(page, "CreateAudiobookSeriesCard", group, 180d, departure.Token)!);
             }
+            // These retained cards represent a completed group response; only
+            // their artwork downloads are still pending at departure.
+            typeof(LibraryPage).GetField("_audiobookGroupsKey", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(page, Invoke(page, "CurrentAudiobookGroupsKey"));
+            typeof(LibraryPage).GetField("_audiobookGroupsLoadCompleted", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(page, true);
             await wire.PendingStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
             departure.Cancel();
             Invoke(page, "ShowTab", "Recommended");
@@ -214,6 +220,14 @@ internal static class BooksLibraryNativeFixture
                 "departure interrupts pending series covers before any image or initials is installed");
             wire.Release.TrySetResult(true);
             navigated.SetValue(page, true);
+            var viewModel = page.ViewModel;
+            var library = viewModel.Library;
+            viewModel.Library = new Library { Id = library!.Id + 1, Type = "audiobooks" };
+            Invoke(page, "ShowTab", "Library");
+            Check(host.Children.OfType<Button>().All(card => ((Border)((StackPanel)card.Content).Children[0]).Child == null),
+                "showing another library never resumes retained covers from the previous library");
+            viewModel.Library = library;
+            Invoke(page, "ShowTab", "Recommended");
             Invoke(page, "ShowTab", "Library");
             var covers = host.Children.OfType<Button>().Select(card => (Border)((StackPanel)card.Content).Children[0]).ToArray();
             for (var attempt = 0; attempt < 200 && covers.Any(cover => cover.Child == null); attempt++)
@@ -244,7 +258,7 @@ internal static class BooksLibraryNativeFixture
             resumed?.Cancel();
             resumed?.Dispose();
             owner.SetValue(page, null);
-            host.Children.Clear();
+            Invoke(page, "ResetAudiobookGroups");
             servicesField.SetValue(null, previous);
             Directory.Delete(cache, recursive: true);
         }
