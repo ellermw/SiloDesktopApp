@@ -67,6 +67,7 @@ public sealed class AdminDownloadSettingsController : IDisposable
         catch (OperationCanceledException) { Clear(); return; }
         lock (_gate) { _form?.Discard(); _form = null; _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke();
+        _store.Invalidate();
         await LoadAsync(owner, false, false).ConfigureAwait(false);
     }
 

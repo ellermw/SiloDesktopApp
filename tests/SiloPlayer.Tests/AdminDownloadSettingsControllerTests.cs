@@ -81,6 +81,47 @@ public sealed class AdminDownloadSettingsControllerTests
         Assert.Empty(state.DirtyKeys);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReturningWithinTheSnapshotWindowReadsTheCurrentServer(bool unavailable)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var reads = h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/settings/effective");
+        h.Controller.Suspend();
+        h.Effective = EffectiveJson.Replace("\"download.artifact_cache_hours\":\"72\"", "\"download.artifact_cache_hours\":\"48\"");
+        if (unavailable) h.EffectiveStatus = HttpStatusCode.ServiceUnavailable;
+
+        await h.Controller.OpenAsync();
+
+        Assert.True(h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/settings/effective") > reads);
+        Assert.Equal(!unavailable, h.Controller.State.Loaded);
+        if (unavailable)
+        {
+            Assert.NotNull(h.Controller.State.Error);
+            Assert.Empty(h.Controller.State.Values);
+        }
+        else Assert.Equal("48", h.Controller.State.Values[R.CacheHours]);
+    }
+
+    [Fact]
+    public async Task LimitingASavedUnlimitedQuotaReportsTheCleanPeriodDependency()
+    {
+        using var h = new Harness { Effective = EffectiveJson.Replace("\"download.period_duration\":\"24h\"", "\"download.period_duration\":\"0s\"") };
+        await h.Controller.OpenAsync();
+        Assert.Empty(h.Controller.State.Errors);
+
+        h.Controller.Set(R.MaxPerPeriod, "5");
+
+        Assert.Equal([R.MaxPerPeriod], h.Controller.State.DirtyKeys);
+        Assert.Equal(AdminDownloadFieldProblem.PeriodRequired, h.Controller.State.Errors[R.PeriodDuration].Problem);
+        await h.Controller.SaveAsync();
+        Assert.Empty(h.Writes);
+        h.Controller.Set(R.PeriodDuration, "24h");
+        Assert.Empty(h.Controller.State.Errors);
+    }
+
     [Fact]
     public async Task SaveSendsOneStrongIfMatchWriteOfOnlyTheDirtyKeysAndAdoptsCanonicalValues()
     {

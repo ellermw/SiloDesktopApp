@@ -1,3 +1,10 @@
+# November 16 — Downloads Settings final reviewed candidate
+
+Manage Downloads Settings (D2) is verified for Beta submission on the deliberately selected aa6b8b86 baseline. Fresh Beta a021aa2c has zero overlapping paths; official main remains abd85d0c after a direct fetch. Version 1.2.1145-beta.1 remains under pipeline control. Final Standards and Spec reviews cover all 17 candidate paths and found no additional actionable blockers.
+
+A single source-bound, nonincremental unit/app/host chain passed 866 focused and 7,369 full units, source-root proof 1/1, then all six native groups: Downloads 383, Security 374, Email 297, General 188, foundation 36 and Subtitles 64. Every native group completed with zero failures, including the previously aborted failed-read recovery, local-isolation and final retirement checks. Product DLL F04975B19620494E1722BCF05505CDC87F1B2938054943DCF1473AB7E64B763D matched publish, reference and host; all 2,193 frozen inputs remained unchanged. Entry freshness and visible cross-field validation each have preserved behavioral RED evidence. Four-size/current-DPI captures were inspected; live-server, all-DPI, Narrator and complete keyboard/IME/visual certification remain outside this evidence. See docs/parity/admin-download-settings.md and the external downloads-review-green-aa6b-r3-receipt.json. Earlier records below describe their own snapshots.
+
+---
 # November 15 - Configure Security delivered in Beta PR175
 
 Security alone is replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d in branch t3/configure-security-beta. Original commits 1e71c820 and fe5a29b4 remain preserved at preserve/configure-security-fe5a29b4; their receipt and logs remain unchanged. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1. Version remains 1.2.1145-beta.1 under pipeline control.

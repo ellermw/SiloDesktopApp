@@ -301,6 +301,26 @@ internal static class AdminDownloadSettingsNativeFixture
             await Until(() => Rail(page).Visibility == Visibility.Collapsed, "the section closes once nothing forces it open");
             Invoke(disclosure); await Until(() => Rail(page).Visibility == Visibility.Visible, "reopen advanced"); // persisted open for the layout checks
 
+            // A valid saved unlimited quota may have a zero period. Limiting only the quota must explain
+            // the dependency on the untouched period, rather than silently disabling Save.
+            server.Values[R.PeriodDuration] = "0s";
+            await controller.ReloadAsync(false);
+            await Until(() => !controller.State.Loading && controller.State.Values[R.PeriodDuration] == "0s", "saved zero period loaded");
+            var quotaDependency = Box(page, R.MaxPerPeriod)!;
+            Invoke(Unlimited(page, R.MaxPerPeriod)!);
+            await Until(() => controller.State.Values[R.MaxPerPeriod] == "", "saved unlimited quota unchecked");
+            quotaDependency.Text = "5";
+            await Until(() => controller.State.Errors.ContainsKey(R.PeriodDuration), "quota requires positive saved period");
+            await Task.Delay(120);
+            Check(!controller.State.DirtyKeys.Contains(R.PeriodDuration) &&
+                Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Set a period longer than zero while Downloads per period is limited." && IsLaidOut(t)) &&
+                !Button(page, "DownloadsSave").IsEnabled,
+                "limiting a saved unlimited quota explains the clean period dependency beside the period");
+            controller.Discard();
+            server.Values[R.PeriodDuration] = "24h";
+            await controller.ReloadAsync(false);
+            await Until(() => !controller.State.Loading && controller.State.Values[R.PeriodDuration] == "24h", "saved positive period restored");
+
             // Per-user period pair, duration grammar and the local-fallback toggle.
             var perPeriod = Box(page, R.MaxPerPeriod)!;
             var periodUnlimited = Unlimited(page, R.MaxPerPeriod)!;
@@ -499,8 +519,7 @@ internal static class AdminDownloadSettingsNativeFixture
             await Until(() => inner.Content is AdminActivityPage, "discard permitted navigation");
             await Task.Delay(150);
             Check(controller.State.Values.Count == 0 && controller.State.DirtyKeys.Count == 0 && cacheBox.Text.Length == 0, "departure retires the controller and clears values, drafts and editor text");
-            // The shared store deliberately serves a 30-second snapshot; drop it so the new page really reads from the failing server.
-            services.GetRequiredService<AdminServerSettingsStore>().Invalidate();
+            // Re-entry itself must refresh the warm shared snapshot; the fixture must not invalidate it for the page.
             server.EffectiveFailure = true;
             inner.GoBack(); await Until(() => inner.Content is AdminDownloadSettingsPage { Controller.State.Error: not null }, "Back with a failed first read");
             page = (AdminDownloadSettingsPage)inner.Content; controller = page.Controller!;

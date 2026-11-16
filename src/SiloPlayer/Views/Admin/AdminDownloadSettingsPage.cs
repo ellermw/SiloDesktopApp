@@ -392,7 +392,7 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
             var description = _descriptions[key];
             if (Managed(key)) description = (description.Length > 0 ? description + " " : "") + T("configure.native.settings.managedByEnvironment");
             Describe(key, description);
-            SetError(key, current && state.Errors.TryGetValue(key, out var error) && Dirty(key) ? R.Describe(key, error) : "");
+            SetError(key, current && state.Errors.TryGetValue(key, out var error) ? R.Describe(key, error) : "");
         }
 
         var allRestart = R.Keys.All(state.RestartKeys.Has);

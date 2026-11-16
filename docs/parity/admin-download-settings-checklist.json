@@ -2,8 +2,8 @@
   "leaf": "Manage > Downloads > Settings",
   "route": "/admin/settings/downloads",
   "official": "Silo-Server/silo-server abd85d0cadac28f4ab7db6821dad9634fc114790",
-  "baseline": "ellermw/SiloDesktopApp beta 2c33599f751e1bb7e18a56ee378ffe918710d74d",
-  "note": "Scoped record for the lead to reconcile into the master checklists; this file does not edit them.",
+  "baseline": "ellermw/SiloDesktopApp selected beta aa6b8b86a7d570fdb57a08df8b5289f3ee3c64f3; fresh a021aa2c has zero candidate-path overlap",
+  "note": "Verified frozen r3 source: 866 focused, 7369 full and all six native groups passed. Final Standards and Spec reviews clear. Delivery status remains in the root checklist; synthetic/current-DPI limits apply.",
   "features": [
     { "id": "allow-downloads", "key": "download.enabled", "label": "Allow downloads", "status": "implemented" },
     { "id": "device-friendly", "key": "download.transcode_enabled", "label": "Prepare device-friendly copies", "status": "implemented" },
