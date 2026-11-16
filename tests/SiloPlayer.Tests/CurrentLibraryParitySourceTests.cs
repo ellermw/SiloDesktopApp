@@ -214,6 +214,36 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("_audiobookGroupsLoadCompleted = true;", load);
     }
 
+    [Fact]
+    public void AudiobookGroupPaginationFailureKeepsLoadedPagesAndRetriesTheSameOffset()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var scroll = Slice(page, "private async void AudiobookGroupsPanel_ViewChanged(", "private AudiobookGroupsKey CurrentAudiobookGroupsKey()");
+        Assert.Contains("await LoadAudiobookGroupsAsync(reset: false);", scroll);
+        var load = Slice(page, "private async Task LoadAudiobookGroupsAsync(", "private FrameworkElement CreateAudiobookGroupCard(");
+        var beforeRequest = Slice(load, "var key = CurrentAudiobookGroupsKey();", "var response = await");
+
+        // Only reset invalidates completion. A failed append must not make the
+        // next ViewChanged promote its retry to a reset and discard loaded cards.
+        Assert.Contains("reset |= _audiobookGroupsKey != key || !_audiobookGroupsLoadCompleted;", beforeRequest);
+        Assert.Contains("if (reset)\n        {\n            ResetAudiobookGroups();", beforeRequest.Replace("\r\n", "\n"));
+        Assert.DoesNotContain("_audiobookGroupsLoadCompleted = false;", load);
+        Assert.DoesNotContain("_audiobookGroupsOffset =", load);
+        Assert.Contains("offset: _audiobookGroupsOffset,", load);
+        Assert.Contains("_audiobookGroupsOffset += response.Groups.Count;", load);
+
+        var failure = load[load.IndexOf("catch (OperationCanceledException)", StringComparison.Ordinal)..];
+        // HttpClient timeouts with an uncancelled caller token show the error
+        // rather than being silently swallowed as navigation cancellation.
+        Assert.Contains("catch (OperationCanceledException) when (ct.IsCancellationRequested)", failure);
+        Assert.Contains("web.audiobooks.groups.loadFailed", failure);
+        Assert.Contains("if (reset) AudiobookGroupsHost.Children.Clear();", failure);
+        Assert.Equal(1, failure.Split("AudiobookGroupsHost.Children.Clear();").Length - 1);
+        Assert.DoesNotContain("_audiobookGroupsOffset", failure);
+        Assert.DoesNotContain("_audiobookGroupsHasMore =", failure);
+        Assert.Contains("_isLoadingAudiobookGroups = false;", failure);
+    }
+
     private static string Slice(string source, string start, string end)
     {
         var from = source.IndexOf(start, StringComparison.Ordinal);

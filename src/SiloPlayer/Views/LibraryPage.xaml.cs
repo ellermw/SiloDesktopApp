@@ -2336,7 +2336,7 @@ public sealed partial class LibraryPage : Page,
             return;
 
         var key = CurrentAudiobookGroupsKey();
-        // Never append with a cursor belonging to another query or an interrupted load.
+        // Never append to another query or an incomplete first page (or after departure).
         reset |= _audiobookGroupsKey != key || !_audiobookGroupsLoadCompleted;
         if (reset)
         {
@@ -2344,7 +2344,7 @@ public sealed partial class LibraryPage : Page,
             BuildAudiobookGroupSkeletons(_currentAudiobookAxis == "series");
         }
         _audiobookGroupsKey = key;
-        _audiobookGroupsLoadCompleted = false;
+        // Reset invalidates completion; an append keeps the loaded pages retryable on failure.
 
         _audiobookGroupLoadCts ??= new CancellationTokenSource();
         var owner = _audiobookGroupLoadCts;
@@ -2387,7 +2387,7 @@ public sealed partial class LibraryPage : Page,
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
             if (!ReferenceEquals(_audiobookGroupLoadCts, owner) || ct.IsCancellationRequested) return;
