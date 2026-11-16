@@ -21,15 +21,10 @@ public sealed class AccessibilityService(SettingsService settingsService, ThemeS
         settings.UiHighContrast = highContrast;
         settingsService.Save(settings);
 
-        // Restore the active theme first so turning high contrast off is exact.
+        // ApplyTheme reads the just-saved preference and applies the in-app high-contrast
+        // palette itself, then a Windows contrast theme over it; writing brushes here
+        // afterwards would cover the system palette. Turning high contrast off stays exact.
         themeService.ApplyTheme(themeService.CurrentTheme);
-        if (highContrast)
-        {
-            SetBrush("PrimaryTextBrush", "#FFFFFF");
-            SetBrush("SecondaryTextBrush", "#D1D5DB");
-            SetBrush("TertiaryTextBrush", "#B6C0CE");
-            SetBrush("BorderBrush", "#8091A7");
-        }
 
         root ??= App.MainWindowInstance?.Content;
         if (root != null) ApplyTypography(root, ScaleFactor(settings.UiTextScale), settings.UiTextWeight == "strong");
@@ -86,14 +81,4 @@ public sealed class AccessibilityService(SettingsService settingsService, ThemeS
     {
         Weight = baseline.Weight switch { < 500 => 520, < 600 => 600, < 700 => 700, _ => 800 }
     };
-
-    private static void SetBrush(string key, string hex)
-    {
-        if (Application.Current.Resources.TryGetValue(key, out var value) && value is SolidColorBrush brush)
-        {
-            var clean = hex.TrimStart('#');
-            brush.Color = Windows.UI.Color.FromArgb(255,
-                Convert.ToByte(clean[..2], 16), Convert.ToByte(clean.Substring(2, 2), 16), Convert.ToByte(clean.Substring(4, 2), 16));
-        }
-    }
 }

@@ -230,7 +230,7 @@ public sealed partial class RequestsPage : Page
         Render();
         await searchTask;
         Render();
-        PageScrollViewer.ChangeView(null, 360, null);
+        PageScrollViewer.ChangeView(null, 360, null, !SystemMotion.AnimationsEnabled);
     }
 
     private async void NextSearch_Click(object sender, RoutedEventArgs e)
@@ -239,7 +239,7 @@ public sealed partial class RequestsPage : Page
         Render();
         await searchTask;
         Render();
-        PageScrollViewer.ChangeView(null, 360, null);
+        PageScrollViewer.ChangeView(null, 360, null, !SystemMotion.AnimationsEnabled);
     }
 
     private void RequestTab_Click(object sender, RoutedEventArgs e)

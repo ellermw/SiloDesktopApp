@@ -229,6 +229,7 @@ public sealed partial class SectionRow : UserControl
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
             ScrollRightBtn,
             SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.scrollRight"));
+        UpdatePinLabel();
     }
 
     private void UpdateSection(HomeSectionWithItems section)
@@ -510,11 +511,14 @@ public sealed partial class SectionRow : UserControl
         return Math.Clamp(Math.Max(target, CardsScrollViewer.HorizontalOffset), 0, CardsScrollViewer.ScrollableWidth);
     }
 
-    /// <summary>Starts the row's own animated navigation and remembers where it lands.</summary>
+    /// <summary>
+    /// Starts the row's own navigation and remembers where it lands. It animates unless
+    /// Windows animation effects are off; then it jumps (official #4311 reduced motion).
+    /// </summary>
     private void NavigateTo(double target)
     {
         _navigationTargetOffset = Math.Abs(target - CardsScrollViewer.HorizontalOffset) > 1 ? target : null;
-        CardsScrollViewer.ChangeView(target, null, null);
+        CardsScrollViewer.ChangeView(target, null, null, disableAnimation: !SystemMotion.AnimationsEnabled);
     }
 
     private void UpdateSectionVisibility(HomeSectionWithItems section)
@@ -812,9 +816,21 @@ public sealed partial class SectionRow : UserControl
         if (PinSectionBtn == null) return;
         PinSectionIcon.Glyph = _isPinned ? "\uE841" : "\uE840";
         PinSectionBtn.Opacity = _isPinned || _isHovered ? 1.0 : 0.0;
-        var label = _isPinned ? "Unpin from sidebar" : "Pin to sidebar";
+        UpdatePinLabel();
+    }
+
+    // Official #4294: the localized action names the button and the row's shown
+    // title describes it (the WebUI's aria-label plus aria-describedby), so a screen
+    // reader can tell one row's pin from the next. UpdateTitle also calls this, so a
+    // language change or a refreshed title updates it.
+    private void UpdatePinLabel()
+    {
+        if (PinSectionBtn == null || SectionTitle == null) return;
+        var label = SiloPlayer.Core.Localization.AppStrings.Get(
+            _isPinned ? "web.home.sectionRow.unpin" : "web.home.sectionRow.pin");
         ToolTipService.SetToolTip(PinSectionBtn, label);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PinSectionBtn, label);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(PinSectionBtn, SectionTitle.Text);
     }
 
     // ─── Explore all ────────────────────────────────────────────────────

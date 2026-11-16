@@ -22,6 +22,8 @@
     <Color x:Key="SurfaceRaisedColor">#223245</Color>
     <Color x:Key="BorderColor">#28384D</Color>
     <Color x:Key="InputColor">#182231</Color>
+    <!-- Official #4308 form-field edge (the WebUI input token); ThemeService sets the live value. -->
+    <Color x:Key="InputBorderColor">#6A6A74</Color>
     <Color x:Key="SidebarAccentColor">#172231</Color>
     <Color x:Key="SidebarBorderColor">#1F2A39</Color>
     <Color x:Key="SecondaryBackgroundColor">#1B2634</Color>
@@ -77,6 +79,7 @@
     <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="{StaticResource SurfaceRaisedColor}" />
     <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
     <SolidColorBrush x:Key="InputBrush" Color="{StaticResource InputColor}" />
+    <SolidColorBrush x:Key="InputBorderBrush" Color="{StaticResource InputBorderColor}" />
     <SolidColorBrush x:Key="SidebarAccentBrush" Color="{StaticResource SidebarAccentColor}" />
     <SolidColorBrush x:Key="SidebarBorderBrush" Color="{StaticResource SidebarBorderColor}" />
     <SolidColorBrush x:Key="SecondaryBackgroundBrush" Color="{StaticResource SecondaryBackgroundColor}" />
@@ -277,7 +280,7 @@
     <SolidColorBrush x:Key="TextControlForeground" Color="{StaticResource PrimaryTextColor}" />
     <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{StaticResource PrimaryTextColor}" />
     <SolidColorBrush x:Key="TextControlForegroundFocused" Color="{StaticResource PrimaryTextColor}" />
-    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{StaticResource InputBorderColor}" />
     <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{StaticResource AccentColor}" />
     <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{StaticResource AccentColor}" />
     <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{StaticResource TertiaryTextColor}" />
@@ -289,7 +292,7 @@
     <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{StaticResource SurfaceHoverColor}" />
     <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="{StaticResource SurfaceRaisedColor}" />
     <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="{StaticResource InputColor}" />
-    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{StaticResource InputBorderColor}" />
     <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{StaticResource AccentColor}" />
     <SolidColorBrush x:Key="ComboBoxForeground" Color="{StaticResource PrimaryTextColor}" />
     <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{StaticResource PopoverColor}" />
@@ -302,8 +305,8 @@
     <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{StaticResource AccentColor}" />
     <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{StaticResource AccentHoverColor}" />
     <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{StaticResource AccentPressedColor}" />
-    <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{StaticResource BorderColor}" />
-    <SolidColorBrush x:Key="ToggleSwitchFillOffPointerOver" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="{StaticResource InputBorderColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOffPointerOver" Color="{StaticResource InputBorderColor}" />
     <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="{StaticResource AccentColor}" />
     <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{StaticResource AccentHoverColor}" />
     <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{StaticResource BorderColor}" />
@@ -591,7 +594,7 @@
     <Style x:Key="DarkTextBoxStyle" TargetType="TextBox">
         <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
-        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource InputBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="{StaticResource RadiusMD}" />
         <Setter Property="Padding" Value="12,4" />
@@ -603,7 +606,7 @@
     <Style x:Key="DarkPasswordBoxStyle" TargetType="PasswordBox">
         <Setter Property="Background" Value="{StaticResource AppBackgroundBrush}" />
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
-        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource InputBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="{StaticResource RadiusMD}" />
         <Setter Property="Padding" Value="12,4" />
