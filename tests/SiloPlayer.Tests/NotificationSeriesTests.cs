@@ -11,13 +11,15 @@ public sealed class NotificationSeriesTests
     [Fact]
     public async Task AdvertisedSeriesCapabilitySurvivesTheActualApiBoundary()
     {
-        using var http = new HttpClient(new Wire(_ => Json("""{"series":{"available":true,"mute":true}}""")));
+        using var http = new HttpClient(new Wire(_ => Json("""{"series":{"available":true,"mute":true,"bulk_mute":true}}""")));
         var client = new SiloApiClient(http); client.SetBaseUrl("https://series.invalid");
         var capability = await new NotificationsApi(client).GetCapabilityAsync();
         var serialized = JsonSerializer.SerializeToElement(capability, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
         Assert.True(serialized.TryGetProperty("series", out var series), "The typed capability discarded the advertised Series operations.");
         Assert.True(series.GetProperty("available").GetBoolean());
         Assert.True(series.GetProperty("mute").GetBoolean());
+        Assert.True(capability.Series.BulkMute);
+        Assert.True(series.GetProperty("bulk_mute").GetBoolean());
     }
 
     [Fact]
@@ -65,7 +67,7 @@ public sealed class NotificationSeriesTests
     }
 
     [Fact]
-    public async Task DualStreamsPageActiveBeforeInactiveAndEmptyPagesStillAdvance()
+    public async Task SingleAllStreamAdvancesEmptyPagesWithoutAnInactiveRequest()
     {
         var queries = new List<string>();
         using var http = new HttpClient(new Wire(r =>
@@ -76,9 +78,10 @@ public sealed class NotificationSeriesTests
             return Json(q.Contains("cursor=") ? """{"items":[],"page":{"has_more":false}}""" : """{"items":[],"page":{"has_more":true,"next_cursor":"next"}}""");
         }));
         var state = new NotificationSeriesState(new NotificationsApi(Client(http))); await state.OpenAsync();
-        Assert.True(state.HasMore); Assert.False(state.IsEmpty); Assert.False(state.ShowInactive);
-        await state.LoadMoreAsync(); Assert.Contains("status=active", queries[^1]); Assert.True(state.ShowInactive);
-        await state.LoadMoreAsync(); Assert.Contains("status=inactive", queries[^1]); Assert.True(state.IsEmpty);
+        Assert.True(state.HasMore); Assert.False(state.IsEmpty);
+        Assert.Contains("status=all", queries[^1]);
+        await state.LoadMoreAsync(); Assert.Contains("status=all", queries[^1]); Assert.True(state.IsEmpty);
+        Assert.DoesNotContain(queries, query => query.Contains("status=active") || query.Contains("status=inactive"));
     }
 
     [Fact]
