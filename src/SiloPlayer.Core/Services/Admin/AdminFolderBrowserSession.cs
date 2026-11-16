@@ -69,6 +69,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
         lock (_gate)
         {
             if (_disposed) return Task.CompletedTask;
+            InvalidateProbeLocked();
             _state = _state with { CurrentPath = path, ValidationError = null };
             return LoadAsync(append: false);
         }
@@ -116,6 +117,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
             lock (_gate)
             {
                 if (_disposed || sequence != _sequence || token.IsCancellationRequested || !_owner.IsActionCurrent(_lease)) return;
+                _probeNavigating = false;
                 _pages = append ? _pages + 1 : 1;
                 _nextCursor = page.NextCursor;
                 var capped = page.NextCursor != null && _pages >= MaxPages;
@@ -133,6 +135,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
             lock (_gate)
             {
                 if (_disposed || sequence != _sequence) return;
+                _probeNavigating = false;
                 _state = _state with
                 {
                     Loading = false, Fetching = false, LoadingMore = false,
@@ -168,7 +171,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
             }
             else
             {
-                if (!submit && trimmed == _state.CurrentPath) return null;
+                if (!submit && trimmed == _state.CurrentPath && (_state.Entries.Count > 0 || _state.Fetching)) return null;
                 _probe = CancellationTokenSource.CreateLinkedTokenSource(_lease.Token);
                 token = _probe.Token;
             }
@@ -181,7 +184,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
             lock (_gate)
             {
                 if (_disposed || sequence != _probeSequence || token.IsCancellationRequested || !_owner.IsActionCurrent(_lease)) return null;
-                if (!submit && probe.Path == _state.CurrentPath) return null;
+                if (!submit && probe.Path == _state.CurrentPath && (_state.Entries.Count > 0 || _state.Fetching)) return null;
                 _state = _state with { CurrentPath = probe.Path, ValidationError = null };
                 navigation = LoadAsync(append: false, sequence);
             }
@@ -221,7 +224,9 @@ public sealed class AdminFolderBrowserSession : IDisposable
         _sequence++;
         _load?.Cancel(); _load?.Dispose(); _load = null;
         _probeNavigating = false;
-        _state = _state with { Fetching = false, Loading = false, LoadingMore = false };
+        // The requested folder never finished loading; do not let a later draft
+        // mistake it for the resolved folder and skip its first-page read.
+        _state = _state with { CurrentPath = _state.ResolvedPath, Fetching = false, Loading = false, LoadingMore = false };
     }
 
     public void ToggleSelected(string path)

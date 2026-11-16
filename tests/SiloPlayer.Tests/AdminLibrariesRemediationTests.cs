@@ -275,6 +275,70 @@ public sealed partial class AdminLibrariesControllerTests
     }
 
     [Theory]
+    [InlineData("/mnt/", false)]
+    [InlineData("/mnt", false)]
+    [InlineData("/", false)]
+    [InlineData("/./", false)]
+    [InlineData("/B", true)]
+    public async Task CancelledProbeNavigationReloadsTheNextDraftOrExplicitFolder(string nextDraft, bool explicitNavigation)
+    {
+        var (kit, authority, controller, server, _, _) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var blocked = 0;
+            server.Override = request =>
+            {
+                if (request.RequestUri!.AbsolutePath != "/api/v2/admin/filesystem/browse") return null;
+                var path = Uri.UnescapeDataString(request.RequestUri.Query.Split("path=")[1].Split('&')[0]);
+                if (path == "/mnt" && request.RequestUri.Query.Contains("limit=50", StringComparison.Ordinal)
+                    && Interlocked.Exchange(ref blocked, 1) == 0)
+                {
+                    entered.TrySetResult();
+                    release.Task.GetAwaiter().GetResult();
+                }
+                var resolved = path == "/./" ? "/" : path.TrimEnd('/');
+                if (resolved.Length == 0) resolved = "/";
+                return AdminMonitorKit.Json("{\"path\":\"" + resolved + "\",\"parent\":\"/\",\"items\":[{\"name\":\"child\",\"path\":\""
+                    + resolved.TrimEnd('/') + "/child\"}],\"page\":{\"has_more\":false}}");
+            };
+            using var lease = controller.CaptureAction();
+            using var browser = new AdminFolderBrowserSession(controller, lease, []);
+            await browser.OpenAsync();
+            var pending = browser.TryFollowDraftAsync("/mnt");
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.True(browser.State.Fetching);
+                Assert.Empty(browser.State.Entries);
+                if (explicitNavigation)
+                    await browser.NavigateAsync(nextDraft);
+                else
+                {
+                    browser.DraftChanged();
+                    Assert.Equal("/", browser.State.CurrentPath);
+                    Assert.False(browser.State.Fetching);
+                    await browser.TryFollowDraftAsync(nextDraft);
+                }
+                var expected = nextDraft == "/./" ? "/" : nextDraft.TrimEnd('/');
+                if (expected.Length == 0) expected = "/";
+                Assert.Equal(expected, browser.State.ResolvedPath);
+                Assert.Equal(expected.TrimEnd('/') + "/child", Assert.Single(browser.State.Entries).Path);
+                Assert.Equal(new[] { expected }, browser.Selection());
+                Assert.False(browser.State.Loading);
+                Assert.False(browser.State.Fetching);
+                Assert.Null(browser.State.Error);
+            }
+            finally { release.TrySetResult(); }
+            Assert.Null(await pending);
+            Assert.Equal(nextDraft == "/./" || nextDraft == "/" ? "/" : nextDraft.TrimEnd('/'), browser.State.ResolvedPath);
+            Assert.Single(browser.State.Entries);
+        }
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
