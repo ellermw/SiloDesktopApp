@@ -4,7 +4,7 @@ namespace SiloPlayer.Core.Services;
 
 public enum MetadataRefreshFollowAction
 {
-    /// <summary>Nothing to do on the page: the job did not succeed, or the visit that started it ended.</summary>
+    /// <summary>Nothing to do on the page: the job failed/canceled, the identity changed, or the starting visit ended.</summary>
     None,
     /// <summary>Reload the starting visit in place.</summary>
     Reload,
@@ -27,8 +27,16 @@ public static class MetadataRefreshFollow
     public static MetadataRefreshFollowDecision Decide(
         MaintenanceJobWaitResult result, string contentId, string mode, DetailMetadataWatch? startingVisit)
     {
-        if (result.Outcome != MaintenanceJobWaitOutcome.Succeeded || startingVisit is not { IsActive: true }
+        if (startingVisit is not { IsActive: true }
             || !string.Equals(startingVisit.ContentId, contentId, StringComparison.Ordinal))
+            return new(MetadataRefreshFollowAction.None);
+        // A successful POST can outlive job visibility (curator permissions,
+        // pruning or an unreadable proxy response). Reload, but never infer a
+        // replacement ID or success from a failed/incomplete job read.
+        if (result.Outcome == MaintenanceJobWaitOutcome.TimedOut
+            || result.Outcome == MaintenanceJobWaitOutcome.Failed && result.Error != null)
+            return new(MetadataRefreshFollowAction.Reload, Structural: mode == "complete");
+        if (result.Outcome != MaintenanceJobWaitOutcome.Succeeded)
             return new(MetadataRefreshFollowAction.None);
         var item = result.Job?.ItemResult;
         if (item?.DetailContentId is { Length: > 0 } replacement

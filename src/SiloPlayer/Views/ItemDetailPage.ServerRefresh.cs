@@ -76,9 +76,13 @@ public sealed partial class ItemDetailPage
         var navigation = _navigationCts;
         var scroll = ContentScroll.VerticalOffset;
         var focused = XamlRoot is { } root ? FocusManager.GetFocusedElement(root) as Control : null;
-        if (!await ViewModel.RefreshServerMetadataAsync(contentId)) return true;
-        if (token.IsCancellationRequested || !ReferenceEquals(_navigationCts, navigation) || !IsCurrentDetail(contentId))
+        var applied = await ViewModel.RefreshServerMetadataAsync(contentId);
+        if (token.IsCancellationRequested || !watch.IsActive || !ReferenceEquals(_serverMetadataWatch, watch)
+            || !ReferenceEquals(_navigationCts, navigation)
+            || !string.Equals(_currentContentId, contentId, StringComparison.Ordinal))
             return true;
+        if (!applied) return false; // Keep failed or superseded reads pending, including a new load.
+        if (!IsCurrentDetail(contentId)) return true;
         UpdateUI();
         // A complete refresh can add or replace files: reread the leaf's versions too.
         if (structural && _playableContentId is { } playable && ViewModel.Item?.Type is not ("series" or "season"))
@@ -181,31 +185,35 @@ public sealed partial class ItemDetailPage
             foreach (var id in MetadataRefreshFollow.InvalidatedIds(result, item.ContentId, item.Type, item.SeriesId))
                 cache.Invalidate(id);
 
-        switch (result.Outcome)
+        if (result.Error != null)
+            LocalLog.AppendException("state_trace.txt", result.Error, "metadata_refresh_job_read");
+        if (result.Outcome == MaintenanceJobWaitOutcome.Canceled
+            || result.Outcome == MaintenanceJobWaitOutcome.Failed && result.Error == null)
         {
-            case MaintenanceJobWaitOutcome.Failed:
-            case MaintenanceJobWaitOutcome.Canceled:
-                if (result.Error != null) LocalLog.AppendException("state_trace.txt", result.Error, "metadata_refresh_job_read");
-                else LocalLog.AppendLine("state_trace.txt",
-                    $"metadata_refresh_job {result.Outcome}: {result.Job?.Failure?.Title} {result.Job?.Failure?.Detail}".TrimEnd());
-                toast.Error(AppStrings.Get("web.item.toast.refreshFailed"));
-                return;
-            case MaintenanceJobWaitOutcome.TimedOut:
-                // Still running, or an older server returned no job: the cache is already dropped.
-                LocalLog.AppendLine("state_trace.txt", "metadata_refresh_job wait ended before the job finished");
-                return;
+            LocalLog.AppendLine("state_trace.txt",
+                $"metadata_refresh_job {result.Outcome}: {result.Job?.Failure?.Title} {result.Job?.Failure?.Detail}".TrimEnd());
+            toast.Error(AppStrings.Get("web.item.toast.refreshFailed"));
+            return;
         }
-
-        var newFiles = itemResult?.NewFiles ?? 0;
-        if (itemResult?.ArtworkCacheIncomplete == true)
-            toast.Warning(AppStrings.Get("web.item.toast.refreshArtworkWarning"));
-        else if (mode == "complete")
-            toast.Success(AppStrings.Get("web.item.toast.completeRefreshFinished"));
-        else if (newFiles > 0)
-            toast.Success(AppStrings.Get("web.item.toast.refreshedNewFiles",
-                new Dictionary<string, object?> { ["count"] = newFiles, ["new_files"] = newFiles }));
+        if (result.Outcome != MaintenanceJobWaitOutcome.Succeeded)
+        {
+            // The POST succeeded, but completion is unknown. Reload without a
+            // success/failure toast, just as when the bounded wait runs out.
+            LocalLog.AppendLine("state_trace.txt", "metadata_refresh_job wait ended before the job finished");
+        }
         else
-            toast.Success(AppStrings.Get("web.item.toast.refreshed"));
+        {
+            var newFiles = itemResult?.NewFiles ?? 0;
+            if (itemResult?.ArtworkCacheIncomplete == true)
+                toast.Warning(AppStrings.Get("web.item.toast.refreshArtworkWarning"));
+            else if (mode == "complete")
+                toast.Success(AppStrings.Get("web.item.toast.completeRefreshFinished"));
+            else if (newFiles > 0)
+                toast.Success(AppStrings.Get("web.item.toast.refreshedNewFiles",
+                    new Dictionary<string, object?> { ["count"] = newFiles, ["new_files"] = newFiles }));
+            else
+                toast.Success(AppStrings.Get("web.item.toast.refreshed"));
+        }
 
         // Only the visit that started the refresh follows or reloads (#4187).
         var decision = MetadataRefreshFollow.Decide(result, item.ContentId, mode, watch);

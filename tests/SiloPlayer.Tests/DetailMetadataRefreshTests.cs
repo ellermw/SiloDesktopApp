@@ -194,6 +194,97 @@ public sealed class DetailMetadataRefreshTests
         Assert.Equal(0, hub.WatchCount);
     }
 
+    [Fact]
+    public void FailedReloadStaysPendingWithItsStructuralSignal() => OnThreadPool(() =>
+    {
+        var delay = new ManualDelay();
+        var hub = new DetailMetadataChangeHub(null, delay.Delay);
+        var reloads = new ReloadRecorder { Next = () => throw new HttpRequestException("offline") };
+        using var watch = hub.Watch("movie-1", () => true, reloads.Reload);
+
+        watch.Signal(structural: true);
+        delay.ReleaseNext();
+        Assert.True(watch.IsHeld);
+        Assert.Equal(0, delay.Pending);
+
+        reloads.Next = () => Task.FromResult(true);
+        watch.Resume();
+        delay.ReleaseNext();
+        Assert.Equal(new[] { true, true }, reloads.Structural);
+        Assert.False(watch.IsHeld);
+    });
+
+    [Fact]
+    public async Task ServerMetadataReloadUpdatesReaderChaptersAndBookExtensionsInPlace()
+    {
+        using var scope = new DetailViewModelTestScope();
+        var fresh = new MediaItemDetail
+        {
+            ContentId = "reader-1", Type = "manga",
+            Manga = new() { Chapters = [new() { ContentId = "chapter-2", Title = "New chapter" }] },
+            Audiobook = new(), Ebook = new()
+        };
+        var vm = scope.CreateWithCatalog((_, _) => Task.FromResult(fresh));
+        var mounted = new MediaItemDetail
+        {
+            ContentId = fresh.ContentId, Type = fresh.Type,
+            Manga = new() { Chapters = [new() { ContentId = "chapter-1" }] },
+            Audiobook = new(), Ebook = new(), UserState = new() { IsFavorite = true }
+        };
+        vm.Item = mounted;
+        var audiobook = mounted.Audiobook;
+        var ebook = mounted.Ebook;
+        var viewerState = mounted.UserState;
+
+        Assert.True(await vm.RefreshServerMetadataAsync(mounted.ContentId));
+
+        Assert.Same(mounted, vm.Item);
+        Assert.Equal("chapter-2", Assert.Single(mounted.Manga!.Chapters).ContentId);
+        Assert.NotNull(mounted.Audiobook);
+        Assert.NotNull(mounted.Ebook);
+        Assert.NotSame(audiobook, mounted.Audiobook);
+        Assert.NotSame(ebook, mounted.Ebook);
+        Assert.Same(viewerState, mounted.UserState);
+        fresh.Manga = null; fresh.Audiobook = null; fresh.Ebook = null;
+        Assert.True(await vm.RefreshServerMetadataAsync(mounted.ContentId));
+        Assert.Null(mounted.Manga);
+        Assert.Null(mounted.Audiobook);
+        Assert.Null(mounted.Ebook);
+    }
+
+    [Fact]
+    public async Task FailedMetadataReadDoesNotAcknowledgeTheChange()
+    {
+        using var scope = new DetailViewModelTestScope();
+        var vm = scope.CreateWithCatalog((_, _) => throw new ApiException("forbidden", "read failed", 403));
+        var mounted = new MediaItemDetail { ContentId = "movie-1", Type = "movie", Title = "Mounted" };
+        vm.Item = mounted;
+
+        Assert.False(await vm.RefreshServerMetadataAsync(mounted.ContentId));
+
+        Assert.Same(mounted, vm.Item);
+        Assert.Equal("Mounted", mounted.Title);
+        Assert.NotNull(vm.MetadataRefreshErrorMessage);
+        Assert.False(vm.IsMetadataRefreshing);
+    }
+
+    [Fact]
+    public async Task SupersededMetadataReadDoesNotAcknowledgeTheChange()
+    {
+        using var scope = new DetailViewModelTestScope();
+        var blocked = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var vm = scope.CreateWithCatalog((id, _) => ++reads == 1 ? blocked.Task
+            : Task.FromResult(new MediaItemDetail { ContentId = id, Type = "movie", Title = "Newer" }));
+        vm.Item = new() { ContentId = "movie-1", Type = "movie" };
+        var first = vm.RefreshServerMetadataAsync("movie-1");
+        Assert.True(await vm.RefreshServerMetadataAsync("movie-1"));
+        blocked.SetResult(new() { ContentId = "movie-1", Type = "movie", Title = "Older" });
+
+        Assert.False(await first);
+        Assert.Equal("Newer", vm.Item.Title);
+    }
+
     // ===== 6d: Refresh Metadata follows its job =====
 
     [Fact]
@@ -415,9 +506,54 @@ public sealed class DetailMetadataRefreshTests
         Assert.Equal(new[] { "episode-1", "episode-1r", "episode-1b", "series-1" },
             MetadataRefreshFollow.InvalidatedIds(rebuilt, "episode-1", "episode", "series-1"));
 
-        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.Failed, MaintenanceJobWaitOutcome.Canceled, MaintenanceJobWaitOutcome.TimedOut, MaintenanceJobWaitOutcome.Stale })
+        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.Failed, MaintenanceJobWaitOutcome.Canceled, MaintenanceJobWaitOutcome.Stale })
             Assert.Equal(MetadataRefreshFollowAction.None,
                 MetadataRefreshFollow.Decide(new(outcome, Job("running")), "episode-1", "quick", visit).Action);
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(404)]
+    [InlineData(200)]
+    public async Task UnreadableJobReloadsOnlyTheStartingVisitWithoutClaimingJobFailure(int status)
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue((HttpStatusCode)status, status == 200 ? "<html>proxy</html>"
+            : """{"type":"forbidden","title":"Job unavailable","status":403}""");
+        var (_, api) = CreateApi(handler);
+        var identity = api.CaptureIdentityContext();
+        var result = await new MaintenanceJobFollower(ct => api.GetJobAsync(identity, "job-1", ct),
+            () => true, new FakeTime().Delay).WaitAsync();
+        Assert.NotNull(result.Error);
+        Assert.Single(handler.Paths);
+        var hub = new DetailMetadataChangeHub(null, new ManualDelay().Delay);
+        using var visit = hub.Watch("movie-1", () => true, new ReloadRecorder().Reload);
+
+        var decision = MetadataRefreshFollow.Decide(result, "movie-1", "complete", visit);
+
+        Assert.Equal(MetadataRefreshFollowAction.Reload, decision.Action);
+        Assert.True(decision.Structural);
+        Assert.Null(decision.ReplacementContentId);
+        Assert.Equal(new[] { "movie-1" }, MetadataRefreshFollow.InvalidatedIds(result, "movie-1", "movie", null));
+        visit.Dispose();
+        Assert.Equal(MetadataRefreshFollowAction.None,
+            MetadataRefreshFollow.Decide(result, "movie-1", "complete", visit).Action);
+    }
+
+    [Fact]
+    public void TimedOutJobReloadsWithoutFollowingAnUnconfirmedReplacement()
+    {
+        var hub = new DetailMetadataChangeHub(null, new ManualDelay().Delay);
+        using var visit = hub.Watch("movie-1", () => true, new ReloadRecorder().Reload);
+        var result = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.TimedOut,
+            new MaintenanceJobStatus { State = "running", ItemResult = new() { DetailContentId = "other" } });
+
+        var quick = MetadataRefreshFollow.Decide(result, "movie-1", "quick", visit);
+        Assert.Equal(MetadataRefreshFollowAction.Reload, quick.Action);
+        Assert.False(quick.Structural);
+        Assert.Null(quick.ReplacementContentId);
+        Assert.True(MetadataRefreshFollow.Decide(result, "movie-1", "complete", visit).Structural);
     }
 
     [Fact]

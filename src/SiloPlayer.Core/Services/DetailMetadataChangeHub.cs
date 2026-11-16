@@ -207,7 +207,7 @@ public sealed class DetailMetadataWatch : IDisposable
                 bool applied;
                 try { applied = await _reload(structural, token).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { applied = true; }
-                catch { applied = true; } // the reload owner reports its own failures
+                catch { applied = false; } // Keep failed reads pending until resumed or signaled again.
 
                 lock (_gate)
                 {
