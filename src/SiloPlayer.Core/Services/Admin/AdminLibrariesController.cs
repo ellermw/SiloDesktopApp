@@ -151,15 +151,20 @@ public sealed class AdminLibrariesController : IDisposable
     /// <summary>A lease for one confirmation, write or editor session; it dies with the current owner.</summary>
     public MonitorAuthorityLease CaptureAction(MonitorAuthorityLease? expectedOwner = null)
     {
+        MonitorAuthorityLease? owner;
         lock (_gate)
         {
-            var owner = expectedOwner ?? _state.Owner;
+            owner = expectedOwner ?? _state.Owner;
             if (!IsOwnerCurrent(owner)) throw new MonitorAuthorityRetiredException();
-            var action = _lifetime.CaptureAction();
-            if (IsOwnerCurrent(owner)) return action;
-            action.Dispose();
-            throw new MonitorAuthorityRetiredException();
         }
+        // Capture can synchronously retire authority and call back into this controller.
+        var action = _lifetime.CaptureAction();
+        lock (_gate)
+        {
+            if (IsOwnerCurrent(owner) && _lifetime.IsCurrent(action)) return action;
+        }
+        action.Dispose();
+        throw new MonitorAuthorityRetiredException();
     }
 
     public bool IsOwnerCurrent(MonitorAuthorityLease? owner)
@@ -175,20 +180,34 @@ public sealed class AdminLibrariesController : IDisposable
         MonitorAuthorityLease owner;
         try { owner = _lifetime.Open(); }
         catch (OperationCanceledException) { Clear(); return; }
+        IDisposable? previous;
         lock (_gate)
         {
-            if (_disposed) return;
-            ResetLocked();
+            if (_disposed || !_lifetime.IsCurrent(owner)) return;
+            previous = ResetLocked();
             _state = new AdminLibrariesSnapshot { Owner = owner, Fetching = true };
-            if (_channel != null)
+        }
+        // The transport can raise retirement while holding its own lock. Never enter
+        // it (including event accessors and lease disposal) while holding _gate.
+        previous?.Dispose();
+        if (_channel != null)
+        {
+            var subscription = new RealtimeSubscription(_channel, this, owner);
+            bool keep;
+            lock (_gate)
             {
-                _channel.SnapshotReceived += OnSnapshot;
-                _channel.EventReceived += OnEvent;
-                _subscription = _channel.Subscribe("scans", "jobs");
+                keep = IsOwnerCurrent(owner);
+                if (keep) _subscription = subscription;
             }
+            if (!keep) { subscription.Dispose(); return; }
+        }
+        var activity = _activity?.Current;
+        lock (_gate)
+        {
+            if (!IsOwnerCurrent(owner)) return;
             // The shared channel may already be subscribed and send no new snapshot.
             // Seed only from the authority-bound store, never the transport's untagged cache.
-            if (_activity?.Current is { IsActingAdmin: true } activity && activity.Epoch == owner.Epoch && _lifetime.IsCurrent(owner))
+            if (activity is { IsActingAdmin: true } && activity.Epoch == owner.Epoch)
                 _state = _state with
                 {
                     Scans = activity.Scans.Select(scan => new AdminLibraryScanRun(scan.Id, scan.LibraryId, scan.Mode, scan.Path, scan.Status,
@@ -386,7 +405,7 @@ public sealed class AdminLibrariesController : IDisposable
 
     // ── Realtime (scans, jobs) ───────────────────────────────────────────
 
-    private void OnSnapshot(string channel, JsonElement data)
+    private void OnSnapshot(MonitorAuthorityLease owner, string channel, JsonElement data)
     {
         if (channel != "scans") return;
         var scans = data.ValueKind == JsonValueKind.Array
@@ -394,20 +413,20 @@ public sealed class AdminLibrariesController : IDisposable
             : [];
         lock (_gate)
         {
-            if (_disposed || _state.Owner == null || !_lifetime.IsCurrent(_state.Owner)) return;
+            if (!IsOwnerCurrent(owner)) return;
             _state = _state with { Scans = scans };
         }
         Changed?.Invoke();
     }
 
-    private void OnEvent(string channel, string name, JsonElement data)
+    private void OnEvent(MonitorAuthorityLease owner, string channel, string name, JsonElement data)
     {
         if (channel == "scans")
         {
             if (AdminLibraryPresentation.ParseScan(data) is not { } scan) return;
             lock (_gate)
             {
-                if (_disposed || _state.Owner == null || !_lifetime.IsCurrent(_state.Owner)) return;
+                if (!IsOwnerCurrent(owner)) return;
                 var scans = _state.Scans.ToList();
                 var index = scans.FindIndex(entry => entry.Id == scan.Id);
                 if (index >= 0 && !scan.IsActive) scans.RemoveAt(index);
@@ -418,7 +437,7 @@ public sealed class AdminLibrariesController : IDisposable
             Changed?.Invoke();
             if (name is "scan.completed" or "scan.failed" or "scan.cancelled")
             {
-                Coalesce(ref _libraryEventTimer, () => _ = ReloadAsync());
+                Coalesce(owner, ref _libraryEventTimer, () => _ = ReloadAsync());
                 DiagnosticsStale?.Invoke();
             }
             return;
@@ -426,16 +445,15 @@ public sealed class AdminLibrariesController : IDisposable
         if (channel != "jobs" || data.ValueKind != JsonValueKind.Object) return;
         var kind = data.TryGetProperty("job_type", out var type) && type.ValueKind == JsonValueKind.String ? type.GetString()
             : data.TryGetProperty("kind", out var v2) && v2.ValueKind == JsonValueKind.String ? v2.GetString() : null;
-        if (kind is "library_refresh") Coalesce(ref _jobEventTimer, () => _ = RestartJobsAsync());
-        if (kind is "delete_library") Coalesce(ref _libraryEventTimer, () => _ = ReloadAsync());
+        if (kind is "library_refresh") Coalesce(owner, ref _jobEventTimer, () => _ = RestartJobsAsync());
+        if (kind is "delete_library") Coalesce(owner, ref _libraryEventTimer, () => _ = ReloadAsync());
     }
 
-    private void Coalesce(ref IDisposable? slot, Action action)
+    private void Coalesce(MonitorAuthorityLease owner, ref IDisposable? slot, Action action)
     {
         lock (_gate)
         {
-            var owner = _state.Owner;
-            if (_disposed || owner == null || !_lifetime.IsCurrent(owner) || slot != null) return;
+            if (!IsOwnerCurrent(owner) || slot != null) return;
             IDisposable? scheduled = null;
             scheduled = _scheduler.Schedule(EventCoalescing, () =>
             {
@@ -739,7 +757,7 @@ public sealed class AdminLibrariesController : IDisposable
         Retired?.Invoke();
     }
 
-    private void ResetLocked()
+    private IDisposable? ResetLocked()
     {
         _listSequence++; _jobSequence++; _monitoringSequence++; _trickplaySequence++;
         _listCancellation?.Cancel(); _listCancellation?.Dispose(); _listCancellation = null;
@@ -747,19 +765,22 @@ public sealed class AdminLibrariesController : IDisposable
         _monitoringTimer = _trickplayTimer = _libraryEventTimer = _jobEventTimer = null;
         foreach (var timer in _mountTimers.Values) timer.Dispose();
         _mountTimers.Clear();
-        if (_channel != null) { _channel.SnapshotReceived -= OnSnapshot; _channel.EventReceived -= OnEvent; }
-        _subscription?.Dispose(); _subscription = null;
+        var subscription = _subscription;
+        _subscription = null;
         _jobCursors.Clear(); _nextJobCursor = null; _reloadAfterReorder = false;
         lock (WatchedTranslationJobs) WatchedTranslationJobs.Clear();
+        return subscription;
     }
 
     private void Clear()
     {
+        IDisposable? subscription;
         lock (_gate)
         {
-            ResetLocked();
+            subscription = ResetLocked();
             _state = new AdminLibrariesSnapshot();
         }
+        subscription?.Dispose();
         Changed?.Invoke();
     }
 
@@ -767,7 +788,41 @@ public sealed class AdminLibrariesController : IDisposable
     {
         lock (_gate) { if (_disposed) return; _disposed = true; }
         _lifetime.Dispose();
-        lock (_gate) { ResetLocked(); _state = new AdminLibrariesSnapshot(); }
+        IDisposable? subscription;
+        lock (_gate) { subscription = ResetLocked(); _state = new AdminLibrariesSnapshot(); }
+        subscription?.Dispose();
         Changed = null; Retired = null; Notice = null; DiagnosticsStale = null;
+    }
+
+    /// <summary>One open owner's handlers and channel lease, acquired/released outside _gate.</summary>
+    private sealed class RealtimeSubscription : IDisposable
+    {
+        private readonly IAdminRealtimeChannel _channel;
+        private readonly Action<string, JsonElement> _snapshot;
+        private readonly Action<string, string, JsonElement> _event;
+        private IDisposable? _handle;
+        private int _disposed;
+
+        public RealtimeSubscription(IAdminRealtimeChannel channel, AdminLibrariesController controller, MonitorAuthorityLease owner)
+        {
+            _channel = channel;
+            _snapshot = (name, data) => controller.OnSnapshot(owner, name, data);
+            _event = (name, kind, data) => controller.OnEvent(owner, name, kind, data);
+            try
+            {
+                channel.SnapshotReceived += _snapshot;
+                channel.EventReceived += _event;
+                _handle = channel.Subscribe("scans", "jobs");
+            }
+            catch { Dispose(); throw; }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            _channel.SnapshotReceived -= _snapshot;
+            _channel.EventReceived -= _event;
+            _handle?.Dispose();
+        }
     }
 }

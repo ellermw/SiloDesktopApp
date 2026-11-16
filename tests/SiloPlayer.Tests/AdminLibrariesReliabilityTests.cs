@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.WebSockets;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
@@ -9,6 +10,115 @@ namespace SiloPlayer.Tests;
 
 public sealed partial class AdminLibrariesControllerTests
 {
+    [Theory]
+    [InlineData("add", false)]
+    [InlineData("subscribe", false)]
+    [InlineData("remove", false)]
+    [InlineData("release", false)]
+    [InlineData("remove", true)]
+    [InlineData("release", true)]
+    public async Task ChannelOperationsDoNotHoldTheControllerGateDuringAccessRetirement(string operation, bool dispose)
+    {
+        using var kit = AdminMonitorKit.Create();
+        var server = new Server();
+        kit.Http.Respond = (request, _) => Task.Run(() => server.Respond(request));
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var channel = new RetirementLockChannel();
+        using var controller = new AdminLibrariesController(new AdminLibrariesApi(kit.Client), authority, channel, new Scheduler());
+        if (operation is "remove" or "release") await controller.OpenAsync();
+
+        channel.ProbeOperation = operation;
+        channel.RetireUnderLock = () =>
+        {
+            // Like the transport's access_changed path: a channel lock is held
+            // while invalidation synchronously calls back into the controller.
+            // Reading State also checks the gate when Dispose has detached authority.
+            _ = controller.State;
+            kit.Client.InvalidateAccessContext();
+        };
+        try
+        {
+            if (dispose) controller.Dispose();
+            else await controller.OpenAsync();
+        }
+        finally
+        {
+            if (channel.Retirement is { } retirement) await retirement.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        Assert.NotNull(channel.Retirement);
+        Assert.Null(controller.State.Owner);
+        Assert.False(channel.HasListeners);
+        Assert.Equal(channel.Subscriptions, channel.Released);
+        Assert.Throws<MonitorAuthorityRetiredException>(() => controller.CaptureAction());
+        if (!dispose)
+        {
+            // A subscription returned after retirement was released, not retained.
+            await controller.OpenAsync();
+            Assert.NotNull(controller.State.Owner);
+            using var action = controller.CaptureAction(controller.State.Owner);
+            Assert.True(controller.IsActionCurrent(action));
+            Assert.Equal(channel.Released + 1, channel.Subscriptions);
+        }
+    }
+
+    private sealed class RetirementLockChannel : IAdminRealtimeChannel
+    {
+        private readonly object _lock = new();
+        private Action<string, JsonElement>? _snapshot;
+        private Action<string, string, JsonElement>? _event;
+        public string? ProbeOperation;
+        public Action? RetireUnderLock;
+        public Task? Retirement;
+        public int Subscriptions, Released;
+        public bool HasListeners => _snapshot != null || _event != null;
+        public WebSocketState CurrentState => WebSocketState.Open;
+        public event Action<WebSocketState>? StateChanged { add { } remove { } }
+        public event Action<string, JsonElement>? SnapshotReceived
+        {
+            add => Run("add", () => _snapshot += value);
+            remove => Run("remove", () => _snapshot -= value);
+        }
+        public event Action<string, string, JsonElement>? EventReceived
+        {
+            add => Run("add", () => _event += value);
+            remove => Run("remove", () => _event -= value);
+        }
+        public bool TryGetLatestSnapshot(string channel, out JsonElement snapshot) { snapshot = default; return false; }
+        public IDisposable Subscribe(params string[] channels)
+        {
+            Run("subscribe", () => Subscriptions++);
+            return new ReleaseHandle(() => Run("release", () => Released++));
+        }
+        private void Run(string operation, Action action)
+        {
+            if (ProbeOperation == operation)
+            {
+                ProbeOperation = null;
+                var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                Retirement = Task.Factory.StartNew(() =>
+                {
+                    lock (_lock)
+                    {
+                        held.SetResult();
+                        RetireUnderLock!();
+                    }
+                }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                Assert.True(held.Task.Wait(TimeSpan.FromSeconds(5)), "retirement did not acquire the channel lock");
+            }
+            // Bound a regression instead of hanging the entire test runner.
+            if (!Monitor.TryEnter(_lock, TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("channel operation held the controller gate while retirement held the channel lock");
+            try { action(); }
+            finally { Monitor.Exit(_lock); }
+        }
+        private sealed class ReleaseHandle(Action release) : IDisposable
+        {
+            private Action? _release = release;
+            public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
+        }
+    }
+
     [Fact]
     public async Task LibraryTransportDeadlineCoversResponseBodiesForEveryTransport()
     {
