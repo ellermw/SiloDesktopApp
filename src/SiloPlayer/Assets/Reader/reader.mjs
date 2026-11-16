@@ -34,13 +34,15 @@ const locationUnavailable = () => text('desktop.reader.locationUnavailable', 'Th
 
 async function navigate(location) {
     const activeView = view, activeBook = book, current = generation, paths = chapterPaths;
-    const target = parseLocation(location);
+    const target = parseLocation(location) ?? (tableOfContents().some(item => item.href === location) ? location : null);
     if (!target || !view) return false;
     let resolved;
     if (target.legacy) {
         if (format === 'pdf') {
             if (target.index !== 0) return false;
             resolved = await activeView.resolveNavigation({fraction:target.anchor});
+        } else if (format !== 'epub') {
+            resolved = {index:target.index, anchor:target.anchor};
         } else {
         // Old desktop chapters omit non-HTML spine items. Resolve by path rather than
         // treating the old chapter number as an EPUB spine number.
@@ -54,7 +56,8 @@ async function navigate(location) {
     // Foliate's public goTo catches errors and can leave the old page in place.
     // Validate CFI/href anchors against the actual document before accepting a restore.
     if (typeof resolved.anchor === 'function' && !(activeView.isFixedLayout && typeof target === 'string' && /^epubcfi\(\/6\/\d+\)$/.test(target))) {
-        const doc = await activeBook.sections[resolved.index].createDocument();
+        const doc = await activeBook.sections[resolved.index].createDocument?.();
+        if (!doc) return false;
         if (current !== generation) return false;
         const anchor = resolved.anchor(doc);
         if (anchor == null) return false;
@@ -141,14 +144,20 @@ window.siloReader = {
         await activeView.open(nextBook);
         if (current !== generation) return false;
         this.appearance(options.settings ?? {});
+        const legacyFb2 = (format === 'fb2' || format === 'fbz') && parseLocation(options.location)?.legacy;
         const location = options.location?.startsWith('fraction:') && !parseLocation(options.location) && Number.isFinite(options.progress)
             ? `fraction:${options.progress}` : options.location;
-        if (location) {
+        if (legacyFb2) {
+            if (!Number.isFinite(options.progress) || options.progress < 0 || options.progress > 1) {
+                send({type:'reader-error',message:locationUnresolved(),count:book.sections.length,toc:tableOfContents()});
+                return false;
+            }
+            await activeView.goToFraction(options.progress);
+        } else if (location) {
             if (!await navigate(location)) {
                 if (current !== generation) return false;
-                // Fail visibly and suppress saves; never replace an unknown shared
-                // location with a silent chapter-zero save.
-                throw new Error(locationUnresolved());
+                send({type:'reader-error',message:locationUnresolved(),count:book.sections.length,toc:tableOfContents()});
+                return false;
             }
         } else if (Number.isFinite(options.progress) && options.progress > 0) {
             await activeView.goToFraction(options.progress);
@@ -191,7 +200,7 @@ window.siloReader = {
         }
         return null;
     },
-    text: () => contents().map(({doc}) => doc.getSelection()?.toString() || doc.body.innerText).join('\n'),
+    text: () => contents().map(({doc}) => doc.getSelection()?.toString() || doc.body?.innerText || doc.documentElement.textContent || '').join('\n'),
     async annotations(values) {
         const current = generation, activeView = view;
         for (const old of annotations) if (old.cfiRange || old.localCfi) {
@@ -230,6 +239,7 @@ window.siloReader = {
         document.body.style.background = colors[0];
         view.renderer.setStyles?.(`:root{--theme-bg-color:${colors[0]};--theme-fg-color:${colors[1]};--override-color:true;color-scheme:${s.theme==='dark'?'dark':'light'}}html,body{background:${colors[0]}!important;color:${colors[1]}!important;font-family:${s.fontFamily || 'inherit'}!important;font-size:${s.fontSize || 112}%!important;font-weight:${s.fontWeight || 400}!important;line-height:${s.lineHeight || 1.65}!important;hyphens:${s.hyphenation===false?'none':'auto'}!important;direction:${s.rtl?'rtl':'inherit'}!important;writing-mode:${s.writingMode==='auto'?'inherit':s.writingMode || 'inherit'}!important;filter:brightness(${s.fontBrightness || 100}%)!important}body :where(p,span,div,li,blockquote,h1,h2,h3,h4,h5,h6,em,strong){color:${colors[1]}!important}`);
         const r = view.renderer;
+        r.setAttribute('spread',s.spread==='none'?'none':'auto');
         r.setAttribute('gap','7%'); r.setAttribute('margin',`${s.margin ?? 24}px`);
         r.setAttribute('max-inline-size',s.flow==='scrolled'?'9999px':`${(s.maxWidth || 74)*10}px`);
         r.setAttribute('max-column-count',s.spread==='none'||s.flow==='scrolled'?'1':'2');

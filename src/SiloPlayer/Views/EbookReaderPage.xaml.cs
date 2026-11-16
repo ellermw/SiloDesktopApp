@@ -47,7 +47,8 @@ public sealed partial class EbookReaderPage : Page
     private double _sharedProgress;
     private EbookReaderProgress? _restoreProgress;
     private int _rendererPageCount;
-    private ApiRequestContext _readerContext;
+    private ApiIdentityContext _readerIdentity;
+    private ApiRequestContext ReaderRequestContext => _ebooksApi.CaptureContext(_readerIdentity);
     private int _openGeneration;
     private const int SearchResultLimit = 1000;
     private int _searchGeneration;
@@ -67,6 +68,7 @@ public sealed partial class EbookReaderPage : Page
     private Dictionary<string, object?>? _latestReaderConfig;
     private string _readerSettingsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-settings");
     private readonly DispatcherTimer _progressTimer = new() { Interval = TimeSpan.FromSeconds(8) };
+    private readonly DispatcherTimer _contextTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly Dictionary<Button, FrameworkElement> _profileChecks = [];
 
     public EbookReaderPage()
@@ -90,6 +92,7 @@ public sealed partial class EbookReaderPage : Page
         ReadingSurface.SizeChanged += (_, _) => UpdateRulerOverlay();
         UpdateReaderResponsiveLayout();
         _progressTimer.Tick += ProgressTimer_Tick;
+        _contextTimer.Tick += (_, _) => ReaderContextInvalidated();
     }
 
     private void InitializeReaderControls()
@@ -139,7 +142,9 @@ public sealed partial class EbookReaderPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        _readerContext = _ebooksApi.CaptureContext();
+        _readerIdentity = _ebooksApi.CaptureIdentityContext();
+        _ebooksApi.ContextInvalidated += ReaderContextInvalidated;
+        _contextTimer.Start();
         _contentId = e.Parameter switch
         {
             EbookReaderNavigation n => n.ContentId,
@@ -157,6 +162,7 @@ public sealed partial class EbookReaderPage : Page
         try
         {
             _item = await _catalogApi.GetItemDetailAsync(_contentId, _libraryId, _lifetime.Token);
+            EnsureReaderContext();
             if (!string.Equals(_item.Type, "ebook", StringComparison.OrdinalIgnoreCase))
             {
                 ShowFailure(NotFound);
@@ -174,9 +180,12 @@ public sealed partial class EbookReaderPage : Page
                 return;
             }
             await ReaderWebView.EnsureCoreWebView2Async();
+            EnsureReaderContext();
             ConfigureReaderWebView();
             await LoadPreferencesAsync();
+            EnsureReaderContext();
             await LoadAnnotationsAsync();
+            EnsureReaderContext();
             await OpenVersionAsync(version, restoreProgress: true);
             _progressTimer.Start();
             Focus(FocusState.Programmatic);
@@ -193,6 +202,8 @@ public sealed partial class EbookReaderPage : Page
     {
         _leaving = true;
         RetireSearch();
+        _contextTimer.Stop();
+        _ebooksApi.ContextInvalidated -= ReaderContextInvalidated;
         await ClearRendererSearchAsync();
         _progressTimer.Stop();
         if (_initialized)
@@ -209,6 +220,7 @@ public sealed partial class EbookReaderPage : Page
             core.NewWindowRequested -= ReaderWebView_NewWindowRequested;
             core.PermissionRequested -= ReaderWebView_PermissionRequested;
             core.WebResourceRequested -= ReaderWebView_WebResourceRequested;
+            core.ProcessFailed -= ReaderWebView_ProcessFailed;
         }
         ReaderWebView.Close();
         var readerDirectories = _readerDirectories.ToArray();
@@ -221,6 +233,31 @@ public sealed partial class EbookReaderPage : Page
         base.OnNavigatedFrom(e);
     }
 
+    private void EnsureReaderContext()
+    {
+        _lifetime.Token.ThrowIfCancellationRequested();
+        if (_leaving || !_ebooksApi.IsCurrentIdentityContext(_readerIdentity)) throw new OperationCanceledException("Reader context changed.");
+    }
+
+    private void ReaderContextInvalidated()
+    {
+        if (_leaving || _lifetime.IsCancellationRequested || _ebooksApi.IsCurrentIdentityContext(_readerIdentity)) return;
+        _lifetime.Cancel();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_leaving) return;
+            _initialized = false;
+            _rendererReady = false;
+            _openGeneration++;
+            RetireSearch();
+            _progressTimer.Stop();
+            _contextTimer.Stop();
+            ReleaseDisplayRequest();
+            ReaderWebView.Close();
+            ShowFailure(NotFound);
+        });
+    }
+
     private void ConfigureReaderWebView()
     {
         var core = ReaderWebView.CoreWebView2;
@@ -231,6 +268,7 @@ public sealed partial class EbookReaderPage : Page
         core.NavigationStarting += ReaderWebView_NavigationStarting;
         core.NewWindowRequested += ReaderWebView_NewWindowRequested;
         core.PermissionRequested += ReaderWebView_PermissionRequested;
+        core.ProcessFailed += ReaderWebView_ProcessFailed;
         core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
         core.WebResourceRequested += ReaderWebView_WebResourceRequested;
     }
@@ -239,6 +277,15 @@ public sealed partial class EbookReaderPage : Page
     {
         if (!EbookReaderWebPolicy.IsTrustedReaderUri(args.Uri))
             args.Cancel = true;
+    }
+
+    private void ReaderWebView_ProcessFailed(CoreWebView2 sender, CoreWebView2ProcessFailedEventArgs args)
+    {
+        if (_leaving || _lifetime.IsCancellationRequested) return;
+        if (args.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited
+            or CoreWebView2ProcessFailedKind.RenderProcessExited or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)) return;
+        _rendererReady = false;
+        ShowFailure(() => T(RendererOpenFailedKey, "Unable to open ebook") + $" ({args.ProcessFailedKind})");
     }
 
     private void ReaderWebView_NewWindowRequested(CoreWebView2 sender, CoreWebView2NewWindowRequestedEventArgs args)
@@ -297,6 +344,7 @@ public sealed partial class EbookReaderPage : Page
     private async Task OpenVersionAsync(FileVersion version, bool restoreProgress)
     {
         if (_opening || _leaving) return;
+        EnsureReaderContext();
         _opening = true;
         RetireSearch();
         try
@@ -320,7 +368,7 @@ public sealed partial class EbookReaderPage : Page
             ring.IsActive = true;
         // No upstream key distinguishes the download step; English fallback.
         SetLoading(() => "Downloading book…");
-        _sourceBytes = await _ebooksApi.ReadFileAsync(_contentId, _fileId, _lifetime.Token);
+        _sourceBytes = await _ebooksApi.ReadFileAsync(_contentId, _fileId, ReaderRequestContext, _lifetime.Token);
         _lifetime.Token.ThrowIfCancellationRequested();
         if (_leaving) return;
         SetLoading(() => T("web.reader.loading", "Loading reader..."));
@@ -333,12 +381,12 @@ public sealed partial class EbookReaderPage : Page
         {
             var book = EbookPackageExtractor.Extract(sourceBytes, cacheRoot, format);
             _lifetime.Token.ThrowIfCancellationRequested();
-            if (book.Format is "epub" or "pdf")
-                await File.WriteAllBytesAsync(Path.Combine(cacheRoot, "reader-source." + book.Format), sourceBytes, _lifetime.Token);
+            await EbookPackageExtractor.WriteReaderSourceAsync(book, sourceBytes, _lifetime.Token);
             return book;
         }, _lifetime.Token);
         _readerDirectories.Add((cacheRoot, materialization));
         _book = await materialization;
+        EnsureReaderContext();
         _lifetime.Token.ThrowIfCancellationRequested();
         if (_leaving) return;
         if (UsesSharedRenderer)
@@ -378,11 +426,7 @@ public sealed partial class EbookReaderPage : Page
         try
         {
             var series = await _catalogApi.GetItemDetailAsync(_item.SeriesId, _libraryId, _lifetime.Token);
-            var chapters = series.Manga?.Chapters
-                .OrderBy(chapter => MangaVolumeSort(chapter.Volume))
-                .ThenBy(chapter => chapter.ChapterIndex ?? double.MaxValue)
-                .ThenBy(chapter => chapter.Title, StringComparer.OrdinalIgnoreCase)
-                .ToList() ?? [];
+            var chapters = SiloPlayer.Core.Helpers.MangaChapterPresentation.Flatten(series.Manga?.Chapters ?? []);
             var index = chapters.FindIndex(chapter => chapter.ContentId == _contentId);
             if (index < 0 || index + 1 >= chapters.Count) return;
             _nextMangaChapter = chapters[index + 1];
@@ -395,8 +439,8 @@ public sealed partial class EbookReaderPage : Page
     private void UpdateFormatSpecificChrome()
     {
         var comic = IsComicBook;
-        SearchTab.IsEnabled = IsHtmlBook || UsesSharedRenderer;
-        SearchBookVisibility(IsHtmlBook || UsesSharedRenderer);
+        SearchTab.IsEnabled = !comic;
+        SearchBookVisibility(SearchTab.IsEnabled);
         ReadingProfilesSection.Visibility = comic ? Visibility.Collapsed : Visibility.Visible;
         ReadAloudSection.Visibility = comic ? Visibility.Collapsed : Visibility.Visible;
         FontSection.Visibility = comic ? Visibility.Collapsed : Visibility.Visible;
@@ -428,10 +472,6 @@ public sealed partial class EbookReaderPage : Page
         catch (OperationCanceledException) { }
         catch (Exception ex) { ShowFailure(ex); }
     }
-
-    private static double MangaVolumeSort(string? volume)
-        => double.TryParse(volume?.TrimStart('v', 'V'), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
-            ? value : double.MaxValue;
 
     private void BuildContents()
     {
@@ -491,7 +531,13 @@ public sealed partial class EbookReaderPage : Page
 
     private async void ReaderWebView_NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
     {
-        if (_leaving || UsesSharedRenderer) return;
+        if (_leaving || _lifetime.IsCancellationRequested) return;
+        if (!args.IsSuccess && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
+        {
+            ShowFailure(() => T(RendererOpenFailedKey, "Unable to open ebook") + $" ({args.WebErrorStatus})");
+            return;
+        }
+        if (UsesSharedRenderer) return;
         LoadingLayer.Visibility = Visibility.Collapsed;
         if (!args.IsSuccess || _book == null) return;
         if (IsHtmlBook)
@@ -519,7 +565,7 @@ public sealed partial class EbookReaderPage : Page
 
     private async void ReaderWebView_WebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
-        if (_leaving || !EbookReaderWebPolicy.IsTrustedReaderUri(args.Source))
+        if (_leaving || _lifetime.IsCancellationRequested || !_ebooksApi.IsCurrentIdentityContext(_readerIdentity) || !EbookReaderWebPolicy.IsTrustedReaderUri(args.Source))
             return;
 
         try
@@ -545,8 +591,15 @@ public sealed partial class EbookReaderPage : Page
             {
                 AdoptSharedSnapshot(message.RootElement);
             }
+            else if (type is "reader-load-error" or "reader-open-error")
+            {
+                _rendererReady = false;
+                ShowFailure(() => T(RendererOpenFailedKey, "Unable to open ebook"));
+            }
             else if (type == "reader-error")
             {
+                if (message.RootElement.TryGetProperty("count", out _) && message.RootElement.TryGetProperty("toc", out _))
+                    AdoptSharedContents(message.RootElement);
                 LoadingLayer.Visibility = Visibility.Collapsed;
                 // The renderer words its errors from the keyed locale payload.
                 App.Services.GetRequiredService<ToastService>().Error(message.RootElement.GetProperty("message").GetString() ?? LocationUnavailableEnglish);
@@ -726,7 +779,7 @@ public sealed partial class EbookReaderPage : Page
                 FileId = _fileId,
                 Location = CurrentLocation,
                 Progress = OverallProgress
-            }, _readerContext, _lifetime.Token);
+            }, ReaderRequestContext, _lifetime.Token);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -782,7 +835,7 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task SavePreferencesAsync()
     {
-        if (!_initialized || _leaving || !_ebooksApi.IsCurrentContext(_readerContext)) return;
+        if (!_initialized || _leaving || !_ebooksApi.IsCurrentIdentityContext(_readerIdentity)) return;
         var config = new Dictionary<string, object?>
         {
             ["settings"] = new Dictionary<string, object?>
@@ -814,7 +867,7 @@ public sealed partial class EbookReaderPage : Page
     }
 
     private string LocalReaderConfigPath => Path.Combine(_readerSettingsDirectory,
-        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(_readerContext.BaseUrl + "|" + _readerContext.ProfileId + "|" + _contentId))) + ".json");
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(_readerIdentity.BaseUrl + "|" + _readerIdentity.ProfileId + "|" + _contentId))) + ".json");
     private async Task SaveLocalReaderConfigAsync(Dictionary<string, object?> config, bool pending, long revision)
     {
         await _localSettingsGate.WaitAsync();
@@ -831,14 +884,14 @@ public sealed partial class EbookReaderPage : Page
     }
     private async Task WriteReaderConfigAsync(Dictionary<string, object?> config, CancellationToken ct)
     {
-        if (!_ebooksApi.IsCurrentContext(_readerContext)) throw new OperationCanceledException(ct);
+        if (!_ebooksApi.IsCurrentIdentityContext(_readerIdentity)) throw new OperationCanceledException(ct);
         if (!_ebooksApi.HasReaderConfigRevision(_contentId))
             await _ebooksApi.GetReaderConfigAsync(_contentId, ct);
         try { await _ebooksApi.SaveReaderConfigAsync(_contentId, config, ct); }
         catch (ApiException ex) when (ex.StatusCode is 409 or 412)
         {
             await _ebooksApi.GetReaderConfigAsync(_contentId, ct);
-            if (!_ebooksApi.IsCurrentContext(_readerContext)) throw new OperationCanceledException(ct);
+            if (!_ebooksApi.IsCurrentIdentityContext(_readerIdentity)) throw new OperationCanceledException(ct);
             await _ebooksApi.SaveReaderConfigAsync(_contentId, config, ct);
         }
         if (ReferenceEquals(config, _latestReaderConfig))
@@ -847,12 +900,12 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task LoadAnnotationsAsync()
     {
-        if (_leaving || !_ebooksApi.IsCurrentContext(_readerContext)) return;
+        if (_leaving || !_ebooksApi.IsCurrentIdentityContext(_readerIdentity)) return;
         AnnotationsList.Children.Clear();
         try
         {
             _annotations = await _ebooksApi.GetAnnotationsAsync(_contentId, _lifetime.Token);
-            if (_leaving || !_ebooksApi.IsCurrentContext(_readerContext)) return;
+            if (_leaving || !_ebooksApi.IsCurrentIdentityContext(_readerIdentity)) return;
             RenderAnnotations();
             if (UsesSharedRenderer && _rendererReady)
                 await ReaderWebView.ExecuteScriptAsync($"window.siloReader?.annotations({JsonSerializer.Serialize(_annotations, ReaderJsonOptions)})");
@@ -876,7 +929,7 @@ public sealed partial class EbookReaderPage : Page
         {
             // The note is saved annotation data, not interface text: keep the stored English form.
             Kind = "bookmark", Location = CurrentLocation, Note = _book.Format == "pdf" ? $"Page {_chapterIndex + 1}" : _book.Chapters[Math.Min(_chapterIndex, _book.Chapters.Count - 1)].Title
-        }, _readerContext, _lifetime.Token);
+        }, ReaderRequestContext, _lifetime.Token);
         await LoadAnnotationsAsync();
         OpenPanel("annotations");
         }
@@ -1057,7 +1110,7 @@ public sealed partial class EbookReaderPage : Page
             SelectedText = selection.Text,
             Style = "highlight",
             Color = "#facc15"
-        }, _readerContext, _lifetime.Token);
+        }, ReaderRequestContext, _lifetime.Token);
         await LoadAnnotationsAsync();
         }
         catch (OperationCanceledException) { }
@@ -1408,7 +1461,7 @@ public sealed partial class EbookReaderPage : Page
         _ => value,
     };
     private static readonly JsonSerializerOptions ReaderJsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-    private bool UsesSharedRenderer => _book?.Format is "epub" or "pdf";
+    private bool UsesSharedRenderer => _book != null;
     private string CurrentLocation => UsesSharedRenderer ? _sharedLocation ?? "" : $"chapter:{_chapterIndex};fraction:{_chapterFraction.ToString("F6", CultureInfo.InvariantCulture)}";
 
     private object SharedSettings() => new
@@ -1429,7 +1482,7 @@ public sealed partial class EbookReaderPage : Page
             format = _book.Format, location = _restoreProgress?.Location, progress = _restoreProgress?.Progress,
             chapters = _book.Chapters.Select(chapter => chapter.RelativePath), settings = SharedSettings(), annotations = _annotations
         };
-        await ReaderWebView.ExecuteScriptAsync($"window.siloReader.open({JsonSerializer.Serialize(options, ReaderJsonOptions)}).catch(e=>chrome.webview.postMessage(JSON.stringify({{type:'reader-error',hostGeneration:{_openGeneration},message:e.message}})))");
+        await ReaderWebView.ExecuteScriptAsync($"window.siloReader.open({JsonSerializer.Serialize(options, ReaderJsonOptions)}).catch(e=>chrome.webview.postMessage(JSON.stringify({{type:'reader-open-error',hostGeneration:{_openGeneration},message:e.message}})))");
     }
 
     private async Task NavigateSharedChapterAsync(int index, double fraction)

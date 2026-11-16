@@ -22,6 +22,11 @@ internal static class ReaderInteropFixture
 {
     public static async Task RunAsync(StackPanel parent)
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "reader-opening")
+        {
+            await ReaderOpeningFixture.RunAsync(parent);
+            return;
+        }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "reader-controls")
         {
             await RunControlsAsync();

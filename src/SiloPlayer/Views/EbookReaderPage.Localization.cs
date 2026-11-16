@@ -94,6 +94,7 @@ public sealed partial class EbookReaderPage
 
     private void ShowFailure(Func<string> message)
     {
+        LoadingLayer.Visibility = Visibility.Visible;
         SetLoading(message);
         if (LoadingLayer.Children.FirstOrDefault() is StackPanel panel && panel.Children.FirstOrDefault() is ProgressRing ring) ring.IsActive = false;
     }

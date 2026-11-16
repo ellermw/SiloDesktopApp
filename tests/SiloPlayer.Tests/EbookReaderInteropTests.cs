@@ -10,6 +10,20 @@ namespace SiloPlayer.Tests;
 public sealed class EbookReaderInteropTests
 {
     [Fact]
+    public async Task DownloadedBookIsRejectedAfterTheOwningProfileChanges()
+    {
+        SiloApiClient? client = null;
+        var handler = new Handler(_ =>
+        {
+            client!.SetProfile("replacement");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent("book bytes"u8.ToArray()) });
+        });
+        client = Client(handler);
+        client.SetProfile("original");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new EbooksApi(client).ReadFileAsync("book", 42));
+    }
+
+    [Fact]
     public async Task ProgressRoundTripsExactCfiAndStringFileIdWithEventTime()
     {
         const string cfi = "epubcfi(/6/4!/4/102[p50],/1:13,/1:35)";
@@ -54,6 +68,24 @@ public sealed class EbookReaderInteropTests
         Assert.False(EbookReaderWebPolicy.IsAllowedSubresource("https://silo-book.local:444/reader-source.pdf"));
         Assert.False(EbookReaderWebPolicy.IsAllowedSubresource("https://someone@silo-book.local/reader-source.pdf"));
         Assert.False(EbookReaderWebPolicy.IsAllowedSubresource("blob:https://silo-book.local/book"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CurrentReaderIdentityCanSaveAfterRequestContextRetirement(bool transportCatchUp)
+    {
+        var handler = new Handler(_ => Task.FromResult(Json("{}")));
+        var client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+        var owner = api.CaptureIdentityContext();
+        Assert.True(client.TryInvalidateAccessContext(api.CaptureContext(), out _, transportCatchUp));
+        Assert.True(api.IsCurrentIdentityContext(owner));
+        await api.SaveProgressAsync("book", new() { FileId = 42, Location = "fraction:0.5", Progress = .5 }, api.CaptureContext(owner));
+        Assert.Equal(1, handler.Calls);
+        client.SetProfile("replacement");
+        Assert.ThrowsAny<OperationCanceledException>(() => api.CaptureContext(owner));
     }
 
     private static SiloApiClient Client(Handler handler)

@@ -13,6 +13,37 @@ public sealed class EbookPackageExtractorTests : IDisposable
     }
 
     [Fact]
+    public void KindleFilesAreAcceptedForTheExistingPackagedMobiRenderer()
+    {
+        var bytes = new byte[100];
+        "BOOKMOBI"u8.CopyTo(bytes.AsSpan(60));
+        foreach (var format in new[] { "mobi", "azw", "azw3" })
+        {
+            var book = EbookPackageExtractor.Extract(bytes, Path.Combine(_root, format), format);
+            Assert.Equal(format, book.Format);
+        }
+    }
+
+    [Fact]
+    public void FixedLayoutEpubWithSvgSpineIsReadable()
+    {
+        var package = Zip(
+            ("META-INF/container.xml", System.Text.Encoding.UTF8.GetBytes("""<container><rootfiles><rootfile full-path="OPS/package.opf"/></rootfiles></container>""")),
+            ("OPS/package.opf", System.Text.Encoding.UTF8.GetBytes("""<package><manifest><item id="page" href="page.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="page"/></spine></package>""")),
+            ("OPS/page.svg", System.Text.Encoding.UTF8.GetBytes("""<svg xmlns="http://www.w3.org/2000/svg"><text>Comic page</text></svg>""")));
+        var book = EbookPackageExtractor.Extract(package, Path.Combine(_root, "svg-epub"), "epub");
+        Assert.Equal("epub", book.Format);
+        Assert.Equal("OPS/page.svg", Assert.Single(book.Chapters).RelativePath);
+    }
+
+    [Fact]
+    public void ComicPagesIncludeModernImageFormatsSupportedByTheWebReader()
+    {
+        var book = EbookPackageExtractor.Extract(Comic("1.png", "2.avif", "3.jxl"), Path.Combine(_root, "comic-formats"), "cbz");
+        Assert.Equal(new[] { "1.png", "2.avif", "3.jxl" }, book.Chapters.Select(chapter => chapter.RelativePath));
+    }
+
+    [Fact]
     public void ReextractingIntoTheSameDirectoryDropsPagesFromThePreviousPackage()
     {
         var target = Path.Combine(_root, "book");

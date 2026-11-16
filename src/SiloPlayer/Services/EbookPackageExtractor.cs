@@ -17,7 +17,7 @@ internal static class EbookPackageExtractor
     internal const int MaxEntries = 50_000;
 
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
-        { ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".svg" };
+        { ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".svg", ".avif", ".jxl" };
 
     public static ExtractedEbook Extract(byte[] bytes, string targetDirectory, string declaredFormat)
         => Extract(bytes, targetDirectory, declaredFormat, MaxExtractedBytes, MaxEntries);
@@ -30,6 +30,9 @@ internal static class EbookPackageExtractor
         if (Directory.Exists(targetDirectory))
             Directory.Delete(targetDirectory, recursive: true);
         Directory.CreateDirectory(targetDirectory);
+        if (declaredFormat.ToLowerInvariant() is "mobi" or "azw" or "azw3" &&
+            bytes.Length >= 68 && bytes.AsSpan(60, 8).SequenceEqual("BOOKMOBI"u8))
+            return new ExtractedEbook(targetDirectory, [new EbookReaderChapter("Book", "")], declaredFormat.ToLowerInvariant());
         if (IsPdf(bytes))
         {
             var path = Path.Combine(targetDirectory, "book.pdf");
@@ -69,8 +72,25 @@ internal static class EbookPackageExtractor
             return ReadEpub(targetDirectory, containerPath);
         var fb2 = Directory.EnumerateFiles(targetDirectory, "*.fb2", SearchOption.AllDirectories).FirstOrDefault();
         if (fb2 != null)
-            return ReadFb2(File.ReadAllBytes(fb2), targetDirectory);
+            return ReadFb2(File.ReadAllBytes(fb2), targetDirectory) with { Format = "fbz" };
         return ReadComicArchive(targetDirectory);
+    }
+
+    public static async Task WriteReaderSourceAsync(ExtractedEbook book, byte[] bytes, CancellationToken ct)
+    {
+        var path = Path.Combine(book.RootDirectory, "reader-source." + book.Format);
+        if (book.Format != "cbz" || IsZip(bytes))
+        {
+            await File.WriteAllBytesAsync(path, bytes, ct);
+            return;
+        }
+        using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+        foreach (var file in Directory.EnumerateFiles(book.RootDirectory, "*", SearchOption.AllDirectories))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!ImageExtensions.Contains(Path.GetExtension(file)) && !Path.GetFileName(file).Equals("ComicInfo.xml", StringComparison.OrdinalIgnoreCase)) continue;
+            archive.CreateEntryFromFile(file, Path.GetRelativePath(book.RootDirectory, file).Replace('\\', '/'), CompressionLevel.Fastest);
+        }
     }
 
     private static void ExtractArchive(byte[] bytes, string targetDirectory, ExtractionBudget budget)
@@ -183,7 +203,7 @@ internal static class EbookPackageExtractor
         {
             var id = itemRef.Attribute("idref")?.Value;
             if (id == null || !manifest.TryGetValue(id, out var item)) continue;
-            if (item.Type is not ("application/xhtml+xml" or "text/html")) continue;
+            if (item.Type is not ("application/xhtml+xml" or "text/html" or "image/svg+xml")) continue;
             var decoded = Uri.UnescapeDataString(item.Href!.Split('#')[0]);
             var full = SafeCombine(packageDirectory, decoded);
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');

@@ -10,7 +10,21 @@ public sealed class EbooksApi(SiloApiClient client)
     private static string Content(string contentId) => Uri.EscapeDataString(contentId);
 
     public Task<byte[]> ReadFileAsync(string contentId, int fileId, CancellationToken ct = default)
-        => client.GetBytesAsync($"/api/v2/ebooks/{Content(contentId)}/files/{fileId}/read", ct);
+        => ReadFileAsync(contentId, fileId, client.CaptureContext(), ct);
+
+    public async Task<byte[]> ReadFileAsync(string contentId, int fileId, ApiRequestContext context, CancellationToken ct = default)
+    {
+        var bytes = await client.SendRawBytesRequestAsync(context, HttpMethod.Get,
+            $"/api/v2/ebooks/{Content(contentId)}/files/{fileId}/read", ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Reader context changed.", ct);
+        return bytes;
+    }
+
+    public event Action? ContextInvalidated
+    {
+        add => client.ContextInvalidated += value;
+        remove => client.ContextInvalidated -= value;
+    }
 
     public async Task<EbookReaderProgress> GetProgressAsync(string contentId, CancellationToken ct = default)
         => (await client.GetAsync<ProgressEnvelope>($"/api/v2/ebooks/{Content(contentId)}/progress", ct)).Progress ?? new();
@@ -20,6 +34,15 @@ public sealed class EbooksApi(SiloApiClient client)
 
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
+
+    public ApiRequestContext CaptureContext(ApiIdentityContext owner)
+    {
+        var context = client.CaptureContext();
+        if (!client.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Reader identity changed.");
+        return context;
+    }
 
     public async Task<EbookReaderProgress> SaveProgressAsync(string contentId, EbookReaderProgressInput input, ApiRequestContext context, CancellationToken ct = default)
         => (await client.SendRequestAsync<ProgressEnvelope>(context, HttpMethod.Put,
