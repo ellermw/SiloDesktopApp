@@ -110,6 +110,9 @@ internal static class AdminMonitorUi
         "square" => "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
         "filter" => "M22 3H2l8 9.46V19l4 2v-8.54z",
         "file-text" => "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z M14 2v4a2 2 0 0 0 2 2h4 M10 9H8 M16 13H8 M16 17H8",
+        // Lucide Loader2 / LoaderCircle and Network (0.576.0; rects written as rounded paths).
+        "loader-circle" => "M21 12a9 9 0 1 1-6.219-8.56",
+        "network" => "M17 16h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z M3 16h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z M10 2h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3 M12 12V8",
         "loader" => "M12 2v4 M16.2 7.8l2.9-2.9 M18 12h4 M16.2 16.2l2.9 2.9 M12 18v4 M4.9 19.1l2.9-2.9 M2 12h4 M4.9 4.9l2.9 2.9",
         "scan-line" => "M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2 M7 12h10",
         "clock" => "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M12 6v6l4 2",
@@ -131,9 +134,9 @@ internal static class AdminMonitorUi
     public static Viewbox Icon(string name, double size, Color color) => Icon(name, size, Solid(color));
 
     /// <summary>A spinning Lucide Loader (WebUI animate-spin): rotation only, no entrance motion.</summary>
-    public static FrameworkElement Spinner(double size, Color color)
+    public static FrameworkElement Spinner(double size, Color color, string iconName = "loader")
     {
-        var icon = Icon("loader", size, color);
+        var icon = Icon(iconName, size, color);
         var transform = new RotateTransform { CenterX = size / 2, CenterY = size / 2 };
         icon.RenderTransform = transform;
         var animation = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation

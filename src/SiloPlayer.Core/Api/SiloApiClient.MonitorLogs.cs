@@ -10,7 +10,7 @@ namespace SiloPlayer.Core.Api;
 public partial class SiloApiClient
 {
     internal async Task<ApiResponse<T>> MonitorLogsSendAsync<T>(MonitorAuthorityLease lease, HttpMethod method, string path,
-        object? body = null, string? etag = null, CancellationToken ct = default)
+        object? body = null, string? etag = null, CancellationToken ct = default, int maxBytes = 8 * 1024 * 1024)
     {
         lease.ThrowIfRetired();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
@@ -26,13 +26,13 @@ public partial class SiloApiClient
             if (!response.IsSuccessStatusCode)
             {
                 // Problem bodies are untrusted too; apply the same bound before parsing.
-                var errorBytes = await MonitorLogsReadBoundedAsync(response.Content, lease, 8 * 1024 * 1024, linked.Token).ConfigureAwait(false);
+                var errorBytes = await MonitorLogsReadBoundedAsync(response.Content, lease, maxBytes, linked.Token).ConfigureAwait(false);
                 response.Content.Dispose();
                 response.Content = new ByteArrayContent(errorBytes);
                 await ThrowApiException(response, request, linked.Token).ConfigureAwait(false);
                 lease.ThrowIfRetired();
             }
-            var bytes = await MonitorLogsReadBoundedAsync(response.Content, lease, 8 * 1024 * 1024, linked.Token).ConfigureAwait(false);
+            var bytes = await MonitorLogsReadBoundedAsync(response.Content, lease, maxBytes, linked.Token).ConfigureAwait(false);
             lease.ThrowIfRetired();
             var result = JsonSerializer.Deserialize<T>(bytes, JsonOptions) ?? throw new InvalidDataException("Empty Monitor response.");
             lease.ThrowIfRetired();

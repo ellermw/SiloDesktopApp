@@ -262,6 +262,26 @@ internal static class AdminSecuritySettingsNativeFixture
 
             // Number entry: whole draft is one change; returning clears; invalid text reverts on blur.
             var global = Number(page, F.Global);
+            var inputTrace = new Queue<string>();
+            var assigningInvalid = false;
+            var inputSequence = 0;
+            void TraceInput(string reason)
+            {
+                inputTrace.Enqueue($"{++inputSequence}@{DateTime.UtcNow:O} {reason}: fixtureAssignment={assigningInvalid}, focus={global.FocusState}, text='{global.Text}', selection={global.SelectionStart}/{global.SelectionLength}, value={controller.State.RateValues?.Number(F.Global)}");
+                while (inputTrace.Count > 80) inputTrace.Dequeue();
+            }
+            global.GotFocus += (_, _) => TraceInput("GotFocus");
+            global.LostFocus += (_, _) => TraceInput("LostFocus");
+            global.TextChanging += (_, _) => TraceInput("TextChanging");
+            global.TextChanged += (_, _) => TraceInput("TextChanged");
+            global.TextCompositionStarted += (_, _) => TraceInput("CompositionStarted");
+            global.TextCompositionChanged += (_, _) => TraceInput("CompositionChanged");
+            global.TextCompositionEnded += (_, _) => TraceInput("CompositionEnded");
+            global.AddHandler(UIElement.KeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler((_, args) =>
+                TraceInput($"KeyDown key={args.Key} scan={args.KeyStatus.ScanCode} repeat={args.KeyStatus.RepeatCount} handled={args.Handled}")), true);
+            global.AddHandler(UIElement.KeyUpEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler((_, args) =>
+                TraceInput($"KeyUp key={args.Key} scan={args.KeyStatus.ScanCode} handled={args.Handled}")), true);
+            global.CharacterReceived += (_, args) => TraceInput($"CharacterReceived U+{args.Character:X4} handled={args.Handled}");
             global.Focus(FocusState.Keyboard); global.Text = "1001";
             await Until(() => controller.State.RateDirty, "global edited");
             await Task.Delay(100);
@@ -276,8 +296,20 @@ internal static class AdminSecuritySettingsNativeFixture
             Check(SaveBar(page).Visibility == Visibility.Collapsed, "typing the saved values back hides the save bar (#4309)");
             foreach (var invalid in new[] { "12abc", "", "0", "-5", "１２", "1.9", "35791395" })
             {
-                global.Focus(FocusState.Keyboard); global.Text = invalid; await Task.Delay(40);
-                Check(controller.State.RateValues!.Number(F.Global) == 1000 && global.Text == invalid, $"invalid '{invalid}' leaves the draft unchanged while focused");
+                global.Focus(FocusState.Keyboard);
+                TraceInput($"FixtureSetBefore expected='{invalid}'");
+                assigningInvalid = true;
+                try { global.Text = invalid; }
+                finally { assigningInvalid = false; }
+                TraceInput($"FixtureSetAfter expected='{invalid}'");
+                await Task.Delay(40);
+                var keptInvalid = controller.State.RateValues!.Number(F.Global) == 1000 && global.Text == invalid;
+                if (!keptInvalid)
+                {
+                    TraceInput("InvalidCheck");
+                    Program.Log("SECURITY-INPUT-TRACE: " + string.Join(" | ", inputTrace));
+                }
+                Check(keptInvalid, $"invalid '{invalid}' leaves the draft unchanged while focused");
                 Toggle(page, F.Enabled).Focus(FocusState.Keyboard); await Task.Delay(80);
                 Check(global.Text == "1000", $"invalid '{invalid}' reverts on blur");
             }
@@ -285,7 +317,13 @@ internal static class AdminSecuritySettingsNativeFixture
             var composing = (HashSet<TextBox>)Field(page, "_composing")!;
             global.Focus(FocusState.Keyboard); composing.Add(global); global.Text = "1777"; await Task.Delay(60);
             Toggle(page, F.Enabled).Focus(FocusState.Keyboard); await Task.Delay(60);
-            Check(controller.State.RateValues!.Number(F.Global) == 1000 && global.Text == "1777", "text typed during an active composition neither commits nor reverts");
+            var keptComposition = controller.State.RateValues!.Number(F.Global) == 1000 && global.Text == "1777";
+            if (!keptComposition)
+            {
+                TraceInput($"CompositionCheck simulated={composing.Contains(global)}");
+                Program.Log("SECURITY-INPUT-TRACE: " + string.Join(" | ", inputTrace));
+            }
+            Check(keptComposition, "text typed during an active composition neither commits nor reverts");
             composing.Remove(global); global.Text = "1000"; await Task.Delay(60);
             Check(!controller.State.RateDirty, "after composition ends normal entry resumes");
 
