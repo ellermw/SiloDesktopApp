@@ -20,70 +20,93 @@ public partial class SiloApiClient
     internal const int AdminLibraryJsonLimit = 4 * 1024 * 1024;
 
     /// <summary>Sends one admin library JSON request; a 2xx body is decoded within <see cref="AdminLibraryJsonLimit"/>.</summary>
-    internal async Task<T> AdminLibrarySendAsync<T>(MonitorAuthorityLease lease, HttpMethod method, string path, object? body = null,
-        CancellationToken ct = default)
+    internal Task<T> AdminLibrarySendAsync<T>(MonitorAuthorityLease lease, HttpMethod method, string path, object? body = null,
+        CancellationToken ct = default) => AdminLibraryWithinDeadlineAsync(lease, ct, async token =>
     {
         lease.ThrowIfRetired();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
         using var request = CreateContextBoundRequest(lease.Context, method, path, body);
-        using var response = await SendWithRetryAsync(request, linked.Token, allowTokenRefresh: method == HttpMethod.Get).ConfigureAwait(false);
+        using var response = await SendWithRetryAsync(request, token, allowTokenRefresh: method == HttpMethod.Get).ConfigureAwait(false);
         lease.ThrowIfRetired();
         if (!response.IsSuccessStatusCode)
         {
-            await ThrowApiException(response, request, linked.Token).ConfigureAwait(false);
+            await AdminLibraryThrowBoundedErrorAsync(response, request, lease, token).ConfigureAwait(false);
             lease.ThrowIfRetired();
         }
         if (response.StatusCode == HttpStatusCode.NoContent) throw new InvalidDataException("The server answered without the expected library administration body.");
-        var bytes = await AdminLibraryReadBoundedAsync(response.Content, lease, AdminLibraryJsonLimit, linked.Token).ConfigureAwait(false);
+        var bytes = await AdminLibraryReadBoundedAsync(response.Content, lease, AdminLibraryJsonLimit, token).ConfigureAwait(false);
         lease.ThrowIfRetired();
         var value = JsonSerializer.Deserialize<T>(bytes, JsonOptions) ?? throw new InvalidDataException("Empty library administration response.");
         lease.ThrowIfRetired();
         return value;
-    }
+    });
 
     /// <summary>A write whose only success is 204 No Content (reorder, overrides, ignore, providers, poster removal).</summary>
-    internal async Task AdminLibrarySendNoContentAsync(MonitorAuthorityLease lease, HttpMethod method, string path, object? body = null,
-        CancellationToken ct = default)
+    internal Task AdminLibrarySendNoContentAsync(MonitorAuthorityLease lease, HttpMethod method, string path, object? body = null,
+        CancellationToken ct = default) => AdminLibraryWithinDeadlineAsync(lease, ct, async token =>
     {
         lease.ThrowIfRetired();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
         using var request = CreateContextBoundRequest(lease.Context, method, path, body);
-        using var response = await SendWithRetryAsync(request, linked.Token, allowTokenRefresh: false).ConfigureAwait(false);
+        using var response = await SendWithRetryAsync(request, token, allowTokenRefresh: false).ConfigureAwait(false);
         lease.ThrowIfRetired();
         if (!response.IsSuccessStatusCode)
         {
-            await ThrowApiException(response, request, linked.Token).ConfigureAwait(false);
+            await AdminLibraryThrowBoundedErrorAsync(response, request, lease, token).ConfigureAwait(false);
             lease.ThrowIfRetired();
         }
         if (response.StatusCode != HttpStatusCode.NoContent)
             throw new InvalidDataException("The server did not confirm the library change.");
-    }
+        return true;
+    });
 
     /// <summary>
     /// <c>PUT /api/v2/libraries/{id}/poster</c> as <c>multipart/form-data</c> with one
     /// <c>poster</c> part. The bytes are read by the caller within the server's 10 MiB limit.
     /// </summary>
-    internal async Task<T> AdminLibraryPutPosterAsync<T>(MonitorAuthorityLease lease, string path, byte[] poster, string mediaType,
-        string fileName, CancellationToken ct = default)
+    internal Task<T> AdminLibraryPutPosterAsync<T>(MonitorAuthorityLease lease, string path, byte[] poster, string mediaType,
+        string fileName, CancellationToken ct = default) => AdminLibraryWithinDeadlineAsync(lease, ct, async token =>
     {
         lease.ThrowIfRetired();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
         using var request = CreateContextBoundRequest(lease.Context, HttpMethod.Put, path, null);
         var form = new MultipartFormDataContent();
         var part = new ByteArrayContent(poster);
         part.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
         form.Add(part, "poster", fileName);
         request.Content = form;
-        using var response = await SendWithRetryAsync(request, linked.Token, allowTokenRefresh: false).ConfigureAwait(false);
+        using var response = await SendWithRetryAsync(request, token, allowTokenRefresh: false).ConfigureAwait(false);
         lease.ThrowIfRetired();
         if (!response.IsSuccessStatusCode)
         {
-            await ThrowApiException(response, request, linked.Token).ConfigureAwait(false);
+            await AdminLibraryThrowBoundedErrorAsync(response, request, lease, token).ConfigureAwait(false);
             lease.ThrowIfRetired();
         }
-        var bytes = await AdminLibraryReadBoundedAsync(response.Content, lease, AdminLibraryJsonLimit, linked.Token).ConfigureAwait(false);
+        var bytes = await AdminLibraryReadBoundedAsync(response.Content, lease, AdminLibraryJsonLimit, token).ConfigureAwait(false);
         lease.ThrowIfRetired();
         return JsonSerializer.Deserialize<T>(bytes, JsonOptions) ?? throw new InvalidDataException("Empty library administration response.");
+    });
+
+    private static async Task<T> AdminLibraryWithinDeadlineAsync<T>(MonitorAuthorityLease lease, CancellationToken ct, Func<CancellationToken, Task<T>> operation)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct, deadline.Token);
+        try
+        {
+            var result = await operation(linked.Token).ConfigureAwait(false);
+            linked.Token.ThrowIfCancellationRequested();
+            lease.ThrowIfRetired();
+            return result;
+        }
+        catch (OperationCanceledException error) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested && !lease.Token.IsCancellationRequested)
+        {
+            throw new TaskCanceledException("Library administration request exceeded its deadline.", new TimeoutException("Library administration request timed out.", error), linked.Token);
+        }
+    }
+
+    private async Task AdminLibraryThrowBoundedErrorAsync(HttpResponseMessage response, HttpRequestMessage request, MonitorAuthorityLease lease, CancellationToken ct)
+    {
+        using var original = response.Content;
+        var bytes = await AdminLibraryReadBoundedAsync(original, lease, AdminLibraryJsonLimit, ct).ConfigureAwait(false);
+        response.Content = new ByteArrayContent(bytes);
+        await ThrowApiException(response, request, ct).ConfigureAwait(false);
     }
 
     private static async Task<byte[]> AdminLibraryReadBoundedAsync(HttpContent content, MonitorAuthorityLease lease, int maxBytes, CancellationToken ct)

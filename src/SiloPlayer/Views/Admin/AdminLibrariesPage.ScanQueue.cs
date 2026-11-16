@@ -19,10 +19,12 @@ public sealed partial class AdminLibrariesPage
 {
     private Flyout? _scanQueueFlyout;
     private StackPanel? _scanQueueHost;
+    private LibraryUiOwner? _scanQueueOwner;
     private readonly HashSet<string> _expandedQueueGroups = new(StringComparer.Ordinal);
 
     private Button ScanQueueButton(AdminLibrariesSnapshot state, IReadOnlyList<AdminScanQueueGroup> groups)
     {
+        var owner = RenderOwner(state);
         var total = groups.Sum(group => group.Scans.Count);
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         content.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new(4), Background = Solid(Success), VerticalAlignment = VerticalAlignment.Center });
@@ -31,20 +33,21 @@ public sealed partial class AdminLibrariesPage
         button.Content = content;
         var host = new StackPanel { Width = 400 };
         var flyout = new Flyout { Content = host, Placement = FlyoutPlacementMode.BottomEdgeAlignedRight, ShouldConstrainToRootBounds = true };
+        button.Tag = flyout;
         flyout.FlyoutPresenterStyle = new Style(typeof(FlyoutPresenter));
         flyout.FlyoutPresenterStyle.Setters.Add(new Setter(FlyoutPresenter.PaddingProperty, new Thickness(0)));
         flyout.FlyoutPresenterStyle.Setters.Add(new Setter(FlyoutPresenter.MaxWidthProperty, 400d));
-        flyout.Opened += (_, _) => { _scanQueueFlyout = flyout; _scanQueueHost = host; if (_controller != null) FillScanQueue(host, _controller.State); };
-        flyout.Closed += (_, _) => { if (ReferenceEquals(_scanQueueFlyout, flyout)) { _scanQueueFlyout = null; _scanQueueHost = null; } };
-        button.Click += (_, _) => flyout.ShowAt(button);
+        flyout.Opened += (_, _) => { if (!owner.IsCurrent) { flyout.Hide(); return; } _scanQueueOwner = owner; _scanQueueFlyout = flyout; _scanQueueHost = host; FillScanQueue(host, owner.Controller.State); };
+        flyout.Closed += (_, _) => { if (ReferenceEquals(_scanQueueFlyout, flyout)) { _scanQueueFlyout = null; _scanQueueHost = null; _scanQueueOwner = null; } };
+        button.Click += (_, _) => { if (owner.IsCurrent) flyout.ShowAt(button); };
         return button;
     }
 
     private void UpdateScanQueueFlyout(AdminLibrariesSnapshot state)
     {
         if (_scanQueueHost == null || _scanQueueFlyout == null) return;
-        if (state.Scans.Count == 0) { _scanQueueFlyout.Hide(); return; }
-        FillScanQueue(_scanQueueHost, state);
+        if (_scanQueueOwner?.IsCurrent != true || state.Scans.Count == 0) { _scanQueueFlyout.Hide(); return; }
+        if (ReferenceEquals(_scanQueueOwner?.Lease, state.Owner)) FillScanQueue(_scanQueueHost, state);
     }
 
     private void FillScanQueue(StackPanel host, AdminLibrariesSnapshot state)
@@ -91,6 +94,7 @@ public sealed partial class AdminLibrariesPage
 
     private StackPanel ScanQueueGroup(AdminScanQueueGroup group, AdminLibrariesSnapshot state)
     {
+        var owner = RenderOwner(state);
         const int collapsedLimit = 4;
         var stack = new StackPanel();
         var head = new Grid { ColumnSpacing = 8, Padding = new(0, 6, 0, 6) };
@@ -102,7 +106,7 @@ public sealed partial class AdminLibrariesPage
         var cancel = Action(Core.Localization.AppStrings.Get("common.cancel", fallback: "Cancel"), "LibrariesQueueCancel_" + group.LibraryId, "square", "GhostButtonStyle", height: 24);
         cancel.FontSize = 10; cancel.Padding = new(8, 0, 8, 0);
         cancel.IsEnabled = !state.ScanCancelling.Contains(group.LibraryId);
-        cancel.Click += (_, _) => { if (_controller != null) _ = _controller.CancelScansAsync(group.LibraryId); };
+        cancel.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.CancelScansAsync(group.LibraryId, owner.Lease); };
         Grid.SetColumn(cancel, 2); head.Children.Add(cancel);
         stack.Children.Add(head);
 
@@ -121,6 +125,7 @@ public sealed partial class AdminLibrariesPage
             AutomationProperties.SetAutomationId(toggle, "LibrariesQueueToggle_" + group.LibraryId);
             toggle.Click += (_, _) =>
             {
+                if (!owner.IsCurrent) return;
                 if (!_expandedQueueGroups.Remove(group.LibraryId)) _expandedQueueGroups.Add(group.LibraryId);
                 if (_scanQueueHost != null && _controller != null) FillScanQueue(_scanQueueHost, _controller.State);
             };

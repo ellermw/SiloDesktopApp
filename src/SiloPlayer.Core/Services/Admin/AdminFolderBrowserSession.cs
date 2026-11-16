@@ -47,6 +47,9 @@ public sealed class AdminFolderBrowserSession : IDisposable
     private int _pages;
     private long _sequence;
     private CancellationTokenSource? _load;
+    private CancellationTokenSource? _probe;
+    private long _probeSequence;
+    private bool _probeNavigating;
     private bool _disposed;
 
     public AdminFolderBrowserSession(AdminLibrariesController owner, MonitorAuthorityLease lease, IEnumerable<string> existingPaths)
@@ -79,7 +82,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
         return LoadAsync(append: true);
     }
 
-    private async Task LoadAsync(bool append)
+    private async Task LoadAsync(bool append, long? probeSequence = null)
     {
         long sequence;
         string path;
@@ -88,12 +91,18 @@ public sealed class AdminFolderBrowserSession : IDisposable
         lock (_gate)
         {
             if (_disposed) return;
+            if (probeSequence.HasValue)
+            {
+                if (probeSequence != _probeSequence || _probe == null) return;
+            }
+            else InvalidateProbeLocked();
+            _probeNavigating = probeSequence.HasValue;
             if (append && _pages >= MaxPages) { _state = _state with { Capped = true, HasMore = false }; return; }
             sequence = ++_sequence;
             path = _state.CurrentPath;
             cursor = append ? _nextCursor : null;
             _load?.Cancel(); _load?.Dispose();
-            _load = CancellationTokenSource.CreateLinkedTokenSource(_lease.Token);
+            _load = CancellationTokenSource.CreateLinkedTokenSource(_lease.Token, probeSequence.HasValue ? _probe!.Token : _lease.Token);
             token = _load.Token;
             _state = append ? _state with { LoadingMore = true } : _state with { Fetching = true, Loading = _state.Entries.Count == 0 || _state.ResolvedPath != path, Error = null };
         }
@@ -103,7 +112,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
             var page = await _api.BrowseAsync(_lease, path, null, cursor, AdminLibrariesApi.BrowsePageSize, token).ConfigureAwait(false);
             lock (_gate)
             {
-                if (_disposed || sequence != _sequence || !_owner.IsActionCurrent(_lease)) return;
+                if (_disposed || sequence != _sequence || token.IsCancellationRequested || !_owner.IsActionCurrent(_lease)) return;
                 _pages = append ? _pages + 1 : 1;
                 _nextCursor = page.NextCursor;
                 var capped = page.NextCursor != null && _pages >= MaxPages;
@@ -117,7 +126,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
         }
         catch (Exception error)
         {
-            if (AdminFailures.Classify(error, _lease) is AdminFailureKind.Retired or AdminFailureKind.Cancelled) return;
+            if (token.IsCancellationRequested || AdminFailures.Classify(error, _lease) is AdminFailureKind.Retired or AdminFailureKind.Cancelled) return;
             lock (_gate)
             {
                 if (_disposed || sequence != _sequence) return;
@@ -135,50 +144,81 @@ public sealed class AdminFolderBrowserSession : IDisposable
     /// Browse (or Enter in the path box): an absolute path is resolved with a
     /// one-entry read first, then shown; a failure stays in the dialog as validation.
     /// </summary>
-    public async Task<string?> SubmitDraftAsync(string draft)
+    public Task<string?> SubmitDraftAsync(string draft) => ProbeDraftAsync(draft, submit: true);
+
+    public Task<string?> TryFollowDraftAsync(string draft) => ProbeDraftAsync(draft, submit: false);
+
+    private async Task<string?> ProbeDraftAsync(string draft, bool submit)
     {
         var trimmed = draft.Trim();
-        if (!trimmed.StartsWith(RootPath, StringComparison.Ordinal))
+        long sequence;
+        CancellationToken token;
+        lock (_gate)
         {
-            lock (_gate) _state = _state with { ValidationError = AdminLibrariesText.T("web.admin.common.folderBrowser.absolutePath") };
-            Changed?.Invoke();
-            return null;
+            if (_disposed || !_owner.IsActionCurrent(_lease)) return null;
+            InvalidateProbeLocked();
+            sequence = _probeSequence;
+            if (!trimmed.StartsWith(RootPath, StringComparison.Ordinal))
+            {
+                if (submit) _state = _state with { ValidationError = AdminLibrariesText.T("web.admin.common.folderBrowser.absolutePath") };
+                token = default;
+            }
+            else
+            {
+                if (!submit && trimmed == _state.CurrentPath) return null;
+                _probe = CancellationTokenSource.CreateLinkedTokenSource(_lease.Token);
+                token = _probe.Token;
+            }
         }
+        if (!token.CanBeCanceled) { Changed?.Invoke(); return null; }
         try
         {
-            var probe = await _api.BrowseAsync(_lease, trimmed, null, null, 1, _lease.Token).ConfigureAwait(false);
-            if (!_owner.IsActionCurrent(_lease)) return null;
-            await NavigateAsync(probe.Path).ConfigureAwait(false);
-            return probe.Path;
+            var probe = await _api.BrowseAsync(_lease, trimmed, null, null, 1, token).ConfigureAwait(false);
+            Task navigation;
+            lock (_gate)
+            {
+                if (_disposed || sequence != _probeSequence || token.IsCancellationRequested || !_owner.IsActionCurrent(_lease)) return null;
+                if (!submit && probe.Path == _state.CurrentPath) return null;
+                _state = _state with { CurrentPath = probe.Path, ValidationError = null };
+                navigation = LoadAsync(append: false, sequence);
+            }
+            await navigation.ConfigureAwait(false);
+            lock (_gate) return !_disposed && sequence == _probeSequence && !token.IsCancellationRequested && _owner.IsActionCurrent(_lease) ? probe.Path : null;
         }
         catch (Exception error)
         {
-            if (AdminFailures.Classify(error, _lease) is AdminFailureKind.Retired or AdminFailureKind.Cancelled) return null;
-            lock (_gate) _state = _state with { ValidationError = AdminLibraryPresentation.Describe(error, "web.admin.common.folderBrowser.browseFailed") };
+            lock (_gate)
+            {
+                if (!submit || _disposed || sequence != _probeSequence || token.IsCancellationRequested || !_owner.IsActionCurrent(_lease)) return null;
+                _state = _state with { ValidationError = AdminLibraryPresentation.Describe(error, "web.admin.common.folderBrowser.browseFailed") };
+            }
             Changed?.Invoke();
             return null;
         }
     }
 
-    /// <summary>Live browse while typing (after the view's 200 ms pause): failures are ignored as the user is still typing.</summary>
-    public async Task<string?> TryFollowDraftAsync(string draft)
+    public void DraftChanged()
     {
-        var trimmed = draft.Trim();
-        if (trimmed.Length == 0 || !trimmed.StartsWith(RootPath, StringComparison.Ordinal) || trimmed == State.CurrentPath) return null;
-        try
+        lock (_gate)
         {
-            var probe = await _api.BrowseAsync(_lease, trimmed, null, null, 1, _lease.Token).ConfigureAwait(false);
-            if (!_owner.IsActionCurrent(_lease) || probe.Path == State.CurrentPath) return null;
-            await NavigateAsync(probe.Path).ConfigureAwait(false);
-            return probe.Path;
+            if (_disposed) return;
+            InvalidateProbeLocked();
+            _state = _state with { ValidationError = null };
         }
-        catch (Exception) { return null; }
+        Changed?.Invoke();
     }
 
-    public void ClearValidation()
+    public void ClearValidation() => DraftChanged();
+
+    private void InvalidateProbeLocked()
     {
-        lock (_gate) { if (_state.ValidationError == null) return; _state = _state with { ValidationError = null }; }
-        Changed?.Invoke();
+        _probeSequence++;
+        _probe?.Cancel(); _probe?.Dispose(); _probe = null;
+        if (!_probeNavigating) return;
+        _sequence++;
+        _load?.Cancel(); _load?.Dispose(); _load = null;
+        _probeNavigating = false;
+        _state = _state with { Fetching = false, Loading = false, LoadingMore = false };
     }
 
     public void ToggleSelected(string path)
@@ -202,7 +242,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
 
     public void Dispose()
     {
-        lock (_gate) { if (_disposed) return; _disposed = true; _load?.Cancel(); _load?.Dispose(); _load = null; }
+        lock (_gate) { if (_disposed) return; _disposed = true; InvalidateProbeLocked(); _load?.Cancel(); _load?.Dispose(); _load = null; }
         Changed = null;
     }
 }

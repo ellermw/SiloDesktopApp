@@ -7984,6 +7984,9 @@ public partial class PlayerService : IDisposable
 
     private async Task SendAutoSkipSettingsToOscAsync(CancellationToken ct)
     {
+        // Autoplay belongs to playback, not this cancellable initializer: a
+        // refused replan can retire initialization without another FILE_LOADED.
+        _ = RefreshCreditsAutoPlayPreferenceAsync(_authorityLifetimeCts.Token);
         _ = RefreshMarkerDetailsPreferencesAsync(ct);
         await RefreshSeekPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;

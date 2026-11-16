@@ -72,11 +72,13 @@ public sealed partial class AdminLibrariesApi(SiloApiClient client)
     // ── Create / update / delete ─────────────────────────────────────────
 
     /// <summary><c>POST /api/v2/libraries</c> with only the members <c>LibraryCreate</c> declares.</summary>
-    public Task<AdminLibrary> CreateAsync(MonitorAuthorityLease lease, AdminLibraryWrite body, CancellationToken ct = default)
+    public async Task<AdminLibrary> CreateAsync(MonitorAuthorityLease lease, AdminLibraryWrite body, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(body);
         Validate(body, creating: true);
-        return client.AdminLibrarySendAsync<AdminLibrary>(lease, HttpMethod.Post, "/api/v2/libraries", body.ToCreateBody(), ct);
+        var created = await client.AdminLibrarySendAsync<AdminLibrary>(lease, HttpMethod.Post, "/api/v2/libraries", body.ToCreateBody(), ct).ConfigureAwait(false);
+        if (!AdminLibraryIds.IsId(created.Id)) throw new AdminLibraryIdentityException();
+        return created;
     }
 
     /// <summary><c>PATCH /api/v2/libraries/{id}</c>. Not guarded by a validator on the server; sent once.</summary>

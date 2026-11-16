@@ -223,7 +223,7 @@ public sealed partial class AdminLibrariesPage
             var key = Uri.EscapeDataString(root.RootPath);
             var overrideButton = Action(T("web.admin.libraries.ambiguousRoots.override"), "AmbiguousOverride_" + key, height: card ? 44 : 28);
             if (!card) overrideButton.FontSize = 12;
-            overrideButton.Click += async (_, _) => { if (await Page.ShowRootOverrideAsync(root)) _ = List.ReloadAsync(); };
+            overrideButton.Click += async (_, _) => { if (await Page.ShowRootOverrideAsync(root, UiOwner)) _ = List.ReloadAsync(); };
             actions.Children.Add(overrideButton);
             if (!string.IsNullOrEmpty(root.ContentId))
             {
@@ -231,7 +231,7 @@ public sealed partial class AdminLibrariesPage
                 if (!card) resolve.FontSize = 12;
                 ToolTipService.SetToolTip(resolve, T("web.admin.libraries.ambiguousRoots.resolveTitle"));
                 var contentId = root.ContentId;
-                resolve.Click += (_, _) => Page.OpenItem(contentId);
+                resolve.Click += (_, _) => Page.OpenItem(contentId, UiOwner);
                 actions.Children.Add(resolve);
             }
             return actions;
@@ -243,12 +243,12 @@ public sealed partial class AdminLibrariesPage
     /// the set values; Remove override deletes the active one. Each is one write; the dialog
     /// closes on success and stays (with the server's message) on failure. True after a write.
     /// </summary>
-    private async Task<bool> ShowRootOverrideAsync(AdminLibraryRoot root)
+    private async Task<bool> ShowRootOverrideAsync(AdminLibraryRoot root, LibraryUiOwner owner)
     {
-        var controller = _controller;
-        if (controller == null || _dialog != null) return false;
+        var controller = owner.Controller;
+        if (!owner.IsCurrent || _dialog != null) return false;
         MonitorAuthorityLease lease;
-        try { lease = controller.CaptureAction(); }
+        try { lease = controller.CaptureAction(owner.Lease); }
         catch (OperationCanceledException) { return false; }
         using (lease)
         {
@@ -640,7 +640,7 @@ public sealed partial class AdminLibrariesPage
             if (!card) button.FontSize = 12;
             button.Click += async (_, _) =>
             {
-                if (await Page.ShowMatchAsync(row.ContentId, row.Title, row.Year, row.ContentType, row.LibraryId)) _ = List.ReloadAsync();
+                await Page.ShowMatchAsync(row.ContentId, row.Title, row.Year, row.ContentType, row.LibraryId, UiOwner);
             };
             return button;
         }

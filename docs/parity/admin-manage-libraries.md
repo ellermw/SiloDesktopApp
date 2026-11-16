@@ -1,13 +1,18 @@
 # Admin Manage › Libraries › Libraries
 
-Official reference: Silo-Server/silo-server abd85d0cadac28f4ab7db6821dad9634fc114790 (fetched
-November 15, 2026). The scope audit's pin 7115ee7028c7c9bde9e201fd5f54e87ea70de3a7 is historical:
+Official reference: Silo-Server/silo-server 17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8 (fetched
+November 16, 2026), with Libraries contracts/pages unchanged from abd85d0cadac28f4ab7db6821dad9634fc114790.
+The scope audit's pin 7115ee7028c7c9bde9e201fd5f54e87ea70de3a7 is historical:
 between the two, every Libraries operation and schema in `contracts/api/v2/openapi.json` is
 unchanged; the WebUI changed only accessibility and motion details (`AdminLibraries.tsx` name ids
 and `aria-describedby` for cleanup, reduced-motion sortable hooks; `LibraryFormSections.tsx`
 path-input ids, remove-path `aria-label`, `aria-expanded` on provider levels, move up/down names;
 poster remove `aria-label`; translate select border token). The native page carries those names.
-Desktop base: Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d (1.2.1145-beta.1, version unchanged).
+Tested desktop base: Beta 173c37974894fe5d52a4a4437c356c84e5c897d9
+(1.2.1165-beta.1, version unchanged and pipeline-owned). Remote Beta was subsequently observed at
+7ba72bed148a29e737ec708997d8fedc259f7a0d; its changes since the tested base are stable-release
+version stamps and documentation, not behavioral application changes. No version edits belong
+to this feature's diff. This is a standalone Libraries increment, not all Manage/Configure work.
 
 Route `/admin/libraries` (`AdminRoute.Libraries`), registered through `AddAdminLibraries()`.
 
@@ -105,16 +110,57 @@ compiled ICU catalog, five `web.common.sortable.*` announcements the generated c
 
 ## Verification and limits
 
-Synthetic server, current DPI, dark theme. 68 focused unit cases (wire bodies/paths, validation,
-whole-order preconditions, no-replay writes, presentation, catalog coverage, controller ownership,
-editor transactions, diagnostics bounds, folder browser) pass, and so does the full main suite
-(7,245). Red evidence: removing reorder serialization or the create→update switch makes its test
-fail. Native group `admin-libraries` (168 checks) exercises every workflow above through the
-production registration hook. It drives keyboard reorder with real key messages and captures
-1440×900, 1440×600, 1920×600 and 800×600, plus dialog captures. The foundation, Configure General,
-Subtitle Files and Monitor groups pass on the same bytes. That native run predates the removal of
-four unused English-only text keys, so a final native window on the committed bytes is still owed.
-Not established: live-server interoperability, pointer-drag reorder (implemented, not
-natively driven), poster file picker, applying a match inside the match tool, flyout captures (the
-popup layer renders no pixels in the host; their content is asserted through automation), IME,
-Narrator, RTL, all-DPI, localization beyond English and complete visual parity.
+Synthetic server, current DPI, dark theme. Fresh verification on the reconciled Beta candidate:
+
+- `beta-173c-units-r1`: 7,576 passed, zero failed/skipped, including 108 Libraries/folder-browser
+  cases and `TaskSourceResolutionProbe.SharedOutputResolvesTheExpectedTaskSource`. Unit PDB
+  binding checked 523 test, 486 Core and 15 Player documents. Receipt SHA256:
+  `4B3A752BB3D704496033929A06F3D73B2B462D1A2A3DE58BFEE3C33E7145C497`.
+- `beta-173c-native-r1`: self-contained app build, in-place publish and native host build all
+  exited 0. Its subsequent binding step failed because the helper incorrectly expected separate
+  Core/Player PDBs; the application links those sources into `SiloPlayer.dll`. No native test ran
+  in that attempt. These qualified app build/publish captures were reused, not repeated.
+- `beta-173c-native-r2-binding-correction`: corrected app/host binding passed, then the new
+  snapshot-replacement keyboard regression timed out. The fixture had accepted the still-loaded
+  old grip before the queued render replaced it, then tried to focus that detached control.
+  The sole subsequent source change waits for the actual new rendered snapshot, loaded/enabled
+  replacement grip and real keyboard focus; every existing behavioral assertion remains.
+- `beta-173c-native-r3-current-render`: source-delta admission stopped before any process because
+  Windows PowerShell 5 wrapped the decoded JSON array. Correcting that helper-only defect passed
+  a positive one-fixture delta control and rejected absent/extra product changes before relaunch.
+- `beta-173c-native-r4-current-render`: host-only rebuild and app/host PDB binding exit 0; focused
+  remediation 211, full `admin-libraries` 378, `admin-manage-foundation` 36,
+  `admin-configure-general` 188 and `admin-monitor` 113 PASS lines. Each native stage has exactly
+  one suite-completion marker, no FAIL lines, empty stderr and numeric exit 0. All seven capture
+  receipts match inline/disk and verify empty jobs and retained-member termination signals.
+
+The final continuation reused the qualified 7,576-unit result only after proving the sole source
+delta was the sealed native fixture. All production and unit-test bytes are unchanged. App PDB
+binding checked 1,007 source documents including linked Core/Player; host PDB binding checked
+240. Released readback rehashed all 2,233 source entries and all 666 published app files exactly.
+Independent source review of the complete Beta-to-working diff found no blocking P0/P1/P2 issues.
+
+Actual final lease: `2026-11-16T16:37:47.9426263Z` to `2026-11-16T16:39:59.8164148Z`.
+Final receipt SHA256: `DB4A061FE7043E50AF112175FD11FD7D01BD5FDEC556C8523434DB230F8A6216`.
+Released audit SHA256: `FC6439AB785B9738A169FB7BD918B96489DC8B8D7028E2517668EADF9B21D376`.
+Evidence root: `.codex-tmp/admin-libraries-reliability-20261116T153001Z/`.
+The historical 7,245-unit/168-native evidence remains historical, not this candidate's result.
+Red evidence includes the reliability regressions failing against the prior transport/state
+implementation, plus the earlier reorder-serialization and create-to-update negative controls.
+
+Native checks drive production registration, real keyboard messages, bounded server-folder
+browsing and opening the existing item match tool. Diagnostics refresh uses fixture-triggered
+match completion; actual matching-tool selection/apply remains unverified. Pointer release/cancellation/capture loss and
+same-owner snapshot retirement exercise the reachable production handlers; this does not prove
+a real pointer-device drag. Captures include 1440×900, 1440×600, 1920×600, 800×600 and dialogs;
+wide-table, Metadata-editor and compact-card captures were visually inspected.
+
+Not established: live-server interoperability, real pointer-device drag, poster file picker and
+growth during picker reads, actual matching-tool selection/apply,
+IME, Narrator, RTL, all-DPI, localization beyond English or complete visual parity.
+The installed player/settings were untouched. Global generated output was subsequently measured
+at 10.191 GiB including hidden files, above the owner's 10 GiB bound; the helper's non-Force scan
+had reported 9.905 GiB. Further local builds/native work are held. A native PowerShell attempt
+to reclaim only disposable historical Admin D1 restore caches was policy-denied before execution;
+zero bytes were removed, with no retry or bypass. This storage limit is separate from the passing
+functional verification and is explicitly recorded in the released audit.

@@ -146,7 +146,23 @@ public sealed class AdminLibrariesController : IDisposable
     }
 
     /// <summary>A lease for one confirmation, write or editor session; it dies with the current owner.</summary>
-    public MonitorAuthorityLease CaptureAction() => _lifetime.CaptureAction();
+    public MonitorAuthorityLease CaptureAction(MonitorAuthorityLease? expectedOwner = null)
+    {
+        lock (_gate)
+        {
+            var owner = expectedOwner ?? _state.Owner;
+            if (!IsOwnerCurrent(owner)) throw new MonitorAuthorityRetiredException();
+            var action = _lifetime.CaptureAction();
+            if (IsOwnerCurrent(owner)) return action;
+            action.Dispose();
+            throw new MonitorAuthorityRetiredException();
+        }
+    }
+
+    public bool IsOwnerCurrent(MonitorAuthorityLease? owner)
+    {
+        lock (_gate) return !_disposed && owner != null && ReferenceEquals(owner, _state.Owner) && _lifetime.IsCurrent(owner);
+    }
     public bool IsActionCurrent(MonitorAuthorityLease? action) => !_disposed && _lifetime.IsCurrent(action);
 
     // ── Lifecycle ────────────────────────────────────────────────────────
@@ -457,26 +473,29 @@ public sealed class AdminLibrariesController : IDisposable
     // ── Commands ─────────────────────────────────────────────────────────
 
     /// <summary>Scan the library, or stop its scans while any are queued or running.</summary>
-    public Task ScanOrStopAsync(string libraryId)
+    public Task ScanOrStopAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null)
     {
-        var stop = State.Scans.Any(scan => scan.LibraryId == libraryId);
-        return stop ? CancelScansAsync(libraryId) : StartScanAsync(libraryId);
+        var state = State;
+        expectedOwner ??= state.Owner;
+        if (!IsOwnerCurrent(expectedOwner)) return Task.CompletedTask;
+        var stop = state.Scans.Any(scan => scan.LibraryId == libraryId);
+        return stop ? CancelScansAsync(libraryId, expectedOwner) : StartScanAsync(libraryId, expectedOwner);
     }
 
-    public Task StartScanAsync(string libraryId) => Command(libraryId,
+    public Task StartScanAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null) => Command(libraryId,
         state => state.ScanStarting.Contains(libraryId), (state, on) => state with { ScanStarting = on ? state.ScanStarting.Add(libraryId) : state.ScanStarting.Remove(libraryId) },
         (lease, ct) => _api.StartScanAsync(lease, libraryId, ct),
         done => Announce(AppStringsOr("web.common.scans.fullIngestStarted", "Full ingest started"), false),
-        error => Fail(error, "web.common.scans.scanFailed"));
+        error => Fail(error, "web.common.scans.scanFailed"), expectedOwner);
 
-    public Task CancelScansAsync(string libraryId) => Command(libraryId,
+    public Task CancelScansAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null) => Command(libraryId,
         state => state.ScanCancelling.Contains(libraryId), (state, on) => state with { ScanCancelling = on ? state.ScanCancelling.Add(libraryId) : state.ScanCancelling.Remove(libraryId) },
         (lease, ct) => _api.CancelScansAsync(lease, libraryId, ct),
         done => { Announce(AppStringsOr("web.common.scans.cancelRequested", "Cancellation requested"), false); DiagnosticsStale?.Invoke(); },
-        error => Fail(error, "web.common.scans.cancelFailed"));
+        error => Fail(error, "web.common.scans.cancelFailed"), expectedOwner);
 
     /// <summary>Queues a quick or full metadata refresh; true when the server accepted it (the dialog then closes).</summary>
-    public async Task<bool> RefreshMetadataAsync(string libraryId, string mode)
+    public async Task<bool> RefreshMetadataAsync(string libraryId, string mode, MonitorAuthorityLease? expectedOwner = null)
     {
         var accepted = false;
         await Command(libraryId, state => state.RefreshStarting != null, (state, on) => state with { RefreshStarting = on ? libraryId : null },
@@ -493,11 +512,11 @@ public sealed class AdminLibrariesController : IDisposable
                 if (error is ApiException { StatusCode: 409 }) { Announce(AdminLibraryPresentation.Describe(error, "web.admin.libraries.toast.refreshFailed"), true); _ = RestartJobsAsync(); return; }
                 Fail(error, "web.admin.libraries.toast.refreshFailed");
                 if (AdminLibraryPresentation.IsUnknownOutcome(error)) _ = RestartJobsAsync();
-            }).ConfigureAwait(false);
+            }, expectedOwner).ConfigureAwait(false);
         return accepted;
     }
 
-    public Task CancelJobAsync(string jobId) => Command(jobId, state => state.JobCancelling != null, (state, on) => state with { JobCancelling = on ? jobId : null },
+    public Task CancelJobAsync(string jobId, MonitorAuthorityLease? expectedOwner = null) => Command(jobId, state => state.JobCancelling != null, (state, on) => state with { JobCancelling = on ? jobId : null },
         (lease, ct) => _api.CancelJobAsync(lease, jobId, ct),
         job =>
         {
@@ -509,7 +528,7 @@ public sealed class AdminLibrariesController : IDisposable
                 Update(owner, () => _state = _state with { RefreshJobs = _state.RefreshJobs.Select(existing => existing.Id == job.Id ? Merge(existing, job) : existing).ToArray() });
             _ = RestartJobsAsync();
         },
-        error => { Fail(error, "web.admin.libraries.toast.cancelJobFailed"); _ = RestartJobsAsync(); });
+        error => { Fail(error, "web.admin.libraries.toast.cancelJobFailed"); _ = RestartJobsAsync(); }, expectedOwner);
 
     private static AdminLibraryJob Merge(AdminLibraryJob listed, AdminLibraryJob answer) => new()
     {
@@ -519,7 +538,7 @@ public sealed class AdminLibrariesController : IDisposable
     };
 
     /// <summary>Checks the library's roots; the result shows on the row for five seconds.</summary>
-    public Task CheckMountAsync(string libraryId) => Command(libraryId,
+    public Task CheckMountAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null) => Command(libraryId,
         state => state.MountChecking.Contains(libraryId), (state, on) => state with { MountChecking = on ? state.MountChecking.Add(libraryId) : state.MountChecking.Remove(libraryId) },
         (lease, ct) => _api.CheckMountAsync(lease, libraryId, ct),
         result =>
@@ -543,32 +562,34 @@ public sealed class AdminLibrariesController : IDisposable
             Announce(AdminLibraryPresentation.MountCheckMessage(result), !result.Healthy);
             _ = ReloadAsync();
         },
-        error => Fail(error, "web.admin.libraries.toast.mountCheckFailed"));
+        error => Fail(error, "web.admin.libraries.toast.mountCheckFailed"), expectedOwner);
 
-    public Task ConfirmCleanupAsync(string libraryId) => Command(libraryId,
+    public Task ConfirmCleanupAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null) => Command(libraryId,
         state => state.CleanupPending.Contains(libraryId), (state, on) => state with { CleanupPending = on ? state.CleanupPending.Add(libraryId) : state.CleanupPending.Remove(libraryId) },
         (lease, ct) => _api.ConfirmEmptyRootCleanupAsync(lease, libraryId, ct),
         done => { Announce(AdminLibrariesText.T("web.admin.libraries.toast.cleanupConfirmed"), false); _ = ReloadAsync(); },
-        error => { Fail(error, "web.admin.libraries.toast.cleanupConfirmFailed"); if (AdminLibraryPresentation.IsUnknownOutcome(error)) _ = ReloadAsync(); });
+        error => { Fail(error, "web.admin.libraries.toast.cleanupConfirmFailed"); if (AdminLibraryPresentation.IsUnknownOutcome(error)) _ = ReloadAsync(); }, expectedOwner);
 
     /// <summary>Starts the deletion job. The library stays listed until the server removes it.</summary>
-    public Task DeleteAsync(string libraryId) => Command(libraryId,
+    public Task DeleteAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null) => Command(libraryId,
         state => state.Deleting.Contains(libraryId), (state, on) => state with { Deleting = on ? state.Deleting.Add(libraryId) : state.Deleting.Remove(libraryId) },
         (lease, ct) => _api.DeleteAsync(lease, libraryId, ct),
         done => { Announce(AdminLibrariesText.T("web.admin.libraries.toast.deletionStarted"), false); _ = ReloadAsync(); },
-        error => { Fail(error, "web.admin.libraries.toast.deleteFailed"); if (AdminLibraryPresentation.IsUnknownOutcome(error)) _ = ReloadAsync(); });
+        error => { Fail(error, "web.admin.libraries.toast.deleteFailed"); if (AdminLibraryPresentation.IsUnknownOutcome(error)) _ = ReloadAsync(); }, expectedOwner);
 
-    public Task ScanAllAsync() => Command("scan_libraries", state => state.ScanAllPending, (state, on) => state with { ScanAllPending = on },
+    public Task ScanAllAsync(MonitorAuthorityLease? expectedOwner = null) => Command("scan_libraries", state => state.ScanAllPending, (state, on) => state with { ScanAllPending = on },
         (lease, ct) => _api.ScanAllAsync(lease, ct),
         done => Announce(AdminLibrariesText.T("web.admin.libraries.toast.scanAllStarted"), false),
-        error => Fail(error, "web.admin.libraries.toast.scanFailed"));
+        error => Fail(error, "web.admin.libraries.toast.scanFailed"), expectedOwner);
 
     /// <summary>Moves one library a single place (cards' Move up/down).</summary>
-    public Task MoveAsync(string libraryId, int direction)
+    public Task MoveAsync(string libraryId, int direction, MonitorAuthorityLease? expectedOwner = null)
     {
         var state = State;
+        expectedOwner ??= state.Owner;
+        if (!IsOwnerCurrent(expectedOwner)) return Task.CompletedTask;
         var next = AdminLibraryPresentation.MoveByOne(state.Libraries, library => library.Id, libraryId, direction);
-        return next == null ? Task.CompletedTask : ReorderAsync(next);
+        return next == null ? Task.CompletedTask : ReorderAsync(next, expectedOwner);
     }
 
     /// <summary>
@@ -576,22 +597,23 @@ public sealed class AdminLibrariesController : IDisposable
     /// current read and nothing else is moving or reading; the new order shows at
     /// once and the previous order returns if the server refuses it.
     /// </summary>
-    public async Task ReorderAsync(IReadOnlyList<AdminLibrary> order)
+    public async Task ReorderAsync(IReadOnlyList<AdminLibrary> order, MonitorAuthorityLease? expectedOwner = null)
     {
         MonitorAuthorityLease action;
         AdminCompleteSnapshot<AdminLibrary> snapshot;
         IReadOnlyList<AdminLibrary> previous;
         lock (_gate)
         {
-            if (_disposed || !_state.CanReorder) return;
+            expectedOwner ??= _state.Owner;
+            if (!IsOwnerCurrent(expectedOwner) || !_state.CanReorder) return;
             snapshot = _state.Complete!;
             previous = _state.Libraries;
         }
-        try { action = CaptureAction(); }
+        try { action = CaptureAction(expectedOwner); }
         catch (OperationCanceledException) { return; }
         lock (_gate)
         {
-            if (_disposed || !_state.CanReorder || !ReferenceEquals(_state.Complete, snapshot) || !snapshot.IsCurrentFor(action, AdminLibrariesApi.LibraryScope))
+            if (!IsOwnerCurrent(expectedOwner) || !_state.CanReorder || !ReferenceEquals(_state.Complete, snapshot) || !snapshot.IsCurrentFor(action, AdminLibrariesApi.LibraryScope))
             {
                 action.Dispose();
                 if (!_disposed && _state.Owner != null) Notice?.Invoke(AdminLibrariesText.T("admin.native.libraries.reorderUnavailable"), true);
@@ -629,17 +651,21 @@ public sealed class AdminLibrariesController : IDisposable
     /// command is pending; the pending flag clears only when the request settles.
     /// </summary>
     private async Task Command<T>(string key, Func<AdminLibrariesSnapshot, bool> pending, Func<AdminLibrariesSnapshot, bool, AdminLibrariesSnapshot> mark,
-        Func<MonitorAuthorityLease, CancellationToken, Task<T>> send, Action<T> succeeded, Action<Exception> failed)
+        Func<MonitorAuthorityLease, CancellationToken, Task<T>> send, Action<T> succeeded, Action<Exception> failed, MonitorAuthorityLease? expectedOwner)
     {
         MonitorAuthorityLease action;
-        lock (_gate) { if (_disposed || _state.Owner == null || pending(_state)) return; }
-        try { action = CaptureAction(); }
+        lock (_gate)
+        {
+            expectedOwner ??= _state.Owner;
+            if (!IsOwnerCurrent(expectedOwner) || pending(_state)) return;
+        }
+        try { action = CaptureAction(expectedOwner); }
         catch (OperationCanceledException) { return; }
         using (action)
         {
             lock (_gate)
             {
-                if (_disposed || !_lifetime.IsCurrent(action) || pending(_state)) return;
+                if (!IsOwnerCurrent(expectedOwner) || !_lifetime.IsCurrent(action) || pending(_state)) return;
                 _state = mark(_state, true);
             }
             Changed?.Invoke();

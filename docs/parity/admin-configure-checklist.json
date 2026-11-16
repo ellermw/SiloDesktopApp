@@ -3,7 +3,7 @@
   "officialCommit": "abd85d0cadac28f4ab7db6821dad9634fc114790",
   "statusRule": "Done = verified and pushed to a PR with its link. In progress = implementation/review/testing, not yet pushed. Remaining = unstarted or blocked, with reason. Merged/released are separate.",
   "inventory": "3 topics, 19 leaves, 88 nested feature entries; nested route patterns remain owned by their leaves.",
-  "scopeNote": "General and Email are verified and pushed to PR173 and PR174. Security is verified and pushed to PR175 (Done). Catalog coverage does not establish implementation: the other 16 leaves and their nested functionality remain unstarted.",
+  "scopeNote": "General and Email are merged in Beta and released in v1.2.1145-beta.1. Security PR175 is merged in Beta f90a6238; release inclusion is not yet verified. Network access is in progress pending final-base review and verification. The other 15 leaves and all their nested functionality remain unfinished.",
   "dependencies": [
     "https://github.com/ellermw/SiloDesktopApp/pull/167",
     "https://github.com/ellermw/SiloDesktopApp/pull/171",
@@ -122,8 +122,9 @@
         "Status poll only while page active"
       ],
       "children": [],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Final r14 verified on reconciled Beta3350: source-root proof1, focused952/full7465 zero fail/skip; all8 native groups1602PASS/0FAIL;2206runtime inputs unchanged. Independent final Standards and complete Spec reviews clear; qualifying Beta PR submission ready.",
+      "verificationReceipt": "D:/SiloPlayer-build/server-update-nov14/configure-network-access/network-final-green-beta3350-r14-receipt.json"
     },
     {
       "id": "scheduledTasks",

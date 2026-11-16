@@ -39,9 +39,9 @@ public sealed partial class AdminLibrariesPage
             _unmatched = new AdminUnmatchedPanel(controller);
             _matcher = new AdminMatcherQueuesPanel(controller);
             _ambiguous = new AdminAppendList<AdminLibraryRoot>(controller, (lease, scope, search, cursor, ct) =>
-                scope == null ? Task.FromResult(new AdminTotalCursorPage<AdminLibraryRoot>([], null, 0)) : controller.Api.ListRootsAsync(lease, scope, "ambiguous", search, cursor, ct));
-            _skipped = new AdminAppendList<AdminSkippedRoot>(controller, (lease, _, search, cursor, ct) => controller.Api.ListSkippedRootsAsync(lease, search, cursor, ct));
-            _stale = new AdminAppendList<AdminStaleMediaId>(controller, (lease, _, search, cursor, ct) => controller.Api.ListStaleIdsAsync(lease, search, cursor, ct));
+                scope == null ? Task.FromResult(new AdminTotalCursorPage<AdminLibraryRoot>([], null, 0)) : controller.Api.ListRootsAsync(lease, scope, "ambiguous", search, cursor, ct), root => root.LibraryId + "\n" + root.RootPath);
+            _skipped = new AdminAppendList<AdminSkippedRoot>(controller, (lease, _, search, cursor, ct) => controller.Api.ListSkippedRootsAsync(lease, search, cursor, ct), root => root.LibraryId + "\n" + root.RootPath);
+            _stale = new AdminAppendList<AdminStaleMediaId>(controller, (lease, _, search, cursor, ct) => controller.Api.ListStaleIdsAsync(lease, search, cursor, ct), item => item.ContentId + "\n" + item.Provider);
         }
         catch (OperationCanceledException) { CloseDiagnostics(); return; }
         _unmatchedView = new UnmatchedView(this, _unmatched);
@@ -76,7 +76,13 @@ public sealed partial class AdminLibrariesPage
     private void OnDiagnosticsStale()
     {
         var matcher = _matcher;
-        EnqueueUi(() => { if (matcher != null && ReferenceEquals(matcher, _matcher)) _ = matcher.LoadSummaryAsync(); });
+        EnqueueUi(() => { if (matcher != null && ReferenceEquals(matcher, _matcher)) matcher.InvalidateSummary(); });
+    }
+
+    private Task RefreshMatchDiagnosticsAsync(LibraryUiOwner owner)
+    {
+        if (!owner.IsCurrent) return Task.CompletedTask;
+        return Task.WhenAll(_unmatched?.RefreshAfterMatchAsync() ?? Task.CompletedTask, _stale?.ReloadAsync() ?? Task.CompletedTask);
     }
 
     /// <summary>The library list for the sections that name or pick libraries.</summary>
@@ -87,6 +93,7 @@ public sealed partial class AdminLibrariesPage
     private abstract class SectionView
     {
         protected readonly AdminLibrariesPage Page;
+        protected readonly LibraryUiOwner UiOwner;
         internal DiagnosticsSection Section { get; }
         private readonly Action _changed;
         private readonly AdminLibraryPanel _panel;
@@ -94,7 +101,7 @@ public sealed partial class AdminLibrariesPage
 
         protected SectionView(AdminLibrariesPage page, AdminLibraryPanel panel, string key, string title, string description)
         {
-            Page = page; _panel = panel;
+            Page = page; _panel = panel; UiOwner = page.RenderOwner(page._controller!.State);
             Section = new DiagnosticsSection(key, title, description);
             Section.Background = Tint("SurfaceBrush", 0.55);
             Section.CornerRadius = new(16);
@@ -275,6 +282,7 @@ public sealed partial class AdminLibrariesPage
     private sealed class UnmatchedView : SectionView
     {
         private readonly AdminUnmatchedPanel _panel;
+        private readonly StackPanel _totals = new() { Spacing = 8 };
         private readonly StackPanel _body = new() { Spacing = 8 };
         private readonly ComboBox _view;
         private readonly TextBox _search;
@@ -299,6 +307,7 @@ public sealed partial class AdminLibrariesPage
             _view.SelectionChanged += (_, _) => { if (!_syncing) _ = _panel.SetViewAsync(_view.SelectedIndex == 1); };
             _search = SearchBox(T("web.admin.libraries.unmatched.searchAwaiting"), "UnmatchedSearch", text => _ = _panel.SetSearchAsync(text));
             _searchHost = WithSearchIcon(_search);
+            _body.Children.Add(_totals);
             _body.Children.Add(_controls);
             _body.Children.Add(_rows);
             _body.Children.Add(_footer);
@@ -311,7 +320,15 @@ public sealed partial class AdminLibrariesPage
             var state = _panel.State;
             Section.Visibility = state.Hidden ? Visibility.Collapsed : Visibility.Visible;
             Section.SetOpen(state.Open);
-            Section.SetCount(state.AwaitingTotal);
+            Section.SetCount(state.AwaitingTotal, error: state.TotalsError != null);
+            _totals.Children.Clear();
+            if (state.TotalsError is { } totalsError)
+            {
+                _totals.Children.Add(Text(totalsError, 12));
+                var retry = RetryButton("UnmatchedTotalsRetry", () => _ = _panel.LoadTotalsAsync());
+                retry.IsEnabled = !state.TotalsLoading;
+                _totals.Children.Add(retry);
+            }
             if (!state.Open) return;
             _syncing = true;
             try { if (_view.SelectedIndex != (state.Ignored ? 1 : 0)) _view.SelectedIndex = state.Ignored ? 1 : 0; }
@@ -391,7 +408,7 @@ public sealed partial class AdminLibrariesPage
             var link = new HyperlinkButton { Content = Strong(item.Title), Padding = new(0), MinHeight = 0 };
             AutomationProperties.SetName(link, item.Title);
             AutomationProperties.SetAutomationId(link, "UnmatchedItem_" + item.ContentId);
-            link.Click += (_, _) => Page.OpenItem(item.ContentId);
+            link.Click += (_, _) => Page.OpenItem(item.ContentId, UiOwner);
             row.Children.Add(link);
             if (item.Year > 0) row.Children.Add(Text(T("web.admin.libraries.unmatched.year", ("year", item.Year)), 12, true));
             return row;
@@ -404,7 +421,7 @@ public sealed partial class AdminLibrariesPage
             if (card) { match.Height = match.MinHeight = 44; match.MinWidth = 120; } else { match.Height = match.MinHeight = 28; match.FontSize = 12; }
             match.Click += async (_, _) =>
             {
-                if (await Page.ShowMatchAsync(item.ContentId, item.Title, item.Year, item.ContentType, item.LibraryId)) _ = _panel.ReloadAsync();
+                await Page.ShowMatchAsync(item.ContentId, item.Title, item.Year, item.ContentType, item.LibraryId, UiOwner);
             };
             actions.Children.Add(match);
             if (state.Ignored || P.CanIgnore(item))

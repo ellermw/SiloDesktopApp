@@ -15,7 +15,7 @@ namespace SiloPlayer.Tests;
 /// row commands with truthful pending/unknown outcomes, the editor's create/update/chain
 /// transaction, the diagnostics panels' bounded paging and retirement. Synthetic server only.
 /// </summary>
-public sealed class AdminLibrariesControllerTests
+public sealed partial class AdminLibrariesControllerTests
 {
     private sealed class Channel : IAdminRealtimeChannel
     {
@@ -474,9 +474,12 @@ public sealed class AdminLibrariesControllerTests
             var before = kit.Http.Requests.Count;
             await panel.LastAsync();
             Assert.True(panel.State.WalkCapped);
-            // The walk starts from the furthest known cursor (page 3) and stops after MaxWalk requests.
-            Assert.Equal(2 + AdminUnmatchedPanel.MaxWalk, panel.State.PageIndex);
-            Assert.True(kit.Http.Requests.Count - before <= AdminUnmatchedPanel.MaxWalk + 1);
+            // The initial read counts within the total request budget, starting at known page 3.
+            Assert.Equal(AdminUnmatchedPanel.MaxWalk, kit.Http.Requests.Count - before);
+            Assert.Equal(1 + AdminUnmatchedPanel.MaxWalk, panel.State.PageIndex);
+            Assert.Equal("GET /api/v2/libraries/unmatched-items?limit=10&cursor=p2", kit.Http.Requests.Skip(before).First());
+            Assert.Equal("GET /api/v2/libraries/unmatched-items?limit=10&cursor=p26", kit.Http.Requests.Last());
+            Assert.DoesNotContain(kit.Http.Requests.Skip(before), request => request.Contains("cursor=p27", StringComparison.Ordinal));
             await panel.FirstAsync();
             Assert.Equal(0, panel.State.PageIndex);
             Assert.Equal(10, panel.State.Items.Count);
@@ -525,7 +528,7 @@ public sealed class AdminLibrariesControllerTests
                 var items = string.Join(',', Enumerable.Range(page * 50, 50).Select(i => "{\"content_id\":\"c" + i + "\",\"content_type\":\"movie\",\"library_id\":\"1\",\"library_name\":\"M\",\"provider\":\"tmdb\",\"provider_id\":\"" + i + "\",\"title\":\"T\",\"year\":1,\"first_seen_at\":\"2026-11-15T10:00:00Z\",\"last_seen_at\":\"2026-11-15T10:00:00Z\"}"));
                 return AdminMonitorKit.Json("{\"items\":[" + items + "],\"page\":{\"has_more\":true,\"next_cursor\":\"s" + (page + 1) + "\"},\"total\":5000}");
             };
-            using var list = new AdminAppendList<AdminStaleMediaId>(controller, (lease, _, search, cursor, ct) => controller.Api.ListStaleIdsAsync(lease, search, cursor, ct));
+            using var list = new AdminAppendList<AdminStaleMediaId>(controller, (lease, _, search, cursor, ct) => controller.Api.ListStaleIdsAsync(lease, search, cursor, ct), item => item.ContentId + "\n" + item.Provider);
             Assert.Empty(kit.Http.Requests.Where(request => request.Contains("stale-ids")));
             await list.SetOpenAsync(true);
             Assert.Equal(50, list.State.Items.Count);

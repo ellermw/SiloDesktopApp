@@ -87,4 +87,121 @@ public sealed class AdminConfigureNavigationTests
         Assert.True(registry.CanOpen(resolution.Request));
         Assert.Equal(AdminRoute.EmailSettings, Assert.Single(Assert.Single(AdminNavigation.SearchGroups(query, registry.IsRegistered)).Pages).Route);
     }
+
+    [Theory]
+    [InlineData("tailscale")]
+    [InlineData("overlay")]
+    [InlineData("port forwarding")]
+    public void NetworkAccessIsAServerLeafSearchableOnlyWhenRegistered(string query)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/settings/network-access", out var resolution));
+        Assert.Equal(AdminRoute.NetworkAccessSettings, resolution.Request!.Route);
+        Assert.Equal("/admin/settings/network-access", resolution.CanonicalHref);
+        var topic = AdminRouteCatalog.Sections.Single(section => section.Id == "configure").Entries.Cast<AdminNavTopic>()
+            .Single(entry => entry.Leaves.Any(leaf => leaf.Route == AdminRoute.NetworkAccessSettings));
+        Assert.Equal("server", topic.Id);
+        Assert.Equal(["GeneralSettings", "AppearanceSettings", "StorageSettings", "SearchSettings", "NetworkAccessSettings"],
+            topic.Leaves.Take(5).Select(leaf => leaf.Route.ToString()));
+        Assert.Equal("Network Access", AdminText.T(topic.Leaves.Single(leaf => leaf.Route == AdminRoute.NetworkAccessSettings).SidebarLabelKey));
+        Assert.False(new AdminPageRegistry([]).CanOpen(resolution.Request));
+        Assert.Empty(AdminNavigation.SearchGroups(query, new AdminPageRegistry([]).IsRegistered));
+        var registry = new AdminPageRegistry([new(AdminRoute.NetworkAccessSettings, typeof(object))]);
+        Assert.True(registry.CanOpen(resolution.Request));
+        Assert.Equal(AdminRoute.NetworkAccessSettings, Assert.Single(Assert.Single(AdminNavigation.SearchGroups(query, registry.IsRegistered)).Pages).Route);
+    }
+
+    [Fact]
+    public void ProductionConfigureRegistrationIncludesTheFinishedNetworkAccessPage()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "AdminConfigureServices.cs"));
+        Assert.Contains("new AdminPageRegistration(AdminRoute.NetworkAccessSettings, typeof(AdminNetworkAccessSettingsPage))", source);
+        Assert.Contains("AddSingleton<AdminNetworkAccessApi>", source);
+        Assert.True(File.Exists(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminNetworkAccessSettingsPage.cs")));
+        var installer = File.ReadAllText(Path.Combine(TestRepository.Root, "installer", "build.ps1"));
+        Assert.Contains("'Views/Admin/AdminNetworkAccessSettingsPage.xbf'", installer);
+    }
+
+    [Fact]
+    public void NetworkAccessCatalogCarriesEveryOfficialPageMessage()
+    {
+        foreach (var key in new[]
+        {
+            "web.admin.settings.network.page.title", "web.admin.settings.network.page.intro", "web.admin.settings.network.page.noProvidersTitle",
+            "web.admin.settings.network.page.noProvidersBody", "web.admin.settings.network.page.providersFailed", "web.admin.settings.network.provider.description",
+            "web.admin.settings.network.provider.noHosts", "web.admin.settings.network.provider.statusFailed", "web.admin.settings.network.host.apiServer",
+            "web.admin.settings.network.host.proxyNode", "web.admin.settings.network.host.namedRole", "web.admin.settings.network.host.reachAt",
+            "web.admin.settings.network.host.reachAtWithHostname", "web.admin.settings.network.host.authorize", "web.admin.settings.network.host.lastHeard",
+            "web.admin.settings.network.host.connect", "web.admin.settings.network.host.disconnect", "web.admin.settings.network.host.startPluginFirst",
+            "web.admin.settings.network.state.disconnected", "web.admin.settings.network.state.awaitingAuthorization", "web.admin.settings.network.state.connecting",
+            "web.admin.settings.network.state.connected", "web.admin.settings.network.state.error", "web.admin.settings.network.state.unavailable",
+            "web.admin.settings.hooks.networkAccess.connectFailed", "web.admin.settings.hooks.networkAccess.disconnectFailed",
+        })
+            Assert.True(AdminText.Has(key), key);
+        Assert.Equal("Network Access", AdminText.T("web.admin.settings.network.page.title"));
+        Assert.Equal("Waiting for authorization", AdminText.T("web.admin.settings.network.state.awaitingAuthorization"));
+        Assert.Equal("Plugin not running", AdminText.T("web.admin.settings.network.state.unavailable"));
+        Assert.Equal("Living Room · API server", AdminText.T("web.admin.settings.network.host.namedRole", new { name = "Living Room", role = "API server" }));
+        Assert.Equal("Access Silo through your Tailscale network without port forwarding.",
+            AdminText.T("web.admin.settings.network.provider.description", new { name = "Tailscale" }));
+        Assert.Equal("Last heard from 1/2/2026", AdminText.T("web.admin.settings.network.host.lastHeard", new { time = "1/2/2026" }));
+    }
+
+    [Fact]
+    public void RichCatalogLinksSplitBeforeUntrustedValuesAreInserted()
+    {
+        var runs = AdminNetworkAccessText.Rich("web.admin.settings.network.host.reachAtWithHostname",
+            new { origin = "https://x.example.test/<link>spoof</link>", hostname = "x<muted>" });
+        Assert.Equal([("", "Clients reach this host at "), ("link", "https://x.example.test/<link>spoof</link>"), ("", " (x<muted>)")],
+            runs.Select(run => (run.Tag, run.Text)));
+        Assert.Equal([("link", "Open the authorization page"), ("muted", " to finish enrolling this host.")],
+            AdminNetworkAccessText.Rich("web.admin.settings.network.host.authorize").Select(run => (run.Tag, run.Text)));
+    }
+
+    [Theory]
+    [InlineData("bandwidth")]
+    [InlineData("disk ceiling")]
+    [InlineData("prepared file directory")]
+    public void DownloadSettingsIsADownloadsTopicLeafSearchableOnlyWhenRegistered(string query)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/settings/downloads", out var resolution));
+        Assert.Equal(AdminRoute.DownloadSettings, resolution.Request!.Route);
+        var topic = AdminRouteCatalog.Sections.Single(section => section.Id == "manage").Entries.Cast<AdminNavTopic>()
+            .Single(entry => entry.Leaves.Any(leaf => leaf.Route == AdminRoute.DownloadSettings));
+        Assert.Equal("downloads", topic.Id);
+        Assert.False(new AdminPageRegistry([]).CanOpen(resolution.Request));
+        Assert.Empty(AdminNavigation.SearchGroups(query, new AdminPageRegistry([]).IsRegistered));
+        var registry = new AdminPageRegistry([new(AdminRoute.DownloadSettings, typeof(object))]);
+        Assert.True(registry.CanOpen(resolution.Request));
+        Assert.Equal(AdminRoute.DownloadSettings, Assert.Single(Assert.Single(AdminNavigation.SearchGroups(query, registry.IsRegistered)).Pages).Route);
+    }
+
+    [Fact]
+    public void EveryDownloadSettingsLabelResolvesToCatalogTextNotAKey()
+    {
+        var keys = new[]
+        {
+            "web.admin.settings.downloads.title", "web.admin.settings.downloads.group", "web.admin.settings.downloads.loadError", "web.admin.settings.downloads.storageLink",
+            "web.admin.settings.downloads.enabled.label", "web.admin.settings.downloads.enabled.description",
+            "web.admin.settings.downloads.transcode.label", "web.admin.settings.downloads.transcode.description",
+            "web.admin.settings.downloads.prepares.label", "web.admin.settings.downloads.prepares.description",
+            "web.admin.settings.downloads.artifactDir.label", "web.admin.settings.downloads.artifactDir.description",
+            "web.admin.settings.downloads.budget.label", "web.admin.settings.downloads.budget.hint",
+            "web.admin.settings.downloads.diskCeiling.label", "web.admin.settings.downloads.diskCeiling.description",
+            "web.admin.settings.downloads.serverBandwidth.label", "web.admin.settings.downloads.serverBandwidth.hint",
+            "web.admin.settings.downloads.perUser.heading", "web.admin.settings.downloads.perUser.bandwidth.label",
+            "web.admin.settings.downloads.perUser.concurrent.label", "web.admin.settings.downloads.perUser.concurrent.hint",
+            "web.admin.settings.downloads.perUser.perPeriod.label", "web.admin.settings.downloads.perUser.perPeriod.hint",
+            "web.admin.settings.downloads.perUser.period.label", "web.admin.settings.downloads.perUser.period.description",
+            "web.admin.settings.downloads.server.heading", "web.admin.settings.downloads.server.localFallback.label", "web.admin.settings.downloads.server.localFallback.description",
+            "web.admin.settings.downloads.server.cacheHours.label", "web.admin.settings.downloads.server.cacheHours.description",
+            "web.admin.common.units.gigabytes", "web.admin.common.units.megabitsPerSecond", "web.settings.limitField.unlimited",
+            "web.settings.pathSettingField.reset", "web.settings.advancedSection.title",
+        };
+        Assert.All(keys, key => Assert.NotEqual(key, AdminText.T(key)));
+        Assert.Equal("Reset Prepared file directory to default", AdminText.T("web.settings.pathSettingField.resetLabel", new { label = "Prepared file directory" }));
+        Assert.Equal("Advanced · 6 settings", AdminText.T("web.settings.advancedSection.accessibleLabel", new Dictionary<string, object?> { ["title"] = "Advanced", ["count"] = 6L, ["count_text"] = "6" }));
+        Assert.Equal("Advanced · 1 setting", AdminText.T("web.settings.advancedSection.accessibleLabel", new Dictionary<string, object?> { ["title"] = "Advanced", ["count"] = 1L, ["count_text"] = "1" }));
+        Assert.Equal("Leave blank for a silo-download-artifacts folder beside this server's transcode directory. Transcode nodes use download-artifacts inside their own transcode directory unless a node has its own directory.",
+            AdminText.T("web.admin.settings.downloads.artifactDir.description"));
+    }
 }

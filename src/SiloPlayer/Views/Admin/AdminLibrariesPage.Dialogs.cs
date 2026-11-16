@@ -58,11 +58,11 @@ public sealed partial class AdminLibrariesPage
     }
 
     /// <summary>A two-button confirmation; Escape and light dismissal never confirm.</summary>
-    private async Task<bool> ConfirmAsync(string title, string description, string confirmLabel, string automationId)
+    private async Task<bool> ConfirmAsync(LibraryUiOwner owner, string title, string description, string confirmLabel, string automationId)
     {
-        if (_controller == null) return false;
+        if (!owner.IsCurrent) return false;
         MonitorAuthorityLease lease;
-        try { lease = _controller.CaptureAction(); }
+        try { lease = owner.Controller.CaptureAction(owner.Lease); }
         catch (OperationCanceledException) { return false; }
         using (lease)
         {
@@ -76,36 +76,36 @@ public sealed partial class AdminLibrariesPage
             content.Children.Add(actions);
             var dialog = NewDialog(title, content);
             cancel.Click += (_, _) => dialog.Hide();
-            confirm.Click += (_, _) => { confirmed = true; dialog.Hide(); };
+            confirm.Click += (_, _) => { if (!owner.IsCurrent || !lease.IsCurrent) return; confirmed = true; dialog.Hide(); };
             if (!await ShowOwnedAsync(dialog, lease, cancel)) return false;
-            return confirmed && lease.IsCurrent && _controller != null && _controller.IsActionCurrent(lease);
+            return confirmed && lease.IsCurrent && owner.IsCurrent && owner.Controller.IsActionCurrent(lease);
         }
     }
 
-    private async Task ConfirmDeleteAsync(AdminLibrary library)
+    private async Task ConfirmDeleteAsync(AdminLibrary library, LibraryUiOwner owner)
     {
-        if (await ConfirmAsync(T("web.admin.libraries.deleteDialog.title"), T("web.admin.libraries.deleteDialog.description", ("name", library.Name)),
-                T("web.admin.libraries.deleteDialog.confirm"), "LibrariesDelete") && _controller != null)
-            await _controller.DeleteAsync(library.Id);
+        if (await ConfirmAsync(owner, T("web.admin.libraries.deleteDialog.title"), T("web.admin.libraries.deleteDialog.description", ("name", library.Name)),
+                T("web.admin.libraries.deleteDialog.confirm"), "LibrariesDelete") && owner.IsCurrent)
+            await owner.Controller.DeleteAsync(library.Id, owner.Lease);
     }
 
-    private async Task ConfirmCleanupAsync(AdminLibrary library)
+    private async Task ConfirmCleanupAsync(AdminLibrary library, LibraryUiOwner owner)
     {
-        if (await ConfirmAsync(T("web.admin.libraries.emptyRootDialog.title"), T("web.admin.libraries.emptyRootDialog.description", ("name", library.Name)),
-                T("web.admin.libraries.emptyRootDialog.confirm"), "LibrariesCleanup") && _controller != null)
-            await _controller.ConfirmCleanupAsync(library.Id);
+        if (await ConfirmAsync(owner, T("web.admin.libraries.emptyRootDialog.title"), T("web.admin.libraries.emptyRootDialog.description", ("name", library.Name)),
+                T("web.admin.libraries.emptyRootDialog.confirm"), "LibrariesCleanup") && owner.IsCurrent)
+            await owner.Controller.ConfirmCleanupAsync(library.Id, owner.Lease);
     }
 
     /// <summary>
     /// Quick (missing only) or full metadata refresh. The dialog stays up until the queued
     /// request settles; its options and Cancel are disabled meanwhile.
     /// </summary>
-    private async Task ShowRefreshDialogAsync(AdminLibrary library)
+    private async Task ShowRefreshDialogAsync(AdminLibrary library, LibraryUiOwner owner)
     {
-        var controller = _controller;
-        if (controller == null) return;
+        var controller = owner.Controller;
+        if (!owner.IsCurrent) return;
         MonitorAuthorityLease lease;
-        try { lease = controller.CaptureAction(); }
+        try { lease = controller.CaptureAction(owner.Lease); }
         catch (OperationCanceledException) { return; }
         using (lease)
         {
@@ -135,10 +135,11 @@ public sealed partial class AdminLibrariesPage
                 AutomationProperties.SetAutomationId(button, "LibrariesRefresh" + (mode == "full" ? "All" : "Missing"));
                 button.Click += async (_, _) =>
                 {
+                    if (!owner.IsCurrent || !lease.IsCurrent) return;
                     foreach (var option in options) option.IsEnabled = false;
                     glyph.Content = Spinning("loader", 20, Brush("SecondaryTextBrush"));
                     cancelButton!.IsEnabled = false;
-                    var accepted = await controller.RefreshMetadataAsync(library.Id, mode);
+                    var accepted = await controller.RefreshMetadataAsync(library.Id, mode, owner.Lease);
                     _ = accepted;
                     // WebUI onSettled: the dialog closes once the request settles, whatever the outcome.
                     dialog?.Hide();
@@ -165,12 +166,12 @@ public sealed partial class AdminLibrariesPage
     /// action lease of this page: it closes and drops candidates when that authority retires.
     /// Returns whether a match was applied.
     /// </summary>
-    private async Task<bool> ShowMatchAsync(string contentId, string title, int year, string contentType, string libraryId)
+    private async Task<bool> ShowMatchAsync(string contentId, string title, int year, string contentType, string libraryId, LibraryUiOwner owner)
     {
-        var controller = _controller;
-        if (controller == null || _dialog != null) return false;
+        var controller = owner.Controller;
+        if (!owner.IsCurrent || _dialog != null) return false;
         MonitorAuthorityLease lease;
-        try { lease = controller.CaptureAction(); }
+        try { lease = controller.CaptureAction(owner.Lease); }
         catch (OperationCanceledException) { return false; }
         using (lease)
         {
@@ -178,7 +179,9 @@ public sealed partial class AdminLibrariesPage
             var dialog = new MatchItemDialog(contentId, title, year > 0 ? year : null, contentType, library, null, null) { XamlRoot = XamlRoot };
             dialog.BindNavigation(lease.Token);
             if (!await ShowOwnedAsync(dialog, lease)) return false;
-            return dialog.HasAppliedMatch && controller.IsActionCurrent(lease);
+            if (!dialog.HasAppliedMatch || !owner.IsCurrent || !controller.IsActionCurrent(lease)) return false;
+            await RefreshMatchDiagnosticsAsync(owner);
+            return true;
         }
     }
 }

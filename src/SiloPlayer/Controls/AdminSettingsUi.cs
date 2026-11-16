@@ -461,6 +461,7 @@ internal sealed class AdminSettingsLabel : Panel
 internal sealed class AdminSettingsGroup : Grid
 {
     private readonly StackPanel _heading = new() { Spacing = 6 };
+    private readonly TextBlock _title;
     private readonly TextBlock _description;
     private readonly Border _dirty = new() { Width = 6, Height = 6, CornerRadius = new(3), Background = AdminSettingsUi.Accent, Visibility = Visibility.Collapsed };
     internal StackPanel Fields { get; } = new();
@@ -476,9 +477,9 @@ internal sealed class AdminSettingsGroup : Grid
         var titleRow = new Grid { ColumnSpacing = 8 };
         titleRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         titleRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var label = AdminSettingsUi.Text(title, 15); label.FontWeight = FontWeights.SemiBold; label.CharacterSpacing = -25;
-        AutomationProperties.SetHeadingLevel(label, AutomationHeadingLevel.Level2);
-        titleRow.Children.Add(label); Grid.SetColumn(_dirty, 1); titleRow.Children.Add(_dirty);
+        _title = AdminSettingsUi.Text(title, 15); _title.FontWeight = FontWeights.SemiBold; _title.CharacterSpacing = -25;
+        AutomationProperties.SetHeadingLevel(_title, AutomationHeadingLevel.Level2);
+        titleRow.Children.Add(_title); Grid.SetColumn(_dirty, 1); titleRow.Children.Add(_dirty);
         AutomationProperties.SetName(_dirty, AdminText.T("web.admin.settings.fields.groupUnsavedChanges"));
         ToolTipService.SetToolTip(_dirty, AdminText.T("web.admin.settings.fields.groupUnsavedChanges"));
         _heading.Children.Add(titleRow);
@@ -505,6 +506,12 @@ internal sealed class AdminSettingsGroup : Grid
             if (visible[index] is Grid grid) grid.BorderThickness = line;
             else if (visible[index] is Border border) border.BorderThickness = line;
         }
+    }
+
+    internal void SetTitle(string title)
+    {
+        _title.Text = title;
+        AutomationProperties.SetName(this, title);
     }
 
     internal void State(bool dirty, string description)

@@ -64,6 +64,9 @@ public sealed class AdminAppendList<T> : AdminLibraryPanel
     public const int LocalPageSize = 10;
 
     private readonly Func<MonitorAuthorityLease, string?, string, string?, CancellationToken, Task<AdminTotalCursorPage<T>>> _fetch;
+    private readonly Func<T, string?> _identity;
+    private readonly HashSet<string> _identities = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _continuations = new(StringComparer.Ordinal);
     private AdminAppendListState<T> _state = new();
     private string? _next;
     private int _pages;
@@ -71,10 +74,11 @@ public sealed class AdminAppendList<T> : AdminLibraryPanel
     private CancellationTokenSource? _load;
 
     /// <param name="fetch">(lease, scope, search, cursor, token) → one validated page.</param>
-    public AdminAppendList(AdminLibrariesController owner, Func<MonitorAuthorityLease, string?, string, string?, CancellationToken, Task<AdminTotalCursorPage<T>>> fetch, string? scope = null)
+    public AdminAppendList(AdminLibrariesController owner, Func<MonitorAuthorityLease, string?, string, string?, CancellationToken, Task<AdminTotalCursorPage<T>>> fetch, Func<T, string?> identity, string? scope = null)
         : base(owner)
     {
         _fetch = fetch;
+        _identity = identity;
         _state = _state with { Scope = scope };
     }
 
@@ -154,6 +158,7 @@ public sealed class AdminAppendList<T> : AdminLibraryPanel
         _sequence++;
         _load?.Cancel(); _load?.Dispose(); _load = null;
         _next = null; _pages = 0;
+        _identities.Clear(); _continuations.Clear();
         _state = _state with { Items = [], Total = null, HasMore = false, Capped = false, Loading = false, LoadingMore = false, Error = null, LoadFailed = false, PageIndex = 0 };
     }
 
@@ -183,6 +188,19 @@ public sealed class AdminAppendList<T> : AdminLibraryPanel
             lock (Gate)
             {
                 if (Disposed || sequence != _sequence || !Owner.IsActionCurrent(Lease)) return;
+                var identities = append ? new HashSet<string>(_identities, StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+                foreach (var item in page.Items)
+                {
+                    var identity = item == null ? null : _identity(item);
+                    if (string.IsNullOrEmpty(identity)) throw new AdminListInconsistentException(AdminListProblem.MissingIdentity);
+                    if (!identities.Add(identity)) throw new AdminListInconsistentException(AdminListProblem.DuplicateIdentity);
+                }
+                if (page.NextCursor is { } next && (string.Equals(cursor, next, StringComparison.Ordinal) || append && _continuations.Contains(next)))
+                    throw new AdminListInconsistentException(AdminListProblem.RepeatedContinuation);
+                _identities.Clear();
+                _identities.UnionWith(identities);
+                if (!append) _continuations.Clear();
+                if (page.NextCursor is { } continuation) _continuations.Add(continuation);
                 _pages = append ? _pages + 1 : 1;
                 _next = page.NextCursor;
                 var capped = page.HasMore && _pages >= MaxPages;
@@ -221,6 +239,8 @@ public sealed record AdminUnmatchedState
     public string Search { get; init; } = "";
     public long? AwaitingTotal { get; init; }
     public long? IgnoredTotal { get; init; }
+    public bool TotalsLoading { get; init; }
+    public string? TotalsError { get; init; }
     public bool Loading { get; init; }
     public string? Error { get; init; }
     public IReadOnlyList<AdminUnmatchedItem> Items { get; init; } = [];
@@ -238,7 +258,7 @@ public sealed record AdminUnmatchedState
     public long RangeStart => Total == 0 ? 0 : PageIndex * (long)AdminLibrariesApi.UnmatchedPageSize + 1;
     public long RangeEnd => Math.Min((PageIndex + 1L) * AdminLibrariesApi.UnmatchedPageSize, Total);
     /// <summary>Hidden while closed and nothing is unmatched or ignored (WebUI).</summary>
-    public bool Hidden => !Open && (AwaitingTotal ?? 0) == 0 && (IgnoredTotal ?? 0) == 0 && Search.Trim().Length == 0;
+    public bool Hidden => !Open && TotalsError == null && AwaitingTotal is 0 && IgnoredTotal is 0 && Search.Trim().Length == 0;
 }
 
 public sealed record AdminUnmatchedChange(string ContentId, string Title, bool Ignored, bool Undone);
@@ -270,23 +290,33 @@ public sealed class AdminUnmatchedPanel : AdminLibraryPanel
     public async Task LoadTotalsAsync()
     {
         long sequence;
-        lock (Gate) { if (Disposed) return; sequence = ++_totalsSequence; }
-        try
+        lock (Gate)
         {
-            var awaiting = Owner.Api.ListUnmatchedAsync(Lease, null, false, null, Lease.Token);
-            var ignored = Owner.Api.ListUnmatchedAsync(Lease, null, true, null, Lease.Token);
-            await Task.WhenAll(awaiting, ignored).ConfigureAwait(false);
-            lock (Gate)
+            if (!Current) return;
+            sequence = ++_totalsSequence;
+            _state = _state with { TotalsLoading = true, TotalsError = null };
+        }
+        RaiseChanged();
+        var totals = await Task.WhenAll(ReadTotalAsync(false), ReadTotalAsync(true)).ConfigureAwait(false);
+        lock (Gate)
+        {
+            if (!Current || sequence != _totalsSequence) return;
+            var error = totals.Select(total => total.Error).FirstOrDefault(failure => failure != null);
+            _state = _state with
             {
-                if (Disposed || sequence != _totalsSequence || !Current) return;
-                _state = _state with { AwaitingTotal = awaiting.Result.Total, IgnoredTotal = ignored.Result.Total };
-            }
-            RaiseChanged();
+                AwaitingTotal = totals[0].Total ?? _state.AwaitingTotal,
+                IgnoredTotal = totals[1].Total ?? _state.IgnoredTotal,
+                TotalsLoading = false,
+                TotalsError = error == null ? null : AdminLibraryPresentation.Describe(error, "admin.native.libraries.transport"),
+            };
         }
-        catch (Exception)
-        {
-            // An unknown count is shown as "—", never as zero.
-        }
+        RaiseChanged();
+    }
+
+    private async Task<(long? Total, Exception? Error)> ReadTotalAsync(bool ignored)
+    {
+        try { return ((await Owner.Api.ListUnmatchedAsync(Lease, null, ignored, null, Lease.Token).ConfigureAwait(false)).Total, null); }
+        catch (Exception error) { return (null, error); }
     }
 
     public Task SetOpenAsync(bool open)
@@ -344,6 +374,19 @@ public sealed class AdminUnmatchedPanel : AdminLibraryPanel
     public Task LastAsync() => ShowAsync(State.TotalPages - 1);
     public Task ReloadAsync() => ShowAsync(State.PageIndex);
 
+    public async Task RefreshAfterMatchAsync()
+    {
+        bool open;
+        lock (Gate)
+        {
+            if (!Current) return;
+            RestartLocked();
+            open = _state.Open;
+        }
+        RaiseChanged();
+        await Task.WhenAll(LoadTotalsAsync(), open ? ShowAsync(0) : Task.CompletedTask).ConfigureAwait(false);
+    }
+
     /// <summary>Shows page <paramref name="index"/>: a visited page is one request; a later page walks forward within <see cref="MaxWalk"/>.</summary>
     public async Task ShowAsync(int index)
     {
@@ -369,7 +412,7 @@ public sealed class AdminUnmatchedPanel : AdminLibraryPanel
             string? cursor;
             lock (Gate) { reached = Math.Min(index, _cursors.Count - 1); cursor = _cursors[reached]; }
             var page = await Owner.Api.ListUnmatchedAsync(Lease, search, ignored, cursor, token).ConfigureAwait(false);
-            var steps = 0;
+            var steps = 1;
             while (reached < index && page.NextCursor != null && steps < MaxWalk)
             {
                 lock (Gate)
@@ -502,24 +545,53 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
 
     private AdminMatcherState _state = new();
     private readonly List<string?> _cursors = [null];
-    private long _summarySequence, _detailSequence;
+    private long _detailSequence;
     private IDisposable? _summaryTimer, _detailTimer;
     private CancellationTokenSource? _detailLoad;
+    private TaskCompletionSource? _summaryLoad;
+    private bool _summaryDirty;
+    private int _detailReadFailures;
 
     public AdminMatcherQueuesPanel(AdminLibrariesController owner) : base(owner) { }
 
     public AdminMatcherState State { get { lock (Gate) return _state; } }
 
-    public async Task LoadSummaryAsync()
+    public void InvalidateSummary()
     {
-        long sequence;
-        lock (Gate) { if (Disposed) return; sequence = ++_summarySequence; _summaryTimer?.Dispose(); _summaryTimer = null; }
+        lock (Gate)
+        {
+            if (!Current) return;
+            var scheduled = _summaryDirty && _summaryTimer != null;
+            _summaryDirty = true;
+            if (!scheduled) ResumeSummaryLocked();
+        }
+    }
+
+    public Task LoadSummaryAsync()
+    {
+        TaskCompletionSource completion;
+        lock (Gate)
+        {
+            if (!Current) return Task.CompletedTask;
+            _summaryTimer?.Dispose(); _summaryTimer = null;
+            if (_summaryLoad != null) { _summaryDirty = true; return _summaryLoad.Task; }
+            if (_state.DetailFetching || _state.Retrying.Count > 0) { _summaryDirty = true; return Task.CompletedTask; }
+            _summaryDirty = false;
+            completion = _summaryLoad = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        _ = ReadSummaryAsync(completion);
+        return completion.Task;
+    }
+
+    private async Task ReadSummaryAsync(TaskCompletionSource completion)
+    {
         try
         {
+            if (!Current) return;
             var queues = await Owner.Api.ListMatchQueuesAsync(Lease, Lease.Token).ConfigureAwait(false);
             lock (Gate)
             {
-                if (Disposed || sequence != _summarySequence || !Current) return;
+                if (!Current) return;
                 _state = _state with { Queues = queues, Loaded = true, Error = null };
             }
         }
@@ -528,16 +600,27 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
             if (Benign(error, Lease)) return;
             lock (Gate)
             {
-                if (Disposed || sequence != _summarySequence) return;
+                if (!Current) return;
                 _state = _state with { Loaded = true, Error = AdminLibrariesText.T("admin.native.libraries.panelFailed", ("error", AdminLibraryPresentation.Describe(error, "admin.native.libraries.transport"))) };
             }
         }
-        lock (Gate)
+        finally
         {
-            if (!Disposed && sequence == _summarySequence && Owner.IsActionCurrent(Lease))
-                _summaryTimer = Owner.Scheduler.Schedule(PollInterval, () => _ = LoadSummaryAsync());
+            lock (Gate)
+            {
+                if (ReferenceEquals(_summaryLoad, completion)) _summaryLoad = null;
+                ResumeSummaryLocked();
+            }
+            completion.TrySetResult();
         }
         RaiseChanged();
+    }
+
+    private void ResumeSummaryLocked()
+    {
+        if (!Current || _summaryLoad != null || _state.DetailFetching || _state.Retrying.Count > 0) return;
+        _summaryTimer?.Dispose();
+        _summaryTimer = Owner.Scheduler.Schedule(_summaryDirty ? AdminLibrariesController.EventCoalescing : PollInterval, () => _ = LoadSummaryAsync());
     }
 
     public void SetOpen(bool open)
@@ -547,6 +630,7 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
             if (Disposed || _state.Open == open) return;
             _state = open ? _state with { Open = true } : _state with { Open = false, SelectedLibraryId = null, DetailPageIndex = 0, Detail = null, DetailError = null };
             if (!open) StopDetailLocked();
+            if (!open && _summaryDirty) ResumeSummaryLocked();
         }
         RaiseChanged();
     }
@@ -563,7 +647,7 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
             {
                 SelectedLibraryId = _state.SelectedLibraryId == libraryId ? null : libraryId, DetailPageIndex = 0, Detail = null, DetailHasNext = false, DetailError = null,
             };
-            if (_state.SelectedLibraryId == null) { RaiseChangedOutside(); return Task.CompletedTask; }
+            if (_state.SelectedLibraryId == null) { if (_summaryDirty) ResumeSummaryLocked(); RaiseChangedOutside(); return Task.CompletedTask; }
         }
         RaiseChanged();
         return LoadDetailAsync(0);
@@ -582,7 +666,7 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
         CancellationToken token;
         lock (Gate)
         {
-            if (Disposed || !_state.Open || _state.SelectedLibraryId == null || index >= _cursors.Count) return;
+            if (!Current || !_state.Open || _state.SelectedLibraryId == null || index >= _cursors.Count) return;
             sequence = ++_detailSequence;
             libraryId = _state.SelectedLibraryId;
             cursor = _cursors[index];
@@ -605,7 +689,7 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
                     Detail = page.Detail, DetailPageIndex = index, DetailFetching = false, DetailError = null,
                     DetailHasNext = page.NextCursor != null && _cursors.Count > index + 1,
                 };
-                _detailTimer = Owner.Scheduler.Schedule(PollInterval, () => _ = LoadDetailAsync(State.DetailPageIndex));
+                _detailReadFailures = 0;
             }
         }
         catch (Exception error)
@@ -613,8 +697,21 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
             if (Benign(error, Lease)) return;
             lock (Gate)
             {
-                if (Disposed || sequence != _detailSequence) return;
+                if (!Current || sequence != _detailSequence || !_state.Open || _state.SelectedLibraryId != libraryId) return;
+                _detailReadFailures = Math.Min(_detailReadFailures + 1, 4);
                 _state = _state with { DetailFetching = false, DetailError = AdminLibrariesText.T("admin.native.libraries.panelFailed", ("error", AdminLibraryPresentation.Describe(error, "admin.native.libraries.transport"))) };
+            }
+        }
+        finally
+        {
+            lock (Gate)
+            {
+                if (Current && sequence == _detailSequence && _state.Open && _state.SelectedLibraryId == libraryId && !_state.DetailFetching)
+                {
+                    var delay = TimeSpan.FromSeconds(Math.Min(60, PollInterval.TotalSeconds * (1 << Math.Max(0, _detailReadFailures - 1))));
+                    _detailTimer = Owner.Scheduler.Schedule(delay, () => _ = LoadDetailAsync(index));
+                    if (_summaryDirty) ResumeSummaryLocked();
+                }
             }
         }
         RaiseChanged();
@@ -652,13 +749,15 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
     private void StopDetailLocked()
     {
         _detailSequence++;
+        _detailReadFailures = 0;
+        _state = _state with { DetailFetching = false };
         _detailTimer?.Dispose(); _detailTimer = null;
         _detailLoad?.Cancel(); _detailLoad?.Dispose(); _detailLoad = null;
     }
 
     public override void Dispose()
     {
-        lock (Gate) { StopDetailLocked(); _summaryTimer?.Dispose(); _summaryTimer = null; _summarySequence++; }
+        lock (Gate) { StopDetailLocked(); _summaryTimer?.Dispose(); _summaryTimer = null; }
         base.Dispose();
     }
 }

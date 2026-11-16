@@ -22,16 +22,16 @@ public sealed partial class AdminLibrariesPage
     /// <summary>The open editor's session (tests and fixtures); null when no editor is open.</summary>
     public AdminLibraryEditorSession? EditorSession => _editor?.Session;
 
-    private void OpenEditor(AdminLibrary? library)
+    private void OpenEditor(AdminLibrary? library, LibraryUiOwner owner)
     {
-        var controller = _controller;
-        if (controller == null || _editor != null || _dialog != null) return;
+        var controller = owner.Controller;
+        if (!owner.IsCurrent || _editor != null || _dialog != null) return;
         AdminLibraryEditorSession session;
-        try { session = AdminLibraryEditorSession.Begin(controller, library); }
+        try { session = AdminLibraryEditorSession.Begin(controller, library, owner.Lease); }
         catch (OperationCanceledException) { return; }
         var opener = Focused(XamlRoot) as Control;
         var view = new AdminLibraryEditorView(this, controller, session);
-        view.CloseRequested += () => CloseEditor(force: false);
+        view.CloseRequested += () => { if (ReferenceEquals(_editor, view)) CloseEditor(force: false); };
         _editor = view;
         _editorHost = OverlayHost();
         Grid.SetRowSpan(view, Math.Max(1, (_editorHost as Grid)?.RowDefinitions.Count ?? 1));
@@ -81,8 +81,10 @@ public sealed partial class AdminLibrariesPage
         var controller = _controller;
         if (controller == null || _dialog != null || !controller.IsActionCurrent(editorLease)) return [];
         MonitorAuthorityLease lease;
-        try { lease = controller.CaptureAction(); }
+        var renderedOwner = controller.State.Owner;
+        try { lease = controller.CaptureAction(renderedOwner); }
         catch (OperationCanceledException) { return []; }
+        if (!controller.IsActionCurrent(editorLease)) { lease.Dispose(); return []; }
         using (lease)
         using (var session = new AdminFolderBrowserSession(controller, lease, existing))
         {
@@ -210,7 +212,7 @@ public sealed partial class AdminLibrariesPage
                 var resolved = await session.TryFollowDraftAsync(draft.Text);
                 _ = resolved;
             };
-            draft.TextChanged += (_, _) => { if (syncing) return; session.ClearValidation(); follow.Stop(); follow.Start(); };
+            draft.TextChanged += (_, _) => { if (syncing) return; session.DraftChanged(); follow.Stop(); follow.Start(); };
             async Task Submit()
             {
                 follow.Stop();

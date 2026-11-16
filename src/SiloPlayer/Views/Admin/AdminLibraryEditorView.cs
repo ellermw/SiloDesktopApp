@@ -171,6 +171,7 @@ internal sealed class AdminLibraryEditorView : Grid
     internal void Detach()
     {
         _closed = true;
+        CloseRequested = null;
         Session.Changed -= OnSessionChanged;
         _retirement.Dispose();
         if (Prewarm != null) { Prewarm.Changed -= OnSessionChanged; Prewarm.Dispose(); Prewarm = null; }
@@ -300,7 +301,7 @@ internal sealed class AdminLibraryEditorView : Grid
                 owner.Monitoring?.ServerEnabled, MonitoringEntry(state)?.State, MonitoringEntry(state)?.Detail, MonitoringEntry(state)?.Directories),
             AdminLibraryEditorSection.Metadata => string.Join("|", _section, _phone, state.Type, state.MetadataLanguage, state.AutoTranslateMetadata, state.BoxSetsEnabled, state.BoxSetMinMovies,
                 state.BoxSetsInSearch, string.Join(",", state.TrailerKinds), state.ChainLoading, state.ChainFailed, state.ChainDirty, ChainKey(state), state.CanSave,
-                translation?.Enabled, translation?.Busy, translation?.Starting, translation?.Cancelling, string.Join(",", translation?.ActiveJobs.Select(job => job.Id + job.Progress + job.ProgressMessage) ?? [])),
+                translation?.Enabled, translation?.CapabilityLoading, translation?.CapabilityError, translation?.Busy, translation?.Starting, translation?.Cancelling, string.Join(",", translation?.ActiveJobs.Select(job => job.Id + job.Progress + job.ProgressMessage) ?? [])),
             _ => string.Join("|", _section, _phone, state.Type, state.ChapterThumbnailsEnabled, state.TrickplayEnabled, state.IntroDetectionEnabled, state.CanSave, ChapterSupported(state), TrickplaySupported(state)),
         };
     }
@@ -498,13 +499,16 @@ internal sealed class AdminLibraryEditorView : Grid
                 _controller.Announce(T("admin.native.libraries.posterInvalid"), true);
                 return;
             }
-            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
-            if (buffer.Length == 0 || buffer.Length > AdminLibrariesApi.MaxPosterBytes) { _controller.Announce(T("admin.native.libraries.posterInvalid"), true); return; }
-            var bytes = new byte[buffer.Length];
-            using (var reader = Windows.Storage.Streams.DataReader.FromBuffer(buffer)) reader.ReadBytes(bytes);
+            using var stream = await file.OpenStreamForReadAsync();
+            var bytes = await AdminLibraryEditorSession.ReadPosterAsync(stream, Session.Lease.Token);
             if (_closed || !Session.IsCurrent) return;
             await Session.UploadPosterAsync(bytes, mediaType);
         }
+        catch (AdminLibraryPosterException)
+        {
+            if (!_closed && Session.IsCurrent) _controller.Announce(T("admin.native.libraries.posterInvalid"), true);
+        }
+        catch (OperationCanceledException) when (_closed || !Session.IsCurrent) { }
         catch (Exception error) when (error is System.Runtime.InteropServices.COMException or UnauthorizedAccessException or IOException)
         {
             _controller.Announce(T("web.admin.libraries.toast.posterUploadFailed"), true);
@@ -579,7 +583,7 @@ internal sealed class AdminLibraryEditorView : Grid
                 {
                     var link = new Microsoft.UI.Xaml.Documents.Hyperlink();
                     link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = segment, FontWeight = FontWeights.Medium });
-                    link.Click += (_, _) => { CloseRequested?.Invoke(); AdminShellPage.Open(settings); };
+                    link.Click += (_, _) => { if (_closed || !Session.IsCurrent) return; CloseRequested?.Invoke(); AdminShellPage.Open(settings); };
                     text.Inlines.Add(link);
                 }
                 else text.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = segment, FontWeight = tag == "link" ? FontWeights.Medium : FontWeights.Normal });
@@ -721,7 +725,21 @@ internal sealed class AdminLibraryEditorView : Grid
         translate.IsEnabled = state.CanSave;
         translate.Toggled += (_, _) => Session.SetAutoTranslate(translate.IsOn);
         stack.Children.Add(PlainSetting(T("web.admin.common.libraryEditor.metadata.autoTranslate"), T("web.admin.common.libraryEditor.metadata.autoTranslateHelp"), translate));
-        if (state.Library != null && Prewarm is { Enabled: true } translation) stack.Children.Add(TranslatePanel(translation));
+        if (state.Library != null && Prewarm is { } translation)
+        {
+            if (translation.Enabled) stack.Children.Add(TranslatePanel(translation));
+            else if (translation.CapabilityLoading || translation.CapabilityError != null)
+            {
+                var failure = new StackPanel { Spacing = 8 };
+                failure.Children.Add(Text(T("web.admin.common.libraryEditor.translate.title"), 14));
+                if (translation.CapabilityError is { } error) failure.Children.Add(Text(error, 12, true));
+                var retry = Action(Core.Localization.AppStrings.Get("common.retry", fallback: "Retry"), "LibraryEditorTranslationCapabilityRetry");
+                retry.IsEnabled = !translation.CapabilityLoading && Session.IsCurrent;
+                retry.Click += (_, _) => _ = translation.RetryCapabilityAsync();
+                failure.Children.Add(retry);
+                stack.Children.Add(failure);
+            }
+        }
         if (state.Support.BoxSets) stack.Children.Add(BoxSets(state));
         if (state.Support.Trailers) stack.Children.Add(TrailerKinds(state));
         if (state.ContentLevels.Count > 0) stack.Children.Add(Providers(state));
@@ -751,6 +769,16 @@ internal sealed class AdminLibraryEditorView : Grid
         head.Children.Add(Strong(T("web.admin.common.libraryEditor.translate.title"), 14));
         stack.Children.Add(head);
         stack.Children.Add(Text(T("web.admin.common.libraryEditor.translate.description"), 12, true));
+        if (translation.JobsLoading)
+            stack.Children.Add(Text(Core.Localization.AppStrings.Get("common.loading", fallback: "Loading..."), 12, true));
+        if (translation.JobsError is { } jobsError)
+        {
+            stack.Children.Add(Text(jobsError, 12));
+            var retry = Action(Core.Localization.AppStrings.Get("common.retry", fallback: "Retry"), "LibraryEditorTranslationJobsRetry");
+            retry.IsEnabled = !translation.JobsLoading && Session.IsCurrent;
+            retry.Click += (_, _) => _ = translation.RetryJobsAsync();
+            stack.Children.Add(retry);
+        }
         var row = new LogsWrapPanel { Spacing = 12, RowSpacing = 8 };
         var field = new StackPanel { Spacing = 4 };
         field.Children.Add(Text(T("web.admin.common.libraryEditor.translate.language"), 12));

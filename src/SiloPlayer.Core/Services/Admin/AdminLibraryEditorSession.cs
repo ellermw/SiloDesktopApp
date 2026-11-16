@@ -133,13 +133,31 @@ public sealed class AdminLibraryEditorSession : IDisposable
     }
 
     /// <summary>Starts an editor under a new action lease (throws when the owner retired).</summary>
-    public static AdminLibraryEditorSession Begin(AdminLibrariesController owner, AdminLibrary? library) =>
-        new(owner.Api, owner, owner.CaptureAction(), library);
+    public static AdminLibraryEditorSession Begin(AdminLibrariesController owner, AdminLibrary? library, MonitorAuthorityLease? expectedOwner = null) =>
+        new(owner.Api, owner, owner.CaptureAction(expectedOwner), library);
 
     public event Action? Changed;
     public AdminLibraryEditorState State { get { lock (_gate) return _state; } }
     public MonitorAuthorityLease Lease => _lease;
     public bool IsCurrent => !_disposed && _owner.IsActionCurrent(_lease);
+
+    public static async Task<byte[]> ReadPosterAsync(Stream stream, CancellationToken ct = default)
+    {
+        using var content = new MemoryStream(64 * 1024);
+        var buffer = new byte[64 * 1024];
+        while (true)
+        {
+            var remaining = AdminLibrariesApi.MaxPosterBytes - (int)content.Length;
+            var read = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining + 1)), ct).ConfigureAwait(false);
+            if (read == 0) break;
+            var length = (int)content.Length + read;
+            if (length > AdminLibrariesApi.MaxPosterBytes) throw new AdminLibraryPosterException(false);
+            if (length > content.Capacity) content.Capacity = Math.Min(AdminLibrariesApi.MaxPosterBytes, Math.Max(length, content.Capacity * 2));
+            content.Write(buffer, 0, read);
+        }
+        if (content.Length == 0) throw new AdminLibraryPosterException(true);
+        return content.ToArray();
+    }
 
     private static AdminLibraryEditorState Initial(AdminLibrary? library)
     {
@@ -516,6 +534,8 @@ public sealed class AdminLibraryTranslationSession : IDisposable
     private readonly IAdminScheduler _scheduler;
     private readonly object _gate = new();
     private IDisposable? _poll;
+    private bool _refreshing, _refreshAgain, _pollNeeded;
+    private int _readFailures;
     private bool _disposed;
 
     public AdminLibraryTranslationSession(AdminLibrariesController owner, MonitorAuthorityLease lease, string libraryId, ISet<string> watched)
@@ -525,27 +545,74 @@ public sealed class AdminLibraryTranslationSession : IDisposable
 
     public event Action? Changed;
     public bool Enabled { get; private set; }
+    public bool CapabilityLoading { get; private set; }
+    public AdminFailureKind? CapabilityFailure { get; private set; }
+    public string? CapabilityError { get; private set; }
+    public bool JobsLoading { get; private set; }
+    public bool JobsLoaded { get; private set; }
+    public string? JobsError { get; private set; }
     public IReadOnlyList<AdminTranslationJob> Jobs { get; private set; } = [];
     public IReadOnlyList<AdminTranslationJob> ActiveJobs => Jobs.Where(job => job.IsActive).ToArray();
     public bool Starting { get; private set; }
     public bool Cancelling { get; private set; }
-    public bool Busy => Starting || ActiveJobs.Count > 0;
+    public bool Busy => Starting || JobsLoading || !JobsLoaded || JobsError != null || ActiveJobs.Count > 0;
 
     public async Task OpenAsync()
     {
+        lock (_gate)
+        {
+            if (!Current() || CapabilityLoading || Enabled) return;
+            CapabilityLoading = true;
+            CapabilityFailure = null;
+            CapabilityError = null;
+        }
+        Changed?.Invoke();
         try
         {
             var capability = await _api.GetMetadataAiCapabilityAsync(_lease, _lease.Token).ConfigureAwait(false);
             if (!Current()) return;
             Enabled = capability.State == "available";
         }
-        catch (Exception) { if (!Current()) return; Enabled = false; }
+        catch (Exception error)
+        {
+            if (!Current()) return;
+            Enabled = false;
+            var failure = AdminFailures.Classify(error, _lease);
+            if (failure is not (AdminFailureKind.Retired or AdminFailureKind.Cancelled))
+            {
+                CapabilityFailure = failure;
+                CapabilityError = AdminLibraryPresentation.Describe(error, "web.admin.common.libraryEditor.translate.failed");
+            }
+        }
+        finally { lock (_gate) CapabilityLoading = false; }
+        if (!Current()) return;
         Changed?.Invoke();
         if (Enabled) await RefreshAsync().ConfigureAwait(false);
     }
 
+    public Task RetryCapabilityAsync() => OpenAsync();
+
+    public Task RetryJobsAsync()
+    {
+        lock (_gate)
+        {
+            if (!Current() || !Enabled) return Task.CompletedTask;
+            _readFailures = 0;
+        }
+        return RefreshAsync();
+    }
+
     private async Task RefreshAsync()
     {
+        lock (_gate)
+        {
+            if (!Current()) return;
+            if (_refreshing) { _refreshAgain = true; return; }
+            _refreshing = true;
+            JobsLoading = true;
+            _poll?.Dispose(); _poll = null;
+        }
+        Changed?.Invoke();
         try
         {
             var jobs = await _api.ListTranslationJobsAsync(_lease, _libraryId, _lease.Token).ConfigureAwait(false);
@@ -564,28 +631,45 @@ public sealed class AdminLibraryTranslationSession : IDisposable
                     _owner.Announce(string.IsNullOrEmpty(job.ErrorMessage) ? AdminLibrariesText.T("web.admin.common.libraryEditor.translate.failed") : job.ErrorMessage, true);
             }
             Jobs = jobs;
+            lock (_gate) { _pollNeeded = jobs.Any(job => job.IsActive); _readFailures = 0; JobsLoaded = true; JobsError = null; }
             _ = finished;
-            Changed?.Invoke();
+        }
+        catch (Exception error)
+        {
+            if (!Current()) return;
             lock (_gate)
             {
-                _poll?.Dispose(); _poll = null;
-                if (!_disposed && jobs.Any(job => job.IsActive)) _poll = _scheduler.Schedule(PollInterval, () => _ = RefreshAsync());
+                _readFailures = Math.Min(_readFailures + 1, 5);
+                JobsError = AdminLibraryPresentation.Describe(error, "web.admin.common.libraryEditor.translate.failed");
             }
         }
-        catch (Exception)
+        finally
         {
-            // WebUI shows nothing for a failed jobs read; the next start or poll reads again.
+            lock (_gate)
+            {
+                _refreshing = false;
+                JobsLoading = false;
+                if (Current() && Enabled && (_pollNeeded || _refreshAgain || !JobsLoaded && _readFailures < 2))
+                {
+                    var delay = TimeSpan.FromSeconds(Math.Min(30, PollInterval.TotalSeconds * (1 << Math.Max(0, _readFailures - 1))));
+                    _poll = _scheduler.Schedule(delay, () => _ = RefreshAsync());
+                }
+                _refreshAgain = false;
+            }
+            if (Current()) Changed?.Invoke();
         }
     }
 
     public async Task StartAsync(string targetLanguage)
     {
         if (string.IsNullOrEmpty(targetLanguage)) { _owner.Announce(AdminLibrariesText.T("web.admin.common.libraryEditor.translate.pickLanguage"), true); return; }
-        lock (_gate) { if (_disposed || Busy) return; Starting = true; }
+        lock (_gate) { if (!Current() || !Enabled || Busy) return; Starting = true; }
         Changed?.Invoke();
         try
         {
             var job = await _api.StartTranslationAsync(_lease, _libraryId, targetLanguage, _lease.Token).ConfigureAwait(false);
+            if (!Current()) return;
+            lock (_gate) _pollNeeded = job.IsActive;
             lock (_watched) _watched.Add(job.Id);
         }
         catch (Exception error)
@@ -602,7 +686,7 @@ public sealed class AdminLibraryTranslationSession : IDisposable
 
     public async Task CancelAsync(string jobId)
     {
-        lock (_gate) { if (_disposed || Cancelling) return; Cancelling = true; }
+        lock (_gate) { if (!Current() || !Enabled || Cancelling) return; Cancelling = true; }
         Changed?.Invoke();
         try { await _api.CancelTranslationAsync(_lease, _libraryId, jobId, _lease.Token).ConfigureAwait(false); }
         catch (Exception error)

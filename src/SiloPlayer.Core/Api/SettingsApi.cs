@@ -307,6 +307,26 @@ public partial class SettingsApi(SiloApiClient client)
             $"/api/v2/settings/values/effective{suffix}", null, ct);
     }
 
+    /// <summary>Read a playback preference across reconnects while preserving its account, profile and device owner.</summary>
+    public async Task<ContractEffectiveSettingsResponse> GetContractEffectiveSettingsAsync(
+        SettingsIdentityContext owner, IEnumerable<string> keys, CancellationToken ct = default)
+    {
+        if (!IsCurrentSettingsIdentityContext(owner))
+            throw new OperationCanceledException("Settings identity changed.", ct);
+        var query = keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct()
+            .Select(key => $"keys={Uri.EscapeDataString(key)}").ToList();
+        if (!string.IsNullOrWhiteSpace(owner.DeviceId))
+            query.Add($"device_id={Uri.EscapeDataString(owner.DeviceId)}");
+        if (!string.IsNullOrWhiteSpace(owner.Identity.ProfileId))
+            query.Add($"profile_id={Uri.EscapeDataString(owner.Identity.ProfileId)}");
+        var suffix = query.Count == 0 ? "" : "?" + string.Join("&", query);
+        var response = await client.SendIdentityBoundRequestAsync<ContractEffectiveSettingsResponse>(
+            owner.Identity, HttpMethod.Get, $"/api/v2/settings/values/effective{suffix}", null, ct).ConfigureAwait(false);
+        if (!IsCurrentSettingsIdentityContext(owner))
+            throw new OperationCanceledException("Settings identity changed.", ct);
+        return response;
+    }
+
     public Task SetContractSettingValueAsync(
         string key,
         string scope,

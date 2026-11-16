@@ -297,7 +297,7 @@ public static class AdminFailures
             case OperationCanceledException when error.InnerException is TimeoutException: return AdminFailureKind.Transport;
             case OperationCanceledException: return lease is { IsCurrent: false } ? AdminFailureKind.Retired : AdminFailureKind.Cancelled;
             case ApiException api: return ClassifyApi(api);
-            case AdminListInconsistentException: return AdminFailureKind.InvalidResponse;
+            case AdminListInconsistentException or AdminNetworkAccessLimitException: return AdminFailureKind.InvalidResponse;
             case InvalidDataException or JsonException: return AdminFailureKind.InvalidResponse;
             case HttpRequestException or IOException: return AdminFailureKind.Transport;
             default: return AdminFailureKind.Unknown;

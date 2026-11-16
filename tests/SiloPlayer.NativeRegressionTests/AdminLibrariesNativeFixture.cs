@@ -37,7 +37,7 @@ using Windows.Storage;
 /// leave guard, authority retirement, and captures at 1440×900, 1440×600, 1920×600 and 800×600.
 /// Dispatch: SILO_NATIVE_TEST_ONLY=admin-libraries.
 /// </summary>
-internal static class AdminLibrariesNativeFixture
+internal static partial class AdminLibrariesNativeFixture
 {
     private static readonly List<string> Failures = [];
 
@@ -50,6 +50,7 @@ internal static class AdminLibrariesNativeFixture
     private static async Task Until(Func<bool> condition, int milliseconds = 5000)
     {
         for (var waited = 0; waited < milliseconds && !condition(); waited += 25) await Task.Delay(25);
+        if (!condition()) throw new InvalidOperationException("Libraries fixture prerequisite timed out.");
     }
 
     private sealed class Realtime : IAdminRealtimeChannel
@@ -91,6 +92,10 @@ internal static class AdminLibrariesNativeFixture
         ];
         public bool RefreshJobCanceling;
         public bool TranslationRunning;
+        public bool MetadataAiReadFails;
+        public bool TranslationJobsReadFails;
+        public bool UnmatchedReadFails;
+        public bool DiagnosticMatchApplied;
         public readonly HashSet<string> Ignored = new(StringComparer.Ordinal);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -152,8 +157,9 @@ internal static class AdminLibrariesNativeFixture
                     return Json("{\"library_id\":\"1\",\"status\":\"queued\",\"queue\":{\"library_id\":\"1\",\"movie_count\":2,\"series_count\":0,\"raw_file_count\":1,\"pending_count\":3,\"parked_count\":0,\"total_count\":3}}");
                 case "/api/v2/libraries/unmatched-items":
                 {
+                    if (UnmatchedReadFails) return Json("{}", HttpStatusCode.ServiceUnavailable);
                     var ignored = query.ContainsKey("ignored");
-                    var all = Enumerable.Range(1, 23).Select(i => "u" + i).Where(id => ignored ? Ignored.Contains(id) : !Ignored.Contains(id)).ToList();
+                    var all = Enumerable.Range(1, 23).Select(i => "u" + i).Where(id => (!DiagnosticMatchApplied || id != "u1") && (ignored ? Ignored.Contains(id) : !Ignored.Contains(id))).ToList();
                     if (query.TryGetValue("q", out var q)) all = all.Where(id => ("Unmatched " + id).Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
                     var limit = int.Parse(query["limit"]);
                     var offset = query.TryGetValue("cursor", out var cursor) ? int.Parse(cursor[1..]) : 0;
@@ -169,6 +175,7 @@ internal static class AdminLibrariesNativeFixture
                     return Json("{\"items\":[" + string.Join(',', new[] { ("/media/movies/Extras", "no media files", 0), ("/media/shows/Specials", "unsupported layout", 4), ("/media/movies/Samples", "sample files only", 2) }
                         .Select(row => "{\"library_id\":\"1\",\"library_name\":\"Movies\",\"root_path\":\"" + row.Item1 + "\",\"reason\":\"" + row.Item2 + "\",\"file_count\":" + row.Item3 + ",\"sample_file_path\":\"" + row.Item1 + "/a.mkv\",\"first_seen_at\":\"2026-11-1" + row.Item3 + "T10:00:00Z\",\"last_seen_at\":\"2026-11-15T10:00:00Z\"}")) + "],\"page\":{\"has_more\":false},\"total\":3}");
                 case "/api/v2/libraries/stale-ids":
+                    if (DiagnosticMatchApplied) return Json("{\"items\":[],\"page\":{\"has_more\":false},\"total\":0}");
                     return Json("{\"items\":[{\"content_id\":\"st1\",\"content_type\":\"movie\",\"library_id\":\"1\",\"library_name\":\"Movies\",\"provider\":\"tmdb\",\"provider_id\":\"1234\",\"title\":\"Old Film\",\"year\":1987,\"first_seen_at\":\"2026-11-10T10:00:00Z\",\"last_seen_at\":\"2026-11-15T10:00:00Z\"}],\"page\":{\"has_more\":false},\"total\":1}");
                 case "/api/v2/admin/filesystem/browse":
                 {
@@ -190,6 +197,7 @@ internal static class AdminLibrariesNativeFixture
                 case "/api/v2/libraries/provider-defaults":
                     return Json(Chain(query["library_type"]));
                 case "/api/v2/capabilities/metadata-ai":
+                    if (MetadataAiReadFails) return Json("{\"type\":\"dependency_unavailable\",\"title\":\"Temporarily unavailable\"}", HttpStatusCode.ServiceUnavailable);
                     return Json("{\"allowed\":true,\"state\":\"available\",\"on_view\":\"button\",\"revision\":\"r\"}");
             }
             if (path.StartsWith("/api/v2/libraries/", StringComparison.Ordinal))
@@ -229,7 +237,9 @@ internal static class AdminLibrariesNativeFixture
             {
                 if (path.EndsWith("/metadata-translation", StringComparison.Ordinal)) { TranslationRunning = true; return Json(TranslationJob("pending"), HttpStatusCode.Accepted); }
                 if (path.EndsWith("/cancel", StringComparison.Ordinal)) { TranslationRunning = false; return new HttpResponseMessage(HttpStatusCode.NoContent); }
-                if (path.EndsWith("/jobs", StringComparison.Ordinal)) return Json("{\"jobs\":[" + (TranslationRunning ? TranslationJob("running") : "") + "]}");
+                if (path.EndsWith("/jobs", StringComparison.Ordinal)) return TranslationJobsReadFails
+                    ? Json("{}", HttpStatusCode.ServiceUnavailable)
+                    : Json("{\"jobs\":[" + (TranslationRunning ? TranslationJob("running") : "") + "]}");
             }
             var json = path switch
             {
@@ -294,6 +304,12 @@ internal static class AdminLibrariesNativeFixture
         field.SetValue(null, provider);
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARIES_REMEDIATION_ONLY") == "1")
+            {
+                await RunRemediationAsync(window);
+                if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
+                return;
+            }
             Resize(window, 1440, 900);
             var outer = new Frame();
             window.Content = outer;
@@ -336,8 +352,21 @@ internal static class AdminLibrariesNativeFixture
             await CaptureAsync(outer, "libraries-table-1440x900.png");
 
             // ── Scan queue popover ───────────────────────────────────────
-            await InvokeAsync(Find<Button>(shell, "LibrariesScanQueue"));
+            var queueTrigger = Find<Button>(shell, "LibrariesScanQueue");
+            var queueUnloads = 0;
+            if (queueTrigger != null)
+            {
+                queueTrigger.Unloaded += (_, _) => queueUnloads++;
+                queueTrigger.Click += (_, _) => Program.Log($"[LIBRARY-QUEUE-TRACE] click loaded={queueTrigger.IsLoaded} scans={controller.State.Scans.Count}");
+                if (queueTrigger.Tag is Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase flyout)
+                {
+                    flyout.Opened += (_, _) => Program.Log($"[LIBRARY-QUEUE-TRACE] Opened targetLoaded={queueTrigger.IsLoaded} sameTrigger={ReferenceEquals(queueTrigger, Find<Button>(shell, "LibrariesScanQueue"))}");
+                    flyout.Closed += (_, _) => Program.Log($"[LIBRARY-QUEUE-TRACE] Closed targetLoaded={queueTrigger.IsLoaded} sameTrigger={ReferenceEquals(queueTrigger, Find<Button>(shell, "LibrariesScanQueue"))}");
+                }
+            }
+            await InvokeAsync(queueTrigger);
             await Until(() => FindInPopups<FrameworkElement>(window, "LibrariesScanQueuePopover") != null);
+            Program.Log($"[LIBRARY-QUEUE-TRACE] after open unloaded={queueUnloads} loaded={queueTrigger?.IsLoaded} sameTrigger={ReferenceEquals(queueTrigger, Find<Button>(shell, "LibrariesScanQueue"))} popups={VisualTreeHelper.GetOpenPopupsForXamlRoot(shell.XamlRoot).Count}");
             Check(FindInPopups<FrameworkElement>(window, "LibrariesScanQueuePopover") != null, "the scan queue popover opens");
             Check(FindInPopups<HyperlinkButton>(window, "LibrariesQueueToggle_2") != null, "a long queue group collapses after four rows");
             await CaptureAsync(outer, "libraries-scan-queue-1440x900.png");
@@ -599,6 +628,7 @@ internal static class AdminLibrariesNativeFixture
             await Until(() => page.EditorSession == null && Find<FrameworkElement>(shell, "LibraryEditor") == null, 2000);
             Check(page.EditorSession == null && Find<FrameworkElement>(shell, "LibraryEditor") == null, "authority retirement closes the editor");
             realtime.Silence();
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARIES_SKIP_REMEDIATION") != "1") await RunRemediationAsync(window);
         }
         finally
         {

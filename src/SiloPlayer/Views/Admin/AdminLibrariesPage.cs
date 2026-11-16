@@ -45,6 +45,18 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     private readonly LogsActionFeedback _feedback;
     private readonly AdminLeaveGuard _leaveGuard;
     private AdminLibrariesController? _controller;
+    private MonitorAuthorityLease? _renderedHeaderOwner;
+
+    private sealed record LibraryUiOwner(AdminLibrariesPage Page, AdminLibrariesController Controller, MonitorAuthorityLease? Lease)
+    {
+        public bool IsCurrent => ReferenceEquals(Page._controller, Controller) && Controller.IsOwnerCurrent(Lease);
+    }
+
+    private LibraryUiOwner RenderOwner(AdminLibrariesSnapshot state)
+    {
+        var controller = _controller ?? throw new InvalidOperationException("The Libraries page has no owner.");
+        return new(this, controller, state.Owner);
+    }
     private AdminRouteRequest _route = new(AdminRoute.Libraries);
     private bool _wide = true;
     private bool _phone;
@@ -276,19 +288,21 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
 
     private void RenderHeader(AdminLibrariesSnapshot state)
     {
+        var owner = RenderOwner(state);
         var groups = AdminLibrariesController.ScanGroups(state);
         var key = string.Join("|", _wide, _phone, state.ScanAllPending, groups.Sum(group => group.Scans.Count), AdminShellPage.CanOpen(new AdminRouteRequest(AdminRoute.Maintenance)));
-        if (key == _renderedHeaderKey) return;
+        if (key == _renderedHeaderKey && ReferenceEquals(state.Owner, _renderedHeaderOwner)) return;
+        _renderedHeaderOwner = state.Owner;
         _renderedHeaderKey = key;
         var focused = Focused(XamlRoot);
         var focusId = focused == null ? "" : AutomationProperties.GetAutomationId(focused);
 
         var scanAll = Action(T("web.admin.libraries.page.scanAll"), "LibrariesScanAll", "scan-line");
         scanAll.IsEnabled = !state.ScanAllPending;
-        scanAll.Click += (_, _) => { if (_controller != null) _ = _controller.ScanAllAsync(); };
+        scanAll.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanAllAsync(owner.Lease); };
         var maintenanceRequest = new AdminRouteRequest(AdminRoute.Maintenance);
         var maintenance = Action(T("web.admin.libraries.page.catalogMaintenance"), "LibrariesCatalogMaintenance", "wrench");
-        if (AdminShellPage.CanOpen(maintenanceRequest)) maintenance.Click += (_, _) => AdminShellPage.Open(maintenanceRequest);
+        if (AdminShellPage.CanOpen(maintenanceRequest)) maintenance.Click += (_, _) => { if (owner.IsCurrent) AdminShellPage.Open(maintenanceRequest); };
         else
         {
             // The target is a Configure page with no native implementation yet: say so instead of a dead link.
@@ -297,7 +311,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
             AutomationProperties.SetHelpText(maintenance, T("admin.native.libraries.maintenanceUnavailable"));
         }
         var add = Action(T("web.admin.libraries.page.addLibrary"), "LibrariesAdd", "plus", "AccentButtonStyle");
-        add.Click += (_, _) => OpenEditor(null);
+        add.Click += (_, _) => OpenEditor(null, owner);
         var queue = groups.Count > 0 ? ScanQueueButton(state, groups) : null;
 
         FrameworkElement actions;
@@ -340,6 +354,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
 
     private void RenderAlerts(AdminLibrariesSnapshot state)
     {
+        var owner = RenderOwner(state);
         _alerts.Children.Clear();
         if (_legacyNotice != null) _alerts.Children.Add(LogsNativeUi.Banner(_legacyNotice));
         if (state.Error != null)
@@ -350,7 +365,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
             _alerts.Children.Add(banner);
             var retry = Action(Core.Localization.AppStrings.Get("common.retry", fallback: "Retry"), "LibrariesRetry");
             retry.HorizontalAlignment = HorizontalAlignment.Left;
-            retry.Click += (_, _) => { if (_controller != null) _ = _controller.ReloadAsync(); };
+            retry.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ReloadAsync(); };
             _alerts.Children.Add(retry);
         }
         if (state.Truncated)
@@ -360,6 +375,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
 
     private void RenderJobControls(AdminLibrariesSnapshot state)
     {
+        var owner = RenderOwner(state);
         _jobControls.Children.Clear();
         if (state.RefreshJobsFailed)
         {
@@ -371,7 +387,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
                 if (tag == "button")
                 {
                     var restart = Action(text, "LibrariesRestartJobs");
-                    restart.Click += (_, _) => { if (_controller != null) _ = _controller.RestartJobsAsync(); };
+                    restart.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.RestartJobsAsync(); };
                     alert.Children.Add(restart);
                 }
                 else if (text.Trim().Length > 0) alert.Children.Add(Text(text.Trim()));
@@ -382,7 +398,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         {
             var older = Action(T("web.admin.libraries.page.loadOlderRefreshJobs"), "LibrariesLoadOlderJobs");
             older.IsEnabled = !state.RefreshJobsLoadingMore;
-            older.Click += (_, _) => { if (_controller != null) _ = _controller.LoadOlderJobsAsync(); };
+            older.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.LoadOlderJobsAsync(); };
             _jobControls.Children.Add(older);
         }
         if (state.RefreshJobsCapped) _jobControls.Children.Add(Text(T("admin.native.libraries.pageCap", AdminLibrariesText.Count(AdminLibrariesController.MaxRefreshJobPages)), 12, true));
@@ -412,9 +428,9 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         return null;
     }
 
-    private void OpenItem(string contentId)
+    private void OpenItem(string contentId, LibraryUiOwner owner)
     {
-        if (_controller?.State.Owner is not { IsCurrent: true }) return;
+        if (!owner.IsCurrent) return;
         App.Services.GetService<NavigationService>()?.Navigate<ItemDetailPage>(contentId);
     }
 }
