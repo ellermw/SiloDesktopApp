@@ -428,6 +428,7 @@
             Grid.Row="3"
             Padding="48,0,48,24"
             ViewChanged="AudiobookGroupsPanel_ViewChanged"
+            SizeChanged="AudiobookGroupsPanel_SizeChanged"
             Visibility="Collapsed">
             <StackPanel Spacing="20">
                 <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">

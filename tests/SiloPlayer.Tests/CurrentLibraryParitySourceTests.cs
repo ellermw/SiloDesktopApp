@@ -130,11 +130,61 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("AudiobookGroupsPanel_ViewChanged", page);
         Assert.Contains("SelectAudiobookGroupAsync", page);
         Assert.Contains("BuildAudiobookGroupSkeletons", page);
-        Assert.Contains("viewportWidth >= 1280 ? 6", page);
         Assert.Contains("viewportWidth >= 1280 ? 3", page);
         Assert.Contains("GetAudiobookGroupsAsync", api);
         Assert.Contains("NowListeningHero", ReadRepoFile("src", "SiloPlayer", "Controls", "NowListeningHero.xaml"));
         Assert.Contains("AudiobookSquareCard", ReadRepoFile("src", "SiloPlayer", "Controls", "AudiobookSquareCard.xaml"));
+    }
+
+    [Fact]
+    public void AudiobookSeriesUseOneSquareCoverWithARunBarInTheBooksGridColumns()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var series = Slice(page, "private FrameworkElement CreateAudiobookSeriesCard(", "private void AudiobookGroupsPanel_SizeChanged(");
+        var width = Slice(page, "private double GetAudiobookSeriesCardWidth()", "private void BuildAudiobookGroupSkeletons(");
+        var cover = Slice(page, "private async Task LoadAudiobookSeriesCoverAsync(", "private static string AudiobookGroupPosterKey(");
+        var bar = Slice(page, "private static FrameworkElement CreateAudiobookSeriesRunBar(", "private async Task SelectAudiobookGroupAsync(");
+
+        // Official #4397: one square cover, a decorative run bar, wrapping listening text.
+        Assert.Contains("if (large) return CreateAudiobookSeriesCard(group, cardWidth, ct);", page);
+        Assert.Contains("CreateAudiobookSeriesCover(group, cardWidth, ct)", series);
+        Assert.Contains("CreateAudiobookSeriesRunBar(AudiobookSeriesPresentation.Run(group))", series);
+        Assert.Contains("TextWrapping = TextWrapping.WrapWholeWords", series);
+        Assert.Contains("AudiobookSeriesPresentation.Listening(group)", series);
+        Assert.DoesNotContain("Take(3)", series);
+        Assert.DoesNotContain("index * 4", page);
+
+        // A failed URL falls through to the next; none loading shows initials.
+        Assert.Contains("AudiobookSeriesPresentation.FirstUntriedCover(group.PosterUrls, failed)", cover);
+        Assert.Contains("image.ImageFailed +=", cover);
+        Assert.Contains("failed.Add(", cover);
+        Assert.Contains("GroupInitials(group.Name)", cover);
+        Assert.Contains("GetImageDiskPathAsync(AudiobookGroupPosterKey(group.Name, url), \"poster\", url, httpClient, ct)", cover);
+
+        // The bar is decorative for UI Automation; the stats text carries the meaning.
+        Assert.Contains("AccessibilityView.Raw", bar);
+        Assert.Contains("run.IsContinuous ? run.ContinuousFill : run.SegmentFill(index)", bar);
+
+        // Same columns as the Books grid for the profile's poster size.
+        Assert.Contains("UICustomizationService.PosterColumnCount(posterSize, WebUiViewport.Width(this, ActualWidth))", width);
+        Assert.Contains("LibraryPosterSizing.GetColumnCount(contentWidth, posterWidth)", width);
+        Assert.Contains("posterSize == \"large\" ? 16d : 12d", width);
+        Assert.Contains("SizeChanged=\"AudiobookGroupsPanel_SizeChanged\"", xaml);
+        Assert.Contains("ResizeAudiobookSeriesCards();", page);
+
+        // Square loading skeletons.
+        var skeletons = Slice(page, "private void BuildAudiobookGroupSkeletons(", "private FrameworkElement CreateAudiobookGroupCover(");
+        Assert.Contains("Height = cardWidth,", skeletons);
+    }
+
+    private static string Slice(string source, string start, string end)
+    {
+        var from = source.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, $"Missing '{start}'.");
+        var to = source.IndexOf(end, from, StringComparison.Ordinal);
+        Assert.True(to > from, $"Missing '{end}' after '{start}'.");
+        return source[from..to];
     }
 
     [Fact]

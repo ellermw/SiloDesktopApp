@@ -774,6 +774,7 @@ public sealed partial class LibraryPage : Page,
             ClearVirtualCards();
             QueueRenderVirtualGrid(force: true);
             if (_collectionsLoaded) BuildCollectionCards();
+            ResizeAudiobookSeriesCards();
         });
     }
 
@@ -2328,7 +2329,7 @@ public sealed partial class LibraryPage : Page,
                 AudiobookGroupsHost.Children.Clear();
             }
             foreach (var group in response.Groups)
-                AudiobookGroupsHost.Children.Add(CreateAudiobookGroupCard(group, axis == "series"));
+                AudiobookGroupsHost.Children.Add(CreateAudiobookGroupCard(group, axis == "series", ct));
 
             _audiobookGroupsOffset += response.Groups.Count;
             _audiobookGroupsHasMore = response.HasMore;
@@ -2358,10 +2359,11 @@ public sealed partial class LibraryPage : Page,
         }
     }
 
-    private FrameworkElement CreateAudiobookGroupCard(AudiobookGroup group, bool large)
+    private FrameworkElement CreateAudiobookGroupCard(AudiobookGroup group, bool large, CancellationToken ct)
     {
         var cardWidth = GetAudiobookGroupCardWidth(large);
-        var cover = CreateAudiobookGroupCover(group, large, cardWidth);
+        if (large) return CreateAudiobookSeriesCard(group, cardWidth, ct);
+        var cover = CreateAudiobookGroupCover(group);
         var title = new TextBlock
         {
             Text = group.Name,
@@ -2382,9 +2384,9 @@ public sealed partial class LibraryPage : Page,
         MediaItemCardActions.BindText(stats, "Text", element => element.Text = AudiobookGroupStats(group));
         var button = new Button
         {
-            Padding = large ? new Thickness(0) : new Thickness(16, 12, 16, 12),
-            Background = large ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent)
-                : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
+            Width = cardWidth,
+            Padding = new Thickness(16, 12, 16, 12),
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
             BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(12),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
@@ -2392,47 +2394,161 @@ public sealed partial class LibraryPage : Page,
             Tag = group,
         };
 
-        if (large)
-        {
-            button.Width = cardWidth;
-            button.Content = new StackPanel
-            {
-                Width = cardWidth,
-                Spacing = 3,
-                Children = { cover, title, stats },
-            };
-        }
-        else
-        {
-            button.Width = cardWidth;
-            var text = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
-            text.Children.Add(title);
-            text.Children.Add(stats);
-            var row = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = GridLength.Auto }, new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } }, ColumnSpacing = 14 };
-            row.Children.Add(cover);
-            Grid.SetColumn(text, 1);
-            row.Children.Add(text);
-            var chevron = new FontIcon { Glyph = "\uE76C", FontSize = 13, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"], VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(chevron, 2);
-            row.Children.Add(chevron);
-            button.Content = row;
-        }
+        var text = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(title);
+        text.Children.Add(stats);
+        var row = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = GridLength.Auto }, new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } }, ColumnSpacing = 14 };
+        row.Children.Add(cover);
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+        var chevron = new FontIcon { Glyph = "\uE76C", FontSize = 13, Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"], VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(chevron, 2);
+        row.Children.Add(chevron);
+        button.Content = row;
 
         button.Click += async (_, _) => await SelectAudiobookGroupAsync(group.Name);
         return button;
     }
 
+    /// <summary>
+    /// A series card (official AudiobookGroupsView #4397): one square cover in
+    /// the Books grid's columns, a decorative bar of its books, the name, its
+    /// totals and the profile's listening, which wraps instead of clipping.
+    /// </summary>
+    private FrameworkElement CreateAudiobookSeriesCard(AudiobookGroup group, double cardWidth, CancellationToken ct)
+    {
+        var title = new TextBlock
+        {
+            Text = group.Name,
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+            Margin = new Thickness(2, 0, 2, 0),
+        };
+        var totals = new TextBlock
+        {
+            Text = AudiobookGroupTotals(group),
+            FontSize = 12,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+            Margin = new Thickness(2, 0, 2, 0),
+        };
+        MediaItemCardActions.BindText(totals, "Text", element => element.Text = AudiobookGroupTotals(group));
+        var listening = new TextBlock
+        {
+            Text = AudiobookSeriesPresentation.Listening(group) ?? "",
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
+            TextWrapping = TextWrapping.WrapWholeWords,
+            Margin = new Thickness(2, 0, 2, 0),
+            Visibility = AudiobookSeriesPresentation.ListeningParts(group.ItemCount, group.FinishedCount, group.InProgressCount).Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed,
+        };
+        MediaItemCardActions.BindText(listening, "Text", element => element.Text = AudiobookSeriesPresentation.Listening(group) ?? "");
+
+        var button = new Button
+        {
+            Width = cardWidth,
+            Padding = new Thickness(0),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(12),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Top,
+            Tag = group,
+            Content = new StackPanel
+            {
+                Width = cardWidth,
+                Spacing = 2,
+                Children =
+                {
+                    CreateAudiobookSeriesCover(group, cardWidth, ct),
+                    CreateAudiobookSeriesRunBar(AudiobookSeriesPresentation.Run(group)),
+                    title,
+                    totals,
+                    listening,
+                },
+            },
+        };
+        button.Click += async (_, _) => await SelectAudiobookGroupAsync(group.Name);
+        return button;
+    }
+
+    private void AudiobookGroupsPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (Math.Abs(e.NewSize.Width - e.PreviousSize.Width) >= 1) ResizeAudiobookSeriesCards();
+    }
+
+    /// <summary>
+    /// Keeps the Series grid in the Books grid's columns when the viewport,
+    /// poster size or poster-width override changes, resizing the retained
+    /// cards (and loading skeletons) in place instead of refetching them.
+    /// </summary>
+    private void ResizeAudiobookSeriesCards()
+    {
+        if (_currentAudiobookAxis != "series" || AudiobookGroupsPanel.Visibility != Visibility.Visible
+            || AudiobookGroupsHost.Children.Count == 0)
+            return;
+        var width = GetAudiobookSeriesCardWidth();
+        foreach (var child in AudiobookGroupsHost.Children)
+        {
+            if (child is Button { Tag: AudiobookGroup, Content: StackPanel card } button)
+            {
+                button.Width = width;
+                card.Width = width;
+                if (card.Children.Count > 0 && card.Children[0] is Border cover)
+                    cover.Width = cover.Height = width;
+            }
+            else if (child is StackPanel skeleton && skeleton.Children.Count > 1
+                && skeleton.Children[0] is Border block && skeleton.Children[1] is Border line)
+            {
+                skeleton.Width = width;
+                block.Width = block.Height = width;
+                line.Width = width * 0.75;
+            }
+        }
+    }
+
     private double GetAudiobookGroupCardWidth(bool large)
     {
+        if (large) return GetAudiobookSeriesCardWidth();
         var viewportWidth = Math.Max(320, AudiobookGroupsPanel.ActualWidth);
         var contentWidth = Math.Max(280,
             viewportWidth - AudiobookGroupsPanel.Padding.Left - AudiobookGroupsPanel.Padding.Right);
-        var columns = large
-            ? viewportWidth >= 1280 ? 6 : viewportWidth >= 1024 ? 5 : viewportWidth >= 768 ? 4 : viewportWidth >= 640 ? 3 : 2
-            : viewportWidth >= 1280 ? 3 : viewportWidth >= 768 ? 2 : 1;
-        var gap = large ? 16d : 12d;
+        var columns = viewportWidth >= 1280 ? 3 : viewportWidth >= 768 ? 2 : 1;
+        const double gap = 12d;
         AudiobookGroupsHost.HorizontalSpacing = gap;
-        return Math.Max(large ? 120 : 240, (contentWidth - gap * (columns - 1)) / columns);
+        AudiobookGroupsHost.VerticalSpacing = gap;
+        return Math.Max(240, (contentWidth - gap * (columns - 1)) / columns);
+    }
+
+    /// <summary>
+    /// Series cards use the Books grid's columns for the profile's poster size
+    /// (official cardGridClasses), including the local poster-width override,
+    /// so a series cover sits at a book cover's width.
+    /// </summary>
+    private double GetAudiobookSeriesCardWidth()
+    {
+        var posterSize = _uiCustomizationService.CardPresentation.PosterSize;
+        var gap = posterSize == "large" ? 16d : 12d;
+        var contentWidth = Math.Max(120,
+            Math.Max(320, AudiobookGroupsPanel.ActualWidth) - AudiobookGroupsPanel.Padding.Left - AudiobookGroupsPanel.Padding.Right);
+        var columns = UICustomizationService.PosterColumnCount(posterSize, WebUiViewport.Width(this, ActualWidth));
+        if (_posterWidthOverride is { } posterWidth)
+            columns = LibraryPosterSizing.GetColumnCount(contentWidth, posterWidth);
+        columns = Math.Max(1, Math.Min(columns, (int)Math.Floor((contentWidth + gap) / (100 + gap))));
+        AudiobookGroupsHost.HorizontalSpacing = gap;
+        // Official gap-y-6 between series rows.
+        AudiobookGroupsHost.VerticalSpacing = 24;
+        // Raster rounding must leave room for every column instead of wrapping
+        // the last card when a fractional width rounds upward in WinUI.
+        var scale = XamlRoot?.RasterizationScale ?? 1;
+        return Math.Max(1, Math.Floor((contentWidth - gap * (columns - 1)) / columns * scale) / scale);
     }
 
     private void BuildAudiobookGroupSkeletons(bool large)
@@ -2475,10 +2591,11 @@ public sealed partial class LibraryPage : Page,
         }
     }
 
-    private FrameworkElement CreateAudiobookGroupCover(AudiobookGroup group, bool large, double cardWidth)
+    /// <summary>An author or narrator row's cover run; series cards use CreateAudiobookSeriesCover.</summary>
+    private FrameworkElement CreateAudiobookGroupCover(AudiobookGroup group)
     {
-        var size = large ? cardWidth : 56d;
-        var host = new Grid { Width = large ? size : 112, Height = size };
+        const double size = 56d;
+        var host = new Grid { Width = 112, Height = size };
         var urls = group.PosterUrls.Take(3).ToList();
         if (urls.Count == 0)
         {
@@ -2492,7 +2609,7 @@ public sealed partial class LibraryPage : Page,
                 Child = new TextBlock
                 {
                     Text = GroupInitials(group.Name),
-                    FontSize = large ? 24 : 14,
+                    FontSize = 14,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
                     HorizontalAlignment = HorizontalAlignment.Center,
@@ -2511,7 +2628,7 @@ public sealed partial class LibraryPage : Page,
                 CornerRadius = new CornerRadius(10),
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
                 HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = large ? new Thickness(index * 4, 0, 0, 0) : new Thickness(index * 28, 0, 0, 0),
+                Margin = new Thickness(index * 28, 0, 0, 0),
             };
             host.Children.Add(poster);
             _ = LoadAudiobookGroupPosterAsync(poster, group.Name, urls[index], size);
@@ -2525,8 +2642,7 @@ public sealed partial class LibraryPage : Page,
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
-            var key = $"audiobook-group-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(groupName + url))).Substring(0, 16)}";
-            var path = await imageService.GetImageDiskPathAsync(key, "poster", url, httpClient);
+            var path = await imageService.GetImageDiskPathAsync(AudiobookGroupPosterKey(groupName, url), "poster", url, httpClient);
             if (string.IsNullOrWhiteSpace(path)) return;
             host.Child = new Image { FlowDirection = FlowDirection.LeftToRight,
                 Source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = (int)Math.Ceiling(size * 1.25) },
@@ -2534,6 +2650,142 @@ public sealed partial class LibraryPage : Page,
             };
         }
         catch { }
+    }
+
+    /// <summary>
+    /// A series' one square cover: the first of its covers that loads. A URL
+    /// that fails to download or decode falls through to the next, and none
+    /// loading shows the initials tile. Decorative: the card's text names it.
+    /// </summary>
+    private FrameworkElement CreateAudiobookSeriesCover(AudiobookGroup group, double size, CancellationToken ct)
+    {
+        var host = new Border
+        {
+            Width = size,
+            Height = size,
+            CornerRadius = new CornerRadius(12),
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"],
+            IsHitTestVisible = false,
+        };
+        AutomationProperties.SetAccessibilityView(host, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+        // Failed URLs, not a count: a refetch rebuilds the card with the
+        // server's new (re-signed or repaired) URLs and tries every cover again.
+        _ = LoadAudiobookSeriesCoverAsync(host, group, size, new HashSet<string>(StringComparer.Ordinal), ct);
+        return host;
+    }
+
+    private async Task LoadAudiobookSeriesCoverAsync(Border host, AudiobookGroup group, double size, HashSet<string> failed, CancellationToken ct)
+    {
+        // One cover request at a time per card; a reset or page departure
+        // cancels the group load token and with it any remaining fallthrough.
+        while (!ct.IsCancellationRequested
+            && AudiobookSeriesPresentation.FirstUntriedCover(group.PosterUrls, failed) is { } url)
+        {
+            string? path = null;
+            try
+            {
+                var imageService = App.Services.GetRequiredService<ImageService>();
+                var httpClient = App.Services.GetRequiredService<HttpClient>();
+                path = await imageService.GetImageDiskPathAsync(AudiobookGroupPosterKey(group.Name, url), "poster", url, httpClient, ct);
+            }
+            catch (OperationCanceledException) { return; }
+            catch { }
+            if (ct.IsCancellationRequested) return;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                failed.Add(url);
+                continue;
+            }
+
+            try
+            {
+                var image = new Image
+                {
+                    FlowDirection = FlowDirection.LeftToRight,
+                    Source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = (int)Math.Ceiling(size * 1.25) },
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                };
+                var attempted = url;
+                image.ImageFailed += (_, _) =>
+                {
+                    if (ct.IsCancellationRequested || !ReferenceEquals(host.Child, image)) return;
+                    failed.Add(attempted);
+                    host.Child = null;
+                    _ = LoadAudiobookSeriesCoverAsync(host, group, size, failed, ct);
+                };
+                host.Child = image;
+                return;
+            }
+            catch
+            {
+                failed.Add(url);
+            }
+        }
+
+        if (!ct.IsCancellationRequested)
+        {
+            host.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceRaisedBrush"];
+            host.Child = new TextBlock
+            {
+                Text = GroupInitials(group.Name),
+                FontSize = 24,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
+    }
+
+    private static string AudiobookGroupPosterKey(string groupName, string url)
+        => $"audiobook-group-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(groupName + url))).Substring(0, 16)}";
+
+    /// <summary>
+    /// The series' length and the profile's listening in one bar (official
+    /// SeriesRun): a segment per book up to 12, finished books filled and
+    /// in-progress books half-filled; longer series draw one continuous bar.
+    /// Decorative: the listening text says the same.
+    /// </summary>
+    private static FrameworkElement CreateAudiobookSeriesRunBar(AudiobookSeriesRun run)
+    {
+        var bar = new Grid
+        {
+            Height = 4,
+            ColumnSpacing = 2,
+            Margin = new Thickness(2, 6, 2, 4),
+            IsHitTestVisible = false,
+        };
+        AutomationProperties.SetAccessibilityView(bar, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+        for (var index = 0; index < run.SegmentCount; index++)
+        {
+            bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var segment = CreateAudiobookSeriesRunSegment(run.IsContinuous ? run.ContinuousFill : run.SegmentFill(index));
+            Grid.SetColumn(segment, index);
+            bar.Children.Add(segment);
+        }
+        return bar;
+    }
+
+    private static FrameworkElement CreateAudiobookSeriesRunSegment(double fill)
+    {
+        var foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
+        var segment = new Grid();
+        var track = new Border { Background = foreground, Opacity = 0.15, CornerRadius = new CornerRadius(2) };
+        segment.Children.Add(track);
+        fill = Math.Clamp(fill, 0d, 1d);
+        if (fill <= 0) return segment;
+
+        var filled = new Border { Background = foreground, CornerRadius = new CornerRadius(2) };
+        if (fill < 1)
+        {
+            // Filled from the start edge; the Grid mirrors under right-to-left.
+            segment.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(fill, GridUnitType.Star) });
+            segment.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - fill, GridUnitType.Star) });
+            Grid.SetColumnSpan(track, 2);
+            filled.CornerRadius = new CornerRadius(2, 0, 0, 2);
+        }
+        segment.Children.Add(filled);
+        return segment;
     }
 
     private async Task SelectAudiobookGroupAsync(string name)
@@ -2568,20 +2820,19 @@ public sealed partial class LibraryPage : Page,
         _ => "series",
     };
 
+    /// <summary>
+    /// An author or narrator row's one stats line: the group's totals, then
+    /// the profile's listening by the shared official rule.
+    /// </summary>
     private static string AudiobookGroupStats(AudiobookGroup group)
     {
-        var hours = group.TotalDurationSeconds / 3600;
-        var minutes = (group.TotalDurationSeconds % 3600) / 60;
-        var parts = new List<string>
-        {
-            SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statBooks", new Dictionary<string, object?> { ["count"] = group.ItemCount, ["count_text"] = (group.ItemCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }),
-            MediaItemCardActions.Runtime((int)(group.TotalDurationSeconds / 60)),
-        };
-        if (group.InProgressCount > 0) parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statInProgress", new Dictionary<string, object?> { ["count"] = group.InProgressCount, ["count_text"] = (group.InProgressCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
-        else if (group.FinishedCount == group.ItemCount && group.ItemCount > 0) parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statAllFinished"));
-        else if (group.FinishedCount > 0) parts.Add(SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.groups.statFinished", new Dictionary<string, object?> { ["count"] = group.FinishedCount, ["count_text"] = (group.FinishedCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }));
-        return string.Join(" · ", parts);
+        var listening = AudiobookSeriesPresentation.Listening(group);
+        return listening == null ? AudiobookGroupTotals(group) : AudiobookGroupTotals(group) + " · " + listening;
     }
+
+    /// <summary>"12 books · 61 hr": the group's size (official groupTotals).</summary>
+    private static string AudiobookGroupTotals(AudiobookGroup group)
+        => AudiobookSeriesPresentation.BooksText(group) + " · " + MediaItemCardActions.Runtime(group.TotalDurationSeconds / 60);
 
     private static string GroupInitials(string name) => string.Concat(name
         .Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -2878,6 +3129,7 @@ public sealed partial class LibraryPage : Page,
         var anchor = _currentFirstRow * old.Columns;
         var fraction = _libraryVerticalOffset % old.RowHeight / old.RowHeight;
         _posterWidthOverride = width;
+        ResizeAudiobookSeriesCards();
         var layout = GetGridLayout();
         _libraryVerticalOffset = (anchor / layout.Columns + fraction) * layout.RowHeight;
         QueueLibraryOffset(_libraryVerticalOffset);

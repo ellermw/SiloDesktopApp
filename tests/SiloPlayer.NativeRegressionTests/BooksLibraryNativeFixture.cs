@@ -122,6 +122,7 @@ internal static class BooksLibraryNativeFixture
                     failures.Add(axis + " group selection did not replace the stale query: " + parameters["groups"]);
                 else Program.Log("PASS: " + axis + " group click requests only its selected group.");
             }
+            SeriesCardCases(page, failures);
             viewModel.ErrorMessage = "Synthetic catalog failure";
             typeof(LibraryPage).GetField("_libraryCatalogLoaded", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, true);
             Invoke(page, "RenderVirtualGrid", false);
@@ -131,6 +132,55 @@ internal static class BooksLibraryNativeFixture
             if (failures.Count > 0) throw new InvalidOperationException(string.Join(Environment.NewLine, failures));
         }
         finally { servicesField.SetValue(null, previous); }
+    }
+
+    /// <summary>
+    /// Official #4397 series cards: one square cover (initials when no cover
+    /// loads), a decorative bar with a segment per book up to 12 and one
+    /// continuous bar past that, and listening counts that wrap.
+    /// </summary>
+    private static void SeriesCardCases(LibraryPage page, List<string> failures)
+    {
+        var group = new AudiobookGroup { Name = "Night Watch Saga", ItemCount = 5, FinishedCount = 2, InProgressCount = 1, TotalDurationSeconds = 36000 };
+        var card = (Button)Invoke(page, "CreateAudiobookSeriesCard", group, 180d, CancellationToken.None)!;
+        var content = (StackPanel)card.Content;
+        var cover = content.Children[0] as Border;
+        var bar = content.Children[1] as Grid;
+        var listening = (TextBlock)content.Children[4];
+        void Expect(bool condition, string message)
+        {
+            if (!condition) failures.Add(message);
+            else Program.Log("PASS: " + message);
+        }
+        Expect(cover is { Width: 180d, Height: 180d, Child: TextBlock { Text: "NW" } },
+            "series card shows one square cover and falls back to initials when no cover is left");
+        Expect(content.Children.OfType<Border>().Count() == 1,
+            "series card no longer fans several covers");
+        Expect(bar != null && bar.ColumnDefinitions.Count == 5
+            && Microsoft.UI.Xaml.Automation.AutomationProperties.GetAccessibilityView(bar) == Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw,
+            "series run bar has a segment per book and stays decorative for UI Automation");
+        var segments = bar?.Children.OfType<Grid>().ToArray() ?? Array.Empty<Grid>();
+        Expect(segments.Length == 5
+            && segments[0].Children.Count == 2 && segments[0].ColumnDefinitions.Count == 0
+            && segments[1].Children.Count == 2 && segments[1].ColumnDefinitions.Count == 0
+            && segments[2].Children.Count == 2 && segments[2].ColumnDefinitions.Count == 2
+            && segments[3].Children.Count == 1 && segments[4].Children.Count == 1,
+            "finished books fill their segment and an in-progress book half-fills its own");
+        Expect(listening.Text == "2 finished · 1 in progress" && listening.TextWrapping == TextWrapping.WrapWholeWords
+            && listening.MaxLines == 0 && listening.Visibility == Visibility.Visible,
+            "series listening lists finished and in-progress counts and wraps instead of clipping");
+
+        var longRun = (Button)Invoke(page, "CreateAudiobookSeriesCard",
+            new AudiobookGroup { Name = "Long", ItemCount = 20, FinishedCount = 20 }, 180d, CancellationToken.None)!;
+        var longContent = (StackPanel)longRun.Content;
+        Expect(longContent.Children[1] is Grid { ColumnDefinitions.Count: 1 }
+            && ((TextBlock)longContent.Children[4]).Text == "all finished",
+            "a series past 12 books draws one continuous bar and says all finished");
+
+        var unstarted = (Button)Invoke(page, "CreateAudiobookSeriesCard",
+            new AudiobookGroup { Name = "Unstarted", ItemCount = 3 }, 180d, CancellationToken.None)!;
+        Expect(((TextBlock)((StackPanel)unstarted.Content).Children[4]).Visibility == Visibility.Collapsed,
+            "an unstarted series shows no listening line");
     }
 
     private static object? Invoke(object owner, string name, params object[] args) => owner.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(owner, args);
