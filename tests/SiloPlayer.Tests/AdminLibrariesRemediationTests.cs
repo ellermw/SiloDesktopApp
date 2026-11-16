@@ -459,6 +459,74 @@ public sealed partial class AdminLibrariesControllerTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SummaryPollingResumesWhenSummaryCompletesDuringDetailRead(bool detailFails)
+    {
+        var (kit, authority, controller, server, _, scheduler) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var summaryEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var summaryRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var detailEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var detailRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var summaryReads = 0;
+            server.Override = request =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/api/v2/libraries/metadata-match-queue")
+                {
+                    var read = Interlocked.Increment(ref summaryReads);
+                    if (read == 1)
+                    {
+                        summaryEntered.TrySetResult();
+                        summaryRelease.Task.GetAwaiter().GetResult();
+                    }
+                    return AdminMonitorKit.Json("{\"items\":[{\"library_id\":\"1\",\"total_count\":" + read + "}]}");
+                }
+                if (request.RequestUri.AbsolutePath == "/api/v2/libraries/1/metadata-match-queue")
+                {
+                    detailEntered.TrySetResult();
+                    detailRelease.Task.GetAwaiter().GetResult();
+                    return detailFails ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable)
+                        : AdminMonitorKit.Json("{\"library_id\":\"1\",\"movies\":[],\"series\":[],\"raw_files\":[],\"page\":{\"has_more\":false}}");
+                }
+                return null;
+            };
+            using var panel = new AdminMatcherQueuesPanel(controller);
+            try
+            {
+                var summary = panel.LoadSummaryAsync();
+                await summaryEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                panel.SetOpen(true);
+                var detail = panel.ToggleLibraryAsync("1");
+                await detailEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                summaryRelease.TrySetResult();
+                await summary.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.True(panel.State.DetailFetching);
+                Assert.Equal(1, panel.State.Total);
+
+                detailRelease.TrySetResult();
+                await detail.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Equal(detailFails, panel.State.DetailError != null);
+                scheduler.Advance(AdminLibrariesController.EventCoalescing);
+                await Until(() => panel.State.Total == 2 && scheduler.Pending(AdminMatcherQueuesPanel.PollInterval) == 2);
+
+                // Closing detail must leave the ordinary summary poll running.
+                panel.SetOpen(false);
+                scheduler.Advance(AdminMatcherQueuesPanel.PollInterval);
+                await Until(() => panel.State.Total == 3);
+                Assert.Equal(3, Volatile.Read(ref summaryReads));
+            }
+            finally
+            {
+                summaryRelease.TrySetResult();
+                detailRelease.TrySetResult();
+            }
+        }
+    }
+
     [Fact]
     public async Task SummaryInvalidationsWaitForForegroundDetailAndResumeOnce()
     {

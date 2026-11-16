@@ -624,7 +624,13 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
 
     private void ResumeSummaryLocked()
     {
-        if (!Current || _summaryLoad != null || _state.DetailFetching || _state.Retrying.Count > 0) return;
+        if (!Current || _summaryLoad != null) return;
+        if (_state.DetailFetching || _state.Retrying.Count > 0)
+        {
+            // The foreground operation must resume polling even without an invalidation.
+            _summaryDirty = true;
+            return;
+        }
         _summaryTimer?.Dispose();
         _summaryTimer = Owner.Scheduler.Schedule(_summaryDirty ? AdminLibrariesController.EventCoalescing : PollInterval, () => _ = LoadSummaryAsync());
     }
