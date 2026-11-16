@@ -29,6 +29,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
 
     internal static CardBadgeHosts Create(Grid parent, CardOverlayGeometry geometry, double progressClearance = 0, double bottomRightClearance = 0)
     {
+        KeepLeftToRight(parent);
         StackPanel Host(HorizontalAlignment horizontal, VerticalAlignment vertical)
         {
             var stack = new StackPanel { Spacing = geometry.StackGap, HorizontalAlignment = horizontal, VerticalAlignment = vertical,
@@ -43,8 +44,9 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
     }
 
     // Badge corners are positions on the artwork, which never mirrors: top-left is the left
-    // corner in every language, as in the WebUI (its overlay layer is dir="ltr"). The hosts and
-    // the layout panels below therefore lay out left to right inside a right-to-left page.
+    // corner in every language, as in the WebUI (its overlay layer is dir="ltr"). The artwork
+    // parent must also be LTR: it places the hosts and sibling status/selection/action controls.
+    // Setting only the hosts' direction does not fix their placement in an RTL parent.
     private static T KeepLeftToRight<T>(T element) where T : FrameworkElement
     {
         element.FlowDirection = FlowDirection.LeftToRight;
@@ -69,6 +71,8 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         _imageOwner = imageOwner;
         if (bottomLeft.Parent is Panel parent)
         {
+            // Also covers cards whose hosts are declared in XAML or constructed without Create.
+            KeepLeftToRight(parent);
             if (_layoutOwner is null)
             {
                 _layoutOwner = parent;

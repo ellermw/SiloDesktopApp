@@ -2,11 +2,15 @@ using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
+using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Services;
 using SiloPlayer.Views;
+using Windows.Foundation;
 
 internal static class CardOverlayRevisionNativeFixture
 {
@@ -123,6 +127,7 @@ internal static class CardOverlayRevisionNativeFixture
             Check(status.Visibility == Visibility.Collapsed, "recycled placeholder clears status");
             library.Reset();
             Check(((FrameworkElement)Get(library, "_watchStatus")!).Visibility == Visibility.Collapsed, "library placeholder clears status");
+            await CheckRightToLeftArtworkAsync(parent, service);
             Program.Log("PASS: overlay revision cards, rail limits/centering, status/disable/recycle and quick-action interaction.");
         }
         finally
@@ -130,6 +135,86 @@ internal static class CardOverlayRevisionNativeFixture
             parent.Children.Remove(surface);
             await Task.Delay(100);
             servicesField.SetValue(null, previous);
+        }
+    }
+
+    private static async Task CheckRightToLeftArtworkAsync(StackPanel parent, CardOverlayService service)
+    {
+        var locale = LocaleService.Shared.Current;
+        var document = Get(service, "_document")!;
+        var revision = service.ManifestRevision;
+        var enabled = Get(service, "_enabled")!;
+        var page = new StackPanel { FlowDirection = FlowDirection.RightToLeft, Orientation = Orientation.Horizontal, Width = 1000, Spacing = 20 };
+        parent.Children.Insert(0, page);
+        try
+        {
+            LocaleService.Shared.Apply(LocaleService.Shared.Create(AppLocaleResolution.Resolve("ar", [], "ar-SA")));
+            Set(service, "_enabled", true);
+            var prefs = OverlayRegistry.DefaultPrefs;
+            foreach (var key in prefs.Keys.ToArray()) prefs[key] = prefs[key] with { Enabled = false };
+            prefs["resolution"] = new(true, OverlayPosition.TopLeft);
+            prefs["availability"] = new(true, OverlayPosition.TopLeft);
+            Set(service, "_document", new CardOverlayPrefs(2, "classic", [], prefs));
+            typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, 29);
+
+            foreach (var type in new[] { "movie", "series" })
+            {
+                page.Children.Clear();
+                var item = new MediaItem
+                {
+                    ContentId = "rtl-overlay-" + type, Type = type, Title = "RTL artwork",
+                    OverlaySummary = type == "movie" ? new() { Resolution = "2160p" } : null,
+                    Availability = type == "series" ? new() { Have = 1, Total = 2 } : null,
+                    UserState = new() { Played = type == "movie", WatchedCount = 1, UnplayedCount = 3 },
+                };
+                var poster = new PosterCard { SuppressImageLoading = true, MediaItem = item };
+                poster.SetCatalogGridLayout(185);
+                var library = new LibraryGridCard { FlowDirection = FlowDirection.RightToLeft };
+                library.Bind(item, null);
+                page.Children.Add(poster); page.Children.Add(library);
+                await Task.Delay(150); page.UpdateLayout();
+                Check(poster.FlowDirection == FlowDirection.RightToLeft &&
+                    ((TextBlock)poster.FindName("TitleText")).FlowDirection == FlowDirection.RightToLeft,
+                    "Arabic card and caption retain RTL outside the artwork");
+                CheckCorners((Panel)poster.FindName("OverlayTopLeft"), Status(poster), type + " poster");
+                CheckCorners((Panel)Get(library, "_overlayTopLeft")!, (FrameworkElement)Get(library, "_watchStatus")!, type + " library");
+                foreach (var name in new[] { "SelectionBadge", "QuickActions", "MoreButton" })
+                    Check(((FrameworkElement)poster.FindName(name)).FlowDirection == FlowDirection.LeftToRight,
+                        name + " shares the artwork's physical corner direction");
+            }
+
+            var detail = new ItemDetailPage();
+            Set(detail, "_seasonCardWidth", 185d);
+            var season = new Season { ContentId = "rtl-season", SeasonNumber = 1, EpisodeCount = 2,
+                Availability = new() { Have = 1, Total = 2 }, UserData = new() { Played = true, WatchedCount = 2 } };
+            var card = (Button)typeof(ItemDetailPage).GetMethod("CreateSeasonCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(detail, [season])!;
+            page.Children.Add(card);
+            await Task.Delay(150); page.UpdateLayout();
+            var artwork = (Grid)((StackPanel)card.Content).Children[0];
+            var badgeHost = artwork.Children.OfType<StackPanel>().Single(host =>
+                host.HorizontalAlignment == HorizontalAlignment.Left && host.VerticalAlignment == VerticalAlignment.Top);
+            var checkmark = artwork.Children.OfType<Border>().Single(border => border.Child is FontIcon);
+            CheckCorners(badgeHost, checkmark, "completed season");
+        }
+        finally
+        {
+            parent.Children.Remove(page);
+            Set(service, "_document", document);
+            Set(service, "_enabled", enabled);
+            typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, revision);
+            LocaleService.Shared.Apply(LocaleService.Shared.Create(locale.Resolution));
+        }
+
+        static void CheckCorners(Panel badges, FrameworkElement status, string label)
+        {
+            var artwork = (FrameworkElement)VisualTreeHelper.GetParent(badges);
+            Check(artwork.FlowDirection == FlowDirection.LeftToRight, label + " artwork parent is LTR inside the RTL page");
+            Check(badges.Children.Count > 0 && badges.ActualWidth > 0 && status.Visibility == Visibility.Visible && status.ActualWidth > 0,
+                label + " has a badge and visible watch status");
+            var left = badges.TransformToVisual(artwork).TransformBounds(new Rect(0, 0, badges.ActualWidth, badges.ActualHeight));
+            var right = status.TransformToVisual(artwork).TransformBounds(new Rect(0, 0, status.ActualWidth, status.ActualHeight));
+            Check(left.Left < artwork.ActualWidth / 2 && right.Right > artwork.ActualWidth / 2 && left.Right <= right.Left,
+                label + " badge is physically left of the top-right watch status without overlap");
         }
     }
 
