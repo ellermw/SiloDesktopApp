@@ -2714,7 +2714,10 @@ public sealed partial class MainWindow : Window
                             ? Visibility.Collapsed
                             : Visibility.Visible;
                     _ = ApplyProfileAvatarAsync(profile.AvatarUrl);
-                    // Metadata changes can start a new shell hydration; commit them after this read's presentation.
+                    // Permission changes retire route reads too. Queue their refresh before
+                    // RefreshSelectedProfile synchronously raises ProfileChanged and rehydrates the shell.
+                    if ((_authService.SelectedProfile?.RequestsAllowed ?? true) != profile.RequestsAllowed)
+                        _pendingAccessRefresh = true;
                     _authService.RefreshSelectedProfile(profile);
                 });
             }

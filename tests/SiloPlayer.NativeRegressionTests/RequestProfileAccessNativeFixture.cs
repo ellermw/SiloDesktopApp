@@ -72,6 +72,15 @@ internal static class RequestProfileAccessNativeFixture
                 throw new InvalidOperationException("INFRA: remote profile setup is not the allowed selected profile.");
             Program.Log("PASS: real shell profile display reads the allowed selected profile before access invalidation.");
             var identity = client.CaptureIdentityContext();
+            // Use a route without its own ProfileChanged reload, so only the shell can repair its owner.
+            var navigation = services.GetRequiredService<NavigationService>();
+            var routeContexts = new List<ApiRequestContext>();
+            navigation.Navigated += (_, e) =>
+            {
+                if (e.SourcePageType == typeof(Page) && Equals(e.Parameter, "permission-route"))
+                    routeContexts.Add(client.CaptureContext());
+            };
+            navigation.NavigateImmediately(typeof(Page), "permission-route");
             await ChangeAccessAsync(false);
             if (auth.SelectedProfile?.RequestsAllowed != false || api.ProfileRequestsAllowed || api.DiscoveryAllowed)
                 throw new InvalidOperationException("Remote profile block is not applied by the real access-change refresh.");
@@ -87,12 +96,30 @@ internal static class RequestProfileAccessNativeFixture
             {
                 wire.RequestsAllowed = allowed;
                 var reads = wire.LibraryReads;
-                client.InvalidateAccessContext();
-                Call(window, "OnAccessChanged", client.CaptureContext());
-                await UntilAsync(() => wire.LibraryReads > reads && !services.GetRequiredService<MainViewModel>().IsLoadingLibraries,
-                    "real access-change shell refresh did not reach and settle its library read");
-                // Let profile-display dispatcher work queued by this same refresh settle.
-                for (var i = 0; i < 100 && auth.SelectedProfile?.RequestsAllowed != allowed; i++) await Task.Delay(10);
+                var profileReads = wire.ProfileReads;
+                var mounts = routeContexts.Count;
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ProfileReadRelease = release;
+                try
+                {
+                    client.InvalidateAccessContext();
+                    Call(window, "OnAccessChanged", client.CaptureContext());
+                    await UntilAsync(() => wire.ProfileReads > profileReads && routeContexts.Count == mounts + 1 &&
+                        wire.LibraryReads > reads && !services.GetRequiredService<MainViewModel>().IsLoadingLibraries,
+                        "real access-change shell refresh did not mount the route before the held profile read");
+                    var intermediateContext = routeContexts[^1];
+                    if (!client.IsCurrentContext(intermediateContext))
+                        throw new InvalidOperationException("INFRA: first route mount did not capture the intermediate access context.");
+                    wire.ProfileReadRelease = null;
+                    release.TrySetResult();
+                    await UntilAsync(() => auth.SelectedProfile?.RequestsAllowed == allowed && routeContexts.Count == mounts + 2 &&
+                        client.IsCurrentContext(routeContexts[^1]),
+                        "permission metadata did not reload the active route under the final access context");
+                    if (client.IsCurrentContext(intermediateContext))
+                        throw new InvalidOperationException("Permission metadata did not retire the intermediate route owner.");
+                    Program.Log("PASS: permission metadata reloads the active route once under final authority after the earlier mount is retired.");
+                }
+                finally { wire.ProfileReadRelease = null; release.TrySetResult(); }
             }
         }
         finally
@@ -127,7 +154,8 @@ internal static class RequestProfileAccessNativeFixture
     {
         internal bool RequestsAllowed = true;
         internal int ProfileReads, LibraryReads;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        internal TaskCompletionSource? ProfileReadRelease;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri?.Host != "request-profile-access.invalid")
                 throw new InvalidOperationException("INFRA: unexpected external profile fixture request.");
@@ -137,6 +165,7 @@ internal static class RequestProfileAccessNativeFixture
             {
                 ProfileReads++;
                 json = JsonSerializer.Serialize(new { items = new[] { new { id = "fixture-profile", name = "Fixture", is_primary = true, requests_allowed = RequestsAllowed } }, requests_allowed_supported = true });
+                if (ProfileReadRelease is { } release) await release.Task.WaitAsync(cancellationToken);
             }
             else if (path == "/api/v2/requests/status")
                 json = JsonSerializer.Serialize(new { requests_enabled = true, allowed = RequestsAllowed, watchlist_titles_supported = RequestsAllowed });
@@ -145,7 +174,7 @@ internal static class RequestProfileAccessNativeFixture
                 if (path == "/api/v2/user/libraries") LibraryReads++;
                 json = "{\"items\":[],\"page\":{\"has_more\":false},\"settings\":{}}";
             }
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
         }
     }
 }
