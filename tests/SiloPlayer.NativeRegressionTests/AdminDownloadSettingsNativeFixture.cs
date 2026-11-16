@@ -298,6 +298,7 @@ internal static class AdminDownloadSettingsNativeFixture
             await Until(() => Rail(page).Visibility == Visibility.Visible, "a new reason re-expands the section");
             Check(true, "a new reason to force the section open re-expands it after a manual collapse");
             controller.Discard(); await Until(() => controller.State.DirtyKeys.Count == 0, "advanced edits discarded again");
+            await Until(() => Rail(page).Visibility == Visibility.Collapsed, "the section closes once nothing forces it open");
             Invoke(disclosure); await Until(() => Rail(page).Visibility == Visibility.Visible, "reopen advanced"); // persisted open for the layout checks
 
             // Per-user period pair, duration grammar and the local-fallback toggle.
