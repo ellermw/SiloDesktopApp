@@ -499,6 +499,8 @@ internal static class AdminDownloadSettingsNativeFixture
             await Until(() => inner.Content is AdminActivityPage, "discard permitted navigation");
             await Task.Delay(150);
             Check(controller.State.Values.Count == 0 && controller.State.DirtyKeys.Count == 0 && cacheBox.Text.Length == 0, "departure retires the controller and clears values, drafts and editor text");
+            // The shared store deliberately serves a 30-second snapshot; drop it so the new page really reads from the failing server.
+            services.GetRequiredService<AdminServerSettingsStore>().Invalidate();
             server.EffectiveFailure = true;
             inner.GoBack(); await Until(() => inner.Content is AdminDownloadSettingsPage { Controller.State.Error: not null }, "Back with a failed first read");
             page = (AdminDownloadSettingsPage)inner.Content; controller = page.Controller!;
