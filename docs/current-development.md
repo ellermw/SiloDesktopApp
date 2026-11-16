@@ -35,6 +35,31 @@ verification, not complete live/visual/physical-device parity certification.
 
 ---
 
+# November 15 - Configure Security delivered in Beta PR175
+
+Security alone is replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d in branch t3/configure-security-beta. Original commits 1e71c820 and fe5a29b4 remain preserved at preserve/configure-security-fe5a29b4; their receipt and logs remain unchanged. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1. Version remains 1.2.1145-beta.1 under pipeline control.
+
+Official main abd85d0cadac28f4ab7db6821dad9634fc114790 was fetched directly. Independent Claude standards/spec review found no blocking correctness bug or Security upstream drift. Lead reproduced and fixed stale shared settings on entry and unsaveable rate edits after a failed shared settings read. Both added regressions failed before the fixes; 723 focused Admin/Architecture tests pass afterward. Final Beta-based verification passes: 7,226 full unit tests (0 skipped), 723 focused tests, Release publish and matching native host; Security 374, Email 297, General 188, foundation 36, Subtitles 64, Monitor 113 and Dashboard 184 native PASS checks. Product DLL SHA256 5DECA87ED788CE0D07DCE133C545128BB952D44803A1544F5C55EF6536808BD1. The initial full run hit a Library count-restoration assertion and stopped progressing; both isolated variants and the complete rerun pass. Synthetic server/current DPI only, with 35 hashed captures at four window sizes; no live-server/all-DPI/complete visual-parity claim. See D:/SiloPlayer-build/server-update-nov14/configure-security/takeover-receipt.json. Security is Done in qualifying non-draft Beta PR175 (https://github.com/ellermw/SiloDesktopApp/pull/175), separately unmerged/unreleased. Automatic approval review rejected removal of generated build/publish outputs as blocked by policy; no retry was attempted and recovered space is 0 GiB on C: and D:. Active shared output remains about 4.56 GiB with over 50 GiB free on both drives. The older receipt below covers only its original base.
+
+---
+# November 15 - Configure Security implemented (In progress, awaiting PR)
+
+Security (C2b) is implemented and verified locally at code 1e71c820a7c7deb1d91226fb5d47d8698c9c1409. It is based on final Email PR174 4958d221 (runtime 3ab6d459), which contains General PR173 905f9ba2, Beta a06cc8b3, PR167 3f0fe220 and PR171 3331916b. The lead owns independent review, push and the Beta PR. It stays In progress until it is pushed to a PR. General (PR173) and Email (PR174) are Done; the remaining 16 leaves are unstarted. PR173/PR174 were open and unmerged when last observed. No Configure change is merged or released.
+
+`/admin/settings/security` is registered under Sign-in & Security with all 32 settings. The local-network key uses the shared settings form/store/API. The 31 rate-limit values use a separate `AdminRateLimitApi`, draft and controller, with their own strong config validator and status hints, and never go through the batched PUT. One Save runs the PUT, then one captured PATCH. A failed PUT skips the PATCH, partial success stays truthful, and the validator-less receipt is followed by a config re-read. A 412 needs an explicit Reload that rebases only the edited fields. An unknown outcome is never replayed and is reconciled on Reload. Lead decisions Q1–Q9 are applied: the failed rate group shows an inline error with Retry, rate editors freeze from the Save click, numbers have distinct accessible names, there are no dirty dots, and number entry accepts plain ASCII integers only.
+
+Official main was freshly fetched at c11b0a968f0d5980b7005579fb95acc2d11d8321 (unchanged). Version remains 1.2.1081-beta.1 (numeric 1.2.1080.1); the pipeline owns stamping and packaging. Final checks on 1e71c820 passed:
+
+- 663 focused Admin/architecture tests and 7,118 full unit tests.
+- Release publish with a matching native host. The product DLL F2609157… is identical in publish, native-reference and host.
+- Native groups on the same bytes: admin-configure-security 374 PASS, admin-configure-email 297, admin-configure-general 183, admin-manage-foundation 36, admin-subtitles 64, admin-monitor 113 and admin-dashboard 184.
+
+A mutation run turned the 8 targeted unit tests red. A native red/green pair covers the full-width settings column and the unclipped unit slot.
+
+See docs/parity/admin-security.md, docs/parity/admin-configure-checklist.json and D:/SiloPlayer-build/server-update-nov14/configure-security/final-receipt.json for exact hashes, captures and limits. Verification used a synthetic server at the current DPI only. No real IME, toast display, high-contrast run, live server, all-DPI or complete visual-parity claim is made. Shared output is about 4.55 GiB; C: 184.69 GiB and D: 474.84 GiB free. No install, restart, push, PR, merge or release action was taken. The installed player and settings are untouched.
+
+---
+
 # November 15 - Neutral opening for playback More
 
 The playback ellipsis menu no longer preselects Playback info (or another
@@ -65,6 +90,27 @@ results/final-more, final-more-pointer, final-speed-presentation, baseline-chapt
 and baseline-speed. Automatic approval review blocked removal of superseded
 unit output; cleanup was not retried and recovered 0 GiB. Task outputs remain
 within the 10 GiB limit with over 50 GiB free on both drives.
+
+---
+
+# November 15 - Reader cooperative search and inline CSS increment
+
+Independent Beta baseline `2c33599f751e1bb7e18a56ee378ffe918710d74d`, unchanged
+1.2.1145-beta.1 / 1.2.1144.1. Ports official #4331's segment checkpoints and 25 ms
+search-yield budget, preserving bounded results and the desktop overlap fix.
+Ports #4325's applicable HTML chapter serialization so CSS containing `>` and
+`&` survives invalid-XHTML fallback. Official reference is
+`abd85d0cadac28f4ab7db6821dad9634fc114790`.
+
+The three Node regressions and native CSS-selector regression failed before
+their corrections. Final 26 Node search/location checks, 43 related main tests,
+Release publish/matching host and native WebView2 reader interoperability pass.
+Packaged runtime files match source; app SHA256
+`9C26BA933CF59CBF313F1177F597206239D606B77A93B9EC31C6AA1C10B82297`.
+See [scope and exact evidence](parity/2026-11-15-reader-responsiveness.md) and
+task-local `.codex-tmp/reader-final-receipt.json`. All .NET/native runs held
+`SiloOct18Build`; shared Configure outputs and the installed player were
+untouched. No direct merge, release or installer action.
 
 ---
 
