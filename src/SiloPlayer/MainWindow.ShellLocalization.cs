@@ -26,6 +26,7 @@ public sealed partial class MainWindow
             new Dictionary<string, object?> { ["name"] = AppStrings.Get("web.shell.sidebar.libraries") },
             _librariesExpanded ? "Collapse libraries" : "Expand libraries"));
         QueueSidebarPublication();
+        if (ContentFrame.Content is SiloPlayer.Views.LibraryPage library) library.RefreshPinnedCollectionTitles();
         RebuildSettingsSidebar();
         RefreshUpdateDialog();
         if (PlayingNextOverlay.Visibility == Microsoft.UI.Xaml.Visibility.Visible)

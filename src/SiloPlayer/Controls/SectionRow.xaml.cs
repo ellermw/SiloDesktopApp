@@ -209,6 +209,11 @@ public sealed partial class SectionRow : UserControl
 
     // Display only: pins, edits and saves keep the server's stored Title. Runs again
     // on interface-language changes (AppLocalization.Register in the constructor).
+    internal void RefreshTitle()
+    {
+        if (Section is { } section) UpdateTitle(section);
+    }
+
     private void UpdateTitle(HomeSectionWithItems section)
     {
         var title = section.DisplayTitle;

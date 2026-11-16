@@ -393,6 +393,7 @@ public sealed partial class LibraryPage : Page,
             await RefreshLibraryFlagsAsync();
             if (!_isNavigated || flagsVisit != _libraryFlagsVisit) return;
             library = ViewModel.Library;
+            RefreshPinnedCollectionTitles();
         }
 
         LibraryUnavailableState.Visibility = library == null
@@ -3804,23 +3805,36 @@ public sealed partial class LibraryPage : Page,
                 {
                     Id = $"pinned-collection-{pin.Id}",
                     SectionType = "collection",
-                    Title = pin.Label,
+                    Title = catalogApi.ResolvePinLabel(libraryId, "collection", pin.Id, pin.Label),
                     ItemLimit = response.Items.Count,
                     TotalCount = response.Total,
                     Items = new System.Collections.ObjectModel.ObservableCollection<MediaItem>(response.Items),
                 };
-                var row = new SectionRow { Section = section };
+                var row = new SectionRow { Section = section, Tag = pin };
                 row.OnViewAll = () => App.Services.GetRequiredService<NavigationService>()
                     .Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
                     {
                         CollectionId = pin.Id,
-                        Title = pin.Label,
+                        Title = section.Title,
                         Subtitle = ViewModel.Library?.Name,
                         LibraryId = libraryId,
                     });
                 RecommendedSectionsPanel.Children.Add(row);
             }
             catch { }
+        }
+    }
+
+    public void RefreshPinnedCollectionTitles()
+    {
+        if (!_isNavigated || ViewModel.Library is not { } library) return;
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        foreach (var row in RecommendedSectionsPanel.Children.OfType<SectionRow>())
+        {
+            if (row.Section is not { } section || !section.Id.StartsWith("pinned-collection-", StringComparison.Ordinal) ||
+                row.Tag is not ValueTuple<string, string> pin) continue;
+            section.Title = catalog.ResolvePinLabel(library.Id, "collection", pin.Item1, pin.Item2);
+            row.RefreshTitle();
         }
     }
 

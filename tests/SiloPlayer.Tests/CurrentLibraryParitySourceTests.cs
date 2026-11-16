@@ -164,7 +164,8 @@ public sealed class CurrentLibraryParitySourceTests
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml");
-        var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "CatalogApi.cs");
+        var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "CatalogApi.cs")
+            + ReadRepoFile("src", "SiloPlayer.Core", "Api", "CatalogApi.PinTitles.cs");
         var shell = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
 
         Assert.Contains("x:Name=\"RecommendedHeroSkeleton\"", xaml);
