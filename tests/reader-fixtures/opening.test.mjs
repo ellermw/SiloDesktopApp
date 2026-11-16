@@ -106,6 +106,42 @@ for (const format of ['cbz', 'cbr']) {
     });
 }
 
+for (const format of ['epub', 'cbz', 'cbr']) {
+    const ids = ['100%.png', '50%_off.jpg', 'a%zz.png', 'encoded%20page.png', 'plain.png'];
+    // Deliberately differ from spine order so comparisons visit non-matching IDs.
+    const chapters = ['plain.png', 'a%zz.png', '100%.png', '50%_off.jpg', 'encoded page.png'];
+
+    test(format + ' reports progress for malformed percent IDs and valid encoded IDs', async () => {
+        const { reader, messages } = openingHarness(ids);
+        assert.equal(await reader.open({ url: 'fixture.' + format, format, chapters }), true);
+        for (let index = 0; index < ids.length; index++) {
+            if (index) await reader.next();
+            const path = index === 3 ? 'encoded page.png' : ids[index];
+            assert.equal(reader.snapshot()?.index, index);
+            assert.equal(reader.snapshot()?.chapterIndex, chapters.indexOf(path));
+            assert.equal(messages.at(-1).type, index === 0 ? 'reader-ready' : 'relocate');
+            const progress = messages.filter(message => message.type === 'relocate').at(-1);
+            assert.equal(progress.index, index);
+            assert.equal(progress.chapterIndex, chapters.indexOf(path));
+        }
+    });
+
+    test(format + ' restores legacy locations past malformed percent IDs', async () => {
+        const { reader, directRestores } = openingHarness(ids);
+        assert.equal(await reader.open({
+            url: 'fixture.' + format, format, chapters, location: 'chapter:0;fraction:0.25',
+        }), true);
+        assert.equal(directRestores[0].index, 4);
+        assert.equal(directRestores[0].anchor, .25);
+        for (let chapter = 1; chapter < chapters.length; chapter++) {
+            assert.equal(await reader.go(`chapter:${chapter};fraction:0.5`), true);
+            assert.equal(reader.snapshot()?.chapterIndex, chapter);
+            const expected = chapter === 4 ? 3 : ids.indexOf(chapters[chapter]);
+            assert.equal(directRestores.at(-1).index, expected);
+        }
+    });
+}
+
 for (const format of ['fb2', 'fbz']) {
     test(format + ' restores legacy desktop chapters by saved overall progress, not foliate section number', async () => {
         const { reader, fractionRestores, directRestores } = openingHarness();

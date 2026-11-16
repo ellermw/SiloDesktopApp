@@ -36,6 +36,12 @@ const text = (key, english) => typeof localeStrings[key] === 'string' && localeS
 const openFailed = () => text('web.reader.error.openFailed', 'Unable to open ebook');
 const locationUnresolved = () => text('desktop.reader.locationUnresolved', 'This saved reading location could not be resolved. Choose a chapter or move the progress slider to continue.');
 const locationUnavailable = () => text('desktop.reader.locationUnavailable', 'This reading location is unavailable in this file.');
+// Archive filenames and spine IDs may contain literal, malformed percent escapes.
+const safeDecodeURI = value => {
+    const raw = String(value);
+    try { return decodeURI(raw); }
+    catch { return raw; }
+};
 
 async function navigate(location) {
     const activeView = view, activeBook = book, current = generation, paths = chapterPaths;
@@ -55,7 +61,7 @@ async function navigate(location) {
             // used Windows path order and the base image extension set.
             const path = paths[target.index];
             if (typeof path !== 'string') return false;
-            const index = activeBook.sections.findIndex(s => s.id === path || decodeURI(String(s.id)) === path);
+            const index = activeBook.sections.findIndex(s => s.id === path || safeDecodeURI(s.id) === path);
             if (index < 0) return false;
             resolved = {index, anchor:target.anchor};
         } else resolved = {index:target.index, anchor:target.anchor};
@@ -149,7 +155,7 @@ window.siloReader = {
             const progress = progressFromRelocate(detail);
             if (!progress) return;
             const index = detail.section?.current ?? activeView.renderer.primaryIndex ?? 0;
-            const chapterIndex = chapterPaths.findIndex(path => path === nextBook.sections[index]?.id || path === decodeURI(String(nextBook.sections[index]?.id)));
+            const chapterIndex = chapterPaths.findIndex(path => path === nextBook.sections[index]?.id || path === safeDecodeURI(nextBook.sections[index]?.id));
             snapshot = {...progress,index,chapterIndex,count:nextBook.sections.length};
             if (recoverOnRelocate) {
                 ready = true; unresolvedRestore = false; recoverOnRelocate = false;
