@@ -51,11 +51,30 @@ public sealed class MetadataResetOwnershipTests
     [Theory]
     [InlineData(403)]
     [InlineData(404)]
+    [InlineData(500)]
     public async Task AcceptedResetWithUnreadableAdminJobReturnsQueuedAndReconciles(int status)
     {
         using var wire = new Wire { JobStatus = (HttpStatusCode)status }; using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://metadata.invalid");
         var api = new MediaMaintenanceApi(client); var completed = true;
+        wire.Detail.SetResult(true);
+        await api.PendingWrites.RunAsync(client.CaptureIdentityContext(), "item",
+            async ct => { completed = await api.ResetToProviderAndWaitAsync(new(client.CaptureContext(), true), "item", [], ct); },
+            ct => new CatalogApi(client).GetItemDetailAsync("item", ct), default);
+        Assert.False(completed);
+        Assert.True(wire.DetailRequested.Task.IsCompleted);
+        Assert.Equal(1, wire.Posts);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptedResetWithJobReadFailureReturnsQueuedAndReconciles(bool timeout)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://metadata.invalid");
+        var api = new MediaMaintenanceApi(client); var completed = true;
+        wire.Job.SetException(timeout ? new TaskCanceledException("Job read timed out") : new HttpRequestException("Job connection dropped"));
         wire.Detail.SetResult(true);
         await api.PendingWrites.RunAsync(client.CaptureIdentityContext(), "item",
             async ct => { completed = await api.ResetToProviderAndWaitAsync(new(client.CaptureContext(), true), "item", [], ct); },

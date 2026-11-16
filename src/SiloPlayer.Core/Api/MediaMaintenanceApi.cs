@@ -100,6 +100,13 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
                     await Task.Delay(delay > 120 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
                     continue;
                 }
+                catch (Exception)
+                {
+                    // A failed job read cannot undo the accepted POST. Only
+                    // owner retirement prevents publishing the queued outcome.
+                    RequireCommitted(identity, capability.Owner, ct);
+                    return false;
+                }
                 if (state is "queued" or "running" or "canceling")
                     await Task.Delay(TimeSpan.FromMilliseconds(1500), ct).ConfigureAwait(false);
             }
