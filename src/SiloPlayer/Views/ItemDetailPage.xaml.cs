@@ -2449,7 +2449,7 @@ public sealed partial class ItemDetailPage : Page
         }
 
         if (_audiobookChapterRows.Count == 0) return;
-        SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookChapterCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.heading") + "  " + SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.count", new Dictionary<string, object?> { ["count"] = _audiobookChapterRows.Count }));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookChapterCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.heading") + "  " + SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.count", new Dictionary<string, object?> { ["count"] = _audiobookChapterRows.Count }, fallback: $"({_audiobookChapterRows.Count.ToString(AppStrings.FormatCulture)})"));
         AudiobookChaptersSection.Visibility = Visibility.Visible;
     }
 
@@ -2489,6 +2489,8 @@ public sealed partial class ItemDetailPage : Page
             item.Click += (_, _) =>
             {
                 _audiobookChaptersLongestFirst = option.Longest;
+                Localized.SetText(AudiobookChapterSortText, null);
+                AudiobookChapterSortText.Text = option.Label;
                 Localized.SetText(AudiobookChapterSortText, option.Key);
                 RenderAudiobookChapters();
             };
@@ -2604,7 +2606,7 @@ public sealed partial class ItemDetailPage : Page
         int FileId)
     {
         internal string DisplayLabel => string.IsNullOrWhiteSpace(Label)
-            ? SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.player.chapterNumber", new Dictionary<string, object?> { ["number"] = PositionIndex.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : Label;
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.player.chapterNumber", new Dictionary<string, object?> { ["number"] = PositionIndex.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) }, fallback: $"Chapter {PositionIndex.ToString(AppStrings.FormatCulture)}") : Label;
     }
 
     private void BuildMangaChapters(MediaItemDetail item)

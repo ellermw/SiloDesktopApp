@@ -150,7 +150,8 @@
                                         HorizontalContentAlignment="Center"
                                         Padding="16,10"
                                         Tag="{Binding}"
-                                        Click="AuthProviderButton_Click">
+                                        Click="AuthProviderButton_Click"
+                                        Loaded="AuthProviderButton_Loaded">
                                         <StackPanel
                                             Orientation="Horizontal"
                                             HorizontalAlignment="Center"

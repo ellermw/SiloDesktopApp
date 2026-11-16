@@ -7,9 +7,10 @@ namespace SiloPlayer.Core.Localization;
 /// (docs/architecture/i18n.md "Matching"): a regional tag matches its
 /// language (<c>es-MX</c> → <c>es</c>, <c>pt</c>/<c>pt-PT</c> → <c>pt-BR</c>),
 /// and Chinese matches by script (<c>zh</c>, <c>zh-CN</c>, <c>zh-SG</c> →
-/// <c>zh-Hans</c>; <c>zh-TW</c>, <c>zh-HK</c>, <c>zh-Hant</c> → none). Tags are
-/// compared after filling the likely script of each shipped language, as the
-/// web compares maximized tags.
+/// <c>zh-Hans</c>; <c>zh-TW</c>, <c>zh-HK</c>, <c>zh-MO</c>, <c>zh-Hant</c> →
+/// <c>zh-Hant</c>). Norwegian <c>no</c> matches <c>nb</c>; <c>nn</c> remains
+/// unmatched. Tags are compared after filling the likely script of each shipped
+/// language, as the web compares maximized tags.
 /// </summary>
 public static class AppLanguageMatcher
 {
@@ -28,10 +29,10 @@ public static class AppLanguageMatcher
         ["traditional chinese"] = "zh-Hant",
     };
 
-    // Deprecated ISO 639 codes BCP 47 canonicalization replaces.
+    // Canonical language aliases and the WebUI's Norwegian Bokmål matching.
     private static readonly Dictionary<string, string> LanguageAliases = new(StringComparer.Ordinal)
     {
-        ["iw"] = "he", ["in"] = "id", ["ji"] = "yi", ["jw"] = "jv", ["mo"] = "ro",
+        ["iw"] = "he", ["in"] = "id", ["ji"] = "yi", ["jw"] = "jv", ["mo"] = "ro", ["no"] = "nb",
     };
 
     // CLDR likely scripts for the languages the catalogs ship (and Chinese regions).
@@ -39,6 +40,9 @@ public static class AppLanguageMatcher
     {
         ["en"] = "Latn", ["es"] = "Latn", ["de"] = "Latn", ["fr"] = "Latn", ["pt"] = "Latn",
         ["ja"] = "Jpan", ["ar"] = "Arab", ["zh"] = "Hans",
+        ["nl"] = "Latn", ["it"] = "Latn", ["pl"] = "Latn", ["tr"] = "Latn", ["sv"] = "Latn",
+        ["da"] = "Latn", ["nb"] = "Latn", ["fi"] = "Latn", ["cs"] = "Latn", ["hr"] = "Latn",
+        ["ru"] = "Cyrl", ["uk"] = "Cyrl", ["ko"] = "Kore",
     };
 
     private static readonly HashSet<string> TraditionalChineseRegions = new(StringComparer.Ordinal) { "TW", "HK", "MO" };
