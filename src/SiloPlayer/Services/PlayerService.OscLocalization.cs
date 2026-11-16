@@ -59,6 +59,7 @@ public partial class PlayerService
             ("marker.skipCredits", []),
             ("web.player.nextEpisode.seasonEpisode", ["season", "episode"]),
             ("web.player.nextEpisode.playNow", []),
+            ("web.player.upNext.heading", []),
             ("common.cancel", []),
             ("common.retry", []),
             ("common.loading", []),

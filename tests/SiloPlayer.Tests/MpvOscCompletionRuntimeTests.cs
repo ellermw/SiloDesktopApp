@@ -9,6 +9,8 @@ public sealed partial class MpvOscRuntimeTests
             local s=osc_test_state
             s.osc_disabled,s.current_alpha=false,1
             handlers['osc-set-markers']('{"content_id":"owned-episode","load_generation":42,"play_generation":7,"credits_start":90,"credits_end":99}')
+            handlers['osc-set-auto-play-next']('true', '7', '42')
+            handlers['osc-set-auto-play-next']('false', '6', '41')
             s.duration,s.time_pos=100,91
             s.next_ep_detail={title='Next'}; s.next_ep_available=true
             osc_test_check_countdown(); s.next_ep_countdown_started_at=mp.get_time()-11; osc_test_check_countdown()

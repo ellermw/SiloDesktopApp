@@ -69,6 +69,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
             Call(service, "StopPlaybackStallWatchdog");
             await LoadProductionOsc(service.Mpv);
             Call(service,"SendMarkersToOsc"); await WaitForOscOwner(service);
+            Call(service,"PublishPlaybackHudPreferences",service.Mpv);
             if (mode.StartsWith("mini-prepare", StringComparison.Ordinal))
                 await VerifyMiniPreparation(service, wire, api, window, mode);
             else if (mode == "postroll")
@@ -156,6 +157,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 var starts=wire.Starts; await Task.Delay(300);
                 Check(wire.Starts==starts,"Retired credits intent advanced a newer preparation owner.");
             }
+            else if(mode.StartsWith("credits-autoplay",StringComparison.Ordinal)) await VerifyCreditsAutoPlay(service,wire);
             else if(mode=="metadata")
             {
                 await (Task)Call(service,"AutoDetectNextEpisodeAsync",CancellationToken.None)!;
@@ -311,6 +313,14 @@ internal static partial class PlaybackHudCompletionNativeFixture
         internal int Stops, Starts, Advances;
         internal bool FailStart, FailAdvance, HoldAdvance, HasEpisodes;
         internal bool HideImages=true, HoldStill;
+        internal bool AutoPlayProfile=true;
+        internal bool FailAutoPlayRead;
+        internal bool? AutoPlayDeviceOverride;
+        internal bool AutoPlay {get=>AutoPlayDeviceOverride ?? AutoPlayProfile;set{AutoPlayProfile=value;AutoPlayDeviceOverride=null;}}
+        internal int AutoPlayProfileWrites, AutoPlayOverrideDeletes;
+        internal int AutoPlayReadCancellations, AutoPlayReads, AutoPlayReadFailures;
+        internal bool AutoPlayEndpointMissing, ThrowAutoPlayReads;
+        internal TaskCompletionSource? AutoPlayReadEntered, AutoPlayReadRelease;
         internal byte[] StillPng=[];
         internal readonly TaskCompletionSource StillEntered=new(TaskCreationOptions.RunContinuationsAsynchronously),StillRelease=new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<string> WatchQueries=[];
@@ -338,7 +348,47 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 return new(HttpStatusCode.OK){Content=new ByteArrayContent(StillPng)};
             }
             if(path=="/api/v2/settings/contract/capabilities") return Json(new {api_version=1,manifest_revision=17,supports_batched_effective=true});
-            if(path=="/api/v2/settings/values/effective") return Json(new {items=new[]{new {key="catalog.hide_unwatched_episode_images",value=HideImages}}});
+            if(path=="/api/v2/settings/values/playback.auto_play_next")
+            {
+                if(request.Method==HttpMethod.Put)
+                {
+                    using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                    AutoPlayProfile=body.RootElement.GetProperty("value").GetBoolean();
+                    Interlocked.Increment(ref AutoPlayProfileWrites);
+                    return Json(new {key="playback.auto_play_next",value=AutoPlayProfile});
+                }
+                if(request.Method==HttpMethod.Delete && request.RequestUri.Query.Contains("scope=profile_device",StringComparison.Ordinal))
+                {
+                    AutoPlayDeviceOverride=null;Interlocked.Increment(ref AutoPlayOverrideDeletes);
+                    return new(HttpStatusCode.NoContent);
+                }
+            }
+            if(path=="/api/v2/settings/values/effective")
+            {
+                if(request.RequestUri.Query.Contains("playback.auto_play_next",StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref AutoPlayReads);
+                    if(AutoPlayEndpointMissing) return new(HttpStatusCode.NotFound){Content=new StringContent("{}")};
+                    if(FailAutoPlayRead) return new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{}")};
+                    if(ThrowAutoPlayReads || AutoPlayReadFailures>0)
+                    {
+                        if(AutoPlayReadFailures>0) Interlocked.Decrement(ref AutoPlayReadFailures);
+                        throw new HttpRequestException("Synthetic autoplay read failure.");
+                    }
+                }
+                var autoPlay=AutoPlay;
+                var release=AutoPlayReadRelease;
+                if(request.RequestUri.Query.Contains("playback.auto_play_next",StringComparison.Ordinal) && release is not null)
+                {
+                    AutoPlayReadEntered?.TrySetResult();
+                    using var cancellation=ct.Register(()=>Interlocked.Increment(ref AutoPlayReadCancellations));
+                    // Deliberately finish an old response even after cancellation;
+                    // the product must also reject it by playback/read ownership.
+                    await release.Task;
+                }
+                return Json(new {items=new[]{new {key="catalog.hide_unwatched_episode_images",value=HideImages},
+                    new {key="playback.auto_play_next",value=autoPlay}}});
+            }
             if (path.EndsWith("/capabilities") && path.Contains("/playback/")) return Json(new { allowed = true, state = "available", installation_id = "fixture-install", protocol_versions = new[] { 3 }, features = new[] { "fixed_media_file_v1" } });
             if(path.Contains("/shuffles"))
             {

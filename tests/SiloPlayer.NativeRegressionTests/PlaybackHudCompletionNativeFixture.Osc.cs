@@ -18,6 +18,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
                         cover=state.loading_backdrop_shown~=nil, disabled=state.osc_disabled, next_title=state.next_ep_detail and state.next_ep_detail.title or "",
                         content=state.marker_content_id or '', load=state.marker_load_generation or 0, play=state.marker_play_generation or 0,
                         still=state.next_ep_still_shown~=nil, countdown=state.next_ep_countdown_active,
+                        autoplay=state.auto_play_next==nil and 'unknown' or tostring(state.auto_play_next),
                         text=(state.playback_wait_overlay and state.playback_wait_overlay.data or ''):gsub('{[^}]*}','')}))
                 end)
                 -- Accelerate only the fixture clock, then execute the actual

@@ -967,14 +967,21 @@ public partial class SettingsViewModel : ObservableObject
 
     private async Task SaveAutoPlayNextAsync(bool value)
     {
+        var context = _settingsApi.CaptureContext();
         try
         {
-            await _settingsApi.SetContractSettingValueAsync("playback.auto_play_next", "profile", value);
-            try { await _settingsApi.DeleteContractSettingValueAsync("playback.auto_play_next", "profile_device"); }
+            await _settingsApi.SetContractSettingValueAsync(context, "playback.auto_play_next", "profile", value);
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            try { await _settingsApi.DeleteContractSettingValueAsync(context, "playback.auto_play_next", "profile_device"); }
             catch { }
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            _settingsApi.NotifyLocalizedSettingChanged("playback.auto_play_next");
             ShowStatus("Auto-play preference saved");
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to save auto-play preference: {ex.DisplayMessage()}"; }
+        catch (Exception ex)
+        {
+            if (_settingsApi.IsCurrentContext(context)) ErrorMessage = $"Failed to save auto-play preference: {ex.DisplayMessage()}";
+        }
     }
 
     partial void OnShowForcedSubtitlesChanged(bool value)
