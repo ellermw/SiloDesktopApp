@@ -20,30 +20,45 @@ internal static class DashboardSessionBadges
         _ => (Surface, MutedForeground, BorderColor),
     };
 
+    /// <summary>
+    /// Now Playing's tag row is one line high (WebUI #4401 <c>max-h-[18px]</c>):
+    /// the pills inherit its 12px line height, which with their 2px vertical
+    /// padding and 1px border makes 18px. The profile pill keeps its own
+    /// <c>leading-[1.1]</c>.
+    /// </summary>
+    public const double TagLineHeight = 12;
+    public const double TagRowHeight = 18;
+
+    private static Border Tag(Border pill)
+    {
+        ((TextBlock)pill.Child).LineHeight = TagLineHeight;
+        return pill;
+    }
+
     /// <summary>Method, JF, client, route and profile badges in the WebUI's order.</summary>
     public static IEnumerable<FrameworkElement> For(DashboardSession session)
     {
         var (label, tone) = DashboardPresentation.MethodMeta(DashboardPresentation.ClassifyMethod(session));
         var (bg, fg, border) = Tone(tone);
-        yield return Pill(label, bg, fg, border);
+        yield return Tag(Pill(label, bg, fg, border));
         if (session.IsJellyfinClient == true)
         {
-            var jf = Pill(DashboardText.T("web.player.jellyfinSession.label"), Alpha(Jellyfin, 0.15), Jellyfin, Alpha(Jellyfin, 0.3));
+            var jf = Tag(Pill(DashboardText.T("web.player.jellyfinSession.label"), Alpha(Jellyfin, 0.15), Jellyfin, Alpha(Jellyfin, 0.3)));
             ToolTipService.SetToolTip(jf, DashboardText.T("web.player.jellyfinSession.title"));
             yield return jf;
         }
         var client = DashboardPresentation.ClientLabel(session);
         if (client != "")
         {
-            var pill = Pill(client, Alpha(Muted, 0.3), MutedForeground, Alpha(BorderColor, 0.6));
+            var pill = Tag(Pill(client, Alpha(Muted, 0.3), MutedForeground, Alpha(BorderColor, 0.6)));
             pill.MaxWidth = 144;
             ToolTipService.SetToolTip(pill, !string.IsNullOrEmpty(session.ClientUserAgent) ? session.ClientUserAgent : client);
             yield return pill;
         }
         if (!string.IsNullOrEmpty(session.StreamLocation))
         {
-            var location = Pill(session.StreamLocation == "local" ? DashboardText.T("web.player.routeBadge.local") : DashboardText.T("web.player.routeBadge.remote"),
-                Alpha(Primary, 0.1), Primary, Alpha(Primary, 0.2));
+            var location = Tag(Pill(session.StreamLocation == "local" ? DashboardText.T("web.player.routeBadge.local") : DashboardText.T("web.player.routeBadge.remote"),
+                Alpha(Primary, 0.1), Primary, Alpha(Primary, 0.2)));
             ToolTipService.SetToolTip(location, DashboardText.T("web.player.routeBadge.locationTitle", ("location", session.StreamLocation)));
             yield return location;
         }
@@ -64,7 +79,7 @@ internal static class DashboardSessionBadges
                 _ => (Alpha(Primary, 0.05), Primary, Alpha(Primary, 0.1)),
             };
             var text = node.Kind is "transcode" or "proxy" ? $"{node.Label} · {node.Name}" : node.Kind == "server" ? DashboardText.T("web.player.routeBadge.apiServer") : node.Name;
-            var badge = node.Kind is "transcode" or "proxy" ? RoutePill(node.Label, node.Name, nbg, nfg, nborder) : Pill(text, nbg, nfg, nborder);
+            var badge = node.Kind is "transcode" or "proxy" ? RoutePill(node.Label, node.Name, nbg, nfg, nborder) : Tag(Pill(text, nbg, nfg, nborder));
             var serves = session.RoutingEgress == "api" ? "yes" : "no";
             ToolTipService.SetToolTip(badge, node.Kind != "server"
                 ? DashboardText.T("web.player.routeBadge.nodeTitle", ("label", node.Label), ("name", node.Name))
@@ -84,12 +99,12 @@ internal static class DashboardSessionBadges
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        var prefix = Text(label, 9, Semibold, foreground, lineHeight: 13.5);
+        var prefix = Text(label, 9, Semibold, foreground, lineHeight: TagLineHeight);
         prefix.Opacity = 0.7;
         row.Children.Add(prefix);
-        var separator = Text("·", 9, Semibold, foreground, lineHeight: 13.5);
+        var separator = Text("·", 9, Semibold, foreground, lineHeight: TagLineHeight);
         Grid.SetColumn(separator, 1); row.Children.Add(separator);
-        var value = Text(name, 9, Semibold, foreground, trim: true, lineHeight: 13.5);
+        var value = Text(name, 9, Semibold, foreground, trim: true, lineHeight: TagLineHeight);
         Grid.SetColumn(value, 2); row.Children.Add(value);
         pill.Child = row;
         return pill;
@@ -105,7 +120,9 @@ internal static class DashboardSessionBadges
 
 /// <summary>
 /// Active streams as cards. An idle server collapses to a one-row strip; a
-/// fixed-height widget shows only whole cards and counts the rest in "+N more".
+/// fixed-height widget shows only whole cards within its full height, and the
+/// header's "View all" counts every stream (WebUI #4401 dropped "+N more").
+/// Tags are capped at one line so every card, and so every row, is even.
 /// Cards pair up only when the widget's own content box is wide enough
 /// (WebUI #3726 <c>@container</c> / <c>@2xl:grid-cols-2</c>), independent of the
 /// viewport and the grid mode.
@@ -114,12 +131,11 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
 {
     private const int MaxRenderedStreams = 40;
     private const int StackedStreamLimit = 4;
-    private const double MoreLinkHeight = 24;
     private Grid? _cards;
     private Grid? _viewport;
-    private FrameworkElement? _more;
     private int _visible = int.MaxValue;
-    private int _sessionCount;
+    /// <summary>Sessions in the last read; the header's "View all" is the only count of them.</summary>
+    public int SessionCount { get; private set; }
     private double _contentWidth;
     private bool _widthRenderQueued;
 
@@ -159,7 +175,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
     {
         var state = Store.Get(DashboardDataStore.Sessions);
         var sessions = state.As<IReadOnlyList<DashboardSession>>() ?? [];
-        _sessionCount = sessions.Count;
+        SessionCount = sessions.Count;
         // Width, not grid mode, picks the columns of cards and skeleton alike;
         // the fixed-rows rule below still follows the viewport (min-width 1024px).
         Columns = ColumnsFor(_contentWidth > 0 ? _contentWidth : ActualWidth);
@@ -231,35 +247,23 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             _viewport = new Grid();
             _viewport.Children.Add(_cards);
             _visible = Fixed ? int.MaxValue : rendered.Count;
-            _more = Destination(MoreText(sessions.Count - Math.Min(_visible, rendered.Count)), 12, activity);
-            _more.HorizontalAlignment = HorizontalAlignment.Center;
-            _more.VerticalAlignment = Fixed ? VerticalAlignment.Bottom : VerticalAlignment.Top;
-            _more.Visibility = sessions.Count > Math.Min(_visible, rendered.Count) ? Visibility.Visible : Visibility.Collapsed;
             if (Fixed)
             {
                 _viewport.Clip = null;
                 _viewport.SizeChanged += (_, _) => Fit();
                 _cards.SizeChanged += (_, _) => Fit();
-                _viewport.Children.Add(_more);
-                body = _viewport;
             }
-            else
-            {
-                _more.Margin = new Thickness(0, 4, 0, 0);
-                body = Column(0, _viewport, _more);
-            }
+            body = _viewport;
         }
         Grid.SetRow(body, 1);
         root.Children.Add(body);
         return root;
     }
 
-    private string MoreText(int count) => T("web.admin.dashboard.widgets.nowPlaying.moreStreams", ("count", (long)count), ("count_text", (long)count));
-
     /// <summary>Shows as many whole cards as fit; keeps hidden ones laid out so a taller widget can re-measure.</summary>
     private void Fit()
     {
-        if (_cards == null || _viewport == null || _more == null) return;
+        if (_cards == null || _viewport == null) return;
         var height = _viewport.ActualHeight;
         var cards = _cards.Children.OfType<FrameworkElement>().ToList();
         if (cards.Count == 0 || height <= 0) return;
@@ -273,9 +277,9 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         var next = int.MaxValue;
         if (Bottom(cards[^1]) > height)
         {
-            var limit = height - MoreLinkHeight;
-            var index = cards.FindIndex(card => Bottom(card) > limit);
-            next = Math.Max(1, index);
+            // Keep one card even in a widget too short for it: an empty widget
+            // reads as an error, and the card clips cleanly at the edge.
+            next = Math.Max(1, cards.FindIndex(card => Bottom(card) > height));
         }
         var visible = Math.Min(next, cards.Count);
         if (visible == _visible) return;
@@ -287,13 +291,6 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             cards[i].IsHitTestVisible = !hidden;
             AutomationProperties.SetAccessibilityView(cards[i], hidden ? Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw : Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Content);
             if (cards[i] is Control control) control.IsTabStop = !hidden;
-        }
-        var more = _sessionCount - visible;
-        _more.Visibility = more > 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (more > 0)
-        {
-            if (_more is TextBlock text) text.Text = MoreText(more);
-            else if (_more is Button { Content: TextBlock label }) label.Text = MoreText(more);
         }
     }
 
@@ -351,8 +348,14 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             Grid.SetRow(sub, 1);
             info.Children.Add(sub);
         }
-        var tags = new WrapPanel { HorizontalSpacing = 4, VerticalSpacing = 4, Margin = new Thickness(0, 0, 0, 6) };
-        foreach (var badge in DashboardSessionBadges.For(session)) tags.Children.Add(badge);
+        // Tags are capped at one 18px line so every card is the same height and
+        // the rows stay even; a tag that would wrap falls wholly below the clip
+        // (WebUI #4401 max-h-[18px] overflow-hidden).
+        var tagWrap = new WrapPanel { HorizontalSpacing = 4, VerticalSpacing = 4, VerticalAlignment = VerticalAlignment.Top };
+        foreach (var badge in DashboardSessionBadges.For(session)) tagWrap.Children.Add(badge);
+        var tags = new Grid { MaxHeight = DashboardSessionBadges.TagRowHeight, Margin = new Thickness(0, 0, 0, 6) };
+        tags.Children.Add(tagWrap);
+        tags.SizeChanged += (_, e) => tags.Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height) };
         Grid.SetRow(tags, 2);
         info.Children.Add(tags);
         var userRow = new Grid { ColumnSpacing = 6 };

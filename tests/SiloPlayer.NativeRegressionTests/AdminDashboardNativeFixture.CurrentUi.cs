@@ -36,7 +36,12 @@ internal static partial class AdminDashboardNativeFixture
         }),
         CurrentSession(1, row => { row["media_type"] = "audiobook"; row["position_seconds"] = 600; row["file_duration"] = null; }),
         CurrentSession(2, row => { row["media_type"] = "episode"; row["username"] = LongUser; row["position_seconds"] = 65; row["file_duration"] = 0; }),
-        CurrentSession(3, _ => { }),
+        // Enough tags to need a second line, which WebUI #4401 clips whole.
+        CurrentSession(3, row =>
+        {
+            row["is_jellyfin_client"] = true; row["client_name"] = "Synthetic Client"; row["client_version"] = "1.0";
+            row["routing_network_provider"] = "synthetic-network-provider-with-a-very-long-name-0123456789-abcdefghij";
+        }),
     ];
 
     private static string? StoredEgressView(string? document)
@@ -184,10 +189,23 @@ internal static partial class AdminDashboardNativeFixture
                 natural.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
                 Program.Log($"TRACE dashboard long username arranged {longName.ActualWidth:0}px of natural {natural.DesiredSize.Width:0}px");
             }
-            // Cards in one row share a height; the long-name card is no taller than its row partner.
+            // WebUI #4401: tags are one line, so every card is the same height and rows stay even,
+            // including the long-name card and the card whose tags would wrap.
             var cardHeights = Descendants(nowPlaying).OfType<Border>().Where(border => border.CornerRadius.TopLeft == 20 && border.Padding.Left == 14)
                 .Select(border => Math.Round(border.ActualHeight)).Distinct().ToArray();
             Program.Log($"TRACE dashboard Now Playing card heights: {string.Join(",", cardHeights)}");
+            Check(cardHeights.Length == 1, $"every Now Playing card has the same height ({string.Join(",", cardHeights)})");
+            var tagRows = Descendants(nowPlaying).OfType<Grid>().Where(grid => grid.MaxHeight == 18).ToArray();
+            Check(tagRows.Length == 4 && tagRows.All(row => row.ActualHeight <= 18.5 && row.Clip != null), "each card's tag row is clipped to one 18px line");
+            var wrappedTag = false;
+            foreach (var row in tagRows)
+                foreach (var pill in row.Children.OfType<Panel>().SelectMany(panel => panel.Children.OfType<FrameworkElement>()))
+                {
+                    var top = pill.TransformToVisual(row).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
+                    if (top >= 18) wrappedTag = true;
+                    else Check(top + pill.ActualHeight <= 18.5, $"a first-line tag fits the 18px line ({top:0.#}+{pill.ActualHeight:0.#})");
+                }
+            Check(wrappedTag, "a tag that would wrap falls wholly below the one-line clip");
 
             await AssertNowPlayingColumnsAsync(page, "span12-1440", expectColumns: 2);
             await CaptureAsync(nowPlaying, "current-ui-now-playing-span12-1440.png");
@@ -271,7 +289,7 @@ internal static partial class AdminDashboardNativeFixture
     /// <summary>
     /// Waits for Now Playing to settle, then checks the column rule against its
     /// measured width, that it stopped re-rendering (no resize feedback loop),
-    /// and that "+N more" counts exactly the cards the fit hid.
+    /// and that the fit uses the full height with no "+N more" link (WebUI #4401).
     /// </summary>
     private static async Task<int> AssertNowPlayingColumnsAsync(AdminDashboardPage page, string label, int? expectColumns)
     {
@@ -289,16 +307,21 @@ internal static partial class AdminDashboardNativeFixture
         var widget = Descendants(WidgetFrame(page, DashboardRegistry.NowPlaying)).First(element => element.GetType().Name == "NowPlayingWidget");
         var type = widget.GetType();
         var cards = (Grid?)type.GetField("_cards", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(widget);
-        var more = (FrameworkElement?)type.GetField("_more", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(widget);
-        var sessions = (int)type.GetField("_sessionCount", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(widget)!;
-        if (cards == null || more == null) { Check(false, $"{label} Now Playing rendered cards"); return current.Columns; }
+        var viewport = (Grid?)type.GetField("_viewport", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(widget);
+        var sessions = (int)type.GetProperty("SessionCount")!.GetValue(widget)!;
+        if (cards == null || viewport == null) { Check(false, $"{label} Now Playing rendered cards"); return current.Columns; }
         Check(cards.ColumnDefinitions.Count == current.Columns, $"{label} card grid has {current.Columns} column(s)");
-        var shown = cards.Children.OfType<FrameworkElement>().Count(card => card.Opacity > 0);
-        var hidden = sessions - shown;
-        var moreText = more is TextBlock text ? text.Text : more is Button { Content: TextBlock content } ? content.Text : null;
-        var expectedText = DashboardText.T("web.admin.dashboard.widgets.nowPlaying.moreStreams", ("count", (long)hidden), ("count_text", (long)hidden));
-        Check(hidden > 0 ? more.Visibility == Visibility.Visible && moreText == expectedText : more.Visibility == Visibility.Collapsed,
-            $"{label} +N more counts the {hidden} hidden card(s)");
+        var all = cards.Children.OfType<FrameworkElement>().ToArray();
+        var shown = all.Count(card => card.Opacity > 0);
+        var moreTexts = Enumerable.Range(1, Math.Max(1, sessions))
+            .Select(n => DashboardText.T("web.admin.dashboard.widgets.nowPlaying.moreStreams", ("count", (long)n), ("count_text", (long)n))).ToHashSet();
+        Check(viewport.Children.Count == 1 && ReferenceEquals(viewport.Children[0], cards)
+              && !Descendants(widget).OfType<TextBlock>().Any(text => moreTexts.Contains(text.Text)),
+            $"{label} has no +N more link; the header's View all counts all {sessions}");
+        double Bottom(FrameworkElement card) => card.TransformToVisual(viewport).TransformPoint(new Windows.Foundation.Point(0, card.ActualHeight)).Y;
+        if (page.GridMode == DashboardGridMode.Twelve && shown < all.Length)
+            Check(shown >= 1 && (shown == 1 || Bottom(all[shown - 1]) <= viewport.ActualHeight + 0.5) && Bottom(all[shown]) > viewport.ActualHeight,
+                $"{label} shows every whole card the full {viewport.ActualHeight:0}px height fits ({shown}/{all.Length})");
         Program.Log($"TRACE dashboard {label}: columns={current.Columns}, width={current.ContentWidth:0}, shown={shown}/{sessions}, mode={page.GridMode}");
         return current.Columns;
     }
