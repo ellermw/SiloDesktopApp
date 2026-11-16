@@ -112,6 +112,8 @@ public sealed class AdminLibrariesController : IDisposable
     private string? _nextJobCursor;
     private long _listSequence, _jobSequence, _monitoringSequence, _trickplaySequence;
     private CancellationTokenSource? _listCancellation;
+    private TaskCompletionSource? _listLoad, _jobLoad;
+    private bool _listDirty, _jobsDirty;
     private IDisposable? _subscription, _monitoringTimer, _trickplayTimer, _libraryEventTimer, _jobEventTimer;
     private readonly Dictionary<string, IDisposable> _mountTimers = new(StringComparer.Ordinal);
     private bool _reloadAfterReorder;
@@ -242,19 +244,31 @@ public sealed class AdminLibrariesController : IDisposable
         return LoadLibrariesAsync(owner);
     }
 
-    private async Task LoadLibrariesAsync(MonitorAuthorityLease owner)
+    private Task LoadLibrariesAsync(MonitorAuthorityLease owner)
     {
         long sequence;
         CancellationToken token;
+        TaskCompletionSource completion;
         lock (_gate)
         {
-            if (_disposed || !_lifetime.IsCurrent(owner)) return;
+            if (!IsOwnerCurrent(owner)) return Task.CompletedTask;
+            if (_state.Reordering) { _reloadAfterReorder = true; return Task.CompletedTask; }
+            // Publish every settled read, even when events arrive faster than it can finish.
+            // Join the current read and remember one trailing reload instead of cancelling it.
+            if (_listLoad != null) { _listDirty = true; return _listLoad.Task; }
+            _listDirty = false;
+            completion = _listLoad = new(TaskCreationOptions.RunContinuationsAsynchronously);
             sequence = ++_listSequence;
-            _listCancellation?.Cancel(); _listCancellation?.Dispose();
             _listCancellation = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
             token = _listCancellation.Token;
             _state = _state with { Fetching = true };
         }
+        _ = ReadLibrariesAsync(owner, sequence, token, completion);
+        return completion.Task;
+    }
+
+    private async Task ReadLibrariesAsync(MonitorAuthorityLease owner, long sequence, CancellationToken token, TaskCompletionSource completion)
+    {
         Changed?.Invoke();
         try
         {
@@ -286,6 +300,22 @@ public sealed class AdminLibrariesController : IDisposable
                     ErrorKind = kind,
                 };
             });
+        }
+        finally
+        {
+            var reload = false;
+            lock (_gate)
+            {
+                if (ReferenceEquals(_listLoad, completion))
+                {
+                    _listLoad = null;
+                    _listCancellation?.Dispose(); _listCancellation = null;
+                    reload = _listDirty && IsOwnerCurrent(owner);
+                    _listDirty = false;
+                }
+            }
+            if (reload) _ = LoadLibrariesAsync(owner);
+            completion.TrySetResult();
         }
     }
 
@@ -365,18 +395,33 @@ public sealed class AdminLibrariesController : IDisposable
         return LoadRefreshJobsAsync(owner, append: false);
     }
 
-    private async Task LoadRefreshJobsAsync(MonitorAuthorityLease owner, bool append)
+    private Task LoadRefreshJobsAsync(MonitorAuthorityLease owner, bool append)
     {
         long sequence;
         string? cursor;
+        TaskCompletionSource completion;
         lock (_gate)
         {
-            if (_disposed || !_lifetime.IsCurrent(owner)) return;
-            if (append && _jobCursors.Count >= MaxRefreshJobPages) { _state = _state with { RefreshJobsCapped = true, RefreshJobsHasMore = false }; return; }
+            if (!IsOwnerCurrent(owner)) return Task.CompletedTask;
+            if (_jobLoad != null)
+            {
+                // A first-page invalidation also waits for an older page to settle.
+                if (!append) _jobsDirty = true;
+                return _jobLoad.Task;
+            }
+            if (append && _jobCursors.Count >= MaxRefreshJobPages) { _state = _state with { RefreshJobsCapped = true, RefreshJobsHasMore = false }; return Task.CompletedTask; }
+            _jobsDirty = false;
+            completion = _jobLoad = new(TaskCreationOptions.RunContinuationsAsynchronously);
             sequence = ++_jobSequence;
             cursor = append ? _nextJobCursor : null;
             _state = _state with { RefreshJobsLoadingMore = append, RefreshJobsFailed = false };
         }
+        _ = ReadRefreshJobsAsync(owner, append, sequence, cursor, completion);
+        return completion.Task;
+    }
+
+    private async Task ReadRefreshJobsAsync(MonitorAuthorityLease owner, bool append, long sequence, string? cursor, TaskCompletionSource completion)
+    {
         Changed?.Invoke();
         try
         {
@@ -400,6 +445,21 @@ public sealed class AdminLibrariesController : IDisposable
             var kind = AdminFailures.Classify(error, owner);
             if (kind is AdminFailureKind.Retired or AdminFailureKind.Cancelled) return;
             Update(owner, () => { if (sequence == _jobSequence) _state = _state with { RefreshJobsLoadingMore = false, RefreshJobsFailed = true }; });
+        }
+        finally
+        {
+            var reload = false;
+            lock (_gate)
+            {
+                if (ReferenceEquals(_jobLoad, completion))
+                {
+                    _jobLoad = null;
+                    reload = _jobsDirty && IsOwnerCurrent(owner);
+                    _jobsDirty = false;
+                }
+            }
+            if (reload) _ = LoadRefreshJobsAsync(owner, append: false);
+            completion.TrySetResult();
         }
     }
 
@@ -761,6 +821,8 @@ public sealed class AdminLibrariesController : IDisposable
     {
         _listSequence++; _jobSequence++; _monitoringSequence++; _trickplaySequence++;
         _listCancellation?.Cancel(); _listCancellation?.Dispose(); _listCancellation = null;
+        _listLoad = _jobLoad = null;
+        _listDirty = _jobsDirty = false;
         foreach (var timer in new[] { _monitoringTimer, _trickplayTimer, _libraryEventTimer, _jobEventTimer }) timer?.Dispose();
         _monitoringTimer = _trickplayTimer = _libraryEventTimer = _jobEventTimer = null;
         foreach (var timer in _mountTimers.Values) timer.Dispose();

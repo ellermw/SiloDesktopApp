@@ -11,6 +11,106 @@ namespace SiloPlayer.Tests;
 public sealed partial class AdminLibrariesControllerTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SteadyEventsPublishSlowReadsAndCoalesceOneTrailingRead(bool jobs)
+    {
+        var (kit, authority, controller, server, channel, scheduler) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            var responses = Enumerable.Range(0, 3)
+                .Select(_ => new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+            var reads = 0;
+            var cancelled = 0;
+            kit.Http.Respond = async (request, ct) =>
+            {
+                if (request.RequestUri!.AbsolutePath != (jobs ? "/api/v2/admin/jobs" : "/api/v2/libraries"))
+                    return server.Respond(request);
+                var index = Interlocked.Increment(ref reads) - 1;
+                try { return await responses[index].Task.WaitAsync(ct); }
+                catch (OperationCanceledException) { Interlocked.Increment(ref cancelled); throw; }
+            };
+            void Burst()
+            {
+                // Each response remains pending through three separate 1 s coalescing windows.
+                for (var i = 0; i < 3; i++)
+                {
+                    if (jobs) channel.Event("jobs", "job.updated", "{\"kind\":\"library_refresh\"}");
+                    else channel.Event("scans", "scan.completed", "{\"id\":\"s1\",\"library_id\":1,\"mode\":\"file\",\"status\":\"completed\"}");
+                    scheduler.Advance(AdminLibrariesController.EventCoalescing);
+                }
+            }
+            HttpResponseMessage Response(int number) => AdminMonitorKit.Json(jobs
+                ? "{\"items\":[{\"id\":\"j" + number + "\",\"kind\":\"library_refresh\",\"state\":\"running\",\"library_id\":\"1\"}],\"page\":{\"has_more\":false}}"
+                : AdminLibrariesTests.Libraries(AdminLibrariesTests.Library("1", "Read " + number)));
+            bool Published(int number) => jobs
+                ? controller.State.RefreshJobs.SingleOrDefault()?.Id == "j" + number
+                : controller.State.Loaded && controller.State.Libraries.SingleOrDefault()?.Name == "Read " + number;
+
+            var opening = controller.OpenAsync();
+            await Until(() => Volatile.Read(ref reads) == 1);
+            Burst();
+            Assert.Equal(1, Volatile.Read(ref reads));
+            Assert.Equal(0, Volatile.Read(ref cancelled));
+
+            responses[0].SetResult(Response(1));
+            await opening;
+            await Until(() => Volatile.Read(ref reads) == 2);
+            Assert.True(Published(1)); // Loading ends before the event stream does.
+            Burst();
+            Assert.Equal(2, Volatile.Read(ref reads));
+            Assert.Equal(0, Volatile.Read(ref cancelled));
+
+            responses[1].SetResult(Response(2));
+            await Until(() => Published(2) && Volatile.Read(ref reads) == 3);
+            responses[2].SetResult(Response(3));
+            await Until(() => Published(3) && controller.State.CanReorder);
+            scheduler.Advance(AdminLibrariesController.EventCoalescing);
+            Assert.Equal(3, Volatile.Read(ref reads));
+            Assert.False(controller.State.Fetching);
+            Assert.False(controller.State.RefreshJobsLoadingMore);
+            Assert.Equal(0, Volatile.Read(ref cancelled));
+        }
+    }
+
+    [Fact]
+    public async Task JobInvalidationsWaitForAnOlderPageThenRefreshTheFirstPage()
+    {
+        var (kit, authority, controller, server, channel, scheduler) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            var older = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var restarted = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var reads = 0;
+            kit.Http.Respond = (request, ct) =>
+            {
+                if (request.RequestUri!.AbsolutePath != "/api/v2/admin/jobs") return Task.FromResult(server.Respond(request));
+                var number = Interlocked.Increment(ref reads);
+                if (number == 1) return Task.FromResult(AdminMonitorKit.Json("{\"items\":[{\"id\":\"first\"}],\"page\":{\"has_more\":true,\"next_cursor\":\"older\"}}"));
+                Assert.Equal(number == 2, request.RequestUri.Query.Contains("cursor=older", StringComparison.Ordinal));
+                return (number == 2 ? older : restarted).Task.WaitAsync(ct);
+            };
+            await controller.OpenAsync();
+            var loading = controller.LoadOlderJobsAsync();
+            await Until(() => Volatile.Read(ref reads) == 2);
+            for (var i = 0; i < 3; i++)
+            {
+                channel.Event("jobs", "job.updated", "{\"kind\":\"library_refresh\"}");
+                scheduler.Advance(AdminLibrariesController.EventCoalescing);
+            }
+            Assert.Equal(2, Volatile.Read(ref reads));
+            older.SetResult(AdminMonitorKit.Json("{\"items\":[{\"id\":\"older\"}],\"page\":{\"has_more\":false}}"));
+            await loading;
+            await Until(() => Volatile.Read(ref reads) == 3);
+            Assert.Equal(["first", "older"], controller.State.RefreshJobs.Select(job => job.Id));
+            restarted.SetResult(AdminMonitorKit.Json("{\"items\":[{\"id\":\"fresh\"}],\"page\":{\"has_more\":false}}"));
+            await Until(() => controller.State.RefreshJobs is [{ Id: "fresh" }]);
+            Assert.False(controller.State.RefreshJobsLoadingMore);
+            Assert.False(controller.State.RefreshJobsHasMore);
+        }
+    }
+
+    [Theory]
     [InlineData("add", false)]
     [InlineData("subscribe", false)]
     [InlineData("remove", false)]
