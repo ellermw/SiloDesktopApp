@@ -180,6 +180,36 @@ test('abort while loading a section cannot outline stale results', async () => {
     assert.equal(view.outlines.length, 0);
 });
 
+test('segment checkpoints are opt-in and never turn into search hits', () => {
+    const text = 'ordinary '.repeat(1500);
+    const plain = [...search([text], 'missing', { granularity: 'word', sensitivity: 'base' })];
+    assert.deepEqual(plain, []);
+    const cooperative = [...search([text], 'missing', { granularity: 'word', sensitivity: 'base', checkpoints: true })];
+    assert.ok(cooperative.length > 0, 'a long unmatched scan must report checkpoints');
+    assert.ok(cooperative.every(result => result.checkpoint === true && !result.range));
+});
+
+for (const prefix of ['', 'needle ']) {
+    test(`time budget lets an unmatched tail abort with ${prefix ? 'one' : 'zero'} matches`, async () => {
+        const view = makeView([async () => chapter([prefix + 'ordinary '.repeat(1500)])]);
+        const controller = new AbortController();
+        const originalClock = Object.getOwnPropertyDescriptor(globalThis, 'performance');
+        let clock = 0;
+        Object.defineProperty(globalThis, 'performance', { configurable: true, value: { now: () => clock += 26 } });
+        const timer = setTimeout(() => controller.abort(), 0);
+        try {
+            const results = await collect(view.search({ query: 'needle', matchWholeWords: true, signal: controller.signal }));
+            assert.equal(controller.signal.aborted, true, 'the long section never yielded to the abort timer');
+            assert.equal(hits(results).length, 0, 'aborted book search exposed unfinished section hits');
+            assert.equal(view.outlines.length, 0);
+            assert.equal(results.includes('done'), false);
+        } finally {
+            clearTimeout(timer);
+            Object.defineProperty(globalThis, 'performance', originalClock);
+        }
+    });
+}
+
 test('section search obeys its limit and a pre-aborted search emits nothing', async () => {
     const view = makeView([async () => chapter(['needle '.repeat(50)])]);
     assert.equal(hits(await collect(view.search({ query: 'needle', index: 0, limit: 3 }))).length, 3);

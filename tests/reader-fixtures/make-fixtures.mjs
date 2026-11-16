@@ -14,15 +14,25 @@ const files = {
     'OPS/short.xhtml':'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Short</title></head><body><p>Short opening.</p></body></html>',
     'OPS/long.xhtml':'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Long</title><script>parent.__bookScriptExecuted=true</script></head><body>'+Array.from({length:100},(_,i)=>`<p id="p${i}">Paragraph ${i}. ${'Distinct passage for reading and annotation. '.repeat(8)}</p>`).join('')+'</body></html>'
 };
+const writeZip = (fileName, entries) => {
 let offset=0; const data=[], directoryEntries=[];
-for(const [name,value] of Object.entries(files)) {
+for(const [name,value] of Object.entries(entries)) {
     const text=Buffer.from(value), filename=Buffer.from(name), crc=crc32(text);
     const local=Buffer.alloc(30); local.writeUInt32LE(0x04034b50); local.writeUInt16LE(20,4); local.writeUInt32LE(crc,14); local.writeUInt32LE(text.length,18); local.writeUInt32LE(text.length,22); local.writeUInt16LE(filename.length,26);
     const central=Buffer.alloc(46); central.writeUInt32LE(0x02014b50); central.writeUInt16LE(20,4); central.writeUInt16LE(20,6); central.writeUInt32LE(crc,16); central.writeUInt32LE(text.length,20); central.writeUInt32LE(text.length,24); central.writeUInt16LE(filename.length,28); central.writeUInt32LE(offset,42);
     data.push(local,filename,text); directoryEntries.push(central,filename); offset+=local.length+filename.length+text.length;
 }
-const cd=Buffer.concat(directoryEntries), end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(Object.keys(files).length,8);end.writeUInt16LE(Object.keys(files).length,10);end.writeUInt32LE(cd.length,12);end.writeUInt32LE(offset,16);
-fs.writeFileSync(path.join(directory,'unequal.epub'),Buffer.concat([...data,cd,end]));
+const cd=Buffer.concat(directoryEntries), end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(Object.keys(entries).length,8);end.writeUInt16LE(Object.keys(entries).length,10);end.writeUInt32LE(cd.length,12);end.writeUInt32LE(offset,16);
+fs.writeFileSync(path.join(directory,fileName),Buffer.concat([...data,cd,end]));
+};
+writeZip('unequal.epub', files);
+writeZip('inline-styles.epub', {
+    mimetype: files.mimetype,
+    'META-INF/container.xml': files['META-INF/container.xml'],
+    'OPS/package.opf': '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">inline-styles-fixture</dc:identifier><dc:title>Inline CSS</dc:title><dc:language>en</dc:language></metadata><manifest><item id="style" href="style.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="style"/></spine></package>',
+    // Bare ampersand forces the real loader's invalid-XHTML -> HTML fallback.
+    'OPS/style.xhtml': '<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Inline CSS</title><style>body > p { color: rgb(17, 34, 51); } p::after { content: "A & B"; }</style><script>parent.__inlineStyleScriptExecuted=true</script></head><body><p id="rule">Styled paragraph</p></body></html>',
+});
 const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R] /Count 4 >>'];
 for(let i=0;i<4;i++) {
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 700] /Resources << /Font << /F1 11 0 R >> >> /Contents ${4+i*2} 0 R >>`);

@@ -26,6 +26,13 @@ Local adaptations:
   official Silo Server commit `7115ee7028c7c9bde9e201fd5f54e87ea70de3a7`
   (`web/vendor/foliate-js`; upstream change #3323 / `8ef7dd85`). Other Foliate
   functionality retains the September reference and the adaptations below.
+- `search.js`, `view.js`: port opt-in segment checkpoints and a 25 ms search
+  yield budget from official `6fccf560745b20408f406a8f7843e344182b31f2`
+  (#4331). Preserve the desktop overlapping-match boundary correction.
+- `epub.js`: port HTML chapter serialization from official
+  `3489103a2d97731b6c6664006acf3290557ce2b6` (#4325), so CSS child selectors
+  and ampersands survive the invalid-XHTML-to-HTML fallback. XML/SVG retain
+  XML serialization. The WebUI-only sanitizer is not used by this renderer.
 - `pdf.js`: replace bundler-only PDF.js alias/global and public paths with local
   relative ES module, worker, stylesheet, CMap, font and WASM paths.
 - `pdf.js`: present the actual PDF.js page bitmap as an inert PNG image in the
@@ -37,7 +44,7 @@ Local adaptations:
 - `fixed-layout.js`: omit constructed-stylesheet polyfill; Evergreen WebView2
   supports that API natively.
 
-CFI parsing/generation, EPUB parsing, section sizes, navigation and progress
+CFI parsing/generation, EPUB package parsing, section sizes, navigation and progress
 algorithms are unchanged. The surrounding desktop bridge is in `reader.mjs`.
 
 ## PDF.js 6.2.108

@@ -4,6 +4,11 @@ const CONTEXT_LENGTH = 50
 // raw characters read on each side of a match before widening the window
 const CONTEXT_WINDOW = CONTEXT_LENGTH * 4
 
+// Silo: opt-in checkpoints let a caller pause long scans with few/no matches.
+// Plain substring search keeps its current behavior.
+const CHECKPOINT = Object.freeze({ checkpoint: true })
+const CHECKPOINT_INTERVAL = 500
+
 const normalizeWhitespace = str => str.replace(/\s+/g, ' ')
 
 // Silo: normalize only a window next to the match instead of the whole text
@@ -74,7 +79,7 @@ const simpleSearch = function* (strs, query, options = {}) {
 }
 
 const segmenterSearch = function* (strs, query, options = {}) {
-    const { locales = 'en', granularity = 'word', sensitivity = 'base' } = options
+    const { locales = 'en', granularity = 'word', sensitivity = 'base', checkpoints } = options
     let segmenter, collator
     try {
         segmenter = new Intl.Segmenter(locales, { usage: 'search', granularity })
@@ -87,11 +92,13 @@ const segmenterSearch = function* (strs, query, options = {}) {
     const queryLength = Array.from(segmenter.segment(query)).length
 
     const substrArr = []
+    let scanned = 0
     let strIndex = 0
     let segments = segmenter.segment(strs[strIndex])[Symbol.iterator]()
     main: while (strIndex < strs.length) {
         while (substrArr.length < queryLength) {
             const { done, value } = segments.next()
+            if (checkpoints && ++scanned % CHECKPOINT_INTERVAL === 0) yield CHECKPOINT
             if (done) {
                 // the current string is exhausted
                 // move on to the next string
@@ -137,6 +144,7 @@ export const search = (strs, query, options) => {
 
 export const searchMatcher = (textWalker, opts) => {
     const { defaultLocale, matchCase, matchDiacritics, matchWholeWords, acceptNode } = opts
+    // Silo: yields checkpoint objects between matches so View can yield/abort.
     return function* (doc, query) {
         const iter = textWalker(doc, function* (strs, makeRange) {
             for (const result of search(strs, query, {
@@ -146,7 +154,12 @@ export const searchMatcher = (textWalker, opts) => {
                 : matchDiacritics && !matchCase ? 'accent'
                 : !matchDiacritics && matchCase ? 'case'
                 : 'base',
+                checkpoints: true,
             })) {
+                if (result === CHECKPOINT) {
+                    yield result
+                    continue
+                }
                 const { startIndex, startOffset, endIndex, endOffset } = result.range
                 result.range = makeRange(startIndex, startOffset, endIndex, endOffset)
                 yield result
