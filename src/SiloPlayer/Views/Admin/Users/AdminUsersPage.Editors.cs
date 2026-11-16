@@ -87,10 +87,11 @@ public sealed partial class AdminUsersPage
         var reconcile = write.Operation is AdminUsersOperation.ViewAs or AdminUsersOperation.Transfer or AdminUsersOperation.ResetLink or AdminUsersOperation.ResetEmail or AdminUsersOperation.ResendInvitation;
         var result = await MutationDialogAsync(title, panel, review, () => write, reconcile, generation);
         if (result == null) return null;
+        // The ViewAs caller owns adoption or revocation, including stale receipts.
+        if (write.Operation == AdminUsersOperation.ViewAs) return result;
         RequireGeneration(generation);
         if (sensitiveResult && result.Body != null) await SensitiveResultAsync(result.Body, generation);
         RequireGeneration(generation);
-        if (write.Operation == AdminUsersOperation.ViewAs) return result;
         if (write.Operation == AdminUsersOperation.DeleteAccount) Navigate(null, "users");
         else await LoadAsync(_location);
         return result;
@@ -107,6 +108,7 @@ public sealed partial class AdminUsersPage
             PrimaryButtonText = "Apply", SecondaryButtonText = "Read back / review", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
         _dialog = dialog; _dialogDirty = true;
         AdminUsersDocument? result = null;
+        var dialogCompleted = false;
         IReadOnlyList<AdminUsersReadback>? refreshed = null;
         var readbackReady = false;
         acknowledge.Checked += (_, _) => dialog.IsPrimaryButtonEnabled = readbackReady && !create && !_workspace.OutcomeUnknown;
@@ -127,10 +129,20 @@ public sealed partial class AdminUsersPage
                 var write = build();
                 if (refreshed != null) write = write with { Readbacks = refreshed };
                 result = await _workspace.WriteAsync(generation, _api, reviewed, write);
-                if (!_workspace.IsCurrent(generation)) { result = null; return; }
+                if (dialogCompleted || !_workspace.IsCurrent(generation)) { await result.DiscardViewAsAsync(); result = null; return; }
                 dialog.Hide();
             }
-            catch (OperationCanceledException) { dialog.Hide(); }
+            catch (OperationCanceledException)
+            {
+                if (!_workspace.IsCurrent(generation)) dialog.Hide();
+                else
+                {
+                    error.Text = _workspace.OutcomeUnknown
+                        ? "The write outcome is unknown. Cancel and reload to read back/reconcile before choosing a separate action. Do not retry this draft."
+                        : "The request was cancelled or timed out before a write was sent. Review the draft before trying again.";
+                    dialog.IsPrimaryButtonEnabled = !_workspace.NeedsReview;
+                }
+            }
             catch (Exception exception)
             {
                 if (_workspace.IsCurrent(generation))
@@ -165,13 +177,28 @@ public sealed partial class AdminUsersPage
                 dialog.IsPrimaryButtonEnabled = !readbackReady;
                 error.Text = create || _workspace.OutcomeUnknown ? "Cancel and reload the current list or account to reconcile the outcome. Start a separate explicit action only if still needed. This draft cannot be replayed." : "Review the current values, then explicitly approve applying this retained draft.";
             }
-            catch (OperationCanceledException) { dialog.Hide(); }
+            catch (OperationCanceledException)
+            {
+                if (!_workspace.IsCurrent(generation)) dialog.Hide();
+                else error.Text = "Readback timed out or was cancelled. The draft remains blocked; cancel and reload to reconcile.";
+            }
             catch (Exception exception) { error.Text = exception is ArgumentException ? exception.Message : "Readback failed. The draft remains blocked."; }
             finally { dialog.IsSecondaryButtonEnabled = true; deferral.Complete(); }
         };
-        try { await dialog.ShowAsync(); }
-        finally { if (ReferenceEquals(_dialog, dialog)) { _dialog = null; _dialogDirty = false; } }
-        return _workspace.IsCurrent(generation) ? result : null;
+        var handedOff = false;
+        try
+        {
+            await dialog.ShowAsync();
+            if (!_workspace.IsCurrent(generation)) return null;
+            handedOff = true;
+            return result;
+        }
+        finally
+        {
+            dialogCompleted = true;
+            if (ReferenceEquals(_dialog, dialog)) { _dialog = null; _dialogDirty = false; }
+            if (!handedOff && result != null) await result.DiscardViewAsAsync();
+        }
     }
     private Task CreateUserAsync()
     {

@@ -5,7 +5,18 @@ using SiloPlayer.Core.Services.Admin.Users;
 
 namespace SiloPlayer.Core.Api;
 
-public sealed record AdminUsersDocument(JsonObject? Body, string? ETag);
+public sealed record AdminUsersDocument(JsonObject? Body, string? ETag)
+{
+    public string? ViewAsBaseUrl { get; internal init; }
+    internal Func<string, Task>? RevokeViewAs { get; init; }
+    public Task DiscardViewAsAsync()
+    {
+        if (RevokeViewAs == null || Body == null) return Task.CompletedTask;
+        var access = Body.Text("access_token");
+        Body.Remove("access_token"); Body.Remove("refresh_token");
+        return access.Length == 0 ? Task.CompletedTask : RevokeViewAs(access);
+    }
+}
 public sealed record AdminUsersCollectionPage(IReadOnlyList<JsonObject> Items, string? NextCursor, JsonObject Envelope);
 public sealed record AdminUserReview(JsonObject User, JsonObject Viewer, JsonObject Capabilities, string? ETag, long Epoch);
 public sealed record AdminUsersReadback(string Path, JsonObject Body, string? ETag = null, bool Strong = false);
@@ -67,7 +78,7 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
         if (target.Body!.Text("id") != (id ?? lease.AccountId)) throw new InvalidDataException("The reviewed account changed identity.");
         return new(target.Body!, viewer, caps, target.ETag, lease.Epoch);
     }
-    public async Task<AdminUsersDocument> WriteAsync(MonitorAuthorityLease lease, AdminUserReview reviewed, AdminUsersWrite write, CancellationToken ct = default)
+    public async Task<AdminUsersDocument> WriteAsync(MonitorAuthorityLease lease, AdminUserReview reviewed, AdminUsersWrite write, CancellationToken ct = default, Action? writeAttempted = null)
     {
         lease.ThrowIfRetired();
         if (reviewed.Epoch != lease.Epoch || reviewed.Viewer.Text("id") != lease.AccountId) throw new MonitorAuthorityRetiredException();
@@ -196,9 +207,17 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
         }
         lease.ThrowIfRetired();
         ct.ThrowIfCancellationRequested();
-        var result = await client.AdminUsersSendAsync(lease, method, path, body, tag, ct).ConfigureAwait(false);
-        if (operation == AdminUsersOperation.ViewAs && (result.Body?["user"].Text("id") != target.Text("id") || result.Body.Text("access_token").Length == 0))
-            throw new InvalidDataException("The temporary sign-in result did not identify the reviewed account. Read back/review; nothing was replayed.");
-        return result;
+        var result = await client.AdminUsersSendAsync(lease, method, path, body, tag, ct, writeAttempted).ConfigureAwait(false);
+        try
+        {
+            if (operation == AdminUsersOperation.ViewAs && (result.Body?["user"] is not JsonObject user || user.Text("id") != target.Text("id") || result.Body.Text("access_token").Length == 0))
+                throw new InvalidDataException("The temporary sign-in result did not identify the reviewed account. Read back/review; nothing was replayed.");
+            return result;
+        }
+        catch
+        {
+            await result.DiscardViewAsAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 }

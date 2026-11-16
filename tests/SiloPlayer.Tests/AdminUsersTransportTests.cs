@@ -16,6 +16,87 @@ public sealed class AdminUsersTransportTests
         protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new MemoryStream(payload));
     }
 
+    private sealed class RetiringReceiptContent(Action retire) : HttpContent
+    {
+        private static readonly byte[] Payload = System.Text.Encoding.UTF8.GetBytes("""{"access_token":"synthetic-target","refresh_token":"synthetic-refresh","user":{"id":"2"}}""");
+        protected override bool TryComputeLength(out long length) { length = Payload.Length; return true; }
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(Payload).AsTask();
+        protected override Task<Stream> CreateContentReadStreamAsync()
+        {
+            retire();
+            return Task.FromResult<Stream>(new MemoryStream(Payload));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReceivedViewAsReceiptIsRevokedWhenItsOwnerRetiresDuringBodyRead(bool authorityRetires)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var workspace = new AdminUsersWorkspace(authority);
+        var api = new AdminUsersApi(kit.Client);
+        var logouts = new List<(Uri Uri, string? Bearer, bool Profile, bool Body, bool Cancelled)>();
+        kit.Http.Respond = (request, token) =>
+        {
+            if (request.Method == HttpMethod.Get) return Task.FromResult(Reply(request.RequestUri!.AbsolutePath));
+            if (request.RequestUri!.AbsolutePath == "/api/v2/auth/logout")
+            {
+                logouts.Add((request.RequestUri, request.Headers.Authorization?.Parameter,
+                    request.Headers.Contains("X-Profile-Id") || request.Headers.Contains("X-Profile-Token"), request.Content != null, token.IsCancellationRequested));
+                return Task.FromResult(AdminMonitorKit.Json("{}"));
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new RetiringReceiptContent(() => { if (authorityRetires) kit.SetRole("user"); else workspace.Suspend(); })
+            });
+        };
+        var generation = workspace.Activate();
+        var review = await workspace.ReadAsync(generation, (lease, token) => api.ReviewAsync(lease, "2", token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => workspace.WriteAsync(generation, api, review, new(AdminUsersOperation.ViewAs)));
+        var logout = Assert.Single(logouts);
+        Assert.Equal("https://silo.test/api/v2/auth/logout", logout.Uri.AbsoluteUri);
+        Assert.Equal("synthetic-target", logout.Bearer);
+        Assert.False(logout.Profile);
+        Assert.False(logout.Body);
+        Assert.False(logout.Cancelled);
+        Assert.Single(kit.Http.Requests.Where(path => path.EndsWith("/impersonate")));
+    }
+
+    [Fact]
+    public async Task UnadoptedReceiptUsesOriginalOriginAndTemporaryBearerForOneLogout()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var logouts = new List<(Uri Uri, string? Bearer, bool Profile, bool Body, bool Cancelled)>();
+        kit.Http.Respond = (request, token) =>
+        {
+            if (request.Method == HttpMethod.Get) return Task.FromResult(Reply(request.RequestUri!.AbsolutePath));
+            if (request.RequestUri!.AbsolutePath == "/api/v2/auth/logout")
+            {
+                logouts.Add((request.RequestUri, request.Headers.Authorization?.Parameter,
+                    request.Headers.Contains("X-Profile-Id") || request.Headers.Contains("X-Profile-Token"), request.Content != null, token.IsCancellationRequested));
+                return Task.FromResult(AdminMonitorKit.Json("{}"));
+            }
+            return Task.FromResult(AdminMonitorKit.Json("""{"access_token":"synthetic-target","refresh_token":"synthetic-refresh","user":{"id":"2"}}"""));
+        };
+        var api = new AdminUsersApi(kit.Client);
+        var result = await api.WriteAsync(lease, await api.ReviewAsync(lease, "2"), new(AdminUsersOperation.ViewAs));
+        kit.Client.SetBaseUrl("https://replacement.test");
+        await result.DiscardViewAsAsync();
+        await result.DiscardViewAsAsync();
+        var logout = Assert.Single(logouts);
+        Assert.Equal("https://silo.test/api/v2/auth/logout", logout.Uri.AbsoluteUri);
+        Assert.Equal("synthetic-target", logout.Bearer);
+        Assert.False(logout.Profile);
+        Assert.False(logout.Body);
+        Assert.False(logout.Cancelled);
+        Assert.False(result.Body!.ContainsKey("access_token"));
+        Assert.False(result.Body.ContainsKey("refresh_token"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -25,6 +25,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private AdminRouteRequest _location = new(AdminRoute.Users);
     private AdminUserReview? _review;
     private long _generation;
+    private long _loadRevision;
     private bool _loading;
     private bool _actionBusy;
     private bool _compact = true;
@@ -91,6 +92,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     {
         if (!_activePage) return;
         if (_workspaceDisposed) { _workspace = CreateWorkspace(); _workspaceDisposed = false; }
+        var revision = ++_loadRevision;
         var previousAccount = _location.Segment(0);
         _workspace.Suspend(); Clear(); _location = request;
         if (previousAccount != request.Segment(0))
@@ -100,9 +102,10 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         }
         _loading = true; _actionBusy = false; _notice.Text = "Loading Users…";
         var generation = _generation;
+        var activated = false;
         try
         {
-            generation = _workspace.Activate(); _generation = generation;
+            generation = _workspace.Activate(); _generation = generation; activated = true;
             _review = await _workspace.ReadAsync(generation, (lease, token) => _api.ReviewAsync(lease, request.Segment(0), token));
             if (!_workspace.IsCurrent(generation)) return;
             if (request.Segment(0) == null) await ReadListAsync(generation);
@@ -110,8 +113,14 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             if (!_workspace.IsCurrent(generation)) return;
             _notice.Text = ""; _loading = false; Render();
         }
-        catch (OperationCanceledException) { }
-        catch (Exception error) { if (_workspace.IsCurrent(generation)) { _loading = false; ShowError(error); } }
+        catch (Exception error)
+        {
+            if (_activePage && revision == _loadRevision && (!activated || _workspace.IsCurrent(generation)))
+            {
+                _loading = false;
+                ShowError(error is OperationCanceledException ? new TimeoutException("Users could not be loaded. Reload to try again.", error) : error, allowInactiveWorkspace: !activated);
+            }
+        }
     }
     private async Task DocumentAsync(string key, string path, long generation)
     {
@@ -120,7 +129,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             var result = await _workspace.ReadAsync(generation, (lease, token) => _api.ReadAsync(lease, path, token));
             if (_workspace.IsCurrent(generation)) _documents[key] = result.Body!;
         }
-        catch (Exception error) when (error is not OperationCanceledException && _workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed. Reload this tab; unsupported and failed are not empty."; }
+        catch (Exception) when (_workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed or timed out. Reload this tab; unsupported and failed are not empty."; }
     }
     private async Task RowsAsync(string key, string path, long generation, bool unpaged = false, int limit = 100)
     {
@@ -131,7 +140,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             _rows[key] = new(path, limit, unpaged, page.Items.ToList(), page.NextCursor, new(StringComparer.Ordinal), page.NextCursor == null,
                 [new(unpaged ? path : AdminPaging.WithPage(path, limit, null), page.Envelope.Copy())]);
         }
-        catch (Exception error) when (error is not OperationCanceledException && _workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed. No empty-state or write-ready snapshot was inferred."; }
+        catch (Exception) when (_workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed or timed out. No empty-state or write-ready snapshot was inferred."; }
     }
     private async Task MoreAsync(string key)
     {
@@ -150,7 +159,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             _rows[key] = rows with { Next = page.NextCursor, Complete = page.NextCursor == null };
             Render();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException error) { if (_workspace.IsCurrent(generation)) ShowError(new TimeoutException("The read timed out or was cancelled. Reload this tab before continuing.", error)); }
         catch (Exception error) { if (_workspace.IsCurrent(generation)) ShowError(error); }
         finally { if (_workspace.IsCurrent(generation)) _loading = false; }
     }
@@ -179,33 +188,39 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         AdminShellPage.TryReplace(this, request);
         _ = LoadAsync(request);
     }
-    private void ShowError(Exception error)
+    private void ShowError(Exception error, bool allowInactiveWorkspace = false)
     {
-        if (error is OperationCanceledException || !_workspace.IsCurrent(_generation)) return;
+        if (error is OperationCanceledException || !allowInactiveWorkspace && !_workspace.IsCurrent(_generation)) return;
         _notice.Text = error switch
         {
-            AdminUsersReviewRequiredException => error.Message,
+            AdminUsersReviewRequiredException or TimeoutException => error.Message,
             ApiException api => $"Server refused this operation ({api.StatusCode}; {api.ProblemType ?? api.ErrorCode ?? "request_failed"}). Reload/review; no mutation was replayed.",
             ArgumentException or InvalidOperationException or InvalidDataException => error.Message,
             _ => "The request failed or its outcome is unknown. Read back and review locally before making another change."
         };
         if (!_body.Children.Contains(_notice)) _body.Children.Insert(0, _notice);
-        if (_review == null) _body.Children.Add(Action("Reload Users", () => LoadAsync(_location)));
+        if (_review == null || !_body.Children.OfType<Button>().Any())
+            _body.Children.Add(Action("Reload Users", () => LoadAsync(_location), recovery: allowInactiveWorkspace));
     }
     private static TextBlock Text(string value, double size = 14) => new() { Text = value, FontSize = size, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
-    private Button Action(string label, Func<Task> run, bool enabled = true, bool nested = false)
+    private Button Action(string label, Func<Task> run, bool enabled = true, bool nested = false, bool recovery = false)
     {
         var button = new Button { Content = label, MinHeight = 40, IsEnabled = enabled, HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(button, label);
         var generation = _generation;
+        var revision = _loadRevision;
+        bool Current() => recovery ? _activePage && revision == _loadRevision : _workspace.IsCurrent(generation);
         button.Click += async (_, _) =>
         {
-            if (!_workspace.IsCurrent(generation) || _loading || _actionBusy && !nested) return;
+            if (!Current() || _loading || _actionBusy && !nested) return;
             if (!nested) _actionBusy = true; button.IsEnabled = false;
             try { await run(); }
-            catch (OperationCanceledException) { }
-            catch (Exception error) { if (_workspace.IsCurrent(generation)) ShowError(error); }
-            finally { if (_workspace.IsCurrent(generation)) { if (!nested) _actionBusy = false; button.IsEnabled = enabled; } }
+            catch (OperationCanceledException error)
+            {
+                if (_workspace.IsCurrent(generation)) ShowError(new TimeoutException("The request timed out or was cancelled. Read back/review before making another change.", error));
+            }
+            catch (Exception error) { if (Current()) ShowError(error, allowInactiveWorkspace: recovery); }
+            finally { if (Current()) { if (!nested) _actionBusy = false; button.IsEnabled = enabled; } }
         };
         return button;
     }

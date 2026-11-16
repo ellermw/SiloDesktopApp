@@ -17,13 +17,20 @@ public sealed partial class AdminUsersPage
     private async Task BeginViewAsAsync()
     {
         var generation = _generation;
-        var result = await ConfirmAsync("View as " + _review!.User.Text("username"), "Start a separate in-memory session for this account. The regular desktop account is never overwritten. Return to admin ends this session.", new(AdminUsersOperation.ViewAs));
-        if (result?.Body == null || !_workspace.IsCurrent(generation)) return;
-        _preview?.Dispose();
-        _previewName = _review.User.Text("username"); _previewReturn = _location.Href; _previewCursors.Clear();
-        _preview = new(App.Services.GetRequiredService<SiloApiClient>().BaseUrl, _review.User.Text("id"), result.Body, _workspace.Token, () => _workspace.IsCurrent(generation));
-        result.Body.Remove("access_token"); result.Body.Remove("refresh_token");
-        await PreviewReadAsync("/api/v2/profiles", "profiles");
+        var targetId = _review!.User.Text("id");
+        var targetName = _review.User.Text("username");
+        var result = await ConfirmAsync("View as " + targetName, "Start a separate in-memory session for this account. The regular desktop account is never overwritten. Return to admin ends this session.", new(AdminUsersOperation.ViewAs));
+        if (result == null) return;
+        try
+        {
+            if (result.Body == null || !_workspace.IsCurrent(generation)) return;
+            _preview?.Dispose();
+            _previewName = targetName; _previewReturn = _location.Href; _previewCursors.Clear();
+            _preview = new(result.ViewAsBaseUrl!, targetId, result.Body, _workspace.Token, () => _workspace.IsCurrent(generation));
+            result.Body.Remove("access_token"); result.Body.Remove("refresh_token");
+            await PreviewReadAsync("/api/v2/profiles", "profiles");
+        }
+        finally { await result.DiscardViewAsAsync(); }
     }
     private async Task PreviewReadAsync(string path, string kind)
     {

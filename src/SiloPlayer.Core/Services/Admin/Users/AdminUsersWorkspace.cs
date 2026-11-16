@@ -82,25 +82,29 @@ public sealed class AdminUsersWorkspace : IDisposable
     public async Task<AdminUsersDocument> WriteAsync(long generation, AdminUsersApi api, AdminUserReview review, AdminUsersWrite write)
     {
         if (NeedsReview) throw new AdminUsersReviewRequiredException();
+        var attempted = false;
+        AdminUsersDocument? result = null;
         try
         {
-            return await ReadAsync(generation, (lease, token) =>
+            return await ReadAsync(generation, async (lease, token) =>
             {
                 if (NeedsReview) throw new AdminUsersReviewRequiredException();
-                return api.WriteAsync(lease, review, write, token);
+                result = await api.WriteAsync(lease, review, write, token, () => attempted = true).ConfigureAwait(false);
+                return result;
             }).ConfigureAwait(false);
         }
         catch (Exception error)
         {
+            if (result != null) await result.DiscardViewAsAsync().ConfigureAwait(false);
             lock (_gate)
             {
                 if (IsCurrent(generation))
                 {
                     var failure = AdminFailures.Classify(error);
-                    if (error is not AdminUsersReviewRequiredException && (failure is AdminFailureKind.Transport or AdminFailureKind.Server or
+                    if (attempted && error is not AdminUsersReviewRequiredException && (failure is AdminFailureKind.Transport or AdminFailureKind.Server or
                         AdminFailureKind.Unknown or AdminFailureKind.InvalidResponse or AdminFailureKind.Cancelled)) _outcomeUnknown = true;
                     if (error is AdminUsersReviewRequiredException || _outcomeUnknown ||
-                        failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired) _needsReview = true;
+                        attempted && (failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired)) _needsReview = true;
                 }
             }
             throw;

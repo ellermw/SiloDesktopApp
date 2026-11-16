@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json.Nodes;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin.Users;
@@ -51,6 +52,7 @@ public sealed class AdminUsersWorkspaceTests
     [InlineData("malformed-json")]
     [InlineData("{}")]
     [InlineData("{\"access_token\":\"synthetic\",\"user\":{\"id\":\"3\"}} ")]
+    [InlineData("{\"access_token\":\"synthetic\",\"user\":true}")]
     public async Task MalformedSuccessfulMutationResponseAlsoRequiresExplicitReadback(string responseBody)
     {
         using var kit = AdminMonitorKit.Create();
@@ -58,8 +60,14 @@ public sealed class AdminUsersWorkspaceTests
         using var workspace = new AdminUsersWorkspace(authority);
         var api = new AdminUsersApi(kit.Client);
         var writes = 0;
+        var logouts = new List<string?>();
         kit.Http.Respond = (request, _) =>
         {
+            if (request.RequestUri!.AbsolutePath == "/api/v2/auth/logout")
+            {
+                logouts.Add(request.Headers.Authorization?.Parameter);
+                return Task.FromResult(AdminMonitorKit.Json("{}"));
+            }
             if (request.Method != HttpMethod.Get) { writes++; return Task.FromResult(AdminMonitorKit.Json(responseBody)); }
             if (request.RequestUri!.AbsolutePath.EndsWith("/capabilities")) return Task.FromResult(AdminMonitorKit.Json("""{"available":true,"allowed":true,"state":"available"}"""));
             return Task.FromResult(AdminMonitorKit.Json(request.RequestUri.AbsolutePath.EndsWith("/1")
@@ -71,8 +79,77 @@ public sealed class AdminUsersWorkspaceTests
         await Assert.ThrowsAnyAsync<Exception>(() => workspace.WriteAsync(generation, api, review, new(AdminUsersOperation.ViewAs)));
         Assert.True(workspace.NeedsReview);
         Assert.Equal(1, writes);
+        Assert.Equal(responseBody.Contains("access_token") ? 1 : 0, logouts.Count);
+        Assert.All(logouts, bearer => Assert.Equal("synthetic", bearer));
         await Assert.ThrowsAsync<AdminUsersReviewRequiredException>(() => workspace.WriteAsync(generation, api, review, new(AdminUsersOperation.ViewAs)));
         Assert.Equal(1, writes);
+    }
+
+    [Fact]
+    public async Task InvalidCustomQuotaLeavesTheWorkspaceEditableWithoutSendingAWrite()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var workspace = new AdminUsersWorkspace(authority);
+        var api = new AdminUsersApi(kit.Client);
+        var writes = 0;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method != HttpMethod.Get) { writes++; return Task.FromResult(AdminMonitorKit.Json("{}")); }
+            var reply = AdminMonitorKit.Json(request.RequestUri!.AbsolutePath.EndsWith("/capabilities")
+                ? """{"available":true,"allowed":true,"state":"available"}"""
+                : request.RequestUri.AbsolutePath.EndsWith("/1")
+                    ? """{"id":"1","role":"admin","is_owner":false,"enabled":true}"""
+                    : """{"id":"2","role":"user","is_owner":false,"enabled":true}""");
+            reply.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"quota-v1\"");
+            return Task.FromResult(reply);
+        };
+        var generation = workspace.Activate();
+        var review = await workspace.ReadAsync(generation, (lease, token) => api.ReviewAsync(lease, "2", token));
+        var quota = new JsonObject { ["limit_mode"] = "custom", ["approval_mode"] = "inherit", ["max_requests"] = null, ["window_days"] = 7 };
+        await Assert.ThrowsAsync<ArgumentException>(() => workspace.WriteAsync(generation, api, review, new(AdminUsersOperation.Quota, quota)));
+        Assert.Equal(0, writes);
+        Assert.False(workspace.NeedsReview);
+        Assert.False(workspace.OutcomeUnknown);
+        // The same workspace remains usable for an explicitly chosen, valid write.
+        quota["max_requests"] = 5;
+        var path = "/api/v2/admin/request-users/2/limit";
+        await workspace.WriteAsync(generation, api, review, new(AdminUsersOperation.Quota, quota,
+            Readbacks: [new(path, review.User.Copy(), "\"quota-v1\"", true)]));
+        Assert.Equal(1, writes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreSendReadFailureDoesNotBecomeAnUnknownWrite(bool cancelled)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var workspace = new AdminUsersWorkspace(authority);
+        var api = new AdminUsersApi(kit.Client);
+        var fail = false;
+        kit.Http.Respond = (request, _) =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            if (fail)
+            {
+                if (cancelled) throw new TaskCanceledException("Synthetic GET timeout");
+                throw new HttpRequestException("Synthetic GET failure");
+            }
+            return Task.FromResult(AdminMonitorKit.Json(request.RequestUri!.AbsolutePath.EndsWith("/capabilities")
+                ? """{"available":true,"allowed":true,"state":"available"}"""
+                : request.RequestUri.AbsolutePath.EndsWith("/1")
+                    ? """{"id":"1","role":"admin","is_owner":true,"enabled":true}"""
+                    : """{"id":"2","role":"user","is_owner":false,"enabled":true}"""));
+        };
+        var generation = workspace.Activate();
+        var review = await workspace.ReadAsync(generation, (lease, token) => api.ReviewAsync(lease, "2", token));
+        fail = true;
+        await Assert.ThrowsAnyAsync<Exception>(() => workspace.WriteAsync(generation, api, review, new(AdminUsersOperation.ViewAs)));
+        Assert.True(workspace.IsCurrent(generation));
+        Assert.False(workspace.NeedsReview);
+        Assert.False(workspace.OutcomeUnknown);
     }
 
     [Fact]
@@ -124,8 +201,10 @@ public sealed class AdminUsersWorkspaceTests
         Assert.False(workspace.NeedsReview);
     }
 
-    [Fact]
-    public async Task UnknownWriteOutcomeCannotUnlockTheRetainedActionAfterReadback()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnknownWriteOutcomeCannotUnlockTheRetainedActionAfterReadback(bool timeout)
     {
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
@@ -133,7 +212,11 @@ public sealed class AdminUsersWorkspaceTests
         var api = new AdminUsersApi(kit.Client);
         kit.Http.Respond = (request, _) =>
         {
-            if (request.Method != HttpMethod.Get) return Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+            if (request.Method != HttpMethod.Get)
+            {
+                if (timeout) throw new TaskCanceledException("Synthetic write response timeout");
+                return Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+            }
             if (request.RequestUri!.AbsolutePath.EndsWith("/capabilities")) return Task.FromResult(AdminMonitorKit.Json("""{"available":true,"allowed":true,"state":"available"}"""));
             return Task.FromResult(AdminMonitorKit.Json(request.RequestUri.AbsolutePath.EndsWith("/1")
                 ? """{"id":"1","role":"admin","is_owner":true,"enabled":true}"""
