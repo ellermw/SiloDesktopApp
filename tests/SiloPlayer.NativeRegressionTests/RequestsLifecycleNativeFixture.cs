@@ -28,9 +28,10 @@ internal static class RequestsLifecycleNativeFixture
         var field = typeof(App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         field.SetValue(null, services);
         var frame = new Frame { Width = 900, Height = 800 }; parent.Children.Add(frame); navigation.Frame = frame;
+        RequestsPage? retainedPage = null;
         try
         {
-            navigation.NavigateImmediately(typeof(RequestsPage)); var page = (RequestsPage)frame.Content;
+            navigation.NavigateImmediately(typeof(RequestsPage)); var page = (RequestsPage)frame.Content; retainedPage = page;
             await Until(() => page.IsLoaded && vm.MyRequests.Count == 1 && vm.Genres.Count == 1);
             Invoke((Button)page.FindName("YoursTabButton"));
             await Until(() => ((FrameworkElement)page.FindName("MyRequestsSection")).Visibility == Visibility.Visible);
@@ -77,8 +78,11 @@ internal static class RequestsLifecycleNativeFixture
         finally
         {
             wire.Discovery.TrySetResult(Response("{\"items\":[]}")); wire.PendingMine?.TrySetResult(Response("{\"items\":[]}"));
-            frame.Navigate(typeof(Page)); parent.Children.Remove(frame); navigation.Frame = null;
-            await Task.Delay(100); field.SetValue(null, outer);
+            await RequestFixtureLifecycle.DetachAsync(frame, () =>
+            {
+                frame.Navigate(typeof(Page)); parent.Children.Remove(frame); navigation.Frame = null;
+            }, retainedPage);
+            field.SetValue(null, outer);
         }
     }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();

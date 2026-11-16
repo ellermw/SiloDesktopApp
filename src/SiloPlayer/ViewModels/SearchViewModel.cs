@@ -19,6 +19,23 @@ public partial class SearchViewModel : ObservableObject
     private readonly PeopleApi _peopleApi;
     private readonly RequestsApi _requestsApi;
     private readonly SettingsApi _settingsApi;
+    public RequestDiscoveryOwner? OutsideDiscoveryOwner { get; private set; }
+    public bool OutsideDiscoveryAllowed => _requestsApi.DiscoveryAllowed;
+    public Task RefreshRetainedOutsideAsync()
+    {
+        if (!OutsideDiscoveryAllowed) { RetireOutsideDiscovery(); return Task.CompletedTask; }
+        if (OutsideDiscoveryOwner is { } owner && _requestsApi.IsCurrentDiscoveryOwner(owner)) return Task.CompletedTask;
+        return SetOutsidePageAsync(OutsideRequestedPage);
+    }
+    public void RetireOutsideDiscovery()
+    {
+        if (OutsideDiscoveryAllowed) return;
+        Interlocked.Exchange(ref _outsideCts, null)?.Cancel();
+        OutsideDiscoveryOwner = null;
+        OutsideLibraryResults.Clear(); OutsideTotalPages = OutsideTotalResults = 0;
+        OutsideWatchlistTitlesSupported = false; IsOutsideLoading = false;
+        SetLocalizedMessage(nameof(OutsideError), () => null, value => OutsideError = value);
+    }
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _filtersCts;
     private string? _snapshot;
@@ -41,7 +58,7 @@ public partial class SearchViewModel : ObservableObject
     public async Task RequestOutsideTitleAsync(RequestMediaResult item)
     {
         var key = ("request", item.MediaType, item.TmdbId);
-        if (!item.Request.Requestable || !_externalPending.Add(key)) return;
+        if (!_requestsApi.SubmissionAllowed || !OutsideLibraryResults.Contains(item) || !item.Request.Requestable || !_externalPending.Add(key)) return;
         var token = _externalActionsCts.Token; var generation = _queryGeneration; var context = _settingsApi.CaptureContext();
         try
         {
@@ -55,7 +72,7 @@ public partial class SearchViewModel : ObservableObject
     public async Task ToggleOutsideWatchlistAsync(RequestMediaResult item)
     {
         var key = ("watchlist", item.MediaType, item.TmdbId);
-        if (!OutsideWatchlistTitlesSupported || !_externalPending.Add(key)) return;
+        if (!_requestsApi.DiscoveryAllowed || !OutsideLibraryResults.Contains(item) || !OutsideWatchlistTitlesSupported || !_externalPending.Add(key)) return;
         var token = _externalActionsCts.Token; var generation = _queryGeneration; var context = _settingsApi.CaptureContext();
         var wasSaved = item.InWatchlist == true;
         try
@@ -521,6 +538,7 @@ public partial class SearchViewModel : ObservableObject
         var owner = new CancellationTokenSource();
         Interlocked.Exchange(ref _outsideCts, owner)?.Cancel();
         var query = Query.Trim(); var key = BuildSearchKey(query); var generation = _queryGeneration;
+        var discoveryOwner = _requestsApi.CaptureDiscoveryOwner();
         var selectedPage = Math.Clamp(page, 1, OutsideTotalPages > 0 ? OutsideTotalPages : 500);
         OutsideRequestedPage = selectedPage;
         IsOutsideLoading = true; SetLocalizedMessage(nameof(OutsideError), () => null, value => OutsideError = value);
@@ -529,9 +547,12 @@ public partial class SearchViewModel : ObservableObject
         try
         {
             var status = await _requestsApi.GetStatusAsync(timeout.Token);
-            var response = status.RequestsEnabled ? await _requestsApi.SearchAsync(type, query, selectedPage, timeout.Token) : new RequestMediaPage();
+            if (_requestsApi.CaptureDiscoveryOwner() != discoveryOwner) return;
+            var response = status.RequestsEnabled && _requestsApi.DiscoveryAllowed ? await _requestsApi.SearchAsync(type, query, selectedPage, timeout.Token) : new RequestMediaPage();
             if (_outsideCts != owner || owner.IsCancellationRequested || generation != _queryGeneration || key != BuildSearchKey(Query.Trim())) return;
-            OutsideWatchlistTitlesSupported = status.WatchlistTitlesSupported;
+            if (_requestsApi.CaptureDiscoveryOwner() != discoveryOwner) return;
+            OutsideDiscoveryOwner = discoveryOwner;
+            OutsideWatchlistTitlesSupported = _requestsApi.DiscoveryAllowed && status.WatchlistTitlesSupported;
             var outside = response.Results
                 .Where(item => !string.Equals(item.Availability, "available", StringComparison.OrdinalIgnoreCase))
                 .Take(20)

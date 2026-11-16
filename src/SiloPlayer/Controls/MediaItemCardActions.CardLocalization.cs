@@ -13,12 +13,12 @@ public static partial class MediaItemCardActions
             new Dictionary<string, object?> { ["hours"] = minutes / 60, ["minutes"] = minutes % 60 })
         : AppStrings.Get("web.item.card.runtimeMinutes", new Dictionary<string, object?> { ["minutes"] = minutes });
 
-    internal static string CardSubtitle(MediaItem item, string? sort)
+    internal static string CardSubtitle(MediaItem item, string? sort, string? restingSubtitle = null)
     {
-        string Fallback() => item.ItemSource == "next_in_series" || item.Type == "episode"
+        string Fallback() => restingSubtitle ?? (item.ItemSource == "next_in_series" || item.Type == "episode"
             ? MediaItemDisplayText.BuildSubtitle(item, "title")
             : string.Join("  ·  ", new[] { item.Year > 0 ? item.Year.ToString(AppStrings.FormatCulture) : "",
-                item.Type == "series" ? AppStrings.Get("web.item.card.series") : "" }.Where(value => value.Length > 0));
+                item.Type == "series" ? AppStrings.Get("web.item.card.series") : "" }.Where(value => value.Length > 0)));
         string? Date(string? value) => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
             ? DateTimeDisplay.FormatDate(date, medium: true) : null;
         return sort switch

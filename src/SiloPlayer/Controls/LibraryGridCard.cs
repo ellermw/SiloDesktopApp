@@ -10,7 +10,7 @@ using SiloPlayer.Views;
 
 namespace SiloPlayer.Controls;
 
-public sealed class LibraryGridCard : Canvas, IMediaItemOwner
+public sealed partial class LibraryGridCard : Canvas, IMediaItemOwner
 {
     private readonly Border _posterBackground;
     private readonly Image _posterImage;
@@ -254,6 +254,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         SetLeft(_subtitleText, 4);
         SetTop(_subtitleText, posterHeight + 34);
         Children.Add(_subtitleText);
+        InitializeBookPresentation(posterHost);
 
         Tapped += OnTapped;
         PointerEntered += OnPointerEntered;
@@ -312,7 +313,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         var episodeTitle = MediaItemDisplayText.BuildEpisodeTitle(item);
         _episodeTitleText.Text = episodeTitle ?? "";
         _episodeTitleText.Visibility = episodeTitle is null ? Visibility.Collapsed : Visibility.Visible;
-        SiloPlayer.Controls.MediaItemCardActions.BindText(_subtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (MediaItemCardActions.CardSubtitle(item, sortKey)) : _subtitleText.Text);
+        BindLibrarySubtitle(item);
         SetTop(_subtitleText, _posterHeight + (episodeTitle is null ? 34 : 56));
         ApplyCardPresentation();
         UpdateOverlays(item);
@@ -332,7 +333,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
     public void RefreshState()
     {
         if (MediaItem is not { } item) return;
-        SiloPlayer.Controls.MediaItemCardActions.BindText(_subtitleText, "Text", element => element.Text = ReferenceEquals(MediaItem, item) ? (MediaItemCardActions.CardSubtitle(item, SortKey)) : _subtitleText.Text);
+        BindLibrarySubtitle(item);
         ApplyCardPresentation();
         UpdateOverlays(item);
         UpdateQuickActionState(item);
@@ -340,6 +341,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     public void ApplyCardPresentation()
     {
+        UpdateBookPresentation();
         _titleText.Visibility = Visibility.Visible;
         _episodeTitleText.Visibility = !string.IsNullOrWhiteSpace(_episodeTitleText.Text)
             ? Visibility.Visible
@@ -369,7 +371,8 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         SetTop(_titleText, posterHeight + 12);
         SetTop(_episodeTitleText, posterHeight + 34);
         SetTop(_subtitleText, posterHeight +
-            (_episodeTitleText.Visibility == Visibility.Visible ? 56 : 34));
+            (_episodeTitleText.Visibility == Visibility.Visible || _authorText.Visibility == Visibility.Visible ? 56 : 34));
+        UpdateBookLayout();
         SetLeft(_moreButton, cardWidth - 42);
         SetTop(_moreButton, posterHeight - 42);
         SetTop(_quickWatchedButton, posterHeight - 42);
@@ -826,12 +829,13 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
         var edge = _overlayGeometry.EdgeInset;
         _overlayTopLeft.Margin = new Thickness(edge);
         _overlayTopRight.Margin = new Thickness(edge);
-        _overlayBottomLeft.Margin = new Thickness(edge);
-        _overlayBottomRight.Margin = new Thickness(edge);
+        var bottom = ListeningRatio(MediaItem) != null ? Math.Max(edge, 16) : edge;
+        _overlayBottomLeft.Margin = new Thickness(edge, edge, edge, bottom);
+        _overlayBottomRight.Margin = new Thickness(edge, edge, edge, bottom);
         _overlayLeftEdge.Margin = _overlayRightEdge.Margin = new Thickness(edge);
         // Shown rail badges keep the inset their hosts chose; quick actions reset geometry after the bind.
         _badges?.UpdateRailInset();
-        _watchStatus.Update(MediaItem?.UserState, _overlayGeometry, borderInset: 0);
+        _watchStatus.Update(MediaItem?.Type == "manga" ? null : MediaItem?.UserState, _overlayGeometry, borderInset: 0);
         if (_watchStatus.Visibility == Visibility.Visible)
             _overlayTopLeft.MaxWidth = Math.Max(0, Width - 2 - 2 * edge - _watchStatus.ReservedWidth - _overlayGeometry.StackGap);
         if (App.Services.GetRequiredService<CardOverlayService>().ManifestRevision < 25 && _watchStatus.Visibility == Visibility.Visible)
@@ -843,6 +847,7 @@ public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void ClearOverlays()
     {
+        ClearBookPresentation();
         Badges.Clear();
         _watchStatus.Update(null, _overlayGeometry, borderInset: 0);
     }

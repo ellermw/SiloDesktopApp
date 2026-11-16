@@ -65,6 +65,7 @@ public class MediaItem : IJsonOnDeserialized
     public string Title { get; set; } = "";
     public int Year { get; set; }
     public int Runtime { get; set; }
+    public List<string>? Authors { get; set; }
     public List<string> Genres { get; set; } = [];
     public List<string> Studios { get; set; } = [];
     public List<string> Networks { get; set; } = [];

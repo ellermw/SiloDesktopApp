@@ -1150,6 +1150,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await OverlayPillNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "books-library-groups")
+            {
+                await BooksLibraryNativeFixture.RunPageBehaviorAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "books-library")
+            {
+                await BooksLibraryNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-revisions")
             {
                 await CardOverlayRevisionNativeFixture.RunAsync(parent);
@@ -1168,6 +1178,39 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "personal-lists")
             {
                 await PersonalListsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-authority-review")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                var reviewCase = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REVIEW_CASE");
+                if (reviewCase == "season-reconnect") await RequestInteractionNativeFixture.RunAsync(parent);
+                else if (reviewCase is "disabled-title" or "denied-follow" or "retained-bookmark") await ProfileRequestsNativeFixture.RunAsync(parent);
+                else if (reviewCase == "remote-profile-access") await RequestProfileAccessNativeFixture.RunAsync();
+                else await RequestViewerNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native request authority review case completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-permissions-review")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await ProfileRequestsNativeFixture.RunAsync(parent);
+                await RequestDiscoverCurrentNativeFixture.RunAsync(parent);
+                await RequestViewerNativeFixture.RunAsync(parent);
+                await RequestsLifecycleNativeFixture.RunAsync(parent);
+                await RequestInteractionNativeFixture.RunAsync(parent);
+                await RequestRemovalNativeFixture.RunAsync(parent);
+                await RequestDetailParityNativeFixture.RunAsync(parent);
+                await RequestDetailPollingNativeFixture.RunAsync(parent);
+                await RequestDetailActionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native request permission review completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-requests")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await ProfileRequestsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-removal")

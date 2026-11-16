@@ -33,6 +33,33 @@ controls and legacy FB2 highlights. Browsing/card changes are a separate PR.
 
 ---
 
+# November 16 — Books browsing/card Beta handoff
+
+The owner explicitly directs immediate non-draft Beta submission while local
+runtime/build launches remain held for shared generated-output cap recovery.
+This independent browsing/card change adds audiobook author captions, listening
+duration/time-left/progress, canonical group selection and reading/listening
+status labels, suppresses the generic manga watched overlay, and prevents a
+failed catalog from also claiming the library is empty. Reader/detail changes
+are separately submitted in [PR182](https://github.com/ellermw/SiloDesktopApp/pull/182).
+
+Original worker verification: 121 focused unit/source tests and four native
+groups passed before the final empty-state guard. The final guard compiled but
+has not been native-reverified. Do not claim those earlier payload results cover
+the submitted final head. Source checks accompany submission; pipeline QA must
+build and execute the final source. No local build/test/native/browser launch,
+cleanup retry, installed-player or settings action occurs for this handoff.
+
+Original source base is Beta 173c37974894fe5d52a4a4437c356c84e5c897d9;
+current Beta 7ba72bed148a29e737ec708997d8fedc259f7a0d is merged for
+submission. Official WebUI main remains 17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8.
+Version stamping stays under pipeline control. Remaining parity gaps include
+distinct true-empty versus filtered-no-match states, Clear Filters and failed
+browse Retry, plus full live-WebUI visual comparison. This is not comprehensive
+all-books parity certification. See docs/parity/2026-11-16-books-library.md.
+
+---
+
 # November 16 — Preserve legacy HTML chapter doctypes
 
 Reader HTML fallback now serializes the complete existing doctype before the

@@ -37,22 +37,32 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
     public bool WatchlistRequests { get; private set; }
     public string? ExternalTitlesError { get; private set; }
     private CancellationTokenSource? _externalLoad;
+    public RequestDiscoveryOwner? ExternalDiscoveryOwner { get; private set; }
 
     public void InvalidateExternalTitles() => ExternalTitles.Clear();
 
+    public void RetireBlockedExternalTitles()
+    {
+        if (_requestsApi.ProfileRequestsAllowed) return;
+        CancelExternalLoad(); ExternalTitlesSupported = false; WatchlistRequests = false;
+        ExternalTitles.Clear();
+    }
+
     public async Task LoadExternalTitlesAsync()
     {
+        var discoveryOwner = _requestsApi.CaptureDiscoveryOwner();
         var load = new CancellationTokenSource();
         Interlocked.Exchange(ref _externalLoad, load)?.Cancel();
         try
         {
             SetLocalizedMessage(nameof(ExternalTitlesError), () => null, value => ExternalTitlesError = value);
             var status = await _requestsApi.GetStatusAsync(load.Token);
-            if (_externalLoad != load || load.IsCancellationRequested) return;
-            ExternalTitlesSupported = status.RequestsEnabled && status.WatchlistTitlesSupported;
+            if (_externalLoad != load || load.IsCancellationRequested || _requestsApi.CaptureDiscoveryOwner() != discoveryOwner) return;
+            ExternalTitlesSupported = _requestsApi.DiscoveryAllowed && status.RequestsEnabled && status.WatchlistTitlesSupported;
             WatchlistRequests = status.WatchlistRequests;
             var titles = ExternalTitlesSupported ? await _requestsApi.GetWatchlistTitlesAsync(load.Token) : [];
             if (_externalLoad != load || load.IsCancellationRequested) return;
+            ExternalDiscoveryOwner = discoveryOwner;
             ExternalTitles.Clear();
             foreach (var title in titles.OrderBy(t => RequestViewerPolicy.WatchlistPresentation(t).Rank)
                          .ThenBy(t => DateOnly.TryParseExact(t.ReleaseDate, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,

@@ -39,7 +39,7 @@ internal static class RequestRemovalNativeFixture
 
     private static async Task RemovalAsync(StackPanel parent)
     {
-        using var rig = new Rig(parent, remove: true);
+        await using var rig = new Rig(parent, remove: true);
         await rig.OpenAsync("yours");
         Wire wire = rig.Wire;
         var removable = RemoveNames(rig.Requests);
@@ -66,8 +66,7 @@ internal static class RequestRemovalNativeFixture
         await Task.Delay(150);
         if (!ReferenceEquals(rig.Dialog(), dialog) || wire.Writes.Count != 0)
             throw new InvalidOperationException("A second activation while confirmation is open replaced the dialog or sent a mutation.");
-        Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == "Keep request"));
-        await Task.Delay(120);
+        await KeepAsync(dialog);
         if (wire.Writes.Count != 0 || !Remove(rig.Requests, "Failed one").IsEnabled) throw new InvalidOperationException("Keeping the request sends a mutation or disables Remove.");
 
         // Race: while the DELETE is pending an admin retries it. Pending state blocks a duplicate, the 409 leaves the row, and
@@ -77,7 +76,9 @@ internal static class RequestRemovalNativeFixture
         var reads = wire.MineReads;
         Click(Remove(rig.Requests, "Failed one")); Primary(await rig.DialogAsync());
         await Until(() => wire.Writes.Count == 1);
+        await Until(() => Remove(rig.Requests, "Failed one").IsLoaded);
         var pending = Remove(rig.Requests, "Failed one");
+        Program.Log($"TRACE: pending removal enabled={pending.IsEnabled}, loaded={pending.IsLoaded}, content={pending.Content?.GetType().FullName}, modelPending={rig.Requests.ViewModel.IsRemovingRequest("f1")}, writes={wire.Writes.Count}.");
         if (pending.IsEnabled || pending.Content is not ProgressRing { IsActive: true }) throw new InvalidOperationException("Pending removal exposes an enabled duplicate-submit target.");
         InvokePrivate(rig.Requests, "RemoveRequest_Click", pending, new RoutedEventArgs());
         await Task.Delay(150);
@@ -118,7 +119,7 @@ internal static class RequestRemovalNativeFixture
         await Task.Delay(150);
         if (!ReferenceEquals(rig.Dialog(), dialog) || wire.Writes.Count != writes)
             throw new InvalidOperationException("A second Cancel or Remove activation replaced the cancel confirmation or sent a mutation.");
-        Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == "Keep request"));
+        await KeepAsync(dialog);
         await Until(() => rig.Dialog() == null);
         await Task.Delay(120);
         Click(cancel);
@@ -142,7 +143,7 @@ internal static class RequestRemovalNativeFixture
 
     private static async Task DetailCancellationAsync(StackPanel parent)
     {
-        using var rig = new Rig(parent, remove: true);
+        await using var rig = new Rig(parent, remove: true);
         rig.Wire.DetailRequest = "{\"requestable\":false,\"requested_by_viewer\":true,\"request_id\":\"r1\",\"status\":\"pending\"}";
         rig.Navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("movie", 7));
         var page = (RequestDetailPage)rig.Frame.Content;
@@ -157,7 +158,7 @@ internal static class RequestRemovalNativeFixture
             await Task.Delay(150);
             if (!ReferenceEquals(rig.Dialog(), dialog) || rig.Wire.Writes.Count != 0)
                 throw new InvalidOperationException("Repeated detail cancellation replaced its confirmation or sent a mutation.");
-            Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == "Keep request"));
+            await KeepAsync(dialog);
             await Until(() => rig.Dialog() == null);
             await Task.Delay(120);
         }
@@ -168,7 +169,7 @@ internal static class RequestRemovalNativeFixture
     {
         foreach (var state in new[] { "eligible", "ineligible", "replaced", "access", "catch-up" })
         {
-            using var rig = new Rig(parent, remove: true);
+            await using var rig = new Rig(parent, remove: true);
             var wire = rig.Wire;
             wire.Mine["r1"] = Row("r1", "Retryable", status: "approved", outcome: "active");
             wire.DetailRequest = "{\"requestable\":false,\"requested_by_viewer\":true,\"request_id\":\"r1\",\"status\":\"approved\",\"download\":{\"percent\":42}}";
@@ -214,7 +215,7 @@ internal static class RequestRemovalNativeFixture
         foreach (var phase in new[] { "confirmation", "cancel", "departure" })
         {
             if (phase == "departure" && catchUp) continue;
-            using var rig = new Rig(parent, remove: true);
+            await using var rig = new Rig(parent, remove: true);
             var wire = rig.Wire;
             wire.DetailRequest = "{\"requestable\":false,\"requested_by_viewer\":true,\"request_id\":\"r1\",\"status\":\"pending\"}";
             rig.Navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("movie", 7));
@@ -275,7 +276,7 @@ internal static class RequestRemovalNativeFixture
     {
         foreach (var catchUp in new[] { false, true })
         {
-            using var rig = new Rig(parent, remove: true);
+            await using var rig = new Rig(parent, remove: true);
             await rig.OpenAsync("yours");
             var wire = rig.Wire;
             var vm = rig.Requests.ViewModel;
@@ -310,7 +311,7 @@ internal static class RequestRemovalNativeFixture
         foreach (var status in new[] { HttpStatusCode.NoContent, HttpStatusCode.NotFound, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
         {
             if (phase == "missing-row" && status != HttpStatusCode.NoContent) continue;
-            using var rig = new Rig(parent, remove: true);
+            await using var rig = new Rig(parent, remove: true);
             await rig.OpenAsync("yours");
             var page = rig.Requests;
             var vm = page.ViewModel;
@@ -379,7 +380,7 @@ internal static class RequestRemovalNativeFixture
     {
         foreach (var retirement in new[] { "none", "profile", "departure", "confirmation" })
         {
-            using var rig = new Rig(parent, remove: true);
+            await using var rig = new Rig(parent, remove: true);
             await rig.OpenAsync("yours");
             var wire = rig.Wire;
             Click(Remove(rig.Requests, "Failed one"));
@@ -423,7 +424,7 @@ internal static class RequestRemovalNativeFixture
 
     private static async Task OlderServerAsync(StackPanel parent)
     {
-        using var rig = new Rig(parent, remove: false);
+        await using var rig = new Rig(parent, remove: false);
         await rig.OpenAsync("yours");
         if (RemoveNames(rig.Requests).Any() || GuideTexts(rig.Requests).Any(text => text.Text.Contains("remove it")))
             throw new InvalidOperationException("A server that does not advertise remove_failed_supported offers removal.");
@@ -432,7 +433,7 @@ internal static class RequestRemovalNativeFixture
 
     private static async Task RowLinksAsync(StackPanel parent)
     {
-        using var rig = new Rig(parent, remove: true, libraryRows: true);
+        await using var rig = new Rig(parent, remove: true, libraryRows: true);
         await rig.OpenAsync("yours");
         var wire = rig.Wire; RequestsPage page = rig.Requests;
         int Navigated(string id) => rig.Navigations.Count(entry => entry.Page == typeof(ItemDetailPage) && (entry.Parameter as string) == id);
@@ -488,7 +489,7 @@ internal static class RequestRemovalNativeFixture
 
     private static async Task DetailLinkAsync(StackPanel parent)
     {
-        using var rig = new Rig(parent, remove: true, detail: true);
+        await using var rig = new Rig(parent, remove: true, detail: true);
         var wire = rig.Wire;
         wire.CatalogStatus["lib-detail"] = HttpStatusCode.ServiceUnavailable;
         rig.Navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("movie", 7));
@@ -549,6 +550,20 @@ internal static class RequestRemovalNativeFixture
     private static Button? DetailCancel(DependencyObject root) => Descendants(root).OfType<Button>().FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == "cancel");
     private static void Click(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static void Invoke(Button button) => Click(button);
+    private static async Task KeepAsync(ContentDialog dialog)
+    {
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnClosed(ContentDialog sender, ContentDialogClosedEventArgs args) => closed.TrySetResult();
+        dialog.Closed += OnClosed;
+        try
+        {
+            Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == "Keep request"));
+            await closed.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            // Let ShowAsync's continuation retire the production confirmation guard before another activation.
+            await Task.Yield();
+        }
+        finally { dialog.Closed -= OnClosed; }
+    }
     private static void Primary(ContentDialog dialog) => Click(Descendants(dialog).OfType<Button>().Single(button => (string?)button.Content == dialog.PrimaryButtonText));
     private static object? InvokePrivate(object target, string name, params object[] args) => target.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, args);
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
@@ -565,7 +580,7 @@ internal static class RequestRemovalNativeFixture
         while (!ready()) { if (DateTime.UtcNow > end) throw new TimeoutException("Request removal fixture did not settle."); await Task.Delay(20); }
     }
 
-    private sealed class Rig : IDisposable
+    private sealed class Rig : IAsyncDisposable
     {
         private readonly StackPanel _parent; private readonly FieldInfo _servicesField; private readonly IServiceProvider _outer;
         private readonly ServiceProvider _services; private readonly HttpClient _http; private readonly ToastContainer _toast;
@@ -627,7 +642,7 @@ internal static class RequestRemovalNativeFixture
         {
             await Until(() => text == null ? ToastTexts().Any(value => !string.IsNullOrWhiteSpace(value)) : ToastTexts().Any(value => value.Contains(text)));
         }
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
             foreach (var gate in Wire.Gates.Values) gate.TrySetResult();
             Wire.DeleteGate?.TrySetResult();
@@ -635,9 +650,12 @@ internal static class RequestRemovalNativeFixture
             Wire.MineGate?.TrySetResult();
             Wire.CancelGate?.TrySetResult();
             Navigation.NavigationRequestHandler = null;
-            try { Frame.Content = null; } catch { }
-            _parent.Children.Remove(Frame); Navigation.Frame = null; Toasts.Unregister(); _parent.Children.Remove(_toast);
-            Task.Delay(120).GetAwaiter().GetResult();
+            await RequestFixtureLifecycle.DetachAsync(Frame, () =>
+            {
+                Frame.Navigate(typeof(Page)); Frame.BackStack.Clear(); Frame.Content = null;
+                _parent.Children.Remove(Frame); Navigation.Frame = null;
+            });
+            Toasts.Unregister(); _parent.Children.Remove(_toast);
             _servicesField.SetValue(null, _outer); _services.Dispose(); _http.Dispose();
         }
     }

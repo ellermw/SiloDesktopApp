@@ -89,7 +89,7 @@ public partial class CatalogApi(SiloApiClient client)
     }
 
     public Task<HomeLayoutResponse> GetLibraryLayoutAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<HomeLayoutResponse>($"/api/v2/library/{libraryId}/layout", ct);
+        => ReadLibraryPinMetadataAsync<HomeLayoutResponse>(libraryId, false, ct);
 
     public Task<CatalogResponse> GetCatalogAsync(
         int? libraryId,
@@ -327,7 +327,7 @@ public partial class CatalogApi(SiloApiClient client)
     // ===== Library Collections =====
 
     public Task<LibraryTabResponse> GetLibraryCollectionsAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<LibraryTabResponse>($"/api/v2/library/{libraryId}/collections", ct);
+        => ReadLibraryPinMetadataAsync<LibraryTabResponse>(libraryId, true, ct);
 
     public async Task<CatalogResponse> GetLibraryCollectionItemsAsync(int libraryId, string collectionId, CancellationToken ct = default)
     {
