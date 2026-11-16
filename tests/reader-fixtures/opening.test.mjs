@@ -73,6 +73,27 @@ for (const format of ['fb2', 'fbz']) {
         assert.equal(reader.snapshot()?.index, 4);
     });
 
+    test(format + ' refuses legacy bookmark and highlight navigation instead of guessing a section', async () => {
+        const { reader, messages, fractionRestores, directRestores } = openingHarness();
+        assert.equal(await reader.open({
+            url: 'fixture.' + format, format, location: 'chapter:2;fraction:0.25', progress: .75,
+            chapters: ['fb2-chapter-0001.html', 'fb2-chapter-0002.html', 'fb2-chapter-0003.html'],
+            annotations: [
+                { kind: 'bookmark', location: 'chapter:1;fraction:0.5' },
+                { kind: 'highlight', location: 'chapter:1;fraction:0.5', selectedText: 'Old highlight' },
+            ],
+        }), true);
+        const saved = reader.snapshot();
+        const relocated = messages.filter(message => message.type === 'relocate').length;
+        assert.equal(await reader.go('chapter:1;fraction:0.5'), false);
+        assert.equal(reader.snapshot(), saved);
+        assert.deepEqual(directRestores, []);
+        assert.deepEqual(fractionRestores, [.75]);
+        assert.equal(messages.filter(message => message.type === 'relocate').length, relocated);
+        assert.equal(messages.at(-1).type, 'reader-error');
+        assert.match(messages.at(-1).message, /unavailable/);
+    });
+
     test(format + ' does not guess a foliate section for legacy progress with no overall fraction', async () => {
         const { reader, messages, directRestores } = openingHarness();
         assert.equal(await reader.open({ url: 'fixture.' + format, format, location: 'chapter:2;fraction:0.25' }), false);

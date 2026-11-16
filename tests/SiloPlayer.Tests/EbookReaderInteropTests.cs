@@ -23,6 +23,40 @@ public sealed class EbookReaderInteropTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new EbooksApi(client).ReadFileAsync("book", 42));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DownloadedBookSurvivesRequestContextRetirement(bool transportCatchUp)
+    {
+        SiloApiClient? client = null;
+        var handler = new Handler(_ =>
+        {
+            Assert.True(client!.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent("book bytes"u8.ToArray()) });
+        });
+        client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+        var owner = api.CaptureIdentityContext();
+        var bytes = await api.ReadFileAsync("book", 42, api.CaptureContext(owner));
+        Assert.Equal("book bytes"u8.ToArray(), bytes);
+        Assert.True(api.IsCurrentIdentityContext(owner));
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task DownloadCannotStartWithARetiredProfileContext()
+    {
+        var handler = new Handler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        var client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+        var context = api.CaptureContext();
+        client.SetProfile("replacement");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.ReadFileAsync("book", 42, context));
+        Assert.Equal(0, handler.Calls);
+    }
+
     [Fact]
     public async Task ProgressRoundTripsExactCfiAndStringFileIdWithEventTime()
     {

@@ -14,9 +14,13 @@ public sealed class EbooksApi(SiloApiClient client)
 
     public async Task<byte[]> ReadFileAsync(string contentId, int fileId, ApiRequestContext context, CancellationToken ct = default)
     {
+        var owner = client.CaptureIdentityContext();
         var bytes = await client.SendRawBytesRequestAsync(context, HttpMethod.Get,
             $"/api/v2/ebooks/{Content(contentId)}/files/{fileId}/read", ct);
-        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Reader context changed.", ct);
+        ct.ThrowIfCancellationRequested();
+        // The request checks its authority before sending; returned bytes belong
+        // to the same reader even if access/cache refresh retired that request.
+        if (!client.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Reader identity changed.", ct);
         return bytes;
     }
 

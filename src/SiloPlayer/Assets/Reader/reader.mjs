@@ -41,6 +41,10 @@ async function navigate(location) {
         if (format === 'pdf') {
             if (target.index !== 0) return false;
             resolved = await activeView.resolveNavigation({fraction:target.anchor});
+        } else if (format === 'fb2' || format === 'fbz') {
+            // Native FB2 chapter numbers do not identify foliate sections.
+            // Only open() has saved overall progress to migrate these safely.
+            return false;
         } else if (format !== 'epub') {
             resolved = {index:target.index, anchor:target.anchor};
         } else {
@@ -75,6 +79,9 @@ async function drawAnnotations() {
         if (!annotation.cfiRange && !annotation.localCfi && annotation.selectedText) {
             const legacy = parseLocation(annotation.location);
             if (legacy?.legacy) {
+                // Keep legacy FB2 highlights in the host's annotation list, but
+                // do not guess their section or paint them in the wrong place.
+                if (format === 'fb2' || format === 'fbz') continue;
                 const chapter = chapterPaths[legacy.index];
                 const content = contents().find(({index}) => book.sections[index]?.id === chapter);
                 if (content) {

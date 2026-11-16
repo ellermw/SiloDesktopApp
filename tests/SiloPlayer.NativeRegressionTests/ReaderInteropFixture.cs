@@ -253,19 +253,21 @@ internal static class ReaderInteropFixture
             };
             Set(page, "_contentId", "fixture-book");
             Set(page, "_fileId", 42);
-            Set(page, "_readerContext", api.CaptureContext());
+            Set(page, "_readerIdentity", api.CaptureIdentityContext());
             Set(page, "_initialized", true);
             ((TextBlock)page.FindName("TitleText")).Text = "The Fixture Book";
             web.CoreWebView2.SetVirtualHostNameToFolderMapping(EbookReaderWebPolicy.ReaderHost, Path.Combine(Program.AppDirectory, "Assets", "Reader"), CoreWebView2HostResourceAccessKind.DenyCors);
             var generation = 0;
             var tocCase = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "reader-toc";
-            foreach (var variant in tocCase ? new[] { "epub", "pdf", "epub-toc" } : new[] { "epub", "pdf" })
+            foreach (var variant in tocCase ? new[] { "epub", "pdf", "epub-toc", "epub-toc-recovery" } : new[] { "epub", "pdf" })
             {
+                var recovery = variant == "epub-toc-recovery";
+                var hasToc = variant is "epub-toc" or "epub-toc-recovery";
                 var format = variant == "pdf" ? "pdf" : "epub";
                 var file = format == "epub" ? "unequal.epub" : "four-pages.pdf";
                 var directory = Path.Combine(Program.ResultDirectory, "reader-page-" + variant);
                 var bytes = File.ReadAllBytes(Path.Combine(fixtures, file));
-                if (variant == "epub-toc") bytes = WithActualTableOfContents(bytes);
+                if (hasToc) bytes = WithActualTableOfContents(bytes);
                 var extractor = typeof(EbookReaderPage).Assembly.GetType("SiloPlayer.Services.EbookPackageExtractor")!;
                 var book = extractor.GetMethod("Extract", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [bytes, directory, format]);
                 File.WriteAllBytes(Path.Combine(directory, "reader-source." + format), bytes);
@@ -274,33 +276,47 @@ internal static class ReaderInteropFixture
                 Call(page, "BuildContents");
                 Call(page, "UpdateFormatSpecificChrome");
                 Set(page, "_rendererReady", false);
+                Set(page, "_rendererOpened", false);
                 Set(page, "_sharedLocation", null);
                 Set(page, "_openGeneration", ++generation);
-                readerHandler.RestoreLocation = format == "epub" ? "chapter:1;fraction:0.5" : "epubcfi(/6/6)";
+                readerHandler.RestoreLocation = recovery ? "epubcfi(/6/9998!/4/2)"
+                    : format == "epub" ? "chapter:1;fraction:0.5" : "epubcfi(/6/6)";
                 Set(page, "_restoreProgress", await api.GetProgressAsync("fixture-book"));
                 web.CoreWebView2.SetVirtualHostNameToFolderMapping(EbookReaderWebPolicy.BookHost, directory, CoreWebView2HostResourceAccessKind.Allow);
                 // Like OpenVersionAsync, reload the shell after changing the book
                 // mapping; WebView2 retains virtual-host mappings for a document.
                 web.Source = new Uri($"https://{EbookReaderWebPolicy.ReaderHost}/index.html?generation={generation}");
-                await WaitAsync(() => (bool)Get(page, "_rendererReady")!, "Actual reader page did not become ready for " + format);
+                await WaitAsync(() => (bool)Get(page, recovery ? "_rendererOpened" : "_rendererReady")!, "Actual reader page did not open for " + variant);
+                if (recovery)
+                {
+                    if ((bool)Get(page, "_rendererReady")! || Get(page, "_sharedLocation") != null)
+                        throw new InvalidOperationException("Unresolved restore incorrectly became ready or replaced the saved location.");
+                    var writesBeforeRecovery = readerHandler.ProgressWrites;
+                    await (Task)Call(page, "SaveProgressAsync")!;
+                    if (readerHandler.ProgressWrites != writesBeforeRecovery)
+                        throw new InvalidOperationException("Unresolved restore wrote progress before explicit recovery.");
+                }
                 if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "reader-toc")
                 {
                     var actualToc = await web.ExecuteScriptAsync("document.querySelector('foliate-view').book.toc ?? []");
                     using var toc = JsonDocument.Parse(actualToc);
                     var nativeToc = (ListView)page.FindName("ContentsList");
                     Program.Log($"TRACE: actual {format} book.toc={toc.RootElement.GetArrayLength()}, nativeContents={nativeToc.Items.Count}.");
-                    if (variant == "epub-toc")
+                    if (hasToc)
                     {
                         if (toc.RootElement.GetArrayLength() != 1 || nativeToc.Items.Count != 2 ||
                             ((ListViewItem)nativeToc.Items[1]).Tag is not "OPS/long.xhtml#p48" ||
                             ((ListViewItem)nativeToc.Items[1]).Content is not TextBlock { Text: "Nested long passage", Margin.Left: 16 })
                             throw new InvalidOperationException("Actual publication TOC labels, nested depth or href were lost in the native contents.");
                         nativeToc.SelectedItem = nativeToc.Items[0];
-                        await WaitAsync(() => (int)Get(page, "_chapterIndex")! == 0, "Real Contents selection did not navigate the short chapter href.");
+                        await WaitAsync(() => (bool)Get(page, "_rendererReady")! && (int)Get(page, "_chapterIndex")! == 0,
+                            "Real Contents selection did not navigate the short chapter href or recover the unresolved restore.");
                         nativeToc.SelectedItem = nativeToc.Items[1];
                         await WaitAsync(() => (int)Get(page, "_chapterIndex")! == 1 && (double)Get(page, "_sharedProgress")! > 0.3,
                             "Real nested Contents selection did not navigate its long passage anchor.");
-                        Program.Log("PASS: actual nested publication TOC labels/depth/href navigation and legacy spine restoration coexist.");
+                        Program.Log(recovery
+                            ? "PASS: actual host TOC selection recovers an unresolved saved location without premature progress writes."
+                            : "PASS: actual nested publication TOC labels/depth/href navigation and legacy spine restoration coexist.");
                     }
                     else if (toc.RootElement.GetArrayLength() != 0 || nativeToc.Items.Count != 0 || page.FindName("ContentsEmptyText") is not TextBlock { Text: "No contents found.", Visibility: Visibility.Visible })
                         throw new InvalidOperationException("Native reader synthesizes spine/pages instead of the actual empty book.toc and current empty contents message.");
@@ -385,6 +401,24 @@ internal static class ReaderInteropFixture
                     Call(page, "OpenPanel", "contents");
                 }
             }
+            Call(page, "OpenPanel", "annotations");
+            page.UpdateLayout();
+            Button AnnotationDeleteButton() => ControlDescendants((DependencyObject)page.FindName("AnnotationsList"))
+                .OfType<Button>().First(button => AutomationProperties.GetName(button) == "Delete annotation");
+            var annotationCount = readerHandler.Bookmarks.Count;
+            client.InvalidateAccessContext();
+            InvokeButton(AnnotationDeleteButton());
+            await Task.Delay(100);
+            if (readerHandler.AnnotationDeleteAttempts != 0 || readerHandler.Bookmarks.Count != annotationCount)
+                throw new InvalidOperationException("Stale annotation revision bypassed its validator.");
+            await (Task)Call(page, "LoadAnnotationsAsync")!;
+            page.UpdateLayout();
+            InvokeButton(AnnotationDeleteButton());
+            await WaitAsync(() => readerHandler.AnnotationDeleteAttempts == 1, "Actual annotation Delete input did not reach the API after reloading validators.");
+            await Task.Delay(100);
+            if (readerHandler.Bookmarks.Count != annotationCount)
+                throw new InvalidOperationException("Failed annotation deletion removed an annotation.");
+            Program.Log("PASS: actual annotation Delete input survives retired validators and API precondition errors.");
             var before = readerHandler.ProgressWrites;
             client.SetProfile("replacement-profile");
             await (Task)Call(page, "SaveProgressAsync")!;
@@ -437,6 +471,7 @@ internal static class ReaderInteropFixture
         public string RestoreLocation { get; set; } = "";
         public EbookReaderProgressInput? LastProgress { get; private set; }
         public int ProgressWrites { get; private set; }
+        public int AnnotationDeleteAttempts { get; private set; }
         public List<EbookReaderAnnotation> Bookmarks { get; } = [];
         private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString };
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -450,6 +485,14 @@ internal static class ReaderInteropFixture
                     return Json(new { progress = LastProgress });
                 }
                 return Json(new { progress = new { file_id = "42", location = RestoreLocation, progress = .5 } });
+            }
+            if (request.Method == HttpMethod.Delete && request.RequestUri.AbsolutePath.Contains("/annotations/", StringComparison.Ordinal))
+            {
+                AnnotationDeleteAttempts++;
+                return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                {
+                    Content = new StringContent("""{"type":"about:blank","title":"Annotation changed","status":412}""", Encoding.UTF8, "application/problem+json")
+                };
             }
             if (request.RequestUri.AbsolutePath.EndsWith("/annotations"))
             {

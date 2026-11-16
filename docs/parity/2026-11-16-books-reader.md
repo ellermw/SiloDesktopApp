@@ -18,6 +18,12 @@ certification. Pipeline QA must execute the final unit/Node/native matrix.
 Normal detail-page Read handoff, legacy FB2 highlight migration and remaining
 low-priority review observations are not certified by this handoff.
 
+Legacy FB2/FBZ annotations are retained, not renumbered into foliate's different
+section layout. Bookmarks and highlights with `chapter:N;fraction:F` but no CFI
+report an unavailable location when selected; legacy highlights remain listed
+but are not painted. Only the saved reading progress has an overall fraction
+for safe restoration. New CFI annotations are unaffected.
+
 ## Source and scope
 
 - Desktop base: `173c37974894fe5d52a4a4437c356c84e5c897d9`, Beta
@@ -62,11 +68,14 @@ even for its MOBI invocation; its loading-state text is the observed symptom.
   The same engine now provides them across supported formats. Comic prose
   controls/search stay hidden or disabled like WebUI. PDF TOC destinations use
   the actual publication resolver; fixed-layout spread preferences now reach
-  the renderer. Legacy saved chapter locations remain accepted.
-- Downloads bind the page's original request context and reject stale returned
-  bytes. The page checks asynchronous startup and retires/cancels/closes its
-  renderer on context changes, including profile setters which emit no event.
-  A 250 ms scoped timer covers those setters; saves cannot adopt a new profile.
+  the renderer. Legacy saved chapter locations remain accepted except for
+  FB2/FBZ annotation locations without a safe mapping, as described above.
+- Downloads check request authority before sending and reader identity after
+  receiving bytes, surviving request retirement without adopting a new profile.
+  Unexpected cancellation during active opening shows a failure, not a spinner.
+  The page checks asynchronous startup and retires/cancels/closes its renderer
+  on identity changes, including profile setters which emit no event. A 250 ms
+  scoped timer covers those setters; saves cannot adopt a new profile.
 - Failed WebView navigation/process/module startup and book opening now show
   a visible failure state. Bootstrap messages contain generation only, not
   exception details. Book iframes remain script-disabled, host objects and
@@ -103,8 +112,9 @@ latest native MOBI profile retirement, then EPUB/PDF/AZW/AZW3/FB2/FBZ/CBZ/CBR/
 SVG EPUB and existing reader interop/controls after a finite slot is granted.
 The new stored-RAR CBR fixture and FB2/FBZ paths have compiled but have not run.
 No final native all-format or visual/accessibility parity claim is made.
-The reader currently conservatively retires on any request-context invalidation,
-including transport catch-up; reconnect-continuation parity remains a limitation.
+The reader identity survives request-context invalidation, including transport
+catch-up; the new download-retirement and native TOC recovery regressions still
+require pipeline execution.
 DRM/encrypted Kindle, compressed real-world RAR variants, JXL runtime decoding
 and the actual user's book/live server are not certified by these fixtures.
 

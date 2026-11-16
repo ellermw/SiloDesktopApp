@@ -43,6 +43,7 @@ public sealed partial class EbookReaderPage : Page
     private bool _leaving;
     private bool _opening;
     private bool _rendererReady;
+    private bool _rendererOpened;
     private string? _sharedLocation;
     private double _sharedProgress;
     private EbookReaderProgress? _restoreProgress;
@@ -190,7 +191,11 @@ public sealed partial class EbookReaderPage : Page
             _progressTimer.Start();
             Focus(FocusState.Programmatic);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException ex)
+        {
+            if (!_leaving && !_lifetime.IsCancellationRequested && _ebooksApi.IsCurrentIdentityContext(_readerIdentity))
+                ShowFailure(ex);
+        }
         catch (Exception ex)
         {
             if (_item == null) ShowFailure(NotFound);
@@ -248,6 +253,7 @@ public sealed partial class EbookReaderPage : Page
             if (_leaving) return;
             _initialized = false;
             _rendererReady = false;
+            _rendererOpened = false;
             _openGeneration++;
             RetireSearch();
             _progressTimer.Stop();
@@ -285,6 +291,7 @@ public sealed partial class EbookReaderPage : Page
         if (args.ProcessFailedKind is not (CoreWebView2ProcessFailedKind.BrowserProcessExited
             or CoreWebView2ProcessFailedKind.RenderProcessExited or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)) return;
         _rendererReady = false;
+        _rendererOpened = false;
         ShowFailure(() => T(RendererOpenFailedKey, "Unable to open ebook") + $" ({args.ProcessFailedKind})");
     }
 
@@ -359,6 +366,7 @@ public sealed partial class EbookReaderPage : Page
         _initialized = false;
         _openGeneration++;
         _rendererReady = false;
+        _rendererOpened = false;
         _sharedLocation = null;
         _selectedVersion = version;
         _fileId = version.FileId;
@@ -469,7 +477,11 @@ public sealed partial class EbookReaderPage : Page
         var version = _readerFiles.FirstOrDefault(candidate => candidate.FileId == fileId);
         if (version == null) return;
         try { await OpenVersionAsync(version, restoreProgress: true); }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException ex)
+        {
+            if (!_leaving && !_lifetime.IsCancellationRequested && _ebooksApi.IsCurrentIdentityContext(_readerIdentity))
+                ShowFailure(ex);
+        }
         catch (Exception ex) { ShowFailure(ex); }
     }
 
@@ -581,6 +593,7 @@ public sealed partial class EbookReaderPage : Page
             else if (type == "reader-ready" && UsesSharedRenderer)
             {
                 _rendererReady = true;
+                _rendererOpened = true;
                 LoadingLayer.Visibility = Visibility.Collapsed;
                 _rendererPageCount = message.RootElement.GetProperty("count").GetInt32();
                 AdoptSharedContents(message.RootElement);
@@ -594,12 +607,18 @@ public sealed partial class EbookReaderPage : Page
             else if (type is "reader-load-error" or "reader-open-error")
             {
                 _rendererReady = false;
+                _rendererOpened = false;
                 ShowFailure(() => T(RendererOpenFailedKey, "Unable to open ebook"));
             }
             else if (type == "reader-error")
             {
                 if (message.RootElement.TryGetProperty("count", out _) && message.RootElement.TryGetProperty("toc", out _))
+                {
+                    // An unresolved restore leaves the publication open for TOC
+                    // recovery, but must not enable saves until reader-ready.
+                    _rendererOpened = true;
                     AdoptSharedContents(message.RootElement);
+                }
                 LoadingLayer.Visibility = Visibility.Collapsed;
                 // The renderer words its errors from the keyed locale payload.
                 App.Services.GetRequiredService<ToastService>().Error(message.RootElement.GetProperty("message").GetString() ?? LocationUnavailableEnglish);
@@ -958,7 +977,7 @@ public sealed partial class EbookReaderPage : Page
 
     private void ContentsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_suppressControls && _initialized && UsesSharedRenderer && _rendererReady &&
+        if (!_suppressControls && _initialized && UsesSharedRenderer && _rendererOpened &&
             ContentsList.SelectedItem is ListViewItem { Tag: string href })
         {
             // The renderer validates CFI and publication-local hrefs before navigation.
@@ -1049,7 +1068,7 @@ public sealed partial class EbookReaderPage : Page
         SetPanelOpen(true);
         SettingsPanel.Visibility = panel == "settings" ? Visibility.Visible : Visibility.Collapsed;
         ContentsList.Visibility = panel == "contents" ? Visibility.Visible : Visibility.Collapsed;
-        ContentsEmptyText.Visibility = panel == "contents" && UsesSharedRenderer && _rendererReady && ContentsList.Items.Count == 0
+        ContentsEmptyText.Visibility = panel == "contents" && UsesSharedRenderer && _rendererOpened && ContentsList.Items.Count == 0
             ? Visibility.Visible : Visibility.Collapsed;
         SearchPanel.Visibility = panel == "search" ? Visibility.Visible : Visibility.Collapsed;
         AnnotationsPanel.Visibility = panel == "annotations" ? Visibility.Visible : Visibility.Collapsed;
@@ -1140,10 +1159,20 @@ public sealed partial class EbookReaderPage : Page
         AutomationProperties.SetName(delete, deleteLabel);
         delete.Click += async (_, _) =>
         {
-            await _ebooksApi.DeleteAnnotationAsync(_contentId, annotation.Id, _lifetime.Token);
-            await LoadAnnotationsAsync();
-            if (AnnotationChapter(annotation) == _chapterIndex)
-                NavigateToChapter(_chapterIndex, _chapterFraction);
+            try
+            {
+                EnsureReaderContext();
+                await _ebooksApi.DeleteAnnotationAsync(_contentId, annotation.Id, _lifetime.Token);
+                EnsureReaderContext();
+                await LoadAnnotationsAsync();
+                if (AnnotationChapter(annotation) == _chapterIndex)
+                    NavigateToChapter(_chapterIndex, _chapterFraction);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ApiException or InvalidOperationException)
+            {
+                if (!_leaving && !_lifetime.IsCancellationRequested && _ebooksApi.IsCurrentIdentityContext(_readerIdentity))
+                    App.Services.GetRequiredService<ToastService>().Error(ex);
+            }
         };
         var stack = new StackPanel { Spacing = 6 };
         stack.Children.Add(new TextBlock { Text = kind, FontSize = 11, Opacity = 0.65 });
