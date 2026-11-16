@@ -194,6 +194,52 @@ public static class AdminText
         ["configure.native.rateLimits.outcomeUnknown"] = "The rate limit save outcome is unknown. Reload and review before saving again.",
         ["configure.native.rateLimits.merged"] = "Rate limit settings changed on the server. Your edits were kept; review them before saving.",
         ["configure.native.rateLimits.retry"] = "Retry",
+        // Configure › Network access: official en.json c11b0a96 (unchanged at abd85d0c). Tags are split before values are inserted.
+        ["web.admin.settings.network.page.title"] = "Network Access",
+        ["web.admin.settings.network.page.intro"] = "Network access providers give this server an identity on an overlay network such as Tailscale, so clients can reach it without port forwarding or a public reverse proxy. Providers are plugins: install one from the Plugins page and it appears here.",
+        ["web.admin.settings.network.page.noProvidersTitle"] = "No providers installed",
+        ["web.admin.settings.network.page.noProvidersBody"] = "No installed plugin provides network access. Install a network access provider from the Plugins page to connect this server to an overlay network.",
+        ["web.admin.settings.network.page.providersFailed"] = "Could not read network access providers.",
+        ["web.admin.settings.network.provider.description"] = "Access Silo through your {name} network without port forwarding.",
+        ["web.admin.settings.network.provider.noHosts"] = "No host runs this provider yet.",
+        ["web.admin.settings.network.provider.statusFailed"] = "Could not read provider status.",
+        ["web.admin.settings.network.host.apiServer"] = "API server",
+        ["web.admin.settings.network.host.proxyNode"] = "Proxy node",
+        ["web.admin.settings.network.host.namedRole"] = "{name} · {role}",
+        ["web.admin.settings.network.host.reachAt"] = "Clients reach this host at <link>{origin}</link>",
+        ["web.admin.settings.network.host.reachAtWithHostname"] = "Clients reach this host at <link>{origin}</link> ({hostname})",
+        ["web.admin.settings.network.host.authorize"] = "<link>Open the authorization page</link><muted> to finish enrolling this host.</muted>",
+        ["web.admin.settings.network.host.lastHeard"] = "Last heard from {time}",
+        ["web.admin.settings.network.host.connect"] = "Connect",
+        ["web.admin.settings.network.host.disconnect"] = "Disconnect",
+        ["web.admin.settings.network.host.startPluginFirst"] = "Start the plugin from the Plugins page first.",
+        ["web.admin.settings.network.state.disconnected"] = "Disconnected",
+        ["web.admin.settings.network.state.awaitingAuthorization"] = "Waiting for authorization",
+        ["web.admin.settings.network.state.connecting"] = "Connecting",
+        ["web.admin.settings.network.state.connected"] = "Connected",
+        ["web.admin.settings.network.state.error"] = "Error",
+        ["web.admin.settings.network.state.unavailable"] = "Plugin not running",
+        ["web.admin.settings.hooks.networkAccess.connectFailed"] = "Failed to connect",
+        ["web.admin.settings.hooks.networkAccess.disconnectFailed"] = "Failed to disconnect",
+        // Native-only: truthful states the WebUI leaves to a raw error message.
+        ["configure.native.network.retry"] = "Retry",
+        ["configure.native.network.limit"] = "This server reported more entries than this app shows (limit {limit}). Reduce the configuration or use the web app.",
+        ["configure.native.network.invalidResponse"] = "The server returned an invalid network access response.",
+        ["configure.native.network.forbidden"] = "Permission to manage network access is required.",
+        ["configure.native.network.authenticationRequired"] = "Sign in again to manage network access.",
+        ["configure.native.network.profileVerification"] = "Verify the selected profile to manage network access.",
+        ["configure.native.network.unavailable"] = "Network access is not available on this server.",
+        ["configure.native.network.providerNotFound"] = "This provider is no longer installed.",
+        ["configure.native.network.rateLimited"] = "The server asked you to wait. Try again shortly.",
+        ["configure.native.network.transport"] = "The request did not finish. Check the connection.",
+        ["configure.native.network.connectUnknown"] = "The connect request may or may not have reached the provider. Its status was refreshed; check it before trying again.",
+        ["configure.native.network.disconnectUnknown"] = "The disconnect request may or may not have reached the provider. Its status was refreshed; check it before trying again.",
+        ["configure.native.network.unknownHost"] = "This host is no longer known to the provider. Its status was refreshed.",
+        ["configure.native.network.connectHost"] = "Connect {host}",
+        ["configure.native.network.disconnectHost"] = "Disconnect {host}",
+        ["configure.native.network.openOrigin"] = "Open {origin}",
+        ["configure.native.network.loadingProviders"] = "Loading network access providers",
+        ["configure.native.network.loadingStatus"] = "Loading provider status",
         ["web.admin.settings.layout.regionLabel"] = "{label} settings",
         ["web.admin.settings.notifications.reload"] = "Reload",
         ["web.admin.settings.redis.db.description"] = "Replaces the number in the URL. Installs sharing one Redis each need their own.",
@@ -1031,6 +1077,9 @@ public static class AdminText
     public static IReadOnlyCollection<string> Keys { get; } = English.Keys.ToArray();
 
     public static bool Has(string key) => English.ContainsKey(key);
+
+    /// <summary>The unformatted English pattern, for callers that split rich-text markup before inserting values.</summary>
+    public static string Pattern(string key) => English.TryGetValue(key, out var text) ? text : key;
 
     /// <summary>Formats <paramref name="key"/> with values read from an anonymous object or dictionary.</summary>
     public static string T(string key, object? values = null)

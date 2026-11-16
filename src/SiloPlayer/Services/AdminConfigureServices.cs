@@ -22,8 +22,11 @@ internal static class AdminConfigureServices
         services.AddTransient<AdminEmailSettingsController>();
         services.AddSingleton<AdminRateLimitApi>();
         services.AddTransient<AdminSecuritySettingsController>();
+        // Network access is a tool page with its own domain API; the page owns its controller and polling.
+        services.AddSingleton<AdminNetworkAccessApi>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.GeneralSettings, typeof(AdminGeneralSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.EmailSettings, typeof(AdminEmailSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.SecuritySettings, typeof(AdminSecuritySettingsPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.NetworkAccessSettings, typeof(AdminNetworkAccessSettingsPage)));
     }
 }
