@@ -1,0 +1,27 @@
+{
+  "leaf": "Manage > Downloads > Settings",
+  "route": "/admin/settings/downloads",
+  "official": "Silo-Server/silo-server abd85d0cadac28f4ab7db6821dad9634fc114790",
+  "baseline": "ellermw/SiloDesktopApp beta 2c33599f751e1bb7e18a56ee378ffe918710d74d",
+  "note": "Scoped record for the lead to reconcile into the master checklists; this file does not edit them.",
+  "features": [
+    { "id": "allow-downloads", "key": "download.enabled", "label": "Allow downloads", "status": "implemented" },
+    { "id": "device-friendly", "key": "download.transcode_enabled", "label": "Prepare device-friendly copies", "status": "implemented" },
+    { "id": "prepare-concurrency", "key": "download.max_concurrent_prepares", "label": "Files prepared at once", "semantics": "0 = built-in default 2, not unlimited", "status": "implemented" },
+    { "id": "artifact-dir", "key": "download.artifact_dir", "label": "Prepared file directory", "semantics": "blank = derived sibling of saved playback.transcode_dir; reset-to-default; restart chip", "status": "implemented" },
+    { "id": "storage-budget", "key": "download.artifact_max_bytes", "label": "Default storage budget per location", "semantics": "decimal GB <-> bytes, 0 = Unlimited", "status": "implemented" },
+    { "id": "disk-ceiling", "key": "download.artifact_disk_ceiling_percent", "label": "Disk ceiling (%)", "semantics": "50..95", "status": "implemented" },
+    { "id": "server-bandwidth", "key": "download.server_bandwidth_mbps", "label": "Server bandwidth", "semantics": "Mbps, 0 = Unlimited, max 73786976294838", "status": "implemented" },
+    { "id": "user-bandwidth", "key": "download.user_bandwidth_mbps", "label": "Per-user bandwidth", "status": "implemented" },
+    { "id": "user-concurrency", "key": "download.max_concurrent_per_user", "label": "Downloads at once per user", "status": "implemented" },
+    { "id": "per-period", "key": "download.max_per_period", "label": "Downloads per period", "semantics": "needs a positive period when limited", "status": "implemented" },
+    { "id": "period", "key": "download.period_duration", "label": "Period length", "semantics": "Go duration or Nd, positive", "status": "implemented" },
+    { "id": "local-fallback", "key": "download.local_transcode_fallback", "label": "Prepare locally when workers are unavailable", "semantics": "blank reads as on", "status": "implemented" },
+    { "id": "cache-hours", "key": "download.artifact_cache_hours", "label": "Keep cached files for", "semantics": "0..720", "status": "implemented" },
+    { "id": "advanced-section", "label": "Advanced disclosure (persisted, forced open by dirty field, manual collapse outranks stale reason)", "status": "implemented" },
+    { "id": "storage-link", "label": "See storage on the server and nodes", "status": "implemented", "limit": "opens /admin/downloads once Prepared Files (D1) is registered; disabled with explanation until then" },
+    { "id": "states", "label": "loading skeleton, failed read with Retry, access/capability failures, 412 conflict, unknown outcome, validation refusal, env-managed, restart-required, retirement", "status": "implemented" },
+    { "id": "save-flow", "label": "Save/Discard, dirty departure dialog, Back, guarded If-Match write, late edits", "status": "implemented" },
+    { "id": "isolation", "label": "Never touches the signed-in user's local offline directory or settings", "status": "implemented" }
+  ]
+}
