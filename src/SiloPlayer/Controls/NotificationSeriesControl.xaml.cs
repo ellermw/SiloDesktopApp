@@ -132,7 +132,7 @@ public sealed partial class NotificationSeriesControl : UserControl
             SeriesEmptyTitle.Text = filtered ? AppStrings.Get("web.notifications.series.noMatch", fallback: "No series match. Try another search or reason.") : AppStrings.Get("web.notifications.series.empty", fallback: "No series notify you yet");
             SeriesEmptyCaption.Visibility = filtered ? Visibility.Collapsed : Visibility.Visible;
             SeriesLoadMore.Visibility = State.HasMore ? Visibility.Visible : Visibility.Collapsed;
-            SeriesLoadMore.IsEnabled = !State.IsLoading && !State.IsLoadingMore && !State.IsSelectingAll;
+            SeriesLoadMore.IsEnabled = State.Available && State.Error == null && !State.IsLoading && !State.IsLoadingMore && !State.IsSelectingAll;
             SeriesLoadMore.Content = State.IsLoadingMore ? AppStrings.Get("web.item.menu.loading", fallback: "Loading…") : AppStrings.Get("web.notifications.inbox.loadMore", fallback: "Load more");
             ApplyWidths(TableHeader);
             NotifiesHeader.Visibility = ActualWidth >= 640 ? Visibility.Visible : Visibility.Collapsed;

@@ -9,8 +9,9 @@ Version numbers are left to the pipeline.
 
 - **Inbox:** notifications are grouped under local-calendar day headings
   (including Last 7 days and Older), with expandable episode groups.
-- **Selection:** select-all and mark-selected-as-read, with per-ID reads, at
-  most six concurrent.
+- **Selection:** manually select Inbox entries and mark-selected-as-read,
+  with per-ID reads, at most six concurrent. Select-all-shown and
+  select-all-matching apply to Series only.
 - **Muting:** capability-gated bulk mute and unmute in ordered 500-ID requests
   without authentication replay, plus a Muted filter. Bulk feedback excludes
   not-found rows, and Undo names only the applied IDs. A single Series unmute
@@ -47,4 +48,5 @@ Local results on this source:
 
 Several visual details still differ from the WebUI: the chevrons, stacked
 posters on grouped rows, mark-read placement, uppercase day headings, title
-size and the selection bar layout. The inbox is not virtualized.
+size and the selection bar layout. The inbox is not virtualized and has no
+select-all control; Inbox entries must be selected individually.

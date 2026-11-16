@@ -22,6 +22,62 @@ public sealed class NotificationSelectionStateTests
         Assert.DoesNotContain(queries, query => query.Contains("status=active") || query.Contains("status=inactive"));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReopenWithoutSeriesCapabilityCannotLoadStaleContinuation(bool fails)
+    {
+        var reopening = false; var seriesReads = 0;
+        using var http = new HttpClient(new Wire(request =>
+        {
+            if (reopening && request.RequestUri!.AbsolutePath.EndsWith("capabilities"))
+                return Task.FromResult(fails ? new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    : Json(new { series = new { available = false } }));
+            if (request.RequestUri!.AbsolutePath.EndsWith("/series")) seriesReads++;
+            return Task.FromResult(Response(request, true, true));
+        }));
+        var state = new NotificationSeriesState(new NotificationsApi(Client(http))); await state.OpenAsync();
+        Assert.True(state.HasMore); Assert.Single(state.Rows);
+        state.Close(); Assert.False(state.HasMore);
+        reopening = true; await state.OpenAsync();
+        Assert.False(state.Available); Assert.False(state.HasMore); Assert.Single(state.Rows);
+        Assert.Equal(fails, state.Error != null);
+        await state.LoadMoreAsync(); await state.LoadMoreAsync(automatic: true);
+        Assert.Equal(1, seriesReads);
+        reopening = false; await state.RetryAsync();
+        Assert.True(state.HasMore); Assert.Null(state.Error); Assert.Equal(2, seriesReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SingleRowMuteReloadKeepsOnlySelectionsInTheReloadedPage(bool allMatching)
+    {
+        var bulkIds = new List<string>();
+        using var http = new HttpClient(new Wire(async request =>
+        {
+            if (request.Method == HttpMethod.Put) return new(HttpStatusCode.NoContent);
+            if (request.Method == HttpMethod.Post)
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+                bulkIds.AddRange(body.RootElement.GetProperty("series_ids").EnumerateArray().Select(id => id.GetString()!));
+                return Json(new { results = bulkIds.Select(id => new { series_id = id, outcome = "applied" }).ToArray() });
+            }
+            return request.RequestUri!.Query.Contains("cursor=next")
+                ? Json(new { items = new[] { Row("two") }, page = new { has_more = false } })
+                : Response(request, true, true);
+        }));
+        var state = new NotificationSeriesState(new NotificationsApi(Client(http))); await state.OpenAsync();
+        if (allMatching) await state.SelectAllMatchingAsync();
+        else { await state.LoadMoreAsync(); state.ToggleLoadedSelection(); }
+        Assert.Equal(2, state.SelectedIds.Count);
+        Assert.True(await state.SetMutedAsync(state.Rows[0], true, state.Context!.Value));
+        Assert.Equal("one", Assert.Single(state.Rows).Item.ContentId);
+        Assert.Equal("one", Assert.Single(state.SelectedIds));
+        Assert.NotNull(await state.SetManyMutedAsync(state.SelectedIds.ToArray(), true, state.Context.Value));
+        Assert.Equal(new[] { "one" }, bulkIds);
+    }
+
     [Fact]
     public async Task ContextRetiredDuringPostMutationReloadCannotPublishTheReceipt()
     {

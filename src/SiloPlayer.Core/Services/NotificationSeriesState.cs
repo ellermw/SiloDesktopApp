@@ -99,8 +99,8 @@ public sealed class NotificationSeriesState(NotificationsApi api) : ObservableOb
     public async Task LoadMoreAsync(bool automatic = false, CancellationToken selectionToken = default)
     {
         if (automatic && (Error != null || IsSelectingAll)) return;
-        if (IsLoading || IsLoadingMore || !HasMore || Context is not { } context || !IsCurrent(context)) return;
-        using var request = CancellationTokenSource.CreateLinkedTokenSource(_query!.Token, selectionToken);
+        if (!Available || IsLoading || IsLoadingMore || !HasMore || _query is not { } query || Context is not { } context || !IsCurrent(context)) return;
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(query.Token, selectionToken);
         var ct = request.Token; var generation = _generation; var options = Options;
         IsLoadingMore = true; Error = null; _moreFailed = false; Notify();
         try
@@ -120,6 +120,7 @@ public sealed class NotificationSeriesState(NotificationsApi api) : ObservableOb
         if (next != null && !_cursors.Add(next)) throw new InvalidDataException("Series cursor repeated. Reload notifications.");
         if (reset) Rows.Clear();
         foreach (var row in page.Items!) if (!Rows.Any(existing => existing.Item.ContentId == row.Item.ContentId)) Rows.Add(row);
+        if (reset) _selected.IntersectWith(Rows.Select(row => row.Item.ContentId));
         _cursor = next; _more = next != null;
     }
 
@@ -228,6 +229,7 @@ public sealed class NotificationSeriesState(NotificationsApi api) : ObservableOb
     {
         ++_generation; _query?.Cancel(); _query?.Dispose(); _query = null;
         _lifetime?.Cancel(); _lifetime?.Dispose(); _lifetime = null;
+        _cursor = null; _more = false; _cursors.Clear(); _moreFailed = false;
         ClearSelection(); IsLoading = IsLoadingMore = IsBulkMutating = false; _pending.Clear();
     }
 }
