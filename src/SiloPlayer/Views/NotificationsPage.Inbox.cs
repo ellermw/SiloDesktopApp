@@ -205,15 +205,27 @@ public sealed partial class NotificationsPage
         row.EpisodeSignature = signature; row.Episodes.Children.Clear();
         foreach (var episode in entry.Notifications)
         {
+            // Rows survive reset loads, so handlers must resolve the current instance.
+            var episodeId = episode.Id;
             var line = new Grid { ColumnSpacing = 8 }; line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             var text = new TextBlock { Text = NotificationSubtitle(episode), TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 13, FontWeight = episode.IsUnread ? FontWeights.SemiBold : FontWeights.Medium };
             var link = new Button { Content = text, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinWidth = 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
-            link.Click += (_, _) => NavigateInboxNotification(episode); line.Children.Add(link);
+            link.Click += (_, _) =>
+            {
+                if (row.Entry.Notifications.FirstOrDefault(item => item.Id == episodeId) is { } current)
+                    NavigateInboxNotification(current);
+            };
+            line.Children.Add(link);
             var time = new TextBlock { Text = NotificationTime(episode), FontSize = 12, Foreground = InboxBrush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(time, 1); line.Children.Add(time);
             var mark = new Button { Content = WebUiIcon.Create("check", 16), Width = 28, Height = 28, MinWidth = 0, MinHeight = 0, Padding = new(0), Visibility = episode.IsUnread ? Visibility.Visible : Visibility.Collapsed, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
             AutomationProperties.SetName(mark, AppStrings.Get("web.notifications.inbox.markRead", fallback: "Mark as read") + " " + text.Text);
-            mark.Click += async (_, _) => await ViewModel.MarkReadCommand.ExecuteAsync(episode); Grid.SetColumn(mark, 2); line.Children.Add(mark);
+            mark.Click += async (_, _) =>
+            {
+                if (row.Entry.Notifications.FirstOrDefault(item => item.Id == episodeId) is { } current)
+                    await ViewModel.MarkReadCommand.ExecuteAsync(current);
+            };
+            Grid.SetColumn(mark, 2); line.Children.Add(mark);
             row.Episodes.Children.Add(line);
         }
     }

@@ -131,6 +131,33 @@ internal static class NotificationStatesNativeFixture
         // The collapsed summary already shows "S1E1 – S1E2"; both episode lines must appear beneath it.
         if (!await Settles(() => { grouped.UpdateLayout(); return Descendants(grouped).OfType<TextBlock>().Count(text => text.Text.StartsWith("S1E", StringComparison.Ordinal)) >= 3; }))
             throw new InvalidOperationException("Expanded group omits its episode lines.");
+        foreach (var filter in new[] { "all", "unread" })
+        {
+            Invoke((Button)page.FindName(filter == "all" ? "AllButton" : "UnreadButton"));
+            await Until(() => vm.StatusFilter == filter && !vm.IsLoading && vm.Notifications.Count == 3);
+            var previous = vm.Notifications.Single(item => item.Id == "episode-one");
+            grouped = NotificationFixtureUi.Row(page, "episode-one");
+            await vm.ReloadAsync();
+            page.UpdateLayout();
+            if (ReferenceEquals(previous, vm.Notifications.Single(item => item.Id == "episode-one")) ||
+                !ReferenceEquals(grouped, NotificationFixtureUi.Row(page, "episode-one")) ||
+                !Descendants(grouped).OfType<Expander>().Single().IsExpanded)
+                throw new InvalidOperationException("Unchanged reload must replace notification objects while retaining the expanded group.");
+            var episodeLink = Descendants(grouped).OfType<Button>().Single(button => button.Content is TextBlock text && text.Text.StartsWith("S1E1", StringComparison.Ordinal));
+            var episodeLine = (Grid)episodeLink.Parent;
+            Invoke(episodeLine.Children.OfType<Button>().Single(button => button != episodeLink));
+            await Until(() => !vm.MarkReadCommand.IsRunning && (filter == "unread"
+                ? vm.Notifications.All(item => item.Id != "episode-one")
+                : !vm.Notifications.Single(item => item.Id == "episode-one").IsUnread));
+            page.UpdateLayout();
+            if (filter == "all" && !Descendants(grouped).OfType<TextBlock>().Any(text => text.Text == "1 new"))
+                throw new InvalidOperationException("Mark-read after unchanged reload leaves the expanded group's unread badge stale.");
+            // Restore server data for the next filter and the existing expansion checks.
+            wire.Inbox.Single(item => item.Id == "episode-one").ReadAt = null;
+        }
+        Invoke((Button)page.FindName("AllButton"));
+        await Until(() => vm.StatusFilter == "all" && !vm.IsLoading && vm.Notifications.Count == 3);
+        Program.Log("PASS: expanded group mark-read resolves reloaded instances in All and removes them from Unread.");
         foreach (var notification in wire.Inbox.Where(item => item.Type == "episode.available")) notification.ReadAt = now.ToString("O");
         Invoke((Button)page.FindName("UnreadButton"));
         await Until(() => vm.StatusFilter == "unread" && !vm.IsLoading && vm.Notifications.Count == 1);
@@ -237,6 +264,12 @@ internal static class NotificationStatesNativeFixture
             if (path.EndsWith("/notifications")) ListReads++;
             if (Paging && path.EndsWith("/notifications") && request.RequestUri.Query.Contains("cursor="))
             { ContinuationStarted = true; return await Continuation.Task.WaitAsync(ct); }
+            if (request.Method == HttpMethod.Post && path.EndsWith("/read") && Inbox != null)
+            {
+                var id = Uri.UnescapeDataString(path.Split('/')[^2]);
+                Inbox.Single(item => item.Id == id).ReadAt = DateTimeOffset.UtcNow.ToString("O");
+                return new(HttpStatusCode.NoContent);
+            }
             if (path.EndsWith("/preferences")) await Preferences.Task.WaitAsync(ct);
             if (path.EndsWith("/notifications") && Mode == "error") return new(HttpStatusCode.ServiceUnavailable);
             if (path.EndsWith("/notifications") && Inbox != null)
