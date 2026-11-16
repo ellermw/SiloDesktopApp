@@ -81,7 +81,7 @@ public sealed partial class EditMetadataDialog
 
     private void RefreshLocale()
     {
-        if (!_pending) PrimaryButtonText = AppStrings.Get("web.item.editMetadata.saveChanges");
+        RefreshWriteControls();
         if (_resetLanguage != AppStrings.Language)
         {
             _resetLanguage = AppStrings.Language;
