@@ -130,11 +130,128 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("AudiobookGroupsPanel_ViewChanged", page);
         Assert.Contains("SelectAudiobookGroupAsync", page);
         Assert.Contains("BuildAudiobookGroupSkeletons", page);
-        Assert.Contains("viewportWidth >= 1280 ? 6", page);
         Assert.Contains("viewportWidth >= 1280 ? 3", page);
         Assert.Contains("GetAudiobookGroupsAsync", api);
         Assert.Contains("NowListeningHero", ReadRepoFile("src", "SiloPlayer", "Controls", "NowListeningHero.xaml"));
         Assert.Contains("AudiobookSquareCard", ReadRepoFile("src", "SiloPlayer", "Controls", "AudiobookSquareCard.xaml"));
+    }
+
+    [Fact]
+    public void AudiobookSeriesUseOneSquareCoverWithARunBarInTheBooksGridColumns()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var series = Slice(page, "private FrameworkElement CreateAudiobookSeriesCard(", "private void AudiobookGroupsPanel_SizeChanged(");
+        var width = Slice(page, "private double GetAudiobookSeriesCardWidth()", "private void BuildAudiobookGroupSkeletons(");
+        var cover = Slice(page, "private async Task LoadAudiobookSeriesCoverAsync(", "private static string AudiobookGroupPosterKey(");
+        var bar = Slice(page, "private static FrameworkElement CreateAudiobookSeriesRunBar(", "private async Task SelectAudiobookGroupAsync(");
+
+        // Official #4397: one square cover, a decorative run bar, wrapping listening text.
+        Assert.Contains("if (large) return CreateAudiobookSeriesCard(group, cardWidth, ct);", page);
+        Assert.Contains("CreateAudiobookSeriesCover(group, cardWidth, ct)", series);
+        Assert.Contains("CreateAudiobookSeriesRunBar(AudiobookSeriesPresentation.Run(group))", series);
+        Assert.Contains("TextWrapping = TextWrapping.WrapWholeWords", series);
+        Assert.Contains("AudiobookSeriesPresentation.Listening(group)", series);
+        Assert.DoesNotContain("Take(3)", series);
+        Assert.DoesNotContain("index * 4", page);
+
+        // A failed URL falls through to the next; none loading shows initials.
+        Assert.Contains("AudiobookSeriesPresentation.FirstUntriedCover(group.PosterUrls, failed)", cover);
+        Assert.Contains("image.ImageFailed +=", cover);
+        Assert.Contains("failed.Add(", cover);
+        Assert.Contains("GroupInitials(group.Name)", cover);
+        Assert.Contains("GetImageDiskPathAsync(AudiobookGroupPosterKey(group.Name, url), \"poster\", url, httpClient, ct)", cover);
+
+        // The bar is decorative for UI Automation; the stats text carries the meaning.
+        Assert.Contains("AccessibilityView.Raw", bar);
+        Assert.Contains("run.IsContinuous ? run.ContinuousFill : run.SegmentFill(index)", bar);
+
+        // Same columns as the Books grid for the profile's poster size.
+        Assert.Contains("UICustomizationService.PosterColumnCount(posterSize, WebUiViewport.Width(this, ActualWidth))", width);
+        Assert.Contains("LibraryPosterSizing.GetColumnCount(contentWidth, posterWidth)", width);
+        Assert.Contains("posterSize == \"large\" ? 16d : 12d", width);
+        Assert.Contains("SizeChanged=\"AudiobookGroupsPanel_SizeChanged\"", xaml);
+        Assert.Contains("ResizeAudiobookSeriesCards();", page);
+
+        // Square loading skeletons.
+        var skeletons = Slice(page, "private void BuildAudiobookGroupSkeletons(", "private FrameworkElement CreateAudiobookGroupCover(");
+        Assert.Contains("Height = cardWidth,", skeletons);
+    }
+
+    [Fact]
+    public void AudiobookGroupActivationReloadsMissingStaleOrInterruptedQueries()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var tabs = Slice(page, "private async void Tab_Click(", "private async Task EnsureLibraryCatalogLoadedAsync(");
+        // Both a tab change and a deliberate retry must activate groups, not the books catalog.
+        Assert.Equal(2, tabs.Split("await EnsureAudiobookGroupsLoadedAsync();").Length - 1);
+        var activation = Slice(page, "private async Task EnsureAudiobookGroupsLoadedAsync(", "private async Task LoadAudiobookGroupsAsync(");
+        Assert.Contains("_audiobookGroupsKey == CurrentAudiobookGroupsKey()", activation);
+        Assert.Contains("if (_audiobookGroupsLoadCompleted)", activation);
+        Assert.Contains("if (_isLoadingAudiobookGroups) return;", activation);
+        Assert.Contains("await LoadAudiobookGroupsAsync(reset: true);", activation);
+
+        var key = Slice(page, "private AudiobookGroupsKey CurrentAudiobookGroupsKey()", "private void ResetAudiobookGroups(");
+        Assert.Contains("ViewModel.Library?.Id", key);
+        Assert.Contains("_currentAudiobookAxis", key);
+        Assert.Contains("AudiobookGroupSearchBox.Text", key);
+        Assert.Contains("AudiobookGroupSortComboBox.SelectedItem", key);
+        var reset = Slice(page, "private void ResetAudiobookGroups(", "private async Task EnsureAudiobookGroupsLoadedAsync(");
+        Assert.Contains("AudiobookGroupsHost.Children.Clear();", reset);
+        Assert.Contains("_audiobookGroupsOffset = 0;", reset);
+        Assert.Contains("_audiobookGroupsTotal = 0;", reset);
+        Assert.Contains("_audiobookGroupsHasMore = false;", reset);
+        Assert.Contains("_audiobookGroupsLoadCompleted = false;", reset);
+        Assert.Contains("ResetRecommendedContent();\n                ResetAudiobookGroups();", page.Replace("\r\n", "\n"));
+
+        var departure = Slice(page, "protected override void OnNavigatedFrom(", "private void UICustomization_Changed(");
+        Assert.Contains("if (_isLoadingAudiobookGroups) _audiobookGroupsLoadCompleted = false;", departure);
+        var covers = Slice(page, "private void ResumeAudiobookSeriesCovers(", "private FrameworkElement CreateAudiobookSeriesCover(");
+        Assert.Contains("if (!_audiobookGroupsLoadCompleted || _audiobookGroupsKey != CurrentAudiobookGroupsKey()) return;", covers);
+        var load = Slice(page, "private async Task LoadAudiobookGroupsAsync(", "private FrameworkElement CreateAudiobookGroupCard(");
+        Assert.Contains("reset |= _audiobookGroupsKey != key || !_audiobookGroupsLoadCompleted;", load);
+        Assert.Contains("key != CurrentAudiobookGroupsKey()", load);
+        Assert.Contains("_audiobookGroupsLoadCompleted = true;", load);
+    }
+
+    [Fact]
+    public void AudiobookGroupPaginationFailureKeepsLoadedPagesAndRetriesTheSameOffset()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var scroll = Slice(page, "private async void AudiobookGroupsPanel_ViewChanged(", "private AudiobookGroupsKey CurrentAudiobookGroupsKey()");
+        Assert.Contains("await LoadAudiobookGroupsAsync(reset: false);", scroll);
+        var load = Slice(page, "private async Task LoadAudiobookGroupsAsync(", "private FrameworkElement CreateAudiobookGroupCard(");
+        var beforeRequest = Slice(load, "var key = CurrentAudiobookGroupsKey();", "var response = await");
+
+        // Only reset invalidates completion. A failed append must not make the
+        // next ViewChanged promote its retry to a reset and discard loaded cards.
+        Assert.Contains("reset |= _audiobookGroupsKey != key || !_audiobookGroupsLoadCompleted;", beforeRequest);
+        Assert.Contains("if (reset)\n        {\n            ResetAudiobookGroups();", beforeRequest.Replace("\r\n", "\n"));
+        Assert.DoesNotContain("_audiobookGroupsLoadCompleted = false;", load);
+        // Reject assignments, not the equality comparison used by the count text.
+        Assert.DoesNotMatch(@"\b_audiobookGroupsOffset\s*=(?!=)", load);
+        Assert.Contains("offset: _audiobookGroupsOffset,", load);
+        Assert.Contains("_audiobookGroupsOffset += response.Groups.Count;", load);
+
+        var failure = load[load.IndexOf("catch (OperationCanceledException)", StringComparison.Ordinal)..];
+        // HttpClient timeouts with an uncancelled caller token show the error
+        // rather than being silently swallowed as navigation cancellation.
+        Assert.Contains("catch (OperationCanceledException) when (ct.IsCancellationRequested)", failure);
+        Assert.Contains("web.audiobooks.groups.loadFailed", failure);
+        Assert.Contains("if (reset) AudiobookGroupsHost.Children.Clear();", failure);
+        Assert.Equal(1, failure.Split("AudiobookGroupsHost.Children.Clear();").Length - 1);
+        Assert.DoesNotContain("_audiobookGroupsOffset", failure);
+        Assert.DoesNotContain("_audiobookGroupsHasMore =", failure);
+        Assert.Contains("_isLoadingAudiobookGroups = false;", failure);
+    }
+
+    private static string Slice(string source, string start, string end)
+    {
+        var from = source.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, $"Missing '{start}'.");
+        var to = source.IndexOf(end, from, StringComparison.Ordinal);
+        Assert.True(to > from, $"Missing '{end}' after '{start}'.");
+        return source[from..to];
     }
 
     [Fact]

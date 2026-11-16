@@ -16,6 +16,9 @@ public class Season
     public string? PosterUrl { get; set; }
     public string? PosterThumbhash { get; set; }
     public SeasonUserData? UserData { get; set; }
+    /// <summary>Episodes in the library out of known episodes; sent only while the profile's badges
+    /// include the availability overlay, and absent for specials or incomplete episode metadata.</summary>
+    public SiloPlayer.Core.Models.Home.CatalogAvailability? Availability { get; set; }
 }
 
 public class SeasonUserData

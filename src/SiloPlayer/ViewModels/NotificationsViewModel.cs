@@ -14,9 +14,96 @@ public partial class NotificationsViewModel : ObservableObject
     public NotificationsViewModel(NotificationsApi notificationsApi)
     {
         _notificationsApi = notificationsApi;
+        Notifications.CollectionChanged += (_, _) => { if (!_updatingInbox) OnPropertyChanged(nameof(InboxSections)); };
     }
 
     public ObservableCollection<AppNotification> Notifications { get; } = [];
+    public IReadOnlyList<NotificationInboxSection> InboxSections => NotificationInboxGroups.Group(Notifications);
+    private readonly HashSet<string> _selectedInboxKeys = new(StringComparer.Ordinal);
+    private long _inboxSelectionRun;
+    private bool _updatingInbox;
+    private CancellationTokenSource? _mutationLifetime;
+    private ApiRequestContext? _bulkMuteContext;
+    public IReadOnlySet<string> SelectedInboxKeys => _selectedInboxKeys;
+    public NotificationInboxEntry[] SelectedInboxEntries => InboxSections.SelectMany(section => section.Entries).Where(entry => _selectedInboxKeys.Contains(entry.Key)).ToArray();
+    public bool CanBulkMuteSeries => _bulkMuteContext is { } context && _notificationsApi.IsCurrentContext(context);
+    public ApiRequestContext? InboxContext => _inboxContext;
+    [ObservableProperty] private bool _isSelectingInbox;
+    [ObservableProperty] private bool _isMarkingSelectedRead;
+    [ObservableProperty] private bool _isMutingSelectedSeries;
+    [ObservableProperty] private string? _selectionErrorMessage;
+
+    public void SetBulkMuteCapability(ApiRequestContext context, bool available)
+    {
+        _bulkMuteContext = available && _notificationsApi.IsCurrentContext(context) ? context : null;
+        OnPropertyChanged(nameof(CanBulkMuteSeries));
+    }
+
+    public void SetInboxSelecting(bool selecting)
+    {
+        IsSelectingInbox = selecting;
+        if (!selecting) ClearInboxSelection();
+    }
+
+    public void ClearInboxSelection()
+    {
+        ++_inboxSelectionRun; _selectedInboxKeys.Clear(); OnPropertyChanged(nameof(SelectedInboxKeys));
+    }
+
+    public void ToggleInboxSelection(string key)
+    {
+        if (!IsSelectingInbox) return;
+        if (!_selectedInboxKeys.Remove(key)) _selectedInboxKeys.Add(key);
+        OnPropertyChanged(nameof(SelectedInboxKeys));
+    }
+
+    public async Task MarkInboxReadAsync(IEnumerable<AppNotification> notifications)
+    {
+        if (IsMarkingSelectedRead || IsMarkingAllRead || !IsCurrentContext || _inboxContext is not { } context) return;
+        var ids = notifications.Where(row => row.IsUnread).Select(row => row.Id).Distinct(StringComparer.Ordinal).ToArray();
+        if (ids.Length == 0) return;
+        _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = null;
+        ++_loadGeneration; _loadInProgress = false; IsLoading = IsLoadingMore = false;
+        _mutationLifetime ??= new(); var owner = _mutationLifetime; var ct = owner.Token;
+        IsMarkingSelectedRead = true; SelectionErrorMessage = null;
+        foreach (var id in ids) ApplyRead(id);
+        ClearInboxSelection();
+        bool Current() => !ct.IsCancellationRequested && ReferenceEquals(owner, _mutationLifetime) && _notificationsApi.IsCurrentContext(context);
+        try { await _notificationsApi.MarkManyReadAsync(context, ids, ct); }
+        catch (OperationCanceledException) when (!Current()) { }
+        catch { if (Current()) SelectionErrorMessage = ShellText(nameof(SelectionErrorMessage), () => AppStrings.Get("web.notifications.queries.markReadFailed", fallback: "Failed to mark notifications read")); }
+        finally
+        {
+            if (Current()) await ReloadAsync();
+            if (ReferenceEquals(owner, _mutationLifetime)) IsMarkingSelectedRead = false;
+        }
+    }
+
+    public async Task<NotificationSeriesMuteReceipt?> SetInboxSeriesMutedAsync(IEnumerable<string> seriesIds, bool muted, ApiRequestContext context)
+    {
+        var ids = seriesIds.Distinct(StringComparer.Ordinal).ToArray();
+        if (!CanBulkMuteSeries || IsMutingSelectedSeries || ids.Length == 0 || !_notificationsApi.IsCurrentContext(context)) return null;
+        _mutationLifetime ??= new(); var owner = _mutationLifetime; var ct = owner.Token;
+        var run = _inboxSelectionRun;
+        var done = SelectedInboxEntries.Where(entry => entry.SeriesId != null && ids.Contains(entry.SeriesId, StringComparer.Ordinal)).Select(entry => entry.Key).ToArray();
+        IsMutingSelectedSeries = true; SelectionErrorMessage = null;
+        bool Current() => !ct.IsCancellationRequested && ReferenceEquals(owner, _mutationLifetime) && _notificationsApi.IsCurrentContext(context);
+        try
+        {
+            var results = await _notificationsApi.SetManySeriesMutedAsync(context, ids, muted, ct);
+            if (!Current()) return null;
+            if (run == _inboxSelectionRun) _selectedInboxKeys.ExceptWith(done);
+            OnPropertyChanged(nameof(SelectedInboxKeys));
+            return new(results);
+        }
+        catch (OperationCanceledException) when (!Current()) { return null; }
+        catch
+        {
+            if (Current()) SelectionErrorMessage = ShellText(nameof(SelectionErrorMessage), () => AppStrings.Get(muted ? "web.notifications.queries.muteManyFailed" : "web.notifications.queries.unmuteManyFailed", fallback: muted ? "Couldn’t mute the selected series" : "Couldn’t unmute the selected series"));
+            return null;
+        }
+        finally { if (ReferenceEquals(owner, _mutationLifetime)) IsMutingSelectedSeries = false; }
+    }
 
     public void ApplyCreated(AppNotification notification)
     {
@@ -57,14 +144,15 @@ public partial class NotificationsViewModel : ObservableObject
     [ObservableProperty] private bool _hasMore;
     [ObservableProperty] private bool _isEmpty;
     [ObservableProperty] private bool _isMarkingAllRead;
-    public bool CanMarkAllRead => IsCurrentContext && !IsLoading && !IsMarkingAllRead && string.IsNullOrWhiteSpace(ErrorMessage) && _notificationsApi.CanMarkAllRead;
+    public bool CanMarkAllRead => IsCurrentContext && !IsLoading && !IsMarkingAllRead && !IsMarkingSelectedRead && string.IsNullOrWhiteSpace(ErrorMessage) && _notificationsApi.CanMarkAllRead;
     public Task ReloadAsync() { _lastLoadedAt = DateTime.MinValue; return LoadPageAsync(reset: true); }
     public Task LoadPreferencesForSeriesAsync()
     {
         if (!IsCurrentContext)
         {
             CancelPendingLoad(); _inboxContext = _notificationsApi.RequestContext;
-            Notifications.Clear(); HasLoadedPreferences = false; Preferences = new();
+            Notifications.Clear(); UnreadCount = 0; HasMore = false; IsEmpty = true;
+            HasLoadedPreferences = false; Preferences = new();
         }
         _loadCts ??= new();
         return LoadOptionalAsync(_loadGeneration, _loadCts.Token);
@@ -95,6 +183,7 @@ public partial class NotificationsViewModel : ObservableObject
     {
         var normalized = filter == "unread" ? "unread" : "all";
         if (StatusFilter == normalized && Notifications.Count > 0) return;
+        ClearInboxSelection();
         StatusFilter = normalized;
         await LoadPageAsync(reset: true);
     }
@@ -159,9 +248,14 @@ public partial class NotificationsViewModel : ObservableObject
                 throw new InvalidDataException("Notification cursor repeated. Reload notifications.");
             }
 
-            if (reset) Notifications.Clear();
-            foreach (var notification in inbox.Notifications)
-                if (!Notifications.Any(existing => existing.Id == notification.Id)) Notifications.Add(notification);
+            _updatingInbox = true;
+            try
+            {
+                if (reset) Notifications.Clear();
+                foreach (var notification in inbox.Notifications)
+                    if (!Notifications.Any(existing => existing.Id == notification.Id)) Notifications.Add(notification);
+            }
+            finally { _updatingInbox = false; OnPropertyChanged(nameof(InboxSections)); }
 
             _nextCursor = inbox.NextCursor;
             HasMore = !string.IsNullOrWhiteSpace(_nextCursor);
@@ -228,6 +322,9 @@ public partial class NotificationsViewModel : ObservableObject
 
     public void CancelPendingLoad()
     {
+        _mutationLifetime?.Cancel(); _mutationLifetime?.Dispose(); _mutationLifetime = null;
+        SelectionErrorMessage = null;
+        IsMarkingSelectedRead = IsMutingSelectedSeries = false; SetInboxSelecting(false);
         Interlocked.Increment(ref _loadGeneration);
         _loadCts?.Cancel();
         _loadCts?.Dispose();
@@ -290,7 +387,7 @@ public partial class NotificationsViewModel : ObservableObject
                 Notifications.Insert(index, notification);
             }
             IsEmpty = Notifications.Count == 0;
-            await _notificationsApi.MarkReadAsync(notification.Id);
+            await _notificationsApi.MarkReadAsync(context!.Value, notification.Id);
         }
         catch (Exception ex)
         {
@@ -398,6 +495,7 @@ public partial class NotificationsViewModel
                 case nameof(ErrorMessage) when ErrorMessage == text.Last: ErrorMessage = ShellText(property, text.Render); break;
                 case nameof(PreferencesErrorMessage) when PreferencesErrorMessage == text.Last: PreferencesErrorMessage = ShellText(property, text.Render); break;
                 case nameof(StatusMessage) when StatusMessage == text.Last: StatusMessage = ShellText(property, text.Render); break;
+                case nameof(SelectionErrorMessage) when SelectionErrorMessage == text.Last: SelectionErrorMessage = ShellText(property, text.Render); break;
                 default: _shellText.Remove(property); break;
             }
         }

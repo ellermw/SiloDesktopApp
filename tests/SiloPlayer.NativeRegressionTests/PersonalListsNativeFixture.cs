@@ -146,7 +146,10 @@ internal static class PersonalListsNativeFixture
                     if (Math.Abs(headerTop - expectedTop) > 1)
                         throw new InvalidOperationException($"Notifications header omits shared WebUI page padding: {headerTop}, expected {expectedTop}.");
                     Program.Log($"Notification viewport={inbox.ActualWidth}, content={content.ActualWidth}, header={((Grid)inbox.FindName("HeaderGrid")).ActualWidth}.");
-                    if (Math.Abs(content.ActualWidth - Math.Min(width, 768)) > 1) throw new InvalidOperationException("Notifications content shrinks instead of filling the centered current WebUI container.");
+                    if (Math.Abs(content.ActualWidth - Math.Min(width, 1024)) > 1) throw new InvalidOperationException("Notifications content shrinks instead of filling the centered current WebUI 1024px container.");
+                    var gutter = width >= 640 ? 24d : 16d;
+                    if (Math.Abs(content.Padding.Left - gutter) > .01 || Math.Abs(content.Padding.Right - gutter) > .01 || Math.Abs(((FrameworkElement)inbox.FindName("InboxHeader")).ActualWidth - (content.ActualWidth - 2 * gutter)) > 1)
+                        throw new InvalidOperationException($"Notifications column lost the WebUI 16px/24px side gutters: {content.Padding.Left}/{content.Padding.Right}.");
                     inboxViewport.Background = inbox.Background;
                     // Capture settled item entrance transitions rather than their faded,
                     // translated intermediate frames.
@@ -163,47 +166,54 @@ internal static class PersonalListsNativeFixture
                         throw new InvalidOperationException("Notification preference label typography and row heights differ from current WebUI.");
                     preferences.Hide(); await Task.Delay(30);
                     var list = (ListView)inbox.FindName("NotificationsList");
-                    var firstRow = (ListViewItem)list.ContainerFromItem(notifications.Notifications[0]);
-                    var rowRoot = Descendants<Grid>(firstRow).First(g => g.Name == "NotificationRowRoot");
-                    var titleElement = Descendants<TextBlock>(rowRoot).First(t => t.Name == "NotificationTitleText");
-                    var savedContext = rowRoot.DataContext;
-                    rowRoot.DataContext = new SiloPlayer.Core.Models.Notifications.AppNotification {
-                        Type = "episode.available", SeriesTitle = "Recycled read fixture", ReadAt = "2026-10-09T12:00:00Z"
+                    var originalRow = notifications.Notifications[0];
+                    var rowRoot = NotificationFixtureUi.Row(inbox, originalRow.Id);
+                    notifications.Notifications[0] = new AppNotification {
+                        Id = originalRow.Id, Type = "episode.available", SeriesId = originalRow.SeriesId, SeriesTitle = "Recycled read fixture",
+                        CreatedAt = originalRow.CreatedAt, ReadAt = "2026-10-09T12:00:00Z"
                     };
-                    if (!Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(rowRoot).Contains("Recycled read fixture")
+                    await UntilAsync(() => NotificationFixtureUi.Named<TextBlock>(rowRoot, "NotificationTitleText").Text == "Recycled read fixture");
+                    var titleElement = NotificationFixtureUi.Named<TextBlock>(rowRoot, "NotificationTitleText");
+                    if (!ReferenceEquals(rowRoot, NotificationFixtureUi.Row(inbox, originalRow.Id))
+                        || !Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(NotificationFixtureUi.Link(rowRoot)).Contains("Recycled read fixture")
                         || titleElement.FontWeight != Microsoft.UI.Text.FontWeights.Medium
-                        || rowRoot.Background is not Microsoft.UI.Xaml.Media.SolidColorBrush recycledBrush || recycledBrush.Color.A != 0)
-                        throw new InvalidOperationException("Recycled notification retains its previous accessible label or unread style.");
-                    rowRoot.DataContext = savedContext;
-                    var reasons = (ItemsControl)rowRoot.FindName("NotificationReasons");
-                    if (reasons.Margin.Top != 4 || Math.Abs(rowRoot.ActualHeight - 91) > 1)
-                        throw new InvalidOperationException($"Notification reason badges miss their 6px subtitle gap/91px row: {reasons.Margin.Top}/{rowRoot.ActualHeight}.");
+                        || rowRoot.Background is Microsoft.UI.Xaml.Media.SolidColorBrush { Color.A: > 0 })
+                        throw new InvalidOperationException("Reused notification retains its previous accessible label or unread style.");
+                    notifications.Notifications[0] = originalRow;
+                    await UntilAsync(() => NotificationFixtureUi.Named<TextBlock>(rowRoot, "NotificationTitleText").Text != "Recycled read fixture");
+                    inbox.UpdateLayout();
+                    if (Math.Abs(rowRoot.ActualHeight - 86) > 1)
+                        throw new InvalidOperationException($"Grouped inbox single row lost its 70px summary and16px vertical padding: {rowRoot.ActualHeight}.");
                     Program.Log($"TRACE inbox geometry listY={list.TransformToVisual(inbox).TransformPoint(new()).Y}, rowY={rowRoot.TransformToVisual(inbox).TransformPoint(new()).Y}, titleY={titleElement.TransformToVisual(inbox).TransformPoint(new()).Y}, titleH={titleElement.ActualHeight}, rowH={rowRoot.ActualHeight}");
-                    var timestamp = Descendants<TextBlock>(rowRoot).Single(t => t.Text == notifications.Notifications[0].RelativeTime);
+                    var timestamp = NotificationFixtureUi.Named<TextBlock>(rowRoot, "NotificationTimeText");
                     var timestampRight = timestamp.TransformToVisual(rowRoot).TransformPoint(new()).X + timestamp.ActualWidth;
-                    var inlineRead = (Button)rowRoot.FindName("InlineMarkReadButton");
+                    var inlineRead = NotificationFixtureUi.Named<Button>(rowRoot, "InlineMarkReadButton");
                     var readOrigin = inlineRead.TransformToVisual(rowRoot).TransformPoint(new());
                     var artwork = Descendants<Border>(rowRoot).Single(b => b.Width == 44 && b.Height == 64);
-                    // WinUI rounds text origins to device pixels. Allow one
-                    // physical pixel, including floating-point representation.
                     var pixelTolerance = 1 / inbox.XamlRoot.RasterizationScale + 0.000001;
-                    Program.Log($"Inbox visual {width}: timestampRight={timestampRight:R}/{rowRoot.ActualWidth - 12:R}, inline={readOrigin.X:R},{readOrigin.Y:R} {inlineRead.ActualWidth:R}x{inlineRead.ActualHeight:R}, rowRadius={rowRoot.CornerRadius.TopLeft:R}, posterRadius={artwork.CornerRadius.TopLeft:R}.");
-                    if (Math.Abs(timestampRight - (rowRoot.ActualWidth - 12)) > pixelTolerance || rowRoot.CornerRadius.TopLeft != 16 || artwork.CornerRadius.TopLeft != 10
+                    Program.Log($"Inbox visual {width}: timestampRight={timestampRight:R}, inline={readOrigin.X:R},{readOrigin.Y:R} {inlineRead.ActualWidth:R}x{inlineRead.ActualHeight:R}, rowRadius={rowRoot.CornerRadius.TopLeft:R}, posterRadius={artwork.CornerRadius.TopLeft:R}.");
+                    if (timestampRight > readOrigin.X + pixelTolerance || rowRoot.CornerRadius.TopLeft != 12 || artwork.CornerRadius.TopLeft != 8
                         || Math.Abs(inlineRead.ActualHeight - 28) > .6 || Math.Abs(inlineRead.ActualWidth - 28) > .6
-                        || Math.Abs(readOrigin.X - (rowRoot.ActualWidth - 36)) > .6 || Math.Abs(readOrigin.Y - (rowRoot.ActualHeight - 36)) > .6)
+                        || Math.Abs(readOrigin.X + inlineRead.ActualWidth - (rowRoot.ActualWidth - 12)) > pixelTolerance
+                        || Math.Abs(readOrigin.Y + inlineRead.ActualHeight / 2 - rowRoot.ActualHeight / 2) > pixelTolerance)
                         throw new InvalidOperationException("Notification timestamp gutter/corners/28px inline action differ from current rendered WebUI.");
                     var visited = new List<(Type Page, object? Parameter)>();
                     navigation.NavigationRequestHandler = (type, parameter) => { visited.Add((type, parameter)); return true; };
-                    var item = (ListViewItem)list.ContainerFromItem(notifications.Notifications[1]);
-                    if (item == null) throw new InvalidOperationException("Notification row was not realized.");
-                    var peer = new ListViewItemAutomationPeer(item);
+                    var item = NotificationFixtureUi.Row(inbox, notifications.Notifications[1].Id);
+                    if (!item.IsLoaded) throw new InvalidOperationException("Notification row was not realized.");
+                    var peer = new ButtonAutomationPeer(NotificationFixtureUi.Link(item));
                     if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke) throw new InvalidOperationException("Notification row does not expose its native invocation.");
                     invoke.Invoke(); await UntilAsync(() => visited.Count > 0);
                     if (visited[^1] is not { Page: var route, Parameter: RequestDetailNavigation { TmdbId: 42, MediaType: "series" } } || route != typeof(RequestDetailPage))
                         throw new InvalidOperationException("Request notification row opens the wrong destination.");
                     navigation.NavigationRequestHandler = null;
                 }
-                finally { notifications.CancelPendingLoad(); inboxFrame.Navigate(typeof(Page)); parent.Children.Remove(inboxViewport); navigation.Frame = null; }
+                finally
+                {
+                    notifications.CancelPendingLoad();
+                    await NotificationFixtureUi.DetachAsync(inboxViewport, () => { inboxFrame.Navigate(typeof(Page)); parent.Children.Remove(inboxViewport); });
+                    navigation.Frame = null;
+                }
             }
             Program.Log("PASS: personal list native density, retained-error retry, inbox rows and actual external notification invocation.");
             Program.Log("PERSONAL_LISTS_ACCEPTANCE_COMPLETED");

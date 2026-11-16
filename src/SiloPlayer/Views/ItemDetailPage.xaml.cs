@@ -107,9 +107,6 @@ public sealed partial class ItemDetailPage : Page
     private double _detailCarouselDragStartOffset;
     private bool _detailCarouselDragging;
     private int _pendingSiblingEpisodeIndex = -1;
-    private readonly List<AudiobookChapterRow> _audiobookChapterRows = [];
-    private bool _audiobookChaptersExpanded;
-    private bool _audiobookChaptersLongestFirst;
     private const double SiblingEpisodesDragThreshold = 7d;
     private const double DetailCarouselDragThreshold = 7d;
     /// <summary>
@@ -362,6 +359,13 @@ public sealed partial class ItemDetailPage : Page
         if (ViewModel.Item?.Type is not ("series" or "season" or "episode")) ResetTvViewport();
         EnsureTvViewport();
         if (_tvViewport != null) { SizeTvViewport(); return; }
+        // The audiobook book page has no backdrop hero; its content sets its height.
+        if (ViewModel.Item?.Type == "audiobook")
+        {
+            BackdropContainer.Height = double.NaN;
+            BackdropContainer.MinHeight = 0;
+            return;
+        }
         // Current WebUI uses a compact 35vh hero for season pages and the
         // standard 60dvh hero for full item detail pages. MinHeight (rather
         // than a fixed Height) lets wrapped actions and long metadata expand
@@ -874,7 +878,7 @@ public sealed partial class ItemDetailPage : Page
         UpdateSimilarGridLayout(width, contentGutter);
         foreach (var panel in ExtrasGroupsPanel.Children.OfType<StackPanel>())
             if (panel.Children.LastOrDefault() is Grid extrasGrid) ReflowExtras(extrasGrid, width);
-
+        LayoutAudiobook(width);
     }
 
     private void UpdateSimilarGridLayout(double width, double gutter)
@@ -977,6 +981,7 @@ public sealed partial class ItemDetailPage : Page
         SkeletonLeftSoft.Color = WithAlpha(0x33);
         SkeletonBottomTransparent.Color = WithAlpha(0);
         SkeletonBottomSolid.Color = WithAlpha(0xFF);
+        if (_audiobookLayout && ViewModel.Item is { } item) ApplyAudiobookTint(item.PosterThumbhash);
     }
 
     private void MoveIntoHero(UIElement element)
@@ -1120,13 +1125,9 @@ public sealed partial class ItemDetailPage : Page
     {
         if (_detailPositionGate.ShouldUpdate(position)) DispatcherQueue.TryEnqueue(UpdateActiveAudiobook);
     }
-    private void UpdateActiveAudiobook()
-    {
-        if (!IsActiveAudiobook()) return;
-        SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = _playerService!.IsPaused ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume", fallback: "Resume") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.audiobook.pause", fallback: "Pause"));
-        BookProgressSummaryText.Text = $"{FormatExtraDuration(_playerService.Position)} / {FormatExtraDuration(_playerService.Duration)}";
-        BookProgressSummaryText.Visibility = Visibility.Visible;
-    }
+    // The book page follows this book's live player: Pause/Resume, the
+    // listened bar and the current chapter (AudiobookContent.tsx).
+    private void UpdateActiveAudiobook() => UpdateAudiobookListening();
 
     private void OnPlayerStateChanged(Services.PlayerState state)
     {
@@ -1690,7 +1691,6 @@ public sealed partial class ItemDetailPage : Page
         BookAuthorLine.Visibility = Visibility.Collapsed;
         BookNarratorLine.Visibility = Visibility.Collapsed;
         BookProgressSummaryText.Visibility = Visibility.Collapsed;
-        AudiobookNarratorSection.Visibility = Visibility.Collapsed;
         VersionDropdownButton.Visibility = Visibility.Collapsed;
         EditionButton.Visibility = Visibility.Collapsed;
         AudioTracksButton.Visibility = Visibility.Collapsed;
@@ -1724,7 +1724,7 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.Type is "movie" or "series" or "audiobook" or "ebook" or "manga")
         {
-            SiloPlayer.Controls.MediaItemCardActions.BindText(HeroContextText, "Text", element => element.Text = item.Type switch
+            SiloPlayer.Controls.MediaItemCardActions.BindText(HeroContextText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(item.Type switch
             {
                 "movie" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeMovie", fallback: "Movie"),
                 "series" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeSeries", fallback: "Series"),
@@ -1732,7 +1732,7 @@ public sealed partial class ItemDetailPage : Page
                 "ebook" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeEbook", fallback: "Ebook"),
                 "manga" => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.hero.typeManga", fallback: "Manga"),
                 _ => "",
-            });
+            }));
             HeroContextText.Visibility = Visibility.Visible;
         }
 
@@ -2060,7 +2060,6 @@ public sealed partial class ItemDetailPage : Page
             StudiosText,
             NetworksText,
             CountriesText,
-            AudiobookNarratorSection,
             BookRelatedSection,
             AudiobookChaptersSection,
             MangaChaptersSection,
@@ -2068,6 +2067,8 @@ public sealed partial class ItemDetailPage : Page
         foreach (var element in movable)
         {
             parent.Children.Remove(element);
+            // The audiobook book page hosts chapters and rails in its body.
+            AudiobookBodyPanel.Children.Remove(element);
             element.Margin = new Thickness(0);
         }
 
@@ -2095,9 +2096,11 @@ public sealed partial class ItemDetailPage : Page
                 MediaLocationsSection, SiblingEpisodesSection,
                 CastSection, CrewSection,
             ],
+            // ApplyAudiobookLayout moves Chapters, then the rails, into the
+            // book page body (AudiobookContent.tsx order).
             "audiobook" =>
             [
-                AudiobookNarratorSection, BookRelatedSection, AudiobookChaptersSection,
+                AudiobookChaptersSection, BookRelatedSection,
             ],
             "ebook" =>
             [
@@ -2141,66 +2144,14 @@ public sealed partial class ItemDetailPage : Page
         _readerTargetFileId = null;
         BookRelatedSection.Visibility = Visibility.Collapsed;
         AudiobookChaptersSection.Visibility = Visibility.Collapsed;
-        AudiobookNarratorSection.Visibility = Visibility.Collapsed;
         MangaChaptersSection.Visibility = Visibility.Collapsed;
 
-        if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
+        // AudiobookContent.tsx is its own page layout, not DetailHero.
+        var audiobook = item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
+        ApplyAudiobookLayout(audiobook);
+        if (audiobook)
         {
-            App.Services.GetRequiredService<Services.PlayerService>().SetAudiobookPresentation(item);
-            var position = Math.Max(0, item.UserData?.PositionSeconds ?? 0);
-            var duration = Math.Max(0, item.Audiobook?.TotalDurationSeconds
-                ?? item.UserData?.DurationSeconds
-                ?? item.Versions.Sum(version => Math.Max(0, version.Duration)));
-            HeroPosterContainer.Height = 170;
-            WatchedButton.Visibility = Visibility.Collapsed;
-            FavoriteButton.Visibility = Visibility.Collapsed;
-            StarRatingContainer.Visibility = Visibility.Collapsed;
-            MoreButton.Visibility = Visibility.Collapsed;
-            AddCollectionButton.Visibility = Visibility.Visible;
-            ListenFromStartButton.Visibility = position > 0 && item.UserData?.Played != true
-                ? Visibility.Visible : Visibility.Collapsed;
-            VersionDropdownButton.Visibility = Visibility.Collapsed;
-            VersionSeparator.Visibility = Visibility.Collapsed;
-            EditionButton.Visibility = Visibility.Collapsed;
-            AudioTracksButton.Visibility = Visibility.Collapsed;
-            SubtitlesPopoverButton.Visibility = Visibility.Collapsed;
-            QualityBadgesPanel.Visibility = Visibility.Collapsed;
-            PlaybackOptionsRow.Visibility = Visibility.Collapsed;
-            MediaLocationsSection.Visibility = Visibility.Collapsed;
-            SplitPlayButton.Visibility = item.Versions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            PlayButtonIcon.Glyph = "\uE768";
-            var hasProgress = position > 0 && item.UserData?.Played != true && duration > 0;
-            if (duration > 0)
-            {
-                RuntimeText.Text = FormatBookDuration(duration).ToUpperInvariant();
-                RuntimeBadge.Visibility = Visibility.Visible;
-                _playProgressFraction = Math.Clamp(position / duration, 0, 1);
-                UpdatePlayProgressWidth();
-            }
-            var authors = PeopleNames(item.Audiobook?.Authors, item.Crew, "Author");
-            var narrators = PeopleNames(item.Audiobook?.Narrators, item.Crew, "Narrator");
-            TaglineText.Visibility = Visibility.Collapsed;
-            HeroCrewLine.Visibility = Visibility.Collapsed;
-            SiloPlayer.Controls.MediaItemCardActions.BindText(BookAuthorLine, "Text", element => element.Text = authors.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.byAuthor", new Dictionary<string, object?> { ["author"] = string.Join(", ", authors) }) : "");
-            BookAuthorLine.Visibility = authors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            SiloPlayer.Controls.MediaItemCardActions.BindText(BookNarratorLine, "Text", element => element.Text = narrators.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.narratedBy", new Dictionary<string, object?> { ["narrator"] = string.Join(", ", narrators) }) : "");
-            BookNarratorLine.Visibility = narrators.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            BuildBookGenreLinks(item);
-
-            BuildAudiobookChapters(item);
-            var currentChapter = FindAudiobookChapter(position);
-            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = hasProgress
-                ? currentChapter == null ? SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.resume", fallback: "Resume") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.resume") + " · " + currentChapter.Label
-                : SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.listen", fallback: "Listen"));
-            BookProgressSummaryText.Text = hasProgress
-                ? $"{FormatBookDuration(position)} listened \u00B7 {Math.Round(Math.Clamp(position / duration, 0, 1) * 100):0}%"
-                : "";
-            BookProgressSummaryText.Visibility = hasProgress ? Visibility.Visible : Visibility.Collapsed;
-
-            BuildNarrationPicker(item);
-            UpdateActiveAudiobook();
-            BuildAudiobookNarrator(narrators.FirstOrDefault());
-            BuildBookRelatedGroups(item.Audiobook?.Series, item.Audiobook?.Related, authors.FirstOrDefault());
+            ConfigureAudiobookDetail(item);
             return;
         }
 
@@ -2220,10 +2171,9 @@ public sealed partial class ItemDetailPage : Page
             var authors = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
             TaglineText.Visibility = Visibility.Collapsed;
             BookAuthorLine.Visibility = Visibility.Collapsed;
-            SiloPlayer.Controls.MediaItemCardActions.BindText(HeroCrewLine, "Text", element => element.Text = authors.Count > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.byAuthor", new Dictionary<string, object?> { ["author"] = string.Join(", ", authors) }) : "");
-            HeroCrewLine.Visibility = authors.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            RefreshHeroCrewLine(item);
             BuildBookGenreLinks(item);
-            BuildBookRelatedGroups(item.Ebook?.Series, item.Ebook?.Related, authors.FirstOrDefault());
+            BuildBookRelatedGroups(item, item.Ebook?.Series, item.Ebook?.Related, authors.FirstOrDefault(), square: false);
             return;
         }
 
@@ -2289,12 +2239,23 @@ public sealed partial class ItemDetailPage : Page
         return names;
     }
 
+    // NarratorPicker.tsx: with other narrations the narrator name becomes a
+    // picker listing every narration of the book, the current one selected.
     private void BuildNarrationPicker(MediaItemDetail item)
     {
         NarrationPickerButton.Visibility = Visibility.Collapsed;
-        if (item.Audiobook?.OtherNarrations.Count > 0)
+        if (item.Audiobook?.OtherNarrations.Count > 0 && BookNarratorLine.Visibility == Visibility.Visible)
         {
-            NarrationPickerButton.Content = BookNarratorLine.Text + " ▾";
+            var narrators = PeopleNames(item.Audiobook.Narrators, item.Crew, "Narrator");
+            var line = new TextBlock { FontSize = BookNarratorLine.FontSize, Foreground = BookNarratorLine.Foreground, TextWrapping = TextWrapping.Wrap };
+            SetBookCreditLine(line, "web.detail.books.narratedBy", "narrator", "Narrated by", narrators);
+            NarrationPickerButton.Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                Children = { line, new FontIcon { Glyph = "", FontSize = 11, VerticalAlignment = VerticalAlignment.Center } },
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(NarrationPickerButton, string.Join(", ", narrators));
             NarrationPickerButton.Visibility = Visibility.Visible;
             BookNarratorLine.Visibility = Visibility.Collapsed;
         }
@@ -2304,7 +2265,9 @@ public sealed partial class ItemDetailPage : Page
         var item = ViewModel.Item;
         if (item?.Audiobook == null) return;
         var menu = new MenuFlyout();
-        menu.Items.Add(new ToggleMenuFlyoutItem { Text = BookNarratorLine.Text, IsChecked = true, IsEnabled = false });
+        var count = item.Audiobook.OtherNarrations.Count + 1;
+        menu.Items.Add(MediaItemCardActions.BindText(new MenuFlyoutItem { IsEnabled = false, FontSize = 11 }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.narrator.narrationCount", new Dictionary<string, object?> { ["count"] = count }, fallback: $"{count} narrations"))));
+        menu.Items.Add(new ToggleMenuFlyoutItem { Text = string.Join(", ", PeopleNames(item.Audiobook.Narrators, item.Crew, "Narrator")), IsChecked = true, IsEnabled = false });
         foreach (var narration in item.Audiobook.OtherNarrations)
         {
             var choice = MediaItemCardActions.BindText(new MenuFlyoutItem(), "Text", element => element.Text = (narration.Narrators.Count > 0 ? string.Join(", ", narration.Narrators) : SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.narrator.unknown")) + (narration.Year > 0 ? " · " + narration.Year.Value.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) : ""));
@@ -2312,24 +2275,6 @@ public sealed partial class ItemDetailPage : Page
             menu.Items.Add(choice);
         }
         menu.ShowAt(NarrationPickerButton);
-    }
-
-    private void BuildAudiobookNarrator(string? narrator)
-    {
-        if (string.IsNullOrWhiteSpace(narrator))
-        {
-            AudiobookNarratorSection.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        AudiobookNarratorName.Text = narrator;
-        AudiobookNarratorInitials.Text = string.Concat(narrator
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Take(2)
-            .Select(part => char.ToUpperInvariant(part[0])));
-        if (string.IsNullOrWhiteSpace(AudiobookNarratorInitials.Text))
-            AudiobookNarratorInitials.Text = "?";
-        AudiobookNarratorSection.Visibility = Visibility.Visible;
     }
 
     private void BuildBookGenreLinks(MediaItemDetail item)
@@ -2346,6 +2291,19 @@ public sealed partial class ItemDetailPage : Page
                 FontSize = 12,
                 Tag = genre,
             };
+            if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
+            {
+                // AudiobookContent genre links use the shared .metadata-badge pill.
+                button.Content = SiloPlayer.Core.Localization.AppStrings.Uppercase(genre);
+                button.FontSize = 11;
+                button.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                button.CharacterSpacing = 40;
+                button.Padding = new Thickness(10, 4, 10, 4);
+                button.Background = (Brush)Application.Current.Resources["SurfaceBrush"];
+                button.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
+                button.BorderThickness = new Thickness(1);
+                button.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+            }
             RoundedBadge.SetRadius(button, 999);
             button.Click += (_, _) =>
             {
@@ -2374,249 +2332,13 @@ public sealed partial class ItemDetailPage : Page
             : Visibility.Collapsed;
     }
 
-    private void BuildBookRelatedGroups(AudiobookSeriesGroup? series, AudiobookRelatedItems? related, string? author)
-    {
-        BookRelatedGroupsPanel.Children.Clear();
-        if (series?.Entries.Count > 0)
-            AddBookRelatedGroup(() => !string.IsNullOrWhiteSpace(series.Name) ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.inSeries", new Dictionary<string, object?> { ["series"] = series.Name }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.inThisSeries"), series.Entries);
-        if (related?.AlsoByAuthor.Count > 0)
-            AddBookRelatedGroup(() => !string.IsNullOrWhiteSpace(author) ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.alsoByAuthor", new Dictionary<string, object?> { ["author"] = author }) : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.alsoByThisAuthor"), related.AlsoByAuthor);
-        if (related?.Similar.Count > 0)
-            AddBookRelatedGroup(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.youMightAlsoLike"), related.Similar);
-        BookRelatedSection.Visibility = BookRelatedGroupsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void AddBookRelatedGroup(Func<string> heading, IEnumerable<AudiobookRelatedItem> entries)
-    {
-        var group = new StackPanel { Spacing = 12 };
-        var headingText = new TextBlock
-        {
-            Text = heading(),
-            Style = (Style)Application.Current.Resources["TitleTextStyle"],
-            FontSize = 20,
-        };
-        MediaItemCardActions.BindText(headingText, "Text", element => element.Text = heading());
-        group.Children.Add(headingText);
-        var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        foreach (var entry in entries)
-        {
-            cards.Children.Add(new PosterCard
-            {
-                MediaItem = new MediaItem
-                {
-                    ContentId = entry.ContentId,
-                    Type = ViewModel.Item?.Type ?? "ebook",
-                    Title = entry.Title,
-                    Year = entry.Year ?? 0,
-                    PosterUrl = entry.PosterUrl,
-                }
-            });
-        }
-        group.Children.Add(new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
-            HorizontalScrollMode = ScrollMode.Enabled,
-            VerticalScrollMode = ScrollMode.Disabled,
-            Content = cards,
-        });
-        BookRelatedGroupsPanel.Children.Add(group);
-    }
-
-    private void BuildAudiobookChapters(MediaItemDetail item)
-    {
-        _audiobookChapterRows.Clear();
-        AudiobookChaptersPanel.Children.Clear();
-        AudiobookChaptersBorder.Visibility = Visibility.Collapsed;
-        AudiobookChapterSortButton.Visibility = Visibility.Collapsed;
-        AudiobookChaptersChevron.Glyph = "\uE76C";
-        _audiobookChaptersExpanded = false;
-
-        var offset = 0d;
-        var positionIndex = 1;
-        foreach (var version in item.Versions)
-        {
-            foreach (var chapter in (version.Chapters ?? []).OrderBy(chapter => chapter.StartSeconds))
-            {
-                var absoluteStart = offset + Math.Max(0, chapter.StartSeconds);
-                _audiobookChapterRows.Add(new AudiobookChapterRow(
-                    positionIndex++,
-                    chapter.Title ?? "",
-                    absoluteStart,
-                    Math.Max(0, chapter.EndSeconds - chapter.StartSeconds),
-                    version.FileId));
-            }
-            offset += Math.Max(0, version.Duration);
-        }
-
-        if (_audiobookChapterRows.Count == 0) return;
-        SiloPlayer.Controls.MediaItemCardActions.BindText(AudiobookChapterCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.heading") + "  " + SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.chapters.count", new Dictionary<string, object?> { ["count"] = _audiobookChapterRows.Count }));
-        AudiobookChaptersSection.Visibility = Visibility.Visible;
-    }
-
-    private AudiobookChapterRow? FindAudiobookChapter(double absolutePosition)
-    {
-        for (var index = _audiobookChapterRows.Count - 1; index >= 0; index--)
-        {
-            if (absolutePosition >= _audiobookChapterRows[index].AbsoluteStart)
-                return _audiobookChapterRows[index];
-        }
-        return null;
-    }
-
-    private void AudiobookChaptersToggleButton_Click(object sender, RoutedEventArgs e)
-    {
-        _audiobookChaptersExpanded = !_audiobookChaptersExpanded;
-        AudiobookChaptersChevron.Glyph = _audiobookChaptersExpanded ? "\uE70D" : "\uE76C";
-        AudiobookChapterSortButton.Visibility = _audiobookChaptersExpanded ? Visibility.Visible : Visibility.Collapsed;
-        AudiobookChaptersBorder.Visibility = _audiobookChaptersExpanded ? Visibility.Visible : Visibility.Collapsed;
-        if (_audiobookChaptersExpanded)
-            RenderAudiobookChapters();
-        else
-            AudiobookChaptersPanel.Children.Clear();
-    }
-
-    private void AudiobookChapterSortButton_Click(object sender, RoutedEventArgs e)
-    {
-        var flyout = new MenuFlyout();
-        foreach (var option in new[] { (Label: "By position", Key: "web.audiobooks.chapters.sortPosition", Longest: false), (Label: "Longest first", Key: "web.audiobooks.chapters.sortLongest", Longest: true) })
-        {
-            var item = new ToggleMenuFlyoutItem
-            {
-                Text = option.Label,
-                IsChecked = _audiobookChaptersLongestFirst == option.Longest,
-            };
-            Localized.SetText(item, option.Key);
-            item.Click += (_, _) =>
-            {
-                _audiobookChaptersLongestFirst = option.Longest;
-                Localized.SetText(AudiobookChapterSortText, option.Key);
-                RenderAudiobookChapters();
-            };
-            flyout.Items.Add(item);
-        }
-        flyout.ShowAt(AudiobookChapterSortButton);
-    }
-
-    private void RenderAudiobookChapters()
-    {
-        AudiobookChaptersPanel.Children.Clear();
-        var position = Math.Max(0, ViewModel.Item?.UserData?.PositionSeconds ?? 0);
-        var current = FindAudiobookChapter(position);
-        var rows = _audiobookChaptersLongestFirst
-            ? _audiobookChapterRows.OrderByDescending(row => row.DurationSeconds)
-            : _audiobookChapterRows.AsEnumerable();
-        foreach (var chapter in rows)
-        {
-            var isCurrent = ReferenceEquals(chapter, current);
-            var button = new Button
-            {
-                Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Padding = new Thickness(0),
-                Tag = chapter,
-                Background = isCurrent ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"] : null,
-            };
-            MediaItemCardActions.BindText(button, "ChapterName", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.player.play") + " · " + chapter.DisplayLabel));
-
-            var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 11, 16, 11) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var indicator = new Border
-            {
-                Background = isCurrent ? (Brush)Application.Current.Resources["AccentBrush"] : null,
-                CornerRadius = new CornerRadius(1),
-            };
-            grid.Children.Add(indicator);
-            var number = new TextBlock
-            {
-                Text = chapter.PositionIndex.ToString(),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Center,
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            };
-            Grid.SetColumn(number, 1);
-            grid.Children.Add(number);
-            var title = new TextBlock
-            {
-                Text = chapter.DisplayLabel,
-                FontSize = 14,
-                FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-            MediaItemCardActions.BindText(title, "Text", element => element.Text = chapter.DisplayLabel);
-            Grid.SetColumn(title, 2);
-            grid.Children.Add(title);
-            var time = new TextBlock
-            {
-                Text = FormatChapterStart(chapter.AbsoluteStart),
-                FontFamily = new FontFamily("Consolas"),
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(time, 3);
-            grid.Children.Add(time);
-            var duration = new TextBlock
-            {
-                Text = FormatChapterDuration(chapter.DurationSeconds),
-                FontFamily = new FontFamily("Consolas"),
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(duration, 4);
-            grid.Children.Add(duration);
-            if (isCurrent)
-            {
-                var listening = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-                listening.Children.Add(new FontIcon { Glyph = "\uE768", FontSize = 11, Foreground = (Brush)Application.Current.Resources["AccentBrush"] });
-                listening.Children.Add(MediaItemCardActions.Localize(new TextBlock { Text = "listening", FontSize = 12, Foreground = (Brush)Application.Current.Resources["AccentBrush"] }, text: "web.audiobooks.chapters.listening"));
-                Grid.SetColumn(listening, 5);
-                grid.Children.Add(listening);
-            }
-            button.Content = grid;
-            button.Click += AudiobookChapter_Click;
-            AudiobookChaptersPanel.Children.Add(button);
-        }
-    }
-
-    private async void AudiobookChapter_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: AudiobookChapterRow chapter } || ViewModel.Item == null) return;
-        await App.Services.GetRequiredService<Services.PlayerService>().PlayAsync(
-            ViewModel.Item.ContentId,
-            fileId: chapter.FileId,
-            startPositionOverride: chapter.AbsoluteStart, libraryId: ViewModel.LibraryId);
-    }
-
-    private sealed record AudiobookChapterRow(
-        int PositionIndex,
-        string Label,
-        double AbsoluteStart,
-        double DurationSeconds,
-        int FileId)
-    {
-        internal string DisplayLabel => string.IsNullOrWhiteSpace(Label)
-            ? SiloPlayer.Core.Localization.AppStrings.Get("web.audiobooks.player.chapterNumber", new Dictionary<string, object?> { ["number"] = PositionIndex.ToString(SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : Label;
-    }
-
     private void BuildMangaChapters(MediaItemDetail item)
     {
         MangaChaptersPanel.Children.Clear();
         _mangaVolumes.Clear();
         _mangaResumeRow = null;
-        var chapters = item.Manga?.Chapters
-            .OrderBy(chapter => MangaVolumeSort(chapter.Volume))
-            .ThenBy(chapter => chapter.ChapterIndex ?? double.MaxValue)
-            .ThenBy(chapter => chapter.Title, StringComparer.OrdinalIgnoreCase)
-            .ToList() ?? [];
+        var entries = SiloPlayer.Core.Helpers.MangaChapterPresentation.Build(item.Manga?.Chapters ?? []);
+        var chapters = entries.SelectMany(entry => entry.Chapters).ToList();
         var target = chapters.FirstOrDefault(chapter => chapter.Read != true) ?? chapters.FirstOrDefault();
         _readerTargetContentId = target?.ContentId;
         SplitPlayButton.Visibility = target != null ? Visibility.Visible : Visibility.Collapsed;
@@ -2628,12 +2350,11 @@ public sealed partial class ItemDetailPage : Page
             : Visibility.Collapsed;
         SiloPlayer.Controls.MediaItemCardActions.BindText(MangaJumpButtonText, "Text", element => element.Text = target == null ? "" : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.jumpTo", new Dictionary<string, object?> { ["label"] = MangaChapterLabel(target) }));
 
-        foreach (var group in chapters.GroupBy(
-                     chapter => string.IsNullOrWhiteSpace(chapter.Volume) ? "" : chapter.Volume.Trim(),
-                     StringComparer.OrdinalIgnoreCase))
+        foreach (var entry in entries)
         {
-            var groupedChapters = group.ToList();
-            if (group.Key.Length == 0 || groupedChapters.Count == 1)
+            var groupedChapters = entry.Chapters;
+            var volume = entry.Volume;
+            if (volume == null || groupedChapters.Count == 1)
             {
                 foreach (var chapter in groupedChapters)
                 {
@@ -2650,14 +2371,14 @@ public sealed partial class ItemDetailPage : Page
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var volumeLabel = SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
-                Text = SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }),
+                Text = SiloPlayer.Core.Helpers.MangaChapterPresentation.VolumeLabel(volume!),
                 FontSize = 13,
                 FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                 CharacterSpacing = 35,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 VerticalAlignment = VerticalAlignment.Center,
-            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }));
-            MediaItemCardActions.BindText(volumeLabel, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }));
+            }, "Text", element => element.Text = SiloPlayer.Core.Helpers.MangaChapterPresentation.VolumeLabel(volume!));
+            MediaItemCardActions.BindText(volumeLabel, "Text", element => element.Text = SiloPlayer.Core.Helpers.MangaChapterPresentation.VolumeLabel(volume!));
             header.Children.Add(volumeLabel);
             var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             if (allRead)
@@ -2689,9 +2410,10 @@ public sealed partial class ItemDetailPage : Page
                 Header = header,
                 Content = rows,
                 IsExpanded = !allRead,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
             };
-            _mangaVolumes.Add((expander, () => SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.volume", new Dictionary<string, object?> { ["number"] = group.Key }) + " · " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.chapterCount", new Dictionary<string, object?> { ["count"] = groupedChapters.Count, ["count_text"] = (groupedChapters.Count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })));
+            _mangaVolumes.Add((expander, () => SiloPlayer.Core.Helpers.MangaChapterPresentation.VolumeLabel(volume!) + " · " + SiloPlayer.Core.Localization.AppStrings.Get("web.detail.manga.chapterCount", new Dictionary<string, object?> { ["count"] = groupedChapters.Count, ["count_text"] = (groupedChapters.Count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) })));
             expander.Collapsed += (_, _) => UpdateMangaStickyHeader();
             MangaChaptersPanel.Children.Add(expander);
         }
@@ -2949,12 +2671,7 @@ public sealed partial class ItemDetailPage : Page
     }
 
     private static string MangaChapterLabel(MangaChapter chapter)
-        => !string.IsNullOrWhiteSpace(chapter.Title) ? chapter.Title
-            : chapter.ChapterIndex.HasValue ? SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.chapter", new Dictionary<string, object?> { ["number"] = chapter.ChapterIndex.Value.ToString("0.##", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }) : SiloPlayer.Core.Localization.AppStrings.Get("web.common.format.manga.chapterFallback");
-
-    private static double MangaVolumeSort(string? volume)
-        => double.TryParse(volume?.TrimStart('v', 'V'), System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : double.MaxValue;
+        => SiloPlayer.Core.Helpers.MangaChapterPresentation.ChapterLabel(chapter);
 
     private static string FormatBookDuration(double seconds)
     {
@@ -6963,6 +6680,28 @@ public sealed partial class ItemDetailPage : Page
 
     private void RefreshHeroCrewLine(MediaItemDetail item)
     {
+        // EbookContent.tsx crewLine: muted "By" and the extension authors
+        // (crew Author only as a fallback). This refresher owns the line, so a
+        // later localization refresh cannot replace it with an empty movie line.
+        if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+        {
+            var names = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
+            HeroCrewLine.Inlines.Clear();
+            if (names.Count > 0)
+            {
+                const string marker = "";
+                var parts = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.byAuthor", new Dictionary<string, object?> { ["author"] = marker }, fallback: "By " + marker).Split(marker);
+                for (var index = 0; index < parts.Length; index++)
+                {
+                    if (parts[index].Length > 0)
+                        HeroCrewLine.Inlines.Add(new Run { Text = parts[index], Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+                    if (index < parts.Length - 1)
+                        HeroCrewLine.Inlines.Add(new Run { Text = string.Join(", ", names), FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+                }
+            }
+            HeroCrewLine.Visibility = names.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            return;
+        }
         var crew = item.Crew ?? [];
         var leadJob = item.Type == "series" && crew.Any(c => c.Job == "Creator") ? "Creator" : "Director";
         var directors = crew.Where(c => c.Job == leadJob).DistinctBy(c => c.Name).Take(2).ToList();
@@ -7999,7 +7738,11 @@ public sealed partial class ItemDetailPage : Page
 
     private void UpdateSeasonPosterState(Grid posterHost, Season season)
     {
-        var state = (season.EpisodeCount, season.UserData?.Played, season.UserData?.WatchedCount, season.UserData?.InProgressCount);
+        var overlays = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();
+        // The availability badge depends on the season's counts and on the profile's badge settings.
+        var overlayState = (overlays.IsLoaded, overlays.Preset, overlays.ManifestRevision, overlays.GetPrefs()?.GetValueOrDefault("availability"));
+        var state = (season.EpisodeCount, season.UserData?.Played, season.UserData?.WatchedCount, season.UserData?.InProgressCount,
+            season.Availability?.Have, season.Availability?.Total, overlayState);
         if (Equals(posterHost.Tag, state)) return;
         posterHost.Tag = state;
         // Retain the poster and focusable card; only the small state overlays change.
@@ -8033,9 +7776,10 @@ public sealed partial class ItemDetailPage : Page
 
         // Season progress bar (3px at bottom): green when completed, accent
         // otherwise. Fills proportional to watched/total episodes.
-        if ((isCompleted || hasProgress) && season.UserData != null && season.EpisodeCount > 0)
+        var progressVisible = (isCompleted || hasProgress) && season.UserData != null && season.EpisodeCount > 0;
+        if (progressVisible)
         {
-            int watched = isCompleted ? season.EpisodeCount : (season.UserData.WatchedCount);
+            int watched = isCompleted ? season.EpisodeCount : (season.UserData!.WatchedCount);
             double ratio = Math.Clamp((double)watched / season.EpisodeCount, 0, 1);
             var progressLayout = MediaCardProgressGeometry.Calculate(cardWidth, ratio, episodeCard: false);
             var barTrack = new Grid
@@ -8065,6 +7809,35 @@ public sealed partial class ItemDetailPage : Page
             posterHost.Children.Add(barTrack);
         }
 
+        AddSeasonAvailabilityBadge(posterHost, season, cardWidth, progressVisible, overlays);
+    }
+
+    /// <summary>
+    /// The availability ribbon of a season card: episodes in the library out of known episodes,
+    /// from the season list's own field (no extra read). Corners lift clear of the progress bar.
+    /// </summary>
+    private void AddSeasonAvailabilityBadge(Grid posterHost, Season season, double cardWidth, bool progressVisible,
+        global::SiloPlayer.Services.CardOverlayService overlays)
+    {
+        if (!overlays.IsLoaded)
+        {
+            _ = RebuildSeasonCardsAfterOverlaysLoadAsync(overlays);
+            return;
+        }
+        var geometry = CardOverlayGeometry.ForPoster(cardWidth, overlays.Preset);
+        var badges = CardBadgeHosts.ForData(global::SiloPlayer.Services.OverlayData.FromSeason(season), overlays, geometry.Scale);
+        if (badges.Count == 0) return;
+        CardBadgeHosts.Create(posterHost, geometry, CardOverlayGeometry.ProgressClearance(progressVisible)).Show(badges);
+    }
+
+    private async Task RebuildSeasonCardsAfterOverlaysLoadAsync(global::SiloPlayer.Services.CardOverlayService overlays)
+    {
+        try
+        {
+            await overlays.EnsureLoadedAsync();
+            DispatcherQueue.TryEnqueue(() => { if (IsLoaded && overlays.IsLoaded) BuildSeasonCards(); });
+        }
+        catch { }
     }
 
     private TextBlock BuildSeasonProgressText(Season season)

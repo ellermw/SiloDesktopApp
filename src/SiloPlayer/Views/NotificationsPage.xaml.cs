@@ -3,11 +3,9 @@ using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
-using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
-using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
@@ -26,6 +24,7 @@ public sealed partial class NotificationsPage : Page
     private long _realtimeRevision;
     private bool _showSeries, _seriesAvailable;
     private CancellationTokenSource? _pageLoad;
+    private ApiRequestContext? _inboxExpansionContext;
     private ScrollViewer? _scroll;
     private static readonly JsonSerializerOptions NotificationJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
@@ -41,7 +40,7 @@ public sealed partial class NotificationsPage : Page
         ((StackPanel)MarkAllButton.Content).Children[0] = WebUiIcon.Create("check-check", 16);
         ((StackPanel)PreferencesButton.Content).Children[0] = WebUiIcon.Create("settings-2", 16);
         NavigationCacheMode = NavigationCacheMode.Required;
-        SeriesView.OpenPreferences += () => PreferencesButton.Flyout.ShowAt(PreferencesButton);
+        SeriesView.State.PropertyChanged += (_, _) => { if (IsLoaded) UpdateSelectionBar(); };
         Loaded += NotificationsPage_Loaded;
         Unloaded += (_, _) =>
         {
@@ -60,8 +59,15 @@ public sealed partial class NotificationsPage : Page
         AttachRealtime();
         _pageLoad?.Cancel(); _pageLoad?.Dispose(); _pageLoad = new(); var ct = _pageLoad.Token;
         var api = App.Services.GetRequiredService<NotificationsApi>(); var context = api.RequestContext;
+        if (_inboxExpansionContext != context) { _expandedInbox.Clear(); _inboxExpansionContext = context; }
         _seriesAvailable = false;
-        try { _seriesAvailable = (await api.GetCapabilityAsync(context, ct)).Series?.Available == true; }
+        ViewModel.SetBulkMuteCapability(context, false);
+        try
+        {
+            var capability = await api.GetCapabilityAsync(context, ct);
+            _seriesAvailable = capability.Series?.Available == true;
+            ViewModel.SetBulkMuteCapability(context, capability.Series?.BulkMute == true);
+        }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || !api.IsCurrentContext(context)) { return; }
         catch { }
         if (ct.IsCancellationRequested || !api.IsCurrentContext(context)) return;
@@ -172,7 +178,7 @@ public sealed partial class NotificationsPage : Page
     private async void Series_Click(object sender, RoutedEventArgs e)
     {
         if (!_seriesAvailable) return;
-        PreferencesButton.Flyout.Hide(); _showSeries = true; UpdateVisuals();
+        PreferencesButton.Flyout.Hide(); ViewModel.SetInboxSelecting(false); _showSeries = true; UpdateVisuals();
         await SeriesView.OpenAsync(); UpdateVisuals();
     }
 
@@ -218,25 +224,6 @@ public sealed partial class NotificationsPage : Page
     {
         var pending = ViewModel.ReloadAsync(); UpdateVisuals();
         await pending; UpdateVisuals();
-    }
-
-    private async void MarkRead_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: AppNotification notification }) return;
-        await ViewModel.MarkReadCommand.ExecuteAsync(notification);
-        UpdateVisuals();
-    }
-
-    private void NotificationsList_ItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is not AppNotification notification) return;
-        if (notification.IsUnread) _ = ViewModel.MarkReadCommand.ExecuteAsync(notification);
-        var destination = NotificationNavigation.Resolve(notification);
-        var navigation = App.Services.GetRequiredService<NavigationService>();
-        if (destination?.ContentId is string contentId)
-            navigation.Navigate<ItemDetailPage>(contentId);
-        else if (destination is { MediaType: string mediaType, TmdbId: int tmdbId })
-            navigation.Navigate<RequestDetailPage>(new RequestDetailNavigation(mediaType, tmdbId));
     }
 
     private async void Preference_Toggled(object sender, RoutedEventArgs e)
@@ -312,11 +299,17 @@ public sealed partial class NotificationsPage : Page
     private void UpdateVisuals()
     {
         LoadingSkeleton.Visibility = !_showSeries && ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
-        // Header/footer share the list's scroll surface; only rows are hidden
-        // while loading, so the page header and states keep their natural flow.
-        var rowSource = _showSeries || ViewModel.IsLoading ? null : ViewModel.Notifications;
-        if (!ReferenceEquals(NotificationsList.ItemsSource, rowSource))
-            NotificationsList.ItemsSource = rowSource;
+        InboxGroupsHost.Visibility = _showSeries || ViewModel.IsLoading ? Visibility.Collapsed : Visibility.Visible;
+        InboxFilters.Visibility = _showSeries ? Visibility.Collapsed : Visibility.Visible;
+        InboxButton.Style = (Style)Application.Current.Resources[!_showSeries ? "SecondaryButtonStyle" : "GhostButtonStyle"];
+        InboxUnreadBadge.Text = ViewModel.UnreadCount > 0 ? AppStrings.Get("web.notifications.inbox.unreadBadge", new Dictionary<string, object?> { ["count"] = ViewModel.UnreadCount, ["count_text"] = ViewModel.UnreadCount.ToString(AppStrings.FormatCulture) }, ViewModel.UnreadCount.ToString(AppStrings.FormatCulture)) : "";
+        InboxUnreadBadge.Visibility = ViewModel.UnreadCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        InboxSelectButton.Visibility = ViewModel.Notifications.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        InboxSelectButton.Content = ViewModel.IsSelectingInbox ? AppStrings.Get("common.done", fallback: "Done") : AppStrings.Get("web.notifications.selection.select", fallback: "Select");
+        SelectionErrorText.Text = ViewModel.SelectionErrorMessage ?? "";
+        SelectionErrorText.Visibility = !_showSeries && ViewModel.SelectionErrorMessage != null ? Visibility.Visible : Visibility.Collapsed;
+        if (!_showSeries) RenderInbox();
+        UpdateSelectionBar();
         EmptyState.Visibility = !_showSeries && !ViewModel.IsLoading && ViewModel.IsEmpty && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
             ? Visibility.Visible : Visibility.Collapsed;
         EmptyTitleText.Text = ViewModel.StatusFilter == "unread" ? AppStrings.Get("web.notifications.inbox.emptyUnread", fallback: "No unread notifications") : AppStrings.Get("web.notifications.inbox.emptyAll", fallback: "No notifications yet");
@@ -340,71 +333,25 @@ public sealed partial class NotificationsPage : Page
         SeriesView.Visibility = _showSeries ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void NotificationRow_Loaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is Grid row) { RegisterNotificationRow(row); UpdateNotificationRow(row); }
-    }
-
-    private void NotificationRow_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
-    {
-        if (sender is Grid row) UpdateNotificationRow(row);
-    }
-
-    private static void UpdateNotificationRow(Grid row)
-    {
-        if (row.DataContext is not AppNotification notification) return;
-        AutomationProperties.SetName(row,
-            string.Join(", ", new[] { NotificationTitle(notification), NotificationSubtitle(notification), NotificationTime(notification) }
-                .Where(value => !string.IsNullOrWhiteSpace(value))));
-        if (row.FindName("NotificationTitleText") is TextBlock title)
-        { title.Text = NotificationTitle(notification); title.FontWeight = notification.IsUnread ? FontWeights.SemiBold : FontWeights.Medium; }
-        if (row.FindName("NotificationSubtitleText") is TextBlock subtitle) subtitle.Text = NotificationSubtitle(notification);
-        if (row.FindName("NotificationTimeText") is TextBlock time) time.Text = NotificationTime(notification);
-        if (row.FindName("NotificationReasons") is ItemsControl reasons) reasons.ItemsSource = NotificationReasons(notification);
-        var hovered = row.Tag is true && NotificationNavigation.Resolve(notification) != null;
-        if ((notification.IsUnread || hovered) && Application.Current.Resources["SurfaceBrush"] is SolidColorBrush surface)
-            row.Background = new SolidColorBrush(surface.Color) { Opacity = hovered ? 0.6 : 0.3 };
-        else
-            row.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-    }
-
-    private void NotificationRow_PointerEntered(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is Grid hovered) { hovered.Tag = true; UpdateNotificationRow(hovered); }
-        if (sender is FrameworkElement row && row.FindName("InlineMarkReadButton") is Button button)
-            button.Opacity = 1;
-    }
-
-    private void NotificationRow_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is Grid hovered) { hovered.Tag = false; UpdateNotificationRow(hovered); }
-        if (sender is FrameworkElement row && row.FindName("InlineMarkReadButton") is Button button)
-            button.Opacity = 0;
-    }
-
-    private void MarkRead_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
-
-    private void InlineMarkReadButton_GotFocus(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button button) button.Opacity = 1;
-    }
-
-    private void InlineMarkReadButton_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button button) button.Opacity = 0;
-    }
-
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         var width = e.NewSize.Width;
         if (width <= 0) return;
         // The WebUI combines the shared shell's 16/32px vertical gutter
-        // with the inbox's own 32px padding.
-        PageContent.Padding = new Thickness(16, 0, 16, 0);
-        NotificationsList.Padding = new Thickness(0, WebUiViewport.Width(this, width) >= 1024 ? 64 : 48, 0, 32);
-        PageContent.Width = Math.Min(width, 768);
-        InboxHeader.Width = Math.Max(0, PageContent.Width - 32);
+        // with the inbox's own 32px padding; its 1024px column uses
+        // 16px side gutters, widening to 24px from the 640px breakpoint.
+        var viewport = WebUiViewport.Width(this, width);
+        var gutter = viewport >= 640 ? 24 : 16;
+        PageContent.Padding = new Thickness(gutter, 0, gutter, 0);
+        NotificationsList.Padding = new Thickness(0, viewport >= 1024 ? 64 : 48, 0, 100);
+        PageContent.Width = Math.Min(width, 1024);
+        InboxHeader.Width = Math.Max(0, PageContent.Width - 2 * gutter);
+        var narrowToolbar = InboxHeader.Width < 640;
+        Grid.SetRow(InboxFilters, narrowToolbar ? 1 : 0);
+        Grid.SetColumn(InboxFilters, narrowToolbar ? 0 : 1);
+        Grid.SetColumnSpan(InboxFilters, narrowToolbar ? 2 : 1);
 
+        if (IsLoaded && !_showSeries) RenderInbox();
         var compact = width < 480;
         HeaderGrid.RowSpacing = compact ? 12 : 0;
         if (HeaderGrid.Children[0] is FrameworkElement title)
