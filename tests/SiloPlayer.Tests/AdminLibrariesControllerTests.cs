@@ -145,13 +145,44 @@ public sealed partial class AdminLibrariesControllerTests
     }
 
     [Fact]
+    public async Task CachedScansAreNotReplayedWhenOpeningOrSwitchingServers()
+    {
+        var (kit, authority, controller, _, channel, _) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            const string previousScans = "[{\"id\":\"server-a\",\"library_id\":1,\"mode\":\"library\",\"path\":\"/server-a/media\",\"status\":\"running\"}]";
+            using var cached = JsonDocument.Parse(previousScans);
+            channel.Latest = cached.RootElement.Clone();
+            await controller.OpenAsync();
+            Assert.Empty(controller.State.Scans);
+            Assert.Empty(AdminLibrariesController.ScanGroups(controller.State));
+            Assert.All(AdminLibrariesController.Rows(controller.State), row => Assert.False(row.ScanStops));
+
+            channel.Snapshot("scans", previousScans);
+            Assert.Equal("server-a", Assert.Single(controller.State.Scans).Id);
+            var previousOwner = controller.State.Owner;
+            kit.Client.SetBaseUrl("https://server-b.test");
+            await controller.OpenAsync();
+            Assert.NotNull(controller.State.Owner);
+            Assert.NotSame(previousOwner, controller.State.Owner);
+            Assert.Empty(controller.State.Scans);
+            Assert.Empty(AdminLibrariesController.ScanGroups(controller.State));
+            Assert.All(AdminLibrariesController.Rows(controller.State), row => Assert.False(row.ScanStops));
+
+            channel.Snapshot("scans", "[{\"id\":\"server-b\",\"library_id\":1,\"mode\":\"library\",\"status\":\"running\"}]");
+            Assert.Equal("server-b", Assert.Single(controller.State.Scans).Id);
+            Assert.True(AdminLibrariesController.Rows(controller.State)[0].ScanStops);
+        }
+    }
+
+    [Fact]
     public async Task ScansComeFromTheChannelAndAFinishedScanReloadsTheList()
     {
         var (kit, authority, controller, _, channel, scheduler) = Create();
         using (kit) using (authority) using (controller)
         {
-            channel.Latest = JsonDocument.Parse("[{\"id\":\"s1\",\"library_id\":1,\"mode\":\"library\",\"status\":\"running\"},{\"id\":\"s2\",\"library_id\":1,\"mode\":\"file\",\"path\":\"/m/a.mkv\",\"status\":\"accepted\"},{\"id\":\"s3\",\"library_id\":2,\"mode\":\"library\",\"status\":\"completed\"}]").RootElement.Clone();
             await controller.OpenAsync();
+            channel.Snapshot("scans", "[{\"id\":\"s1\",\"library_id\":1,\"mode\":\"library\",\"status\":\"running\"},{\"id\":\"s2\",\"library_id\":1,\"mode\":\"file\",\"path\":\"/m/a.mkv\",\"status\":\"accepted\"},{\"id\":\"s3\",\"library_id\":2,\"mode\":\"library\",\"status\":\"completed\"}]");
             var groups = AdminLibrariesController.ScanGroups(controller.State);
             Assert.Single(groups);
             Assert.Equal((1, 1), (groups[0].Running, groups[0].Queued));

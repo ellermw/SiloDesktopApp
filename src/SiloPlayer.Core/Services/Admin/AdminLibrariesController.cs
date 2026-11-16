@@ -184,7 +184,7 @@ public sealed class AdminLibrariesController : IDisposable
                 _channel.EventReceived += OnEvent;
             }
         }
-        if (_channel != null && _channel.TryGetLatestSnapshot("scans", out var scans)) OnSnapshot("scans", scans);
+        // Cached transport snapshots have no authority identity. Wait for a fresh delivery.
         Changed?.Invoke();
         await Task.WhenAll(LoadLibrariesAsync(owner), LoadCapabilitiesAsync(owner), LoadMonitoringAsync(owner), LoadTrickplayAsync(owner),
             LoadRefreshJobsAsync(owner, append: false)).ConfigureAwait(false);
