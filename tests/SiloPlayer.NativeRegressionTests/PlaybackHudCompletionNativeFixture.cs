@@ -313,7 +313,10 @@ internal static partial class PlaybackHudCompletionNativeFixture
         internal int Stops, Starts, Advances;
         internal bool FailStart, FailAdvance, HoldAdvance, HasEpisodes;
         internal bool HideImages=true, HoldStill;
-        internal bool AutoPlay=true;
+        internal bool AutoPlayProfile=true;
+        internal bool? AutoPlayDeviceOverride;
+        internal bool AutoPlay {get=>AutoPlayDeviceOverride ?? AutoPlayProfile;set{AutoPlayProfile=value;AutoPlayDeviceOverride=null;}}
+        internal int AutoPlayProfileWrites, AutoPlayOverrideDeletes;
         internal int AutoPlayReadCancellations;
         internal TaskCompletionSource? AutoPlayReadEntered, AutoPlayReadRelease;
         internal byte[] StillPng=[];
@@ -343,6 +346,21 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 return new(HttpStatusCode.OK){Content=new ByteArrayContent(StillPng)};
             }
             if(path=="/api/v2/settings/contract/capabilities") return Json(new {api_version=1,manifest_revision=17,supports_batched_effective=true});
+            if(path=="/api/v2/settings/values/playback.auto_play_next")
+            {
+                if(request.Method==HttpMethod.Put)
+                {
+                    using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                    AutoPlayProfile=body.RootElement.GetProperty("value").GetBoolean();
+                    Interlocked.Increment(ref AutoPlayProfileWrites);
+                    return Json(new {key="playback.auto_play_next",value=AutoPlayProfile});
+                }
+                if(request.Method==HttpMethod.Delete && request.RequestUri.Query.Contains("scope=profile_device",StringComparison.Ordinal))
+                {
+                    AutoPlayDeviceOverride=null;Interlocked.Increment(ref AutoPlayOverrideDeletes);
+                    return new(HttpStatusCode.NoContent);
+                }
+            }
             if(path=="/api/v2/settings/values/effective")
             {
                 var autoPlay=AutoPlay;

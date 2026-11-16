@@ -1,4 +1,6 @@
 using SiloPlayer.Services;
+using SiloPlayer.ViewModels;
+using Microsoft.Extensions.DependencyInjection;
 
 internal static partial class PlaybackHudCompletionNativeFixture
 {
@@ -19,11 +21,23 @@ internal static partial class PlaybackHudCompletionNativeFixture
 
         service.SetNextEpisodeHint(service.ContentId!,"episode-2","Next","Synthetic Show",null,null,seasonNumber:1,episodeNumber:2);
         Call(service,"PublishCreditsEpisodeDetail",false);
-        wire.AutoPlay=false; await Refresh(); await Expect("false");
+        wire.AutoPlayDeviceOverride=true; await Refresh(); await Expect("true");
+        var settings=SiloPlayer.App.Services.GetRequiredService<SettingsViewModel>();
+        settings.AutoPlayNext=false;
+        await Until(()=>wire.AutoPlayProfileWrites==1 && wire.AutoPlayOverrideDeletes==1,
+            "The actual Settings toggle did not save and clear the device override.");
+        await Expect("false");
         var starts=wire.Starts;
         mpv.SendScriptMessage("completion-expire-credits"); await Task.Delay(150);
         Check(wire.Starts==starts,"Effective autoplay off still advanced through the production credits route.");
         Program.Log("PASS: effective profile autoplay off reaches production OSC and suppresses automatic credits navigation.");
+
+        settings.AutoPlayNext=true;
+        await Until(()=>wire.AutoPlayProfileWrites==2 && wire.AutoPlayOverrideDeletes==2,
+            "The actual Settings toggle did not persist re-enabled autoplay.");
+        await Expect("true");
+        Program.Log("PASS: actual Settings property saves notify active credits after device-override cleanup in both directions.");
+        wire.AutoPlay=false; await Refresh(); await Expect("false");
 
         wire.AutoPlayReadEntered=new(TaskCreationOptions.RunContinuationsAsynchronously);
         var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

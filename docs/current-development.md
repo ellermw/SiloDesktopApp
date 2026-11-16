@@ -18,11 +18,15 @@ Full main suite: 7,180 passed. Final 443 OSC/localization checks, Release publis
 matching native host and credits-autoplay/autoplay/postroll native groups pass.
 The three original Lua regressions and a subsequent native cancellation
 regression failed before their corrections. Final app DLL SHA256
-`2AEE3E1F224B01CE89EB43D2E40277D5BD6C715E5EE4BD8FA6CE6D3F5CB57678`.
+`018293C7D8633F04D4EEAE352DCBA1645DFC688CDD83331DB8A5666FCAF0EEE0`.
 See [scope and exact verification](parity/2026-11-15-credits-autoplay.md).
-Evidence is task-local `.codex-tmp/credits-final-receipt.json` and adjacent logs.
-The test-only localized-heading assertion was verified by the final focused run;
-the preceding full run retains its original scope.
+PR176 review identified a missing notification from the actual Settings writer.
+An added native property-toggle regression failed before correction; the writer
+now captures profile authority and notifies after device-override cleanup. Final
+publish/host, 443 focused checks and all three native groups passed again; the
+preceding full 7,180 run retains its original scope. Latest evidence is task-local
+`.codex-tmp/credits-settings-save-final-receipt.json` and adjacent logs. The prior
+`credits-final` candidate/receipt remains historical evidence.
 
 All later .NET/native runs hold `SiloOct18Build`; shared Configure binaries are
 untouched. Reusable task output is about 1 GiB. No installed-player/settings,
