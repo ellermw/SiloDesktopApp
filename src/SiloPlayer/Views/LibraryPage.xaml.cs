@@ -258,7 +258,9 @@ public sealed partial class LibraryPage : Page,
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModel.TotalCount) ||
-                args.PropertyName == nameof(ViewModel.DisplayTotalCount))
+                args.PropertyName == nameof(ViewModel.DisplayTotalCount) ||
+                args.PropertyName == nameof(ViewModel.IsExactCountLoading) ||
+                args.PropertyName == nameof(ViewModel.ExactCountFailed))
             {
                 DispatcherQueue.TryEnqueue(() => UpdateCountDisplay());
             }
@@ -266,6 +268,8 @@ public sealed partial class LibraryPage : Page,
             {
                 DispatcherQueue.TryEnqueue(() =>
                 {
+                    // The count waits (progress ring) while the first window is read.
+                    UpdateCountDisplay();
                     var showSkeletons = _isNavigated && _currentTab == "Library" &&
                         ViewModel.IsLoading && ViewModel.TotalCount == 0 && _currentAudiobookAxis == "books";
                     if (showSkeletons) BuildLibrarySkeletons();
@@ -1187,7 +1191,12 @@ public sealed partial class LibraryPage : Page,
         Grid.SetColumn(SortComboBox, hasToolbarType ? 1 : 0);
         Grid.SetColumn(OrderComboBox, hasToolbarType ? 2 : 1);
         Grid.SetColumn(OpenFiltersButton, hasToolbarType ? 3 : 2);
+        // The count sits right after Filters. Without a type picker that is the Auto
+        // column 3; with one it is the star column 4, which the poster-size button
+        // also uses, so the text keeps clear of it with a right margin.
         Grid.SetColumn(ResultCountText, hasToolbarType ? 4 : 3);
+        Grid.SetColumn(ResultCountProgress, hasToolbarType ? 4 : 3);
+        ResultCountText.Margin = hasToolbarType ? new Thickness(0, 0, 48, 0) : new Thickness(0);
     }
 
     /// <summary>B42: Persist current page state for this library.</summary>
@@ -1297,20 +1306,32 @@ public sealed partial class LibraryPage : Page,
         await EnsureVisibleRangeLoadedAsync(force: true);
     }
 
+    // The sort/order/Filters toolbar is the visible one (not audiobook series,
+    // author or narrator groups). Set by UpdateCatalogToolbarVisibility.
+    private bool _catalogToolbarShown;
+
+    /// <summary>
+    /// The browse item count beside the Filters button (official #4316): the exact
+    /// total the browse reported, named for what the library holds, with a small
+    /// progress ring while it is read and nothing when it is unknown, empty or the
+    /// read failed. It never shows the pager's estimated extent as a count and
+    /// issues no read of its own: the view model's exact-count read feeds it.
+    /// </summary>
     private void UpdateCountDisplay()
     {
-        if (ViewModel.DisplayTotalCount > 0)
+        var mode = LibraryResultCount.Mode(
+            _catalogToolbarShown, ViewModel.DisplayTotalCount, ViewModel.IsExactCountLoading,
+            ViewModel.IsLoading, ViewModel.ExactCountFailed);
+        if (mode == LibraryResultCountMode.Label)
         {
-            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultCount", new Dictionary<string, object?> { ["shown"] = (ViewModel.DisplayTotalCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = ViewModel.DisplayTotalCount }, fallback: $"{ViewModel.DisplayTotalCount:N0} {(ViewModel.DisplayTotalCount == 1 ? "item" : "items")}"));
+            var libraryType = ViewModel.Library?.Type;
+            var browseType = ViewModel.SelectedType;
+            var count = ViewModel.DisplayTotalCount;
+            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultCountText, "Text", element => element.Text = LibraryResultCount.Label(libraryType, browseType, browseType, count));
         }
-        else if (ViewModel.TotalCount > 0)
-        {
-            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.loadingCount", fallback: "Loading item count"));
-        }
-        else
-        {
-            ResultCountText.Text = "";
-        }
+        ResultCountText.Visibility = mode == LibraryResultCountMode.Label ? Visibility.Visible : Visibility.Collapsed;
+        ResultCountProgress.IsActive = mode == LibraryResultCountMode.Loading;
+        ResultCountProgress.Visibility = mode == LibraryResultCountMode.Loading ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private static List<FilterOption> BuildFilterOptions(IEnumerable<string> values, string allLabel)
@@ -2249,7 +2270,8 @@ public sealed partial class LibraryPage : Page,
         SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
         OrderComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
         OpenFiltersButton.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
-        ResultCountText.Visibility = Visibility.Collapsed;
+        _catalogToolbarShown = showBooks;
+        UpdateCountDisplay();
     }
 
     private void UpdateAudiobookAxisButtons()
@@ -2897,10 +2919,7 @@ public sealed partial class LibraryPage : Page,
         UpdateAudiobookAxisButtons();
         AudiobookGroupsPanel.Visibility = Visibility.Collapsed;
         LibraryContentArea.Visibility = Visibility.Visible;
-        SortComboBox.Visibility = Visibility.Visible;
-        OrderComboBox.Visibility = Visibility.Visible;
-        OpenFiltersButton.Visibility = Visibility.Visible;
-        ResultCountText.Visibility = Visibility.Collapsed;
+        UpdateCatalogToolbarVisibility(showBooks: true);
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         UpdateLibraryArtworkActivity();
         await FillViewportAsync();
