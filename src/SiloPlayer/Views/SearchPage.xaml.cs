@@ -38,6 +38,7 @@ public sealed partial class SearchPage : Page
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        ImeCompositionGuard.Attach(SearchBox);
         SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshInlineChoices(); ViewModel.RefreshLocalization(); UpdateResultsState(); UpdateRequestResults(); UpdateActiveResultFilters(); });
         CatalogToolbarChoices.Apply(ResultTypeCombo, ResultSortCombo, ResultOrderCombo);
         _catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
@@ -496,7 +497,9 @@ public sealed partial class SearchPage : Page
 
     private async void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key != Windows.System.VirtualKey.Enter ||
+        // Official #4287: the Enter that confirms an IME conversion is not a search.
+        if (ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e) ||
+            e.Key != Windows.System.VirtualKey.Enter ||
             string.IsNullOrWhiteSpace(SearchBox.Text))
             return;
 
