@@ -40,6 +40,30 @@ public partial class SiloApiClient
         return value;
     });
 
+    /// <summary>Reads a same-origin poster through the authenticated, lease-bound transport, never through the image decoder.</summary>
+    internal Task<byte[]> AdminLibraryGetPosterAsync(MonitorAuthorityLease lease, string posterUrl, CancellationToken ct = default) =>
+        AdminLibraryWithinDeadlineAsync(lease, ct, async token =>
+        {
+            lease.ThrowIfRetired();
+            var context = lease.Context;
+            if (!Uri.TryCreate(context.BaseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var origin)
+                || origin.Scheme is not ("http" or "https")
+                || string.IsNullOrWhiteSpace(posterUrl)
+                || !Uri.TryCreate(origin, posterUrl, out var uri)
+                || uri.Scheme != origin.Scheme || !string.Equals(uri.Authority, origin.Authority, StringComparison.OrdinalIgnoreCase)
+                || uri.UserInfo.Length != 0)
+                throw new ArgumentException("Library posters must use the connected server origin.", nameof(posterUrl));
+            using var request = CreateContextBoundRequest(context, HttpMethod.Get, "", null);
+            request.RequestUri = uri;
+            using var response = await SendWithRetryAsync(request, token).ConfigureAwait(false);
+            lease.ThrowIfRetired();
+            if (!response.IsSuccessStatusCode)
+                await AdminLibraryThrowBoundedErrorAsync(response, request, lease, token).ConfigureAwait(false);
+            var bytes = await AdminLibraryReadBoundedAsync(response.Content, lease, AdminLibrariesApi.MaxPosterBytes, token).ConfigureAwait(false);
+            if (bytes.Length == 0) throw new InvalidDataException("The library poster is empty.");
+            return bytes;
+        });
+
     /// <summary>A write whose only success is 204 No Content (reorder, overrides, ignore, providers, poster removal).</summary>
     internal Task AdminLibrarySendNoContentAsync(MonitorAuthorityLease lease, HttpMethod method, string path, object? body = null,
         CancellationToken ct = default) => AdminLibraryWithinDeadlineAsync(lease, ct, async token =>

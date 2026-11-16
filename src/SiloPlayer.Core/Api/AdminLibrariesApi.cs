@@ -229,6 +229,10 @@ public sealed partial class AdminLibrariesApi(SiloApiClient client)
 
     // ── Poster ────────────────────────────────────────────────────────────
 
+    /// <summary>Reads at most 10 MiB of poster data from the connected server under the editor's lease.</summary>
+    public Task<byte[]> GetPosterAsync(MonitorAuthorityLease lease, string posterUrl, CancellationToken ct = default) =>
+        client.AdminLibraryGetPosterAsync(lease, posterUrl, ct);
+
     /// <summary>Uploads a JPEG, PNG or WebP poster of at most 10 MiB and answers the library with its new poster URL.</summary>
     public async Task<AdminLibrary> UploadPosterAsync(MonitorAuthorityLease lease, string libraryId, byte[] poster, string mediaType, CancellationToken ct = default)
     {

@@ -84,9 +84,11 @@ item match internals (item tools), the server's stale-ID rematch and matcher-que
 
 - The editor, folder browser and dialogs appear immediately (no slide/fade); the editor is a modal
   panel over the shell, full-screen below 640 px; confirmation and mode dialogs are ContentDialogs.
-- A library created whose provider-chain write then fails turns the session into an edit of the
-  created library, so retrying sends PATCH + chain instead of creating a second library (the WebUI
-  would POST again).
+- Add keeps Enabled and Auto-translate choices: after POST, a PATCH applies either value when it
+  differs from the created library (POST cannot accept these fields). This deliberately avoids
+  silently losing choices offered by the native editor. The created id is adopted before PATCH or provider-chain
+  writes, so a known failure retries as an update instead of creating a second library; a lost answer
+  disables Save with the existing unknown-outcome handling (the WebUI would POST again).
 - The mount check shows one toast with the formatted result (the WebUI shows that plus a generic one).
 - The Ignore/Restore toast's description and Undo stay inline under the unmatched list until dismissed.
 - Unmatched “Last” stops after 25 requests and says so; append lists stop at 10 pages and say so;
@@ -96,6 +98,10 @@ item match internals (item tools), the server's stale-ID rematch and matcher-que
   Configure pages have no native implementation; `?tab=autoscan` links show a notice instead of
   opening an Autoscan page that does not exist natively yet.
 - An open card menu keeps the cards unchanged underneath until it closes (so it stays open after a move).
+- Pointer reorder defers status-only table rebuilds until release/cancellation, retaining the capturing
+  grip and row geometry; replacing the owner/library snapshot or leaving the wide layout still cancels.
+- Poster previews accept only HTTP(S) on the configured server's scheme and authority, and read at
+  most 10 MiB through the authenticated admin lease before decoding locally (no BitmapImage URL fetch).
 
 ## Integration (lead-owned shared files, additive)
 

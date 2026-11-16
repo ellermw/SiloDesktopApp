@@ -111,10 +111,11 @@ public sealed record AdminLibraryEditorState
 /// Add/Edit library (WebUI <c>useLibraryForm</c> + <c>LibraryEditorDialog</c>). Owns one
 /// draft under an action lease bound to the page owner. Provider chains come from the
 /// server (the saved chain for an existing library, the type's seed for new ones) and
-/// are written only when edited. A save runs once: create or update, then the chain;
-/// a lost answer leaves saving disabled with an unknown-outcome message (no replay).
-/// A created library turns the session into an edit of it, so a failed chain write is
-/// retried as an update instead of creating a second library.
+/// are written only when edited. Each write is sent once: create (then PATCH for
+/// update-only choices when needed) or update, then the chain. A lost answer leaves
+/// saving disabled with an unknown-outcome message (no replay). A created library
+/// becomes an edit before follow-up writes, so a known failure retries as an update
+/// instead of creating a second library.
 /// </summary>
 public sealed class AdminLibraryEditorSession : IDisposable
 {
@@ -379,14 +380,26 @@ public sealed class AdminLibraryEditorSession : IDisposable
             return null;
         }
         if (!IsCurrent) return null;
-        _owner.Announce(AdminLibrariesText.T(editing != null ? "web.admin.libraries.toast.libraryUpdated" : "web.admin.libraries.toast.libraryCreated"), false);
         _owner.AfterLibrarySaved(_lease, body.TrickplayEnabled != null || body.Enabled != (editing?.Enabled ?? true));
-        // From here the library exists: a retry is an update of it.
-        Update(s => s with
+        // From here the library exists: any retry (including a failed follow-up PATCH) is an update of it.
+        RecordSavedLibrary(saved);
+        if (editing == null && (saved.Enabled != body.Enabled || saved.AutoTranslateMetadata != body.AutoTranslateMetadata))
         {
-            Library = saved, SavedTrickplay = saved.TrickplayEnabled, SavedBoxSets = saved.BoxSetsEnabled,
-            SavedBoxSetMinMovies = saved.BoxSetMinMovies is >= 2 and <= 10 ? saved.BoxSetMinMovies : s.SavedBoxSetMinMovies, SavedBoxSetsInSearch = saved.BoxSetsInSearch,
-        });
+            try
+            {
+                // LibraryCreate does not accept these two fields. Apply the draft only after adopting the created id.
+                saved = await _api.UpdateAsync(_lease, saved.Id, BuildBody(State), _lease.Token).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                Failed(error, "web.admin.libraries.toast.saveFailed");
+                return null;
+            }
+            if (!IsCurrent) return null;
+            RecordSavedLibrary(saved);
+            _owner.AfterLibrarySaved(_lease, true);
+        }
+        _owner.Announce(AdminLibrariesText.T(editing != null ? "web.admin.libraries.toast.libraryUpdated" : "web.admin.libraries.toast.libraryCreated"), false);
         if (chains == null) { Update(s => s with { Saving = false, Saved = true }); return null; }
         try
         {
@@ -402,6 +415,12 @@ public sealed class AdminLibraryEditorSession : IDisposable
         Update(s => s with { Saving = false, Saved = true, ChainDirty = false });
         return null;
     }
+
+    private void RecordSavedLibrary(AdminLibrary saved) => Update(s => s with
+    {
+        Library = saved, SavedTrickplay = saved.TrickplayEnabled, SavedBoxSets = saved.BoxSetsEnabled,
+        SavedBoxSetMinMovies = saved.BoxSetMinMovies is >= 2 and <= 10 ? saved.BoxSetMinMovies : s.SavedBoxSetMinMovies, SavedBoxSetsInSearch = saved.BoxSetsInSearch,
+    });
 
     private void Failed(Exception error, string fallbackKey)
     {

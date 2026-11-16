@@ -35,7 +35,8 @@ internal static partial class AdminLibrariesNativeFixture
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previousServices = servicesField.GetValue(null);
         servicesField.SetValue(null, provider);
-        var page = new AdminLibrariesPage(new AdminLibrariesApi(client), authority, new Realtime());
+        var realtime = new Realtime();
+        var page = new AdminLibrariesPage(new AdminLibrariesApi(client), authority, realtime);
         var host = new Grid();
         var retainedHost = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, Orientation = Orientation.Horizontal };
         var retainedParents = new Dictionary<FrameworkElement, DependencyObject>();
@@ -60,7 +61,7 @@ internal static partial class AdminLibrariesNativeFixture
             Resize(window, 1440, 900);
             await Until(() => page.Controller?.State is { Loaded: true } && Find<Button>(page, "LibrariesGrip_2") != null);
             var controller = page.Controller!;
-            await PointerDropRegressionAsync(window, page, server);
+            await PointerDropRegressionAsync(window, page, server, realtime);
             await SnapshotReplacementDragRegressionAsync(page, server);
             await TranslationCapabilityRetryRegressionAsync(window, page, server);
             await ReadRecoveryControlsRegressionAsync(window, page, server);
@@ -375,7 +376,7 @@ internal static partial class AdminLibrariesNativeFixture
         await controller.ReloadAsync();
     }
 
-    private static async Task PointerDropRegressionAsync(Window window, AdminLibrariesPage page, Server server)
+    private static async Task PointerDropRegressionAsync(Window window, AdminLibrariesPage page, Server server, Realtime realtime)
     {
         var grip = Find<Button>(page, "LibrariesGrip_2")!;
         var target = Find<Button>(page, "LibrariesGrip_3")!;
@@ -386,6 +387,15 @@ internal static partial class AdminLibrariesNativeFixture
         var before = server.Requests.Count(request => request == "POST /api/v2/libraries/reorder");
         Check((bool)Handle("BeginPointerDrag", grip, page.Controller!, page.Controller!.State.Owner!, page.Controller.State.Libraries, "2", start)!, "reachable pointer press handler admits the rendered owner");
         Check((bool)Handle("MovePointerDrag", grip, end)!, "reachable pointer move handler selects a real rendered target");
+        var libraries = page.Controller.State.Libraries;
+        var scans = page.Controller.State.Scans;
+        realtime.Event("scans", "scan.progress", "{\"id\":\"s2\",\"library_id\":2,\"mode\":\"subtree\",\"status\":\"running\",\"result\":{\"total_files\":100,\"files_processed\":42}}");
+        await Until(() => !ReferenceEquals(scans, page.Controller.State.Scans));
+        Handle("Render", page.Controller.State);
+        await Task.Delay(100); // Allow queued renders to run before release.
+        Check(ReferenceEquals(libraries, page.Controller.State.Libraries), "scan progress keeps the drag's library snapshot current");
+        Check(ReferenceEquals(grip, Find<Button>(page, "LibrariesGrip_2")) && grip.IsLoaded && ReferenceEquals(Field(page, "_dragGrip"), grip),
+            "scan progress preserves the mounted pointer grip and pending drop");
         Handle("LosePointerDragCapture", grip);
         Handle("ReleasePointerDrag", grip, (Action)(() => Handle("LosePointerDragCapture", grip)));
         await Until(() => server.Requests.Count(request => request == "POST /api/v2/libraries/reorder") > before, 1500);

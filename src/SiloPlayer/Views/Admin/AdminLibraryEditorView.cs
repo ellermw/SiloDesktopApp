@@ -452,8 +452,7 @@ internal sealed class AdminLibraryEditorView : Grid
         if (!string.IsNullOrEmpty(library.PosterUrl))
         {
             var image = new Image { Height = 56, Width = 56 * 16 / 9d, Stretch = Stretch.UniformToFill };
-            if (Uri.TryCreate(new Uri(App.Services.GetService(typeof(SiloApiClient)) is SiloApiClient client && client.BaseUrl.Length > 0 ? client.BaseUrl : "https://localhost/"), library.PosterUrl, out var uri))
-                image.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(uri);
+            _ = LoadPosterPreviewAsync(image, library);
             AutomationProperties.SetName(image, T("web.admin.common.libraryEditor.poster.alt", ("name", library.Name)));
             row.Children.Add(new Border { Child = image, CornerRadius = new(4), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") });
         }
@@ -480,6 +479,24 @@ internal sealed class AdminLibraryEditorView : Grid
         }
         stack.Children.Add(row);
         return stack;
+    }
+
+    private async Task LoadPosterPreviewAsync(Image image, AdminLibrary library)
+    {
+        try
+        {
+            var bytes = await _controller.Api.GetPosterAsync(Session.Lease, library.PosterUrl!, Session.Lease.Token);
+            if (_closed || !Session.IsCurrent || Session.State.Library?.Id != library.Id || Session.State.Library?.PosterUrl != library.PosterUrl) return;
+            using var stream = new MemoryStream(bytes);
+            using var source = stream.AsRandomAccessStream();
+            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+            await bitmap.SetSourceAsync(source);
+            if (!_closed && Session.IsCurrent) image.Source = bitmap;
+        }
+        catch (Exception)
+        {
+            // A missing, invalid or retired preview must not break the editor or fetch via BitmapImage.
+        }
     }
 
     /// <summary>Opens the image picker (JPEG, PNG, WebP), reads at most 10 MiB, then uploads under the editor's lease.</summary>

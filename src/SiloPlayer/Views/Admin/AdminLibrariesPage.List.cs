@@ -51,6 +51,9 @@ public sealed partial class AdminLibrariesPage
         // An open card menu stays open (a move can be repeated, the mount result shows under its label):
         // the menu updates in place and the cards rebuild when it closes.
         if (_cardMenu is { Owner.IsCurrent: true } && !_wide) { RefreshCardMenu(state); return; }
+        // Keep the capturing grip and its row geometry mounted until pointer release.
+        // Status-only updates are rendered on release; a new owner/list or layout still cancels.
+        if (_dragGrip != null && DragIsCurrent && _wide) return;
         _renderedListKey = key;
         var focused = Focused(XamlRoot);
         var focusId = focused == null ? "" : AutomationProperties.GetAutomationId(focused);
@@ -485,7 +488,13 @@ public sealed partial class AdminLibrariesPage
         _pointerDrag = false;
         releaseCapture();
         if (_dragGrip != grip) return;
-        if (shouldCommit) CommitDrag(); else CancelDrag();
+        if (shouldCommit) CommitDrag();
+        else
+        {
+            CancelDrag();
+            _renderedListKey = null;
+            if (_controller != null) Render(_controller.State);
+        }
     }
 
     private void LosePointerDragCapture(Button grip)

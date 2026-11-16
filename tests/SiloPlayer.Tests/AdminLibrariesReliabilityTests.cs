@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
@@ -88,6 +89,154 @@ public sealed partial class AdminLibrariesControllerTests
         };
         await Assert.ThrowsAsync<InvalidDataException>(operation);
         Assert.Single(kit.Http.Requests);
+    }
+
+    [Theory]
+    [InlineData("https://other.test/poster.png")]
+    [InlineData("http://silo.test/poster.png")]
+    [InlineData("https://silo.test:444/poster.png")]
+    [InlineData("//other.test/poster.png")]
+    [InlineData("file:///local/poster.png")]
+    [InlineData("ms-appx:///poster.png")]
+    [InlineData("https://user@silo.test/poster.png")]
+    public async Task PosterPreviewRejectsUntrustedOriginsBeforeSending(string url)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        await Assert.ThrowsAsync<ArgumentException>(() => new AdminLibrariesApi(kit.Client).GetPosterAsync(lease, url));
+        Assert.Empty(kit.Http.Requests);
+    }
+
+    [Theory]
+    [InlineData("https://[")]
+    [InlineData("not a server URL")]
+    [InlineData("file:///local")]
+    public async Task PosterPreviewRejectsInvalidServerBasesWithoutSending(string baseUrl)
+    {
+        using var kit = AdminMonitorKit.Create();
+        kit.Client.SetBaseUrl(baseUrl);
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        await Assert.ThrowsAsync<ArgumentException>(() => new AdminLibrariesApi(kit.Client).GetPosterAsync(lease, "/poster.png"));
+        Assert.Empty(kit.Http.Requests);
+    }
+
+    [Fact]
+    public async Task PosterPreviewDiscardsAResponseAfterItsLeaseRetires()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) =>
+        {
+            kit.SetRole("user");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1]) });
+        };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new AdminLibrariesApi(kit.Client).GetPosterAsync(lease, "/poster.png"));
+        Assert.Single(kit.Http.Requests);
+    }
+
+    [Theory]
+    [InlineData("/posters/1.png")]
+    [InlineData("posters/1.png")]
+    [InlineData("https://silo.test/posters/1.png")]
+    public async Task PosterPreviewUsesTheAuthenticatedLeaseTransport(string url)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (request, _) =>
+        {
+            Assert.Equal("https://silo.test/posters/1.png", request.RequestUri!.AbsoluteUri);
+            Assert.Equal("synthetic-access", request.Headers.Authorization?.Parameter);
+            Assert.Equal("p1", request.Headers.GetValues("X-Profile-Id").Single());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) });
+        };
+        Assert.Equal(new byte[] { 1, 2, 3 }, await new AdminLibrariesApi(kit.Client).GetPosterAsync(lease, url));
+        Assert.Single(kit.Http.Requests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PosterPreviewBoundsBothDeclaredAndChunkedBodies(bool chunked)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var bytes = new byte[AdminLibrariesApi.MaxPosterBytes + 1];
+        kit.Http.Respond = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = chunked ? new StreamContent(new LibraryStalledStream(bytes)) : new ByteArrayContent(bytes),
+        });
+        await Assert.ThrowsAsync<InvalidDataException>(() => new AdminLibrariesApi(kit.Client).GetPosterAsync(lease, "/poster.png"));
+        Assert.Single(kit.Http.Requests);
+    }
+
+    [Fact]
+    public async Task CreateAppliesEnabledAndAutoTranslateBeforeReportingSaved()
+    {
+        var (kit, authority, controller, server, _, _) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var created = AdminLibrariesTests.Library("9", "New");
+            var updated = created.Replace("\"enabled\":true", "\"enabled\":false").Replace("\"auto_translate_metadata\":false", "\"auto_translate_metadata\":true");
+            string? patch = null;
+            server.Override = request => request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v2/libraries" when request.Method == HttpMethod.Post => AdminMonitorKit.Json(created, HttpStatusCode.Created),
+                "/api/v2/libraries/9" when request.Method == HttpMethod.Patch => (patch = request.Content!.ReadAsStringAsync().Result) == null ? null : AdminMonitorKit.Json(updated),
+                _ => null,
+            };
+            using var editor = AdminLibraryEditorSession.Begin(controller, null);
+            editor.SetName("New"); editor.UpdatePath(0, "/media/new");
+            editor.SetEnabled(false); editor.SetAutoTranslate(true);
+            await editor.SubmitAsync();
+            Assert.True(editor.State.Saved);
+            Assert.False(editor.State.Library!.Enabled);
+            Assert.True(editor.State.Library.AutoTranslateMetadata);
+            using var json = JsonDocument.Parse(patch!);
+            Assert.False(json.RootElement.GetProperty("enabled").GetBoolean());
+            Assert.True(json.RootElement.GetProperty("auto_translate_metadata").GetBoolean());
+            Assert.Single(kit.Http.Requests.Where(request => request == "POST /api/v2/libraries"));
+            Assert.Single(kit.Http.Requests.Where(request => request == "PATCH /api/v2/libraries/9"));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateFollowUpPatchFailureRetainsCreatedIdAndNeverReplaysPost(bool lostAnswer)
+    {
+        var (kit, authority, controller, server, _, _) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var created = AdminLibrariesTests.Library("9", "New");
+            var failing = true;
+            server.Override = request => request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v2/libraries" when request.Method == HttpMethod.Post => AdminMonitorKit.Json(created, HttpStatusCode.Created),
+                "/api/v2/libraries/9" when request.Method == HttpMethod.Patch => failing
+                    ? lostAnswer ? throw new HttpRequestException("reset") : AdminMonitorKit.Json("{}", HttpStatusCode.UnprocessableEntity)
+                    : AdminMonitorKit.Json(created.Replace("\"enabled\":true", "\"enabled\":false")),
+                _ => null,
+            };
+            using var editor = AdminLibraryEditorSession.Begin(controller, null);
+            editor.SetName("New"); editor.UpdatePath(0, "/media/new"); editor.SetEnabled(false);
+            await editor.SubmitAsync();
+            Assert.False(editor.State.Saved);
+            Assert.Equal("9", editor.State.Library?.Id);
+            Assert.NotNull(editor.State.Failure);
+            Assert.Equal(lostAnswer, editor.State.OutcomeUnknown);
+            failing = false;
+            await editor.SubmitAsync();
+            Assert.Equal(!lostAnswer, editor.State.Saved);
+            Assert.Single(kit.Http.Requests.Where(request => request == "POST /api/v2/libraries"));
+            Assert.Equal(lostAnswer ? 1 : 2, kit.Http.Requests.Count(request => request == "PATCH /api/v2/libraries/9"));
+        }
     }
 
     [Fact]
