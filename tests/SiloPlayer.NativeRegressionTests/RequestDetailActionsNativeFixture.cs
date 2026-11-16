@@ -33,7 +33,7 @@ internal static class RequestDetailActionsNativeFixture
             var features = new RequestFeatureStatus { Allowed = true, RequestsEnabled = true, FollowSupported = true, WatchlistTitlesSupported = true, SeasonRequestsSupported = true, DownloadProgressSupported = true };
             handler.Item.Request.Download = new() { Phase = "downloading", Percent = 42 };
             Set(page, "_features", features); Set(page, "_navigation", new RequestDetailNavigation("series", 41));
-            void Render() { Set(page, "_item", handler.Item); Invoke(page, "Render", handler.Item); ((FrameworkElement)page.FindName("LoadingLayer")).Visibility = Visibility.Collapsed; page.UpdateLayout(); }
+            void Render() { Set(page, "_item", handler.Item); Set(page, "_contentOwner", SiloPlayer.App.Services.GetRequiredService<RequestsApi>().CaptureDiscoveryOwner()); Invoke(page, "Render", handler.Item); ((FrameworkElement)page.FindName("LoadingLayer")).Visibility = Visibility.Collapsed; page.UpdateLayout(); }
             Button Action(string id) => ((SiloPlayer.Controls.WrapPanel)page.FindName("ActionsPanel")).Children.OfType<Button>().Single(button => AutomationProperties.GetAutomationId(button) == id);
             Render(); await Task.Delay(100);
             foreach (var action in new[] { "follow", "watchlist" })
@@ -75,7 +75,13 @@ internal static class RequestDetailActionsNativeFixture
             if (!handler.Seasons!.SequenceEqual([2])) throw new InvalidOperationException("Actual mixed-season selection submits all/default/already-requested seasons.");
             Program.Log("PASS: REQUEST_DETAIL_ACTIONS_COMPLETED actual Follow/Watchlist pending/rejection/retry/remove, cancel confirmation/Keep/rejection/pending/retry and exact mixed-season ToggleSwitch submission.");
         }
-        finally { handler.Gate?.TrySetResult(); parent.Children.Remove(page); local.GetRequiredService<ToastService>().Unregister(); parent.Children.Remove(toast); await Task.Delay(150); field.SetValue(null, original); }
+        finally
+        {
+            handler.Gate?.TrySetResult();
+            await RequestFixtureLifecycle.DetachAsync(page, () => parent.Children.Remove(page));
+            local.GetRequiredService<ToastService>().Unregister(); parent.Children.Remove(toast);
+            field.SetValue(null, original);
+        }
     }
     private static void Set(object target, string name, object value) => target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
     private static object? Invoke(object target, string name, params object[] args) => target.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, args);

@@ -39,7 +39,7 @@ internal static class RequestDetailParityNativeFixture
             {
                 var page = new RequestDetailPage { Width = width, Height = 800 }; pages.Add(page); parent.Children.Add(page);
                 var item = new RequestMediaDetail { MediaType = "movie", TmdbId = 41, Title = "An External Title With A Long Name", Overview = string.Join(" ", Enumerable.Repeat("A fixture overview to verify description overflow and accessible actions.", 8)), Request = new() { Requestable = true }, Recommendations = [new() { MediaType = "series", TmdbId = 42, Title = "Shared recommendation", Request = new() { Requestable = true } }] };
-                Set(page, "_item", item); Set(page, "_features", Features()); Invoke(page, "Render", item);
+                Set(page, "_item", item); Set(page, "_features", Features()); Set(page, "_contentOwner", SiloPlayer.App.Services.GetRequiredService<RequestsApi>().CaptureDiscoveryOwner()); Invoke(page, "Render", item);
                 ((FrameworkElement)page.FindName("LoadingLayer")).Visibility = Visibility.Collapsed;
                 await LayoutAsync(page, width, 800);
                 var poster = (FrameworkElement)page.FindName("PosterBorder");
@@ -75,7 +75,7 @@ internal static class RequestDetailParityNativeFixture
             var series = new RequestMediaDetail { MediaType = "series", TmdbId = 42, Title = "Upcoming external series", Availability = "missing", Request = new() { Requestable = true }, Seasons = [new() { SeasonNumber = 1, AirDate = DateTime.UtcNow.AddYears(1).ToString("yyyy-MM-dd"), EpisodeCount = 8 }] };
             handler.Item = series;
             var detail = new RequestDetailPage { Width = 500, Height = 800 }; pages.Add(detail); parent.Children.Add(detail);
-            Set(detail, "_item", series); Set(detail, "_features", Features()); Invoke(detail, "Render", series);
+            Set(detail, "_item", series); Set(detail, "_features", Features()); Set(detail, "_contentOwner", SiloPlayer.App.Services.GetRequiredService<RequestsApi>().CaptureDiscoveryOwner()); Invoke(detail, "Render", series);
             await LayoutAsync(detail, 500, 800);
             var request = ((WrapPanel)detail.FindName("ActionsPanel")).Children.OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Request series");
             handler.FailCreate = true;
@@ -100,7 +100,13 @@ internal static class RequestDetailParityNativeFixture
             Program.Log("PASS: actual upcoming whole-series request entry/payload, rejected picker remains open, pending spinner/deduplication and successful retry.");
             await EditablePendingSeasonsAsync(parent);
         }
-        finally { services.GetRequiredService<ToastService>().Unregister(); parent.Children.Remove(toast); foreach (var page in pages) parent.Children.Remove(page); field.SetValue(null, previous); }
+        finally
+        {
+            services.GetRequiredService<ToastService>().Unregister(); parent.Children.Remove(toast);
+            foreach (var page in pages)
+                await RequestFixtureLifecycle.DetachAsync(page, () => parent.Children.Remove(page));
+            field.SetValue(null, previous);
+        }
     }
     private static RequestFeatureStatus Features() => new() { RequestsEnabled = true, Allowed = true, State = "available", SeasonRequestsSupported = true, WatchlistTitlesSupported = true, WatchlistRequests = true, FollowSupported = true, DownloadProgressSupported = true };
     private static async Task LoadedBackdropAsync(StackPanel parent)
@@ -117,7 +123,7 @@ internal static class RequestDetailParityNativeFixture
                     Creators = ["Bill Lawrence"], Networks = ["ABC"], Genres = ["Comedy"],
                     Overview = "Sunny, a whiz in both Pre-Med and Film, makes a video diary for her mother of her first year at Sacred Heart.",
                     Request = new() { Requestable = true } };
-                Set(page, "_item", item); Set(page, "_features", Features()); Invoke(page, "Render", item);
+                Set(page, "_item", item); Set(page, "_features", Features()); Set(page, "_contentOwner", SiloPlayer.App.Services.GetRequiredService<RequestsApi>().CaptureDiscoveryOwner()); Invoke(page, "Render", item);
                 ((FrameworkElement)page.FindName("LoadingLayer")).Visibility = Visibility.Collapsed;
                 await LayoutAsync(page, width, height);
                 if (width >= 1024 && ((Grid)page.FindName("HeroContent")).RowSpacing != 0)
@@ -156,7 +162,7 @@ internal static class RequestDetailParityNativeFixture
                 }
                 await MediaParityNativeFixture.CaptureAsync(page, $"requests-loaded-backdrop-{width:0}.png");
             }
-            finally { parent.Children.Remove(page); }
+            finally { await RequestFixtureLifecycle.DetachAsync(page, () => parent.Children.Remove(page)); }
         }
         Program.Log("PASS: actual decoded4096x2304 backdrop preserves external-title hero and visible actions at500x800/1920x1048/2566x984/3440x1408/3840x2128/5120x1440.");
     }

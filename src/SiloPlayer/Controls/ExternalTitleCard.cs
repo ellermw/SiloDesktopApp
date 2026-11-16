@@ -30,8 +30,11 @@ public static class ExternalTitleCard
 
     public static Grid Build(RequestMediaResult item, double width, Func<Task>? request = null,
         Func<Task>? watchlist = null, bool removeOnly = false, string? statusCaption = null, bool attention = false, string? statusBadge = null,
-        bool watchlistCard = false, Action? statusSearchAction = null, Func<string>? captionText = null, Func<string>? badgeText = null)
+        bool watchlistCard = false, Action? statusSearchAction = null, Func<string>? captionText = null, Func<string>? badgeText = null, SiloPlayer.Core.Api.RequestDiscoveryOwner? discoveryOwner = null)
     {
+        var api = App.Services.GetService<SiloPlayer.Core.Api.RequestsApi>();
+        var owner = discoveryOwner ?? api?.CaptureDiscoveryOwner();
+        bool CanDiscover() => api == null || owner is { } context && api.IsCurrentDiscoveryOwner(context) && api.DiscoveryAllowed;
         var card = new Grid { Width = width, RowSpacing = 0 };
         card.RowDefinitions.Add(new RowDefinition { Height = new GridLength(width * 1.5) });
         card.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -86,7 +89,7 @@ public static class ExternalTitleCard
                 var findRun = new Run { Text = "Find it" };
                 find.Inlines.Add(findRun);
                 SiloPlayer.Services.AppLocalization.Register(statusText, () => findRun.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.library.watchlist.findIt", fallback: "Find it"));
-                find.Click += (_, _) => statusSearchAction();
+                find.Click += (_, _) => { if (CanDiscover()) statusSearchAction(); };
                 statusText.Inlines.Add(find);
             }
             caption.Children.Add(statusText);
@@ -97,7 +100,7 @@ public static class ExternalTitleCard
             Style = (Style)Application.Current.Resources["PosterHitTargetButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
         MediaItemCardActions.BindText(open, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.viewDetails") + " · " + item.Title));
-        open.Click += (_, _) => navigation.Navigate<RequestDetailPage>((RequestDetailNavigation)open.Tag);
+        open.Click += (_, _) => { if (CanDiscover()) navigation.Navigate<RequestDetailPage>((RequestDetailNavigation)open.Tag); };
         Grid.SetRowSpan(open, statusSearchAction == null ? 3 : 2); card.Children.Add(open);
         if (item.LibraryContentId is { Length: > 0 } libraryId)
         {
@@ -164,7 +167,7 @@ public static class ExternalTitleCard
                 action.Button.IsHitTestVisible = revealed;
             }
         }
-        if (request != null && item.Request.Requestable)
+        if (request != null && CanDiscover() && api?.SubmissionAllowed != false && item.Request.Requestable)
         {
             var pending = false;
             var button = new Button { Height = 36, MinHeight = 0, Padding = new Thickness(14, 0, 14, 0),
@@ -173,7 +176,7 @@ public static class ExternalTitleCard
             object NormalContent() => new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6,
                 Children = { WebUiIcon.Create("plus", 14, Brush("AccentForegroundBrush"), 2.5), SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Request", FontSize = 12, FontWeight = FontWeights.SemiBold }, text: "web.requests.request") } };
             button.Content = NormalContent(); MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.requestTitle", new Dictionary<string, object?> { ["title"] = item.Title })));
-            button.Click += async (_, _) => { if (pending) return; pending = true; button.IsEnabled = false;
+            button.Click += async (_, _) => { if (pending || !CanDiscover()) return; pending = true; button.IsEnabled = false;
                 MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.sendingFor", new Dictionary<string, object?> { ["title"] = item.Title })));
                 button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new ProgressRing { IsActive = true, Width = 14, Height = 14 }, SiloPlayer.Controls.MediaItemCardActions.Localize(new TextBlock { Text = "Sending", FontSize = 12, FontWeight = FontWeights.SemiBold }, text: "web.requests.card.sending") } }; UpdateReveal();
                 try { await request(); }
@@ -181,7 +184,7 @@ public static class ExternalTitleCard
                 finally { pending = false; button.IsEnabled = true; button.Content = NormalContent(); MediaItemCardActions.BindText(button, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.card.requestTitle", new Dictionary<string, object?> { ["title"] = item.Title }))); UpdateReveal(); } };
             actions.Add((button, () => pending)); card.Children.Add(button);
         }
-        if (watchlist != null)
+        if (watchlist != null && CanDiscover())
         {
             var pending = false;
             var button = new Button { Width = 32, Height = 32, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), CornerRadius = new CornerRadius(10),
@@ -199,7 +202,7 @@ public static class ExternalTitleCard
             void RootChanged(XamlRoot _, XamlRootChangedEventArgs __) => UpdateBookmark();
             card.Loaded += (_, _) => { if (observedRoot != null) observedRoot.Changed -= RootChanged; observedRoot = card.XamlRoot; if (observedRoot != null) observedRoot.Changed += RootChanged; UpdateBookmark(); };
             card.Unloaded += (_, _) => { if (observedRoot != null) observedRoot.Changed -= RootChanged; observedRoot = null; };
-            button.Click += async (_, _) => { if (pending) return; pending = true; button.IsEnabled = false; UpdateReveal();
+            button.Click += async (_, _) => { if (pending || !CanDiscover()) return; pending = true; button.IsEnabled = false; UpdateReveal();
                 try { await watchlist(); UpdateBookmark(); } catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
                 finally { pending = false; button.IsEnabled = true; UpdateReveal(); } };
             actions.Add((button, () => pending)); card.Children.Add(button);

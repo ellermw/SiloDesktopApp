@@ -29,7 +29,7 @@ internal static class RequestDetailPollingNativeFixture
                 var item = Item(percent);
                 Set(page, "_navigation", new RequestDetailNavigation("movie", 41)); Set(page, "_item", item);
                 Set(page, "_features", new RequestFeatureStatus { Allowed = true, RequestsEnabled = true, DownloadProgressSupported = true });
-                Invoke(page, "Render", item); ((FrameworkElement)page.FindName("LoadingLayer")).Visibility = Visibility.Collapsed;
+                Set(page, "_contentOwner", SiloPlayer.App.Services.GetRequiredService<RequestsApi>().CaptureDiscoveryOwner()); Invoke(page, "Render", item); ((FrameworkElement)page.FindName("LoadingLayer")).Visibility = Visibility.Collapsed;
                 parent.Children.Add(page); page.UpdateLayout(); return page;
             }
             var page = Create(); await Task.Delay(100);
@@ -64,7 +64,12 @@ internal static class RequestDetailPollingNativeFixture
             if (detachedTimer.IsEnabled || handler.Calls != unloadedCalls) throw new InvalidOperationException("Unloaded detail retains its poll owner or creates new requests.");
             Program.Log("PASS: REQUEST_DETAIL_POLLING_COMPLETED 30-second mounted download refresh, mutation activation, no overlap, retained progress on rejection, completion stop and unload cancellation.");
         }
-        finally { foreach (var page in pages) parent.Children.Remove(page); field.SetValue(null, previous); }
+        finally
+        {
+            foreach (var page in pages)
+                await RequestFixtureLifecycle.DetachAsync(page, () => parent.Children.Remove(page));
+            field.SetValue(null, previous);
+        }
     }
     private static RequestMediaDetail Item(int? percent) => new() { TmdbId = 41, MediaType = "movie", Title = "Download polling fixture", Request = new() { State = percent == null ? "pending" : "processing", Status = percent == null ? "pending" : "processing", Download = percent == null ? null : new() { Phase = "downloading", Percent = percent } } };
     private static double Progress(RequestDetailPage page) => Descendants((DependencyObject)page.FindName("DownloadProgressHost")).OfType<ProgressBar>().Single().Value;
