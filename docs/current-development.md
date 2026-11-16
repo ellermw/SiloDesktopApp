@@ -1,3 +1,36 @@
+# November 16 — Admin Manage Users Beta handoff
+
+One scoped Users increment adds Users/Invitations/Invite Codes and the account
+Overview, Profiles, Access, Sign-in, Activity, Downloads and Preferences surfaces,
+including nested profile/PIN/avatar, policy/quota, invitation and invite-code
+workflows. It is separate from Libraries PR181, Search, Storage and viewer work.
+
+Deliberate tested base: `bdd033c1cab7cd601d6771bb853f4b0af044d67e`. Official
+Users contracts were read at `17d5376c` and rechecked at `8f93594c`; the later
+`5b3dcaa2f` Dashboard-only change is a separate increment. Version stamps remain
+1.2.1165 / 1.2.1165.0 under pipeline control.
+
+Actual evidence: focused Users/architecture 157/157 PASS; R6 full 7,625/7,625
+PASS before the final UI-only fixes; R7 full 7,624 PASS / 1 FAIL, with the
+unchanged Network Access case subsequently PASS 1/1 alone in R8. Do not present
+that as an all-green final full suite. R10 nonincremental app/publish/host and
+source/PDB binding pass; five complete native groups pass: Users147, foundation36,
+General188, Monitor113, Dashboard184 (counts include completion/teardown markers).
+Actual R10 release: `2026-11-16T20:32:48.1897021Z`. Root released audit confirms
+2,613 source entries, 666 published files and ten contained numeric-zero captures.
+Only documentation changes after the tested source. See `docs/parity/admin-users.md`.
+
+Known temporary view-as sessions use one independent bounded logout on retirement;
+unknown/unreceived impersonation receipts cannot guarantee remote revocation.
+English localization, complete keyboard/Narrator/all-DPI/live visual parity,
+full-app view-as playback/Downloads, ten authored semantic controls and live
+account/server/installer acceptance remain unverified. No installed-player,
+settings, installer execution, release or direct merge. The owner-authorized
+feature commit/non-draft Beta PR hands subsequent review/QA/fixes to the pipeline.
+
+---
+
+
 # November 16 — Books browsing/card Beta handoff
 
 The owner explicitly directs immediate non-draft Beta submission while local

@@ -1,0 +1,11 @@
+diff --git a/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersWorkspace.cs b/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersWorkspace.cs
+--- a/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersWorkspace.cs
++++ b/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersWorkspace.cs
+@@ -23,7 +23,6 @@
+         lock (_gate)
+         {
+             if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
+-            if (_outcomeUnknown) throw new AdminUsersReviewRequiredException();
+             _needsReview = false;
+         }
+     }

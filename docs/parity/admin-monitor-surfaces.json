@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files page, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email and Security settings pages and the Network access tool page",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files page, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email and Security settings pages and the Network access tool page, and Admin Manage Users account, profile, invitation and invite-code workflows",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminMarkerHistoryApi.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Activity.cs",
@@ -126,6 +126,31 @@
     "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.Rows.cs",
     "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.cs",
     "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.xaml",
-    "src/SiloPlayer/Views/Admin/AdminSubtitlesRegistration.cs"
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesRegistration.cs",
+    "src/SiloPlayer.Core/Api/AdminUsersApi.Guards.cs",
+    "src/SiloPlayer.Core/Api/AdminUsersApi.cs",
+    "src/SiloPlayer.Core/Api/SiloApiClient.AdminUsers.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUserAvatarImages.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUserAvatars.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUserPreferences.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUserRequestTerms.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUserViewAs.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUsersContract.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUsersPresentation.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUsersRules.cs",
+    "src/SiloPlayer.Core/Services/Admin/Users/AdminUsersWorkspace.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersAvatarPicker.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersForm.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.Choices.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.Detail.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.Downloads.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.Editors.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.List.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.Preferences.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.SignIn.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.ViewAs.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersRegistration.cs"
   ]
 }
