@@ -123,6 +123,7 @@ internal static class BooksLibraryNativeFixture
                 else Program.Log("PASS: " + axis + " group click requests only its selected group.");
             }
             SeriesCardCases(page, failures);
+            await SeriesCoverLifetimeCasesAsync(page, servicesField);
             viewModel.ErrorMessage = "Synthetic catalog failure";
             typeof(LibraryPage).GetField("_libraryCatalogLoaded", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, true);
             Invoke(page, "RenderVirtualGrid", false);
@@ -181,6 +182,99 @@ internal static class BooksLibraryNativeFixture
             new AudiobookGroup { Name = "Unstarted", ItemCount = 3 }, 180d, CancellationToken.None)!;
         Expect(((TextBlock)((StackPanel)unstarted.Content).Children[4]).Visibility == Visibility.Collapsed,
             "an unstarted series shows no listening line");
+    }
+
+    private static async Task SeriesCoverLifetimeCasesAsync(LibraryPage page, FieldInfo servicesField)
+    {
+        var previous = (IServiceProvider)servicesField.GetValue(null)!;
+        var cache = Path.Combine(Path.GetTempPath(), "silo-series-cover-" + Guid.NewGuid().ToString("N"));
+        using var images = new ImageService(cache);
+        using var wire = new CoverWire();
+        using var http = new HttpClient(wire);
+        using var departure = new CancellationTokenSource();
+        var host = (Panel)page.FindName("AudiobookGroupsHost");
+        var axis = typeof(LibraryPage).GetField("_currentAudiobookAxis", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var navigated = typeof(LibraryPage).GetField("_isNavigated", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var owner = typeof(LibraryPage).GetField("_audiobookGroupLoadCts", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        servicesField.SetValue(null, new CoverServices(previous, images, http));
+        try
+        {
+            // Both cards are waiting on downloads when departure cancels their
+            // token. Returning to Home must not strand them on the Library tab.
+            axis.SetValue(page, "series");
+            for (var index = 0; index < 2; index++)
+            {
+                var group = new AudiobookGroup { Name = "Pending Series", PosterUrls = [$"https://covers.invalid/pending-{index}"] };
+                host.Children.Add((Button)Invoke(page, "CreateAudiobookSeriesCard", group, 180d, departure.Token)!);
+            }
+            await wire.PendingStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            departure.Cancel();
+            Invoke(page, "ShowTab", "Recommended");
+            Check(host.Children.OfType<Button>().All(card => ((Border)((StackPanel)card.Content).Children[0]).Child == null),
+                "departure interrupts pending series covers before any image or initials is installed");
+            wire.Release.TrySetResult(true);
+            navigated.SetValue(page, true);
+            Invoke(page, "ShowTab", "Library");
+            var covers = host.Children.OfType<Button>().Select(card => (Border)((StackPanel)card.Content).Children[0]).ToArray();
+            for (var attempt = 0; attempt < 200 && covers.Any(cover => cover.Child == null); attempt++)
+                await Task.Delay(10);
+            Check(covers.Length == 2 && covers.All(cover => cover.Child is TextBlock { Text: "PS" }),
+                "re-showing Library resumes every retained cancelled series cover to initials without rebuilding cards");
+
+            var timeout = "https://covers.invalid/timeout";
+            var valid = "https://covers.invalid/valid";
+            var failed = new HashSet<string>(StringComparer.Ordinal);
+            var recovered = new Border();
+            await (Task)Invoke(page, "LoadAudiobookSeriesCoverAsync", recovered,
+                new AudiobookGroup { Name = "Timeout Series", PosterUrls = [timeout, valid] }, 180d, failed, CancellationToken.None)!;
+            Check(failed.Contains(timeout) && !failed.Contains(valid) && recovered.Child is Image,
+                "download TaskCanceledException with an uncancelled caller token falls through to a valid cover");
+            var fallback = new Border();
+            await (Task)Invoke(page, "LoadAudiobookSeriesCoverAsync", fallback,
+                new AudiobookGroup { Name = "Timeout Series", PosterUrls = [timeout] }, 180d,
+                new HashSet<string>(StringComparer.Ordinal), CancellationToken.None)!;
+            Check(fallback.Child is TextBlock { Text: "TS" }, "exhausted timed-out covers fall back to initials");
+        }
+        finally
+        {
+            wire.Release.TrySetResult(true);
+            navigated.SetValue(page, false);
+            axis.SetValue(page, "books");
+            var resumed = (CancellationTokenSource?)owner.GetValue(page);
+            resumed?.Cancel();
+            resumed?.Dispose();
+            owner.SetValue(page, null);
+            host.Children.Clear();
+            servicesField.SetValue(null, previous);
+            Directory.Delete(cache, recursive: true);
+        }
+    }
+
+    private sealed class CoverServices(IServiceProvider fallback, ImageService images, HttpClient http) : IServiceProvider
+    {
+        public object? GetService(Type type) => type == typeof(ImageService) ? images
+            : type == typeof(HttpClient) ? http : fallback.GetService(type);
+    }
+
+    private sealed class CoverWire : HttpMessageHandler
+    {
+        internal readonly TaskCompletionSource<bool> PendingStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource<bool> Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _pendingCount;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.StartsWith("/pending-", StringComparison.Ordinal))
+            {
+                if (Interlocked.Increment(ref _pendingCount) == 2) PendingStarted.TrySetResult(true);
+                await Release.Task;
+            }
+            if (path == "/timeout") throw new TaskCanceledException("Synthetic download timeout");
+            return path == "/valid"
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=")) }
+                : new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
     }
 
     private static object? Invoke(object owner, string name, params object[] args) => owner.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(owner, args);

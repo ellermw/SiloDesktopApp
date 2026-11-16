@@ -24,7 +24,9 @@
    not as a count, so a refetch that brings new URLs tries again. The card
    is rebuilt on every reset load. One cover request runs at a time per
    card, and the group-load cancellation token stops the fallthrough on a
-   reset or page departure.
+   reset or page departure. Showing the Series tab again resumes retained
+   covers whose token was cancelled, keeping their failed-URL sets. Download
+   timeouts fall through unless the caller's token itself was cancelled.
 2. **Decorative run bar** under the cover: 4 px tall with a 2 px gap
    between segments. Series of up to 12 books get one segment per book,
    with finished books filled and in-progress books half-filled. Longer
@@ -50,8 +52,9 @@
    size, UI customization or poster-width override changes, with no
    refetch. Loading skeletons stay square.
 
-Local behavior preserved: retained page state and offset restore (cards are
-still rebuilt by the existing reset load), no page-navigation animation,
+Local behavior preserved: retained page state and offset restore (returning
+straight to Library rebuilds cards; returning via Home resumes retained covers
+when Library is shown), no page-navigation animation,
 bounded loading, keyboard and Button activation, and the existing
 localization keys (`web.audiobooks.groups.*`).
 
@@ -74,7 +77,7 @@ localization keys (`web.audiobooks.groups.*`).
 
 ## Verification
 
-Local results on this source:
+Original PR verification results (before the cancellation/timeout follow-up):
 
 - **Unit tests:** all 7,481 pass, including `AudiobookSeriesPresentationTests`
   and `CurrentLibraryParitySourceTests`.
@@ -84,6 +87,11 @@ Local results on this source:
   continuous bar past 12 books, and no listening line for an unstarted
   series.
 - **`books-library` native:** passes all 15 checks.
+
+Follow-up native cases cover cancellation during pending downloads, re-showing
+Library from Home, timeout fallthrough to a valid cover, and timeout-only
+initials fallback. These additions have not been built or run locally; the
+pipeline must verify them.
 
 Not certified: visual comparison against the live WebUI across poster sizes,
 a real cover URL that fails and falls through, and live data. Image decode

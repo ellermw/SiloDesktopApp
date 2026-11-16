@@ -1261,6 +1261,8 @@ public sealed partial class LibraryPage : Page,
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
 
         _currentTab = tag;
+        if (_isNavigated && !_applyingLibraryState && tag == "Library" && _currentAudiobookAxis == "series")
+            ResumeAudiobookSeriesCovers();
         UpdateLibraryLetters();
         WakeCatalogContentRefresh();
         // B42: Persist tab selection so a return to this library lands on the same tab.
@@ -2652,6 +2654,26 @@ public sealed partial class LibraryPage : Page,
         catch { }
     }
 
+    private sealed record AudiobookSeriesCoverState(AudiobookGroup Group, HashSet<string> Failed, CancellationToken Token);
+
+    private void ResumeAudiobookSeriesCovers()
+    {
+        foreach (var card in AudiobookGroupsHost.Children.OfType<Button>())
+        {
+            if (card.Content is not StackPanel { Children.Count: > 0 } content
+                || content.Children[0] is not Border { Tag: AudiobookSeriesCoverState state } host
+                || !state.Token.IsCancellationRequested || host.Child is TextBlock)
+                continue;
+
+            // Retained cards can outlive the departure-cancelled group token,
+            // including when navigation returns to Home rather than Library.
+            _audiobookGroupLoadCts ??= new CancellationTokenSource();
+            var ct = _audiobookGroupLoadCts.Token;
+            host.Tag = state with { Token = ct };
+            _ = LoadAudiobookSeriesCoverAsync(host, state.Group, host.Width, state.Failed, ct);
+        }
+    }
+
     /// <summary>
     /// A series' one square cover: the first of its covers that loads. A URL
     /// that fails to download or decode falls through to the next, and none
@@ -2670,7 +2692,9 @@ public sealed partial class LibraryPage : Page,
         AutomationProperties.SetAccessibilityView(host, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
         // Failed URLs, not a count: a refetch rebuilds the card with the
         // server's new (re-signed or repaired) URLs and tries every cover again.
-        _ = LoadAudiobookSeriesCoverAsync(host, group, size, new HashSet<string>(StringComparer.Ordinal), ct);
+        var state = new AudiobookSeriesCoverState(group, new HashSet<string>(StringComparer.Ordinal), ct);
+        host.Tag = state;
+        _ = LoadAudiobookSeriesCoverAsync(host, group, size, state.Failed, ct);
         return host;
     }
 
@@ -2688,7 +2712,7 @@ public sealed partial class LibraryPage : Page,
                 var httpClient = App.Services.GetRequiredService<HttpClient>();
                 path = await imageService.GetImageDiskPathAsync(AudiobookGroupPosterKey(group.Name, url), "poster", url, httpClient, ct);
             }
-            catch (OperationCanceledException) { return; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch { }
             if (ct.IsCancellationRequested) return;
             if (string.IsNullOrWhiteSpace(path))
