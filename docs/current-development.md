@@ -15,6 +15,93 @@ See [scope and evidence](parity/2026-11-16-reader-doctype.md).
 
 ---
 
+# November 16 — Credits follow-up verified for PR176
+
+Official Server main was fetched directly again unchanged at
+`abd85d0cadac28f4ab7db6821dad9634fc114790`. Fresh Beta is
+`40ab7889ef1d015a8ee07ef1962870763f95f66c` (pipeline stamp 1.2.1151-beta.1).
+This Credits follow-up was verified as source atop pipeline Beta-merge head
+`12e510bd7918cc437da95e60945be78e137f5169`. Its version remains
+1.2.1145-beta.1 / numeric 1.2.1144.1; the Beta pipeline owns subsequent stamping.
+
+Credits Up next now respects autoplay and pause, survives routine event-socket
+reconnects, and uses WebUI's enabled default after bounded optional settings-read
+failures. Genuine account/profile/device/access/playback/file retirement still
+rejects stale responses. Native tests exercise actual Settings writes in both
+directions, initializer cancellation, access-change retry and successor playback.
+
+Both reconnect/failure regressions first failed against prior native bytes.
+The 06:49:17.4418184Z–06:51:48.1016177Z lease then passed nonincremental
+unit/app/host builds, actual xUnit source-root proof, PDB document/checksum and
+publish/reference/host byte binding, and all five native cases (19 PASS, zero
+FAIL): credits-autoplay, credits-autoplay-reconnect, credits-autoplay-failure,
+autoplay and postroll. Product SHA256:
+`F979769FD851C41F9ED83583A88CD06987539375145EE809B5828EA6AC8B9A32`.
+
+That chain's focused units stopped on a new HTTP test returning `settings`
+instead of the contract's `items`. Only that fixture JSON changed afterward.
+The assigned final unit-only lease ran 06:58:27.6808250Z–07:01:37.7719166Z:
+fresh nonincremental units, source/PDB proofs, 727 focused tests and all 7,239
+full-suite tests passed, zero failures/skips. Guards confirm product/native
+sources still exactly match the five passing native runs. Independent final
+source review found no blocking findings. Receipts:
+`.codex-tmp/credits-final-units-20261116T0658-receipt.json` and
+`.codex-tmp/credits-review-green-20261116T0650-stopped-receipt.json`.
+
+Reader doctype follow-up is separately submitted in qualifying Beta PR178,
+head `2809dcd1d50e4a6a0b1cf0b06d94cfccbd12fb48`, with an executed red then
+42 renderer and 26 Node checks passing. No shared .NET output was touched.
+
+Credits has released its lease with no waiter or requeue. All .NET/native work
+uses shared `D:/SiloPlayer-build/{artifacts,publish,native-reference}` under
+`SiloOct18Build`; native stages retain continuous ownership and source/byte
+binding. The installed player/settings remain preserved. No direct merge,
+release or installer action occurred. Synthetic tests do not certify live
+household, Narrator, every DPI or full visual parity.
+
+Admin Manage/Configure remains with its existing lead. Monitor/shared shell,
+request permissions, audiobooks, localization, metadata and the remaining
+viewer increments continue independently; this is not whole-rollout completion.
+
+---
+
+November 15 - Server review and credits autoplay increment
+
+Reviewed official Silo Server main `abd85d0cadac28f4ab7db6821dad9634fc114790`
+against Beta `2c33599f751e1bb7e18a56ee378ffe918710d74d`. The 222-commit
+inventory and remaining work are recorded in
+[the upstream review](parity/2026-11-15-server-abd85d0.md). Request restrictions,
+Activity and audiobook changes are independent work; Configure Security and
+Network access remain with the existing Configure lead.
+
+The first increment aligns production credits Up next with autoplay and pause:
+unresolved/off waits for manual Play now, eligible elapsed time survives holds,
+range exit/reentry and cancellation behave correctly, and stale preference reads
+cannot affect a successor. Initial reads share the current settings request;
+live refreshes cancel superseded HTTP work. Version remains pipeline-owned
+1.2.1145-beta.1 / 1.2.1144.1.
+
+Full main suite: 7,180 passed. Final 443 OSC/localization checks, Release publish,
+matching native host and credits-autoplay/autoplay/postroll native groups pass.
+The three original Lua regressions and a subsequent native cancellation
+regression failed before their corrections. Final app DLL SHA256
+`018293C7D8633F04D4EEAE352DCBA1645DFC688CDD83331DB8A5666FCAF0EEE0`.
+See [scope and exact verification](parity/2026-11-15-credits-autoplay.md).
+PR176 review identified a missing notification from the actual Settings writer.
+An added native property-toggle regression failed before correction; the writer
+now captures profile authority and notifies after device-override cleanup. Final
+publish/host, 443 focused checks and all three native groups passed again; the
+preceding full 7,180 run retains its original scope. Latest evidence is task-local
+`.codex-tmp/credits-settings-save-final-receipt.json` and adjacent logs. The prior
+`credits-final` candidate/receipt remains historical evidence.
+
+All later .NET/native runs hold `SiloOct18Build`; shared Configure binaries are
+untouched. Reusable task output is about 1 GiB. No installed-player/settings,
+installer, direct merge or release action occurred. This is synthetic/offscreen
+verification, not complete live/visual/physical-device parity certification.
+
+---
+
 # November 15 - Configure Security delivered in Beta PR175
 
 Security alone is replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d in branch t3/configure-security-beta. Original commits 1e71c820 and fe5a29b4 remain preserved at preserve/configure-security-fe5a29b4; their receipt and logs remain unchanged. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1. Version remains 1.2.1145-beta.1 under pipeline control.

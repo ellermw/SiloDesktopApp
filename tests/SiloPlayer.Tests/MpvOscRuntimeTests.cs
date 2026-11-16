@@ -1699,6 +1699,9 @@ public sealed partial class MpvOscRuntimeTests
             assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_check_next = check_next_episode_button; osc_test_render_next = render_next_episode_button; osc_test_check_countdown = check_next_episode_countdown; osc_test_scale = ui_scale; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu; osc_test_render_stats = render_stats; osc_test_render_hud = render_osc; osc_test_render_wait = render_playback_wait; osc_test_render_skip = render_skip_button; osc_test_transport = activate_transport_control'))()
             mp.add_timeout(0.05, function()
                 local ok, err = pcall(function()
+                    -- Most fixtures model a resolved, enabled host preference.
+                    -- Preference-specific tests explicitly exercise unknown/off.
+                    osc_test_state.auto_play_next = true
                     {{setup}}
                 end)
                 if not ok then

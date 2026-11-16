@@ -34,6 +34,11 @@ public partial class PlayerService
 
     private void OnMarkerDetailsSettingChanged(string key)
     {
+        if (!_closing && State != PlayerState.Idle && key == AutoPlayNextSettingKey)
+        {
+            _ = RefreshCreditsAutoPlayPreferenceAsync(_authorityLifetimeCts.Token);
+            return;
+        }
         if (_closing || State == PlayerState.Idle || !MarkerDetailsPreferences.Keys.Contains(key)) return;
         _ = RefreshMarkerDetailsPreferencesAsync(_authorityLifetimeCts.Token);
     }

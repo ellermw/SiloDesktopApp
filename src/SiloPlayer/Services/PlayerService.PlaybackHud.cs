@@ -95,6 +95,7 @@ public partial class PlayerService
         try { clock = PlaybackEndTime.ResolveClock(_settingsService.Load().UiTimeFormat, AppStrings.FormatCulture); }
         catch { clock = PlaybackEndTime.ResolveClock(null, AppStrings.FormatCulture); }
         PublishOscLocalization(mpv);
+        PublishCreditsAutoPlay(mpv);
         mpv.SendScriptMessage("osc-set-end-time-format", clock, EndTimeLabelTemplate());
         mpv.SendScriptMessage("osc-set-hud-wait-labels",
             HudText("web.player.connection.reconnecting", "Reconnecting…"), HudText("web.player.room.catchingUp", "Catching up to the party"));
