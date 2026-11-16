@@ -1,3 +1,38 @@
+# November 16 — Books reader/detail Beta handoff; local runtime held
+
+Books changes are integrated but uncommitted in the dedicated Books worktree
+on Beta `173c37974894fe5d52a4a4437c356c84e5c897d9`, version
+`1.2.1165-beta.1` / numeric `1.2.1164.1`. Official Server/WebUI main remains
+`17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8` on a fresh remote check. Beta
+has since advanced to `7ba72bed148a29e737ec708997d8fedc259f7a0d`; that
+source has not yet been integrated or verified for these changes.
+
+Worker checks retain their original scope and payload provenance. Independent
+reviews found reader lifetime/error recovery, comic ordering and additional
+parity gaps; this is not an all-books parity certification. Source corrections
+now separate reader identity from request retirement, limit bootstrap failure
+reporting to startup, preserve recoverable saved-location errors and FB2/FBZ
+overall progress, canonicalize comic volume groups/Next order, stretch comic
+sections, and resize retained ebook rails. New regression sources are unexecuted.
+Earlier worker payload verification does not cover these final corrections.
+
+The owner's latest scheduling report puts shared generated outputs at
+10.191 GiB, above the 10 GiB cap. Admin released at
+2026-11-16T16:39:59.8164148Z, but all new runtime/build launches remain held
+pending bounded recovery. Books holds no lease, starts no new test/build/browser
+runtime and does not retry denied cleanup. Preserved payloads, evidence and the
+installed player/settings remain untouched. See the
+[delivery plan](plans/2026-11-16-books-parity.md) and three dated Books parity
+handoffs for scope and outstanding corrections. The owner explicitly directs
+immediate qualifying non-draft Beta PR submission despite this local hold;
+pipeline review/QA must verify final source. Do not infer a successful final
+build, native pass or complete parity from submission. Remaining gaps include
+normal detail Read entry coverage, clickable audiobook series navigation,
+library empty/no-match/Retry recovery, translated new audiobook strings, sticky
+controls and legacy FB2 highlights. Browsing/card changes are a separate PR.
+
+---
+
 # November 16 — Books browsing/card Beta handoff
 
 The owner explicitly directs immediate non-draft Beta submission while local

@@ -420,22 +420,25 @@ public sealed class ItemDetailCurrentParityTests
         var api = Read("src", "SiloPlayer.Core", "Api", "CatalogApi.cs");
         var model = Read("src", "SiloPlayer.Core", "Models", "Catalog", "MediaItemDetail.cs");
 
+        // Current AudiobookContent.tsx: chapters open by default with a Show all
+        // window; the narrator card and chapter sort menu were retired upstream.
+        var bookLayout = Read("src", "SiloPlayer", "Views", "ItemDetailPage.BookLayout.cs");
+        var presentation = Read("src", "SiloPlayer.Core", "Helpers", "AudiobookDetailPresentation.cs");
         Assert.Contains("AudiobookChaptersSection", xaml);
         Assert.Contains("MangaChaptersSection", xaml);
         Assert.Contains("BookRelatedSection", xaml);
-        Assert.Contains("AudiobookNarratorSection", xaml);
+        Assert.DoesNotContain("AudiobookNarratorSection", xaml);
         Assert.Contains("AudiobookChaptersToggleButton", xaml);
-        Assert.Contains("AudiobookChapterSortButton", xaml);
+        Assert.DoesNotContain("AudiobookChapterSortButton", xaml);
         Assert.Contains("BookAuthorLine", xaml);
         Assert.Contains("BookNarratorLine", xaml);
         Assert.Contains("web.detail.books.continueReading", page);
         Assert.Contains("Listen from Start", xaml);
         Assert.Contains("new EbookReaderNavigation(target, _readerTargetFileId, ViewModel.LibraryId)", page);
-        Assert.Contains("startPositionOverride: chapter.AbsoluteStart", page);
-        Assert.Contains("offset += Math.Max(0, version.Duration)", page);
-        Assert.Contains("OrderByDescending(row => row.DurationSeconds)", page);
-        Assert.Contains("currentChapter.Label", page);
-        Assert.Contains("BuildBookGenreLinks(item)", page);
+        Assert.Contains("startPositionOverride: chapter.AbsoluteStart", bookLayout);
+        Assert.Contains("offset += Math.Max(0, version.Duration)", presentation);
+        Assert.Contains("web.detail.audiobook.resumeChapter", bookLayout);
+        Assert.Contains("BuildBookGenreLinks(item)", bookLayout);
         Assert.Contains("Genre: genre", page);
         Assert.Contains("GetMangaSeriesFilesAsync", api);
         Assert.Contains("MangaDetailExtension", model);

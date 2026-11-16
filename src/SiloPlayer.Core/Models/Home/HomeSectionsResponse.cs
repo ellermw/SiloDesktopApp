@@ -177,7 +177,14 @@ public class AudiobookRelatedItem
     public string Title { get; set; } = "";
     public int? Year { get; set; }
     public string? PosterUrl { get; set; }
+    public string? PosterThumbhash { get; set; }
     public double? SeriesIndex { get; set; }
+    /// <summary>Audiobooks only: total listening time in seconds.</summary>
+    public double? DurationSeconds { get; set; }
+    /// <summary>The profile finished this book; absent when not.</summary>
+    public bool? Played { get; set; }
+    /// <summary>0-1, only while the book is started and not played.</summary>
+    public double? ProgressRatio { get; set; }
 }
 
 public class AudiobookSeriesGroup
