@@ -22,6 +22,7 @@ internal static class RequestProfileAccessNativeFixture
         var windowProperty = typeof(App).GetProperty(nameof(App.MainWindowInstance))!;
         var previousServices = servicesField.GetValue(null);
         var previousWindow = windowProperty.GetValue(null);
+        var previousServerName = DocumentTitle.AppName;
         using var wire = new Wire();
         using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://request-profile-access.invalid");
@@ -91,6 +92,54 @@ internal static class RequestProfileAccessNativeFixture
             if (auth.SelectedProfileId != "fixture-profile" || !client.IsCurrentIdentityContext(identity))
                 throw new InvalidOperationException("Profile metadata refresh changed the selected identity.");
             Program.Log("PASS: remote profile unblock restores Requests without reselecting the profile or replacing its identity.");
+            await VerifyProfileDisplayHydrationAsync(false);
+            await VerifyProfileDisplayHydrationAsync(true);
+
+            async Task VerifyProfileDisplayHydrationAsync(bool allowed)
+            {
+                wire.RequestsAllowed = allowed;
+                var previousOwner = (CancellationTokenSource)typeof(MainWindow).GetField("_shellHydrationCts", Private)!.GetValue(window)!;
+                var retiredToken = previousOwner.Token;
+                var key = (string)Call(window, "GetAuthenticatedShellKey")!;
+                var mounts = routeContexts.Count;
+                var owners = new System.Collections.Concurrent.ConcurrentQueue<CancellationTokenSource>();
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.BrandingReadRelease = release;
+                wire.BrandingReadStarted = () => owners.Enqueue((CancellationTokenSource)typeof(MainWindow)
+                    .GetField("_shellHydrationCts", Private)!.GetValue(window)!);
+                try
+                {
+                    // Focus/flyout refresh: no AccessChanged event precedes the profile read.
+                    await (Task)Call(window, "UpdateProfileDisplayAsync", key, retiredToken)!;
+                    await UntilAsync(() => auth.SelectedProfile?.RequestsAllowed == allowed &&
+                        routeContexts.Count == mounts + 1 && !owners.IsEmpty,
+                        "profile-display permission refresh did not start branding and theme hydration and remount the route");
+                    var owner = (CancellationTokenSource)typeof(MainWindow).GetField("_shellHydrationCts", Private)!.GetValue(window)!;
+                    if (!retiredToken.IsCancellationRequested || owner.IsCancellationRequested ||
+                        owners.Any(started => !ReferenceEquals(started, owner)))
+                        throw new InvalidOperationException("Profile-display refresh replaced or cancelled the complete hydration it just started.");
+                    if ((bool)typeof(MainWindow).GetField("_pendingAccessRefresh", Private)!.GetValue(window)! ||
+                        !client.IsCurrentContext(routeContexts[^1]))
+                        throw new InvalidOperationException("Profile-display refresh did not consume the pending route refresh under final authority.");
+                    release.TrySetResult();
+                    var appearance = (SharedAppearanceState)typeof(ThemeService).GetField("_sharedAppearance", Private)!
+                        .GetValue(services.GetRequiredService<ThemeService>())!;
+                    await UntilAsync(() => window.AppWindow.Title.Contains("Profile access server", StringComparison.Ordinal) &&
+                        appearance.Colors.TryGetValue("primary", out var accent) && accent == "#123456",
+                        "branding and shared theme did not finish after the profile-display permission refresh");
+                    if (!ReferenceEquals(owner, typeof(MainWindow).GetField("_shellHydrationCts", Private)!.GetValue(window)) ||
+                        owner.IsCancellationRequested || owners.Any(started => !ReferenceEquals(started, owner)) ||
+                        routeContexts.Count != mounts + 1)
+                        throw new InvalidOperationException("Profile-display refresh must retain one live hydration and remount the route only once.");
+                    Program.Log("PASS: profile-display permission change completes branding and theme with one live hydration and one route refresh.");
+                }
+                finally
+                {
+                    wire.BrandingReadRelease = null;
+                    wire.BrandingReadStarted = null;
+                    release.TrySetResult();
+                }
+            }
 
             async Task ChangeAccessAsync(bool allowed)
             {
@@ -139,6 +188,9 @@ internal static class RequestProfileAccessNativeFixture
             }
             windowProperty.SetValue(null, previousWindow);
             servicesField.SetValue(null, previousServices);
+            DocumentTitle.SetServerName(previousServerName);
+            if (previousServices is IServiceProvider original && original.GetService<ThemeService>() is { } theme)
+                theme.ApplyTheme(theme.CurrentTheme);
         }
     }
 
@@ -155,6 +207,8 @@ internal static class RequestProfileAccessNativeFixture
         internal bool RequestsAllowed = true;
         internal int ProfileReads, LibraryReads;
         internal TaskCompletionSource? ProfileReadRelease;
+        internal TaskCompletionSource? BrandingReadRelease;
+        internal Action? BrandingReadStarted;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri?.Host != "request-profile-access.invalid")
@@ -166,6 +220,12 @@ internal static class RequestProfileAccessNativeFixture
                 ProfileReads++;
                 json = JsonSerializer.Serialize(new { items = new[] { new { id = "fixture-profile", name = "Fixture", is_primary = true, requests_allowed = RequestsAllowed } }, requests_allowed_supported = true });
                 if (ProfileReadRelease is { } release) await release.Task.WaitAsync(cancellationToken);
+            }
+            else if (path == "/api/v2/theme/branding")
+            {
+                BrandingReadStarted?.Invoke();
+                if (BrandingReadRelease is { } release) await release.Task.WaitAsync(cancellationToken);
+                json = "{\"server_name\":\"Profile access server\",\"accent_color\":\"#123456\"}";
             }
             else if (path == "/api/v2/requests/status")
                 json = JsonSerializer.Serialize(new { requests_enabled = true, allowed = RequestsAllowed, watchlist_titles_supported = RequestsAllowed });

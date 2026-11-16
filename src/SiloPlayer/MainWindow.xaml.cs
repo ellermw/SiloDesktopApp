@@ -1821,7 +1821,7 @@ public sealed partial class MainWindow : Window
         else DispatcherQueue.TryEnqueue(Refresh);
     }
 
-    private void ApplyPendingAccessRefresh()
+    private void ApplyPendingAccessRefresh(bool shellHydrationStarted = false)
     {
         ApplyPendingHomeCatchUp();
         if ((!_pendingAccessRefresh && !_pendingDetailCatchUp) || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
@@ -1837,11 +1837,11 @@ public sealed partial class MainWindow : Window
         _pendingAccessRefresh = false;
         _pendingDetailCatchUp = false;
         _pendingDetailCatchUpRequiresRemount = false;
-        if (!string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal))
+        if (shellHydrationStarted || !string.Equals(_hydratedShellKey, GetAuthenticatedShellKey(), StringComparison.Ordinal))
         {
             // A new request authority needs the complete hydration once. Show
-            // owns it; do not immediately cancel and start a second load.
-            ShowMainNavigation();
+            // owns it; do not cancel it when Show calls back with the new key.
+            if (!shellHydrationStarted) ShowMainNavigation();
             if (!preserveDetail && ContentFrame.Content is not BoxSetPage)
                 TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
             return;
@@ -1963,7 +1963,7 @@ public sealed partial class MainWindow : Window
                 "library_navigation_load",
                 () => LoadShellNavigationAsync(shellKey, shellToken));
         }
-        ApplyPendingAccessRefresh();
+        ApplyPendingAccessRefresh(shellHydrationStarted: shouldHydrateShell);
     }
 
     private async Task LoadSidebarCustomizationAsync(string shellKey, CancellationToken token)
