@@ -305,6 +305,46 @@ internal static class AdminDownloadSettingsNativeFixture
             Check(Box(page, R.UserBandwidth)!.Text == "50" && UnitLabel(page, Box(page, R.UserBandwidth)!) == "Mbps" && Box(page, R.MaxConcurrentPerUser)!.Text == "3" &&
                 Unlimited(page, R.MaxPerPeriod)!.IsChecked == true && Box(page, R.PeriodDuration)!.Text == "24h" && Toggle(page, R.LocalTranscodeFallback).IsOn && Box(page, R.CacheHours)!.Text == "72",
                 "every advanced field shows its saved value");
+            // Every unscaled limit must reject alternative zero spellings without selecting Unlimited.
+            foreach (var key in new[] { R.ServerBandwidth, R.UserBandwidth, R.MaxConcurrentPerUser, R.MaxPerPeriod })
+            {
+                var limitBox = Box(page, key)!;
+                var unlimited = Unlimited(page, key)!;
+                if (unlimited.IsChecked == true)
+                {
+                    Invoke(unlimited);
+                    await Until(() => controller.State.Values[key] == "", "uncheck " + key);
+                    await Task.Delay(120);
+                }
+                foreach (var draft in new[] { "00", "+0", "-0" })
+                {
+                    limitBox.Text = "100";
+                    await Until(() => controller.State.Values[key] == "100", "finite limit " + key);
+                    await Task.Delay(120);
+                    if (draft == "00")
+                    {
+                        limitBox.Select(0, 1);
+                        limitBox.SelectedText = ""; // Deleting 1 from 100 must not remove the quota.
+                    }
+                    else limitBox.Text = draft;
+                    await Task.Delay(120);
+                    Check(limitBox.Text == draft && limitBox.IsEnabled && unlimited.IsChecked == false &&
+                        controller.State.Values[key] == "" && controller.State.Errors.TryGetValue(key, out var error) &&
+                        error.Problem == AdminDownloadFieldProblem.Blank && !Button(page, "DownloadsSave").IsEnabled,
+                        $"typed {draft} on {key} remains editable and blocks Save, never Unlimited");
+                    var savesBeforeZero = server.Saves;
+                    await controller.SaveAsync();
+                    Check(server.Saves == savesBeforeZero, $"typed {draft} on {key} cannot reach the server");
+                }
+                Invoke(unlimited);
+                await Until(() => controller.State.Values[key] == R.Unlimited, "explicit Unlimited " + key);
+                await Task.Delay(120);
+                Check(unlimited.IsChecked == true && !limitBox.IsEnabled && !controller.State.Errors.ContainsKey(key),
+                    "only explicitly choosing Unlimited accepts zero on " + key);
+                controller.Discard();
+                await Until(() => controller.State.DirtyKeys.Count == 0, "discard zero spellings " + key);
+                await Task.Delay(120);
+            }
             var userBandwidth = Box(page, R.UserBandwidth)!;
             var userUnlimited = Unlimited(page, R.UserBandwidth)!;
             userBandwidth.Focus(FocusState.Programmatic);

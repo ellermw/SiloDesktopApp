@@ -99,6 +99,16 @@ public static class AdminDownloadSettingsRules
         catch (OverflowException) { return displayed; }
     }
 
+    /// <summary>
+    /// Stages typed limit text, never Unlimited: every integer spelling of zero (including rounded bytes)
+    /// becomes an incomplete limit. The checkbox stages the sentinel separately.
+    /// </summary>
+    public static string ToLimitDraft(string displayed, long scale)
+    {
+        var value = ToStoredUnits(displayed, scale);
+        return TryInteger(value, out var parsed) && parsed == 0 ? "" : value;
+    }
+
     // ---------------------------------------------------------------- prepared-file directory (settingsPathDefaults.ts)
 
     /// <summary>

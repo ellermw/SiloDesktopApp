@@ -102,6 +102,30 @@ public sealed class AdminDownloadSettingsRulesTests
         Assert.False(R.IsUnlimited("1"));
     }
 
+    [Theory]
+    [InlineData("0", 1L)]
+    [InlineData("00", 1L)]
+    [InlineData("+0", 1L)]
+    [InlineData("-0", 1L)]
+    [InlineData("  +00  ", 1L)]
+    [InlineData("0.0000000004", R.BytesPerGigabyte)]
+    [InlineData("-0.0000000004", R.BytesPerGigabyte)]
+    public void TypedZeroLimitsStageAnInvalidBlankInsteadOfUnlimited(string text, long scale)
+    {
+        var draft = R.ToLimitDraft(text, scale);
+        Assert.Equal("", draft);
+        foreach (var key in R.Keys.Where(R.IsLimitKey))
+            Assert.Equal(AdminDownloadFieldProblem.Blank, Check(key, draft)!.Problem);
+    }
+
+    [Theory]
+    [InlineData("+12", 1L, "+12")]
+    [InlineData("1.5", 1L, "1.5")]
+    [InlineData("abc", 1L, "abc")]
+    [InlineData("0.5", R.BytesPerGigabyte, "500000000")]
+    public void TypedNonzeroAndInvalidLimitsKeepTheirStoredText(string text, long scale, string expected) =>
+        Assert.Equal(expected, R.ToLimitDraft(text, scale));
+
     // ---- server normalizers
 
     [Theory]

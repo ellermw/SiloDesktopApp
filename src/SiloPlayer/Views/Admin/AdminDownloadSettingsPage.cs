@@ -233,10 +233,9 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
         editor.Box.TextChanging += (_, _) =>
         {
             if (_syncing || _controller?.State is not { Loaded: true } || editor.Unlimited.IsChecked == true) return;
-            var value = R.ToStoredUnits(editor.Box.Text, scale);
             // Only the checkbox may stage Unlimited. A zero (including a sub-byte value rounded to zero)
             // is an incomplete limit, not permission to silently remove the server's cap.
-            var staged = R.IsUnlimited(value) ? "" : value;
+            var staged = R.ToLimitDraft(editor.Box.Text, scale);
             editor.DraftValue = staged;
             Set(key, staged);
         };
