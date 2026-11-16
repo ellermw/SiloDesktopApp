@@ -274,6 +274,81 @@ public sealed partial class AdminLibrariesControllerTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task FolderFirstPageLoadResetsPaginationAndCannotBeSupersededByLoadMore(bool refresh, bool fail)
+    {
+        var (kit, authority, controller, server, _, _) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var reads = 0;
+            var target = refresh ? "/A" : "/B";
+            server.Override = request =>
+            {
+                if (request.RequestUri!.AbsolutePath != "/api/v2/admin/filesystem/browse") return null;
+                var read = Interlocked.Increment(ref reads);
+                if (read == 1) return AdminMonitorKit.Json(Page("/A", "old", "old-cursor"));
+                if (read == 2)
+                {
+                    entered.TrySetResult();
+                    release.Task.GetAwaiter().GetResult();
+                    if (fail) return AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable);
+                }
+                return AdminMonitorKit.Json(Page(target, read == 2 || fail && read == 3 ? "first" : "second",
+                    read == 2 || fail && read == 3 ? "new-cursor" : null));
+            };
+            using var lease = controller.CaptureAction();
+            using var browser = new AdminFolderBrowserSession(controller, lease, []);
+            await browser.NavigateAsync("/A");
+            Assert.True(browser.State.HasMore);
+            Assert.Single(browser.State.Entries);
+            var pending = refresh ? browser.RefreshAsync() : browser.NavigateAsync(target);
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.True(browser.State.Fetching);
+                Assert.True(browser.State.Loading);
+                Assert.Empty(browser.State.Entries);
+                Assert.False(browser.State.HasMore);
+                Assert.False(browser.State.LoadingMore);
+                await browser.LoadMoreAsync();
+                Assert.Equal(2, Volatile.Read(ref reads));
+            }
+            finally { release.TrySetResult(); }
+            await pending;
+            Assert.False(browser.State.Fetching);
+            Assert.False(browser.State.Loading);
+            if (fail)
+            {
+                Assert.NotNull(browser.State.Error);
+                Assert.Empty(browser.State.Entries);
+                Assert.False(browser.State.HasMore);
+                await browser.LoadMoreAsync();
+                Assert.Equal(2, reads);
+                await browser.RefreshAsync();
+            }
+            Assert.Null(browser.State.Error);
+            Assert.Equal(target, browser.State.ResolvedPath);
+            Assert.Equal(target + "/first", Assert.Single(browser.State.Entries).Path);
+            await browser.LoadMoreAsync();
+            Assert.Equal(new[] { target + "/first", target + "/second" }, browser.State.Entries.Select(entry => entry.Path));
+            Assert.False(browser.State.HasMore);
+            var browseRequests = kit.Http.Requests.Where(request => request.Contains("/admin/filesystem/browse", StringComparison.Ordinal)).ToArray();
+            Assert.DoesNotContain(browseRequests, request => request.Contains("cursor=old-cursor", StringComparison.Ordinal));
+            Assert.Contains("cursor=new-cursor", browseRequests[^1]);
+        }
+
+        static string Page(string path, string name, string? cursor) =>
+            "{\"path\":\"" + path + "\",\"parent\":\"/\",\"items\":[{\"name\":\"" + name + "\",\"path\":\"" + path + "/" + name
+            + "\"}],\"page\":{\"has_more\":" + (cursor != null ? "true,\"next_cursor\":\"" + cursor + "\"" : "false") + "}}";
+    }
+
     [Fact]
     public async Task DisposedFolderBrowserRejectsALateProbe()
     {

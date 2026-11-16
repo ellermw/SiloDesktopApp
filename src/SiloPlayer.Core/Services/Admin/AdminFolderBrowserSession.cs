@@ -70,17 +70,13 @@ public sealed class AdminFolderBrowserSession : IDisposable
         {
             if (_disposed) return Task.CompletedTask;
             _state = _state with { CurrentPath = path, ValidationError = null };
+            return LoadAsync(append: false);
         }
-        return LoadAsync(append: false);
     }
 
     public Task RefreshAsync() => LoadAsync(append: false);
 
-    public Task LoadMoreAsync()
-    {
-        lock (_gate) { if (_disposed || _nextCursor == null || _state.LoadingMore) return Task.CompletedTask; }
-        return LoadAsync(append: true);
-    }
+    public Task LoadMoreAsync() => LoadAsync(append: true);
 
     private async Task LoadAsync(bool append, long? probeSequence = null)
     {
@@ -91,6 +87,7 @@ public sealed class AdminFolderBrowserSession : IDisposable
         lock (_gate)
         {
             if (_disposed) return;
+            if (append && (_nextCursor == null || _state.Fetching || _state.Loading || _state.LoadingMore)) return;
             if (probeSequence.HasValue)
             {
                 if (probeSequence != _probeSequence || _probe == null) return;
@@ -101,6 +98,12 @@ public sealed class AdminFolderBrowserSession : IDisposable
             sequence = ++_sequence;
             path = _state.CurrentPath;
             cursor = append ? _nextCursor : null;
+            if (!append)
+            {
+                _nextCursor = null;
+                _pages = 0;
+                _state = _state with { Entries = [], HasMore = false, Capped = false, LoadingMore = false };
+            }
             _load?.Cancel(); _load?.Dispose();
             _load = CancellationTokenSource.CreateLinkedTokenSource(_lease.Token, probeSequence.HasValue ? _probe!.Token : _lease.Token);
             token = _load.Token;
