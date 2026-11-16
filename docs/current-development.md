@@ -1,3 +1,12 @@
+# November 15 - Configure Network access implemented (in progress)
+
+Configure > Server > Network access (C7) is implemented on Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d against official abd85d0cadac28f4ab7db6821dad9634fc114790 (Network sources unchanged since c11b0a96). It is registered through the production Configure entry point. It shows installed overlay-network providers, each host's state, origin, addresses, enrollment link, error and last-heard time, and per-host Connect/Disconnect. A separate domain API bounds every read and command (leases, deadlines, 1 MiB responses, explicit list limits) and sends one captured host per command without authentication replay. Ambiguous outcomes are reconciled by a status read, never resent. At most two status reads run at once; the 15 s poll runs only while the page and window are active, and activation refreshes only stale data. Enrollment URLs stay in memory, are never logged and open only through the guarded HTTP(S) launcher. See docs/parity/admin-network-access.md.
+
+Status: **In progress** until the lead reviews it and opens the Beta PR; General and Email remain in their PRs, Security is in PR175 and the other leaves are unfinished. Nothing is merged or released. Version stays 1.2.1145-beta.1; the pipeline owns stamping.
+
+Verified code 16f67885 passes 736 focused Admin/architecture tests and 7,239 full units. One build-lock hold covered Release publish and the matching host (product DLL C0A0F1E2…5EFE in publish, reference and host) and native groups: network access 332 PASS, Email 297, General 188, Manage foundation 36, Subtitle Files 64, Monitor 113 and Dashboard 184. Captures cover 1440x900, 1440x600, 1920x600 and 800x600 plus loading, error, empty, busy and control states. Receipt: D:/SiloPlayer-build/server-update-nov14/configure-network-access/final-receipt.json. Synthetic server/plugin data at current DPI only: no live plugin, Narrator, all-DPI or performance claim. Storage about 4.67 GiB generated, C 185/D 474 GiB free; cleanup not attempted. Installed player and settings untouched.
+
+---
 # November 15 - Configure Security delivered in Beta PR175
 
 Security alone is replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d in branch t3/configure-security-beta. Original commits 1e71c820 and fe5a29b4 remain preserved at preserve/configure-security-fe5a29b4; their receipt and logs remain unchanged. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1. Version remains 1.2.1145-beta.1 under pipeline control.
