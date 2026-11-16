@@ -429,7 +429,7 @@ public sealed partial class ItemDetailPage : Page
             _ => 0,
         };
         if (delta == 0) return;
-        scroller.ChangeView(Math.Max(0, scroller.HorizontalOffset + delta), null, null);
+        scroller.ChangeView(Math.Max(0, scroller.HorizontalOffset + delta), null, null, !SystemMotion.AnimationsEnabled);
         e.Handled = true;
     }
 
@@ -466,7 +466,7 @@ public sealed partial class ItemDetailPage : Page
     {
         var delta = Math.Max(minimumStep, scroller.ViewportWidth * 0.82d) * direction;
         var target = Math.Clamp(scroller.HorizontalOffset + delta, 0, Math.Max(0, scroller.ScrollableWidth));
-        scroller.ChangeView(target, null, null);
+        scroller.ChangeView(target, null, null, !SystemMotion.AnimationsEnabled);
         UpdateDetailCarouselButtons(scroller, previousButton, nextButton);
     }
 
@@ -658,7 +658,7 @@ public sealed partial class ItemDetailPage : Page
             SeasonsScrollViewer.HorizontalOffset + delta,
             0,
             Math.Max(0, SeasonsScrollViewer.ScrollableWidth));
-        SeasonsScrollViewer.ChangeView(target, null, null);
+        SeasonsScrollViewer.ChangeView(target, null, null, !SystemMotion.AnimationsEnabled);
         UpdateSeasonScrollButtons();
     }
 
