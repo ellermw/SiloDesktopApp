@@ -343,8 +343,13 @@ public sealed class AdminNetworkAccessController : IDisposable
             _capabilitiesLoading = false;
             if (result == null)
             {
-                _capabilitiesFailure = Classify(failure!, lease);
-                _capabilitiesLimit = (failure as AdminNetworkAccessLimitException)?.Limit;
+                // A failed refresh must not replace loaded groups and hosts with a page-level error.
+                // Keep the last document stale so the next activation can try again.
+                if (!_capabilitiesLoaded)
+                {
+                    _capabilitiesFailure = Classify(failure!, lease);
+                    _capabilitiesLimit = (failure as AdminNetworkAccessLimitException)?.Limit;
+                }
                 PublishLocked();
             }
             else
@@ -469,6 +474,8 @@ public sealed class AdminNetworkAccessController : IDisposable
         lock (_gate)
         {
             if (_disposed || !_active || !_open || _lease is not { } lease || !_lifetime.IsCurrent(lease)) return;
+            // Do not poll statuses while a capability error is the visible page state.
+            if (_capabilitiesFailure != null) return;
             // Foreground navigation or playback start keeps the network; the next tick tries again.
             if (_deferBackground()) return;
             foreach (var slot in _slots) EnqueueLocked(slot, background: true);

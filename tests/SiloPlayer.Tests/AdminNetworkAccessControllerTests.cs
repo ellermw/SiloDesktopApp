@@ -123,12 +123,68 @@ public sealed class AdminNetworkAccessControllerTests
         fixture.Controller.Open();
         await Until(() => fixture.Controller.State.CapabilitiesFailure != null, "capabilities failure");
         Assert.Equal(AdminFailureKind.Server, fixture.Controller.State.CapabilitiesFailure);
+        Assert.False(fixture.Controller.State.CapabilitiesLoaded);
+        Assert.Empty(fixture.Controller.State.Providers);
         fixture.Time.Advance(TimeSpan.FromMinutes(1));
         await Task.Delay(30);
         Assert.Equal(1, fixture.Count(CapabilitiesRead));
+        Assert.Equal(0, fixture.Count(StubStatus));
+        Assert.Equal(0, fixture.Count(DownStatus));
         fixture.Routes[CapabilitiesRead] = (_, _) => Fixture.Json(AdminNetworkAccessApiTests.Capabilities);
         await fixture.Controller.RetryCapabilitiesAsync();
         await Until(() => fixture.Controller.State.Providers.Count == 2 && fixture.Controller.State.Providers.All(p => p.Status != null), "retry");
+        Assert.Null(fixture.Controller.State.CapabilitiesFailure);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedCapabilityRefreshKeepsLoadedProvidersAndRetriesOnNextActivation(bool transportFailure)
+    {
+        using var fixture = await OpenedAsync();
+        var response = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes[CapabilitiesRead] = async (_, ct) =>
+        {
+            await response.Task.WaitAsync(ct);
+            if (transportFailure) throw new HttpRequestException("reset");
+            return AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable);
+        };
+        var initialStub = Provider(fixture.Controller, "stub").Status;
+        var initialDown = Provider(fixture.Controller, "down").Status;
+        fixture.Controller.SetActive(false);
+        fixture.Time.Advance(TimeSpan.FromSeconds(31));
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Count(CapabilitiesRead) == 2 &&
+            !ReferenceEquals(Provider(fixture.Controller, "stub").Status, initialStub) &&
+            !ReferenceEquals(Provider(fixture.Controller, "down").Status, initialDown), "activation status reads settled");
+        var beforeFailure = fixture.Controller.State;
+        response.SetResult();
+        await Until(() => fixture.Controller.State.Revision > beforeFailure.Revision, "failed capability refresh settled");
+
+        var state = fixture.Controller.State;
+        Assert.True(state.CapabilitiesLoaded);
+        Assert.False(state.CapabilitiesLoading);
+        Assert.Null(state.CapabilitiesFailure);
+        Assert.Null(state.CapabilitiesLimit);
+        Assert.Equal(["stub", "down"], state.Providers.Select(p => p.Summary.Provider));
+        for (var i = 0; i < state.Providers.Count; i++)
+        {
+            Assert.Same(beforeFailure.Providers[i].Status, state.Providers[i].Status);
+            Assert.Null(state.Providers[i].Failure);
+            Assert.Single(state.Providers[i].Status!.Hosts);
+        }
+
+        // Visible, retained groups continue polling; capabilities are not polled or retried on a timer.
+        fixture.Time.Advance(AdminNetworkAccessController.PollInterval);
+        await Until(() => !ReferenceEquals(Provider(fixture.Controller, "stub").Status, state.Providers[0].Status) &&
+            !ReferenceEquals(Provider(fixture.Controller, "down").Status, state.Providers[1].Status), "retained providers polled");
+        Assert.Equal(2, fixture.Count(CapabilitiesRead));
+        fixture.Routes[CapabilitiesRead] = (_, _) => Fixture.Json("""{"state":"available","allowed":true,"providers":[]}""");
+        fixture.Controller.SetActive(false);
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Count(CapabilitiesRead) == 3 && fixture.Controller.State.Providers.Count == 0,
+            "next activation retries stale capabilities");
+        Assert.True(fixture.Controller.State.CapabilitiesLoaded);
         Assert.Null(fixture.Controller.State.CapabilitiesFailure);
     }
 
