@@ -1,3 +1,47 @@
+# November 16 - Admin Manage Libraries for separate Beta submission
+
+Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
+`AddAdminLibraries()`: the sortable table and compact cards, scan queue popover, Scan all, row
+commands (scan/stop, metadata refresh mode dialog/stop, mount check, delete and empty-root cleanup
+confirmations), keyboard/pointer/card-menu reorder as serialized whole-order writes, the add/edit
+editor (General, Folders with server folder browsing and path completion, Metadata with provider
+chains and translation prewarm, Advanced), and the Unmatched, Matcher queue, Ambiguous roots,
+Skipped roots and Stale ID sections. Official reference 17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8
+(Libraries contracts unchanged from abd85d0c); tested Beta base 173c3797, version
+1.2.1165-beta.1 unchanged and pipeline-owned. Writes are sent
+once; lost answers are reported as unknown and reloaded; 202 receipts are never shown as completion.
+
+Historical verification of the earlier candidate on Beta base 173c3797: 7,576 unit cases passed
+(108 Libraries/folder-browser cases), including the actual source-root proof. A host-only
+continuation after one fixture readiness correction passed all five selected native stages:
+remediation 211, full Libraries 378, Manage foundation 36, Configure General 188, Monitor 113
+PASS lines. All seven historical build/binding/native captures had numeric exit 0 and verified
+containment. Source/PDB binding covered 1,007 app and 240 host documents; readback rehashed
+2,233 source entries and 666 published application files for that earlier candidate only.
+
+Later fixes c4192cde, 53fa9ca7 and afef78f9 changed production code and added regression tests,
+including concurrency coverage. They address matcher summary polling, last-page ignore/restore,
+scan hydration on open and controller channel locking. These fixes are source-reviewed only;
+no builds or tests were run for them. The historical counts, receipts and hashes do not verify
+head afef78f98544, and the 7,576 count does not include its new regression tests. Pipeline
+verification of the updated source is pending.
+
+Historical native lease: 2026-11-16T16:37:47.9426263Z-16:39:59.8164148Z. Receipt SHA256
+DB4A061FE7043E50AF112175FD11FD7D01BD5FDEC556C8523434DB230F8A6216; evidence in
+`.codex-tmp/admin-libraries-reliability-20261116T153001Z/beta-173c-native-r4-current-render/`.
+Details and historical failures: `docs/parity/admin-manage-libraries.md`.
+Remote Beta was observed at 7ba72bed (stable 1.2.1165 release/docs/version-only changes since the
+tested base); this feature does not alter version stamps. Users, Search and the remaining Admin
+sections are separate increments, not bundled into this Libraries change.
+
+Limits: synthetic server and current DPI only; no live-server, real pointer-device drag, poster
+file picker, IME/Narrator, all-DPI or complete visual parity certification. The installed player
+and settings remain untouched. A hidden-file-inclusive storage readback found 10.191 GiB of
+global generated output, over the owner's 10 GiB limit; further local builds/native execution
+are on hold. Historical restore-cache cleanup was policy-denied with zero bytes removed and
+was not retried. Functional test success is not a claim of storage-bound compliance.
+---
+
 # November 16 — Books reader/detail Beta handoff; local runtime held
 
 Books changes are integrated but uncommitted in the dedicated Books worktree
