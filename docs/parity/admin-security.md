@@ -10,7 +10,7 @@ The original commits and receipt are preserved at preserve/configure-security-fe
 
 ## Status
 
-Security (C2b) is **In progress**: implemented and verified in its isolated worktree, awaiting the lead's independent review, push and Beta PR. It becomes Done only when pushed to a PR with its link recorded. General (PR173) and Email (PR174) are Done; the remaining 16 leaves are unstarted. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1.
+Security (C2b) is **Done** in verified, non-draft Beta [PR175](https://github.com/ellermw/SiloDesktopApp/pull/175), separately unmerged/unreleased. General (PR173) and Email (PR174) are Done; the remaining 16 leaves are unstarted. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1.
 
 ## Delivered behavior
 
