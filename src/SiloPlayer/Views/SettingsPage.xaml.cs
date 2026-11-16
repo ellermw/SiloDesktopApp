@@ -1635,7 +1635,7 @@ _webhookPlexAuthCts?.Cancel();
         for (var index = 0; index < _interfaceMenuDraft.Count; index++)
         {
             var item = _interfaceMenuDraft[index];
-            var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(10, 7, 8, 7) };
+            var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(10, 7, 8, 7), Tag = item };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1798,10 +1798,31 @@ _webhookPlexAuthCts?.Cancel();
         "builtin" when item.Destination == "calendar" => L("web.settings.interface.builtin.calendar", "Calendar"),
         "builtin" => item.Destination ?? "Destination",
         "library" => L("web.settings.interface.menuLibrary", $"{item.Label} · Library", Args(("name", item.Label))),
-        "section" => L("web.settings.interface.menuSection", $"{item.Label} · Section", Args(("name", item.Label))),
-        "collection" => L("web.settings.interface.menuCollection", $"{item.Label} · Collection", Args(("name", item.Label))),
+        "section" => PinMenuDescription(item, "web.settings.interface.menuSection", "Section"),
+        "collection" => PinMenuDescription(item, "web.settings.interface.menuCollection", "Collection"),
         _ => item.Label ?? "Destination",
     };
+
+    private static string PinMenuDescription(PrimaryMenuItem item, string key, string kind)
+    {
+        var title = App.MainWindowInstance?.ResolveMenuPinLabel(item) ?? item.Label ?? "";
+        return L(key, $"{title} · {kind}", Args(("name", title)));
+    }
+
+    public void RefreshInterfacePinLabels()
+    {
+        if (!IsLoaded) return;
+        foreach (var border in InterfacePrimaryMenuHost.Children.OfType<Border>())
+        {
+            if (border.Child is not Grid { Tag: PrimaryMenuItem item } row || item.Type is not ("section" or "collection")) continue;
+            var label = row.Children.OfType<TextBlock>().Last();
+            label.Text = InterfaceMenuLabel(item);
+            var actions = row.Children.OfType<StackPanel>().Single().Children.OfType<Button>().ToArray();
+            AutomationProperties.SetName(actions[0], L("web.settings.interface.moveUp", $"Move {label.Text} up", Args(("label", label.Text))));
+            AutomationProperties.SetName(actions[1], L("web.settings.interface.moveDown", $"Move {label.Text} down", Args(("label", label.Text))));
+            AutomationProperties.SetName(actions[2], L("web.settings.interface.remove", $"Remove {label.Text}", Args(("label", label.Text))));
+        }
+    }
 
     private async Task LoadPersonalizeSummaryAsync()
     {
