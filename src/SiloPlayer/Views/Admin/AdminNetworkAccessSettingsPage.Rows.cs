@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using Windows.Foundation;
@@ -275,7 +276,8 @@ internal sealed class NetworkAccessHostRow : Grid
             var key = host.Hostname is { Length: > 0 } name && name != origin ? "web.admin.settings.network.host.reachAtWithHostname" : "web.admin.settings.network.host.reachAt";
             foreach (var run in X.Rich(key, new { origin, hostname = host.Hostname ?? "" }))
             {
-                if (run.Tag != "link") { _reach.Inlines.Add(new Run { Text = run.Text }); continue; }
+                // Only a safe HTTP(S) origin becomes a link; anything else is shown as text and cannot be activated.
+                if (run.Tag != "link" || !ExternalBrowserUrlPolicy.TryGetSafeUri(origin, out _)) { _reach.Inlines.Add(new Run { Text = run.Text }); continue; }
                 var link = new Hyperlink { UnderlineStyle = UnderlineStyle.Single, Foreground = U.Brush("PrimaryTextBrush") };
                 link.Inlines.Add(new Run { Text = run.Text });
                 AutomationProperties.SetName(link, X.T("configure.native.network.openOrigin", new { origin = run.Text }));

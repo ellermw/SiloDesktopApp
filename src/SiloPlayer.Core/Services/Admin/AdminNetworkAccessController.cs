@@ -175,16 +175,17 @@ public sealed class AdminNetworkAccessController : IDisposable
         Raise();
     }
 
-    public async Task RetryCapabilitiesAsync()
+    /// <summary>Explicit retry after a failed capability read (capabilities are never polled).</summary>
+    public Task RetryCapabilitiesAsync()
     {
         lock (_gate)
         {
-            if (_lease is not { IsCurrent: true } lease || _capabilitiesLoading) return;
+            if (_lease is not { IsCurrent: true } lease || _capabilitiesLoading) return Task.CompletedTask;
             StartCapabilitiesLocked(lease);
             PublishLocked();
         }
         Raise();
-        await Task.CompletedTask.ConfigureAwait(false);
+        return Task.CompletedTask;
     }
 
     public Task ConnectAsync(string provider, string hostId) => CommandAsync(provider, hostId, AdminNetworkAccessCommandKind.Connect);

@@ -247,12 +247,12 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
     {
         var controller = _controller;
         if (!_active || controller == null) return;
-        Uri? uri = null;
-        if (link == NetworkAccessLink.Enrollment ? controller.TryGetEnrollmentUri(provider, hostId, out var enrollment) && (uri = enrollment) != null
-            : controller.TryGetOriginUri(provider, hostId, out var origin) && (uri = origin) != null)
-        {
-            try { await Launcher(uri!); } catch (Exception) { /* A launcher failure exposes nothing and changes no state. */ }
-        }
+        Uri uri;
+        var allowed = link == NetworkAccessLink.Enrollment
+            ? controller.TryGetEnrollmentUri(provider, hostId, out uri)
+            : controller.TryGetOriginUri(provider, hostId, out uri);
+        if (!allowed) return;
+        try { await Launcher(uri); } catch (Exception) { /* A launcher failure exposes nothing and changes no state. */ }
     }
 
     private void OnCommandFailed(AdminNetworkAccessCommandFeedback feedback)

@@ -118,7 +118,7 @@ internal static class AdminNetworkAccessNativeFixture
                         "https://basement-proxy-node-with-a-very-long-overlay-hostname.tail1234.ts.net:8443",
                         "basement-proxy-node-with-a-very-long-overlay-hostname.tail1234.ts.net", ["100.64.0.10"], "tailscale 1.80.2"),
                     Host("node:12", "proxy", "Office", hostname: "office.tail1234.ts.net"),
-                    Host("node:14", "proxy", "Garage"),
+                    Host("node:14", "proxy", "Garage", "ftp://garage.tail1234.ts.net"),
                     Host("node:16", "proxy", "", error: "provider reported: node key expired", raw: "needs_attention"),
                     Host("node:18", "proxy", "Attic", error: "plugin process is backoff: plugin process exited"),
                 },
@@ -253,6 +253,9 @@ internal static class AdminNetworkAccessNativeFixture
             var longReach = ReachText(Row(page, "node:10"));
             Check(longReach != null && Plain(longReach).EndsWith("(basement-proxy-node-with-a-very-long-overlay-hostname.tail1234.ts.net)", StringComparison.Ordinal),
                 "a distinct hostname follows the origin link");
+            var unsafeReach = ReachText(Row(page, "node:14"));
+            Check(unsafeReach != null && Plain(unsafeReach).EndsWith("ftp://garage.tail1234.ts.net", StringComparison.Ordinal) && !unsafeReach.Inlines.OfType<Hyperlink>().Any(),
+                "a non-web origin is shown as text, never as a link");
             Check(Descendants(Row(page, "node:12")).OfType<TextBlock>().Any(t => t.Text == "office.tail1234.ts.net" || Plain(t) == "office.tail1234.ts.net"), "hostname alone shows without a link");
             var authorize = AuthorizeLink(Row(page, "node:12"));
             Check(authorize != null && AutomationProperties.GetName(authorize) == "Open the authorization page", "waiting host shows the authorization link with an accessible name");
