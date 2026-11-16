@@ -1145,6 +1145,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await OverlayPillNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "books-library-groups")
+            {
+                await BooksLibraryNativeFixture.RunPageBehaviorAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "books-library")
+            {
+                await BooksLibraryNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-revisions")
             {
                 await CardOverlayRevisionNativeFixture.RunAsync(parent);
