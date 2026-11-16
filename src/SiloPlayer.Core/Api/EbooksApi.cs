@@ -6,7 +6,7 @@ namespace SiloPlayer.Core.Api;
 
 public sealed class EbooksApi(SiloApiClient client)
 {
-    private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string ETag)> _revisions = new();
+    private readonly ConcurrentDictionary<string, (ApiIdentityContext Identity, string ETag)> _revisions = new();
     private static string Content(string contentId) => Uri.EscapeDataString(contentId);
 
     public Task<byte[]> ReadFileAsync(string contentId, int fileId, CancellationToken ct = default)
@@ -70,7 +70,7 @@ public sealed class EbooksApi(SiloApiClient client)
         return response.Body;
     }
     public bool HasReaderConfigRevision(string contentId)
-        => _revisions.TryGetValue($"/api/v2/ebooks/{Content(contentId)}/reader-config", out var revision) && client.IsCurrentContext(revision.Context);
+        => _revisions.TryGetValue($"/api/v2/ebooks/{Content(contentId)}/reader-config", out var revision) && client.IsCurrentIdentityContext(revision.Identity);
 
     public async Task<List<EbookReaderAnnotation>> GetAnnotationsAsync(string contentId, CancellationToken ct = default)
     {
@@ -123,7 +123,7 @@ public sealed class EbooksApi(SiloApiClient client)
     }
 
     private string Revision(string path)
-        => _revisions.TryGetValue(path, out var revision) && client.IsCurrentContext(revision.Context)
+        => _revisions.TryGetValue(path, out var revision) && client.IsCurrentIdentityContext(revision.Identity)
             ? revision.ETag : throw new InvalidOperationException("Reload the reader before saving changes.");
 
     private void EnsureIdentity(ApiIdentityContext owner, CancellationToken ct)
@@ -134,10 +134,9 @@ public sealed class EbooksApi(SiloApiClient client)
 
     private void Remember(string path, string? etag, ApiIdentityContext owner, CancellationToken ct)
     {
-        var context = client.CaptureContext();
         EnsureIdentity(owner, ct);
-        // A completed response still belongs to this reader after request retirement.
-        if (!string.IsNullOrEmpty(etag)) _revisions[path] = (context, etag);
+        // Validators belong to the reader identity, not a transient request context.
+        if (!string.IsNullOrEmpty(etag)) _revisions[path] = (owner, etag);
         else _revisions.TryRemove(path, out _);
     }
 

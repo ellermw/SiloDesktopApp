@@ -9,8 +9,10 @@ the page lifetime. Startup failures are separated from runtime script errors;
 unresolved saved locations stay recoverable with contents available and saves
 suppressed until explicit recovery. FB2/FBZ legacy open uses saved overall
 progress, comic image ordering preserves case-insensitive desktop order, and
-comic Next uses canonical shared series ordering. Recovering WebView subprocess
-exits and canceled navigations no longer become fatal reader errors.
+comic Next uses canonical shared series ordering. Canceled navigations no
+longer become fatal reader errors. Browser/render process exits and unresponsive
+renderers still show a failure screen and require reopening the reader;
+automatic renderer recovery is not implemented.
 
 These lead corrections and their new regressions have not run under the local
 hold. All verification below is earlier worker evidence, not final-payload

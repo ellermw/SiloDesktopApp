@@ -29,7 +29,7 @@ public sealed class EbookReaderInteropTests
     public async Task DownloadedBookSurvivesRequestContextRetirement(bool transportCatchUp)
     {
         SiloApiClient? client = null;
-        var handler = new Handler(_ =>
+        var handler = new Handler(request =>
         {
             Assert.True(client!.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent("book bytes"u8.ToArray()) });
@@ -48,7 +48,7 @@ public sealed class EbookReaderInteropTests
     public async Task ReaderPreferencesSurviveTransportCatchUpDuringOpen()
     {
         SiloApiClient? client = null;
-        var handler = new Handler(_ =>
+        var handler = new Handler(request =>
         {
             Assert.True(client!.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
             var response = Json("""{"config":{"theme":"sepia"}}""");
@@ -96,6 +96,55 @@ public sealed class EbookReaderInteropTests
         Assert.Equal(new[] { "first", "second" }, result.Select(annotation => annotation.Id));
         await api.DeleteAnnotationAsync("book", "first");
         Assert.Equal(3, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnnotationCanBeDeletedAfterRequestContextRetirement(bool transportCatchUp)
+    {
+        var handler = new Handler(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+                return Task.FromResult(Json("""{"items":[{"id":"first","etag":"\"first\""}]}"""));
+            Assert.Equal(HttpMethod.Delete, request.Method);
+            Assert.Equal("/api/v2/ebooks/book/annotations/first", request.RequestUri!.AbsolutePath);
+            Assert.Equal("\"first\"", request.Headers.IfMatch.Single().ToString());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        });
+        var client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+        await api.GetAnnotationsAsync("book");
+        Assert.True(client.TryInvalidateAccessContext(api.CaptureContext(), out _, transportCatchUp));
+
+        await api.DeleteAnnotationAsync("book", "first");
+
+        Assert.Equal(2, handler.Calls);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => api.DeleteAnnotationAsync("book", "first"));
+        Assert.Equal(2, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnnotationRevisionCannotBeUsedAfterReaderIdentityChanges(bool returnToOriginalProfile)
+    {
+        var handler = new Handler(request =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            return Task.FromResult(Json("""{"items":[{"id":"first","etag":"\"first\""}]}"""));
+        });
+        var client = Client(handler);
+        client.SetProfile("original");
+        var api = new EbooksApi(client);
+        await api.GetAnnotationsAsync("book");
+        client.SetProfile("replacement");
+        if (returnToOriginalProfile) client.SetProfile("original");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => api.DeleteAnnotationAsync("book", "first"));
+
+        Assert.Equal(1, handler.Calls);
     }
 
     [Theory]
