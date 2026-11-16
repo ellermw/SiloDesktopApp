@@ -1,3 +1,23 @@
+# November 16 - Admin Manage Libraries implemented (in progress until lead review)
+
+Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
+`AddAdminLibraries()`: the sortable table and compact cards, scan queue popover, Scan all, row
+commands (scan/stop, metadata refresh mode dialog/stop, mount check, delete and empty-root cleanup
+confirmations), keyboard/pointer/card-menu reorder as serialized whole-order writes, the add/edit
+editor (General, Folders with server folder browsing and path completion, Metadata with provider
+chains and translation prewarm, Advanced), and the Unmatched, Matcher queue, Ambiguous roots,
+Skipped roots and Stale ID sections. Official reference abd85d0cadac28f4ab7db6821dad9634fc114790
+(no Libraries contract drift since 7115ee70); Beta base 2c33599f, version unchanged. Writes are sent
+once; lost answers are reported as unknown and reloaded; 202 receipts are never shown as completion.
+
+Status: **In progress** until the lead's independent review and Beta PR. Details, rulings and limits:
+docs/parity/admin-manage-libraries.md; evidence under
+D:/SiloPlayer-build/server-update-nov14/manage-libraries/. Synthetic server and current DPI only; no
+live server, pointer-drag, file picker, IME/Narrator, all-DPI or complete visual parity claim.
+Installed player and settings untouched.
+
+---
+
 # November 15 - Configure Security delivered in Beta PR175
 
 Security alone is replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d in branch t3/configure-security-beta. Original commits 1e71c820 and fe5a29b4 remain preserved at preserve/configure-security-fe5a29b4; their receipt and logs remain unchanged. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1. Version remains 1.2.1145-beta.1 under pipeline control.
