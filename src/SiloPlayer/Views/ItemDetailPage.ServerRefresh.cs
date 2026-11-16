@@ -138,13 +138,8 @@ public sealed partial class ItemDetailPage
         var watch = _serverMetadataWatch;
         var dialog = new Controls.RefreshMetadataDialog(async mode =>
         {
-            var identity = api.CaptureIdentityContext();
-            var receipt = await api.RefreshMetadataAsync(item.ContentId, mode);
-            if (!api.IsCurrentIdentityContext(identity)) return;
-            toast.Info(AppStrings.Get(mode == "complete"
-                ? "web.item.toast.refreshRunningComplete"
-                : "web.item.toast.refreshRunningQuick"));
-            _ = FollowMetadataRefreshAsync(item, mode, receipt, identity, watch);
+            if (await Services.MetadataRefreshFlow.StartAsync(api, toast, item.ContentId, mode) is not { } start) return;
+            _ = FollowMetadataRefreshAsync(item, mode, start, watch);
         })
         {
             XamlRoot = XamlRoot,
@@ -157,63 +152,17 @@ public sealed partial class ItemDetailPage
     /// drops the item's cached detail and reloads only the visit that started it.
     /// Runs on the UI thread; the wait itself does not hold it.
     /// </summary>
-    private async Task FollowMetadataRefreshAsync(MediaItemDetail item, string mode, MetadataRefreshReceipt receipt,
-        ApiIdentityContext identity, DetailMetadataWatch? watch)
+    private async Task FollowMetadataRefreshAsync(MediaItemDetail item, string mode, Services.MetadataRefreshStart start,
+        DetailMetadataWatch? watch)
     {
-        var api = App.Services.GetRequiredService<MediaMaintenanceApi>();
-        var toast = App.Services.GetRequiredService<Services.ToastService>();
-        MaintenanceJobWaitResult result;
-        try
-        {
-            result = string.IsNullOrWhiteSpace(receipt.Id)
-                ? new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.TimedOut)
-                : await new MaintenanceJobFollower(
-                    ct => api.GetJobAsync(identity, receipt.Id, ct),
-                    () => api.IsCurrentIdentityContext(identity)).WaitAsync();
-        }
-        catch (Exception ex)
-        {
-            LocalLog.AppendException("state_trace.txt", ex, "metadata_refresh_follow");
-            return;
-        }
-
-        // Signed out or switched account or profile while it ran: nothing failed, so say nothing.
-        if (result.Outcome == MaintenanceJobWaitOutcome.Stale || !api.IsCurrentIdentityContext(identity)) return;
-        var itemResult = result.Job?.ItemResult;
-        // Every later read of the item, from any page, must skip detail cached before the refresh.
-        if (App.Services.GetService<ItemDetailPrefetchCache>() is { } cache)
-            foreach (var id in MetadataRefreshFollow.InvalidatedIds(result, item.ContentId, item.Type, item.SeriesId))
-                cache.Invalidate(id);
-
-        if (result.Error != null)
-            LocalLog.AppendException("state_trace.txt", result.Error, "metadata_refresh_job_read");
-        if (result.Outcome == MaintenanceJobWaitOutcome.Canceled
-            || result.Outcome == MaintenanceJobWaitOutcome.Failed && result.Error == null)
-        {
-            LocalLog.AppendLine("state_trace.txt",
-                $"metadata_refresh_job {result.Outcome}: {result.Job?.Failure?.Title} {result.Job?.Failure?.Detail}".TrimEnd());
-            toast.Error(AppStrings.Get("web.item.toast.refreshFailed"));
-            return;
-        }
-        if (result.Outcome != MaintenanceJobWaitOutcome.Succeeded)
-        {
-            // The POST succeeded, but completion is unknown. Reload without a
-            // success/failure toast, just as when the bounded wait runs out.
-            LocalLog.AppendLine("state_trace.txt", "metadata_refresh_job wait ended before the job finished");
-        }
-        else
-        {
-            var newFiles = itemResult?.NewFiles ?? 0;
-            if (itemResult?.ArtworkCacheIncomplete == true)
-                toast.Warning(AppStrings.Get("web.item.toast.refreshArtworkWarning"));
-            else if (mode == "complete")
-                toast.Success(AppStrings.Get("web.item.toast.completeRefreshFinished"));
-            else if (newFiles > 0)
-                toast.Success(AppStrings.Get("web.item.toast.refreshedNewFiles",
-                    new Dictionary<string, object?> { ["count"] = newFiles, ["new_files"] = newFiles }));
-            else
-                toast.Success(AppStrings.Get("web.item.toast.refreshed"));
-        }
+        var result = await Services.MetadataRefreshFlow.FollowAsync(
+            App.Services.GetRequiredService<MediaMaintenanceApi>(),
+            App.Services.GetRequiredService<Services.ToastService>(),
+            App.Services.GetService<ItemDetailPrefetchCache>(),
+            start, item.ContentId, item.Type, item.SeriesId, mode);
+        // Identity change, cancellation or a thrown read: nothing more. Every other outcome, including an
+        // unknown completion, goes to the follow decision, which reloads without inferring a replacement.
+        if (result == null) return;
 
         // Only the visit that started the refresh follows or reloads (#4187).
         var decision = MetadataRefreshFollow.Decide(result, item.ContentId, mode, watch);

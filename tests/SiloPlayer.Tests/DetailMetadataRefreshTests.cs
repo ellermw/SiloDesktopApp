@@ -561,6 +561,8 @@ public sealed class DetailMetadataRefreshTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var refresh = Read("src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs");
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var toasts = Read("src", "SiloPlayer.Core", "Services", "MetadataRefreshFollow.cs");
         var shell = Read("src", "SiloPlayer", "MainWindow.xaml.cs");
         var english = Read("src", "SiloPlayer.Core", "Localization", "Generated", "en.json");
 
@@ -573,14 +575,180 @@ public sealed class DetailMetadataRefreshTests
                      "web.item.toast.refreshFailed",
                  })
         {
-            Assert.Contains($"\"{key}\"", refresh);
+            Assert.Contains($"\"{key}\"", toasts);
             Assert.Contains($"\"{key}\":", english);
         }
-        Assert.Contains("api.GetJobAsync(identity, receipt.Id, ct)", refresh);
+        Assert.Contains("api.GetJobAsync(identity, receipt.Id, token)", flow);
         Assert.Contains("BeginServerMetadataWatch(contentId);", page);
         Assert.Contains("EndServerMetadataWatch();", page);
         Assert.Contains("Subscribe(\"notifications\", \"user_settings\", \"user_state\", \"catalog\")", shell);
         Assert.Contains("GetService<DetailMetadataChangeHub>()?.Receive(channel, eventName, data)", shell);
+    }
+
+    // ===== 6d: the card menu follows the same job =====
+
+    [Fact]
+    public void RunningAndFinishToastsAreLocalizedAndMatchTheOfficialHook()
+    {
+        Assert.Equal(new MetadataRefreshToast(MetadataRefreshToastKind.Info, "web.item.toast.refreshRunningQuick"),
+            MetadataRefreshFollow.RunningToast("quick"));
+        Assert.Equal(new MetadataRefreshToast(MetadataRefreshToastKind.Info, "web.item.toast.refreshRunningComplete"),
+            MetadataRefreshFollow.RunningToast("complete"));
+
+        MetadataRefreshToast Finish(MaintenanceJobWaitOutcome outcome, MaintenanceJobStatus? job, string mode = "quick")
+            => MetadataRefreshFollow.FinishToast(new(outcome, job), mode);
+
+        var plain = Finish(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded"));
+        Assert.Equal((MetadataRefreshToastKind.Success, "web.item.toast.refreshed"), (plain.Kind, plain.Key));
+        var complete = Finish(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded"), "complete");
+        Assert.Equal((MetadataRefreshToastKind.Success, "web.item.toast.completeRefreshFinished"), (complete.Kind, complete.Key));
+        var added = Finish(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded", newFiles: 3));
+        Assert.Equal((MetadataRefreshToastKind.Success, "web.item.toast.refreshedNewFiles"), (added.Kind, added.Key));
+        Assert.Equal(3L, added.Arguments!["count"]);
+        Assert.Equal(3L, added.Arguments["new_files"]);
+
+        var artwork = Job("succeeded");
+        artwork.ItemResult!.ArtworkCacheIncomplete = true;
+        foreach (var mode in new[] { "quick", "complete" })
+        {
+            var warning = Finish(MaintenanceJobWaitOutcome.Succeeded, artwork, mode);
+            Assert.Equal((MetadataRefreshToastKind.Warning, "web.item.toast.refreshArtworkWarning"), (warning.Kind, warning.Key));
+        }
+
+        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.Failed, MaintenanceJobWaitOutcome.Canceled })
+        {
+            var failed = Finish(outcome, Job("failed"));
+            Assert.Equal((MetadataRefreshToastKind.Error, "web.item.toast.refreshFailed"), (failed.Kind, failed.Key));
+        }
+        // A wait that ran out or went stale says nothing: the job may still be running, or the account changed.
+        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.TimedOut, MaintenanceJobWaitOutcome.Stale })
+            Assert.Equal(MetadataRefreshToastKind.None, Finish(outcome, Job("running")).Kind);
+        // A failed read of the job is not a failed refresh: completion is unknown, so nothing is said.
+        Assert.Equal(MetadataRefreshToastKind.None,
+            MetadataRefreshFollow.FinishToast(new(MaintenanceJobWaitOutcome.Failed, null, new HttpRequestException("job read")), "quick").Kind);
+    }
+
+    [Fact]
+    public void FinishedCardRefreshNotifiesEveryTouchedItemAndOnlyTheRefreshedOneStructurally()
+    {
+        var rebuilt = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded,
+            Job("succeeded", detailId: "episode-1b", refreshId: "episode-1r"));
+
+        var complete = MetadataRefreshFollow.ChangedItems(rebuilt, "episode-1", "complete", "episode", "series-1");
+        Assert.Equal(new[]
+        {
+            new MetadataRefreshChange("episode-1", true), new MetadataRefreshChange("episode-1r", false),
+            new MetadataRefreshChange("episode-1b", false), new MetadataRefreshChange("series-1", false),
+        }, complete);
+
+        // A quick refresh is structural only when it found files.
+        var quick = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded"));
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", false) },
+            MetadataRefreshFollow.ChangedItems(quick, "movie-1", "quick", "movie", null));
+        var found = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded", newFiles: 1));
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", true) },
+            MetadataRefreshFollow.ChangedItems(found, "movie-1", "quick", "movie", null));
+
+        // A server-reported failure or cancellation, or a stale wait, changed nothing to reread.
+        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.Failed, MaintenanceJobWaitOutcome.Canceled, MaintenanceJobWaitOutcome.Stale })
+            Assert.Empty(MetadataRefreshFollow.ChangedItems(new(outcome, Job("running")), "movie-1", "complete", "movie", null));
+        // An unknown completion rereads only the item itself, as Decide reloads it, trusting no job data.
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", true) },
+            MetadataRefreshFollow.ChangedItems(new(MaintenanceJobWaitOutcome.TimedOut, Job("running", detailId: "movie-1b")), "movie-1", "complete", "movie", null));
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", false) },
+            MetadataRefreshFollow.ChangedItems(new(MaintenanceJobWaitOutcome.Failed, null, new HttpRequestException("job read")), "movie-1", "quick", "movie", null));
+    }
+
+    [Fact]
+    public async Task CardRefreshPollsTheJobThenRereadsOpenDetailPagesOfTheItem()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(HttpStatusCode.OK, JobJson("running"), TimeSpan.FromSeconds(4));
+        handler.Enqueue(HttpStatusCode.OK, JobJson("succeeded", newFiles: 1));
+        var (_, api) = CreateApi(handler);
+        var identity = api.CaptureIdentityContext();
+        var time = new FakeTime();
+
+        var result = await new MaintenanceJobFollower(ct => api.GetJobAsync(identity, "job-1", ct),
+            () => api.IsCurrentIdentityContext(identity), time.Delay, () => time.Now).WaitAsync();
+
+        Assert.Equal(MaintenanceJobWaitOutcome.Succeeded, result.Outcome);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(4) }, time.Waits);
+        Assert.Equal(2, handler.Paths.Count);
+
+        // The same notification the card menu sends once the job finished: the open page rereads
+        // once, structurally because the refresh found a file, and a page of another item does not.
+        OnThreadPool(() =>
+        {
+            var delay = new ManualDelay();
+            var hub = new DetailMetadataChangeHub(null, delay.Delay);
+            var open = new ReloadRecorder();
+            var other = new ReloadRecorder();
+            using var openWatch = hub.Watch("movie-1", () => true, open.Reload);
+            using var otherWatch = hub.Watch("movie-2", () => true, other.Reload);
+            foreach (var change in MetadataRefreshFollow.ChangedItems(result, "movie-1", "quick", "movie", null))
+                hub.NotifyItemChanged(change.ContentId, change.Structural);
+            Assert.Equal(0, open.Calls);
+            Assert.Equal(1, delay.Pending);
+
+            delay.ReleaseNext();
+
+            Assert.Equal(new[] { true }, open.Structural);
+            Assert.Equal(0, other.Calls);
+        });
+    }
+
+    [Fact]
+    public async Task CardRefreshEndsQuietlyWhenTheAccountChangesWhileTheJobRuns()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(HttpStatusCode.OK, JobJson("running"));
+        var (_, api) = CreateApi(handler);
+        var identity = api.CaptureIdentityContext();
+        var current = true;
+        var time = new FakeTime { OnWait = () => current = false };
+
+        var result = await new MaintenanceJobFollower(ct => api.GetJobAsync(identity, "job-1", ct),
+            () => current && api.IsCurrentIdentityContext(identity), time.Delay, () => time.Now).WaitAsync();
+
+        Assert.Equal(MaintenanceJobWaitOutcome.Stale, result.Outcome);
+        Assert.Equal(MetadataRefreshToastKind.None, MetadataRefreshFollow.FinishToast(result, "quick").Kind);
+        Assert.Empty(MetadataRefreshFollow.ChangedItems(result, "movie-1", "quick", "movie", null));
+        Assert.Empty(MetadataRefreshFollow.InvalidatedIds(result, "movie-1", "movie", null));
+    }
+
+    [Fact]
+    public void CardMenuFollowsTheJobThroughTheSharedFlowAndNoLongerSaysQueued()
+    {
+        var menu = Read("src", "SiloPlayer", "Controls", "MediaItemMenu.cs");
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var detail = Read("src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs");
+        var english = Read("src", "SiloPlayer.Core", "Localization", "Generated", "en.json");
+
+        Assert.DoesNotContain("queued", menu, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("toast.Success(mode", menu, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFlow.StartAsync(maintenanceApi, toast, item.ContentId, mode)", menu, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFlow.FollowAsync(", menu, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId)", menu, StringComparison.Ordinal);
+        Assert.Contains("hub?.NotifyItemChanged(change.ContentId, change.Structural)", menu, StringComparison.Ordinal);
+        // A definite failure stops; the surfaces refresh after the job, not when it was queued.
+        var finished = menu.IndexOf("MetadataRefreshFollow.IsDefiniteFailure(result)", StringComparison.Ordinal);
+        Assert.InRange(finished, 1, menu.IndexOf("MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId", StringComparison.Ordinal));
+
+        // The flow owns the bounded, identity-bound follow, the cache drop and every toast.
+        Assert.Contains("new MaintenanceJobFollower(", flow, StringComparison.Ordinal);
+        Assert.Contains("api.GetJobAsync(identity, receipt.Id, token)", flow, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.InvalidatedIds(result, contentId, type, seriesId)", flow, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.RunningToast(mode)", flow, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.FinishToast(result, mode)", flow, StringComparison.Ordinal);
+        foreach (var key in new[] { "refreshRunningQuick", "refreshRunningComplete", "refreshed", "completeRefreshFinished",
+                     "refreshedNewFiles", "refreshArtworkWarning", "refreshFailed" })
+            Assert.Contains($"\"web.item.toast.{key}\":", english);
+
+        // The detail page and the card share the flow instead of each following the job.
+        Assert.Contains("Services.MetadataRefreshFlow.StartAsync(api, toast, item.ContentId, mode)", detail, StringComparison.Ordinal);
+        Assert.Contains("Services.MetadataRefreshFlow.FollowAsync(", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("new MaintenanceJobFollower(", detail, StringComparison.Ordinal);
     }
 
     // ===== helpers =====
