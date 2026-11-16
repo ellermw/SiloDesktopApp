@@ -4,9 +4,13 @@ Reference: official Silo Server/WebUI `c11b0a968f0d5980b7005579fb95acc2d11d8321`
 
 Desktop parent: final Email PR174 `4958d221e50b886a815bc1c62d6cba91cc8f3b6e` (runtime `3ab6d459`), which contains General PR173 `905f9ba2`, Beta `a06cc8b3`, PR167 `3f0fe220` and PR171 `3331916b`. PR167's head later moved to pipeline merge `3e4be1a2` of the same Beta `a06cc8b3`; it adds no content beyond textual merge markers. Version `1.2.1081-beta.1` (numeric `1.2.1080.1`) remains under pipeline control.
 
+## Fresh Beta reconciliation
+
+The original commits and receipt are preserved at preserve/configure-security-fe5a29b4 and the original evidence path. Security alone was replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d (version 1.2.1145-beta.1). Official main abd85d0cadac28f4ab7db6821dad9634fc114790 was fetched directly; independent review found no Security source, schema or catalog drift from c11b0a96. Entry now invalidates the shared settings cache, so the local-network value and validator refresh. Rate controls stay disabled if the shared settings read fails, until explicit Reload succeeds. Two new unit regressions failed before these fixes and pass after them. Original counts and hashes below describe the earlier base only; the takeover receipt records final Beta-based verification: 7,226 full units, 723 focused units, Release publish/matching host and all seven native groups pass (374/297/188/36/64/113/184). The initial full run failed Library count restoration and stopped progressing; the isolated retry and complete rerun pass.
+
 ## Status
 
-Security (C2b) is **In progress**: implemented and verified in its isolated worktree, awaiting the lead's independent review, push and Beta PR. It becomes Done only when pushed to a PR with its link recorded. General (PR173) and Email (PR174) are Done; the remaining 16 leaves are unstarted. No Configure change is merged or released.
+Security (C2b) is **In progress**: implemented and verified in its isolated worktree, awaiting the lead's independent review, push and Beta PR. It becomes Done only when pushed to a PR with its link recorded. General (PR173) and Email (PR174) are Done; the remaining 16 leaves are unstarted. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1.
 
 ## Delivered behavior
 

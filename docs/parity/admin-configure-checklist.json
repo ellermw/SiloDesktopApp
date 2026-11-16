@@ -1,6 +1,6 @@
 {
   "schema": "silo-desktop/configure-delivery-checklist@1",
-  "officialCommit": "c11b0a968f0d5980b7005579fb95acc2d11d8321",
+  "officialCommit": "abd85d0cadac28f4ab7db6821dad9634fc114790",
   "statusRule": "Done = verified and pushed to a PR with its link. In progress = implementation/review/testing, not yet pushed. Remaining = unstarted or blocked, with reason. Merged/released are separate.",
   "inventory": "3 topics, 19 leaves, 88 nested feature entries; nested route patterns remain owned by their leaves.",
   "scopeNote": "General and Email are verified and pushed to PR173 and PR174. Security is implemented and verified locally (In progress until pushed to a PR). Catalog coverage does not establish implementation: the other 16 leaves and their nested functionality remain unstarted.",
@@ -478,5 +478,5 @@
       "statusReason": "Unstarted; delivered in a separate verified group after General."
     }
   ],
-  "mergedReleasedStatus": "PR173 and PR174 are open and unmerged (last observed); Security has no PR yet; no Configure changes released. Pipeline owns review, reconciliation, merge, stamping and packaging."
+  "mergedReleasedStatus": "PR173 and PR174 merged and are included in v1.2.1145-beta.1; Security has no PR yet and is undergoing final Beta-based verification. Pipeline owns review, reconciliation, merge, stamping and packaging."
 }
