@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files page, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email and Security settings pages and the Network access tool page",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files page, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email, Security and Storage settings pages and the Network access tool page",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminMarkerHistoryApi.cs",
     "src/SiloPlayer.Core/Api/AdminMonitorApi.Activity.cs",
@@ -116,6 +116,14 @@
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.Editors.cs",
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.xaml",
+    "src/SiloPlayer.Core/Api/AdminStorageApi.cs",
+    "src/SiloPlayer.Core/Models/Admin/AdminStorageModels.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminStorageRules.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminStorageSettingsController.cs",
+    "src/SiloPlayer/Views/Admin/AdminStorageSettingsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminStorageSettingsPage.S3.cs",
+    "src/SiloPlayer/Views/Admin/AdminStorageSettingsPage.Transition.cs",
+    "src/SiloPlayer/Views/Admin/AdminStorageSettingsPage.xaml",
     "src/SiloPlayer.Core/Api/AdminSubtitlesApi.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminSubtitles.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminSubtitlesModels.cs",

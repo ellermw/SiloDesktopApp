@@ -93,15 +93,15 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
     public async Task<AdminSettingsConnectionResult> CheckConnectionAsync(MonitorAuthorityLease lease, string kind,
         IReadOnlyDictionary<string, string> values, IReadOnlyCollection<string> dirtyKeys, CancellationToken ct = default)
     {
-        if (kind != "redis") throw new ArgumentException("Unsupported connection check.", nameof(kind));
-        if (values.Keys.Any(key => key is not ("redis.url" or "redis.db")) || dirtyKeys.Any(key => key is not ("redis.url" or "redis.db")))
-            throw new ArgumentException("Invalid Redis connection check values.", nameof(values));
+        if (!ConnectionCheckKeys.TryGetValue(kind, out var allowed)) throw new ArgumentException("Unsupported connection check.", nameof(kind));
+        if (values.Keys.Any(key => !allowed.Contains(key)) || dirtyKeys.Any(key => !allowed.Contains(key)))
+            throw new ArgumentException("Invalid connection check values.", nameof(values));
         using var timeout = Timeout(lease, ct, TimeSpan.FromSeconds(20));
         ApiResponse<ConnectionResponse> response;
         try
         {
             response = await client.MonitorLogsSendAsync<ConnectionResponse>(lease, HttpMethod.Post,
-                "/api/v2/admin/settings/check/redis", new Dictionary<string, object?> { ["values"] = values, ["dirty_keys"] = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
+                "/api/v2/admin/settings/check/" + kind, new Dictionary<string, object?> { ["values"] = values, ["dirty_keys"] = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ApiException error) { throw Sanitize(error); }
@@ -121,8 +121,22 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
             foreach (var component in secrets.Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
                 message = message.Replace(component, "<redacted>", StringComparison.Ordinal);
         }
+        // S3 credentials are write-only: a submitted access or secret key is never shown back.
+        foreach (var key in ConnectionCheckSecrets)
+            if (values.TryGetValue(key, out var credential) && credential.Length > 0)
+                message = message.Replace(credential, "<redacted>", StringComparison.Ordinal);
+        if (message.Length > 500) message = message[..500] + "…";
         return new(response.Body.Success.Value, message);
     }
+
+    /// <summary>Keys each supported connection check may submit (official RedisGroup and StorageSettings S3Group).</summary>
+    private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> ConnectionCheckKeys = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+    {
+        ["redis"] = new HashSet<string>(StringComparer.Ordinal) { "redis.url", "redis.db" },
+        ["s3_public"] = new HashSet<string>(AdminStorageRules.PublicS3Keys, StringComparer.Ordinal),
+        ["s3_private"] = new HashSet<string>(AdminStorageRules.PrivateS3Keys, StringComparer.Ordinal),
+    };
+    private static readonly string[] ConnectionCheckSecrets = AdminStorageRules.Secrets.ToArray();
 
     /// <summary>
     /// Sends one synchronous SMTP test through the server's SAVED settings. The body

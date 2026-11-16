@@ -3,7 +3,7 @@
   "officialCommit": "abd85d0cadac28f4ab7db6821dad9634fc114790",
   "statusRule": "Done = verified and pushed to a PR with its link. In progress = implementation/review/testing, not yet pushed. Remaining = unstarted or blocked, with reason. Merged/released are separate.",
   "inventory": "3 topics, 19 leaves, 88 nested feature entries; nested route patterns remain owned by their leaves.",
-  "scopeNote": "General and Email are merged in Beta and released in v1.2.1145-beta.1. Security PR175 is merged in Beta f90a6238; release inclusion is not yet verified. Network access is in progress pending final-base review and verification. The other 15 leaves and all their nested functionality remain unfinished.",
+  "scopeNote": "General and Email are merged in Beta and released in v1.2.1145-beta.1. Security PR175 is merged in Beta f90a6238; release inclusion is not yet verified. Network access is in progress pending final-base review and verification. Storage (C5) is an In progress source-only candidate. The other leaves and all their nested functionality remain unfinished.",
   "dependencies": [
     "https://github.com/ellermw/SiloDesktopApp/pull/167",
     "https://github.com/ellermw/SiloDesktopApp/pull/171",
@@ -88,8 +88,9 @@
         "Storage transition review: what should move (start_fresh/preserve_uploads/migrate_all), capabilities, source health (5s poll only while recovery_pending and page active), cancel transition job"
       ],
       "children": [],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Verified scoped pre-submission snapshot on Beta522007cf: proof1/focused332/full7583 units, app/host and Storage plus four shared Admin native groups pass. Unchanged Downloads fixture316 times out identically on a non-Storage Beta212 baseline; original full receipt remains failed, not all-green. Foreground refresh invalidations coalesce and known capabilities survive transient errors. Live S3/migration, full visual, every-DPI and localization remain limits; separate Beta PR submission follows this snapshot.",
+      "sourceRecord": "docs/parity/admin-storage.md"
     },
     {
       "id": "search",
