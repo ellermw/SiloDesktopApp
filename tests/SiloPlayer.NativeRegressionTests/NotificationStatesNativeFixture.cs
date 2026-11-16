@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -19,13 +20,13 @@ internal static class NotificationStatesNativeFixture
         var original = (IServiceProvider)field.GetValue(null)!;
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://notification-states.invalid"); client.SetProfile("fixture");
-        var vm = new NotificationsViewModel(new NotificationsApi(client));
+        var api = new NotificationsApi(client); var vm = new NotificationsViewModel(api);
         wire.Paging = Environment.GetEnvironmentVariable("SILO_NATIVE_PERSONAL_CASE") == "notification-pages";
         if (wire.Paging) wire.Preferences.TrySetResult();
         using var auth = new AuthService(client, new AuthApi(client));
         auth.SelectProfile("fixture");
         using var events = new EventChannelClient(client, auth);
-        field.SetValue(null, new Services(original, vm, client, events));
+        field.SetValue(null, new Services(original, vm, client, api, events));
         var frame = new Frame { Width = 500, Height = 800 }; parent.Children.Add(frame);
         var differences = new List<string>();
         try
@@ -37,7 +38,7 @@ internal static class NotificationStatesNativeFixture
                 var more = (Button)page.FindName("LoadMoreButton");
                 page.UpdateLayout(); await Task.Delay(60);
                 var rows = (ListView)page.FindName("NotificationsList");
-                var last = (ListViewItem)rows.ContainerFromIndex(vm.Notifications.Count - 1);
+                var last = NotificationFixtureUi.Row(page, vm.Notifications[^1].Id);
                 var lastBottom = last.TransformToVisual(page).TransformPoint(new()).Y + last.ActualHeight;
                 var footerGap = more.TransformToVisual(page).TransformPoint(new()).Y - lastBottom;
                 if (footerGap < 16 || footerGap > 32)
@@ -57,11 +58,11 @@ internal static class NotificationStatesNativeFixture
                 scroll.ChangeView(null, scroll.ScrollableHeight, null, true);
                 await Until(() => scroll.VerticalOffset > 1000);
                 rows.UpdateLayout(); await Task.Delay(80);
-                var final = (ListViewItem?)rows.ContainerFromIndex(vm.Notifications.Count - 1);
+                var final = NotificationFixtureUi.Row(page, vm.Notifications[^1].Id);
                 if (final == null || final.TransformToVisual(page).TransformPoint(new()).Y > frame.ActualHeight)
                     throw new InvalidOperationException("The last notification cannot be reached by scrolling the long inbox.");
                 Program.Log("PASS: NOTIFICATION_PAGES_COMPLETED actual pending control disables and final continuation appends/hides control.");
-                Program.Log("PASS: NOTIFICATION_FLOW_COMPLETED short-list footer gap24px and bounded virtualized long-list scrolling.");
+                Program.Log("PASS: NOTIFICATION_FLOW_COMPLETED short-list footer gap24px and bounded long-list scrolling.");
                 return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_PERSONAL_CASE") == "notification-realtime")
@@ -74,7 +75,9 @@ internal static class NotificationStatesNativeFixture
             await Until(() => page.IsLoaded && vm.Notifications.Count == 1);
             page.UpdateLayout(); await Task.Delay(100);
             if (((FrameworkElement)page.FindName("LoadingSkeleton")).Visibility != Visibility.Collapsed ||
-                ((FrameworkElement)page.FindName("NotificationsList")).Visibility != Visibility.Visible)
+                ((FrameworkElement)page.FindName("NotificationsList")).Visibility != Visibility.Visible ||
+                ((FrameworkElement)page.FindName("InboxGroupsHost")).Visibility != Visibility.Visible ||
+                NotificationFixtureUi.Rows(page).Length != 1)
                 differences.Add("Completed inbox remains hidden behind the skeleton while optional preferences are pending.");
             if (page.FindName("PreferenceLoadingPanel") is not FrameworkElement loading || loading.Visibility != Visibility.Visible ||
                 ((FrameworkElement)page.FindName("PreferenceLoadFailedPanel")).Visibility != Visibility.Collapsed)
@@ -98,20 +101,72 @@ internal static class NotificationStatesNativeFixture
             if (((TextBlock)page.FindName("EmptyTitleText")).Text != "No unread notifications")
                 differences.Add("Actual unread-tab invocation did not render its filtered-empty message.");
             if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
+            await CheckCurrentInboxAsync(frame, page, vm, wire);
             Program.Log("PASS: NOTIFICATION_STATES_COMPLETED optional pending/rendered inbox, preferences skeleton, empty spacing, error exclusion, Reload and actual unread filter.");
         }
         finally
         {
-            wire.Preferences.TrySetResult(); wire.Continuation.TrySetResult(new(HttpStatusCode.NoContent)); vm.CancelPendingLoad(); frame.Navigate(typeof(Page)); parent.Children.Remove(frame);
-            await Task.Delay(100); field.SetValue(null, original);
+            wire.Preferences.TrySetResult(); wire.Continuation.TrySetResult(new(HttpStatusCode.NoContent)); vm.CancelPendingLoad();
+            await NotificationFixtureUi.DetachAsync(frame, () => { frame.Navigate(typeof(Page)); parent.Children.Remove(frame); });
+            field.SetValue(null, original);
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_PERSONAL_CASE") == "notification-realtime" &&
                 typeof(EventChannelClient).GetField("EventReceived", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(events) != null)
                 throw new InvalidOperationException("Unloaded inbox retains its realtime handler.");
         }
     }
+    private static async Task CheckCurrentInboxAsync(Frame frame, NotificationsPage page, NotificationsViewModel vm, Wire wire)
+    {
+        var now = DateTimeOffset.Now;
+        wire.Inbox = [
+            new() { Id = "boundary", Type = "request.approved", CreatedAt = now.ToString("O"), ReasonFlags = new() { Title = "Request boundary", Favorite = true } },
+            new() { Id = "episode-one", Type = "episode.available", SeriesId = "group", SeriesTitle = "Grouped series", CreatedAt = now.AddDays(-2).ToString("O"), SeasonNumber = 1, EpisodeNumber = 1 },
+            new() { Id = "episode-two", Type = "episode.available", SeriesId = "group", SeriesTitle = "Grouped series", CreatedAt = now.AddDays(-2).AddMinutes(-1).ToString("O"), SeasonNumber = 1, EpisodeNumber = 2 }
+        ];
+        Invoke((Button)page.FindName("AllButton"));
+        await Until(() => vm.Notifications.Count == 3 && NotificationFixtureUi.Rows(page).Length == 2);
+        var grouped = NotificationFixtureUi.Row(page, "episode-one");
+        var expand = Descendants(grouped).OfType<Expander>().Single();
+        ((IExpandCollapseProvider)new ExpanderAutomationPeer(expand).GetPattern(PatternInterface.ExpandCollapse)).Expand();
+        await Until(() => expand.IsExpanded);
+        // The collapsed summary already shows "S1E1 – S1E2"; both episode lines must appear beneath it.
+        if (!await Settles(() => { grouped.UpdateLayout(); return Descendants(grouped).OfType<TextBlock>().Count(text => text.Text.StartsWith("S1E", StringComparison.Ordinal)) >= 3; }))
+            throw new InvalidOperationException("Expanded group omits its episode lines.");
+        foreach (var notification in wire.Inbox.Where(item => item.Type == "episode.available")) notification.ReadAt = now.ToString("O");
+        Invoke((Button)page.FindName("UnreadButton"));
+        await Until(() => vm.StatusFilter == "unread" && !vm.IsLoading && vm.Notifications.Count == 1);
+        Invoke((Button)page.FindName("AllButton"));
+        await Until(() => vm.StatusFilter == "all" && !vm.IsLoading && vm.Notifications.Count == 3 && NotificationFixtureUi.Rows(page).Length == 2);
+        if (!Descendants(NotificationFixtureUi.Row(page, "episode-one")).OfType<Expander>().Single().IsExpanded)
+            throw new InvalidOperationException("All/Unread filter discarded a group's saved expansion while the group was absent.");
+        Invoke((Button)page.FindName("InboxSelectButton"));
+        var requestRow = NotificationFixtureUi.Row(page, "boundary");
+        var checkbox = Descendants(requestRow).OfType<CheckBox>().Single();
+        ((IToggleProvider)new CheckBoxAutomationPeer(checkbox).GetPattern(PatternInterface.Toggle)).Toggle();
+        await Until(() => vm.SelectedInboxEntries.Length == 1);
+        var summary = ((TextBlock)page.FindName("SelectionSummary")).Text;
+        if (!summary.Contains("· 1 notification", StringComparison.Ordinal) || summary.Contains("· 1 notifications", StringComparison.Ordinal))
+            throw new InvalidOperationException("Selected single notification uses the wrong count fallback.");
+        Invoke((Button)page.FindName("InboxSelectButton"));
+        frame.Width = 700; page.UpdateLayout();
+        await Until(() => page.ActualWidth >= 640);
+        if (!await Settles(() => { page.UpdateLayout(); return Descendants(requestRow).OfType<TextBlock>().Any(text => text.Text == "Request" && text.ActualWidth > 0); }) ||
+            Descendants(requestRow).OfType<TextBlock>().Any(text => text.Text == "Favorite"))
+            throw new InvalidOperationException("Request row omits its tag or retains obsolete relationship chips.");
+        var oldParent = requestRow.Parent;
+        var moving = vm.Notifications.Single(item => item.Id == "boundary"); moving.CreatedAt = now.AddDays(-1).ToString("O");
+        vm.Notifications[vm.Notifications.IndexOf(moving)] = moving;
+        await Until(() => requestRow.IsLoaded && requestRow.Parent != oldParent);
+        if (!ReferenceEquals(requestRow, NotificationFixtureUi.Row(page, "boundary")) ||
+            !Descendants(page).OfType<TextBlock>().Any(text => text.Text == "Yesterday" && Microsoft.UI.Xaml.Automation.AutomationProperties.GetHeadingLevel(text) == AutomationHeadingLevel.Level2))
+            throw new InvalidOperationException("Day rollover failed to move the retained row or lost accessible day headings.");
+        await MediaParityNativeFixture.CaptureAsync(frame, "notification-grouped-review.png");
+        Program.Log("PASS: grouped expansion survives absent filtered groups; single selection grammar, Request tag, retained row day move and accessible headings.");
+    }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Until(Func<bool> ready)
     { for (var i = 0; i < 150; i++) { if (ready()) return; await Task.Delay(20); } throw new TimeoutException("Notification state did not settle."); }
+    private static async Task<bool> Settles(Func<bool> ready)
+    { for (var i = 0; i < 150; i++) { if (ready()) return true; await Task.Delay(20); } return false; }
     private static async Task CheckRealtimeAsync(Frame frame, NotificationsViewModel vm, EventChannelClient events, Wire wire)
     {
         void Emit(string name, string json)
@@ -133,7 +188,7 @@ internal static class NotificationStatesNativeFixture
         if (vm.Notifications[0].IsUnread || vm.UnreadCount != 0) throw new InvalidOperationException("Actual read event did not repaint the cached row/count.");
         var list = (ListView)((NotificationsPage)frame.Content).FindName("NotificationsList");
         list.UpdateLayout();
-        var realized = (ListViewItem)list.ContainerFromItem(vm.Notifications[0]);
+        var realized = NotificationFixtureUi.Row((NotificationsPage)frame.Content, vm.Notifications[0].Id);
         var title = Descendants(realized).OfType<TextBlock>().Single(text => text.Name == "NotificationTitleText");
         var indicator = Descendants(realized).OfType<Microsoft.UI.Xaml.Shapes.Ellipse>().Single();
         if (title.FontWeight.Weight != 500 || indicator.Visibility != Visibility.Collapsed)
@@ -161,14 +216,15 @@ internal static class NotificationStatesNativeFixture
             foreach (var descendant in Descendants(child)) yield return descendant;
         }
     }
-    private sealed class Services(IServiceProvider original, NotificationsViewModel vm, SiloApiClient client, EventChannelClient events) : IServiceProvider
+    private sealed class Services(IServiceProvider original, NotificationsViewModel vm, SiloApiClient client, NotificationsApi api, EventChannelClient events) : IServiceProvider
     {
         public object? GetService(Type type) => type == typeof(NotificationsViewModel) ? vm
-            : type == typeof(SiloApiClient) ? client : type == typeof(EventChannelClient) ? events : original.GetService(type);
+            : type == typeof(SiloApiClient) ? client : type == typeof(NotificationsApi) ? api : type == typeof(EventChannelClient) ? events : original.GetService(type);
     }
     private sealed class Wire : HttpMessageHandler
     {
         internal string Mode = "loaded";
+        internal List<AppNotification>? Inbox;
         internal int ListReads;
         internal bool UnreadAvailable;
         internal bool Paging, ContinuationStarted;
@@ -183,6 +239,11 @@ internal static class NotificationStatesNativeFixture
             { ContinuationStarted = true; return await Continuation.Task.WaitAsync(ct); }
             if (path.EndsWith("/preferences")) await Preferences.Task.WaitAsync(ct);
             if (path.EndsWith("/notifications") && Mode == "error") return new(HttpStatusCode.ServiceUnavailable);
+            if (path.EndsWith("/notifications") && Inbox != null)
+            {
+                var items = request.RequestUri.Query.Contains("status=unread") ? Inbox.Where(item => item.IsUnread).ToArray() : Inbox.ToArray();
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items, page = new { has_more = false } }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })) };
+            }
             var json = path.EndsWith("/preferences") ? "{\"enabled\":true}"
                 : path.EndsWith("/unread-count") ? "{\"count\":0}"
                 : Mode == "empty" || request.RequestUri.Query.Contains("status=unread") && !UnreadAvailable ? "{\"items\":[],\"read_cutoff\":\"fixture-cutoff\"}"

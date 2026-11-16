@@ -61,7 +61,28 @@ public sealed partial class NotificationsApi(SiloApiClient client)
         }, ct);
 
     public Task MarkReadAsync(string id, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v2/notifications/{Uri.EscapeDataString(id)}/read", new Dictionary<string, object?>(), ct);
+        => MarkReadAsync(RequestContext, id, ct);
+
+    public async Task MarkReadAsync(ApiRequestContext context, string id, CancellationToken ct = default)
+    {
+        RequireSeriesContext(context, ct);
+        // An idempotent read may refresh authentication, as before; the
+        // context-bound request rechecks the profile on any refresh retry.
+        await client.SendNoContentRequestAsync(context, HttpMethod.Post,
+            $"/api/v2/notifications/{Uri.EscapeDataString(id)}/read", new Dictionary<string, object?>(), ct);
+        RequireSeriesContext(context, ct);
+    }
+
+    public async Task MarkManyReadAsync(ApiRequestContext context, IEnumerable<string> notificationIds, CancellationToken ct = default)
+    {
+        RequireSeriesContext(context, ct);
+        foreach (var batch in notificationIds.Distinct(StringComparer.Ordinal).Chunk(6))
+        {
+            RequireSeriesContext(context, ct);
+            await Task.WhenAll(batch.Select(id => MarkReadAsync(context, id, ct)));
+        }
+        RequireSeriesContext(context, ct);
+    }
 
     public Task MarkAllReadAsync(CancellationToken ct = default)
     {

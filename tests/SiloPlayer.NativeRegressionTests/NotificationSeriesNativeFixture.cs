@@ -55,21 +55,21 @@ internal static class NotificationSeriesNativeFixture
                 wire.CapabilityFailures = 1; Invoke((Button)page.FindName("SeriesButton")); var retrySeries = (NotificationSeriesControl)page.FindName("SeriesView");
                 await Until(() => retrySeries.State.Error != null); var before = wire.CapabilityReads;
                 Invoke((Button)retrySeries.FindName("SeriesRetry")); await Task.Delay(250);
-                Require(wire.CapabilityReads > before && retrySeries.State.Available && retrySeries.State.Error == null && retrySeries.State.Active.Count > 0, "initial capability failure Retry must reinitialize capability and load the list");
+                Require(wire.CapabilityReads > before && retrySeries.State.Available && retrySeries.State.Error == null && retrySeries.State.Rows.Count > 0, "initial capability failure Retry must reinitialize capability and load the list");
                 Program.Log("PASS: actual initial-capability failure Retry recovers the Series list."); return;
             }
             Invoke((Button)page.FindName("SeriesButton")); var series = (NotificationSeriesControl)page.FindName("SeriesView");
             series.Loaded += (_, _) => Program.Log("lifecycle Series loaded " + Gates());
             series.Unloaded += (_, _) => Program.Log("lifecycle Series unloaded " + Gates());
             string Gates() => $"opened={typeof(NotificationSeriesControl).GetField("_opened", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(series)}, ready={typeof(NotificationSeriesControl).GetField("_ready", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(series)}, current={series.State.Context is { } owner && series.State.IsCurrent(owner)}, loaded={series.IsLoaded}";
-            await Until(() => series.State.Active.Count == 1 && !series.State.IsLoading);
+            await Until(() => series.State.Rows.Count == 1 && !series.State.IsLoading);
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_SERIES_CASE") == "undo-timeout")
             {
                 Invoke(Action(series, "Mute One Series"));
                 await Until(() => wire.Muted && Descendants(toasts).OfType<Button>().Any(button => button.Content as string == "Undo"));
                 wire.TimeoutWrite = true; Invoke(Descendants(toasts).OfType<Button>().First(button => button.Content as string == "Undo")); await Task.Delay(250);
                 Require(Descendants(toasts).OfType<TextBlock>().Any(text => text.Text == "Failed to unmute the series"), "current-owner Undo timeout must show the existing visible unmute error");
-                wire.TimeoutWrite = false; await series.LoadMoreAsync(); Invoke(Action(series, "Unmute One Series")); await Until(() => !wire.Muted && series.State.Active.Any(row => row.Item.ContentId == "one"));
+                wire.TimeoutWrite = false; await series.LoadMoreAsync(); Invoke(Action(series, "Unmute One Series")); await Until(() => !wire.Muted && series.State.Rows.Any(row => row.Item.ContentId == "one"));
                 Invoke(Action(series, "Mute One Series")); await Until(() => wire.Muted && Descendants(toasts).OfType<Button>().Any(button => button.Content as string == "Undo" && button.IsEnabled));
                 var failures = Descendants(toasts).OfType<TextBlock>().Count(text => text.Text == "Failed to unmute the series");
                 wire.HoldUnmute = true; Invoke(Descendants(toasts).OfType<Button>().First(button => button.Content as string == "Undo" && button.IsEnabled)); await Until(() => wire.UnmuteEntered);
@@ -85,18 +85,18 @@ internal static class NotificationSeriesNativeFixture
                 scroll.ChangeView(null, scroll.ScrollableHeight, null, true); await Task.Delay(150);
                 scroll.ChangeView(null, Math.Max(0, scroll.ScrollableHeight - 30), null, true); await Task.Delay(150);
                 Require(wire.Continuations.Count == requests, "tail scroll after a paging error must wait for explicit Retry instead of resubmitting failed GET");
-                wire.FailMore = false; Invoke((Button)series.FindName("SeriesRetry")); await Until(() => series.State.Active.Count == 2 && series.State.Error == null);
+                wire.FailMore = false; Invoke((Button)series.FindName("SeriesRetry")); await Until(() => series.State.Rows.Count == 3 && series.State.Error == null);
                 Program.Log("PASS: actual tail scroll stays quiet after page error; explicit Retry uses the original cursor and succeeds."); return;
             }
             Require(((Button)page.FindName("MarkAllButton")).Visibility == Visibility.Collapsed, "Series hides mark-all read");
-            Require(((FrameworkElement)series.FindName("InactiveSection")).Visibility == Visibility.Collapsed, "inactive waits until active continuation exhausts");
+            Require(series.State.Options.Status == "all" && series.State.HasMore && series.State.Rows.Select(row => row.Item.ContentId).SequenceEqual(new[] { "one" }), "Series starts one server-ordered all-status stream");
             wire.FailMore = true; wire.TimeoutMore = true; Invoke((Button)series.FindName("SeriesLoadMore")); await Until(() => series.State.Error != null);
-            Require(series.State.Active.Count == 1 && ((Button)series.FindName("SeriesRetry")).IsEnabled, "paging error retains existing rows with usable Retry");
-            wire.FailMore = false; wire.TimeoutMore = false; Invoke((Button)series.FindName("SeriesRetry")); await Until(() => series.State.ShowInactive && series.State.Active.Count == 2);
+            Require(series.State.Rows.Count == 1 && ((Button)series.FindName("SeriesRetry")).IsEnabled, "paging error retains existing rows with usable Retry");
+            wire.FailMore = false; wire.TimeoutMore = false; Invoke((Button)series.FindName("SeriesRetry")); await Until(() => !series.State.HasMore && series.State.Rows.Count == 3);
             Require(wire.Continuations.TakeLast(2).Distinct().Count() == 1, "failed continuation retries the original cursor");
-            Require(((FrameworkElement)series.FindName("InactiveSection")).Visibility == Visibility.Visible, "silenced section opens after active completes");
-            Program.Log("PASS: actual Series navigation, active-first continuation, retained-row paging error and same-cursor Retry.");
-            ((ComboBox)series.FindName("ReasonCombo")).SelectedIndex = 4;
+            Require(series.State.Rows.Select(row => row.Item.ContentId).SequenceEqual(new[] { "one", "two", "old" }) && series.State.Rows[^1].Muted, "all-status pagination retains server order and includes muted rows in the same table");
+            Program.Log("PASS: actual Series navigation, single-stream continuation, retained-row paging error and same-cursor Retry.");
+            Invoke(Filter(series, "next_up"));
             ((ComboBox)series.FindName("SortCombo")).SelectedIndex = 4;
             ((TextBox)series.FindName("SearchBox")).Text = " bear & fox ";
             await Until(() => series.State.Options == new SiloPlayer.Core.Models.Notifications.NotificationSeriesOptions("bear & fox", "next_up", "-year") && !series.State.IsLoading);
@@ -105,30 +105,30 @@ internal static class NotificationSeriesNativeFixture
             Invoke(Link(series, "One Series")); await Task.Delay(100); frame.GoBack();
             // State's query finishes before control.OpenAsync restores its toolbar.
             // The page assigns _scroll only after awaiting that complete operation.
-            await Until(() => series.IsLoaded && !series.State.IsLoading && series.State.Active.Count > 0 &&
+            await Until(() => series.IsLoaded && !series.State.IsLoading && series.State.Rows.Count > 0 &&
                 series.State.Context is { } owner && series.State.IsCurrent(owner) &&
                 typeof(NotificationSeriesControl).GetField("_opened", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(series) is true &&
                 typeof(NotificationsPage).GetField("_scroll", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page) != null);
             Require(((TextBox)series.FindName("SearchBox")).Text == "bear & fox" && ((ComboBox)series.FindName("SortCombo")).SelectedIndex == 4, "detail/back preserves query controls");
             navigation.NavigationRequestHandler = null;
-            ((TextBox)series.FindName("SearchBox")).Text = ""; ((ComboBox)series.FindName("ReasonCombo")).SelectedIndex = 0; ((ComboBox)series.FindName("SortCombo")).SelectedIndex = 0;
+            ((TextBox)series.FindName("SearchBox")).Text = ""; Invoke(Filter(series, "all")); ((ComboBox)series.FindName("SortCombo")).SelectedIndex = 0;
             try { await Until(() => series.State.Options == new SiloPlayer.Core.Models.Notifications.NotificationSeriesOptions() && !series.State.IsLoading); }
             catch
             {
-                Program.Log($"filter diagnostic: options={series.State.Options}, search={((TextBox)series.FindName("SearchBox")).Text}, reason={((ComboBox)series.FindName("ReasonCombo")).SelectedIndex}, sort={((ComboBox)series.FindName("SortCombo")).SelectedIndex}, loading={series.State.IsLoading}, {Gates()}, error={series.State.Error}");
+                Program.Log($"filter diagnostic: options={series.State.Options}, search={((TextBox)series.FindName("SearchBox")).Text}, reason={series.State.Options.Reason}, sort={((ComboBox)series.FindName("SortCombo")).SelectedIndex}, loading={series.State.IsLoading}, {Gates()}, error={series.State.Error}");
                 Program.Log("filter diagnostic queries=" + string.Join(";", wire.Queries.TakeLast(8))); throw;
             }
             wire.FailWrite = true; Invoke(Action(series, "Mute One Series")); await Until(() => series.State.MutationError != null);
-            Require(!series.State.Active[0].Muted && Action(series, "Mute One Series").IsEnabled, "failed mute rolls back and retains retryable action");
+            Require(!series.State.Rows[0].Muted && Action(series, "Mute One Series").IsEnabled, "failed mute rolls back and retains retryable action");
             wire.FailWrite = false; wire.TimeoutWrite = true; Invoke(Action(series, "Mute One Series")); await Until(() => series.State.MutationError != null);
-            Require(!series.State.Active[0].Muted && Action(series, "Mute One Series").IsEnabled, "current-owner HTTP timeout rolls back and shows actionable error"); wire.TimeoutWrite = false;
+            Require(!series.State.Rows[0].Muted && Action(series, "Mute One Series").IsEnabled, "current-owner HTTP timeout rolls back and shows actionable error"); wire.TimeoutWrite = false;
             wire.FailWrite = false; wire.HoldWrite = true; Invoke(Action(series, "Mute One Series"));
             await Until(() => wire.WriteEntered); Require(!Action(series, "Unmute One Series").IsEnabled, "only pending series action disables while request awaits");
             wire.FailRead = true; wire.WriteRelease.TrySetResult(); await Until(() => series.State.Error != null && Descendants(toasts).OfType<Button>().Any(button => button.Content as string == "Undo"));
             Require(series.State.MutationError == null && wire.Muted, "accepted mute retains success and Undo when refresh fails");
             var writes = wire.Writes; Invoke((Button)series.FindName("SeriesRetry")); await Task.Delay(100); Require(wire.Writes == writes, "read retry never repeats accepted mute");
             wire.FailRead = false; Invoke((Button)series.FindName("SeriesRetry")); await Until(() => !series.State.IsLoading && series.State.Error == null);
-            Invoke(Descendants(toasts).OfType<Button>().First(button => button.Content as string == "Undo")); await Until(() => !wire.Muted && series.State.Active.Any(row => row.Item.ContentId == "one"));
+            Invoke(Descendants(toasts).OfType<Button>().First(button => button.Content as string == "Undo")); await Until(() => !wire.Muted && series.State.Rows.Any(row => row.Item.ContentId == "one"));
             Program.Log("PASS: actual pending row, mutation rollback, accepted204/list-failure/read-only Retry and actionable captured Undo.");
             wire.HoldWrite = false; Invoke(Action(series, "Mute One Series")); await Until(() => wire.Muted && Descendants(toasts).OfType<Button>().Any(button => button.Content as string == "Undo"));
             await Until(() => Descendants(toasts).OfType<Button>().Any(button => button.Content as string == "Undo" && button.IsEnabled));
@@ -146,7 +146,7 @@ internal static class NotificationSeriesNativeFixture
                 Require(longTitle.IsTextTrimmed, "long title visibly ellipsizes before its action");
                 Program.Log($"layout width={width} root={parent.XamlRoot.Size.Width} frame={frame.ActualWidth} page={page.ActualWidth} content={series.ActualWidth}");
                 await MediaParityNativeFixture.CaptureAsync(frame, "notification-series-" + width + ".png");
-                foreach (var button in Descendants(series).OfType<Button>().Where(button => AutomationProperties.GetName(button).StartsWith("Mute ") || AutomationProperties.GetName(button).StartsWith("Unmute ")))
+                foreach (var button in Descendants(series).OfType<ToggleSwitch>())
                 {
                     var point = button.TransformToVisual(series).TransformPoint(new());
                     Require(point.X >= 0 && point.X + button.ActualWidth <= series.ActualWidth + 1, "series action stays inside narrow/wide content bounds");
@@ -158,6 +158,43 @@ internal static class NotificationSeriesNativeFixture
                         Require(point.X >= 0 && point.X + chip.ActualWidth <= chips.ActualWidth + 1 && point.Y + chip.ActualHeight <= chips.ActualHeight + 1, "all four relationship pills wrap inside their actual allocated row");
                     }
             }
+            // One Series is still muted from the stale-profile Undo check above. Unmute it through its real
+            // row action so the bulk mute below applies, rather than returning "unchanged" with nothing to undo.
+            Invoke(Action(series, "Unmute One Series"));
+            await Until(() => !wire.Muted && !series.State.IsPending("one") && !series.State.IsLoading);
+            var earlierUndo = Descendants(toasts).OfType<Button>().Where(button => button.Content as string == "Undo").ToHashSet();
+            var chooseOne = Descendants(series).OfType<CheckBox>().Single(control => AutomationProperties.GetName(control) == "Select One Series");
+            Invoke(chooseOne);
+            await Until(() => series.State.SelectedIds.Count == 1);
+            Require(((FrameworkElement)page.FindName("SelectionBar")).Visibility == Visibility.Visible && ((Button)page.FindName("SelectionAllMatching")).Visibility == Visibility.Visible,
+                "partial selection exposes Select all matching inside the selection bar even after all pages are loaded");
+            Invoke((Button)page.FindName("SelectionAllMatching"));
+            await Until(() => series.State.SelectedIds.Count == 3);
+            Require(((CheckBox)series.FindName("SelectShown")).IsChecked == true && ((Button)page.FindName("SelectionAllMatching")).Visibility == Visibility.Collapsed,
+                "Select all matching selects every loaded row and hides its completed action");
+            Invoke(Descendants(page).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Clear selection"));
+            await Until(() => series.State.SelectedIds.Count == 0);
+            Invoke(chooseOne); Invoke((Button)page.FindName("SelectionMute"));
+            try { await Until(() => wire.Muted && wire.BulkRequests.Count == 1 && Descendants(toasts).OfType<Button>().Any(button => button.Content as string == "Undo" && !earlierUndo.Contains(button))); }
+            catch (InvalidOperationException)
+            {
+                var mute = (Button)page.FindName("SelectionMute");
+                throw new InvalidOperationException($"Bulk mute did not settle: muted={wire.Muted}, bulkRequests={wire.BulkRequests.Count}, selected={series.State.SelectedIds.Count}, " +
+                    $"muteVisible={mute.Visibility}, muteEnabled={mute.IsEnabled}, chooseOneChecked={chooseOne.IsChecked}, " +
+                    $"toastButtons=[{string.Join(",", Descendants(toasts).OfType<Button>().Select(button => button.Content as string ?? "?"))}].");
+            }
+            Require(wire.BulkRequests[0] is { Muted: true } && wire.BulkRequests[0].Ids.SequenceEqual(new[] { "one" }),
+                "actual bulk bar posts exactly the selected series");
+            Invoke((Button)series.FindName("MutedFilter"));
+            await Until(() => series.State.Options.Status == "muted" && !series.State.IsLoading);
+            Require(series.State.Rows.All(row => row.Muted) && series.State.Rows.Any(row => row.Item.ContentId == "one"), "Muted tab contains only muted server rows");
+            Invoke(Descendants(toasts).OfType<Button>().Single(button => button.Content as string == "Undo" && !earlierUndo.Contains(button)));
+            await Until(() => !wire.Muted && wire.BulkRequests.Count == 2);
+            Require(wire.BulkRequests[1] is { Muted: false } && wire.BulkRequests[1].Ids.SequenceEqual(new[] { "one" }),
+                "bulk Undo unmutes only the applied captured IDs");
+            Invoke(Filter(series, "all"));
+            await Until(() => series.State.Options.Status == "all" && !series.State.IsLoading && series.State.Rows.Any(row => row.Item.ContentId == "one"));
+            Program.Log("PASS: actual series selection/header/bar, all-loaded select-all, bulk mute, Muted tab and applied-ID Undo.");
             var search = (TextBox)series.FindName("SearchBox"); search.Text = "none";
             await Until(() => series.State.Options.Q == "none" && series.State.IsEmpty);
             Require(((TextBlock)series.FindName("SeriesEmptyTitle")).Text.StartsWith("No series match"), "search has a distinct filtered-empty state");
@@ -173,13 +210,21 @@ internal static class NotificationSeriesNativeFixture
         }
         finally
         {
-            vm.CancelPendingLoad(); frame.Navigate(typeof(Page)); parent.Children.Remove(frame); parent.Children.Remove(toasts);
+            vm.CancelPendingLoad();
             wire.CapabilityRelease.TrySetResult(); wire.UnmuteRelease.TrySetResult(); wire.WriteRelease.TrySetResult();
-            await Task.Delay(200); toast.Unregister(); navigation.Frame = null; field.SetValue(null, previous);
+            await NotificationFixtureUi.DetachAsync(frame, () => { frame.Navigate(typeof(Page)); parent.Children.Remove(frame); });
+            parent.Children.Remove(toasts); toast.Unregister(); navigation.Frame = null; field.SetValue(null, previous);
         }
     }
     private static void Require(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
-    private static Button Action(NotificationSeriesControl root, string name) => Descendants(root).OfType<Button>().First(button => AutomationProperties.GetName(button) == name);
+    private static ToggleSwitch Action(NotificationSeriesControl root, string name)
+    {
+        var title = name.StartsWith("Unmute ", StringComparison.Ordinal) ? name[7..] : name[5..];
+        return Descendants(root).OfType<ToggleSwitch>().Single(control => AutomationProperties.GetName(control) == "Notify me about new episodes of " + title);
+    }
+    private static Button Filter(NotificationSeriesControl root, string filter) => ((StackPanel)root.FindName("FilterTabs")).Children.OfType<Button>().Single(button => button.Tag as string == filter);
+    private static void Invoke(ToggleSwitch control) => ((IToggleProvider)new ToggleSwitchAutomationPeer(control).GetPattern(PatternInterface.Toggle)).Toggle();
+    private static void Invoke(CheckBox control) => ((IToggleProvider)new CheckBoxAutomationPeer(control).GetPattern(PatternInterface.Toggle)).Toggle();
     private static Button Link(NotificationSeriesControl root, string title) => Descendants(root).OfType<Button>().First(button => AutomationProperties.GetName(button).StartsWith(title + ","));
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Until(Func<bool> ready) { for (var attempt = 0; attempt < 200; attempt++) { if (ready()) return; await Task.Delay(20); } throw new InvalidOperationException("Notification Series native state timed out."); }
@@ -190,6 +235,8 @@ internal static class NotificationSeriesNativeFixture
     {
         internal bool Muted, FailWrite, FailRead, FailMore, HoldWrite, WriteEntered, TimeoutMore, TimeoutWrite, Supported = true;
         internal int Writes, InboxReads;
+        internal bool TwoMuted, OldMuted = true;
+        internal List<(bool Muted, string[] Ids)> BulkRequests = [];
         internal bool CapabilityTimeout;
         internal bool HoldCapability, CapabilityEntered, HoldUnmute, UnmuteEntered;
         internal TaskCompletionSource CapabilityRelease = new(TaskCreationOptions.RunContinuationsAsynchronously), UnmuteRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -204,6 +251,19 @@ internal static class NotificationSeriesNativeFixture
             if (path.EndsWith("capabilities") && CapabilityTimeout) throw new TaskCanceledException("Current-owner fixture capability timeout.");
             if (path == "/poster.png") return new(HttpStatusCode.OK) { Content = new ByteArrayContent(await File.ReadAllBytesAsync(Path.Combine(Program.AppDirectory, "Assets", "silo-icon-1024.png"), ct)) };
             if (path.EndsWith("capabilities")) { CapabilityReads++; if (CapabilityFailures-- > 0) return new(HttpStatusCode.BadRequest); }
+            if (r.Method == HttpMethod.Post && (path.EndsWith("/series/mute") || path.EndsWith("/series/unmute")))
+            {
+                using var bulkBody = JsonDocument.Parse(await r.Content!.ReadAsStringAsync(ct));
+                var ids = bulkBody.RootElement.GetProperty("series_ids").EnumerateArray().Select(value => value.GetString()!).ToArray();
+                var muted = path.EndsWith("/mute"); BulkRequests.Add((muted, ids));
+                var results = ids.Select(id =>
+                {
+                    var before = id switch { "one" => Muted, "two" => TwoMuted, "old" => OldMuted, _ => false };
+                    if (id == "one") Muted = muted; else if (id == "two") TwoMuted = muted; else if (id == "old") OldMuted = muted;
+                    return new { series_id = id, outcome = id is not ("one" or "two" or "old") ? "not_found" : before == muted ? "unchanged" : "applied" };
+                }).ToArray();
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { results })) };
+            }
             if (path.EndsWith("/mute"))
             {
                 if (r.Method == HttpMethod.Delete && HoldUnmute) { UnmuteEntered = true; await UnmuteRelease.Task; throw new TaskCanceledException("Stale-owner fixture Undo timeout."); }
@@ -217,20 +277,20 @@ internal static class NotificationSeriesNativeFixture
                 Queries.Add(r.RequestUri.Query);
                 if (FailRead) return new(HttpStatusCode.BadRequest);
                 var more = r.RequestUri.Query.Contains("cursor="); if (more) { Continuations.Add(r.RequestUri.Query); if (TimeoutMore) throw new TaskCanceledException("Current-owner fixture continuation timeout."); if (FailMore) return new(HttpStatusCode.BadRequest); }
-                var active = r.RequestUri.Query.Contains("status=active"); var none = r.RequestUri.Query.Contains("q=none");
+                var mutedOnly = r.RequestUri.Query.Contains("status=muted"); var none = r.RequestUri.Query.Contains("q=none");
                 var cards = new List<object>();
                 object Row(string id, string title, bool muted, bool next = false) => new {
                     item = new { content_id = id, type = "series", title, poster_url = "https://series-native.invalid/poster.png" },
                     reasons = new { favorite = !next, watchlist = !next, continue_watching = !next, next_up = true },
                     active_reasons = new { favorite = !next, watchlist = !next, continue_watching = !next, next_up = true }, notifies = !muted, muted,
                     next_up_after = new { season_number = 2, episode_number = 8 } };
-                if (!none && active && !Muted && !more) cards.Add(Row("one", "One Series", false));
-                if (!none && active && more) cards.Add(Row("two", "Second Series with a very long title that must visibly truncate before its action at every supported size", false, true));
-                if (!none && !active) { cards.Add(new { item = new { content_id = "old", type = "series", title = "Muted with no remaining reasons" }, reasons = new { }, active_reasons = new { }, notifies = false, muted = true }); if (Muted) cards.Add(Row("one", "One Series", true)); }
-                var hasMore = !none && active && !more;
-                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items = cards, page = new { has_more = hasMore, next_cursor = hasMore ? "next-active" : null } })) };
+                if (!none && (!mutedOnly || Muted) && !more) cards.Add(Row("one", "One Series", Muted));
+                if (!none && (!mutedOnly && more || mutedOnly && TwoMuted)) cards.Add(Row("two", "Second Series with a very long title that must visibly truncate before its action at every supported size", TwoMuted, true));
+                if (!none && (mutedOnly ? OldMuted : more)) cards.Add(new { item = new { content_id = "old", type = "series", title = "Muted with no remaining reasons" }, reasons = new { }, active_reasons = new { }, notifies = false, muted = OldMuted });
+                var hasMore = !none && !mutedOnly && !more;
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items = cards, page = new { has_more = hasMore, next_cursor = hasMore ? "next-all" : null } })) };
             }
-            var body = path.EndsWith("capabilities") ? Supported ? """{"series":{"available":true,"mute":true}}""" : "{}"
+            var body = path.EndsWith("capabilities") ? Supported ? """{"series":{"available":true,"mute":true,"bulk_mute":true}}""" : "{}"
                 : path.EndsWith("preferences") ? """{"enabled":true,"notify_favorites":true,"notify_next_up":true}"""
                 : path.EndsWith("unread-count") ? "{\"count\":0}" : """{"items":[],"page":{"has_more":false},"read_cutoff":"fixture-cutoff"}""";
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };

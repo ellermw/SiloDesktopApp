@@ -158,6 +158,8 @@ public sealed class NotificationSeriesCapability
 {
     public bool Available { get; set; }
     public bool Mute { get; set; }
+    [JsonPropertyName("bulk_mute")]
+    public bool BulkMute { get; set; }
 }
 
 public sealed class NotificationInAppCapability
