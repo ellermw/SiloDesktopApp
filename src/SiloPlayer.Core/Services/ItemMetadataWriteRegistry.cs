@@ -19,6 +19,7 @@ public sealed class ItemMetadataWriteRegistry
     private sealed class Entry
     {
         public int Count;
+        public long CommitSequence;
         public MediaItemDetail? Refreshed;
         public TaskCompletionSource<MediaItemDetail?> Settled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -35,7 +36,8 @@ public sealed class ItemMetadataWriteRegistry
                 ? entry.Settled.Task.WaitAsync(ct) : Task.FromResult<MediaItemDetail?>(null);
     }
 
-    public async Task<MediaItemDetail> RunAsync(ApiIdentityContext owner, string itemId,
+    // A null result means the write succeeded but reconciliation needs Retry.
+    public async Task<MediaItemDetail?> RunAsync(ApiIdentityContext owner, string itemId,
         Func<CancellationToken, Task> write, Func<CancellationToken, Task<MediaItemDetail>> refetch,
         CancellationToken dialogLifetime, CancellationToken authority = default)
     {
@@ -53,6 +55,7 @@ public sealed class ItemMetadataWriteRegistry
         }
         MediaItemDetail? refreshed = null;
         Exception? failure = null;
+        long refetchSequence = 0;
         try
         {
             WriteStarted?.Invoke(owner, itemId);
@@ -62,18 +65,27 @@ public sealed class ItemMetadataWriteRegistry
                 try { await write(writeLifetime.Token).ConfigureAwait(false); }
                 catch (Exception ex) { failure = ex; }
             }
+            lock (_gate)
+            {
+                // Even an ambiguous write may have committed. Invalidate reads
+                // started before this write finished, regardless of finish order.
+                refetchSequence = ++entry.CommitSequence;
+                entry.Refreshed = null;
+            }
             // Reconcile even a failed/ambiguous write, with a separate bounded
             // read budget. Never replay a mutation after an uncertain outcome.
             using var readLifetime = CancellationTokenSource.CreateLinkedTokenSource(authority);
             readLifetime.CancelAfter(TimeSpan.FromSeconds(30));
             try { refreshed = await refetch(readLifetime.Token).ConfigureAwait(false); }
-            catch (Exception ex) { failure ??= ex; }
+            catch (Exception) { /* Observers handle reconciliation through load-error/Retry. */ }
         }
         finally
         {
             lock (_gate)
             {
-                entry.Refreshed = refreshed;
+                if (refetchSequence == entry.CommitSequence && refreshed != null)
+                    entry.Refreshed = refreshed;
+                refreshed = entry.Refreshed;
                 Interlocked.Increment(ref _revision);
                 if (--entry.Count == 0)
                 {
@@ -83,6 +95,6 @@ public sealed class ItemMetadataWriteRegistry
             }
         }
         if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
-        return refreshed!;
+        return refreshed;
     }
 }

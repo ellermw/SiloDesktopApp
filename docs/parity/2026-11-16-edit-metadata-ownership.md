@@ -21,22 +21,35 @@ owns `ItemMetadataWriteRegistry`, keyed by the complete `ApiIdentityContext`
 (server URL, profile, authentication and identity generations) and content ID.
 The registry counts overlapping writes and shares a completion task with every
 opening. Closing an observer does not release or cancel another operation.
-Entries are removed after the last write and its refetch settle.
+Entries are removed after the last write and its refetch settle. Only a refetch
+started after the latest write completion may supply the settled item; a slower
+older read cannot replace newer values or locks.
 
 Image Apply, metadata Save, and Reset to Provider use that registry. The dialog
 lifetime token admits a write and cancels its UI observation; once admitted, a
 write uses its own two-minute budget. Identity/access retirement cancels the
 background operation. A separate 30-second item-read budget reconciles even a
 failed or ambiguous request; mutations are never replayed by the registry.
-Editor resets follow their queued job to a terminal state before that refetch,
+Editor resets follow their queued job within that budget before the refetch,
 using identity-bound reads and transient read retries that respect Retry-After.
-The existing general Refresh Metadata action is unchanged (audit 6d).
+After an accepted POST, budget expiry, forbidden/missing job reads or unknown job
+states return an explicit queued outcome, not a failed write. The editor reports
+"Metadata reset queued. Provider changes will appear when the job completes."
+and closes, preserving the base queued-reset behavior. Controls remain guarded
+through the bounded wait and reconciliation, not indefinitely for an unreadable
+or long-running server job. Reopening after that release does not guarantee the
+job has completed; there is no background job monitor or automatic POST replay.
+Identity/access retirement remains cancellation, and known failed/canceled jobs
+remain errors. The existing general Refresh Metadata action is unchanged (audit 6d).
 
 Reopened editors disable Save, Reset and new image applies while a matching
 operation/refetch is pending. Existing `web.item.dialog.saving` copy provides
 the visible pending state. A failed item reconciliation keeps the form disabled
-and provides existing localized load-error/Retry copy. A subsequent successful
-read restores the controls. Unedited fields adopt refetched values, while this
+and provides existing localized load-error/Retry copy, separately from the write
+outcome. Accepted writes publish their change before refetch, and Save/Apply/Reset
+still report success when only reconciliation fails. Image Apply retains its
+Current badge and local artwork lock. A subsequent successful read restores the
+controls. Unedited fields adopt refetched values, while this
 opening's edits and explicit lock overrides survive; full lock submissions use
 the refetched server lock set. Programmatic control updates do not create edits.
 
@@ -46,6 +59,9 @@ reconciliation. The detail menu now fetches current item detail, then checks the
 captured request authority, navigation instance, current content ID and curation
 permission before constructing the dialog. Its read is cancelable and bounded;
 the action disables while opening and uses the existing error-toast mapping.
+Read-retirement subscriptions are detached before showing the editor. Post-save
+reload checks identity, access and navigation instead of the opening request
+context, so a same-owner transport reconnect during editing cannot suppress it.
 Existing retained page state and navigation animation policy are unchanged.
 
 ## Changed files
@@ -84,7 +100,7 @@ Existing retained page state and navigation animation policy are unchanged.
 
 ## Verification
 
-Local results on this source:
+Original PR verification (before the review fixes below):
 
 - **Unit tests:** all 7,489 pass. They include `ItemMetadataWriteRegistryTests`,
   `MetadataResetOwnershipTests`, `EditMetadataOwnershipContractTests`,
@@ -96,6 +112,12 @@ Local results on this source:
 - **`profiles-metadata` native:** passes all 11 checks. Both of these cover the
   updated Reset wiring.
 
-Not certified: a real server's Reset job against curator job-read permissions,
-a job that runs past the bounded wait, a server-side unknown write outcome, and
-full visual parity.
+Review-fix verification: source inspected only; builds and tests are reserved for
+the pipeline. Added unit coverage for out-of-order refetches, reconciliation-only
+failure, queued reset on forbidden/missing/unknown job reads, expired job waits
+(including long Retry-After), and identity retirement. Native fixtures cover
+accepted Save/Apply publication despite failed refetch and curator-forbidden job
+reads. Source contracts cover reconnect-safe detail reload and queued-reset copy.
+
+Not certified against a real server: curator job-read permissions, jobs running
+past the bounded wait, a server-side unknown write outcome, and full visual parity.

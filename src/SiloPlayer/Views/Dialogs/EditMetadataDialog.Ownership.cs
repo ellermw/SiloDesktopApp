@@ -71,10 +71,11 @@ public sealed partial class EditMetadataDialog
             } while (_reconcileAgain || _api.PendingWrites.IsPending(_identityOwner, _item.ContentId));
         }
         catch (OperationCanceledException) when (!CurrentOwner) { }
-        catch (Exception ex)
+        catch (Exception)
         {
+            // Reconciliation is not the write outcome. Keep Retry visible without
+            // reporting an already accepted Save/Apply/Reset as a failed write.
             _writeRefreshFailed = true;
-            if (CurrentOwner) Toast().Error(ex);
         }
         finally { _observingWrite = false; RefreshWriteControls(); }
     }
@@ -94,12 +95,11 @@ public sealed partial class EditMetadataDialog
         finally { _updatingForm = false; }
     }
 
-    private async Task<MediaItemDetail> RunOwnedWriteAsync(Func<CancellationToken, Task> write)
+    private async Task<MediaItemDetail?> RunOwnedWriteAsync(Func<CancellationToken, Task> write)
     {
         var owner = _identityOwner;
         var access = _client.CaptureContext().AccessGeneration;
         var itemId = _item.ContentId;
-        var succeeded = false;
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var auth = App.Services.GetRequiredService<AuthService>();
         using var authority = new CancellationTokenSource();
@@ -113,16 +113,16 @@ public sealed partial class EditMetadataDialog
             RetireWrite();
             return await _api.PendingWrites.RunAsync(owner, itemId, async ct =>
             {
-                await write(ct); succeeded = true;
+                await write(ct);
                 if (CurrentOwner) HasSaved = true;
+                // Publish the committed write even if its reconciliation fails
+                // or the initiating dialog has already closed.
+                if (CurrentIdentity()) DispatcherQueue.TryEnqueue(() => { if (CurrentIdentity()) Changed(); });
             }, async ct =>
             {
                 if (!CurrentIdentity()) throw new OperationCanceledException(ct);
                 var refreshed = await catalog.GetItemDetailAsync(owner, itemId, ct);
                 if (!CurrentIdentity()) throw new OperationCanceledException(ct);
-                // The initiating dialog may have closed. Publish the accepted
-                // write for its still-current account, independently of its UI.
-                if (succeeded) DispatcherQueue.TryEnqueue(() => { if (CurrentIdentity()) Changed(); });
                 return refreshed;
             }, _lifetime.Token, authority.Token);
         }

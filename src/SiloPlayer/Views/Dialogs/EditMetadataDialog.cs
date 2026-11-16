@@ -152,13 +152,15 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 var locksToKeep = _item.Type is "season" or "episode"
                     ? _state.EffectiveLocks(_item.LockedFields).Except(_state.FieldLockMap.Values).Order().ToArray()
                     : Array.Empty<int>();
-                await RunOwnedWriteAsync(ct => _api.ResetToProviderAndWaitAsync(capability, _item.ContentId, locksToKeep, ct));
+                var completed = false;
+                await RunOwnedWriteAsync(async ct => { completed = await _api.ResetToProviderAndWaitAsync(capability, _item.ContentId, locksToKeep, ct); });
                 if (!CurrentOwner) return;
                 HasSaved = true;
-                Toast().Success(AppStrings.Get("web.item.toast.refreshed"));
+                Toast().Success(completed ? AppStrings.Get("web.item.toast.refreshed")
+                    : "Metadata reset queued. Provider changes will appear when the job completes.");
                 flyout.Hide(); Hide();
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (!CurrentOwner) { }
             catch (ApiException ex) when (capability.AtomicReset && ex.StatusCode == 422)
             { if (CurrentOwner) Toast().Error(ex, "This server does not support atomic metadata reset. Nothing was changed."); }
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
@@ -601,7 +603,8 @@ public sealed partial class EditMetadataDialog : ContentDialog
             var selected = selection; var selectedType = String(selected, "type"); _imagePending = true; apply.IsEnabled = false; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; apply.Content = AppStrings.Get("web.item.dialog.applying");
             try { var refreshed = await RunOwnedWriteAsync(async ct => { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id"), ct); }); if (!CurrentOwner) return;
                 applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true;
-                RebaseItem(refreshed); Render(); Toast().Success(AppStrings.Get("web.item.toast.imageApplied")); }
+                if (refreshed != null) RebaseItem(refreshed);
+                Render(); Toast().Success(AppStrings.Get("web.item.toast.imageApplied")); }
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
             finally { _imagePending = false; RefreshWriteControls(); }
         };

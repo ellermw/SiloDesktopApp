@@ -93,6 +93,53 @@ public sealed class ItemMetadataWriteRegistryTests
     }
 
     [Fact]
+    public async Task SuccessfulWriteWithFailedRefetchRemainsSuccessfulAndRequiresRetry()
+    {
+        var registry = new ItemMetadataWriteRegistry(); var write = Gate<bool>();
+        var writes = 0;
+        var running = registry.RunAsync(Owner, "item", async ct => { await write.Task.WaitAsync(ct); writes++; },
+            _ => Task.FromException<MediaItemDetail>(new HttpRequestException("refetch")), default);
+        var observer = registry.WaitForIdleAsync(Owner, "item", default);
+        write.SetResult(true);
+        Assert.Null(await running);
+        Assert.Null(await observer);
+        Assert.Equal(1, writes);
+        Assert.False(registry.IsPending(Owner, "item"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OlderRefetchFinishingLastCannotReplaceLatestCommit(bool olderReadFails)
+    {
+        var registry = new ItemMetadataWriteRegistry();
+        var oldRead = Gate<MediaItemDetail>();
+        var a = registry.RunAsync(Owner, "item", _ => Task.CompletedTask, ct => oldRead.Task.WaitAsync(ct), default);
+        var newest = await Fresh(default); newest.Title = "Latest commit"; newest.LockedFields = [3, 10];
+        var b = registry.RunAsync(Owner, "item", _ => Task.CompletedTask, _ => Task.FromResult(newest), default);
+        Assert.Same(newest, await b);
+        var observer = registry.WaitForIdleAsync(Owner, "item", default);
+        if (olderReadFails) oldRead.SetException(new HttpRequestException("old read"));
+        else oldRead.SetResult(new MediaItemDetail { ContentId = "item", Title = "Before latest commit", LockedFields = [3] });
+        await a;
+        Assert.Same(newest, await observer);
+    }
+
+    [Fact]
+    public async Task FailedLatestRefetchCannotExposeAnEarlierCommitsLocks()
+    {
+        var registry = new ItemMetadataWriteRegistry(); var secondWrite = Gate<bool>(); var oldRead = Gate<MediaItemDetail>();
+        var a = registry.RunAsync(Owner, "item", _ => Task.CompletedTask, ct => oldRead.Task.WaitAsync(ct), default);
+        var b = registry.RunAsync(Owner, "item", ct => secondWrite.Task.WaitAsync(ct),
+            _ => Task.FromException<MediaItemDetail>(new HttpRequestException("latest read")), default);
+        var observer = registry.WaitForIdleAsync(Owner, "item", default);
+        oldRead.SetResult(await Fresh(default)); await a;
+        secondWrite.SetResult(true);
+        Assert.Null(await b);
+        Assert.Null(await observer);
+    }
+
+    [Fact]
     public async Task AuthorityRetirementCancelsBackgroundWorkAndReleasesEntry()
     {
         var registry = new ItemMetadataWriteRegistry(); using var authority = new CancellationTokenSource();

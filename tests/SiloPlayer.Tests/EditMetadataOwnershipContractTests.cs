@@ -27,6 +27,43 @@ public sealed class EditMetadataOwnershipContractTests
     }
 
     [Fact]
+    public void DetailReloadAfterEditingSurvivesTransportReconnectButNotIdentityOrNavigationRetirement()
+    {
+        var code = Source("src/SiloPlayer/Views/ItemDetailPage.xaml.cs");
+        var start = code.IndexOf("edit.Click += async", StringComparison.Ordinal);
+        var end = code.IndexOf("MoreFlyout.Items.Add(edit)", start, StringComparison.Ordinal);
+        var opening = code[start..end];
+        var show = opening.IndexOf("await dialog.ShowAsync()", StringComparison.Ordinal);
+        Assert.True(opening.IndexOf("DetachRead();", StringComparison.Ordinal) < show);
+        Assert.Contains("if (dialog.HasSaved && IdentityCurrent())", opening[show..]);
+        Assert.Contains("if (IdentityCurrent()) UpdateUI()", opening[show..]);
+        Assert.DoesNotContain("&& Current()", opening[show..]);
+        var identityStart = opening.IndexOf("bool IdentityCurrent()", StringComparison.Ordinal);
+        var identityEnd = opening.IndexOf("bool OwnerCurrent()", identityStart, StringComparison.Ordinal);
+        var identityGuard = opening[identityStart..identityEnd];
+        Assert.Contains("client.IsCurrentIdentityContext(identity)", identityGuard);
+        Assert.Contains("ReferenceEquals(_navigationCts, navigation)", identityGuard);
+        Assert.Contains("AccessGeneration == authority.AccessGeneration", identityGuard);
+        Assert.Contains("AuthorizationPolicy.CanCurateMetadata(auth)", identityGuard);
+        Assert.DoesNotContain("client.IsCurrentContext(authority)", identityGuard);
+        Assert.DoesNotContain("loading.IsCancellationRequested", identityGuard);
+    }
+
+    [Fact]
+    public void AcceptedWritePublishesBeforeReconciliationAndResetReportsUnknownCompletion()
+    {
+        var ownership = Source("src/SiloPlayer/Views/Dialogs/EditMetadataDialog.Ownership.cs");
+        var write = ownership.IndexOf("await write(ct);", StringComparison.Ordinal);
+        var publish = ownership.IndexOf("Changed();", write, StringComparison.Ordinal);
+        var refetch = ownership.IndexOf("await catalog.GetItemDetailAsync", write, StringComparison.Ordinal);
+        Assert.True(write >= 0 && publish > write && publish < refetch);
+        var dialog = Source("src/SiloPlayer/Views/Dialogs/EditMetadataDialog.cs");
+        Assert.Contains("completed = await _api.ResetToProviderAndWaitAsync", dialog);
+        Assert.Contains("Metadata reset queued. Provider changes will appear when the job completes.", dialog);
+        Assert.Contains("catch (OperationCanceledException) when (!CurrentOwner)", dialog);
+    }
+
+    [Fact]
     public void ReopenedFormAdoptsRefetchedValuesAndLocksWithoutRevertingProviderChanges()
     {
         var state = new MetadataEditState(new MediaItemDetail { Type = "movie", Title = "Old page", Overview = "Old overview", LockedFields = [0, 3] });

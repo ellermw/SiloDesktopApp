@@ -64,37 +64,53 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         return receipt;
     }
 
-    /// <summary>The editor's reset remains a write until the server job settles, as in WebUI #4329.</summary>
-    public async Task ResetToProviderAndWaitAsync(MetadataResetCapability capability, string itemId,
+    /// <summary>Wait within the write budget; false means accepted, completion still unknown.</summary>
+    public async Task<bool> ResetToProviderAndWaitAsync(MetadataResetCapability capability, string itemId,
         IReadOnlyCollection<int> locksToKeep, CancellationToken ct)
     {
         var identity = client.CaptureIdentityContext();
         var receipt = await ResetToProviderAsync(capability, itemId, locksToKeep, ct).ConfigureAwait(false);
         var state = receipt.Status;
-        while (state is not ("succeeded" or "completed"))
+        try
         {
-            RequireCommitted(identity, capability.Owner, ct);
-            if (state is "failed" or "canceled" or "cancelled")
-                throw new InvalidOperationException(SiloPlayer.Core.Localization.AppStrings.Get("web.item.toast.refreshFailed"));
-            if (state is not ("queued" or "running" or "canceling") || string.IsNullOrWhiteSpace(receipt.Id))
-                throw new InvalidOperationException("The server did not return a valid metadata reset job.");
-            try
+            while (state is not ("succeeded" or "completed"))
             {
-                var job = await client.SendIdentityBoundRequestAsync<JsonElement>(identity, HttpMethod.Get,
-                    $"/api/v2/admin/jobs/{Uri.EscapeDataString(receipt.Id)}", null, ct).ConfigureAwait(false);
                 RequireCommitted(identity, capability.Owner, ct);
-                state = job.TryGetProperty("state", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+                if (state is "failed" or "canceled" or "cancelled")
+                    throw new InvalidOperationException(SiloPlayer.Core.Localization.AppStrings.Get("web.item.toast.refreshFailed"));
+                if (state is not ("queued" or "running" or "canceling") || string.IsNullOrWhiteSpace(receipt.Id))
+                    return false;
+                try
+                {
+                    var job = await client.SendIdentityBoundRequestAsync<JsonElement>(identity, HttpMethod.Get,
+                        $"/api/v2/admin/jobs/{Uri.EscapeDataString(receipt.Id)}", null, ct).ConfigureAwait(false);
+                    RequireCommitted(identity, capability.Owner, ct);
+                    state = job.TryGetProperty("state", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+                }
+                catch (ApiException ex) when (ex.StatusCode is 403 or 404)
+                {
+                    // Delegated curators can submit a reset without access to
+                    // admin job reads. The accepted POST must not be replayed.
+                    RequireCommitted(identity, capability.Owner, ct);
+                    return false;
+                }
+                catch (ApiException ex) when (ex.StatusCode is 429 or 502 or 503 or 504)
+                {
+                    var delay = Math.Max(1.5, ex.RetryAfterSeconds ?? 1.5);
+                    await Task.Delay(delay > 120 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
+                    continue;
+                }
+                if (state is "queued" or "running" or "canceling")
+                    await Task.Delay(TimeSpan.FromMilliseconds(1500), ct).ConfigureAwait(false);
             }
-            catch (ApiException ex) when (ex.StatusCode is 429 or 502 or 503 or 504)
-            {
-                // Retry reads only. The registry supplies a bounded write token;
-                // a long Retry-After ends with that token, never an early replay.
-                var delay = Math.Max(1.5, ex.RetryAfterSeconds ?? 1.5);
-                await Task.Delay(delay > 120 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
-                continue;
-            }
-            if (state is "queued" or "running" or "canceling")
-                await Task.Delay(TimeSpan.FromMilliseconds(1500), ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // A budget expiry cannot undo an accepted reset. Identity/access
+            // retirement still cancels publication, rather than becoming success.
+            RequireCommitted(identity, capability.Owner, CancellationToken.None);
+            return false;
         }
     }
 

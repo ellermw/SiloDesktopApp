@@ -14,6 +14,8 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
+using SiloPlayer.Messaging;
+using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Views.Dialogs;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -55,6 +57,8 @@ internal static class ConditionalEditorsNativeFixture
             await CaseAsync("image current lock merge with metadata save", () => ImageAsync(owner, wire, true));
             await CaseAsync("image pending tab switch keeps submitted type", () => ImageTabSwitchAsync(owner, wire));
             await CaseAsync("image close reopen retains write until refetch", () => ImageReopenAsync(owner, wire));
+            await CaseAsync("save succeeds and publishes despite failed refetch", () => AcceptedWriteFailedRefetchAsync(owner, wire, false));
+            await CaseAsync("image succeeds with Retry after failed refetch", () => AcceptedWriteFailedRefetchAsync(owner, wire, true));
             foreach (var translated in new[] { 0, 1, 3 })
                 await CaseAsync("translation result " + translated, () => TranslationAsync(owner, wire, translated));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(460, 740)); await Task.Delay(120);
@@ -284,6 +288,53 @@ internal static class ConditionalEditorsNativeFixture
         }
         finally { wire.ImageGate?.TrySetResult(Response(HttpStatusCode.OK, "{}")); dialog.Hide(); await showing; }
     }
+    private static async Task AcceptedWriteFailedRefetchAsync(FrameworkElement owner, Wire wire, bool image)
+    {
+        wire.Reset(); wire.DetailGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recipient = new object(); var broadcasts = 0;
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) =>
+        {
+            if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && message.ContentId == Movie().ContentId) broadcasts++;
+        });
+        var dialog = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot };
+        var showing = dialog.ShowAsync();
+        try
+        {
+            await Task.Delay(150);
+            StackPanel? images = null;
+            if (image)
+            {
+                Section(dialog, "Images");
+                images = Field<Dictionary<string, StackPanel>>(dialog, "_sections")["images"];
+                var grid = images.Children.OfType<WrapPanel>().Single();
+                await UntilAsync(() => grid.Children.OfType<Button>().Count() == 4);
+                Invoke(grid.Children.OfType<Button>().Last()); Invoke(images.Children.OfType<Button>().Single());
+            }
+            else { Box(dialog, "Title").Text = "Accepted title"; Save(dialog); }
+            await UntilAsync(() => wire.DetailReads > 0 && broadcasts == 1);
+            Check(dialog.HasSaved, "Accepted write was not recorded before reconciliation.");
+            wire.DetailGate.SetException(new HttpRequestException("Synthetic item read failure"));
+            if (image)
+            {
+                await UntilAsync(() => !Field<bool>(dialog, "_imagePending") && Field<bool>(dialog, "_writeRefreshFailed"));
+                Check(!dialog.IsPrimaryButtonEnabled && Field<Button>(dialog, "_retryWriteRefresh").Visibility == Visibility.Visible, "Failed reconciliation did not guard Save with Retry.");
+                Check(Descendants<TextBlock>(images!).Any(text => text.Text == "Current"), "Accepted image did not update Current after refetch failed.");
+                Check(Field<MetadataEditState>(dialog, "_state").EffectiveLocks(Movie().LockedFields).Contains(10), "Accepted image lost its local artwork lock.");
+                wire.DetailGate = null;
+                Invoke(Field<Button>(dialog, "_retryWriteRefresh"));
+                await UntilAsync(() => dialog.IsPrimaryButtonEnabled);
+            }
+            else await showing;
+            Check(wire.Writes.Count == 1 && broadcasts == 1, "Reconciliation replayed or failed to publish an accepted write.");
+        }
+        finally
+        {
+            wire.DetailGate?.TrySetException(new HttpRequestException("Fixture cleanup"));
+            WeakReferenceMessenger.Default.UnregisterAll(recipient);
+            dialog.Hide(); await showing;
+        }
+    }
+
     private static async Task ImageReopenAsync(FrameworkElement owner, Wire wire)
     {
         wire.Reset(); wire.ImageGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
