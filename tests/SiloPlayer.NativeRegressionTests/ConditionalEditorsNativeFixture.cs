@@ -54,6 +54,7 @@ internal static class ConditionalEditorsNativeFixture
             await CaseAsync("image immediate apply Cancel", () => ImageAsync(owner, wire, false));
             await CaseAsync("image current lock merge with metadata save", () => ImageAsync(owner, wire, true));
             await CaseAsync("image pending tab switch keeps submitted type", () => ImageTabSwitchAsync(owner, wire));
+            await CaseAsync("image close reopen retains write until refetch", () => ImageReopenAsync(owner, wire));
             foreach (var translated in new[] { 0, 1, 3 })
                 await CaseAsync("translation result " + translated, () => TranslationAsync(owner, wire, translated));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(460, 740)); await Task.Delay(120);
@@ -283,6 +284,52 @@ internal static class ConditionalEditorsNativeFixture
         }
         finally { wire.ImageGate?.TrySetResult(Response(HttpStatusCode.OK, "{}")); dialog.Hide(); await showing; }
     }
+    private static async Task ImageReopenAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Reset(); wire.ImageGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.DetailGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var original = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot };
+        var firstShowing = original.ShowAsync();
+        EditMetadataDialog? reopened = null;
+        Windows.Foundation.IAsyncOperation<ContentDialogResult>? secondShowing = null;
+        var registry = SiloPlayer.App.Services.GetRequiredService<MediaMaintenanceApi>().PendingWrites;
+        var identity = SiloPlayer.App.Services.GetRequiredService<SiloApiClient>().CaptureIdentityContext();
+        try
+        {
+            await Task.Delay(150); Section(original, "Images");
+            var images = Field<Dictionary<string, StackPanel>>(original, "_sections")["images"];
+            var grid = images.Children.OfType<WrapPanel>().Single();
+            await UntilAsync(() => grid.Children.OfType<Button>().Count() == 4);
+            Invoke(grid.Children.OfType<Button>().Last()); Invoke(images.Children.OfType<Button>().Single());
+            await UntilAsync(() => wire.Writes.Count == 1);
+            Close(original); await firstShowing;
+            Check(registry.IsPending(identity, Movie().ContentId), "close canceled or released an accepted image write");
+            reopened = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot };
+            secondShowing = reopened.ShowAsync(); await Task.Delay(150);
+            Check(!reopened.IsPrimaryButtonEnabled && !Field<Button>(reopened, "_reset").IsEnabled, "reopened editor enabled Save or Reset during an earlier image write");
+            Check(Field<TextBlock>(reopened, "_writeStatus").Text == "Saving...", "reopened editor has no visible pending state");
+            wire.ImageGate.SetResult(Response(HttpStatusCode.OK, "{}"));
+            await UntilAsync(() => wire.DetailReads > 0);
+            Check(!reopened.IsPrimaryButtonEnabled && registry.IsPending(identity, Movie().ContentId), "image HTTP completion released Save before refetch");
+            var fresh = Movie(); fresh.Title = "Current server title"; fresh.LockedFields = [3, 10];
+            wire.DetailGate.SetResult(Response(HttpStatusCode.OK, JsonSerializer.Serialize(fresh, Json)));
+            await UntilAsync(() => reopened.IsPrimaryButtonEnabled && Field<Button>(reopened, "_reset").IsEnabled);
+            Check(Box(reopened, "Title").Text == fresh.Title, "reopened form saved its stale title over the refetch");
+            Check(Field<MetadataEditState>(reopened, "_state").EffectiveLocks(fresh.LockedFields).Contains(10), "reopened form dropped the image lock");
+            Close(reopened); await secondShowing;
+            Check(wire.Writes.Count == 1, "reopened Cancel wrote metadata");
+        }
+        finally
+        {
+            wire.ImageGate.TrySetResult(Response(HttpStatusCode.OK, "{}"));
+            var fresh = Movie(); fresh.LockedFields = [3, 10];
+            wire.DetailGate.TrySetResult(Response(HttpStatusCode.OK, JsonSerializer.Serialize(fresh, Json)));
+            original.Hide(); await firstShowing;
+            reopened?.Hide(); if (secondShowing != null) await secondShowing;
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await registry.WaitForIdleAsync(identity, Movie().ContentId, cleanup.Token);
+        }
+    }
     private static async Task ImageTabSwitchAsync(FrameworkElement owner, Wire wire)
     {
         wire.Reset(); wire.ImageGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -440,9 +487,10 @@ internal static class ConditionalEditorsNativeFixture
     {
         private readonly List<Write> _writes = []; private bool _applied;
         public IReadOnlyList<Write> Writes { get { lock (_writes) return _writes.ToArray(); } }
-        public TaskCompletionSource<HttpResponseMessage>? PatchGate, ImageGate;
+        public TaskCompletionSource<HttpResponseMessage>? PatchGate, ImageGate, DetailGate;
+        public int DetailReads;
         public int? TranslationTotal;
-        public void Reset() { lock (_writes) _writes.Clear(); _applied = false; PatchGate = ImageGate = null; }
+        public void Reset() { lock (_writes) _writes.Clear(); _applied = false; PatchGate = ImageGate = DetailGate = null; DetailReads = 0; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "editors-fixture.invalid") throw new InvalidOperationException("Fixture attempted external networking");
@@ -458,6 +506,8 @@ internal static class ConditionalEditorsNativeFixture
             if (path.EndsWith("/metadata-translation/jobs")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(new { jobs = new[] { new { id = "fixture-translation", status = "completed", fields_total = TranslationTotal ?? 0, fields_done = TranslationTotal ?? 0 } } }, Json));
             if (path.Contains("metadata-ai")) return Response(HttpStatusCode.OK, TranslationTotal == null ? "{\"state\":\"disabled\"}" : "{\"state\":\"available\"}");
             if (path.Contains("/people/")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(Person(), Json));
+            if (request.Method == HttpMethod.Get && path.StartsWith("/api/v2/catalog/items/") && DetailGate != null)
+            { Interlocked.Increment(ref DetailReads); return await DetailGate.Task.WaitAsync(ct); }
             var movie = Movie(); if (_applied) movie.LockedFields = [3, 10];
             return Response(HttpStatusCode.OK, JsonSerializer.Serialize(movie, Json));
         }

@@ -9,6 +9,9 @@ namespace SiloPlayer.Core.Api;
 /// </summary>
 public sealed class MediaMaintenanceApi(SiloApiClient client)
 {
+    // MediaMaintenanceApi is a singleton, shared by card/detail editor openings.
+    public Services.ItemMetadataWriteRegistry PendingWrites { get; } = new();
+
     public Task<MetadataRefreshReceipt> ResetToProviderAsync(string itemId, CancellationToken ct = default)
         => ResetToProviderAsync(itemId, Array.Empty<int>(), ct);
 
@@ -59,6 +62,40 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
             path + "/refresh-metadata", new { mode = capability.AtomicReset ? "reset" : "quick" }, ct).ConfigureAwait(false);
         RequireCommitted(identity, owner, ct);
         return receipt;
+    }
+
+    /// <summary>The editor's reset remains a write until the server job settles, as in WebUI #4329.</summary>
+    public async Task ResetToProviderAndWaitAsync(MetadataResetCapability capability, string itemId,
+        IReadOnlyCollection<int> locksToKeep, CancellationToken ct)
+    {
+        var identity = client.CaptureIdentityContext();
+        var receipt = await ResetToProviderAsync(capability, itemId, locksToKeep, ct).ConfigureAwait(false);
+        var state = receipt.Status;
+        while (state is not ("succeeded" or "completed"))
+        {
+            RequireCommitted(identity, capability.Owner, ct);
+            if (state is "failed" or "canceled" or "cancelled")
+                throw new InvalidOperationException(SiloPlayer.Core.Localization.AppStrings.Get("web.item.toast.refreshFailed"));
+            if (state is not ("queued" or "running" or "canceling") || string.IsNullOrWhiteSpace(receipt.Id))
+                throw new InvalidOperationException("The server did not return a valid metadata reset job.");
+            try
+            {
+                var job = await client.SendIdentityBoundRequestAsync<JsonElement>(identity, HttpMethod.Get,
+                    $"/api/v2/admin/jobs/{Uri.EscapeDataString(receipt.Id)}", null, ct).ConfigureAwait(false);
+                RequireCommitted(identity, capability.Owner, ct);
+                state = job.TryGetProperty("state", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+            }
+            catch (ApiException ex) when (ex.StatusCode is 429 or 502 or 503 or 504)
+            {
+                // Retry reads only. The registry supplies a bounded write token;
+                // a long Retry-After ends with that token, never an early replay.
+                var delay = Math.Max(1.5, ex.RetryAfterSeconds ?? 1.5);
+                await Task.Delay(delay > 120 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
+                continue;
+            }
+            if (state is "queued" or "running" or "canceling")
+                await Task.Delay(TimeSpan.FromMilliseconds(1500), ct).ConfigureAwait(false);
+        }
     }
 
     // Transport catch-up retires reads only. A write the server has already

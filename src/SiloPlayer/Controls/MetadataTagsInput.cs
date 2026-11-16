@@ -35,6 +35,10 @@ public sealed class MetadataTagsInput : UserControl
         _input.TextChanged += (_, _) => { if (_input.Text.Contains(',')) Commit(); };
     }
     public void CommitPending() => Commit();
+    public void SetValues(IEnumerable<string> values)
+    {
+        _values.Clear(); _values.AddRange(values); Render();
+    }
     private void Commit()
     {
         var additions = _input.Text.Split(',').Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();

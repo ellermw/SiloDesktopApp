@@ -360,6 +360,7 @@ internal static class HouseholdContractsNativeFixture
             {
                 "/api/v2/profiles" => new { items = new[] { new { id = "primary", name = "Primary", is_primary = true } } },
                 "/api/v2/admin/catalog/capabilities" => new { item_metadata_reset = SupportsReset },
+                "/api/v2/admin/jobs/job" => new { id = "job", state = "succeeded" },
                 _ => (object)new { items = Array.Empty<object>(), state = "unavailable", sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() },
             });
         }
