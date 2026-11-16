@@ -113,6 +113,14 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private int _displayTotalCount;
 
+    /// <summary>
+    /// The latest exact-count read for the current query failed or the server could
+    /// only estimate. The browse count then shows nothing instead of a stale or
+    /// estimated number (official Silo Server #4316). Cleared by the next exact count.
+    /// </summary>
+    [ObservableProperty]
+    private bool _exactCountFailed;
+
     [ObservableProperty]
     private bool _hasMore;
 
@@ -800,6 +808,7 @@ public partial class LibraryViewModel : ObservableObject
         _lastVisibleEndIndex = PageSize - 1;
         TotalCount = 0;
         DisplayTotalCount = 0;
+        ExactCountFailed = false;
         HasMore = false;
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         ClearActiveWindow(notify: true);
@@ -987,11 +996,18 @@ public partial class LibraryViewModel : ObservableObject
     private async Task LoadExactCountAsync(int version, string? snapshot, CancellationToken ct)
     {
         var loadVersion = ++_exactCountLoadVersion;
+        ExactCountFailed = false;
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-exact-count");
         try
         {
             var result = await FetchWindowPageAsync(0, true, snapshot, ct);
-            if (ct.IsCancellationRequested || version != _queryVersion || loadVersion != _exactCountLoadVersion || !result.TotalExact) return;
+            if (ct.IsCancellationRequested || version != _queryVersion || loadVersion != _exactCountLoadVersion) return;
+            if (!result.TotalExact)
+            {
+                // The server could only estimate: the browse count stays hidden.
+                ExactCountFailed = true;
+                return;
+            }
             ApplyExactCatalogTotal(result.Total);
             WindowLoaded?.Invoke();
         }
@@ -999,7 +1015,10 @@ public partial class LibraryViewModel : ObservableObject
         catch
         {
             // Keep the estimated extent and usable cards if the optional
-            // count fails; a later navigation/query can retry it.
+            // count fails; a later navigation/query can retry it. The visible
+            // count drops rather than keep a stale number.
+            if (!ct.IsCancellationRequested && version == _queryVersion && loadVersion == _exactCountLoadVersion)
+                ExactCountFailed = true;
         }
     }
 
@@ -1308,6 +1327,7 @@ public partial class LibraryViewModel : ObservableObject
             _hasExactTotal = true;
             _estimatedTotalItems = exact.Total;
             DisplayTotalCount = exact.Total;
+            ExactCountFailed = false;
             TotalCount = exact.Total;
             Items.SetCount(exact.Total);
             HasMore = exact.HasMore || _pageResponses.Keys.Any(page => !Items.IsPageLoaded(page));

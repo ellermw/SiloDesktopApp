@@ -419,6 +419,43 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(800, model.Items.Count);
     }
 
+    [Fact]
+    public async Task BrowseCountShowsOnlyTheExactTotalTheCountReadReturned()
+    {
+        // Official #4316: the count beside Filters is the exact total, never the
+        // pager's estimated extent, and it needs no read beyond the count read.
+        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, IndexTotal = 1200 }; var model = wire.Create();
+        var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.WindowLoaded += () => { if (model.DisplayTotalCount == 800) counted.TrySetResult(); };
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        // Before the count lands the pager has an estimate but no exact total: wait, show no number.
+        Assert.True(model.TotalCount > 0);
+        Assert.Equal(0, model.DisplayTotalCount);
+        Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Loading,
+            SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.TotalCount, model.IsLoading, model.ExactCountFailed));
+        wire.ReleaseExactCount.TrySetResult();
+        await counted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(model.ExactCountFailed);
+        Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Label,
+            SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.TotalCount, model.IsLoading, model.ExactCountFailed));
+    }
+
+    [Fact]
+    public async Task BrowseCountHidesWhenTheServerCanOnlyEstimateTheTotal()
+    {
+        using var wire = new Wire { CatalogExact = false }; var model = wire.Create();
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(model.ExactCountFailed) && model.ExactCountFailed) failed.TrySetResult();
+        };
+        await model.LoadCommand.ExecuteAsync(null);
+        await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, model.DisplayTotalCount);
+        Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Hidden,
+            SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.TotalCount, model.IsLoading, model.ExactCountFailed));
+    }
+
     [Theory]
     [InlineData(900, 800, false)] // Empty page beyond the newly counted end.
     [InlineData(900, 1000, false)] // Older non-empty page beyond that end.
