@@ -290,10 +290,14 @@ internal static class AdminDownloadSettingsNativeFixture
             Invoke(disclosure); await Until(() => Rail(page).Visibility == Visibility.Collapsed, "manual collapse while forced");
             await Task.Delay(120);
             Check(Rail(page).Visibility == Visibility.Collapsed, "a manual collapse outranks the current reason to force it open");
-            controller.Set(R.MaxPerPeriod, "5");
-            await Until(() => Rail(page).Visibility == Visibility.Visible, "a new dirty field re-expands the section");
-            Check(true, "a different field going dirty re-expands the collapsed section");
+            // The reason clears (saved/discarded), then a different advanced field goes dirty: the stale manual collapse must not hide it.
             controller.Discard(); await Until(() => controller.State.DirtyKeys.Count == 0, "advanced edits discarded");
+            await Task.Delay(120);
+            Check(Rail(page).Visibility == Visibility.Collapsed, "clearing the reason leaves the manual collapse in place");
+            controller.Set(R.MaxPerPeriod, "5");
+            await Until(() => Rail(page).Visibility == Visibility.Visible, "a new reason re-expands the section");
+            Check(true, "a new reason to force the section open re-expands it after a manual collapse");
+            controller.Discard(); await Until(() => controller.State.DirtyKeys.Count == 0, "advanced edits discarded again");
             Invoke(disclosure); await Until(() => Rail(page).Visibility == Visibility.Visible, "reopen advanced"); // persisted open for the layout checks
 
             // Per-user period pair, duration grammar and the local-fallback toggle.
