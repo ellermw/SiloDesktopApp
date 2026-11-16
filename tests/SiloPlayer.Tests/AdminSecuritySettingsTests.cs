@@ -428,11 +428,52 @@ public sealed class AdminSecuritySettingsTests
         Assert.Equal(0, state.DirtyCount);
         Assert.False(state.RateEditable);
         Assert.False(h.Controller.TrySetRateNumber(F.Global, "1600"));
+        h.Controller.SetLocalNetwork(true);
+        Assert.True(h.Controller.State.CanSave);
+        h.Put = _ =>
+        {
+            Assert.Equal(AdminRateLimitMessage.ReloadBeforeEditing, h.Controller.State.RateMessage);
+            Assert.Equal(state.RateFailure, h.Controller.State.RateFailure);
+            return Task.FromResult(Saved("""{"media_servers.allow_private_destinations":"true"}"""));
+        };
+        await h.Controller.SaveAsync();
+        Assert.Equal(AdminRateLimitBlock.ReloadRequired, h.Controller.State.RateBlock);
+        Assert.Equal(AdminRateLimitMessage.ReloadBeforeEditing, h.Controller.State.RateMessage);
+        Assert.Equal(state.RateFailure, h.Controller.State.RateFailure);
+        Assert.False(h.Controller.State.RateEditable);
+        Assert.Equal(0, h.Controller.State.DirtyCount);
+        Assert.Equal(["PATCH /api/v2/admin/rate-limits/config", "PUT /api/v2/admin/settings"], h.Writes);
         h.ConfigStatus = HttpStatusCode.OK; h.RateConfig = Config(global: 1500); h.RateETag = "\"rate-2\"";
         await h.Controller.ReloadRateAsync();
         Assert.Equal(AdminRateLimitBlock.None, h.Controller.State.RateBlock);
         Assert.True(h.Controller.State.RateEditable);
         Assert.Equal(1500, h.Controller.State.RateBaseline!.Number(F.Global));
+        Assert.Single(h.Patches);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.PreconditionFailed, AdminRateLimitBlock.Conflict, AdminRateLimitMessage.ChangedElsewhere)]
+    [InlineData(HttpStatusCode.GatewayTimeout, AdminRateLimitBlock.OutcomeUnknown, AdminRateLimitMessage.OutcomeUnknown)]
+    public async Task ALocalOnlySaveAfterDiscardKeepsTheRateBlockAndReloadMessage(HttpStatusCode status, AdminRateLimitBlock block, AdminRateLimitMessage message)
+    {
+        using var h = new Harness { Patch = _ => Task.FromResult(Problem(status, status == HttpStatusCode.PreconditionFailed ? "precondition_failed" : "dependency_unavailable")) };
+        await h.Controller.OpenAsync();
+        h.Controller.TrySetRateNumber(F.Global, "1500");
+        await h.Controller.SaveAsync();
+        Assert.Equal(block, h.Controller.State.RateBlock);
+        h.Controller.Discard();
+        Assert.False(h.Controller.State.RateDirty);
+        h.Controller.SetLocalNetwork(true);
+        Assert.True(h.Controller.State.CanSave);
+        await h.Controller.SaveAsync();
+        Assert.Equal(block, h.Controller.State.RateBlock);
+        Assert.Equal(message, h.Controller.State.RateMessage);
+        Assert.Equal(0, h.Controller.State.DirtyCount);
+        Assert.Equal(["PATCH /api/v2/admin/rate-limits/config", "PUT /api/v2/admin/settings"], h.Writes);
+        await h.Controller.ReloadRateAsync();
+        Assert.Equal(AdminRateLimitBlock.None, h.Controller.State.RateBlock);
+        Assert.Equal(AdminRateLimitMessage.None, h.Controller.State.RateMessage);
+        Assert.True(h.Controller.State.RateEditable);
         Assert.Single(h.Patches);
     }
 

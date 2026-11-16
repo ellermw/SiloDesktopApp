@@ -302,7 +302,12 @@ public sealed class AdminSecuritySettingsController : IDisposable
                 _state = _state with
                 {
                     Saving = true, SavePhase = settings != null ? AdminSecuritySavePhase.Settings : AdminSecuritySavePhase.RateLimits,
-                    Error = null, ErrorCode = null, Failure = null, RateMessage = AdminRateLimitMessage.None, RateFailure = null, RateErrorCode = null, RateDetail = null,
+                    Error = null, ErrorCode = null, Failure = null,
+                };
+                // A local-only save must keep the rate group's message and Reload affordance.
+                if (rate != null) _state = _state with
+                {
+                    RateMessage = AdminRateLimitMessage.None, RateFailure = null, RateErrorCode = null, RateDetail = null,
                 };
                 Derive();
             }
