@@ -25,6 +25,16 @@ all-books parity certification. See docs/parity/2026-11-16-books-library.md.
 
 ---
 
+# November 16 — Admin Configure Search verified Beta handoff
+
+Configure > Server > Search is verified on deliberate Beta base `bdd033c1cab7cd601d6771bb853f4b0af044d67e`, without editing pipeline-owned version stamps (1.2.1165). Official main `5b3dcaa2fdfec6de2a537a2e10897352a1078689` retains the Search contracts inspected at `17d5376c`. The independent Search PR covers engine/connection, write-only credentials, matching/semantic controls, Advanced tuning and bounded active-only status. Provider diagnostics are strictly allowlisted; foreground invalidations coalesce. Task controls preserve official destinations and stay disabled with accessible help until Scheduled Tasks is registered; Search executes no tasks.
+
+Acceptance: `search-full-r2` passed source proof **1**, focused **187**, full **7537** units, plus app build/publish. Final fixture-only `search-native-r6` retained the exact tested unit/product source and all **666** app payload files, rebuilt/bound the native host and passed **all eight** groups (Search/General/Email/Security/Network/Manage foundation/Monitor/Dashboard). Final release **2026-11-16T21:25:39.0469867Z**; receipt SHA256 `54E551A535135E7D4F038637D39DD0A7B0EB1E2BBBD574C777E112AB4572BAC7`. The released audit qualified **2576** source entries and **11** contained numeric captures. Earlier fixture failures remain preserved, not green evidence.
+
+Only documentation changed after acceptance. No screenshots, live Meilisearch, installer, physical input, Narrator, every-DPI or full visual-parity claim; new copy is English-only. Health dots and Scheduled Tasks are separate. Installed player/settings and Requests payload stay untouched. See [scope and evidence](parity/admin-search.md).
+
+---
+
 # November 16 — Preserve legacy HTML chapter doctypes
 
 Reader HTML fallback now serializes the complete existing doctype before the
