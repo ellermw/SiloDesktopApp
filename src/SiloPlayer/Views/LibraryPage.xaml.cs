@@ -129,6 +129,7 @@ public sealed partial class LibraryPage : Page,
     private bool _audiobookGroupsTotalExact;
     private bool _audiobookGroupsHasMore;
     private bool _isLoadingAudiobookGroups;
+    private bool _audiobookGroupsFillQueued;
     private sealed record AudiobookGroupsKey(int LibraryId, string Axis, string Search, string Sort);
     private AudiobookGroupsKey? _audiobookGroupsKey;
     private bool _audiobookGroupsLoadCompleted;
@@ -2290,6 +2291,25 @@ public sealed partial class LibraryPage : Page,
             await LoadAudiobookGroupsAsync(reset: false);
     }
 
+    private void QueueAudiobookGroupsViewportFill()
+    {
+        if (_audiobookGroupsFillQueued) return;
+        _audiobookGroupsFillQueued = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, async () =>
+        {
+            _audiobookGroupsFillQueued = false;
+            if (!_isNavigated || _currentTab != "Library" || !_audiobookGroupsHasMore || _isLoadingAudiobookGroups
+                || !_audiobookGroupsLoadCompleted || _audiobookGroupsKey != CurrentAudiobookGroupsKey()
+                || AudiobookGroupsPanel.Visibility != Visibility.Visible || AudiobookGroupsPanel.ActualHeight <= 0)
+                return;
+
+            // Appending or resizing can leave no scrollable range, so ViewChanged
+            // alone cannot request the next page. Read the updated layout first.
+            AudiobookGroupsPanel.UpdateLayout();
+            if (AudiobookGroupsPanel.ScrollableHeight - AudiobookGroupsPanel.VerticalOffset < 360)
+                await LoadAudiobookGroupsAsync(reset: false);
+        });
+    }
+
     private AudiobookGroupsKey CurrentAudiobookGroupsKey() => new(
         ViewModel.Library?.Id ?? 0,
         _currentAudiobookAxis,
@@ -2323,6 +2343,7 @@ public sealed partial class LibraryPage : Page,
             if (_audiobookGroupsLoadCompleted)
             {
                 if (_currentAudiobookAxis == "series") ResumeAudiobookSeriesCovers();
+                QueueAudiobookGroupsViewportFill();
                 return;
             }
             if (_isLoadingAudiobookGroups) return;
@@ -2386,6 +2407,7 @@ public sealed partial class LibraryPage : Page,
             AudiobookGroupsEmpty.Visibility = AudiobookGroupsHost.Children.Count == 0
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            if (response.Groups.Count > 0) QueueAudiobookGroupsViewportFill();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
@@ -2529,6 +2551,7 @@ public sealed partial class LibraryPage : Page,
     private void AudiobookGroupsPanel_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (Math.Abs(e.NewSize.Width - e.PreviousSize.Width) >= 1) ResizeAudiobookSeriesCards();
+        QueueAudiobookGroupsViewportFill();
     }
 
     /// <summary>
@@ -2559,6 +2582,7 @@ public sealed partial class LibraryPage : Page,
                 line.Width = width * 0.75;
             }
         }
+        QueueAudiobookGroupsViewportFill();
     }
 
     private double GetAudiobookGroupCardWidth(bool large)

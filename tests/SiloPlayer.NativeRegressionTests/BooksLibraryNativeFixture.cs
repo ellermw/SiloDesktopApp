@@ -124,6 +124,7 @@ internal static class BooksLibraryNativeFixture
             }
             SeriesCardCases(page, failures);
             await SeriesCoverLifetimeCasesAsync(page, servicesField);
+            await SeriesPaginationCasesAsync(servicesField);
             viewModel.ErrorMessage = "Synthetic catalog failure";
             typeof(LibraryPage).GetField("_libraryCatalogLoaded", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, true);
             Invoke(page, "RenderVirtualGrid", false);
@@ -261,6 +262,108 @@ internal static class BooksLibraryNativeFixture
             Invoke(page, "ResetAudiobookGroups");
             servicesField.SetValue(null, previous);
             Directory.Delete(cache, recursive: true);
+        }
+    }
+
+    private static async Task SeriesPaginationCasesAsync(FieldInfo servicesField)
+    {
+        var previous = (IServiceProvider)servicesField.GetValue(null)!;
+        foreach (var resize in new[] { false, true })
+        {
+            using var wire = new SeriesGroupsWire();
+            using var http = new HttpClient(wire);
+            var api = new SiloApiClient(http);
+            api.SetBaseUrl("https://series-pagination.invalid");
+            servicesField.SetValue(null, new SeriesGroupsServices(previous, new CatalogApi(api)));
+            var page = new LibraryPage();
+            var panel = (ScrollViewer)page.FindName("AudiobookGroupsPanel");
+            var host = (Panel)page.FindName("AudiobookGroupsHost");
+            var window = new Window();
+            void Set(string name, object value) => typeof(LibraryPage)
+                .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, value);
+            try
+            {
+                page.ViewModel.Library = new Library { Id = 17, Type = "audiobooks" };
+                Set("_currentAudiobookAxis", "series");
+                Set("_currentTab", "Library");
+                Set("_isNavigated", true);
+                Set("_posterWidthOverride", resize ? 320d : 140d);
+                // Mount just the real groups viewport, avoiding page navigation.
+                // Disable ViewChanged so only the new fill path can advance it.
+                var viewChangedEvent = typeof(ScrollViewer).GetEvent(nameof(ScrollViewer.ViewChanged))!;
+                var viewChanged = typeof(LibraryPage).GetMethod("AudiobookGroupsPanel_ViewChanged",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .CreateDelegate(viewChangedEvent.EventHandlerType!, page);
+                viewChangedEvent.RemoveEventHandler(panel, viewChanged);
+                ((Panel)panel.Parent).Children.Remove(panel);
+                panel.Width = 2560;
+                panel.Height = 1440;
+                panel.Visibility = Visibility.Visible;
+                window.Content = panel;
+                window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                window.AppWindow.Show(false);
+                await Task.Delay(150);
+                panel.UpdateLayout();
+                await (Task)Invoke(page, "LoadAudiobookGroupsAsync", true)!;
+
+                if (resize)
+                {
+                    await Task.Delay(150);
+                    panel.UpdateLayout();
+                    Check(host.Children.Count == 60 && panel.ScrollableHeight >= 360 && wire.RequestCount == 1,
+                        "large series cards stop loading when the first page fills the viewport");
+                    Set("_posterWidthOverride", 140d);
+                    Invoke(page, "ResizeAudiobookSeriesCards");
+                }
+                for (var attempt = 0; attempt < 200 && host.Children.Count != 61; attempt++)
+                    await Task.Delay(10);
+                panel.UpdateLayout();
+                Check(host.Children.Count == 61 && wire.SecondPageRequests == 1 && panel.VerticalOffset == 0,
+                    resize ? "shrinking retained series cards requests the next page without scrolling"
+                        : "narrow series posters request the next page without scrolling an underfilled viewport");
+                Check(panel.ScrollableHeight == 0,
+                    "the dense series pagination case has no scrollable range");
+                var requests = wire.RequestCount;
+                Invoke(page, "ResizeAudiobookSeriesCards");
+                await Task.Delay(150);
+                Check(wire.RequestCount == requests, "series viewport fill stops when HasMore is false");
+            }
+            finally
+            {
+                Set("_isNavigated", false);
+                Invoke(page, "ResetAudiobookGroups");
+                window.Content = null;
+                window.Close();
+                servicesField.SetValue(null, previous);
+            }
+        }
+    }
+
+    private sealed class SeriesGroupsServices(IServiceProvider fallback, CatalogApi catalog) : IServiceProvider
+    {
+        public object? GetService(Type type) => type == typeof(CatalogApi) ? catalog : fallback.GetService(type);
+    }
+
+    private sealed class SeriesGroupsWire : HttpMessageHandler
+    {
+        internal int RequestCount;
+        internal int SecondPageRequests;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            var second = request.RequestUri!.Query.Contains("cursor=series-next", StringComparison.Ordinal);
+            if (second) SecondPageRequests++;
+            var items = Enumerable.Range(second ? 60 : 0, second ? 1 : 60)
+                .Select(index => new AudiobookGroup { Name = $"Series {index:00}", ItemCount = 3 });
+            var json = JsonSerializer.Serialize(new
+            {
+                items,
+                total = 61,
+                total_exact = true,
+                page = new { has_more = !second, next_cursor = second ? null : "series-next" },
+            }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
         }
     }
 
