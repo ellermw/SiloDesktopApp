@@ -228,7 +228,8 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("reset |= _audiobookGroupsKey != key || !_audiobookGroupsLoadCompleted;", beforeRequest);
         Assert.Contains("if (reset)\n        {\n            ResetAudiobookGroups();", beforeRequest.Replace("\r\n", "\n"));
         Assert.DoesNotContain("_audiobookGroupsLoadCompleted = false;", load);
-        Assert.DoesNotContain("_audiobookGroupsOffset =", load);
+        // Reject assignments, not the equality comparison used by the count text.
+        Assert.DoesNotMatch(@"\b_audiobookGroupsOffset\s*=(?!=)", load);
         Assert.Contains("offset: _audiobookGroupsOffset,", load);
         Assert.Contains("_audiobookGroupsOffset += response.Groups.Count;", load);
 
