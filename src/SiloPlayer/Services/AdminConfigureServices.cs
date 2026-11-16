@@ -10,8 +10,8 @@ namespace SiloPlayer.Services;
 internal static class AdminConfigureServices
 {
     /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
-    internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).ToArray());
-    internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).ToArray());
+    internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).Concat(AdminSecuritySettingsController.Keys).ToArray());
+    internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).Concat(AdminSecuritySettingsController.Secrets).ToArray());
 
     internal static void Add(IServiceCollection services)
     {
@@ -20,7 +20,10 @@ internal static class AdminConfigureServices
             sp.GetRequiredService<AdminMonitorAuthority>(), Keys, Secrets));
         services.AddTransient<AdminGeneralSettingsController>();
         services.AddTransient<AdminEmailSettingsController>();
+        services.AddSingleton<AdminRateLimitApi>();
+        services.AddTransient<AdminSecuritySettingsController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.GeneralSettings, typeof(AdminGeneralSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.EmailSettings, typeof(AdminEmailSettingsPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.SecuritySettings, typeof(AdminSecuritySettingsPage)));
     }
 }
