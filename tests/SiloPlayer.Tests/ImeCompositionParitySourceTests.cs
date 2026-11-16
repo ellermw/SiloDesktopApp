@@ -12,6 +12,18 @@ public sealed class ImeCompositionParitySourceTests
     [InlineData("src/SiloPlayer/Views/SearchPage.xaml.cs", "private async void SearchBox_KeyDown(", "ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e)")]
     [InlineData("src/SiloPlayer/Views/CollectionEditorPage.xaml.cs", "private async void SearchBox_KeyDown(", "ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e)")]
     [InlineData("src/SiloPlayer/Controls/MetadataTagsInput.cs", "_input.KeyDown += (_, e) =>", "ImeCompositionGuard.ShouldIgnore(composition, e)) return;")]
+    // Follow-up surfaces: every custom handler that submits, searches, joins or commits.
+    [InlineData("src/SiloPlayer/Views/RequestsPage.xaml.cs", "private async void SearchBox_KeyDown(", "ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e)) return;")]
+    [InlineData("src/SiloPlayer/Views/WatchTogetherJoinPage.xaml.cs", "private async void RoomCodeBox_KeyDown(", "SiloPlayer.Helpers.ImeCompositionGuard.ShouldIgnore(SiloPlayer.Helpers.ImeCompositionGuard.Attach(RoomCodeBox), e)) return;")]
+    [InlineData("src/SiloPlayer/Views/WatchTogetherRoomPage.xaml.cs", "private async void HostSearchBox_KeyDown(", "ImeCompositionGuard.Attach(HostSearchBox).ShouldIgnore(e)) return;")]
+    [InlineData("src/SiloPlayer/Views/LoginPage.xaml.cs", "private void InputBox_KeyDown(", "sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;")]
+    [InlineData("src/SiloPlayer/Views/SignupPage.xaml.cs", "private void InputBox_KeyDown(", "sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;")]
+    [InlineData("src/SiloPlayer/Views/ActivateDevicePage.xaml.cs", "private void CodeBox_KeyDown(", "SiloPlayer.Helpers.ImeCompositionGuard.ShouldIgnore(SiloPlayer.Helpers.ImeCompositionGuard.Attach(CodeBox), e)) return;")]
+    [InlineData("src/SiloPlayer/Views/EbookReaderPage.xaml.cs", "private async void SearchBox_KeyDown(", "ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e)) return;")]
+    [InlineData("src/SiloPlayer/Views/CollectionsPage.xaml.cs", "private async void AddGroupNameBox_KeyDown(", "ImeCompositionGuard.Attach(AddGroupNameBox).ShouldIgnore(e)) return;")]
+    [InlineData("src/SiloPlayer/Views/CollectionsPage.xaml.cs", "renameBox.KeyDown += async (_, args) =>", "renameComposition.ShouldIgnore(args)) return;")]
+    [InlineData("src/SiloPlayer/Controls/MatchItemDialog.xaml.cs", "private void SearchField_KeyDown(", "sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;")]
+    [InlineData("src/SiloPlayer/Controls/NotificationSettingsControl.xaml.cs", "private async void EmailAddressInput_KeyDown(", "ImeCompositionGuard.Attach(EmailAddressInput).ShouldIgnore(e)) return;")]
     public void KeyHandlerConsultsTheTrackerBeforeActing(string path, string handler, string guard)
     {
         var source = Read(path);
@@ -30,6 +42,16 @@ public sealed class ImeCompositionParitySourceTests
     [InlineData("src/SiloPlayer/Views/SearchPage.xaml.cs", "ImeCompositionGuard.Attach(SearchBox);")]
     [InlineData("src/SiloPlayer/Views/CollectionEditorPage.xaml.cs", "ImeCompositionGuard.Attach(SearchBox);")]
     [InlineData("src/SiloPlayer/Controls/MetadataTagsInput.cs", "var composition = SiloPlayer.Helpers.ImeCompositionGuard.Attach(_input);")]
+    [InlineData("src/SiloPlayer/Views/RequestsPage.xaml.cs", "ImeCompositionGuard.Attach(SearchBox);")]
+    [InlineData("src/SiloPlayer/Views/WatchTogetherJoinPage.xaml.cs", "SiloPlayer.Helpers.ImeCompositionGuard.Attach(RoomCodeBox);")]
+    [InlineData("src/SiloPlayer/Views/WatchTogetherRoomPage.xaml.cs", "ImeCompositionGuard.Attach(HostSearchBox);")]
+    [InlineData("src/SiloPlayer/Views/LoginPage.xaml.cs", "ImeCompositionGuard.Attach(UsernameBox);")]
+    [InlineData("src/SiloPlayer/Views/SignupPage.xaml.cs", "foreach (var input in new[] { UsernameBox, EmailBox, InviteCodeBox }) ImeCompositionGuard.Attach(input);")]
+    [InlineData("src/SiloPlayer/Views/ActivateDevicePage.xaml.cs", "SiloPlayer.Helpers.ImeCompositionGuard.Attach(CodeBox);")]
+    [InlineData("src/SiloPlayer/Views/EbookReaderPage.xaml.cs", "ImeCompositionGuard.Attach(SearchBox);")]
+    [InlineData("src/SiloPlayer/Views/CollectionsPage.xaml.cs", "ImeCompositionGuard.Attach(AddGroupNameBox);")]
+    [InlineData("src/SiloPlayer/Controls/MatchItemDialog.xaml.cs", "ImeCompositionGuard.Attach(box);")]
+    [InlineData("src/SiloPlayer/Controls/NotificationSettingsControl.xaml.cs", "ImeCompositionGuard.Attach(EmailAddressInput);")]
     public void TrackerIsAttachedInTheConstructorBeforeAnyCompositionCanStart(string path, string attach)
     {
         var source = Read(path);
@@ -40,6 +62,29 @@ public sealed class ImeCompositionParitySourceTests
         if (firstHandler < 0) firstHandler = source.IndexOf("_input.KeyDown +=", StringComparison.Ordinal);
         Assert.True(attachAt < firstHandler, $"{path} attaches the IME tracker only inside its key handler, after composition began");
         if (initialize >= 0) Assert.True(attachAt > initialize, $"{path} attaches before its TextBox exists");
+    }
+
+    [Fact]
+    public void GroupRenameBoxIsTrackedBeforeItsKeyHandlerIsRegistered()
+    {
+        var source = Read("src/SiloPlayer/Views/CollectionsPage.xaml.cs");
+        var attachAt = source.IndexOf("var renameComposition = ImeCompositionGuard.Attach(renameBox);", StringComparison.Ordinal);
+        var handlerAt = source.IndexOf("renameBox.KeyDown += async (_, args) =>", StringComparison.Ordinal);
+        Assert.True(attachAt >= 0, "the group rename box no longer attaches the IME tracker");
+        Assert.True(attachAt < handlerAt, "the group rename box registers its key handler before it is tracked");
+    }
+
+    [Fact]
+    public void MatchDialogTracksTheDynamicProviderBoxesBeforeTheirHandlers()
+    {
+        var source = Read("src/SiloPlayer/Controls/MatchItemDialog.xaml.cs");
+        foreach (var name in new[] { "providerBox", "valueBox" })
+        {
+            var attachAt = source.IndexOf($"ImeCompositionGuard.Attach({name});", StringComparison.Ordinal);
+            var handlerAt = source.IndexOf($"{name}.KeyDown += SearchField_KeyDown;", StringComparison.Ordinal);
+            Assert.True(attachAt >= 0, $"{name} no longer attaches the IME tracker");
+            Assert.True(attachAt < handlerAt, $"{name} registers SearchField_KeyDown before it is tracked");
+        }
     }
 
     [Fact]

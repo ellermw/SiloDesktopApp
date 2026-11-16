@@ -72,6 +72,8 @@ public sealed partial class EbookReaderPage : Page
     public EbookReaderPage()
     {
         InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not start the book search.
+        ImeCompositionGuard.Attach(SearchBox);
         FontSizeSlider.Value = 112;
         FontWeightSlider.Value = 400;
         LineHeightSlider.Value = 1.65;
@@ -1103,6 +1105,7 @@ public sealed partial class EbookReaderPage : Page
 
     private async void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e)) return;
         if (e.Key != Windows.System.VirtualKey.Enter) return;
         e.Handled = true;
         await RunSearchAsync();

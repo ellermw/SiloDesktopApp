@@ -40,6 +40,8 @@ public sealed partial class RequestsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<RequestsViewModel>();
         InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not start the search.
+        ImeCompositionGuard.Attach(SearchBox);
         SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); _renderedDataVersion = -1; Render(); });
         for (var i = 0; i < 4; i++)
         {
@@ -209,6 +211,7 @@ public sealed partial class RequestsPage : Page
 
     private async void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e)) return;
         if (e.Key != Windows.System.VirtualKey.Enter) return;
         e.Handled = true;
         await RunSearchAsync();
