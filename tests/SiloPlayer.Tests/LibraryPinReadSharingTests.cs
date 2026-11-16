@@ -114,6 +114,17 @@ public sealed class LibraryPinReadSharingTests
         Assert.Equal("Other library", api.ResolvePinLabel(8, type, id, "Other library"));
     }
 
+    [Fact]
+    public async Task EmptySectionTitleKeepsTheSavedFallback()
+    {
+        using var wire = new Wire { RowTitle = "" };
+        var api = new CatalogApi(wire.Client);
+        wire.Release.TrySetResult();
+        var layout = await api.GetLibraryLayoutAsync(7);
+        Assert.Equal("", Assert.Single(layout.Sections).DisplayTitle);
+        Assert.Equal("Saved row", api.ResolvePinLabel(7, "section", "recent", "Saved row"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

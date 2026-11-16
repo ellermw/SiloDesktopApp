@@ -30,7 +30,7 @@ public partial class CatalogApi
             if (!_pinTitles.TryGetValue((owner, language, libraryId.Value, type == "collection"), out var cached)) return fallback;
             return cached.Value switch
             {
-                HomeLayoutResponse layout => layout.Sections.FirstOrDefault(section => section.Id == id)?.DisplayTitle ?? fallback,
+                HomeLayoutResponse layout => layout.Sections.FirstOrDefault(section => section.Id == id)?.DisplayTitle is { Length: > 0 } sectionTitle ? sectionTitle : fallback,
                 LibraryTabResponse tab => tab.Collections.FirstOrDefault(collection => collection.Id == id)?.Title is { Length: > 0 } title ? title : fallback,
                 _ => fallback,
             };
