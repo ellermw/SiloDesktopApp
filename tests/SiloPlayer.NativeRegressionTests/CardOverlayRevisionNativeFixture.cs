@@ -162,7 +162,7 @@ internal static class CardOverlayRevisionNativeFixture
                 page.Children.Clear();
                 var item = new MediaItem
                 {
-                    ContentId = "rtl-overlay-" + type, Type = type, Title = "RTL artwork",
+                    ContentId = "rtl-overlay-" + type, Type = type, Title = "RTL artwork", ItemSource = "continue_watching",
                     OverlaySummary = type == "movie" ? new() { Resolution = "2160p" } : null,
                     Availability = type == "series" ? new() { Have = 1, Total = 2 } : null,
                     UserState = new() { Played = type == "movie", WatchedCount = 1, UnplayedCount = 3 },
@@ -171,16 +171,24 @@ internal static class CardOverlayRevisionNativeFixture
                 poster.SetCatalogGridLayout(185);
                 var library = new LibraryGridCard { FlowDirection = FlowDirection.RightToLeft };
                 library.Bind(item, null);
-                page.Children.Add(poster); page.Children.Add(library);
+                var wide = new LandscapeCard { MediaItem = item };
+                page.Children.Add(poster); page.Children.Add(library); page.Children.Add(wide);
                 await Task.Delay(150); page.UpdateLayout();
                 Check(poster.FlowDirection == FlowDirection.RightToLeft &&
                     ((TextBlock)poster.FindName("TitleText")).FlowDirection == FlowDirection.RightToLeft,
                     "Arabic card and caption retain RTL outside the artwork");
                 CheckCorners((Panel)poster.FindName("OverlayTopLeft"), Status(poster), type + " poster");
                 CheckCorners((Panel)Get(library, "_overlayTopLeft")!, (FrameworkElement)Get(library, "_watchStatus")!, type + " library");
-                foreach (var name in new[] { "SelectionBadge", "QuickActions", "MoreButton" })
-                    Check(((FrameworkElement)poster.FindName(name)).FlowDirection == FlowDirection.LeftToRight,
-                        name + " shares the artwork's physical corner direction");
+                Check(((FrameworkElement)poster.FindName("SelectionBadge")).FlowDirection == FlowDirection.LeftToRight,
+                    "selection badge shares the artwork's physical corner direction");
+                foreach (var name in new[] { "QuickActions", "QuickWatchedButton", "QuickFavoriteButton", "MoreButton" })
+                    Check(((FrameworkElement)poster.FindName(name)).FlowDirection == FlowDirection.RightToLeft,
+                        name + " retains Arabic direction for menus and tooltips");
+                foreach (var name in new[] { "RemainingBadge", "CurrentItemBadge", "HoverPlayButton", "QuickWatchedButton", "DismissButton" })
+                    Check(((FrameworkElement)wide.FindName(name)).FlowDirection == FlowDirection.RightToLeft,
+                        "landscape " + name + " retains Arabic direction");
+                await CheckMenuDirectionAsync(poster, (Button)poster.FindName("MoreButton"), item);
+                await CheckMenuDirectionAsync(wide, (Button)wide.FindName("DismissButton"), item);
             }
 
             var detail = new ItemDetailPage();
@@ -203,6 +211,22 @@ internal static class CardOverlayRevisionNativeFixture
             Set(service, "_enabled", enabled);
             typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, revision);
             LocaleService.Shared.Apply(LocaleService.Shared.Create(locale.Resolution));
+        }
+
+        static async Task CheckMenuDirectionAsync(FrameworkElement card, Button trigger, MediaItem item)
+        {
+            var menu = MediaItemMenu.Build(item, owner: card);
+            try
+            {
+                menu.ShowAt(trigger);
+                await Task.Delay(150);
+                DependencyObject? presenter = menu.Items[0];
+                while (presenter is not null && presenter is not MenuFlyoutPresenter)
+                    presenter = VisualTreeHelper.GetParent(presenter);
+                Check(presenter is MenuFlyoutPresenter { FlowDirection: FlowDirection.RightToLeft },
+                    card.GetType().Name + " More menu presenter retains Arabic RTL");
+            }
+            finally { menu.Hide(); }
         }
 
         static void CheckCorners(Panel badges, FrameworkElement status, string label)

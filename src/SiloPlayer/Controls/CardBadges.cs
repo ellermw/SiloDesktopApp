@@ -45,8 +45,9 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
 
     // Badge corners are positions on the artwork, which never mirrors: top-left is the left
     // corner in every language, as in the WebUI (its overlay layer is dir="ltr"). The artwork
-    // parent must also be LTR: it places the hosts and sibling status/selection/action controls.
-    // Setting only the hosts' direction does not fix their placement in an RTL parent.
+    // parent must also be LTR to place the hosts physically. Localized artwork text and
+    // action controls bind their direction to the card's RootGrid, so menus and tooltips
+    // retain the page direction. Setting only host direction does not fix RTL placement.
     private static T KeepLeftToRight<T>(T element) where T : FrameworkElement
     {
         element.FlowDirection = FlowDirection.LeftToRight;
