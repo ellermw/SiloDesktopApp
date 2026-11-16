@@ -42,10 +42,20 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
             { _bottomRightClearance = bottomRightClearance };
     }
 
+    // Badge corners are positions on the artwork, which never mirrors: top-left is the left
+    // corner in every language, as in the WebUI (its overlay layer is dir="ltr"). The hosts and
+    // the layout panels below therefore lay out left to right inside a right-to-left page.
+    private static T KeepLeftToRight<T>(T element) where T : FrameworkElement
+    {
+        element.FlowDirection = FlowDirection.LeftToRight;
+        return element;
+    }
+
     public void Show(IReadOnlyList<CardBadge> badges)
     {
         if (!_observingMount)
         {
+            foreach (var host in new[] { topLeft, topRight, bottomLeft, bottomRight, leftEdge, rightEdge }) KeepLeftToRight(host);
             _observingMount = true;
             bottomLeft.Loaded += (_, _) => bottomLeft.DispatcherQueue.TryEnqueue(() =>
             {
@@ -65,9 +75,9 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
                 parent.SizeChanged += (_, _) => Layout();
                 topLeft.SizeChanged += (_, _) => Layout();
             }
-            _bottomRows ??= new OverlayBottomRows { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false };
-            _bottomBand ??= new Border { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false };
-            _topScrim ??= new Border { VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
+            _bottomRows ??= KeepLeftToRight(new OverlayBottomRows { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false });
+            _bottomBand ??= KeepLeftToRight(new Border { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false });
+            _topScrim ??= KeepLeftToRight(new Border { VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false });
             foreach (var element in new FrameworkElement[] { _topScrim, _bottomRows, _bottomBand })
                 if (element.Parent is null)
                 {
@@ -95,12 +105,13 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         var right = badges.Where(badge => badge.Corner == OverlayPosition.BottomRight).ToArray();
         if (_band)
         {
-            var top = new OverlayBandMarks { Gap = look.StackGap * scale };
+            var top = new OverlayBandMarks { Gap = look.StackGap * scale, FlowDirection = FlowDirection.LeftToRight };
             foreach (var badge in badges.Where(badge => badge.Corner == OverlayPosition.TopLeft)) top.Children.Add(BandUnit(Build(badge), top.Children.Count > 0, scale));
             if (top.Children.Count > 0) topLeft.Children.Add(top);
             if (_bottomBand is not null)
             {
                 var marks = new OverlayBandMarks { Gap = look.StackGap * scale, HorizontalAlignment = HorizontalAlignment.Center };
+                marks.FlowDirection = FlowDirection.LeftToRight;
                 foreach (var badge in left.Concat(right)) marks.Children.Add(BandUnit(Build(badge), marks.Children.Count > 0, scale));
                 _bottomBand.Child = marks; _bottomBand.Background = Scrim(false); _bottomBand.Padding = new Thickness(8 * scale, 24 * scale, 8 * scale, 8 * scale);
             }

@@ -7997,7 +7997,11 @@ public sealed partial class ItemDetailPage : Page
 
     private void UpdateSeasonPosterState(Grid posterHost, Season season)
     {
-        var state = (season.EpisodeCount, season.UserData?.Played, season.UserData?.WatchedCount, season.UserData?.InProgressCount);
+        var overlays = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();
+        // The availability badge depends on the season's counts and on the profile's badge settings.
+        var overlayState = (overlays.IsLoaded, overlays.Preset, overlays.ManifestRevision, overlays.GetPrefs()?.GetValueOrDefault("availability"));
+        var state = (season.EpisodeCount, season.UserData?.Played, season.UserData?.WatchedCount, season.UserData?.InProgressCount,
+            season.Availability?.Have, season.Availability?.Total, overlayState);
         if (Equals(posterHost.Tag, state)) return;
         posterHost.Tag = state;
         // Retain the poster and focusable card; only the small state overlays change.
@@ -8031,9 +8035,10 @@ public sealed partial class ItemDetailPage : Page
 
         // Season progress bar (3px at bottom): green when completed, accent
         // otherwise. Fills proportional to watched/total episodes.
-        if ((isCompleted || hasProgress) && season.UserData != null && season.EpisodeCount > 0)
+        var progressVisible = (isCompleted || hasProgress) && season.UserData != null && season.EpisodeCount > 0;
+        if (progressVisible)
         {
-            int watched = isCompleted ? season.EpisodeCount : (season.UserData.WatchedCount);
+            int watched = isCompleted ? season.EpisodeCount : (season.UserData!.WatchedCount);
             double ratio = Math.Clamp((double)watched / season.EpisodeCount, 0, 1);
             var progressLayout = MediaCardProgressGeometry.Calculate(cardWidth, ratio, episodeCard: false);
             var barTrack = new Grid
@@ -8063,6 +8068,35 @@ public sealed partial class ItemDetailPage : Page
             posterHost.Children.Add(barTrack);
         }
 
+        AddSeasonAvailabilityBadge(posterHost, season, cardWidth, progressVisible, overlays);
+    }
+
+    /// <summary>
+    /// The availability ribbon of a season card: episodes in the library out of known episodes,
+    /// from the season list's own field (no extra read). Corners lift clear of the progress bar.
+    /// </summary>
+    private void AddSeasonAvailabilityBadge(Grid posterHost, Season season, double cardWidth, bool progressVisible,
+        global::SiloPlayer.Services.CardOverlayService overlays)
+    {
+        if (!overlays.IsLoaded)
+        {
+            _ = RebuildSeasonCardsAfterOverlaysLoadAsync(overlays);
+            return;
+        }
+        var geometry = CardOverlayGeometry.ForPoster(cardWidth, overlays.Preset);
+        var badges = CardBadgeHosts.ForData(global::SiloPlayer.Services.OverlayData.FromSeason(season), overlays, geometry.Scale);
+        if (badges.Count == 0) return;
+        CardBadgeHosts.Create(posterHost, geometry, CardOverlayGeometry.ProgressClearance(progressVisible)).Show(badges);
+    }
+
+    private async Task RebuildSeasonCardsAfterOverlaysLoadAsync(global::SiloPlayer.Services.CardOverlayService overlays)
+    {
+        try
+        {
+            await overlays.EnsureLoadedAsync();
+            DispatcherQueue.TryEnqueue(() => { if (IsLoaded && overlays.IsLoaded) BuildSeasonCards(); });
+        }
+        catch { }
     }
 
     private TextBlock BuildSeasonProgressText(Season season)

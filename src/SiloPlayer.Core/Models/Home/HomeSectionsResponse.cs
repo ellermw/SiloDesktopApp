@@ -72,6 +72,10 @@ public class MediaItem : IJsonOnDeserialized
     public string? ContentRating { get; set; }
     public string Status { get; set; } = "";
     public string? ShowStatus { get; set; }
+    /// <summary>Series: complete released seasons out of released seasons. Season: episodes in the
+    /// library out of known episodes. The server sends it only while this profile's badges include
+    /// the availability overlay; a missing value means no ribbon.</summary>
+    public CatalogAvailability? Availability { get; set; }
     public string Overview { get; set; } = "";
     public string? PendingTranslationLanguage { get; set; }
     public List<string>? MachineTranslatedFields { get; set; }
@@ -219,6 +223,12 @@ public class EbookDetailExtension
     public AudiobookRelatedItems Related { get; set; } = new();
 }
 
+/// <summary>The server's CatalogAvailability: <c>have</c> out of <c>total</c> on a series or season card.</summary>
+public sealed class CatalogAvailability
+{
+    public int Have { get; set; }
+    public int Total { get; set; }
+}
 public class OverlaySummary
 {
     public string Resolution { get; set; } = "";
