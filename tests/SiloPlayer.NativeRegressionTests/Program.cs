@@ -1128,6 +1128,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ToastDiagnosticsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-toasts")
+            {
+                await PlaybackToastNativeFixture.RunAsync(_window, parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-dismissal")
             {
                 await HomeDismissalNativeFixture.RunAsync(parent);
