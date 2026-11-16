@@ -364,6 +364,7 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminSecuritySettingsPage.xbf',
     'Views/Admin/AdminNetworkAccessSettingsPage.xbf',
     'Views/Admin/AdminDownloadSettingsPage.xbf',
+    'Views/Admin/AdminScheduledTasksPage.xbf',
     'Controls/ServerActivityButton.xbf'
 )
 $ForbiddenPublishedResourcePatterns = @(

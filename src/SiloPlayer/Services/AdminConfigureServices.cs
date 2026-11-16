@@ -32,5 +32,7 @@ internal static class AdminConfigureServices
         services.AddSingleton(new AdminPageRegistration(AdminRoute.NetworkAccessSettings, typeof(AdminNetworkAccessSettingsPage)));
         services.AddTransient<AdminDownloadSettingsController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
+        services.AddSingleton<AdminTasksApi>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.ScheduledTasks, typeof(AdminScheduledTasksPage)));
     }
 }
