@@ -121,6 +121,10 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private bool _exactCountFailed;
 
+    /// <summary>An exact-count read is in flight for the current catalog query.</summary>
+    [ObservableProperty]
+    private bool _isExactCountLoading;
+
     [ObservableProperty]
     private bool _hasMore;
 
@@ -750,7 +754,6 @@ public partial class LibraryViewModel : ObservableObject
             StartNewCatalogQuery();
             _estimatedTotalItems = estimatedTotal;
             TotalCount = estimatedTotal;
-            DisplayTotalCount = estimatedTotal;
             Items.Reset(estimatedTotal);
             SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_errors.txt",
                 $"catalog_cursor_recovery start={startIndex} count={itemCount} query_version={_queryVersion} prior_scope_retired=true retry_without_cursor=true");
@@ -868,6 +871,7 @@ public partial class LibraryViewModel : ObservableObject
     {
         try { _catalogQueryCts.Cancel(); } catch { }
         _catalogQueryCts.Dispose();
+        IsExactCountLoading = false;
     }
 
     private void CancelWindowLoad()
@@ -996,6 +1000,7 @@ public partial class LibraryViewModel : ObservableObject
     private async Task LoadExactCountAsync(int version, string? snapshot, CancellationToken ct)
     {
         var loadVersion = ++_exactCountLoadVersion;
+        IsExactCountLoading = true;
         ExactCountFailed = false;
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-exact-count");
         try
@@ -1011,7 +1016,7 @@ public partial class LibraryViewModel : ObservableObject
             ApplyExactCatalogTotal(result.Total);
             WindowLoaded?.Invoke();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch
         {
             // Keep the estimated extent and usable cards if the optional
@@ -1019,6 +1024,11 @@ public partial class LibraryViewModel : ObservableObject
             // count drops rather than keep a stale number.
             if (!ct.IsCancellationRequested && version == _queryVersion && loadVersion == _exactCountLoadVersion)
                 ExactCountFailed = true;
+        }
+        finally
+        {
+            if (version == _queryVersion && loadVersion == _exactCountLoadVersion)
+                IsExactCountLoading = false;
         }
     }
 

@@ -255,6 +255,7 @@ public sealed partial class LibraryPage : Page,
         {
             if (args.PropertyName == nameof(ViewModel.TotalCount) ||
                 args.PropertyName == nameof(ViewModel.DisplayTotalCount) ||
+                args.PropertyName == nameof(ViewModel.IsExactCountLoading) ||
                 args.PropertyName == nameof(ViewModel.ExactCountFailed))
             {
                 DispatcherQueue.TryEnqueue(() => UpdateCountDisplay());
@@ -1308,7 +1309,7 @@ public sealed partial class LibraryPage : Page,
     private void UpdateCountDisplay()
     {
         var mode = LibraryResultCount.Mode(
-            _catalogToolbarShown, ViewModel.DisplayTotalCount, ViewModel.TotalCount,
+            _catalogToolbarShown, ViewModel.DisplayTotalCount, ViewModel.IsExactCountLoading,
             ViewModel.IsLoading, ViewModel.ExactCountFailed);
         if (mode == LibraryResultCountMode.Label)
         {

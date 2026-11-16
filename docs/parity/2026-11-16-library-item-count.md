@@ -42,7 +42,7 @@ Parity pass dated 2026-11-16. Source-only: nothing here has been built or run ye
   "12 episodes", "640 books", "1 series"/"42 series", generic "N titles"). `tv` is treated like `series`, as the desktop type
   picker already does.
 - Waiting: a 16 px `ResultCountProgress` ring (named "Loading item count") shows while a first window is loading or an
-  estimated extent exists without an exact total.
+  exact-count read is in flight (`IsExactCountLoading`), never just because an estimated extent exists.
 - Hidden: exact total is zero (empty), the latest exact-count read failed or the server only estimated
   (`LibraryViewModel.ExactCountFailed`, which also hides an older number), and whenever the sort/order/Filters toolbar is
   not the visible one (audiobook series/author/narrator axes, which keep their own group count).
@@ -66,7 +66,9 @@ Parity pass dated 2026-11-16. Source-only: nothing here has been built or run ye
 
 - `src/SiloPlayer/Helpers/LibraryResultCount.cs` (new): noun choice, localized label with English fallbacks, show/wait/hide rule.
 - `src/SiloPlayer/ViewModels/LibraryViewModel.cs`, `LibraryViewModel.Letters.cs`: `ExactCountFailed` (set when the exact-count read
-  fails or is estimate-only, cleared by a new query, a retry or any exact total).
+  fails or is estimate-only, cleared by a new query, a retry or any exact total); `IsExactCountLoading` tracks the current
+  read and is cleared on completion or query cancellation. Transport timeouts and authority-change aborts count as failures,
+  but caller cancellation does not. Cursor recovery retains only the pager estimate, not a display count.
 - `src/SiloPlayer/Views/LibraryPage.xaml`: `ResultCountText` placed after Filters with live region; new `ResultCountProgress`.
 - `src/SiloPlayer/Views/LibraryPage.xaml.cs`: `UpdateCountDisplay` rewritten; `_catalogToolbarShown`; the two forced-collapse sites
   replaced by `UpdateCatalogToolbarVisibility`; `IsLoading`/`ExactCountFailed` changes refresh the count; column and margin set
@@ -80,7 +82,10 @@ Parity pass dated 2026-11-16. Source-only: nothing here has been built or run ye
 
 ## Verification
 
-Local results on this source:
+QA follow-up: source inspection only; builds and tests were not run. Regression coverage added for cursor recovery
+(successful and failed), count timeouts/authority changes/cancellation, and a failed first window with an index extent.
+
+Original PR's reported local results (not rerun after the QA follow-up):
 
 - **Unit tests:** all 7,518 pass, including `LibraryResultCountTests` and
   the two new `LibraryLetterNavigationTests`.

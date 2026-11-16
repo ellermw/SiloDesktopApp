@@ -69,22 +69,22 @@ public sealed class LibraryResultCountTests
     }
 
     [Theory]
-    // Shown only once the exact total is above zero, whatever the estimate says.
-    [InlineData(true, 1234, 1234, false, false, LibraryResultCountMode.Label)]
-    [InlineData(true, 800, 1200, true, false, LibraryResultCountMode.Label)]
-    // Waiting: the pager has an estimate or the first window is still loading.
-    [InlineData(true, 0, 1200, false, false, LibraryResultCountMode.Loading)]
-    [InlineData(true, 0, 0, true, false, LibraryResultCountMode.Loading)]
-    // Empty result: nothing to count.
-    [InlineData(true, 0, 0, false, false, LibraryResultCountMode.Hidden)]
+    // Shown only once the exact total is above zero.
+    [InlineData(true, 1234, false, false, false, LibraryResultCountMode.Label)]
+    [InlineData(true, 800, true, true, false, LibraryResultCountMode.Label)]
+    // Waiting only while a count read or a catalog window is actually loading.
+    [InlineData(true, 0, true, false, false, LibraryResultCountMode.Loading)]
+    [InlineData(true, 0, false, true, false, LibraryResultCountMode.Loading)]
+    // Empty or idle unknown result: nothing to count, even with a pager estimate.
+    [InlineData(true, 0, false, false, false, LibraryResultCountMode.Hidden)]
     // A failed (or estimate-only) count read hides, even over an older number.
-    [InlineData(true, 0, 1200, false, true, LibraryResultCountMode.Hidden)]
-    [InlineData(true, 800, 800, false, true, LibraryResultCountMode.Hidden)]
+    [InlineData(true, 0, true, false, true, LibraryResultCountMode.Hidden)]
+    [InlineData(true, 800, false, false, true, LibraryResultCountMode.Hidden)]
     // Audiobook series/author/narrator groups use their own count, not this one.
-    [InlineData(false, 1234, 1234, false, false, LibraryResultCountMode.Hidden)]
-    [InlineData(false, 0, 1200, true, false, LibraryResultCountMode.Hidden)]
-    public void ModeShowsWaitsOrHidesTheCount(bool toolbarShown, int exact, int estimated, bool loading, bool failed, LibraryResultCountMode expected)
-        => Assert.Equal(expected, LibraryResultCount.Mode(toolbarShown, exact, estimated, loading, failed));
+    [InlineData(false, 1234, false, false, false, LibraryResultCountMode.Hidden)]
+    [InlineData(false, 0, true, true, false, LibraryResultCountMode.Hidden)]
+    public void ModeShowsWaitsOrHidesTheCount(bool toolbarShown, int exact, bool countLoading, bool loading, bool failed, LibraryResultCountMode expected)
+        => Assert.Equal(expected, LibraryResultCount.Mode(toolbarShown, exact, countLoading, loading, failed));
 
     [Fact]
     public void LibraryPageDrivesTheCountFromTheExactTotalWithoutForcingItCollapsed()
@@ -99,6 +99,8 @@ public sealed class LibraryResultCountTests
         Assert.Contains("LibraryResultCount.Mode(", update);
         Assert.Contains("ViewModel.DisplayTotalCount", update);
         Assert.Contains("ViewModel.ExactCountFailed", update);
+        Assert.Contains("ViewModel.IsExactCountLoading", update);
+        Assert.DoesNotContain("ViewModel.TotalCount", update);
         Assert.Contains("LibraryResultCount.Label(", update);
         // The estimated extent is never the number shown, and the count issues no read.
         Assert.DoesNotContain("ViewModel.TotalCount,", Between(update, "LibraryResultCount.Label(", ";"));
@@ -113,6 +115,7 @@ public sealed class LibraryResultCountTests
         Assert.Contains("_catalogToolbarShown = showBooks;", code);
         // The view model's changes reach the page, and the retained page keeps no slide animation.
         Assert.Contains("nameof(ViewModel.ExactCountFailed)", code);
+        Assert.Contains("nameof(ViewModel.IsExactCountLoading)", code);
         Assert.DoesNotContain("Transition", Between(xaml, "x:Name=\"ResultCountText\"", "<StackPanel Grid.Row=\"1\" Grid.Column=\"4\""));
     }
 

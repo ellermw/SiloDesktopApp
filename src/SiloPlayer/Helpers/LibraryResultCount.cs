@@ -87,24 +87,24 @@ public static class LibraryResultCount
     /// <summary>
     /// Whether the count shows, waits or hides. It shows only once the catalog
     /// has reported an exact total above zero. While that total is still being
-    /// read (a first window is loading or the pager only has an estimate) it
+    /// read (a first window or an exact-count read is loading) it
     /// waits, and it hides when the latest read failed (even over an older
     /// number), when the result is empty, and wherever the catalog toolbar
     /// itself is not shown (audiobook series/author/narrator groups).
     /// </summary>
     /// <param name="catalogToolbarShown">The sort/order/Filters toolbar is the visible one.</param>
     /// <param name="exactTotal">The exact total the browse reported; 0 when not known (or empty).</param>
-    /// <param name="estimatedTotal">The pager's extent, which may only be an estimate.</param>
+    /// <param name="isExactCountLoading">An exact-count read is in flight for the current query.</param>
     /// <param name="isLoading">A catalog window is being read.</param>
     /// <param name="countFailed">The exact-count read failed for the current query.</param>
     public static LibraryResultCountMode Mode(
-        bool catalogToolbarShown, int exactTotal, int estimatedTotal, bool isLoading, bool countFailed)
+        bool catalogToolbarShown, int exactTotal, bool isExactCountLoading, bool isLoading, bool countFailed)
     {
         if (!catalogToolbarShown) return LibraryResultCountMode.Hidden;
         // A failed refresh drops the count rather than keep a stale number.
         if (countFailed) return LibraryResultCountMode.Hidden;
         if (exactTotal > 0) return LibraryResultCountMode.Label;
-        return estimatedTotal > 0 || isLoading ? LibraryResultCountMode.Loading : LibraryResultCountMode.Hidden;
+        return isExactCountLoading || isLoading ? LibraryResultCountMode.Loading : LibraryResultCountMode.Hidden;
     }
 
     private static string Normalize(string? value) => (value ?? "").Trim().ToLowerInvariant();
