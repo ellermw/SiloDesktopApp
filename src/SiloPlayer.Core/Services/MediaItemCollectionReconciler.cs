@@ -107,6 +107,8 @@ public static class MediaItemCollectionReconciler
             && left.ContentRating == right.ContentRating
             && left.Status == right.Status
             && left.ShowStatus == right.ShowStatus
+            && left.Availability?.Have == right.Availability?.Have
+            && left.Availability?.Total == right.Availability?.Total
             && left.Overview == right.Overview
             && left.PendingTranslationLanguage == right.PendingTranslationLanguage
             && (left.MachineTranslatedFields ?? []).SequenceEqual(right.MachineTranslatedFields ?? [])

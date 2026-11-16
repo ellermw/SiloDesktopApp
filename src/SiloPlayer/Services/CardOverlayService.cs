@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SiloPlayer.Core.Api;
@@ -63,6 +64,10 @@ public sealed class OverlayData
     public string? Network { get; set; }
     public string? ShowStatus { get; set; }
     public string? RequestStatus { get; set; }
+    /// <summary>Complete seasons on a series, or episodes in the library on a season. Null without the server field.</summary>
+    public int? AvailabilityHave { get; set; }
+    /// <summary>Released seasons on a series, or known episodes on a season. Null without the server field.</summary>
+    public int? AvailabilityTotal { get; set; }
 
     public static OverlayData FromMediaItem(MediaItem item) => new()
     {
@@ -89,7 +94,24 @@ public sealed class OverlayData
         Studio = item.Studios.FirstOrDefault(),
         Network = item.Networks.FirstOrDefault(),
         ShowStatus = item.ShowStatus,
+        AvailabilityHave = item.Availability?.Have,
+        AvailabilityTotal = item.Availability?.Total,
     };
+
+    /// <summary>The badge data of a season card (the same availability field as a series card).</summary>
+    public static OverlayData FromSeason(SiloPlayer.Core.Models.Catalog.Season season) => new()
+    {
+        AvailabilityHave = season.Availability?.Have,
+        AvailabilityTotal = season.Availability?.Total,
+    };
+}
+
+/// <summary>How a series or season poster's availability reads: no badge, partly in the library, or complete.</summary>
+public enum OverlayAvailabilityState
+{
+    None,
+    Partial,
+    Complete,
 }
 
 /// <summary>
@@ -150,6 +172,7 @@ public static class OverlayRegistry
         new("network",            "Network",          OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.Network) ? null : d.Network),
         new("show_status",        "Show Status",      OverlayPosition.TopRight,    false, d => FormatShowStatus(d.ShowStatus)),
         new("request_status",     "Request Status",   OverlayPosition.TopLeft,     true, d => d.RequestStatus),
+        new("availability",       "Availability",     OverlayPosition.TopLeft,     false, d => FormatAvailability(d)),
         new("advisory_age", "Advisory Age", OverlayPosition.TopRight, false, d => d.AdvisoryAge > 0 ? $"{d.AdvisoryAge}+" : null),
     ];
 
@@ -163,6 +186,60 @@ public static class OverlayRegistry
         "show_status" => data.ShowStatus,
         _ => null,
     };
+
+    /// <summary>Accent of a complete series or season (the WebUI's COMPLETE_ACCENT).</summary>
+    public const string AvailabilityCompleteAccent = "#21c452";
+    /// <summary>Accent of a partly available series or season (the WebUI's ATTENTION_ACCENT).</summary>
+    public const string AvailabilityPartialAccent = "#f59e0b";
+    // The badge text of a complete title. Localized for display by LocalizeAvailability;
+    // the text itself stays a stable key so equal badges compare equal.
+    private const string AvailabilityCompleteText = "Complete";
+
+    /// <summary>
+    /// Complete, partly in the library, or no badge. A missing count, or a total that is not
+    /// positive, is no badge (the WebUI's availabilityState).
+    /// </summary>
+    public static OverlayAvailabilityState AvailabilityState(OverlayData data)
+    {
+        if (data.AvailabilityHave is not { } have || data.AvailabilityTotal is not { } total || total <= 0)
+            return OverlayAvailabilityState.None;
+        return have >= total ? OverlayAvailabilityState.Complete : OverlayAvailabilityState.Partial;
+    }
+
+    private static string? FormatAvailability(OverlayData data) => AvailabilityState(data) switch
+    {
+        OverlayAvailabilityState.Complete => AvailabilityCompleteText,
+        OverlayAvailabilityState.Partial => string.Create(CultureInfo.InvariantCulture, $"{data.AvailabilityHave}/{data.AvailabilityTotal}"),
+        _ => null,
+    };
+
+    /// <summary>Whether availability badge text (as <see cref="OverlayDef.GetValue"/> returns it) is the complete state.</summary>
+    public static bool IsAvailabilityComplete(string? text) => text == AvailabilityCompleteText;
+
+    /// <summary>
+    /// The availability badge text in the interface language: the shipped
+    /// <c>web.settings.overlays.badge.availability.value.*</c> messages. Text that is neither
+    /// the complete state nor have/total is returned as it came.
+    /// </summary>
+    public static string LocalizeAvailability(string text)
+    {
+        if (text == AvailabilityCompleteText)
+            return SiloPlayer.Core.Localization.AppStrings.Get("web.settings.overlays.badge.availability.value.complete", fallback: text);
+        var slash = text.IndexOf('/');
+        if (slash > 0
+            && int.TryParse(text.AsSpan(0, slash), NumberStyles.None, CultureInfo.InvariantCulture, out var have)
+            && int.TryParse(text.AsSpan(slash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var total))
+            return SiloPlayer.Core.Localization.AppStrings.Get("web.settings.overlays.badge.availability.value.fraction",
+                new Dictionary<string, object?> { ["have"] = have, ["total"] = total }, fallback: text);
+        return text;
+    }
+
+    /// <summary>
+    /// The accent a badge takes from its own data when the profile chose none: availability is
+    /// green when complete and amber while partial. Other badges have none.
+    /// </summary>
+    public static string? DataAccent(string id, string text) =>
+        id == "availability" ? IsAvailabilityComplete(text) ? AvailabilityCompleteAccent : AvailabilityPartialAccent : null;
 
     public static Dictionary<string, OverlayItemConfig> DefaultPrefs =>
         All.ToDictionary(def => def.Id, def => new OverlayItemConfig(def.DefaultEnabled, def.DefaultPosition));
@@ -359,6 +436,7 @@ public class CardOverlayService
         "request_status" => 15,
         "advisory_age" => 13,
         "resolution_hdr_audio" => 26,
+        "availability" => 29,
         _ => 0,
     };
 

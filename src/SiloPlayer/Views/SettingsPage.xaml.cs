@@ -1930,7 +1930,8 @@ _webhookPlexAuthCts?.Cancel();
     private IReadOnlySet<string> _overlayShownRatings = new HashSet<string>();
     private bool OverlayOffered(string id) => id switch
     {
-        "resolution_hdr_audio" => _cardOverlayService.OffersOverlay(id),
+        // A server below the badge's settings revision rejects a document that holds it.
+        "resolution_hdr_audio" or "availability" => _cardOverlayService.OffersOverlay(id),
         "rating_imdb" or "imdb_top_250" => _overlayShownRatings.Contains("imdb"),
         "rating_tmdb" => _overlayShownRatings.Contains("tmdb"),
         "rating_rt" or "rt_certified_fresh" => _overlayShownRatings.Contains("rt_critic"),
@@ -2027,7 +2028,7 @@ _webhookPlexAuthCts?.Cancel();
         ("Metadata", "Year, runtime, language, studio, and network context.",
             ["year", "runtime", "original_language", "studio", "network"]),
         ("Ribbons", "Show status, awards, and chart recognition.",
-            ["show_status", "request_status"]),
+            ["show_status", "request_status", "availability"]),
     ];
 
     private static (string Label, string? Value)[] OverlayAccentOptions =>
@@ -2098,7 +2099,7 @@ _webhookPlexAuthCts?.Cancel();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var label = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        label.Children.Add(new TextBlock { Text = definition.Label, FontSize = 14, FontWeight = FontWeights.Medium });
+        label.Children.Add(new TextBlock { Text = definition.Id == "availability" ? L("web.settings.overlays.badge.availability.label", definition.Label) : definition.Label, FontSize = 14, FontWeight = FontWeights.Medium });
         label.Children.Add(new TextBlock
         {
             Text = OverlayDescription(definition.Id),
@@ -2448,6 +2449,8 @@ _webhookPlexAuthCts?.Cancel();
             ContentRating = _cardOverlayPreviewVariant == "movie" ? "PG-13" : "TV-MA", Year = _cardOverlayPreviewVariant == "show" ? 2024 : 2026,
             Runtime = _cardOverlayPreviewVariant == "show" ? 47 * 60 : 118 * 60, OriginalLanguage = "en", Studio = "Studio",
             Network = _cardOverlayPreviewVariant == "show" ? "Network" : null, ShowStatus = _cardOverlayPreviewVariant == "show" ? "Returning" : null,
+            // The WebUI's show sample: two of three seasons complete.
+            AvailabilityHave = _cardOverlayPreviewVariant == "show" ? 2 : null, AvailabilityTotal = _cardOverlayPreviewVariant == "show" ? 3 : null,
         };
         if (_cardOverlayPreviewVariant == "requested") data = new OverlayData { RequestStatus = "Requested", Year = 2026 };
         var geometry = SiloPlayer.Core.Services.CardOverlayGeometry.ForPoster(NavigationPreviewPoster.Width - 2);
@@ -2487,6 +2490,7 @@ _webhookPlexAuthCts?.Cancel();
         "studio" => L("web.settings.overlays.badge.studio.description", "Primary production studio (movies)"),
         "network" => L("web.settings.overlays.badge.network.description", "Primary network (series)"),
         "show_status" => L("web.settings.overlays.badge.showStatus.description", "Series lifecycle: Returning, Ended, Cancelled"),
+        "availability" => L("web.settings.overlays.badge.availability.description", "Complete seasons on a series, or episodes in the library on a season"),
         _ => "Poster card badge.",
     };
 

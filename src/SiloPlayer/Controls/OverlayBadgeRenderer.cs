@@ -20,7 +20,7 @@ internal static class OverlayBadgeRenderer
         OverlayStyle? style = null, string? valueKey = null, CardOverlayService? images = null, Func<string>? display = null)
     {
         scale = double.IsFinite(scale) && scale > 0 ? Math.Clamp(scale, .1, 8) : 1;
-        var accent = config.AccentColor ?? DefaultAccent(id);
+        var accent = config.AccentColor ?? DefaultAccent(id) ?? OverlayRegistry.DataAccent(id, text);
         var configOwner = images?.CaptureImageOwner();
         var look = OverlayAppearance.Resolve(preset, style, accent);
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = look.IconGap * scale, VerticalAlignment = VerticalAlignment.Center };
@@ -57,6 +57,7 @@ internal static class OverlayBadgeRenderer
         string DisplayText()
         {
             if (display != null) return display();
+            if (id == "availability") return OverlayRegistry.LocalizeAvailability(text);
             var key = (id, valueKey) switch
             {
                 ("status", "pending") => "web.item.card.statusScanning",
@@ -86,7 +87,7 @@ internal static class OverlayBadgeRenderer
                 var mark = Label(source); mark.Foreground = Brush(color.ReadableText);
                 content.Children.Add(new Border { Background = Brush(color), CornerRadius = new(look.FontSize * scale * .2), Padding = new(look.FontSize * scale * .35, look.FontSize * scale * .15, look.FontSize * scale * .35, look.FontSize * scale * .15), Child = mark });
             }
-            else if (source is null && (config.ShowIcon ?? look.PreferIcon) && Glyph(id) is { } glyph)
+            else if (source is null && (config.ShowIcon ?? look.PreferIcon) && Glyph(id, text) is { } glyph)
                 content.Children.Add(new FontIcon { Glyph = glyph, FontSize = look.IconSize * scale, Width = look.IconSize * scale, Height = look.IconSize * scale, Foreground = foreground });
             content.Children.Add(Label(source is not null ? look.SourceChips ? score! : source + " " + score : DisplayText(), look.SourceChips && score is not null));
         }
@@ -147,7 +148,7 @@ internal static class OverlayBadgeRenderer
             if (bitmap is null || owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return;
             content.Children.Clear();
             content.Children.Add(new Image { FlowDirection = FlowDirection.LeftToRight, Source = bitmap, Height = look.IconSize * scale, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center });
-            content.Children.Add(Label(score ?? text, score is not null));
+            content.Children.Add(Label(score ?? DisplayText(), score is not null));
             badge.InvalidateMeasure();
         }
         void Reset()
@@ -187,6 +188,8 @@ internal static class OverlayBadgeRenderer
     internal static string? DefaultAccent(string id) => id switch { "rating_imdb" => "#f5c518", "rating_tmdb" => "#01b4e4", "rating_rt" => "#fa320a", "rating_rt_audience" => "#fa6400", _ => null };
     internal static string? SourceMark(string id) => id switch { "rating_imdb" => "IMDb", "rating_tmdb" => "TMDB", "rating_rt" => "RT", "rating_rt_audience" => "RT Aud", _ => null };
     private static string BareScore(string text, string mark) => text.StartsWith(mark + " ", StringComparison.OrdinalIgnoreCase) ? text[(mark.Length + 1)..] : text;
+    // Availability shows its check only for a complete title, as the WebUI's getIcon does.
+    private static string? Glyph(string id, string text) => id == "availability" ? OverlayRegistry.IsAvailabilityComplete(text) ? ((char)0xE73E).ToString() : null : Glyph(id);
     private static string? Glyph(string id) => id switch
     {
         "resolution" or "resolution_hdr" or "resolution_hdr_audio" or "hdr" or "video_codec" => "\uE7F4",
