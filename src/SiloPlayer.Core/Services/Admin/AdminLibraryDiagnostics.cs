@@ -467,10 +467,12 @@ public sealed class AdminUnmatchedPanel : AdminLibraryPanel
             _state = _state with { Pending = _state.Pending.Add(item.ContentId), LastChange = undo ? null : _state.LastChange };
         }
         RaiseChanged();
+        var changed = false;
         try
         {
             await Owner.Api.SetUnmatchedIgnoredAsync(Lease, item.ContentId, ignored, Lease.Token).ConfigureAwait(false);
             if (!Current) return;
+            changed = true;
             if (!undo)
             {
                 Owner.Announce(AdminLibrariesText.T(ignored ? "web.admin.libraries.toast.ignored" : "web.admin.libraries.toast.restored", ("title", item.Title)), false);
@@ -489,7 +491,11 @@ public sealed class AdminUnmatchedPanel : AdminLibraryPanel
             RaiseChanged();
         }
         if (!Current) return;
-        await Task.WhenAll(ShowAsync(State.PageIndex), LoadTotalsAsync()).ConfigureAwait(false);
+        var state = State;
+        // Removing the only row leaves this page's keyset cursor past the end.
+        var page = changed && state.Items.Count == 1 && state.Items[0].ContentId == item.ContentId && state.Ignored != ignored
+            ? Math.Max(0, state.PageIndex - 1) : state.PageIndex;
+        await Task.WhenAll(ShowAsync(page), LoadTotalsAsync()).ConfigureAwait(false);
     }
 
     /// <summary>The toast's Undo: flips the last change back once.</summary>

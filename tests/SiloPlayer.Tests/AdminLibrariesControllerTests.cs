@@ -145,6 +145,50 @@ public sealed partial class AdminLibrariesControllerTests
     }
 
     [Fact]
+    public async Task OpeningAndReopeningHydrateScansAlreadyHeldByTheSharedActivityStore()
+    {
+        using var kit = AdminMonitorKit.Create();
+        var server = new Server();
+        server.Override = request => request.RequestUri!.AbsolutePath == "/api/v2/scan/cancel"
+            ? AdminMonitorKit.Json("{\"library_id\":\"1\",\"cancelled\":2}") : null;
+        kit.Http.Respond = (request, _) => Task.Run(() => server.Respond(request));
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var channel = new Channel();
+        var scheduler = new Scheduler();
+        using var activity = new ServerActivityStore(new AdminMonitorApi(kit.Client), authority, channel, scheduler);
+        using var controller = new AdminLibrariesController(new AdminLibrariesApi(kit.Client), authority, channel, scheduler, activity);
+        const string scans = "[{\"id\":\"running\",\"library_id\":1,\"mode\":\"library\",\"status\":\"running\"},{\"id\":\"queued\",\"library_id\":1,\"mode\":\"file\",\"status\":\"accepted\"}]";
+        using var cached = JsonDocument.Parse(scans);
+        channel.Latest = cached.RootElement.Clone();
+        channel.Snapshot("scans", scans);
+        Assert.Equal(1, channel.Subscriptions);
+
+        await controller.OpenAsync();
+        Assert.Equal(2, channel.Subscriptions);
+        var row = AdminLibrariesController.Rows(controller.State)[0];
+        Assert.True(row.ScanStops);
+        Assert.Equal((1, 1), (row.RunningScans, row.QueuedScans));
+        var group = Assert.Single(AdminLibrariesController.ScanGroups(controller.State));
+        Assert.Equal((1, 1), (group.Running, group.Queued));
+        await controller.ScanOrStopAsync("1");
+        Assert.Contains("POST /api/v2/scan/cancel", kit.Http.Requests);
+        Assert.DoesNotContain("POST /api/v2/scan", kit.Http.Requests);
+
+        authority.Retire();
+        Assert.Null(controller.State.Owner);
+        // Reconnect delivers to the shared store before the page's queued reopen.
+        channel.Snapshot("scans", "[{\"id\":\"reopened\",\"library_id\":1,\"mode\":\"library\",\"status\":\"accepted\"}]");
+        await controller.OpenAsync();
+        Assert.Equal("reopened", Assert.Single(controller.State.Scans).Id);
+        Assert.True(AdminLibrariesController.Rows(controller.State)[0].ScanStops);
+
+        kit.Client.SetBaseUrl("https://server-b.test");
+        await controller.OpenAsync();
+        Assert.Empty(controller.State.Scans);
+        Assert.All(AdminLibrariesController.Rows(controller.State), entry => Assert.False(entry.ScanStops));
+    }
+
+    [Fact]
     public async Task CachedScansAreNotReplayedWhenOpeningOrSwitchingServers()
     {
         var (kit, authority, controller, _, channel, _) = Create();
@@ -541,6 +585,52 @@ public sealed partial class AdminLibrariesControllerTests
             Assert.Contains("DELETE /api/v2/libraries/unmatched-items/c1/ignore", kit.Http.Requests);
             await panel.UndoAsync();
             Assert.Equal(1, kit.Http.Requests.Count(request => request.StartsWith("DELETE /api/v2/libraries/unmatched-items/c1/ignore", StringComparison.Ordinal)));
+        }
+    }
+
+    [Theory]
+    [InlineData(false, 21)]
+    [InlineData(true, 21)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    public async Task RemovingTheOnlyUnmatchedRowReturnsToThePreviousPage(bool ignored, int total)
+    {
+        var (kit, authority, controller, server, _, _) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var removed = false;
+            server.Override = request =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/api/v2/libraries/unmatched-items/c" + (total - 1) + "/ignore")
+                {
+                    Assert.Equal(ignored ? HttpMethod.Delete : HttpMethod.Put, request.Method);
+                    removed = true;
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                }
+                if (request.RequestUri!.AbsolutePath != "/api/v2/libraries/unmatched-items") return null;
+                var query = request.RequestUri.Query;
+                var page = query.Contains("cursor=p") ? int.Parse(query[(query.IndexOf("cursor=p", StringComparison.Ordinal) + 8)..].Split('&')[0]) : 0;
+                var count = total - (removed ? 1 : 0);
+                var start = page * 10;
+                return AdminMonitorKit.Json(UnmatchedPage(start, Math.Clamp(count - start, 0, 10), start + 10 < count ? "p" + (page + 1) : null, count));
+            };
+            using var panel = new AdminUnmatchedPanel(controller);
+            if (ignored) await panel.SetViewAsync(true);
+            await panel.SetOpenAsync(true);
+            await panel.LastAsync();
+            Assert.Equal((total - 1) / 10, panel.State.PageIndex);
+            var item = Assert.Single(panel.State.Items);
+
+            await panel.SetIgnoredAsync(item, !ignored);
+
+            Assert.Equal(total - 1, panel.State.Total);
+            Assert.Equal(Math.Max(0, (total - 1) / 10 - 1), panel.State.PageIndex);
+            Assert.Equal(total == 1 ? 0 : 10, panel.State.Items.Count);
+            Assert.Equal(total == 1 ? 0 : 11, panel.State.RangeStart);
+            Assert.Equal(total - 1, panel.State.RangeEnd);
+            Assert.False(panel.State.HasNext);
+            Assert.Null(panel.State.Error);
         }
     }
 

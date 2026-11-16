@@ -31,6 +31,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     private readonly AdminLibrariesApi _api;
     private readonly AdminMonitorAuthority _authority;
     private readonly IAdminRealtimeChannel? _realtime;
+    private readonly ServerActivityStore? _activity;
     private readonly Grid _root = new();
     private readonly ScrollViewer _scroll;
     private readonly StackPanel _body = new() { Spacing = 24 };
@@ -66,12 +67,12 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     public AdminLibrariesController? Controller => _controller;
 
     public AdminLibrariesPage() : this(App.Services.GetRequiredService<AdminLibrariesApi>(), App.Services.GetRequiredService<AdminMonitorAuthority>(),
-        App.Services.GetService<AdminLibrariesRealtimeSource>()?.Channel) { }
+        App.Services.GetService<AdminLibrariesRealtimeSource>()?.Channel, App.Services.GetRequiredService<ServerActivityStore>()) { }
 
-    public AdminLibrariesPage(AdminLibrariesApi api, AdminMonitorAuthority authority, IAdminRealtimeChannel? realtime)
+    public AdminLibrariesPage(AdminLibrariesApi api, AdminMonitorAuthority authority, IAdminRealtimeChannel? realtime, ServerActivityStore? activity = null)
     {
         InitializeComponent();
-        _api = api; _authority = authority; _realtime = realtime;
+        _api = api; _authority = authority; _realtime = realtime; _activity = activity;
         NavigationCacheMode = NavigationCacheMode.Disabled;
         AutomationProperties.SetAutomationId(this, "AdminLibrariesPage");
         _leaveGuard = new AdminLeaveGuard(() => _controller?.State.Owner, () => _editor?.Session.State.IsDirty == true, DiscardEditor);
@@ -148,7 +149,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     private void Open()
     {
         Close();
-        var controller = new AdminLibrariesController(_api, _authority, _realtime);
+        var controller = new AdminLibrariesController(_api, _authority, _realtime, activity: _activity);
         _controller = controller;
         controller.Changed += QueueRender;
         controller.Retired += OnRetired;

@@ -104,6 +104,7 @@ public sealed class AdminLibrariesController : IDisposable
     private readonly AdminLibrariesApi _api;
     private readonly AdminAuthorityLifetime _lifetime;
     private readonly IAdminRealtimeChannel? _channel;
+    private readonly ServerActivityStore? _activity;
     private readonly IAdminScheduler _scheduler;
     private readonly object _gate = new();
     private AdminLibrariesSnapshot _state = new();
@@ -116,10 +117,12 @@ public sealed class AdminLibrariesController : IDisposable
     private bool _reloadAfterReorder;
     private bool _disposed;
 
-    public AdminLibrariesController(AdminLibrariesApi api, AdminMonitorAuthority authority, IAdminRealtimeChannel? channel = null, IAdminScheduler? scheduler = null)
+    public AdminLibrariesController(AdminLibrariesApi api, AdminMonitorAuthority authority, IAdminRealtimeChannel? channel = null, IAdminScheduler? scheduler = null,
+        ServerActivityStore? activity = null)
     {
         _api = api;
         _channel = channel;
+        _activity = activity;
         _scheduler = scheduler ?? new SystemAdminScheduler();
         _lifetime = new AdminAuthorityLifetime(authority);
         _lifetime.Retired += OnRetired;
@@ -179,12 +182,20 @@ public sealed class AdminLibrariesController : IDisposable
             _state = new AdminLibrariesSnapshot { Owner = owner, Fetching = true };
             if (_channel != null)
             {
-                _subscription = _channel.Subscribe("scans", "jobs");
                 _channel.SnapshotReceived += OnSnapshot;
                 _channel.EventReceived += OnEvent;
+                _subscription = _channel.Subscribe("scans", "jobs");
             }
+            // The shared channel may already be subscribed and send no new snapshot.
+            // Seed only from the authority-bound store, never the transport's untagged cache.
+            if (_activity?.Current is { IsActingAdmin: true } activity && activity.Epoch == owner.Epoch && _lifetime.IsCurrent(owner))
+                _state = _state with
+                {
+                    Scans = activity.Scans.Select(scan => new AdminLibraryScanRun(scan.Id, scan.LibraryId, scan.Mode, scan.Path, scan.Status,
+                        null, null, scan.Result?.TotalFiles, scan.Result?.FilesProcessed, scan.Result?.Message))
+                        .Where(scan => scan.IsActive).Take(500).ToArray(),
+                };
         }
-        // Cached transport snapshots have no authority identity. Wait for a fresh delivery.
         Changed?.Invoke();
         await Task.WhenAll(LoadLibrariesAsync(owner), LoadCapabilitiesAsync(owner), LoadMonitoringAsync(owner), LoadTrickplayAsync(owner),
             LoadRefreshJobsAsync(owner, append: false)).ConfigureAwait(false);
