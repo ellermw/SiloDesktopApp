@@ -1130,6 +1130,9 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnPlayerStateChanged(Services.PlayerState state)
     {
+        // A player no longer covering the page releases a held server metadata reload.
+        if (state is not (Services.PlayerState.Expanded or Services.PlayerState.Fullscreen))
+            _serverMetadataWatch?.Resume();
         if (state == Services.PlayerState.Idle)
         {
             DispatcherQueue?.TryEnqueue(() =>
@@ -1166,6 +1169,7 @@ public sealed partial class ItemDetailPage : Page
         SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged;
         ++_titleArtRevision;
         ViewModel.CancelPendingLoads();
+        EndServerMetadataWatch();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
@@ -1283,6 +1287,8 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrEmpty(contentId))
         {
             _currentContentId = contentId;
+            // Watch before the first read, so a change that lands during it is not lost.
+            BeginServerMetadataWatch(contentId);
             await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
                 _playerService?.PendingProgressSave ?? Task.CompletedTask);
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
@@ -1300,6 +1306,7 @@ public sealed partial class ItemDetailPage : Page
             // episode queries are companion requests in the WebUI and must not
             // hold the entire page behind another network round trip.
             UpdateUI();
+            _serverMetadataWatch?.Resume();
             AdvisoryAgeBadge.Visibility = Visibility.Collapsed;
             _ = RefreshVersionQualityAsync();
             _ = LoadAdvisoryDisplayAsync(ViewModel.Item, navigationToken);
@@ -4230,22 +4237,7 @@ public sealed partial class ItemDetailPage : Page
             : label;
     }
 
-    private async Task ShowRefreshMetadataDialogAsync()
-    {
-        var item = ViewModel.Item;
-        if (item == null) return;
-        var toast = App.Services.GetRequiredService<Services.ToastService>();
-        var dialog = new Controls.RefreshMetadataDialog(async mode =>
-        {
-            await App.Services.GetRequiredService<MediaMaintenanceApi>()
-                .RefreshMetadataAsync(item.ContentId, mode);
-            toast.Success(mode == "complete" ? "Complete refresh queued" : "Metadata refresh queued");
-        })
-        {
-            XamlRoot = XamlRoot,
-        };
-        await dialog.ShowAsync();
-    }
+    // ShowRefreshMetadataDialogAsync and its job follow: ItemDetailPage.ServerRefresh.cs.
 
     private async void FavoriteButton_Click(object sender, RoutedEventArgs e)
     {

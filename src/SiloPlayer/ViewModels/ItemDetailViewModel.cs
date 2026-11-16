@@ -1331,6 +1331,20 @@ public partial class ItemDetailViewModel : ObservableObject,
             ? ReloadContainerMetadataAsync(item) : LoadAsync(contentId);
     }
 
+    /// <summary>
+    /// A remote metadata change or a finished refresh job: drops cached detail
+    /// and patches the mounted item in place for any type. Rows, companions,
+    /// selections and viewer state stay mounted, so the page keeps its scroll
+    /// position and focus. Returns false when no mounted item matched.
+    /// </summary>
+    public async Task<bool> RefreshServerMetadataAsync(string contentId)
+    {
+        _detailPrefetchCache.Invalidate(contentId);
+        if (!_stateRefreshActive || IsLoading || Item is not { } item || item.ContentId != contentId) return false;
+        await ReloadContainerMetadataAsync(item);
+        return true;
+    }
+
     /// <summary>A same-ID Match can also change structure and the server play target.</summary>
     public async Task ReloadAfterMatchAsync(string contentId)
     {
