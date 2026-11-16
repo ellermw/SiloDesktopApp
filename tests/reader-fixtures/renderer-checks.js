@@ -37,6 +37,9 @@ window.runReaderChecks = async function(fixtureRoot) {
     const styledBook=await makeBook(new File([await (await fetch(fixtureRoot+'/inline-styles.epub')).blob()],'inline-styles.epub'));
     const styledURL=await styledBook.sections[0].load();
     const markup=await (await fetch(styledURL)).text();
+    const parsedChapter=new DOMParser().parseFromString(markup,'text/html');
+    check(parsedChapter.doctype?.publicId==='-//W3C//DTD XHTML 1.0 Transitional//EN','HTML fallback preserves the legacy public doctype identifier');
+    check(parsedChapter.doctype?.systemId==='http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd','HTML fallback preserves the legacy system doctype identifier');
     check(markup.includes('body > p'),'HTML chapter serialization preserves CSS child selectors');
     check(markup.includes('A & B'),'HTML chapter serialization preserves CSS ampersands');
     const cssFrame=document.createElement('iframe');

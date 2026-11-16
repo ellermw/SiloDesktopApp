@@ -1,3 +1,20 @@
+# November 16 — Preserve legacy HTML chapter doctypes
+
+Reader HTML fallback now serializes the complete existing doctype before the
+HTML document element. Legacy public/system identifiers survive, alongside the
+inline CSS child selectors and ampersands preserved by PR177. The synthetic
+chapter remains in the script-disabled reader sandbox.
+
+This source-only asset follow-up is based on Beta 40ab7889ef1d015a8ee07ef1962870763f95f66c;
+version 1.2.1151-beta.1 stays under pipeline control. The new renderer assertion
+failed on PR177 bytes and passes after the one-line serializer correction.
+Verification: 42 Chromium EPUB/PDF renderer checks and 26 Node reader checks
+passed. No .NET build, native WinUI fixture, installer, installed-player or
+settings action occurred for this increment. Shared output was not touched.
+See [scope and evidence](parity/2026-11-16-reader-doctype.md).
+
+---
+
 # November 15 - Configure Security delivered in Beta PR175
 
 Security alone is replayed onto Beta 2c33599f751e1bb7e18a56ee378ffe918710d74d in branch t3/configure-security-beta. Original commits 1e71c820 and fe5a29b4 remain preserved at preserve/configure-security-fe5a29b4; their receipt and logs remain unchanged. General PR173 and Email PR174 are merged and included in v1.2.1145-beta.1. Version remains 1.2.1145-beta.1 under pipeline control.

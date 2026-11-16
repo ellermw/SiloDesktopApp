@@ -31,7 +31,7 @@ writeZip('inline-styles.epub', {
     'META-INF/container.xml': files['META-INF/container.xml'],
     'OPS/package.opf': '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">inline-styles-fixture</dc:identifier><dc:title>Inline CSS</dc:title><dc:language>en</dc:language></metadata><manifest><item id="style" href="style.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="style"/></spine></package>',
     // Bare ampersand forces the real loader's invalid-XHTML -> HTML fallback.
-    'OPS/style.xhtml': '<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Inline CSS</title><style>body > p { color: rgb(17, 34, 51); } p::after { content: "A & B"; }</style><script>parent.__inlineStyleScriptExecuted=true</script></head><body><p id="rule">Styled paragraph</p></body></html>',
+    'OPS/style.xhtml': '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Inline CSS</title><style>body > p { color: rgb(17, 34, 51); } p::after { content: "A & B"; }</style><script>parent.__inlineStyleScriptExecuted=true</script></head><body><p id="rule">Styled paragraph</p></body></html>',
 });
 const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R] /Count 4 >>'];
 for(let i=0;i<4;i++) {
