@@ -33,6 +33,9 @@ public sealed partial class RequestDetailPage : Page
     private bool _downloadRefreshBusy;
     private readonly HashSet<string> _pendingActions = [];
     private bool _requestConfirmationOpen;
+    private RequestDiscoveryOwner? _contentOwner;
+    private long _loadRevision;
+    private bool CanUseDiscovery => _contentOwner is { } owner && _api.IsCurrentDiscoveryOwner(owner);
 
     public RequestDetailPage()
     {
@@ -61,38 +64,74 @@ public sealed partial class RequestDetailPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        if (!EnsureDiscoveryAccess()) return;
+        App.Services.GetRequiredService<AuthService>().ProfileChanged += ProfileAuthorityChanged;
+        _api.StatusChanged += ProfileAuthorityChanged;
         if (e.Parameter is not RequestDetailNavigation nav) { Fail("This title could not be identified."); return; }
         _navigation = nav;
         await LoadAsync(nav);
     }
 
+    private void ProfileAuthorityChanged() => DispatcherQueue.TryEnqueue(() => EnsureDiscoveryAccess());
+    private bool EnsureDiscoveryAccess()
+    {
+        if (_api.DiscoveryAllowed) return true;
+        var owner = _api.CaptureIdentityContext();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_lifetime.IsCancellationRequested && _api.IsCurrentIdentityContext(owner) && !_api.DiscoveryAllowed)
+                App.Services.GetRequiredService<NavigationService>().NavigateReplacingCurrentEntry<HomePage>();
+        });
+        return false;
+    }
+
     private async Task LoadAsync(RequestDetailNavigation nav)
     {
+        if (!EnsureDiscoveryAccess()) return;
+        var revision = ++_loadRevision;
+        bool CurrentLoad() => !_lifetime.IsCancellationRequested && revision == _loadRevision;
+        void Interrupted()
+        {
+            if (!CurrentLoad() || !EnsureDiscoveryAccess()) return;
+            Fail("Couldn't load this title.\nTry again in a moment.");
+            RetryTitleButton.Visibility = Visibility.Visible;
+        }
         LoadingLayer.Visibility = Visibility.Visible;
         LoadingText.Visibility = Visibility.Collapsed;
         RetryTitleButton.Visibility = Visibility.Collapsed;
         DetailSkeleton.Visibility = Visibility.Visible;
+        _contentOwner = null;
+        var loadOwner = _api.CaptureDiscoveryOwner();
         try
         {
-            _item = await _api.GetDetailAsync(nav.MediaType, nav.TmdbId, _lifetime.Token);
-            try { _features = await _api.GetStatusAsync(_lifetime.Token); }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { throw; }
-            catch { _features = new(); }
-            var library = await ExternalTitleResolution.ResolveAsync(_item, App.Services.GetRequiredService<ItemDetailPrefetchCache>(), _lifetime.Token);
-            _lifetime.Token.ThrowIfCancellationRequested();
-            _libraryLink = library.LibraryLink;
+            RequestFeatureStatus features;
+            try { features = await _api.GetStatusAsync(_lifetime.Token); }
+            catch (OperationCanceledException) { throw; }
+            catch { features = new(); }
+            if (!CurrentLoad()) return;
+            if (!_api.IsCurrentDiscoveryOwner(loadOwner)) { Interrupted(); return; }
+            var item = await _api.GetDetailAsync(nav.MediaType, nav.TmdbId, _lifetime.Token);
+            if (!CurrentLoad()) return;
+            if (!_api.IsCurrentDiscoveryOwner(loadOwner)) { Interrupted(); return; }
+            var library = await ExternalTitleResolution.ResolveAsync(item, App.Services.GetRequiredService<ItemDetailPrefetchCache>(), _lifetime.Token);
+            if (!CurrentLoad()) return;
+            if (!_api.IsCurrentDiscoveryOwner(loadOwner)) { Interrupted(); return; }
             if (library.LibraryItem != null)
             {
                 App.Services.GetRequiredService<NavigationService>().NavigateReplacingCurrentEntry<ItemDetailPage>(library.LibraryItem.ContentId);
                 return;
             }
-            Render(_item);
+            _item = item; _features = features; _libraryLink = library.LibraryLink;
+            _contentOwner = loadOwner;
+            Render(item);
             LoadingLayer.Visibility = Visibility.Collapsed;
-            if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(_item.Title);
+            if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(item.Title);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { Interrupted(); }
         catch (Exception ex)
         {
+            if (!CurrentLoad()) return;
+            if (!_api.IsCurrentDiscoveryOwner(loadOwner)) { Interrupted(); return; }
             System.Diagnostics.Debug.WriteLine($"Request detail load failed: {ex}");
             var kind = DetailFailurePolicy.Classify(ex);
             Fail(kind is DetailFailureKind.NotFound or DetailFailureKind.AccessDenied
@@ -104,7 +143,9 @@ public sealed partial class RequestDetailPage : Page
 
     private async void RetryTitle_Click(object sender, RoutedEventArgs e) { if (_navigation != null) await LoadAsync(_navigation); }
 
-    protected override void OnNavigatedFrom(NavigationEventArgs e) { StopDownloadRefresh(); _lifetime.Cancel(); base.OnNavigatedFrom(e); }
+    protected override void OnNavigatedFrom(NavigationEventArgs e) { StopDownloadRefresh(); _lifetime.Cancel(); App.Services.GetRequiredService<AuthService>().ProfileChanged -= ProfileAuthorityChanged;
+        _api.StatusChanged -= ProfileAuthorityChanged;
+        base.OnNavigatedFrom(e); }
 
     private void StopDownloadRefresh()
     {
@@ -213,7 +254,7 @@ public sealed partial class RequestDetailPage : Page
     {
         ActionsPanel.Children.Clear();
         LinksPanel.Children.Clear(); DownloadProgressHost.Children.Clear();
-        if (item.Request.Requestable)
+        if (_api.SubmissionAllowed && item.Request.Requestable)
         {
             var button = SecondaryAction("request", $"Request {(item.MediaType == "series" ? "series" : "movie")}", "plus", display: () => SiloPlayer.Core.Localization.AppStrings.Get(item.MediaType == "series" ? "web.detail.request.requestSeries" : "web.detail.request.requestMovie"));
             StylePrimaryAction(button);
@@ -249,13 +290,13 @@ public sealed partial class RequestDetailPage : Page
             open.Click += OpenLibrary_Click;
             ActionsPanel.Children.Add(open);
         }
-        if (RequestViewerPolicy.CanFollow(_features, item.Request))
+        if (RequestViewerPolicy.ShowFollowAction(_features, item.Request, _api.SubmissionAllowed))
         {
             var follow = SecondaryAction("follow", item.Request.Following == true ? "Stop notifying me" : "Notify me when available", item.Request.Following == true ? "bell-off" : "bell", item.Request.Following == true, () => SiloPlayer.Core.Localization.AppStrings.Get(item.Request.Following == true ? "web.detail.request.stopNotifying" : "web.detail.request.notifyWhenAvailable"));
             follow.Click += Follow_Click;
             ActionsPanel.Children.Add(follow);
         }
-        if (_features.WatchlistTitlesSupported)
+        if (_api.DiscoveryAllowed && _features.WatchlistTitlesSupported)
         {
             var watchlist = SecondaryAction("watchlist", item.InWatchlist == true ? "On Watchlist" : "Add to Watchlist", item.InWatchlist == true ? "bookmark-check" : "bookmark", item.InWatchlist == true, () => SiloPlayer.Core.Localization.AppStrings.Get(item.InWatchlist == true ? "web.detail.request.onWatchlist" : "web.requests.card.addToWatchlist"));
             watchlist.Click += Watchlist_Click;
@@ -366,7 +407,7 @@ public sealed partial class RequestDetailPage : Page
                     toast.Success(SiloPlayer.Core.Localization.AppStrings.Get("web.common.requests.toast.cancelled", fallback: "Request cancelled"));
                     _ = Successor()?.RefreshRequestAsync();
                 }
-                if (!_lifetime.IsCancellationRequested) { await MutateAsync(cancel, SubmitAsync); return; }
+                if (!_lifetime.IsCancellationRequested) { await MutateAsync(cancel, SubmitAsync, identityOnly: true); return; }
                 try { await SubmitAsync(); }
                 catch (Exception ex) { if (!Abandoned()) toast.Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
             };
@@ -399,12 +440,14 @@ public sealed partial class RequestDetailPage : Page
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Request detail refresh after cancellation unavailable: {ex.GetType().Name}"); }
     }
 
-    private async Task MutateAsync(Button button, Func<Task> action)
+    private async Task MutateAsync(Button button, Func<Task> action, bool identityOnly = false)
     {
-        if (_item == null || _lifetime.IsCancellationRequested) return;
+        if (_item == null || _lifetime.IsCancellationRequested || _contentOwner is not { } owner ||
+            (identityOnly ? !_api.IsCurrentIdentityContext(owner.Identity) : !CanUseDiscovery)) return;
         var actionId = AutomationProperties.GetAutomationId(button);
         if (!_pendingActions.Add(actionId)) return;
-        var context = _downloadRefreshClient.CaptureContext();
+        bool IsCurrent() => !_lifetime.IsCancellationRequested &&
+            (identityOnly ? _api.IsCurrentIdentityContext(owner.Identity) : _api.IsCurrentDiscoveryOwner(owner));
         var mediaType = _item.MediaType; var tmdbId = _item.TmdbId;
         var original = button.Content;
         button.IsEnabled = false;
@@ -412,27 +455,36 @@ public sealed partial class RequestDetailPage : Page
         try
         {
             await action();
+            // An Unfollow after access loss needs no discovery reconciliation.
+            if (!IsCurrent() || !_api.IsCurrentDiscoveryOwner(owner)) return;
             var fresh = await _api.GetDetailAsync(mediaType, tmdbId, _lifetime.Token);
-            if (_lifetime.IsCancellationRequested || !_downloadRefreshClient.IsCurrentContext(context)) return;
+            if (!IsCurrent() || !_api.IsCurrentDiscoveryOwner(owner)) return;
             _item = fresh;
             BuildActions(_item); BuildSeasons(_item);
         }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }
+        catch (Exception ex)
+        {
+            if (IsCurrent()) App.Services.GetRequiredService<ToastService>().Error(ex, MediaItemCardActions.Problem(ex));
+        }
         finally
         {
             _pendingActions.Remove(actionId); button.IsEnabled = true; button.Content = original;
-            if (_item != null && !_lifetime.IsCancellationRequested && _downloadRefreshClient.IsCurrentContext(context)) BuildActions(_item);
+            if (_item != null && IsCurrent()) BuildActions(_item);
         }
     }
 
     private async void Follow_Click(object sender, RoutedEventArgs e)
     {
-        if (_item == null || sender is not Button button) return;
+        if (_item == null || sender is not Button button || _contentOwner is not { } owner) return;
         var item = _item;
-        await MutateAsync(button, () => item.Request.Following == true
-            ? _api.UnfollowAsync(item.MediaType, item.TmdbId, _lifetime.Token)
-            : _api.FollowAsync(item.MediaType, item.TmdbId, _lifetime.Token));
+        if (item.Request.Following == true)
+            await MutateAsync(button, async () =>
+            {
+                await _api.UnfollowAsync(item.MediaType, item.TmdbId, owner.Identity, _lifetime.Token);
+                if (_api.IsCurrentIdentityContext(owner.Identity)) item.Request.Following = false;
+            }, identityOnly: true);
+        else
+            await MutateAsync(button, () => _api.FollowAsync(item.MediaType, item.TmdbId, _lifetime.Token));
     }
 
     private async void Watchlist_Click(object sender, RoutedEventArgs e)
@@ -478,7 +530,7 @@ public sealed partial class RequestDetailPage : Page
 
     private async void Request_Click(object sender, RoutedEventArgs e)
     {
-        if (_item == null || _lifetime.IsCancellationRequested || sender is not Button button || !_pendingActions.Add("request")) return;
+        if (!CanUseDiscovery || !_api.SubmissionAllowed || _item == null || _lifetime.IsCancellationRequested || sender is not Button button || !_pendingActions.Add("request")) return;
         var context = _downloadRefreshClient.CaptureContext();
         var item = _item; var original = button.Content;
         button.IsEnabled = false;
@@ -507,7 +559,7 @@ public sealed partial class RequestDetailPage : Page
         }
     }
     private Task SubmitRequestAsync(RequestMediaDetail item, List<int>? seasons)
-        => _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, TvdbId = item.TvdbId, ImdbId = item.ImdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath, Seasons = seasons }, _lifetime.Token);
+        => !CanUseDiscovery ? Task.FromCanceled(new CancellationToken(true)) : _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, TvdbId = item.TvdbId, ImdbId = item.ImdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath, Seasons = seasons }, _lifetime.Token);
 
     private void BuildCast(IEnumerable<RequestMediaCastMember> cast)
     {
@@ -542,7 +594,7 @@ public sealed partial class RequestDetailPage : Page
                 item.InWatchlist = item.InWatchlist != true;
                 App.Services.GetService<SiloPlayer.ViewModels.WatchlistViewModel>()?.InvalidateExternalTitles();
             } : null;
-            RecommendationsPanel.Children.Add(ExternalTitleCard.Build(item, width, watchlist: watchlist));
+            RecommendationsPanel.Children.Add(ExternalTitleCard.Build(item, width, watchlist: watchlist, discoveryOwner: _contentOwner));
         }
         RecommendationsSection.Visibility = RecommendationsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }

@@ -258,7 +258,7 @@ public sealed partial class LibraryPage : Page,
             {
                 DispatcherQueue.TryEnqueue(() => UpdateCountDisplay());
             }
-            else if (args.PropertyName == nameof(ViewModel.IsLoading))
+            else if (args.PropertyName is nameof(ViewModel.IsLoading) or nameof(ViewModel.ErrorMessage))
             {
                 DispatcherQueue.TryEnqueue(() =>
                 {
@@ -267,7 +267,7 @@ public sealed partial class LibraryPage : Page,
                     if (showSkeletons) BuildLibrarySkeletons();
                     LibrarySkeletonScroll.Visibility = showSkeletons ? Visibility.Visible : Visibility.Collapsed;
                     LibraryEmptyText.Visibility = !ViewModel.IsLoading && _libraryCatalogLoaded &&
-                        ViewModel.TotalCount == 0 && _currentTab == "Library"
+                        ViewModel.TotalCount == 0 && _currentTab == "Library" && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
                         ? Visibility.Visible
                         : Visibility.Collapsed;
                 });
@@ -393,6 +393,7 @@ public sealed partial class LibraryPage : Page,
             await RefreshLibraryFlagsAsync();
             if (!_isNavigated || flagsVisit != _libraryFlagsVisit) return;
             library = ViewModel.Library;
+            RefreshPinnedCollectionTitles();
         }
 
         LibraryUnavailableState.Visibility = library == null
@@ -2071,7 +2072,7 @@ public sealed partial class LibraryPage : Page,
         using var timing = LibraryPerformanceTrace.Measure("library-grid-render", 16);
         App.SetPerfBreadcrumb($"Library render start force={force} cards={_visibleLibraryCards.Count} total={ViewModel.TotalCount}");
         var total = ViewModel.TotalCount;
-        LibraryEmptyText.Visibility = total <= 0 && !ViewModel.IsLoading && _libraryCatalogLoaded
+        LibraryEmptyText.Visibility = total <= 0 && !ViewModel.IsLoading && _libraryCatalogLoaded && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (!_isNavigated || total <= 0 || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible)
@@ -2539,12 +2540,13 @@ public sealed partial class LibraryPage : Page,
     private async Task SelectAudiobookGroupAsync(string name)
     {
         MarkLibraryStateEdited();
-        switch (_currentAudiobookAxis)
+        if (_currentAudiobookAxis is not ("author" or "narrator" or "series")) return;
+        ViewModel.UseAdvancedRules = true;
+        StoreLibraryRuleDraft(new QueryDefinition
         {
-            case "author": ViewModel.SelectedAuthor = name; AuthorBox.Text = name; break;
-            case "narrator": ViewModel.SelectedNarrator = name; NarratorBox.Text = name; break;
-            case "series": ViewModel.SelectedSeries = name; SeriesBox.Text = name; break;
-        }
+            Match = "all",
+            Groups = [new QueryGroup { Match = "all", Rules = [new QueryRule { Field = _currentAudiobookAxis, Op = "is", Value = name }] }],
+        });
         _currentAudiobookAxis = "books";
         UpdateAudiobookAxisButtons();
         AudiobookGroupsPanel.Visibility = Visibility.Collapsed;
@@ -3803,23 +3805,36 @@ public sealed partial class LibraryPage : Page,
                 {
                     Id = $"pinned-collection-{pin.Id}",
                     SectionType = "collection",
-                    Title = pin.Label,
+                    Title = catalogApi.ResolvePinLabel(libraryId, "collection", pin.Id, pin.Label),
                     ItemLimit = response.Items.Count,
                     TotalCount = response.Total,
                     Items = new System.Collections.ObjectModel.ObservableCollection<MediaItem>(response.Items),
                 };
-                var row = new SectionRow { Section = section };
+                var row = new SectionRow { Section = section, Tag = pin };
                 row.OnViewAll = () => App.Services.GetRequiredService<NavigationService>()
                     .Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
                     {
                         CollectionId = pin.Id,
-                        Title = pin.Label,
+                        Title = section.Title,
                         Subtitle = ViewModel.Library?.Name,
                         LibraryId = libraryId,
                     });
                 RecommendedSectionsPanel.Children.Add(row);
             }
             catch { }
+        }
+    }
+
+    public void RefreshPinnedCollectionTitles()
+    {
+        if (!_isNavigated || ViewModel.Library is not { } library) return;
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        foreach (var row in RecommendedSectionsPanel.Children.OfType<SectionRow>())
+        {
+            if (row.Section is not { } section || !section.Id.StartsWith("pinned-collection-", StringComparison.Ordinal) ||
+                row.Tag is not ValueTuple<string, string> pin) continue;
+            section.Title = catalog.ResolvePinLabel(library.Id, "collection", pin.Item1, pin.Item2);
+            row.RefreshTitle();
         }
     }
 
@@ -4417,7 +4432,15 @@ public sealed partial class LibraryPage : Page,
             if (!string.IsNullOrEmpty(ViewModel.SelectedMatchStatus))
                 filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeMatch", new Dictionary<string, object?> { ["status"] = ViewModel.SelectedMatchStatus }), () => { ViewModel.SelectedMatchStatus = null; MatchStatusComboBox.SelectedIndex = 0; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedWatchStatus))
-                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get(ViewModel.Library?.Type == "audiobook" ? "web.catalog.filters.badgeListening" : ViewModel.Library?.Type is "ebook" or "manga" ? "web.catalog.filters.badgeRead" : "web.catalog.filters.badgeWatch", new Dictionary<string, object?> { ["status"] = ViewModel.SelectedWatchStatus }), () => { ViewModel.SelectedWatchStatus = null; WatchStatusComboBox.SelectedIndex = 0; }));
+            {
+                var statusKey = (ViewModel.SelectedType ?? ViewModel.Library?.Type) switch
+                {
+                    "audiobook" or "audiobooks" => "web.catalog.filters.badgeListening",
+                    "ebook" or "ebooks" or "manga" => "web.catalog.filters.badgeRead",
+                    _ => "web.catalog.filters.badgeWatch",
+                };
+                filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get(statusKey, new Dictionary<string, object?> { ["status"] = ViewModel.SelectedWatchStatus }), () => { ViewModel.SelectedWatchStatus = null; WatchStatusComboBox.SelectedIndex = 0; }));
+            }
             if (!string.IsNullOrEmpty(ViewModel.SelectedAddedInLast))
                 filters.Add(("", SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.filters.badgeAddedInLast", new Dictionary<string, object?> { ["span"] = ViewModel.SelectedAddedInLast }), () => { ViewModel.SelectedAddedInLast = null; AddedInLastBox.Text = ""; }));
             if (!string.IsNullOrEmpty(ViewModel.SelectedReleasedInLast))

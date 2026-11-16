@@ -102,6 +102,9 @@ public sealed partial class SearchPage : Page
         base.OnNavigatedTo(e);
         var generation = ++_navigationGeneration;
         _isNavigated = true;
+        var requestApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
+        _requestIdentity = requestApi.CaptureIdentityContext(); _requestProfileAllowed = requestApi.ProfileRequestsAllowed;
+        App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().ProfileChanged += RequestAuthorityChanged;
         ViewModel.BeginSearchVisit();
         _catalogApi.LibraryCacheInvalidated += RefreshBoxSetSearch;
         _localizedReads.Invalidated += BoxSetLanguageChanged;
@@ -114,6 +117,9 @@ public sealed partial class SearchPage : Page
             UpdateScopeButtons();
             UpdateResultsState();
             _ = ViewModel.RefreshBoxSetSearchAsync();
+            var replaysQuery = e.Parameter is string routeQuery && !string.IsNullOrWhiteSpace(routeQuery) ||
+                e.Parameter is SearchNavigation scopedQuery && !string.IsNullOrWhiteSpace(scopedQuery.Query);
+            if (!replaysQuery) _ = ViewModel.RefreshRetainedOutsideAsync();
         }
         else
         {
@@ -334,8 +340,26 @@ public sealed partial class SearchPage : Page
         _filterInitializing = false;
     }
 
+    private bool _requestProfileAllowed;
+    private SiloPlayer.Core.Api.ApiIdentityContext _requestIdentity;
+    private void RequestAuthorityChanged() => DispatcherQueue.TryEnqueue(async () =>
+    {
+        var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
+        var identity = api.CaptureIdentityContext();
+        if (!_isNavigated || identity.AuthenticationGeneration != _requestIdentity.AuthenticationGeneration ||
+            identity.BaseUrl != _requestIdentity.BaseUrl || identity.ProfileId != _requestIdentity.ProfileId) return;
+        var allowed = api.ProfileRequestsAllowed;
+        if (allowed == _requestProfileAllowed) return;
+        _requestIdentity = identity;
+        _requestProfileAllowed = allowed;
+        if (allowed) await ViewModel.SetOutsidePageAsync(1);
+        else ViewModel.RetireOutsideDiscovery();
+        UpdateRequestResults();
+    });
+
     private void UpdateRequestResults()
     {
+        if (!ViewModel.OutsideDiscoveryAllowed) { RequestResultsSection.Visibility = Visibility.Collapsed; return; }
         // Optional request-provider discovery can arrive several seconds after
         // the in-library catalog grid. Keep the primary count/grid visually
         // stable, but still match the WebUI by rendering Request to Add below
@@ -370,7 +394,7 @@ public sealed partial class SearchPage : Page
 
     private void BuildExternalRequestCard(ContentControl host, RequestMediaResult item)
     {
-        host.Content = SiloPlayer.Controls.ExternalTitleCard.Build(item, _catalogCardWidth,
+        host.Content = SiloPlayer.Controls.ExternalTitleCard.Build(item, _catalogCardWidth, discoveryOwner: ViewModel.OutsideDiscoveryOwner,
             watchlist: ViewModel.OutsideWatchlistTitlesSupported ? async () =>
             {
                 await ViewModel.ToggleOutsideWatchlistAsync(item);
@@ -617,6 +641,7 @@ public sealed partial class SearchPage : Page
     {
         _navigationGeneration++;
         _isNavigated = false;
+        App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().ProfileChanged -= RequestAuthorityChanged;
         _uiCustomizationService.Changed -= UICustomization_Changed;
         _catalogApi.LibraryCacheInvalidated -= RefreshBoxSetSearch;
         _localizedReads.Invalidated -= BoxSetLanguageChanged;

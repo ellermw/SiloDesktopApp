@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
@@ -120,14 +121,17 @@ public sealed partial class RequestsPage : Page
     }
     private async void RetryMine_Click(object sender, RoutedEventArgs e) { if (sender is Button button) button.IsEnabled = false; await ViewModel.RetryMineAsync(); Render(); if (sender is Button retry) retry.IsEnabled = true; }
     private async void RetryDiscovery_Click(object sender, RoutedEventArgs e) { if (sender is Button button) button.IsEnabled = false; await ViewModel.RetryDiscoveryAsync(); Render(); if (sender is Button retry) retry.IsEnabled = true; }
-    private void BrowseDiscover_Click(object sender, RoutedEventArgs e) { _activeTab = "discover"; UpdateTabState(); }
+    private void BrowseDiscover_Click(object sender, RoutedEventArgs e) { if (!ViewModel.DiscoveryAllowed) return; _activeTab = "discover"; UpdateTabState(); }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         StopDownloadRefresh();
         RetireLibraryChecks();
         _libraryCheckOwner = new CancellationTokenSource();
+        var api = App.Services.GetRequiredService<RequestsApi>();
+        _visitIdentity = api.CaptureIdentityContext(); _visitRequestsAllowed = api.ProfileRequestsAllowed;
         ViewModel.PropertyChanged += RequestsStateChanged;
+        App.Services.GetRequiredService<AuthService>().ProfileChanged += ProfileAuthorityChanged;
         _downloadRefreshOwner = new CancellationTokenSource();
         _downloadRefreshTimer.Start();
         await ViewModel.LoadCommand.ExecuteAsync(null);
@@ -136,6 +140,23 @@ public sealed partial class RequestsPage : Page
             Render();
             _renderedDataVersion = ViewModel.DataVersion;
         }
+    }
+
+    private ApiIdentityContext _visitIdentity;
+    private bool _visitRequestsAllowed;
+    private async void ProfileAuthorityChanged()
+    {
+        if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => ProfileAuthorityChanged()); return; }
+        var api = App.Services.GetRequiredService<RequestsApi>();
+        var identity = api.CaptureIdentityContext();
+        if (!IsLoaded || identity.AuthenticationGeneration != _visitIdentity.AuthenticationGeneration ||
+            identity.BaseUrl != _visitIdentity.BaseUrl || identity.ProfileId != _visitIdentity.ProfileId ||
+            _visitRequestsAllowed == api.ProfileRequestsAllowed) return;
+        _visitIdentity = identity;
+        _visitRequestsAllowed = api.ProfileRequestsAllowed;
+        UpdateTabState();
+        await ViewModel.RefreshAsync();
+        if (IsLoaded) Render();
     }
 
     private void RequestsStateChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -161,6 +182,7 @@ public sealed partial class RequestsPage : Page
     private void StopDownloadRefresh()
     {
         ViewModel.PropertyChanged -= RequestsStateChanged;
+        App.Services.GetRequiredService<AuthService>().ProfileChanged -= ProfileAuthorityChanged;
         _downloadRefreshTimer.Stop();
         _downloadRefreshOwner?.Cancel();
         _downloadRefreshOwner?.Dispose();
@@ -195,7 +217,7 @@ public sealed partial class RequestsPage : Page
     private Task RunSearchAsync()
     {
         var query = SearchBox.Text.Trim();
-        if (query.Length < 2) return Task.CompletedTask;
+        if (!ViewModel.DiscoveryAllowed || query.Length < 2) return Task.CompletedTask;
         App.Services.GetRequiredService<NavigationService>().Navigate<SearchPage>(query);
         return Task.CompletedTask;
     }
@@ -267,6 +289,14 @@ public sealed partial class RequestsPage : Page
 
     private void UpdateTabState()
     {
+        var allowed = ViewModel.ProfileRequestsAllowed;
+        if (!allowed) _activeTab = "yours";
+        RequestTabs.Visibility = SearchBarGrid.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
+        RequestsHeader.ColumnDefinitions[1].Width = !allowed || ActualWidth < 640 ? new GridLength(0) : new GridLength(288);
+        MineEmptyHint.Visibility = MineBrowseButton.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
+        SiloPlayer.Services.Localized.SetText(HubIntroText, allowed ? "web.requests.hub.intro" : "web.requests.hub.blockedIntro");
+        if (_mineHeading.Children[0] is TextBlock intro)
+            SiloPlayer.Services.Localized.SetText(intro, allowed ? "web.requests.hub.yoursIntro" : "web.requests.hub.yoursIntroProfile");
         var yours = _activeTab == "yours";
         var busy = ViewModel.IsLoading || ViewModel.IsSearching;
         LoadingSkeleton.Visibility = busy && !yours ? Visibility.Visible : Visibility.Collapsed;
@@ -420,7 +450,8 @@ public sealed partial class RequestsPage : Page
                 Height = 24, MinHeight = 0, Padding = new Thickness(0), Foreground = Brush("SecondaryTextBrush"),
                 Style = (Style)Application.Current.Resources["GhostButtonStyle"],
                 Visibility = RequestDiscoveryLayout.HasExploreAll(section) ? Visibility.Visible : Visibility.Collapsed };
-            explore.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestBrowsePage>(new RequestBrowseNavigation("section", section.Key));
+            var exploreOwner = ViewModel.DiscoveryOwner;
+            explore.Click += (_, _) => { if (ViewModel.DiscoveryAllowed && exploreOwner is { } owner && App.Services.GetRequiredService<RequestsApi>().IsCurrentDiscoveryOwner(owner)) App.Services.GetRequiredService<NavigationService>().Navigate<RequestBrowsePage>(new RequestBrowseNavigation("section", section.Key)); };
             SiloPlayer.Controls.MediaItemCardActions.BindText(explore, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.exploreAllLabel", new Dictionary<string, object?> { ["title"] = row.DisplayTitle })));
             Grid.SetColumn(explore, 1); heading.Children.Add(explore); panel.Children.Add(heading);
 
@@ -447,7 +478,7 @@ public sealed partial class RequestsPage : Page
 
     private FrameworkElement BuildMediaPosterCard(RequestMediaResult result)
     {
-        return SiloPlayer.Controls.ExternalTitleCard.Build(result, _requestCardWidth,
+        return SiloPlayer.Controls.ExternalTitleCard.Build(result, _requestCardWidth, discoveryOwner: ViewModel.DiscoveryOwner,
             watchlist: ViewModel.Features.WatchlistTitlesSupported ? async () =>
             {
                 var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
@@ -517,14 +548,15 @@ public sealed partial class RequestsPage : Page
                 };
             else
                 button.Content = new TextBlock { Text = card.DisplayName, FontSize = 16, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White), FontWeight = FontWeights.SemiBold, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
-            button.Click += Brand_Click;
+            var brandOwner = ViewModel.DiscoveryOwner;
+            button.Click += (sender, args) => { if (brandOwner is { } owner && App.Services.GetRequiredService<RequestsApi>().IsCurrentDiscoveryOwner(owner)) Brand_Click(sender, args); };
             panel.Children.Add(button);
         }
     }
 
     private void Brand_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: RequestBrowseNavigation nav })
+        if (ViewModel.DiscoveryAllowed && sender is Button { Tag: RequestBrowseNavigation nav })
             App.Services.GetRequiredService<NavigationService>().Navigate<RequestBrowsePage>(nav);
     }
 
@@ -551,15 +583,18 @@ public sealed partial class RequestsPage : Page
             posterContent = new Border { Width = 48, Height = 72, Background = Brush("CardBackgroundBrush"), CornerRadius = new CornerRadius(6),
                 Child = SiloPlayer.Controls.WebUiIcon.Create(request.MediaType == "series" ? "tv" : "film", 16, Brush("SecondaryTextBrush")) };
         var openPoster = new Button { Content = posterContent, Padding = new Thickness(0), Width = 48, Height = 72, VerticalAlignment = VerticalAlignment.Top, Style = (Style)Application.Current.Resources["PosterHitTargetButtonStyle"] };
-        openPoster.Click += (_,_) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(request.MediaType,request.TmdbId)); row.Children.Add(openPoster);
+        var rowOwner = ViewModel.DiscoveryOwner;
+        bool CanOpenTitle() => ViewModel.DiscoveryAllowed && rowOwner is { } owner && App.Services.GetRequiredService<RequestsApi>().IsCurrentDiscoveryOwner(owner);
+        openPoster.Click += (_,_) => { if (CanOpenTitle()) App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(request.MediaType,request.TmdbId)); };
+        row.Children.Add(ViewModel.ProfileRequestsAllowed ? openPoster : posterContent);
         var content = new StackPanel { Spacing = 4, VerticalAlignment = ActualWidth < 640 ? VerticalAlignment.Top : VerticalAlignment.Center };
         var titleRow = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 };
         var title = new HyperlinkButton { Content = new TextBlock { Text = request.Title, FontSize = 14, LineHeight = 20,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold,
             TextTrimming = TextTrimming.CharacterEllipsis }, Height = 20, MinHeight = 0,
             Padding = new Thickness(0), Foreground = Brush("PrimaryTextBrush") };
-        title.Click += (_,_) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(request.MediaType,request.TmdbId));
-        titleRow.Children.Add(title); titleRow.Children.Add(SiloPlayer.Controls.ExternalTitleCard.StatusBadge(RequestDisplayLabel(request), display: () => SiloPlayer.Controls.MediaItemCardActions.RequestStatus(request.Status, request.Outcome, request.State)));
+        title.Click += (_,_) => { if (CanOpenTitle()) App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(request.MediaType,request.TmdbId)); };
+        titleRow.Children.Add(ViewModel.ProfileRequestsAllowed ? title : new TextBlock { Text = request.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis }); titleRow.Children.Add(SiloPlayer.Controls.ExternalTitleCard.StatusBadge(RequestDisplayLabel(request), display: () => SiloPlayer.Controls.MediaItemCardActions.RequestStatus(request.Status, request.Outcome, request.State)));
         content.Children.Add(titleRow);
         var details = new List<string> { FormatMediaType(request.MediaType) };
         if (request.Year is >0) details.Add(request.Year.ToString()!);
@@ -591,15 +626,23 @@ public sealed partial class RequestsPage : Page
             var cancel = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Cancel request", Tag = request, FontSize = 14, Height = 32, MinHeight = 0,
                 Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] }, content: "web.requests.cancel.action");
             SiloPlayer.Controls.MediaItemCardActions.BindText(cancel, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.cancel.actionFor", new Dictionary<string, object?> { ["title"] = request.Title })));
-            cancel.Click += CancelRequest_Click; actions.Children.Add(cancel);
+            var cancelOwner = ViewModel.CaptureRemovalOwner();
+            cancel.Click += (sender, args) => { if (App.Services.GetRequiredService<RequestsApi>().IsCurrentIdentityContext(cancelOwner)) CancelRequest_Click(sender, args); }; actions.Children.Add(cancel);
         }
         if (ViewModel.CanRemoveRequest(request))
         {
             var remove = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Remove request", Tag = request, FontSize = 14, Height = 32, MinHeight = 0,
                 Padding = new Thickness(12, 0, 12, 0), Style = (Style)Application.Current.Resources["OutlineButtonStyle"] }, content: "web.requests.remove.action");
             SiloPlayer.Controls.MediaItemCardActions.BindText(remove, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.requests.remove.actionFor", new Dictionary<string, object?> { ["title"] = request.Title })));
-            if (ViewModel.IsRemovingRequest(request.Id)) { remove.IsEnabled = false; remove.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 }; }
-            remove.Click += RemoveRequest_Click; actions.Children.Add(remove);
+            if (ViewModel.IsRemovingRequest(request.Id))
+            {
+                // Pending content must survive the button's Loaded localization refresh.
+                SiloPlayer.Services.Localized.SetContent(remove, null);
+                remove.IsEnabled = false;
+                remove.Content = new ProgressRing { IsActive = true, Width = 16, Height = 16 };
+            }
+            var removeOwner = ViewModel.CaptureRemovalOwner();
+            remove.Click += (sender, args) => { if (App.Services.GetRequiredService<RequestsApi>().IsCurrentIdentityContext(removeOwner)) RemoveRequest_Click(sender, args); }; actions.Children.Add(remove);
         }
         if (actions.Children.Count > 0)
         {
@@ -628,6 +671,8 @@ public sealed partial class RequestsPage : Page
     private async void CancelRequest_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: MediaRequest request } || _requestConfirmationOpen) return;
+        var owner = ViewModel.CaptureRemovalOwner();
+        var visit = _libraryCheckOwner;
         var confirmation = SiloPlayer.Controls.MediaItemCardActions.Localize(new ContentDialog
         {
             Title = "Cancel this request?", Content = $"Your request for \"{request.Title}\" will be withdrawn before it is sent to the download automation.",
@@ -640,8 +685,8 @@ public sealed partial class RequestsPage : Page
         _requestConfirmationOpen = true;
         try { choice = await confirmation.ShowAsync(); }
         finally { _requestConfirmationOpen = false; }
-        if (choice != ContentDialogResult.Primary) return;
-        await ViewModel.CancelRequestCommand.ExecuteAsync(request);
+        if (choice != ContentDialogResult.Primary || visit?.IsCancellationRequested != false) return;
+        await ViewModel.CancelOwnRequestAsync(request, owner);
         Render();
     }
 
@@ -757,7 +802,7 @@ public sealed partial class RequestsPage : Page
             Grid.SetRow(_mineHelp, compact ? 1 : 0); Grid.SetColumn(_mineHelp, compact ? 0 : 1);
             _mineHelp.Margin = compact ? new Thickness(-8, 0, 0, 0) : new Thickness(0, 0, -8, 0);
         }
-        RequestsHeader.ColumnDefinitions[1].Width = compact ? new GridLength(0) : new GridLength(288);
+        RequestsHeader.ColumnDefinitions[1].Width = compact || !ViewModel.ProfileRequestsAllowed ? new GridLength(0) : new GridLength(288);
         Grid.SetRow(SearchBarGrid, compact ? 1 : 0); Grid.SetColumn(SearchBarGrid, compact ? 0 : 1);
         Grid.SetColumnSpan(SearchBarGrid, compact ? 2 : 1);
         Grid.SetRow(MediaTypeComboBox, 0);

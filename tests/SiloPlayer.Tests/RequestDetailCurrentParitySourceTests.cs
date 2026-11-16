@@ -34,7 +34,7 @@ public sealed class RequestDetailCurrentParitySourceTests
         Assert.Contains("x:Name=\"LoadingBackButton\"", markup);
         Assert.Contains("AutomationProperties.Name=\"Go back\"", markup);
         // Recommendations retain navigation/watchlist while requesting stays on detail.
-        Assert.Contains("ExternalTitleCard.Build(item, width, watchlist: watchlist)", source);
+        Assert.Contains("ExternalTitleCard.Build(item, width, watchlist: watchlist, discoveryOwner: _contentOwner)", source);
         Assert.Contains("RequestViewerPolicy.Label", source);
         Assert.Contains("RequestDownloadProgress.Build", source);
         Assert.Contains("web.detail.overview.tmdbVotes", source);

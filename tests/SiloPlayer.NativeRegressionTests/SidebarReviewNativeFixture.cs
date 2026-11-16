@@ -38,7 +38,7 @@ internal static partial class SidebarReviewNativeFixture
         : new[] { new { type = "collection", id = "pin", label } } };
     private static object Menu(string label) => new { items = new object[] { new { type = "builtin", destination = "home" }, new { type = "library", library_id = 1, label } } };
     private static object EffectiveMenu() => new { items = new object[] {
-        new { key = "nav.primary_menu", value = Menu(MenuLabel), source = "profile_client" },
+        new { key = "nav.primary_menu", value = IsCurrentPinLabelScenario ? CurrentPinMenu() : Menu(MenuLabel), source = "profile_client" },
         new { key = "ui.card_presentation", value = new { poster_size = PosterSize, caption = "title_metadata" }, source = "profile_client" } } };
     private static object Libraries() => new { items = new[] { new { id = 1, name = "One", type = "movies" }, new { id = 2, name = "Two", type = "series" } } };
     private static TaskCompletionSource<object> Hold() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -63,6 +63,12 @@ internal static partial class SidebarReviewNativeFixture
         var vm = provider.GetRequiredService<MainViewModel>();
         var service = provider.GetRequiredService<UICustomizationService>();
         typeof(MainWindow).GetField("_playerPrewarmed", Instance)!.SetValue(window, true);
+        if (IsCurrentPinLabelScenario)
+        {
+            await CheckCurrentPinLabelsAsync(window, provider, nav);
+            if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
+            return;
+        }
         if (mode is "sidebar-review-home-library-load" or "sidebar-review-home-pin-load")
         {
             await CheckHeldHomeNavigationAsync(window, provider, nav, mode.EndsWith("pin-load", StringComparison.Ordinal));
@@ -718,6 +724,7 @@ internal static partial class SidebarReviewNativeFixture
     internal static async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var path = request.RequestUri!.AbsolutePath;
+        if (IsCurrentPinLabelScenario && (await CurrentPinResponseAsync(request, ct)) is { } pinResponse) return pinResponse;
         if (path == "/api/v2/auth/me") return Json(new { id = "fixture", username = "Fixture", role = "user" });
         if (IsSettingsProfileRoute && path == "/api/v2/profiles") return Json(new { items = new[] { FirstProfile, SecondProfile } });
         if (IsSettingsProfileRoute && path == "/api/v2/profiles/first" && request.Method == HttpMethod.Patch)

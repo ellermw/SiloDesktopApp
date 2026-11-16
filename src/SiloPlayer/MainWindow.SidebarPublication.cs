@@ -88,6 +88,7 @@ public sealed partial class MainWindow
         }
         ReconcileSidebarItems(NavView.MenuItems, header + 1, oldLibraryItems, desired);
         PublishPrimaryMenu();
+        EnsureSidebarPinTitles();
 
         // Native removal/moves may reset selection/focus. Only surviving nodes
         // retain them; retired routes use the existing route synchronization.
@@ -132,10 +133,11 @@ public sealed partial class MainWindow
         if (_sidebarPins.TryGetValue(libraryId.ToString(), out var pins))
         foreach (var pin in pins)
         {
+            var label = PinLabel(libraryId, pin.Type, pin.Id, pin.Label);
             byKey.TryGetValue((pin.Type.ToLowerInvariant(), pin.Id), out var item);
             if (item == null)
             {
-                var tag = new SidebarPinNavTag { LibraryId = libraryId, PinType = pin.Type, PinId = pin.Id, Label = pin.Label };
+                var tag = new SidebarPinNavTag { LibraryId = libraryId, PinType = pin.Type, PinId = pin.Id, Label = label };
                 item = new NavigationViewItem { Tag = tag };
                 item.Content = BuildPinnedSidebarContent(item, tag);
             }
@@ -144,11 +146,12 @@ public sealed partial class MainWindow
                 // The content's handlers retain this tag. Mutate it in place,
                 // preserving focused descendants and keeping callbacks current.
                 var tag = (SidebarPinNavTag)item.Tag;
-                tag.LibraryId = libraryId; tag.PinType = pin.Type; tag.PinId = pin.Id; tag.Label = pin.Label;
+                tag.LibraryId = libraryId; tag.PinType = pin.Type; tag.PinId = pin.Id; tag.Label = label;
                 var content = (Grid)item.Content;
-                content.Children.OfType<TextBlock>().Single().Text = pin.Label;
-                AutomationProperties.SetName(content.Children.OfType<Button>().Single(), AppStrings.Get("web.shell.sidebar.unpin") + " " + pin.Label);
+                content.Children.OfType<TextBlock>().Single().Text = label;
+                AutomationProperties.SetName(content.Children.OfType<Button>().Single(), AppStrings.Get("web.shell.sidebar.unpin") + " " + label);
             }
+            AutomationProperties.SetName(item, label);
             var icon = string.Equals(pin.Type, "collection", StringComparison.OrdinalIgnoreCase) ? "folder-open" : "layout-grid";
             if (!Equals(item.Icon?.Tag, icon))
             {

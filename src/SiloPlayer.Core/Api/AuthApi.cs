@@ -117,6 +117,7 @@ public partial class AuthApi(SiloApiClient client)
             if (request.RequireAdvisoryAgeSupported)
                 body["require_advisory_age"] = request.MaxAdvisoryAge.HasValue && request.RequireAdvisoryAge;
         }
+        if (request.RequestsAllowedSupported) body["requests_allowed"] = request.RequestsAllowed;
         if (request.Avatar != null)
             body["avatar"] = updating && request.Avatar.Length == 0 ? null : request.Avatar;
         if (!string.IsNullOrEmpty(request.Pin)) body["pin"] = request.Pin;

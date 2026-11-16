@@ -175,6 +175,8 @@ public sealed partial class MainWindow
             DetachCriticalContentSource();
         }
 
+        EnsureSidebarPinTitles();
+
         var shellContext = acting && !adminShell && _criticalContentLoaded &&
                            ContentFrame.Content is not (EbookReaderPage or ProfileSelectPage or PasswordRecoveryPage);
         MainServerActivityButton.Eligible = shellContext && !_isNarrowShell;
