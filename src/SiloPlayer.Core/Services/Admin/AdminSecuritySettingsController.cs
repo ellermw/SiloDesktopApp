@@ -101,6 +101,7 @@ public sealed class AdminSecuritySettingsController : IDisposable
             _state = new() { Owner = owner, Loading = true, RateLoading = true };
         }
         Changed?.Invoke();
+        _store.Invalidate();
         await Task.WhenAll(LoadSettingsAsync(owner, false, false), LoadRateAsync(owner)).ConfigureAwait(false);
     }
 
@@ -414,7 +415,7 @@ public sealed class AdminSecuritySettingsController : IDisposable
         state = state with
         {
             RateValues = _rate?.Values, RateBaseline = _rate?.Baseline, RateDirtyPaths = _rate?.DirtyPaths ?? [],
-            RateEditable = _rate != null && !state.Saving && !state.RateLoading && state.RateBlock is not (AdminRateLimitBlock.OutcomeUnknown or AdminRateLimitBlock.ReloadRequired),
+            RateEditable = _rate != null && state.Loaded && !state.Loading && !state.Saving && !state.RateLoading && state.RateBlock is not (AdminRateLimitBlock.OutcomeUnknown or AdminRateLimitBlock.ReloadRequired),
         };
         var settingsDirty = state.DirtyKeys.Any(key => !state.ManagedByEnv.Contains(key));
         var accessBlocked = state.Failure is AdminFailureKind.Unauthorized or AdminFailureKind.Forbidden or AdminFailureKind.ProfileVerificationRequired

@@ -14,6 +14,40 @@ namespace SiloPlayer.Tests;
 /// </summary>
 public sealed class AdminSecuritySettingsTests
 {
+    [Fact]
+    public async Task ReopeningRefreshesCachedLocalNetworkAndValidator()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        Assert.Equal("false", h.Controller.State.Values[LocalNetwork]);
+        h.Controller.Suspend();
+        h.Effective = """{"media_servers.allow_private_destinations":"true"}""";
+        h.SettingsETag = "\"fresh\"";
+        await h.Controller.OpenAsync();
+        Assert.Equal("true", h.Controller.State.Values[LocalNetwork]);
+        string? validator = null;
+        h.Put = request => { validator = request.Headers.IfMatch.ToString(); return Task.FromResult(Saved("""{"media_servers.allow_private_destinations":"false"}""")); };
+        h.Controller.SetLocalNetwork(false);
+        await h.Controller.SaveAsync();
+        Assert.Equal("\"fresh\"", validator);
+    }
+
+    [Fact]
+    public async Task SettingsReadFailureDisablesRateEditingUntilSettingsReload()
+    {
+        using var h = new Harness { SettingsStatus = HttpStatusCode.ServiceUnavailable };
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.RateLoaded);
+        Assert.False(h.Controller.State.RateEditable);
+        Assert.False(h.Controller.SetRate(F.Enabled, false));
+        Assert.Equal(0, h.Controller.State.DirtyCount);
+        h.SettingsStatus = HttpStatusCode.OK;
+        await h.Controller.ReloadAsync(false);
+        Assert.True(h.Controller.State.RateEditable);
+        Assert.True(h.Controller.SetRate(F.Enabled, false));
+        Assert.True(h.Controller.State.CanSave);
+    }
+
     private const string LocalNetwork = AdminSecuritySettingsController.LocalNetwork;
 
     private static string Config(double global = 1000, string backend = "memory", double ipBurst = 120, double standardBurst = 20,
@@ -41,6 +75,8 @@ public sealed class AdminSecuritySettingsTests
         internal readonly AdminSecuritySettingsController Controller;
         internal string Effective = """{"media_servers.allow_private_destinations":"false","ratelimit.enabled":"true","branding.server_name":"Other page"}""";
         internal string RateConfig = Config();
+        internal HttpStatusCode SettingsStatus = HttpStatusCode.OK;
+        internal string SettingsETag = "\"one\"";
         internal string? RateETag = "\"rate-1\"";
         internal string RateStatus = """{"active":true,"active_backend":"memory","redis_available":true}""";
         internal HttpStatusCode ConfigStatus = HttpStatusCode.OK, StatusStatus = HttpStatusCode.OK;
@@ -73,10 +109,10 @@ public sealed class AdminSecuritySettingsTests
                     return response;
                 }
                 if (path.EndsWith("/rate-limits/status")) return AdminMonitorKit.Json(StatusStatus == HttpStatusCode.OK ? RateStatus : """{"title":"down"}""", StatusStatus);
-                var settings = path.EndsWith("effective") ? AdminMonitorKit.Json(Effective)
+                var settings = path.EndsWith("effective") ? AdminMonitorKit.Json(Effective, SettingsStatus)
                     : path.EndsWith("sensitive-status") ? AdminMonitorKit.Json("""{"configured":[],"managed_by_env":[]}""")
                     : AdminMonitorKit.Json("""{"keys":[],"prefixes":[]}""");
-                settings.Headers.ETag = new("\"one\"");
+                settings.Headers.ETag = new(SettingsETag);
                 return settings;
             };
         }
