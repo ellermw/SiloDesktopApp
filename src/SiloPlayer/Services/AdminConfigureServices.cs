@@ -42,5 +42,7 @@ internal static class AdminConfigureServices
         services.AddSingleton<AdminMaintenanceApi>();
         services.AddTransient<AdminMaintenanceController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.Maintenance, typeof(AdminMaintenancePage)));
+        services.AddSingleton<AdminTasksApi>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.ScheduledTasks, typeof(AdminScheduledTasksPage)));
     }
 }

@@ -426,7 +426,7 @@ public static class AdminRouteCatalog
     private static readonly string[][] UnsupportedPatterns =
     [
         ["backups"], ["backups", "*", "restore"], ["backups", "uploads", "*", "restore"], ["plugins"], ["plugins", "*"],
-        ["policy"], ["recommendations"], ["api-keys"], ["tasks"], ["tasks", "*"],
+        ["policy"], ["recommendations"], ["api-keys"],
     ];
 
     /// <summary>

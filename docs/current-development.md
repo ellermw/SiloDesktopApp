@@ -26,6 +26,18 @@ See `docs/parity/admin-maintenance.md` for exact evidence and intentional differ
 
 ---
 
+# November 16 — Admin Scheduled Tasks (C8) verified Beta handoff
+
+Configure > Server > Scheduled Tasks (`/admin/tasks`, `/admin/tasks/:key`) is verified for its separate Beta PR on deliberate base `6936ae5c956360358c454cb8af478f47e2dbd0ba` (pipeline-owned `1.2.1168-beta.1`). Official main was fetched directly unchanged at `92ee051878c2a791940ec9598e2bdd0f04890b3e`. Scope includes list/on-demand groups, run/cancel, detail and queue metrics, ETag-guarded schedules with explicit review/adoption, cursor history, hidden Search tasks and active-only realtime/clock work.
+
+Acceptance: `tasks-full-r5` proof **1**, focused **250**, full **7724** units and app/publish pass. Final fixture-only `tasks-native-r8` retains those exact unit/product inputs and all **667** app files, rebuilds/binds the host, and passes all six native groups (**45/113/36/76/64/346** markers). Actual release **2026-11-16T23:06:18.3669255Z**; receipt SHA256 `714164EA15DC5253378D2754D3E08FC68C32C7CAA67965909D5C2B91DC3D8260`. Released audit verifies **2614** source entries and **9** final captures plus the retained successful stages. Earlier failed receipts stay failed.
+
+The source review's sole P2 (Retry while fetching) was reproduced and corrected. Legacy task-route blocklist entries were removed, and compile/actual-button-readiness fixture repairs retain all44 Check lines. Only delivery docs changed after acceptance. No Scheduled Tasks screenshots, live-server/WebUI, installer, every-DPI, physical-input, Narrator or comprehensive visual certification; new copy is English-only. [Scope and evidence](parity/admin-tasks.md).
+
+Libraries181, Users194, Search198, Storage199 and Dashboard200 remain separate pipeline-owned PRs. Search's preserved task destinations activate through the new registration; Search code is not changed. Installed player/settings and Requests payload remain untouched.
+
+---
+
 # November 16 — Admin Dashboard Now Playing row parity verified
 
 Official #4401 (`5b3dcaa2fdfec6de2a537a2e10897352a1078689`) removes the +N more link, uses the full card viewport and clips tag rows to one 18px line. This separate two-source-file Dashboard change matches those rules on deliberate Beta base `21233391575c09c2dfd2c39a96211b5ecc10f4f7` (pipeline-owned `1.2.1168-beta.1`). Fresh official main `92ee051878c2a791940ec9598e2bdd0f04890b3e` leaves the widget unchanged.
