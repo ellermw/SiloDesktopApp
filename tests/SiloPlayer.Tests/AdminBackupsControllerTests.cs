@@ -217,6 +217,119 @@ public sealed class AdminBackupsControllerTests
         Assert.Null(h.Controller.State.UnknownOutcome);
     }
 
+    [Theory]
+    [InlineData("start", false)]
+    [InlineData("start", true)]
+    [InlineData("delete", false)]
+    [InlineData("delete", true)]
+    [InlineData("save", false)]
+    [InlineData("save", true)]
+    [InlineData("acknowledge", false)]
+    [InlineData("acknowledge", true)]
+    [InlineData("download-failure", false)]
+    [InlineData("download-failure", true)]
+    public async Task CommandFollowUpReadsAndListPollingOutliveTheAction(string command, bool delayed)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var before = h.ListReads;
+        h.List = BackupJson.List(BackupJson.Backup(status: "in_progress"), busy: true);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (delayed) h.ListGate = gate;
+        h.Override = request =>
+        {
+            if (request.Method == HttpMethod.Delete) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            if (request.Method == HttpMethod.Put)
+            {
+                var saved = AdminMonitorKit.Json("""{"values":{"backup.keep":"14"},"restart_required":false}""");
+                saved.Headers.ETag = new("\"two\"");
+                return Task.FromResult(saved);
+            }
+            if (request.RequestUri!.AbsolutePath.EndsWith("/acknowledge-key", StringComparison.Ordinal))
+                return Task.FromResult(BackupJson.Json("""{"key_check":"abcd-ef01-2345-6789"}"""));
+            if (request.RequestUri.AbsolutePath.EndsWith("/download-links", StringComparison.Ordinal))
+                return Task.FromResult(BackupJson.Json(BackupJson.Problem("dependency_unavailable", 503), HttpStatusCode.ServiceUnavailable));
+            if (request.Method == HttpMethod.Post)
+                return Task.FromResult(BackupJson.Json("""{"id":"20261116T120000Z-manual","kind":"manual","status":"in_progress"}""", HttpStatusCode.Accepted));
+            return null;
+        };
+        try
+        {
+            switch (command)
+            {
+                case "start": await h.Controller.BackUpNowAsync(); break;
+                case "delete": await h.Controller.DeleteBackupAsync(BackupJson.BackupId); break;
+                case "save": h.Controller.Set(Present.KeepKey, "14"); await h.Controller.SaveAsync(); break;
+                case "acknowledge": Assert.Null(await h.Controller.AcknowledgeKeyAsync("abcd-ef01-2345-6789")); break;
+                case "download-failure": Assert.Null(await h.Controller.CreateDownloadLinksAsync(BackupJson.BackupId, "full")); break;
+            }
+            await Eventually.True(() => h.ListReads == before + 1, "command follow-up read started");
+            // Consume the old page timer while the delayed follow-up is in flight.
+            if (delayed) h.Scheduler.Advance(AdminBackupsController.IdleInterval);
+        }
+        finally { gate.TrySetResult(); }
+        await Eventually.True(() => h.Controller.State.List?.Busy == true && h.Scheduler.Pending.Contains(AdminBackupsController.BusyInterval), "follow-up published and scheduled polling");
+        h.Scheduler.Advance(AdminBackupsController.BusyInterval);
+        await Eventually.True(() => h.ListReads == before + 2 && h.Scheduler.Pending.Contains(AdminBackupsController.BusyInterval), "polling continues after action disposal");
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task UploadCommandFollowUpPollingOutlivesTheAction(bool delete, bool delayed)
+    {
+        using var h = new Harness();
+        var uploads = "{\"items\":[" + BackupJson.Upload("checking", received: 3) + "]}";
+        var gate = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var commandStarted = false;
+        h.Override = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Delete) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            if (request.Method == HttpMethod.Post) return Task.FromResult(BackupJson.Json(BackupJson.Upload("checking", received: 3)));
+            if (path.EndsWith("/capabilities", StringComparison.Ordinal)) return Task.FromResult(BackupJson.Json(BackupJson.Capabilities()));
+            if (path == "/api/v2/admin/backups/uploads")
+            {
+                var read = Interlocked.Increment(ref reads);
+                return commandStarted && delayed && read == 2 ? gate.Task : Task.FromResult(BackupJson.Json(uploads));
+            }
+            return null;
+        };
+        await h.Controller.OpenAsync();
+        var before = reads;
+        commandStarted = true;
+        var pending = delete ? h.Controller.DeleteUploadAsync(BackupJson.UploadId) : h.Controller.CheckUploadAgainAsync(BackupJson.UploadId);
+        try { await Eventually.True(() => reads == before + 1, "upload follow-up read started"); }
+        finally { gate.TrySetResult(BackupJson.Json(uploads)); }
+        await pending;
+        Assert.Contains(AdminBackupsController.CheckingInterval, h.Scheduler.Pending);
+        h.Scheduler.Advance(AdminBackupsController.CheckingInterval);
+        await Eventually.True(() => reads == before + 2 && h.Scheduler.Pending.Contains(AdminBackupsController.CheckingInterval), "upload polling continues after action disposal");
+    }
+
+    [Fact]
+    public async Task SavingRefreshesTheScheduleAfterTheActionIsDisposed()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var answer = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Override = request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/v2/admin/tasks/backup") return answer.Task;
+            if (request.Method != HttpMethod.Put) return null;
+            var saved = AdminMonitorKit.Json("""{"values":{"backup.keep":"14"},"restart_required":false}""");
+            saved.Headers.ETag = new("\"two\"");
+            return Task.FromResult(saved);
+        };
+        h.Controller.Set(Present.KeepKey, "14");
+        try { await h.Controller.SaveAsync(); }
+        finally { answer.TrySetResult(BackupJson.Json("""{"key":"backup","next_run_at":"2026-11-18T04:00:00.000Z"}""")); }
+        await Eventually.True(() => h.Controller.State.TaskNextRunAt == DateTimeOffset.Parse("2026-11-18T04:00:00Z"), "schedule response survives action disposal");
+    }
+
     [Fact]
     public async Task TheStartedBackupsOutcomeIsReadOnlyFromALaterList()
     {
@@ -291,5 +404,8 @@ public sealed class AdminBackupsControllerTests
         Assert.Contains("\"backup.destination\":\"s3\"", putBody);
         Assert.DoesNotContain(h.Controller.State.Values.Values, value => value.Contains("typed-secret", StringComparison.Ordinal));
         Assert.DoesNotContain(h.Controller.State.PersistedValues.Values, value => value.Contains("typed-secret", StringComparison.Ordinal));
+        var before = h.ListReads;
+        h.Scheduler.Advance(AdminBackupsController.IdleInterval);
+        await Eventually.True(() => h.ListReads == before + 1 && h.Scheduler.Pending.Contains(AdminBackupsController.IdleInterval), "S3 save keeps page-owned list polling");
     }
 }

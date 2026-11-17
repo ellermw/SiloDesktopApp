@@ -476,8 +476,11 @@ public sealed class AdminBackupsController : IDisposable
             }
             if (!saved) return;
             _store.Invalidate();
-            _ = RefreshListAsync(action, background: false);
-            _ = ReadScheduleAsync(action);
+            if (ReadOwner(action) is { } owner)
+            {
+                _ = RefreshListAsync(owner, background: false);
+                _ = ReadScheduleAsync(owner);
+            }
             try { Saved?.Invoke(); } catch { /* An observer cannot change an acknowledged write. */ }
         }
     }
@@ -514,7 +517,7 @@ public sealed class AdminBackupsController : IDisposable
             finally { Update(action, () => _state = _state with { StartingBackup = false }); }
             if (!_lifetime.IsCurrent(action)) return;
             Notified?.Invoke(notice);
-            _ = RefreshListAsync(action, background: false);
+            if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
         }
     }
 
@@ -539,7 +542,7 @@ public sealed class AdminBackupsController : IDisposable
             finally { Update(action, () => _state = _state with { DeletingBackupId = null }); }
             if (!_lifetime.IsCurrent(action)) return;
             Notified?.Invoke(notice);
-            _ = RefreshListAsync(action, background: false);
+            if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
         }
     }
 
@@ -567,7 +570,7 @@ public sealed class AdminBackupsController : IDisposable
                 if (_lifetime.IsCurrent(action))
                 {
                     Notified?.Invoke(new(AdminText.T(scope == "restore-set" ? "web.admin.backups.download.restoreSetFailed" : "web.admin.backups.table.downloadFailed"), Present.ErrorMessage(error), true));
-                    _ = RefreshListAsync(action, background: false);
+                    if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
                 }
                 return null;
             }
@@ -628,7 +631,7 @@ public sealed class AdminBackupsController : IDisposable
             finally
             {
                 Update(action, () => _state = _state with { AcknowledgingKey = false });
-                if (_lifetime.IsCurrent(action)) _ = RefreshListAsync(action, background: false);
+                if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
             }
         }
     }
@@ -677,7 +680,7 @@ public sealed class AdminBackupsController : IDisposable
             _store.Invalidate();
             await LoadSettingsAsync(action, preserveDraft: true).ConfigureAwait(false);
             Update(action, () => _form?.Reset(Present.DestinationKey));
-            _ = RefreshListAsync(action, background: false);
+            if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
             if (_lifetime.IsCurrent(action))
                 Notified?.Invoke(new(AdminText.T("web.admin.backups.s3.saved"), AdminText.T("web.admin.backups.s3.savedDescription"), false));
             return null;
@@ -703,7 +706,7 @@ public sealed class AdminBackupsController : IDisposable
             finally { Update(action, () => _state = _state with { DeletingUploadId = null }); }
             if (!_lifetime.IsCurrent(action)) return;
             Notified?.Invoke(notice);
-            await ReadUploadsAsync(action).ConfigureAwait(false);
+            if (ReadOwner(action) is { } owner) await ReadUploadsAsync(owner).ConfigureAwait(false);
         }
     }
 
@@ -727,7 +730,7 @@ public sealed class AdminBackupsController : IDisposable
                 if (_lifetime.IsCurrent(action)) Notified?.Invoke(new(AdminText.T("web.admin.backups.uploads.checkFailed"), Present.ErrorMessage(error), true));
             }
             finally { Update(action, () => _state = _state with { CheckingUploadId = null }); }
-            if (_lifetime.IsCurrent(action)) await ReadUploadsAsync(action).ConfigureAwait(false);
+            if (ReadOwner(action) is { } owner) await ReadUploadsAsync(owner).ConfigureAwait(false);
         }
     }
 
@@ -735,6 +738,12 @@ public sealed class AdminBackupsController : IDisposable
     public MonitorAuthorityLease CaptureAction() => _lifetime.CaptureAction();
 
     // ── State plumbing ───────────────────────────────────────────────
+
+    /// <summary>Follow-up reads and their timers belong to the page, not the disposable command lease.</summary>
+    private MonitorAuthorityLease? ReadOwner(MonitorAuthorityLease action)
+    {
+        lock (_gate) return _lifetime.IsCurrent(action) ? _state.Owner : null;
+    }
 
     private void Update(MonitorAuthorityLease owner, Action update)
     {
