@@ -252,7 +252,7 @@ public static class MediaItemMenu
             }
         }
 
-        if (canCurateMetadata && item.Type != "manga")
+        if (ItemMaintenanceActionPolicy.CanEditCard(canCurateMetadata, item.Type))
             flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.editMetadata", fallback: "Edit Metadata"), "\uE70F", async () =>
             {
                 var root = DialogRoot();
@@ -432,7 +432,7 @@ public static class MediaItemMenu
                 detail.Title,
                 detail.Year > 0 ? detail.Year : null,
                 detail.Type,
-                libraryId: null,
+                libraryId: library,
                 versions: detail.Versions,
                 folderPaths: detail.FolderPaths,
                 seriesId: detail.SeriesId)
