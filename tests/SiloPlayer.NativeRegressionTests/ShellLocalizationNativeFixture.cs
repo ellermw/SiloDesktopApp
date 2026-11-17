@@ -134,15 +134,16 @@ internal static class ShellLocalizationNativeFixture
             foreach (var language in new[] { "de", "ar" })
             {
                 Apply(language); await Settle(notificationsPage);
-                var row = All<Grid>(notificationsPage).Single(item => item.Name == "NotificationRowRoot" && item.DataContext is AppNotification { Id: "raw-row" });
-                Check(((TextBlock)row.FindName("NotificationTitleText")).Text == "Raw Series العربية", "notification title data translated");
+                var row = NotificationFixtureUi.Row(notificationsPage, "raw-row");
+                Check(NotificationFixtureUi.Named<TextBlock>(row, "NotificationTitleText").Text == "Raw Series العربية", "notification title data translated");
                 var code = AppStrings.Get("web.notifications.queries.episodeCode", new Dictionary<string, object?> { ["season"] = "2", ["episode"] = "3" });
-                Check(((TextBlock)row.FindName("NotificationSubtitleText")).Text == AppStrings.Get("web.notifications.inbox.episodeLine", new Dictionary<string, object?> { ["code"] = code, ["title"] = "Raw Episode 日本語" }), "episode notification line did not refresh");
-                Check(((TextBlock)row.FindName("NotificationTimeText")).Text == AppStrings.Get("web.notifications.inbox.justNow"), "notification time did not refresh");
-                Check(((System.Collections.IEnumerable)((ItemsControl)row.FindName("NotificationReasons")).ItemsSource).Cast<string>().SequenceEqual(new[] { AppStrings.Get("web.notifications.reason.favorite"), AppStrings.Get("web.notifications.reason.nextUp") }), "notification reasons did not refresh");
-                var fallback = All<Grid>(notificationsPage).Single(item => item.Name == "NotificationRowRoot" && item.DataContext is AppNotification { Id: "fallback-row" });
-                Check(((TextBlock)fallback.FindName("NotificationTitleText")).Text == AppStrings.Get("web.notifications.inbox.mediaRequest"), "notification fallback title did not refresh");
-                Check(((TextBlock)fallback.FindName("NotificationSubtitleText")).Text == AppStrings.Get("web.notifications.inbox.requestDeclinedReason", new Dictionary<string, object?> { ["reason"] = "Raw reason 日本語" }), "notification raw decline reason lost");
+                Check(NotificationFixtureUi.Named<TextBlock>(row, "NotificationSubtitleText").Text == AppStrings.Get("web.notifications.inbox.episodeLine", new Dictionary<string, object?> { ["code"] = code, ["title"] = "Raw Episode 日本語" }), "episode notification line did not refresh");
+                Check(NotificationFixtureUi.Named<TextBlock>(row, "NotificationTimeText").Text == AppStrings.Get("web.notifications.inbox.justNow"), "notification time did not refresh");
+                Check(((NotificationInboxEntry)row.DataContext).Latest.ReasonFlags is { Favorite: true, NextUp: true }, "notification relationship data lost during localization");
+                var fallback = NotificationFixtureUi.Row(notificationsPage, "fallback-row");
+                Check(All<TextBlock>(fallback).Any(text => text.Text == AppStrings.Get("web.notifications.inbox.requestTag", fallback: "Request")), "request tag did not refresh");
+                Check(NotificationFixtureUi.Named<TextBlock>(fallback, "NotificationTitleText").Text == AppStrings.Get("web.notifications.inbox.mediaRequest"), "notification fallback title did not refresh");
+                Check(NotificationFixtureUi.Named<TextBlock>(fallback, "NotificationSubtitleText").Text == AppStrings.Get("web.notifications.inbox.requestDeclinedReason", new Dictionary<string, object?> { ["reason"] = "Raw reason 日本語" }), "notification raw decline reason lost");
                 Check(((TextBlock)notificationsPage.FindName("UnreadButtonText")).Text == AppStrings.Get("web.notifications.inbox.filterUnreadCount", new Dictionary<string, object?> { ["count"] = notifications.UnreadCount.ToString(AppStrings.FormatCulture) }), "notification unread count did not refresh");
             }
             Program.Log("TRACE: actual notification rows preserve raw media/reasons and refresh labels, dates, reasons and counts.");
@@ -316,7 +317,7 @@ internal static class ShellLocalizationNativeFixture
         }
         finally
         {
-            host.Children.Clear(); parent.Children.Remove(host);
+            await NotificationFixtureUi.DetachAsync(host, () => { host.Children.Clear(); parent.Children.Remove(host); });
             window?.Close(); main.SetValue(null, previousMain); field.SetValue(null, previous);
             locales.Apply(locales.Create(previousLocale.Resolution));
         }

@@ -6,7 +6,8 @@ namespace SiloPlayer.Messaging;
 /// These IDs describe refresh scope, never watched/progress scalar values.
 /// ViewerStateContentIds permits viewer-only leaf refreshes without advancing
 /// their navigation-owned playback state, unless PlaybackStateContentIds also
-/// names that leaf in a mixed event batch.
+/// names that leaf in a mixed event batch. ReloadStructure additionally reconciles
+/// container row membership after server metadata changes.
 /// </summary>
 public sealed record MediaStateInvalidated(
     SiloPlayer.Core.Api.ApiRequestContext Context,
@@ -15,7 +16,8 @@ public sealed record MediaStateInvalidated(
     bool CatchUp = false,
     bool RefreshDetails = true,
     IReadOnlySet<string>? ViewerStateContentIds = null,
-    IReadOnlySet<string>? PlaybackStateContentIds = null);
+    IReadOnlySet<string>? PlaybackStateContentIds = null,
+    bool ReloadStructure = false);
 
 /// <summary>A captured profile's server-ordered Home preference was accepted.</summary>
 public sealed record HomePreferenceChanged(SiloPlayer.Core.Api.ApiRequestContext Context, bool ReloadLayout = false);

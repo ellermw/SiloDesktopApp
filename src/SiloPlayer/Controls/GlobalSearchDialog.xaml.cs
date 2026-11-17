@@ -53,6 +53,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     private readonly List<RequestMediaResult> _requestResults = [];
     private readonly List<Person> _peopleResults = [];
     private readonly SearchSelectionState _selection = new();
+    private readonly ImeCompositionState _imeComposition;
     private string _renderedQuery = "";
     private bool _hasMore;
     private bool _searchFailed;
@@ -88,6 +89,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _boxSets.PropertyChanged += (_, _) => Render();
         // TextBox consumes arrow navigation before ordinary routed handlers.
         SearchBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(SearchBox_KeyDown), true);
+        _imeComposition = ImeCompositionGuard.Attach(SearchBox);
         _scopeLoadTask = LoadScopeAsync();
         CornerRadius = new CornerRadius(12);
         SearchFooterHints.Children.Add(CreateKeyHint(["↑", "↓"], () => SiloPlayer.Core.Localization.AppStrings.Get("web.search.navigate")));
@@ -99,6 +101,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         {
             _catalogApi.LibraryCacheInvalidated += RefreshBoxSets;
             _apiClient.LocalizedReads.Invalidated += BoxSetLanguageChanged;
+            _auth.ProfileChanged += RequestAuthorityChanged;
             UpdateDialogGeometry();
             if (XamlRoot != null) XamlRoot.Changed += SearchRoot_Changed;
             // WinUI hosts this template part in a separate popup, so its
@@ -198,7 +201,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             if (string.IsNullOrEmpty(_auth.SelectedProfileId)) return;
             var status = await _requestsApi.GetStatusAsync();
             if (!_apiClient.IsCurrentContext(_dialogContext)) return;
-            _requestDiscoveryEnabled = status.RequestsEnabled && _auth.SelectedProfileId == _dialogContext.ProfileId;
+            _requestDiscoveryEnabled = _auth.SelectedProfile?.RequestsAllowed != false && status.RequestsEnabled && _auth.SelectedProfileId == _dialogContext.ProfileId;
         }
         catch { _requestDiscoveryEnabled = false; }
         if (_apiClient.IsCurrentContext(_dialogContext)) RefreshSearchPlaceholder();
@@ -354,10 +357,18 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         && ReferenceEquals(_searchCts, owner)
         && string.Equals(SearchBox.Text.Trim(), query, StringComparison.Ordinal);
 
+    private void RequestAuthorityChanged() => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (_auth.SelectedProfile?.RequestsAllowed != false) return;
+        _requestDiscoveryEnabled = false; _requestsPending = false; _requestResults.Clear();
+        RefreshSearchPlaceholder(); Render();
+    });
+
     private void OnClosed(ContentDialog sender, ContentDialogClosedEventArgs args)
     {
         _catalogApi.LibraryCacheInvalidated -= RefreshBoxSets;
         _apiClient.LocalizedReads.Invalidated -= BoxSetLanguageChanged;
+        _auth.ProfileChanged -= RequestAuthorityChanged;
         _boxSets.Retire();
         _dismissBackdrop?.RemoveHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnBackdropPressed));
         _dismissBackdrop = null;
@@ -826,6 +837,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Official #4287: candidate Enter, arrows and Escape belong to the IME.
+        if (_imeComposition.ShouldIgnore(e)) return;
         switch (e.Key)
         {
             case VirtualKey.K when (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
@@ -900,6 +913,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             nav.Navigate(typeof(PersonDetailPage), _peopleResults[index - _results.Count].Id);
         else
         {
+            if (_auth.SelectedProfile?.RequestsAllowed == false) return;
             var item = _requestResults[index - _results.Count - _peopleResults.Count];
             nav.Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId));
         }

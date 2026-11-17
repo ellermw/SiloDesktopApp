@@ -97,7 +97,11 @@ public sealed partial class MatchItemDialog : ContentDialog
         SearchIcon.Visibility = Visibility.Collapsed;
         ((StackPanel)SearchButton.Content).Children.Insert(0, WebUiIcon.Create("search", 16, (Brush)Application.Current.Resources["AccentForegroundBrush"]));
         foreach (var box in new[] { TitleBox, YearBox, ImdbIdBox, TmdbIdBox, TvdbIdBox, GenericTitleBox, GenericYearBox })
+        {
             ConfigureInput(box);
+            // Official #4287: Enter confirming an IME candidate must not start a match search.
+            ImeCompositionGuard.Attach(box);
+        }
         Opened += async (_, _) =>
         {
             _auth.UserChanged += AuthorityChanged; _auth.LoggedOut += AuthorityChanged;
@@ -659,6 +663,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             FontSize = 13,
         };
         ConfigureInput(providerBox);
+        ImeCompositionGuard.Attach(providerBox);
         providerBox.KeyDown += SearchField_KeyDown;
         AutomationProperties.SetName(providerBox, AppStrings.Get("web.item.match.provider", fallback: "Provider"));
         row.Children.Add(providerBox);
@@ -670,6 +675,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             FontSize = 13,
         };
         ConfigureInput(valueBox);
+        ImeCompositionGuard.Attach(valueBox);
         valueBox.KeyDown += SearchField_KeyDown;
         AutomationProperties.SetName(valueBox, AppStrings.Get("web.item.match.providerId", fallback: "Provider ID"));
         Grid.SetColumn(valueBox, 1);
@@ -722,6 +728,7 @@ public sealed partial class MatchItemDialog : ContentDialog
 
     private void SearchField_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
+        if (sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
             _ = DoSearchAsync();

@@ -176,16 +176,19 @@ public class AuthService : IDisposable
     public void RefreshSelectedProfile(Profile profile)
     {
         var refreshed = false;
+        var permissionChanged = false;
         lock (_stateGate)
         {
             if (SelectedProfileId == profile.Id)
             {
+                permissionChanged = (SelectedProfile?.RequestsAllowed ?? true) != profile.RequestsAllowed;
                 SelectedProfile = profile;
                 refreshed = true;
             }
         }
         // Metadata participates in the shell hydration key even when the
         // selected profile and its PIN/request authority remain unchanged.
+        if (permissionChanged) _apiClient.InvalidateAccessContext();
         if (refreshed) RaiseSafely(ProfileChanged);
     }
 

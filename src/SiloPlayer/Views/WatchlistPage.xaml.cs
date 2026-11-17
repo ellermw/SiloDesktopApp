@@ -36,13 +36,24 @@ public sealed partial class WatchlistPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        App.Services.GetRequiredService<AuthService>().ProfileChanged -= WatchlistProfileChanged;
+        App.Services.GetRequiredService<AuthService>().ProfileChanged += WatchlistProfileChanged;
+        WatchlistProfileChanged();
         await ViewModel.LoadCommand.ExecuteAsync(null);
         ApplySort();
         UpdateCounts();
         if (WatchlistScope.SelectedIndex == 1) await LoadExternalAsync();
     }
 
-    protected override void OnNavigatedFrom(NavigationEventArgs e) { ViewModel.CancelExternalLoad(); base.OnNavigatedFrom(e); }
+    protected override void OnNavigatedFrom(NavigationEventArgs e) { App.Services.GetRequiredService<AuthService>().ProfileChanged -= WatchlistProfileChanged; ViewModel.CancelExternalLoad(); base.OnNavigatedFrom(e); }
+
+    private void WatchlistProfileChanged() => DispatcherQueue.TryEnqueue(() =>
+    {
+        var allowed = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>().ProfileRequestsAllowed;
+        WatchlistScope.Visibility = allowed ? Visibility.Visible : Visibility.Collapsed;
+        if (allowed) return;
+        ViewModel.RetireBlockedExternalTitles(); WatchlistScope.SelectedIndex = 0;
+    });
 
     private async void WatchlistScope_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -90,17 +101,19 @@ public sealed partial class WatchlistPage : Page
         contents.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap }, "Text", element => element.Text = SiloPlayer.Controls.MediaItemCardActions.WatchlistText(title).Caption));
         var open = new Button { Content = contents, Padding = new Thickness(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalContentAlignment = HorizontalAlignment.Stretch };
         MediaItemCardActions.BindText(open, "Name", element => Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.item.menu.viewDetails") + " · " + title.Title));
-        open.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(title.MediaType, title.TmdbId));
+        var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>(); var owner = ViewModel.ExternalDiscoveryOwner ?? api.CaptureDiscoveryOwner();
+        open.Click += (_, _) => { if (api.IsCurrentDiscoveryOwner(owner) && api.DiscoveryAllowed) App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(title.MediaType, title.TmdbId)); };
         panel.Children.Add(open);
         if (title.Status is "needs_review" or "removed")
         {
             var find = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Find it", HorizontalAlignment = HorizontalAlignment.Stretch }, content: "web.library.watchlist.findIt");
-            find.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<SearchPage>(title.Title);
+            find.Click += (_, _) => { if (api.IsCurrentDiscoveryOwner(owner) && api.DiscoveryAllowed) App.Services.GetRequiredService<NavigationService>().Navigate<SearchPage>(title.Title); };
             panel.Children.Add(find);
         }
         var remove = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "Remove", HorizontalAlignment = HorizontalAlignment.Stretch }, content: "web.catalog.page.removeConfirm");
         remove.Click += async (_, _) =>
         {
+            if (!api.IsCurrentDiscoveryOwner(owner) || !api.DiscoveryAllowed) return;
             remove.IsEnabled = false;
             try { await ViewModel.RemoveExternalTitleAsync(title); UpdateCounts(); }
             catch (Exception ex) { remove.IsEnabled = true; App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex)); }

@@ -9,6 +9,7 @@ using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
+using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
@@ -26,6 +27,7 @@ internal static class RequestViewerNativeFixture
         var api = new RequestsApi(client);
         var overlays = new CardOverlayService(new SettingsApi(client));
         using var services = new ServiceCollection().AddSingleton(api).AddSingleton(client).AddSingleton(auth)
+            .AddSingleton(new NavigationService())
             .AddSingleton(new PeopleApi(client)).AddSingleton(new SettingsApi(client)).AddSingleton<SearchViewModel>()
             .AddSingleton(new CatalogApi(client)).AddSingleton(new ToastService()).AddSingleton(overlays)
             .AddSingleton(new UICustomizationService(new SettingsApi(client)))
@@ -33,11 +35,20 @@ internal static class RequestViewerNativeFixture
             .AddSingleton<WatchlistViewModel>().BuildServiceProvider();
         var serviceField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previous = serviceField.GetValue(null); serviceField.SetValue(null, services);
+        var standalonePages = new List<FrameworkElement>();
         try
         {
+            var reviewCase = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REVIEW_CASE");
+            if (reviewCase == "retained-search") { await RetainedSearchOwnerAsync(parent, handler, auth, api); return; }
+            if (reviewCase == "retired-title-load") { await RetiredTitleLoadAsync(parent, handler, auth); return; }
+            if (reviewCase == "cancelled-write") { await CancelledWriteFeedbackAsync(parent, handler, client); return; }
             await SearchAndRulesAsync(parent);
+            await RetainedSearchOwnerAsync(parent, handler, auth, api);
+            await RetiredTitleLoadAsync(parent, handler, auth);
+            await CancelledWriteFeedbackAsync(parent, handler, client);
             var page = new RequestDetailPage { Width = 1000, Height = 700 };
-            parent.Children.Add(page);
+            standalonePages.Add(page); parent.Children.Add(page);
+            Field(page, "_contentOwner", api.CaptureDiscoveryOwner());
             var item = await api.GetDetailAsync("series", 42);
             Field(page, "_item", item); Field(page, "_features", await api.GetStatusAsync());
             Invoke(page, "Render", item);
@@ -72,10 +83,10 @@ internal static class RequestViewerNativeFixture
                 Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(b) == "watchlist" &&
                 Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(b) == "On Watchlist" &&
                 Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(b) == "On"));
-            parent.Children.Remove(page);
+            await RequestFixtureLifecycle.DetachAsync(page, () => parent.Children.Remove(page));
 
             var watchlistPage = new WatchlistPage { Width = 900, Height = 700 };
-            parent.Children.Add(watchlistPage);
+            standalonePages.Add(watchlistPage); parent.Children.Add(watchlistPage);
             ((ComboBox)watchlistPage.FindName("WatchlistScope")).SelectedIndex = 1;
             await UntilAsync(() => watchlistPage.ViewModel.ExternalTitles.Count == 1);
             watchlistPage.Measure(new Windows.Foundation.Size(900, 700));
@@ -83,11 +94,178 @@ internal static class RequestViewerNativeFixture
             await Task.Delay(150);
             if (((ItemsRepeater)watchlistPage.FindName("ExternalRepeater")).Visibility != Visibility.Visible || ((ItemsRepeater)watchlistPage.FindName("PosterRepeater")).Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("Native watchlist tab visibility is wrong.");
-            if (((TextBlock)watchlistPage.FindName("ItemCountText")).Text != "1") throw new InvalidOperationException("Native external watchlist count is wrong.");
-            parent.Children.Remove(watchlistPage);
+            if (((TextBlock)watchlistPage.FindName("ItemCountText")).Text != "1 title") throw new InvalidOperationException("Native external watchlist count is wrong.");
+            await RequestFixtureLifecycle.DetachAsync(watchlistPage, () => parent.Children.Remove(watchlistPage));
             Program.Log("PASS: native request title seasons, download phase, follow/unfollow label, watchlist write, external tab and count.");
         }
-        finally { serviceField.SetValue(null, previous); }
+        finally
+        {
+            foreach (var page in standalonePages.Where(page => parent.Children.Contains(page)))
+                await RequestFixtureLifecycle.DetachAsync(page, () => parent.Children.Remove(page));
+            serviceField.SetValue(null, previous);
+        }
+    }
+
+
+    private static async Task RetainedSearchOwnerAsync(StackPanel parent, Handler handler, AuthService auth, RequestsApi api)
+    {
+        await RetainedSearchVisitAsync(parent, handler, auth, api, routedQuery: true);
+        await RetainedSearchVisitAsync(parent, handler, auth, api, routedQuery: false);
+    }
+
+    private static async Task RetainedSearchVisitAsync(StackPanel parent, Handler handler, AuthService auth, RequestsApi api, bool routedQuery)
+    {
+        var navigation = SiloPlayer.App.Services.GetRequiredService<NavigationService>();
+        var frame = new Frame { Width = 900, Height = 700, CacheSize = 8 };
+        parent.Children.Add(frame); navigation.Frame = frame;
+        try
+        {
+            // A route-supplied query is replayed by OnNavigatedTo on Back and is a
+            // positive control. A normally typed query has no route to replay.
+            navigation.NavigateImmediately(typeof(SearchPage), routedQuery ? new SearchNavigation("Retained request", "movie") : null);
+            await UntilAsync(() => frame.Content is SearchPage search && search.IsLoaded &&
+                (bool)search.GetType().GetField("_initialized", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(search)!);
+            var original = (SearchPage)frame.Content;
+            var searchBox = (TextBox)original.FindName("SearchBox");
+            if (!routedQuery) searchBox.Text = "Retained request";
+            await UntilAsync(() => original.ViewModel.OutsideLibraryResults.Count == 1 && !original.ViewModel.IsOutsideLoading);
+            var originalQuery = searchBox.Text;
+            var originalOwner = original.ViewModel.OutsideDiscoveryOwner;
+            if (originalOwner is not { } owner || !api.IsCurrentDiscoveryOwner(owner))
+                throw new InvalidOperationException("Search did not capture an initial external-title owner.");
+            navigation.NavigateImmediately(typeof(Page));
+            auth.SelectProfile("fixture-profile", profile: new() { Id = "fixture-profile", Name = "Renamed fixture" });
+            if (api.IsCurrentDiscoveryOwner(owner))
+                throw new InvalidOperationException("Same-profile selection did not retire the old discovery owner in the fixture.");
+            var reads = handler.Paths.Count(path => path == "GET /api/v2/requests/search");
+            navigation.GoBackImmediately();
+            await UntilAsync(() => ReferenceEquals(frame.Content, original) && original.IsLoaded);
+            try
+            {
+                await UntilAsync(() => original.ViewModel.OutsideDiscoveryOwner is { } current && api.IsCurrentDiscoveryOwner(current) &&
+                    !original.ViewModel.IsOutsideLoading && handler.Paths.Count(path => path == "GET /api/v2/requests/search") > reads);
+            }
+            catch (TimeoutException)
+            {
+                if (routedQuery) throw new InvalidOperationException("Routed-search positive control did not reload its replayed query after Back.");
+                throw new InvalidOperationException("Retained search leaves external-title controls owned by a retired same-profile identity after Back.");
+            }
+            if (searchBox.Text != originalQuery || original.ViewModel.OutsideRequestedPage != 1)
+                throw new InvalidOperationException("Refreshing retired external-title authority changed the retained search query or page.");
+            Program.Log(routedQuery
+                ? "PASS: Routed-search positive control refreshes external-title authority by replaying its query after Back."
+                : "PASS: Back to typed retained search refreshes external-title authority after a same-profile edit without changing query/page.");
+        }
+        finally
+        {
+            await RequestFixtureLifecycle.DetachAsync(frame, () =>
+            {
+                if (frame.Content is SearchPage) frame.Navigate(typeof(Page));
+                frame.BackStack.Clear(); frame.Content = null; navigation.Frame = null; parent.Children.Remove(frame);
+            });
+        }
+    }
+
+    private static async Task RetiredTitleLoadAsync(StackPanel parent, Handler handler, AuthService auth)
+    {
+        var navigation = SiloPlayer.App.Services.GetRequiredService<NavigationService>();
+        var frame = new Frame { Width = 900, Height = 700 };
+        handler.LibraryContentId = null;
+        handler.DetailEntered = false;
+        handler.DetailRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        parent.Children.Add(frame); navigation.Frame = frame;
+        try
+        {
+            navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("series", 42));
+            await UntilAsync(() => handler.DetailEntered && frame.Content is RequestDetailPage);
+            var page = (RequestDetailPage)frame.Content;
+            auth.SelectProfile("fixture-profile", profile: new() { Id = "fixture-profile", Name = "Edited while loading" });
+            handler.DetailRelease.TrySetResult(true);
+            try
+            {
+                await UntilAsync(() => ((FrameworkElement)page.FindName("DetailSkeleton")).Visibility == Visibility.Collapsed &&
+                    ((Button)page.FindName("RetryTitleButton")).Visibility == Visibility.Visible);
+            }
+            catch (TimeoutException)
+            {
+                throw new InvalidOperationException("Retired request-title load leaves a loading skeleton without Retry after an allowed identity refresh.");
+            }
+            Program.Log("PASS: a retired request-title load leaves a reachable Retry instead of an endless skeleton.");
+            if (handler.Paths.Count(path => path.EndsWith("/requests/detail/series/42")) != 1)
+                throw new InvalidOperationException("Retired title load fetched again before the explicit Retry.");
+            var retry = (Button)page.FindName("RetryTitleButton");
+            ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(retry)
+                .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+            await UntilAsync(() => ((FrameworkElement)page.FindName("LoadingLayer")).Visibility == Visibility.Collapsed);
+            Program.Log("PASS: Retry loads the current allowed title after identity retirement.");
+        }
+        finally
+        {
+            handler.DetailRelease.TrySetResult(true); handler.DetailRelease = null;
+            await RequestFixtureLifecycle.DetachAsync(frame, () =>
+            {
+                frame.Navigate(typeof(Page)); frame.Content = null; navigation.Frame = null; parent.Children.Remove(frame);
+            });
+        }
+    }
+
+    private static async Task CancelledWriteFeedbackAsync(StackPanel parent, Handler handler, SiloApiClient client)
+    {
+        var navigation = SiloPlayer.App.Services.GetRequiredService<NavigationService>();
+        var toastService = SiloPlayer.App.Services.GetRequiredService<ToastService>();
+        var toast = new SiloPlayer.Controls.ToastContainer();
+        var frame = new Frame { Width = 900, Height = 700 };
+        handler.LibraryContentId = null;
+        handler.WriteEntered = false;
+        handler.CancelReleasedWrite = true;
+        handler.WriteRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        parent.Children.Add(frame); parent.Children.Add(toast); navigation.Frame = frame;
+        toastService.Register(toast, parent.DispatcherQueue);
+        RequestDetailPage? mountedPage = null;
+        try
+        {
+            navigation.NavigateImmediately(typeof(RequestDetailPage), new RequestDetailNavigation("series", 42));
+            await UntilAsync(() => frame.Content is RequestDetailPage loaded && loaded.IsLoaded &&
+                ((FrameworkElement)loaded.FindName("LoadingLayer")).Visibility == Visibility.Collapsed);
+            var page = (RequestDetailPage)frame.Content; mountedPage = page;
+            var action = Descendants(page).OfType<Button>().Single(button =>
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(button) == "follow");
+            var peer = new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(action);
+            ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)peer.GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+            await UntilAsync(() => handler.WriteEntered);
+            if (!client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true))
+                throw new InvalidOperationException("Cancelled request-write fixture failed to advance transport context.");
+            handler.WriteRelease.TrySetResult(true);
+            await UntilAsync(() => action.IsEnabled);
+            try { await UntilAsync(() => ((StackPanel)toast.FindName("ToastStack")).Children.Count > 0); }
+            catch (TimeoutException)
+            {
+                throw new InvalidOperationException("A transport-cancelled request write silently restores its old action without visible feedback.");
+            }
+            Program.Log("PASS: an active transport-cancelled request action reports visible feedback.");
+            ((StackPanel)toast.FindName("ToastStack")).Children.Clear();
+            handler.WriteEntered = false; handler.WriteRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            action = Descendants(page).OfType<Button>().Single(button =>
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(button) == "follow");
+            ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(action)
+                .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+            await UntilAsync(() => handler.WriteEntered);
+            frame.Navigate(typeof(Page));
+            handler.WriteRelease.TrySetResult(true);
+            await UntilAsync(() => action.IsEnabled);
+            if (((StackPanel)toast.FindName("ToastStack")).Children.Count != 0)
+                throw new InvalidOperationException("An unloaded request action published stale cancellation feedback.");
+            Program.Log("PASS: the same cancelled write stays quiet after its page lifetime unloads.");
+        }
+        finally
+        {
+            handler.WriteRelease.TrySetResult(true); handler.WriteRelease = null; handler.ResetActions();
+            await RequestFixtureLifecycle.DetachAsync(frame, () =>
+            {
+                frame.Navigate(typeof(Page)); frame.Content = null; navigation.Frame = null;
+                toastService.Unregister(); parent.Children.Remove(toast); parent.Children.Remove(frame);
+            }, mountedPage);
+        }
     }
 
     private static void Field(object target, string name, object value) => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
@@ -168,12 +346,31 @@ internal static class RequestViewerNativeFixture
         public string? LibraryContentId;
         private bool _following;
         private bool _watchlist;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public TaskCompletionSource<bool>? DetailRelease;
+        public TaskCompletionSource<bool>? WriteRelease;
+        public bool DetailEntered;
+        public bool WriteEntered;
+        public bool CancelReleasedWrite;
+        public void ResetActions() { _following = false; _watchlist = false; CancelReleasedWrite = false; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
             Paths.Add(request.Method + " " + path);
+            if (path.EndsWith("/requests/detail/series/42") && DetailRelease is { } detailRelease)
+            { DetailEntered = true; await detailRelease.Task.WaitAsync(ct); }
+            if (path.Contains("/requests/follows/") && WriteRelease is { } writeRelease)
+            {
+                WriteEntered = true;
+                await writeRelease.Task.WaitAsync(ct);
+                if (CancelReleasedWrite) throw new OperationCanceledException("Fixture transport cancelled the active write.", ct);
+            }
             object reply;
             if (path.EndsWith("/requests/status")) reply = new { requests_enabled = true, allowed = true, follow_supported = true, season_requests_supported = true, watchlist_titles_supported = true };
+            else if (path.EndsWith("/requests/search")) reply = new
+            {
+                results = new[] { new { media_type = "movie", tmdb_id = 72, title = "Retained request", availability = "missing", request = new { requestable = true } } },
+                total_pages = 1, total_results = 1, page = 1
+            };
             else if (path.Contains("/requests/follows/")) { _following = request.Method == HttpMethod.Put; reply = new { following = _following }; }
             else if (path.Contains("/watchlist/titles/")) { _watchlist = request.Method == HttpMethod.Put; reply = new { media_type = "series", tmdb_id = 42 }; }
             else if (path.EndsWith("/requests/detail/series/42")) reply = new
@@ -185,7 +382,7 @@ internal static class RequestViewerNativeFixture
             else if (path.EndsWith("/watchlist/titles")) reply = new { items = new[] { new { media_type = "series", tmdb_id = 42, title = "Fixture series", status = "active", request = new { status = "pending", state = "pending" } } } };
             else if (path.EndsWith("/settings/contract/capabilities")) reply = new { manifest_revision = 15 };
             else reply = new { items = Array.Empty<object>() };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(reply)) });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(reply)) };
         }
     }
 }

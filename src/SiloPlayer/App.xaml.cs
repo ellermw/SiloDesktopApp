@@ -360,7 +360,7 @@ public partial class App : Application
         services.AddSingleton<PeopleApi>(sp => new PeopleApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<CollectionsApi>(sp => new CollectionsApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<DownloadsApi>(sp => new DownloadsApi(sp.GetRequiredService<SiloApiClient>()));
-        services.AddSingleton<RequestsApi>(sp => new RequestsApi(sp.GetRequiredService<SiloApiClient>()));
+        services.AddSingleton<RequestsApi>(sp => new RequestsApi(sp.GetRequiredService<SiloApiClient>(), sp.GetRequiredService<AuthService>()));
         services.AddSingleton<NotificationsApi>(sp => new NotificationsApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<HistoryImportApi>(sp => new HistoryImportApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<RecommendationsApi>(sp => new RecommendationsApi(sp.GetRequiredService<SiloApiClient>()));
@@ -384,6 +384,7 @@ public partial class App : Application
         AdminConfigureServices.Add(services);
         services.AddAdminPlaybackAudit();
         services.AddAdminSubtitleFiles();
+        services.AddAdminLibraries();
 
         services.AddSingleton<LogsStreamClient>();
         services.AddSingleton(sp => new ServerActivityStore(
@@ -416,6 +417,9 @@ public partial class App : Application
                 isCurrentIdentity: provider.GetRequiredService<SiloApiClient>().IsCurrentIdentityContext);
             return cache;
         });
+        // Remote catalog item changes: drop cached detail and refresh an open detail page.
+        services.AddSingleton(provider => new DetailMetadataChangeHub(
+            provider.GetRequiredService<ItemDetailPrefetchCache>()));
         services.AddSingleton<EpisodeSpoilerPreferences>();
 
         // Player service (owns mpv lifecycle, not tied to page navigation)

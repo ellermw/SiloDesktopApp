@@ -16,6 +16,8 @@ public class CreateProfileRequest
     [JsonIgnore] public bool RequireAdvisoryAgeSupported { get; set; }
     public int? MaxAdvisoryAge { get; set; }
     public bool RequireAdvisoryAge { get; set; }
+    [JsonIgnore] public bool RequestsAllowedSupported { get; set; }
+    public bool RequestsAllowed { get; set; } = true;
     public string MaxPlaybackQuality { get; set; } = "";
     public bool LibraryRestrictionsEnabled { get; set; }
     public List<int> AllowedLibraryIds { get; set; } = [];

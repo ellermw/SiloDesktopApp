@@ -33,6 +33,8 @@ public sealed partial class ActivateDevicePage : Page
     {
         ViewModel = App.Services.GetRequiredService<ActivateDeviceViewModel>();
         this.InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not submit the device code.
+        SiloPlayer.Helpers.ImeCompositionGuard.Attach(CodeBox);
         AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); UpdateSignedInText(); });
     }
 
@@ -94,6 +96,7 @@ public sealed partial class ActivateDevicePage : Page
 
     private void CodeBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (SiloPlayer.Helpers.ImeCompositionGuard.ShouldIgnore(SiloPlayer.Helpers.ImeCompositionGuard.Attach(CodeBox), e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter && ViewModel.SubmitCodeCommand.CanExecute(null))
         {
             ViewModel.SubmitCodeCommand.Execute(null);

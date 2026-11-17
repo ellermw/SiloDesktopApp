@@ -15,6 +15,9 @@ namespace SiloPlayer.Controls;
 /// </summary>
 public sealed partial class ToastContainer : UserControl
 {
+    private readonly Dictionary<Border, DispatcherTimer> _timers = new();
+    private readonly HashSet<Border> _dismissing = new();
+
     public ToastContainer()
     {
         this.InitializeComponent();
@@ -22,6 +25,10 @@ public sealed partial class ToastContainer : UserControl
     }
 
     public enum ToastKind { Success, Error, Info, Warning }
+
+    internal bool HasToasts => ToastStack.Children.Count != 0;
+    internal IEnumerable<FrameworkElement> Toasts => ToastStack.Children.OfType<FrameworkElement>();
+    internal event Action? ToastsChanged;
 
     /// <summary>
     /// Show a toast with the given message + kind. Returns immediately; the
@@ -34,13 +41,16 @@ public sealed partial class ToastContainer : UserControl
         ToastStack.Children.Insert(0, toast);
 
         // Slide-in from the right + fade-in.
-        var transform = new TranslateTransform { X = 48 };
+        // Keep the underlying values at the final state. Moving between
+        // XamlRoots may stop an animation, but must not leave a toast invisible.
+        var transform = new TranslateTransform();
         toast.RenderTransform = transform;
-        toast.Opacity = 0;
+        toast.Opacity = 1;
 
         var sbIn = new Storyboard();
         var slide = new DoubleAnimation
         {
+            From = 48,
             To = 0,
             Duration = new Duration(TimeSpan.FromMilliseconds(260)),
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
@@ -51,6 +61,7 @@ public sealed partial class ToastContainer : UserControl
 
         var fade = new DoubleAnimation
         {
+            From = 0,
             To = 1,
             Duration = new Duration(TimeSpan.FromMilliseconds(260)),
         };
@@ -62,18 +73,23 @@ public sealed partial class ToastContainer : UserControl
 
         // Auto-dismiss timer.
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(durationMs) };
+        _timers.Add(toast, timer);
         timer.Tick += (_, _) =>
         {
             timer.Stop();
             DismissToast(toast);
         };
         timer.Start();
+        ToastsChanged?.Invoke();
     }
 
     private void DismissToast(Border toast)
     {
+        if (!ToastStack.Children.Contains(toast) || !_dismissing.Add(toast)) return;
+        if (_timers.Remove(toast, out var previous)) previous.Stop();
         var fade = new DoubleAnimation
         {
+            From = toast.Opacity,
             To = 0,
             Duration = new Duration(TimeSpan.FromMilliseconds(200)),
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
@@ -82,12 +98,24 @@ public sealed partial class ToastContainer : UserControl
         Storyboard.SetTargetProperty(fade, "Opacity");
         var sb = new Storyboard();
         sb.Children.Add(fade);
-        sb.Completed += (_, _) =>
+        toast.Opacity = 0;
+        // A separate retirement timer survives reparenting during fade-out;
+        // Storyboard.Completed is not guaranteed after an unload.
+        var retirement = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _timers.Add(toast, retirement);
+        retirement.Tick += (_, _) =>
         {
+            retirement.Stop();
+            _timers.Remove(toast);
+            _dismissing.Remove(toast);
             if (ToastStack.Children.Contains(toast))
+            {
                 ToastStack.Children.Remove(toast);
+                ToastsChanged?.Invoke();
+            }
         };
         sb.Begin();
+        retirement.Start();
     }
 
     private Border BuildToast(string message, ToastKind kind, string? actionLabel, Func<Task>? action)
@@ -142,7 +170,8 @@ public sealed partial class ToastContainer : UserControl
         content.Children.Add(text);
         if (actionLabel != null && action != null)
         {
-            var button = new Button { Content = actionLabel, Padding = new Thickness(10, 4, 10, 4), HorizontalAlignment = HorizontalAlignment.Left };
+            var button = new Button { Content = actionLabel, Padding = new Thickness(10, 4, 10, 4), HorizontalAlignment = HorizontalAlignment.Left,
+                AllowFocusOnInteraction = false };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, actionLabel);
             button.Click += async (_, _) =>
             {
@@ -160,6 +189,7 @@ public sealed partial class ToastContainer : UserControl
         // Dismiss button.
         var dismissBtn = new Button
         {
+            AllowFocusOnInteraction = false,
             Content = new FontIcon
             {
                 Glyph = "\uE711",

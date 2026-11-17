@@ -21,7 +21,7 @@ public sealed partial class NotificationsApi
     public async Task<NotificationSeriesPage> GetSeriesAsync(ApiRequestContext context, string status,
         NotificationSeriesOptions options, string? cursor = null, CancellationToken ct = default)
     {
-        if (status is not ("active" or "inactive")) throw new ArgumentException("Unsupported Series status.", nameof(status));
+        if (status is not ("all" or "muted" or "active" or "inactive")) throw new ArgumentException("Unsupported Series status.", nameof(status));
         if (options.Reason is not (null or "favorite" or "watchlist" or "continue_watching" or "next_up")) throw new ArgumentException("Unsupported Series reason.");
         if (options.Sort is not ("title" or "-title" or "-latest_episode_added" or "-added_at" or "-year")) throw new ArgumentException("Unsupported Series sort.");
         var query = $"status={status}&limit=50&image_size=small";
@@ -43,6 +43,35 @@ public sealed partial class NotificationsApi
         await client.SendNoContentRequestWithoutRefreshAsync(context, muted ? HttpMethod.Put : HttpMethod.Delete,
             $"/api/v2/notifications/series/{Uri.EscapeDataString(seriesId)}/mute", null, ct);
         RequireSeriesContext(context, ct);
+    }
+
+    public async Task<List<NotificationSeriesMuteResult>> SetManySeriesMutedAsync(ApiRequestContext context,
+        IEnumerable<string> seriesIds, bool muted, CancellationToken ct = default)
+    {
+        var ids = seriesIds.Distinct(StringComparer.Ordinal).ToArray();
+        if (ids.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("A series is required.", nameof(seriesIds));
+        RequireSeriesContext(context, ct);
+        var results = new List<NotificationSeriesMuteResult>();
+        foreach (var batch in ids.Chunk(500))
+        {
+            RequireSeriesContext(context, ct);
+            var response = await client.SendRequestWithoutRefreshAsync<NotificationSeriesMuteResponse>(context, HttpMethod.Post,
+                muted ? "/api/v2/notifications/series/mute" : "/api/v2/notifications/series/unmute",
+                new Dictionary<string, object?> { ["series_ids"] = batch }, ct);
+            RequireSeriesContext(context, ct);
+            if (response.Results == null || response.Results.Count != batch.Length)
+                throw new InvalidDataException("Invalid series mute receipt.");
+            var receipts = new Dictionary<string, NotificationSeriesMuteResult>(StringComparer.Ordinal);
+            foreach (var result in response.Results)
+            {
+                if (result == null || result.Outcome is not ("applied" or "unchanged" or "not_found") ||
+                    !batch.Contains(result.SeriesId, StringComparer.Ordinal) || !receipts.TryAdd(result.SeriesId, result))
+                    throw new InvalidDataException("Invalid series mute receipt.");
+            }
+            results.AddRange(batch.Select(id => receipts[id]));
+        }
+        RequireSeriesContext(context, ct);
+        return results;
     }
 
     private void RequireSeriesContext(ApiRequestContext context, CancellationToken ct)
