@@ -11,9 +11,9 @@ internal static class AdminConfigureServices
 {
     /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
     internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).Concat(AdminSecuritySettingsController.Keys)
-        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminSearchSettingsController.Keys).ToArray());
+        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminStorageSettingsController.Keys).Concat(AdminSearchSettingsController.Keys).Distinct(StringComparer.Ordinal).ToArray());
     internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).Concat(AdminSecuritySettingsController.Secrets)
-        .Concat(AdminDownloadSettingsController.Secrets).Concat(AdminSearchSettingsController.Secrets).ToArray());
+        .Concat(AdminDownloadSettingsController.Secrets).Concat(AdminStorageSettingsController.Secrets).Concat(AdminSearchSettingsController.Secrets).Distinct(StringComparer.Ordinal).ToArray());
 
     internal static void Add(IServiceCollection services)
     {
@@ -42,6 +42,9 @@ internal static class AdminConfigureServices
         services.AddSingleton<AdminMaintenanceApi>();
         services.AddTransient<AdminMaintenanceController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.Maintenance, typeof(AdminMaintenancePage)));
+        // Storage reuses the shared settings snapshot; status, transitions and jobs use their own domain API. The page owns its controller and polling.
+        services.AddSingleton<AdminStorageApi>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.StorageSettings, typeof(AdminStorageSettingsPage)));
         services.AddSingleton<AdminTasksApi>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.ScheduledTasks, typeof(AdminScheduledTasksPage)));
     }

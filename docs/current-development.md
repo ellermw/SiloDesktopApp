@@ -26,6 +26,18 @@ See `docs/parity/admin-maintenance.md` for exact evidence and intentional differ
 
 ---
 
+# November 16 — Configure Storage verified scoped Beta handoff
+
+Configure > Server > Storage (C5) is ready for its separate Beta PR on deliberate base `522007cf7e20d8dbce7f72234c2f2af382d1c921` (1.2.1165; pipeline-owned). It covers local/public-private S3 storage, write-only keys and checks, asset links, transition review/queue/cancel, recovery and active-only polling. Source review repairs retain coalesced post-command refreshes and last-good capabilities, and permit review retirement while queuing.
+
+`storage-full-r5`: proof **1**, focused **332**, full **7583** units passed; app/publish/host/source binding passed. Storage/General/Email/Security/Network native groups passed (**50/188/297/374/346** markers). Actual release **2026-11-16T21:50:35.6731539Z**; receipt SHA256 `B8F5C56E285CDA48C6FFB042C24977DA9330CC808730F9AE10ED5335DD41DCED`. Released audit verified **2582** source entries, **666** payload files and **15** exact contained captures.
+
+The sixth Downloads selector remains failed at unchanged fixture316 (`uncheck download.server_bandwidth_mbps`). It fails identically on the non-Storage Beta212 baseline with only the independent Dashboard diff; its fixture/page/controller/rules are byte-identical. Baseline receipt `6A64DD3B1CE60CC235A9999680DBC3AC432C4C132707239A51FE79CC84652BE0`, release **21:57:42.7757669Z**. The original Storage receipt stays failed: this is scoped acceptance with a documented baseline limit, not an all-green native suite.
+
+Only delivery docs changed afterward. Fresh official main is `92ee051878c2a791940ec9598e2bdd0f04890b3e`; Storage contracts reviewed at `8f93594c` are unchanged. No live S3/migration, installer, physical input, every-DPI, Narrator or full visual parity claim; English-only copy. Installed player/settings and Requests payload untouched. See [scope and evidence](parity/admin-storage.md).
+
+---
+
 # November 16 — Admin Scheduled Tasks (C8) verified Beta handoff
 
 Configure > Server > Scheduled Tasks (`/admin/tasks`, `/admin/tasks/:key`) is verified for its separate Beta PR on deliberate base `6936ae5c956360358c454cb8af478f47e2dbd0ba` (pipeline-owned `1.2.1168-beta.1`). Official main was fetched directly unchanged at `92ee051878c2a791940ec9598e2bdd0f04890b3e`. Scope includes list/on-demand groups, run/cancel, detail and queue metrics, ETag-guarded schedules with explicit review/adoption, cursor history, hidden Search tasks and active-only realtime/clock work.
