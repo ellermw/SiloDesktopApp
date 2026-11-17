@@ -43,6 +43,7 @@ internal static partial class AdminDashboardNativeFixture
         CurrentSession(3, row =>
         {
             row["is_jellyfin_client"] = true; row["client_name"] = MultilineClient; row["client_version"] = "1.0";
+            row["client_label"] = MultilineClient;
             row["routing_network_provider"] = MultilineNetwork;
             row["profile_name"] = MultilineProfile;
         }),
