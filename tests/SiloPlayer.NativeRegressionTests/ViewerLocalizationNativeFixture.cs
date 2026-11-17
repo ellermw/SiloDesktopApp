@@ -14,6 +14,7 @@ using SiloPlayer.Controls;
 using SiloPlayer.Converters;
 using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -79,7 +80,7 @@ internal static class ViewerLocalizationNativeFixture
                 var networkButton = All<Button>(page).Single(candidate => ReferenceEquals(candidate.Tag, network.Provider));
                 Require(All<TextBlock>(networkButton).Any(text => text.Text == network.Label), language + " unchanged network label contract");
                 Require(ReferenceEquals(All<Image>(networkButton).Single().Source, iconSource), language + " unchanged network icon binding");
-                Require(!label.IsTextTrimmed && label.ActualWidth > 0 && label.ActualWidth <= button.ActualWidth, language + " provider label fits");
+                RequireProviderFits(button, label, icon, language);
                 if (language is "pl" or "ru" or "ko" or "zh-Hant") await Capture(host, "login-" + language + ".png");
             }
             host.Children.Clear();
@@ -106,6 +107,28 @@ internal static class ViewerLocalizationNativeFixture
             RequireProviderText(button, label, "Войти через Reloaded OpenID Connect", "same-locale reload reads the current provider label");
             Require(oauth.DisplayName == "OpenID Connect", "retained selection never rewrites the previous provider model");
             Require(ReferenceEquals(icon.Source, iconSource), "retained selection and reload preserve provider icon binding");
+            // Exercise full translated sentences at normal and enlarged accessibility text sizes.
+            currentProvider.DisplayName = "Microsoft Entra ID";
+            var originalFontSize = label.FontSize;
+            foreach (var language in new[] { "fi", "pl" })
+            foreach (var width in new[] { 900d, 448d })
+            {
+                host.Width = width;
+                Apply(language);
+                await Settle(host);
+                var expected = AppStrings.Get("signIn.withProvider", new Dictionary<string, object?> { ["provider"] = currentProvider.DisplayName });
+                RequireProviderText(button, label, expected, language + " long provider sentence");
+                foreach (var fontSize in new[] { originalFontSize, originalFontSize * 2 })
+                {
+                    label.FontSize = fontSize;
+                    await Settle(host);
+                    RequireProviderFits(button, label, icon, $"{language} at width {width}, font {fontSize}");
+                    if (fontSize > originalFontSize)
+                        Require(label.ActualHeight > fontSize * 2, language + " enlarged sentence wraps to multiple lines");
+                }
+            }
+            label.FontSize = originalFontSize;
+            host.Width = 900;
             Require(wire.Requests == initialRequests, "locale refresh makes no network requests");
             host.Children.Clear();
             var hero = new NowListeningHero();
@@ -121,6 +144,34 @@ internal static class ViewerLocalizationNativeFixture
                 Require(row.Label == expectedChapter && (language != "en" || row.Label == "Chapter 7"), language + " untitled chapter row uses the surviving localized chapter title");
                 Require(((TextBlock)hero.FindName("EyebrowText")).Text == AppStrings.Uppercase(AppStrings.Get("web.audiobooks.hero.ariaLabel")), language + " actual hero uses surviving localized key");
             }
+            host.Children.Clear();
+            var player = provider.GetRequiredService<PlayerService>();
+            // Seed playback state without starting a native media session.
+            typeof(PlayerService).GetProperty(nameof(PlayerService.IsAudiobook))!.SetValue(player, true);
+            typeof(PlayerService).GetProperty(nameof(PlayerService.Versions))!.SetValue(player, new List<FileVersion>
+            {
+                new() { FileId = 1, Duration = 420, Chapters = Enumerable.Range(0, 7).Select(index =>
+                    new VersionChapter { Index = index, StartSeconds = index * 60, EndSeconds = (index + 1) * 60 }).ToList() }
+            });
+            typeof(PlayerService).GetProperty(nameof(PlayerService.Position))!.SetValue(player, 365d);
+            typeof(PlayerService).GetProperty(nameof(PlayerService.Duration))!.SetValue(player, 420d);
+            var listening = new AudiobookNowListening();
+            host.Children.Add(listening);
+            await Settle(host);
+            try
+            {
+                listening.Activate();
+                foreach (var (language, expected) in new[] { ("en", "CHAPTER 7"), ("de", "KAPITEL 7"), ("es", "CAPÍTULO 7"), ("en", "CHAPTER 7") })
+                {
+                    Apply(language);
+                    await Settle(host);
+                    Require(((TextBlock)listening.FindName("ChapterNumberText")).Text == expected,
+                        language + " actual Now Listening chapter number stays localized");
+                    Require(player.CurrentAudiobookChapter?.Index == 6 && player.Position == 365,
+                        language + " locale change preserves the current playback chapter");
+                }
+            }
+            finally { listening.Deactivate(); }
         }
         finally
         {
@@ -136,6 +187,25 @@ internal static class ViewerLocalizationNativeFixture
         Require(label.Text == expected, message + " visible text");
         Require(AutomationProperties.GetName(button) == expected, message + " explicit accessible name");
         Require(new ButtonAutomationPeer(button).GetName() == expected, message + " UIA peer name");
+    }
+    private static void RequireProviderFits(Button button, TextBlock label, Image icon, string message)
+    {
+        Require(label.TextWrapping == TextWrapping.Wrap && !label.IsTextTrimmed && label.ActualWidth > 0,
+            message + " provider label wraps without trimming");
+        var left = button.Padding.Left + button.BorderThickness.Left;
+        var top = button.Padding.Top + button.BorderThickness.Top;
+        var right = button.ActualWidth - button.Padding.Right - button.BorderThickness.Right;
+        var bottom = button.ActualHeight - button.Padding.Bottom - button.BorderThickness.Bottom;
+        foreach (var element in new FrameworkElement[] { label, icon })
+        {
+            var bounds = element.TransformToVisual(button).TransformBounds(new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
+            Require(bounds.Left >= left - 1 && bounds.Right <= right + 1 && bounds.Top >= top - 1 && bounds.Bottom <= bottom + 1,
+                message + " rendered provider content stays inside button padding");
+        }
+        var labelBounds = label.TransformToVisual(button).TransformBounds(new Windows.Foundation.Rect(0, 0, label.ActualWidth, label.ActualHeight));
+        var iconBounds = icon.TransformToVisual(button).TransformBounds(new Windows.Foundation.Rect(0, 0, icon.ActualWidth, icon.ActualHeight));
+        Require(labelBounds.Left >= iconBounds.Right + 7 || iconBounds.Left >= labelBounds.Right + 7,
+            message + " provider icon and text do not overlap");
     }
     private static async Task Settle(FrameworkElement element) { await Task.Delay(150); element.UpdateLayout(); await Task.Delay(100); }
     private static void Require(bool condition, string message)

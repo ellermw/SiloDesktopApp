@@ -147,25 +147,28 @@
                                     <Button
                                         Style="{StaticResource OutlineButtonStyle}"
                                         HorizontalAlignment="Stretch"
-                                        HorizontalContentAlignment="Center"
+                                        HorizontalContentAlignment="Stretch"
                                         Padding="16,10"
                                         Tag="{Binding}"
                                         Click="AuthProviderButton_Click"
                                         Loaded="AuthProviderButton_Loaded">
-                                        <StackPanel
-                                            Orientation="Horizontal"
-                                            HorizontalAlignment="Center"
-                                            Spacing="8">
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
                                             <Image FlowDirection="LeftToRight"
                                                 Source="{Binding IconUrl, Converter={StaticResource UrlToImage}}"
                                                 Width="20"
                                                 Height="20"
                                                 Stretch="Uniform"
                                                 Visibility="{Binding IconUrl, Converter={StaticResource NullToVis}}" />
-                                            <TextBlock
+                                            <TextBlock Grid.Column="1"
                                                 Text="{Binding DisplayName}"
+                                                TextWrapping="Wrap"
+                                                TextAlignment="Center"
                                                 VerticalAlignment="Center" />
-                                        </StackPanel>
+                                        </Grid>
                                     </Button>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>

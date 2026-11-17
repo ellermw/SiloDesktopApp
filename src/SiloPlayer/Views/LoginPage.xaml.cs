@@ -144,7 +144,7 @@ public sealed partial class LoginPage : Page
 
     private static void RefreshAuthProviderText(Button button)
     {
-        if (button.Tag is not AuthProvider provider || button.Content is not StackPanel content) return;
+        if (button.Tag is not AuthProvider provider || button.Content is not Grid content) return;
         var label = content.Children.OfType<TextBlock>().Single();
         var text = AppStrings.Get("signIn.withProvider", new Dictionary<string, object?> { ["provider"] = provider.DisplayName },
             fallback: "Sign in with " + provider.DisplayName);
