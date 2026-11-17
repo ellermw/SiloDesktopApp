@@ -221,6 +221,32 @@ public sealed class AdminStorageRulesTests
     }
 
     [Fact]
+    public void APrivateOnlyReviewBecomesAnArtworkReviewWhenItsLocalPathChanges()
+    {
+        var draft = new Draft();
+        draft.Saved[R.LocalPath] = "";
+        draft.Saved["s3.private_bucket"] = "old";
+        draft.Saved["s3.private_endpoint"] = "https://s3.example";
+        draft.Staged["s3.private_bucket"] = "new";
+        Assert.True(R.Plan(draft, LockedLocal, "local", Health(true, true), false, "").PrivateOnly);
+        var reviewed = R.Plan(draft, LockedLocal, "local", Health(true, true), false, "/data/art");
+        Assert.True(reviewed.PublicLocationChanging);
+        Assert.False(reviewed.PrivateOnly);
+    }
+
+    [Fact]
+    public void PrivateEndpointValidationMatchesTheTransitionPayload()
+    {
+        var draft = new Draft();
+        draft.Saved["s3.private_bucket"] = "private";
+        draft.Saved["s3.private_endpoint"] = "https://s3.example";
+        draft.Staged["s3.private_endpoint"] = "";
+        Assert.False(R.Plan(draft, LockedS3, "local", Health(true, true), false).PrivateEndpointMissing);
+        Assert.True(R.Plan(draft, LockedLocal, "local", Health(true, true), false).PrivateEndpointMissing);
+        Assert.True(R.Plan(draft, LockedS3, "s3", Health(true, true), false).PrivateEndpointMissing);
+    }
+
+    [Fact]
     public void TransitionValuesSendOnlyTheReviewedTargetAndStagedStorageKeys()
     {
         var draft = new Draft();

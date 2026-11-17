@@ -131,11 +131,17 @@ public sealed class AdminStorageApiTests
     [Fact]
     public async Task TransportFailureAfterSendIsUnknownWithoutEchoingTheCredential()
     {
+        var directory = Path.Combine(TestRepository.Root, ".codex-tmp", "storage-transport", Guid.NewGuid().ToString("N"));
+        using var operation = LocalLog.BeginOperation("storage-transport-fixture", directory);
         using var h = new Harness();
         h.Kit.Http.Respond = (_, _) => Task.FromException<HttpResponseMessage>(new HttpRequestException("synthetic-secret echoed"));
         var error = await Assert.ThrowsAsync<AdminStorageCommandOutcomeUnknownException>(() =>
             h.Api.CreateTransitionAsync(h.Lease, "migrate_all", new Dictionary<string, string> { ["artwork.storage_backend"] = "s3", ["s3.public_secret_key"] = "synthetic-secret" }));
         Assert.DoesNotContain("synthetic-secret", error.ToString());
+        var diagnostics = File.ReadAllText(Path.Combine(directory, "api_diagnostics.txt"));
+        Assert.Contains("error=storage_transition_transport_failed", diagnostics);
+        Assert.DoesNotContain("synthetic-secret", diagnostics);
+        Assert.Single(h.Requests);
     }
 
     [Fact]

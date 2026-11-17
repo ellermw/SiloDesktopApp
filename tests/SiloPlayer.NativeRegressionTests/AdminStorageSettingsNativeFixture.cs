@@ -175,6 +175,34 @@ internal static class AdminStorageSettingsNativeFixture
             Check(Math.Abs(Field<StackPanel>(page, "_body").ActualWidth - 1120) < 1.5, "the settings column uses the 1120 DIP width");
             await CaptureAsync(outer, "storage-loaded.png");
 
+            // A private-only local review still submits a local path: its required editor must be visible.
+            server.Values[AdminStorageRules.LocalPath] = "";
+            server.Values["s3.private_bucket"] = "old-private";
+            server.Values["s3.private_endpoint"] = "https://s3.example";
+            await controller.ReloadAsync(preserveDraft: false);
+            await Until(() => !controller.State.StatusLoading, "private-only status");
+            controller.Set("s3.private_bucket", "new-private");
+            await controller.SaveAsync();
+            await Until(() => page.ReviewDialog is { IsLoaded: true } && controller.State.SourceHealth != null, "private-only review");
+            await Task.Delay(100);
+            var privateReview = page.ReviewDialog!;
+            Check(privateReview.Title as string == "Change private storage", "a private bucket edit opens a private-only review");
+            Check(Field<FrameworkElement>(page, "_reviewLocal").Visibility == Visibility.Visible &&
+                Field<FrameworkElement>(page, "_reviewLocalPathRequired").Visibility == Visibility.Visible &&
+                !Button(privateReview, "StorageReviewQueue").IsEnabled, "a blank required local path has a visible editor and validation");
+            Input(privateReview, "StorageReviewLocalPath").Text = "/data/art";
+            await Until(() => Button(privateReview, "StorageReviewQueue").IsEnabled, "private-only path corrected");
+            Check(Field<FrameworkElement>(page, "_reviewLocal").Visibility == Visibility.Visible, "the private-only path editor stays visible after correction");
+            var privateClosed = Closed(privateReview);
+            Invoke(Button(privateReview, "StorageReviewCancel"));
+            await privateClosed.WaitAsync(TimeSpan.FromSeconds(6));
+            server.Values[AdminStorageRules.LocalPath] = "/data/art";
+            server.Values.Remove("s3.private_bucket");
+            server.Values.Remove("s3.private_endpoint");
+            await controller.ReloadAsync(preserveDraft: false);
+            await Until(() => !controller.State.StatusLoading, "restored local status");
+            await Task.Delay(100);
+
             // A plain edit saves with Save; Discard reverts.
             var cache = Descendants(page).OfType<ToggleSwitch>().Single(t => AutomationProperties.GetAutomationId(t) == "Storage_metadata.cache_images");
             cache.IsOn = false;

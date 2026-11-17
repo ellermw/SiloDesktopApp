@@ -262,6 +262,42 @@ public sealed class AdminStorageSettingsControllerTests
         await Until(() => h.Count("GET /api/v2/admin/settings/effective") >= 2, "settings reload");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcknowledgedJobSurvivesAFailedFirstReadAndIsPolledThroughCompletion(bool previousTerminal)
+    {
+        using var h = new Harness();
+        if (previousTerminal)
+            h.Jobs = """{"items":[{"id":"old-job","kind":"storage_transition","state":"failed"}]}""";
+        await h.OpenAsync();
+        await Until(() => !h.Controller.State.Loading && !h.Controller.State.Reconciling, "initial reconciliation");
+        h.Controller.Set("artwork.local_path", "/mnt/art");
+        await h.Controller.SaveAsync();
+        var reads = 0;
+        h.Routes["GET /api/v2/admin/jobs"] = _ => Task.FromResult(Interlocked.Increment(ref reads) == 1
+            ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable)
+            : AdminMonitorKit.Json(h.Jobs));
+        h.Routes["POST /api/v2/admin/storage-transitions"] = _ => Task.FromResult(AdminMonitorKit.Json(Accepted, HttpStatusCode.Accepted));
+        await h.Controller.QueueTransitionAsync();
+        await Until(() => Volatile.Read(ref reads) == 1 && h.Controller.IsJobsPolling, "failed first jobs refresh");
+        await Task.Delay(30);
+        Assert.Equal("job-9", h.Controller.State.LatestTransition?.Id);
+        Assert.True(h.Controller.State.LatestTransition?.IsActive);
+        Assert.Null(h.Controller.State.Review);
+
+        h.Jobs = """{"items":[{"id":"job-9","kind":"storage_transition","state":"running","storage_transition_result":{"phase":"copying"}}]}""";
+        h.Time.Advance(TimeSpan.FromSeconds(2));
+        await Until(() => h.Controller.State.LatestTransition?.Status == "running", "poll discovers accepted job");
+        await Task.Delay(30);
+        h.Effective = """{"artwork.storage_backend":"local","artwork.local_path":"/mnt/art"}""";
+        h.Jobs = """{"items":[{"id":"job-9","kind":"storage_transition","state":"succeeded","storage_transition_result":{"phase":"completed"}}]}""";
+        h.Time.Advance(TimeSpan.FromSeconds(2));
+        await Until(() => h.Controller.State.GetPersisted("artwork.local_path") == "/mnt/art" && !h.Controller.State.Reconciling, "completion reconciles settings");
+        await Until(() => !h.Controller.IsJobsPolling, "completed job stops polling");
+        Assert.Equal(["POST /api/v2/admin/storage-transitions"], h.Writes);
+    }
+
     [Fact]
     public async Task PostQueueReconciliationBlocksSavesUntilItsSnapshotHasSettled()
     {
@@ -331,7 +367,7 @@ public sealed class AdminStorageSettingsControllerTests
         h.Jobs = ActiveJob;
         h.Routes["POST /api/v2/admin/storage-transitions"] = _ => Task.FromResult(AdminMonitorKit.Json(Accepted, HttpStatusCode.Accepted));
         await h.Controller.QueueTransitionAsync();
-        await Until(() => h.Controller.State.LatestTransition?.IsActive == true && h.Controller.IsJobsPolling, "copying job");
+        await Until(() => h.Controller.State.LatestTransition?.Phase == "copying" && h.Controller.IsJobsPolling, "copying job");
         Assert.Equal("", h.Controller.State.GetPersisted("artwork.storage_backend"));
         Assert.False(h.Controller.IsRecoveryPolling);
         h.Controller.Set("metadata.cache_images", "false");
@@ -373,6 +409,53 @@ public sealed class AdminStorageSettingsControllerTests
         await h.Controller.SaveAsync();
         Assert.Equal("\"committed\"", validator);
         Assert.Null(h.Controller.State.Error);
+    }
+
+    [Fact]
+    public async Task ACommitInvalidatesAnOpenReviewUntilSettingsAndStatusReconcile()
+    {
+        using var h = new Harness { Jobs = ActiveJob };
+        await h.OpenAsync();
+        h.Controller.Set("artwork.local_path", "/new-local");
+        await h.Controller.SaveAsync();
+        var staleReview = Assert.IsType<AdminStorageReview>(h.Controller.State.Review);
+        Assert.True(AdminStorageSettingsController.CanQueue(h.Controller.State));
+        var releaseSettings = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseStatus = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Routes["GET /api/v2/admin/settings/effective"] = async _ =>
+        {
+            await releaseSettings.Task;
+            var response = AdminMonitorKit.Json("""{"artwork.storage_backend":"s3","artwork.local_path":"/data/art","s3.public_bucket":"media"}""");
+            response.Headers.ETag = new("\"committed\"");
+            return response;
+        };
+        h.Routes["GET /api/v2/admin/server/status"] = async _ =>
+        {
+            await releaseStatus.Task;
+            return AdminMonitorKit.Json("""{"artwork_storage":{"backend":"s3","locked":true,"status_known":true}}""");
+        };
+        try
+        {
+            h.Jobs = """{"items":[{"id":"job-1","kind":"storage_transition","state":"succeeded","storage_transition_result":{"phase":"completed"}}]}""";
+            h.Controller.RefreshTransitions();
+            await Until(() => h.Controller.State is { Reconciling: true, Loading: true, StatusLoading: true }, "commit invalidates review");
+            Assert.Null(h.Controller.State.Review);
+            Assert.False(AdminStorageSettingsController.CanQueue(h.Controller.State with { Review = staleReview }));
+            await h.Controller.QueueTransitionAsync();
+            releaseSettings.SetResult();
+            await Until(() => !h.Controller.State.Loading, "settings reconciled before status");
+            Assert.True(h.Controller.State.Reconciling);
+            h.Controller.ChangeBackend("local");
+            Assert.Null(h.Controller.State.Review);
+            Assert.Empty(h.Writes);
+            releaseStatus.SetResult();
+            await Until(() => !h.Controller.State.Reconciling && h.Controller.State.ArtworkStorage?.Backend == "s3", "status reconciled");
+            h.Controller.ChangeBackend("local");
+            Assert.NotNull(h.Controller.State.Review);
+            await Until(() => h.Controller.State.SourceHealth != null, "fresh review probes S3 source");
+            Assert.Equal(1, h.Count("GET /api/v2/admin/storage-transitions/source-health?probe=true"));
+        }
+        finally { releaseSettings.TrySetResult(); releaseStatus.TrySetResult(); }
     }
 
     [Fact]
@@ -741,6 +824,58 @@ public sealed class AdminStorageSettingsControllerTests
         h.Controller.Set("artwork.local_path", "/x");
         h.Controller.Set("metadata.cache_images", "false");
         Assert.Equal(["metadata.cache_images"], h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task MissingStatusRetiresTheHiddenReviewAndAllowsReload()
+    {
+        using var h = new Harness();
+        await h.OpenAsync();
+        h.Controller.Set("artwork.local_path", "/new-local");
+        await h.Controller.SaveAsync();
+        Assert.NotNull(h.Controller.State.Review);
+        var status = h.Status;
+        h.Status = """{"restart_required":false}""";
+        h.Controller.RetryStatus();
+        await Until(() => h.Controller.State.StatusUnavailable, "missing status");
+        Assert.Null(h.Controller.State.Review);
+        var reads = h.Count("GET /api/v2/admin/settings/effective");
+        h.Status = status;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        await Until(() => h.Controller.State.StatusKnown && !h.Controller.State.StatusLoading, "reloaded status");
+        Assert.Equal(reads + 1, h.Count("GET /api/v2/admin/settings/effective"));
+        Assert.Equal("/new-local", h.Controller.State.Get("artwork.local_path"));
+        await h.Controller.SaveAsync();
+        Assert.NotNull(h.Controller.State.Review);
+    }
+
+    [Theory]
+    [InlineData("preserve_uploads")]
+    [InlineData("start_fresh")]
+    [InlineData("migrate_all")]
+    public async Task LeavingS3DoesNotValidatePrivateValuesThatWillBeDiscarded(string policy)
+    {
+        using var h = new Harness
+        {
+            Status = """{"artwork_storage":{"backend":"s3","locked":true,"status_known":true,"private_locked":true}}""",
+            Effective = """{"artwork.storage_backend":"s3","artwork.local_path":"/data/art","s3.public_bucket":"media","s3.private_bucket":"private","s3.private_endpoint":"https://s3.example"}""",
+        };
+        await h.OpenAsync();
+        h.Controller.Set("s3.private_endpoint", "");
+        h.Controller.ChangeBackend("local");
+        await Until(() => h.Controller.State.SourceHealth != null, "source probe");
+        h.Controller.SetReviewPolicy(policy);
+        Assert.True(AdminStorageSettingsController.CanQueue(h.Controller.State));
+        string? body = null;
+        h.Routes["POST /api/v2/admin/storage-transitions"] = async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return AdminMonitorKit.Json(Accepted, HttpStatusCode.Accepted);
+        };
+        await h.Controller.QueueTransitionAsync();
+        using var sent = JsonDocument.Parse(body!);
+        Assert.Equal(["artwork.local_path", "artwork.storage_backend"], sent.RootElement.GetProperty("values").EnumerateObject().Select(p => p.Name).Order());
+        Assert.DoesNotContain("s3.private_endpoint", h.Controller.State.DirtyKeys);
     }
 
     [Fact]

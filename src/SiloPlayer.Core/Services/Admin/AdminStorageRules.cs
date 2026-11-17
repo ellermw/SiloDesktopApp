@@ -176,24 +176,29 @@ public static partial class AdminStorageRules
                 : "web.admin.settings.storage.s3.locationChangeS3"
             : isPublic ? "web.admin.settings.storage.s3.locationUnlockedPublic" : "web.admin.settings.storage.s3.locationUnlockedPrivate";
 
-    public static AdminStorageTransitionPlan Plan(IAdminStorageDraft draft, AdminArtworkStorageStatus status, string targetBackend, AdminStorageSourceHealth? sourceHealth, bool sourceHealthFailed)
+    public static AdminStorageTransitionPlan Plan(IAdminStorageDraft draft, AdminArtworkStorageStatus status, string targetBackend, AdminStorageSourceHealth? sourceHealth, bool sourceHealthFailed, string? reviewedLocalPath = null)
     {
         var currentS3 = CurrentSourceIsS3(status);
+        // The review's path is submitted even when the form itself has no staged path edit.
+        var localPathChanging = reviewedLocalPath == null ? LocationKeyChanged(draft, LocalPath) :
+            NormalizeLocationValue(LocalPath, reviewedLocalPath) != NormalizeLocationValue(LocalPath, draft.GetPersisted(LocalPath));
         var persistedPrivate = JsTrim(draft.GetPersisted("s3.private_bucket")) != "";
         var publicChanging = targetBackend != (currentS3 ? "s3" : "local") ||
             (targetBackend == "s3" && PublicS3IdentityKeys.Any(key => LocationKeyChanged(draft, key))) ||
-            (targetBackend == "local" && LocationKeyChanged(draft, LocalPath));
+            (targetBackend == "local" && localPathChanging);
         // Avatars, diagnostics and job artifacts move when the private bucket changes, when S3 is disabled while a
         // private bucket holds them, and when a local install without one moves to S3.
         var privateChanging = PrivateS3IdentityKeys.Any(key => LocationKeyChanged(draft, key)) ||
             (targetBackend == "local" && currentS3 && persistedPrivate) ||
-            (targetBackend == "local" && !currentS3 && !persistedPrivate && LocationKeyChanged(draft, LocalPath)) ||
+            (targetBackend == "local" && !currentS3 && !persistedPrivate && localPathChanging) ||
             (targetBackend == "s3" && !currentS3 && !persistedPrivate);
         var sourceUsesS3 = CurrentSourceUsesS3(draft, status);
         var sourceUnavailable = sourceUsesS3 && (sourceHealth?.Reachable == false || sourceHealthFailed);
         var mayHaveAvatars = !currentS3 || sourceHealth?.PrivateConfigured == true || persistedPrivate;
         var missingPrivate = targetBackend == "s3" && mayHaveAvatars && JsTrim(draft.Get("s3.private_bucket")) == "";
-        var endpointMissing = JsTrim(draft.Get("s3.private_bucket")) != "" && JsTrim(draft.Get("s3.private_endpoint")) == "";
+        // Leaving S3 discards staged private S3 values instead of submitting them.
+        var endpointMissing = !(targetBackend == "local" && currentS3) &&
+            JsTrim(draft.Get("s3.private_bucket")) != "" && JsTrim(draft.Get("s3.private_endpoint")) == "";
         return new(publicChanging, privateChanging, privateChanging && !publicChanging, sourceUnavailable, missingPrivate, endpointMissing);
     }
 

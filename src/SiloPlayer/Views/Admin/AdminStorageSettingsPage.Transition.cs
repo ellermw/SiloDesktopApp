@@ -38,6 +38,7 @@ public sealed partial class AdminStorageSettingsPage
     private readonly TextBlock _endpointMissing = U.Text(T("web.admin.settings.storage.dialog.privateEndpointMissing"), 12);
     private readonly StackPanel _reviewLocal = new() { Spacing = 8 };
     private readonly TextBox _reviewLocalPath = U.Input(T("web.admin.settings.storage.dialog.localPath"), "StorageReviewLocalPath", R.LocalPathExample);
+    private readonly TextBlock _reviewLocalPathRequired = U.Text("Enter a local artwork path before queueing.", 12);
     private readonly TextBlock _reviewS3Note = U.Text(T("web.admin.settings.storage.dialog.s3ValuesNote"), 12, true);
     private readonly RadioButton[] _policies = new RadioButton[3];
     private readonly TextBlock[] _policyTitles = new TextBlock[3], _policyDescriptions = new TextBlock[3], _policyReasons = new TextBlock[3];
@@ -198,6 +199,9 @@ public sealed partial class AdminStorageSettingsPage
         _reviewLocalPath.Width = double.NaN; _reviewLocalPath.HorizontalAlignment = HorizontalAlignment.Stretch;
         _reviewLocal.Children.Add(Strong(T("web.admin.settings.storage.dialog.localPath")));
         _reviewLocal.Children.Add(_reviewLocalPath);
+        _reviewLocalPathRequired.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive);
+        AutomationProperties.SetLiveSetting(_reviewLocalPathRequired, AutomationLiveSetting.Polite);
+        _reviewLocal.Children.Add(_reviewLocalPathRequired);
         _reviewLocalPath.TextChanging += (_, _) =>
         {
             if (!_syncing && _controller?.State.Review is { } review && review.LocalPath != _reviewLocalPath.Text) _controller.SetReviewLocalPath(_reviewLocalPath.Text);
@@ -275,7 +279,7 @@ public sealed partial class AdminStorageSettingsPage
         if (review == null || state.ArtworkStorage is not { } status || !_active) { HideReview(); return; }
         if (_review == null) ShowReview();
         if (_review == null) return;
-        var plan = R.Plan(state, status, review.Backend, state.SourceHealth, state.SourceHealthFailed);
+        var plan = R.Plan(state, status, review.Backend, state.SourceHealth, state.SourceHealthFailed, review.LocalPath);
         _review!.Title = T(plan.PrivateOnly ? "web.admin.settings.storage.dialog.titlePrivate" : "web.admin.settings.storage.dialog.titleArtwork");
 
         var sourceUsesS3 = R.CurrentSourceUsesS3(state, status);
@@ -312,7 +316,9 @@ public sealed partial class AdminStorageSettingsPage
         _targetPrivateLine.Visibility = privateLine ? Visibility.Visible : Visibility.Collapsed;
         _endpointMissing.Visibility = plan.PrivateEndpointMissing ? Visibility.Visible : Visibility.Collapsed;
 
-        _reviewLocal.Visibility = !plan.PrivateOnly && review.Backend == "local" ? Visibility.Visible : Visibility.Collapsed;
+        // Even a private-only local command submits this path, so its required editor must remain accessible.
+        _reviewLocal.Visibility = review.Backend == "local" ? Visibility.Visible : Visibility.Collapsed;
+        _reviewLocalPathRequired.Visibility = R.JsTrim(review.LocalPath) == "" ? Visibility.Visible : Visibility.Collapsed;
         _reviewS3Note.Visibility = !plan.PrivateOnly && review.Backend == "s3" ? Visibility.Visible : Visibility.Collapsed;
         _syncing = true;
         try

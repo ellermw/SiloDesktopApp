@@ -48,6 +48,8 @@ public sealed record AdminStorageSettingsState : IAdminStorageDraft
     public bool SourceHealthFetching { get; init; }
     public bool Queuing { get; init; }
     public bool Cancelling { get; init; }
+    /// <summary>A committed transition invalidated the review; settings and storage status must settle first.</summary>
+    public bool Reconciling { get; init; }
     /// <summary>Catalog key of an ambiguous transition/cancel result: shown until the next explicit command or reload.</summary>
     public string? CommandUnknownKey { get; init; }
 
@@ -102,6 +104,7 @@ public sealed class AdminStorageSettingsController : IDisposable
     private long _epoch, _revision;
     private ITimer? _jobsPoll, _recoveryPoll;
     private bool _active, _disposed, _reconcilePending;
+    private AdminStorageTransitionJob? _acknowledgedTransition;
 
     /// <param name="deferBackground">True while foreground navigation or playback start should not share the network with a background read.</param>
     public AdminStorageSettingsController(AdminServerSettingsApi settings, AdminServerSettingsStore store, AdminStorageApi storage,
@@ -280,7 +283,7 @@ public sealed class AdminStorageSettingsController : IDisposable
     private bool CanEdit(string key)
     {
         var s = _state;
-        if (_form == null || !s.Loaded || s.Loading || s.SensitiveStatusError || s.Review != null || s.Queuing || s.ManagedByEnv.Contains(key)) return false;
+        if (_form == null || !s.Loaded || s.Loading || s.Reconciling || s.SensitiveStatusError || s.Review != null || s.Queuing || s.ManagedByEnv.Contains(key)) return false;
         if (Secrets.Contains(key) && s.Saving) return false;
         if (AdminStorageRules.S3IdentityKeys.Contains(key) && (s.Saving || !s.StatusKnown)) return false;
         if (key == AdminStorageRules.LocalPath && (s.Saving || !s.StatusKnown || (s.ArtworkStorage!.Locked && AdminStorageRules.CurrentSourceIsS3(s.ArtworkStorage)))) return false;
@@ -376,7 +379,7 @@ public sealed class AdminStorageSettingsController : IDisposable
             AdminStorageNotice? notice = null;
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _form == null || !_state.Loaded || _state.Loading || _state.Saving || _state.Queuing || _reconcilePending ||
+                if (!_lifetime.IsCurrent(action) || _form == null || !_state.Loaded || _state.Loading || _state.Saving || _state.Queuing || _state.Reconciling || _reconcilePending ||
                     _state.Review != null || _state.Conflict || _state.OutcomeUnknown || _state.SensitiveStatusError || _state.ArtworkStorage == null) return;
                 var dirty = _form.DirtyKeys.Where(key => !_state.ManagedByEnv.Contains(key)).ToArray();
                 if (!_state.StatusKnown)
@@ -401,7 +404,7 @@ public sealed class AdminStorageSettingsController : IDisposable
             var opened = false;
             Update(action, () =>
             {
-                if (_form == null || _state.Review != null || _state.Loading || _state.Saving || _reconcilePending ||
+                if (_form == null || _state.Review != null || _state.Loading || _state.Saving || _state.Reconciling || _reconcilePending ||
                     !_state.StatusKnown || !_state.ManagedTransitionsAvailable ||
                     !AdminStorageRules.LocationChangePending(new FormDraft(_form), _state.ArtworkStorage!, _state.LatestTransition)) return;
                 // The backend may have changed while unrelated keys were being saved.
@@ -418,7 +421,7 @@ public sealed class AdminStorageSettingsController : IDisposable
         AdminSettingsSaveIntent intent;
         lock (_gate)
         {
-            if (!_lifetime.IsCurrent(action) || _form == null || _state.Saving || _state.Loading || _state.Queuing || _reconcilePending || _state.Review != null) return false;
+            if (!_lifetime.IsCurrent(action) || _form == null || _state.Saving || _state.Loading || _state.Queuing || _state.Reconciling || _reconcilePending || _state.Review != null) return false;
             var keep = only == null ? null : new HashSet<string>(only, StringComparer.Ordinal);
             var excluded = _form.DirtyKeys.Where(key => _state.ManagedByEnv.Contains(key) || (keep != null && !keep.Contains(key))).ToArray();
             intent = _form.CaptureSave(excluded);
@@ -546,8 +549,8 @@ public sealed class AdminStorageSettingsController : IDisposable
     {
         // The transition API requires an explicit backend value; never submit an environment-owned key.
         if (state.Review is not { } review || state.ArtworkStorage is not { } status || !state.StatusKnown ||
-            state.Queuing || state.Loading || state.Saving || state.ManagedByEnv.Contains(AdminStorageRules.Backend)) return false;
-        var plan = AdminStorageRules.Plan(state, status, review.Backend, state.SourceHealth, state.SourceHealthFailed);
+            state.Queuing || state.Loading || state.Saving || state.Reconciling || state.ManagedByEnv.Contains(AdminStorageRules.Backend)) return false;
+        var plan = AdminStorageRules.Plan(state, status, review.Backend, state.SourceHealth, state.SourceHealthFailed, review.LocalPath);
         return !(AdminStorageRules.CurrentSourceUsesS3(state, status) && state.SourceHealthPending) &&
                !(plan.CopyPolicyUnavailable && review.Policy != "start_fresh") &&
                !(review.Backend == "local" && AdminStorageRules.JsTrim(review.LocalPath) == "") &&
@@ -568,7 +571,7 @@ public sealed class AdminStorageSettingsController : IDisposable
             AdminStorageNotice? notice = null;
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _form == null || _state.Review is not { } review || _state.Queuing || _state.Saving) return;
+                if (!_lifetime.IsCurrent(action) || _form == null || _state.Review is not { } review || _state.Queuing || _state.Saving || _reconcilePending || _state.Reconciling) return;
                 if (!_state.StatusKnown) notice = new(false, "web.admin.settings.storage.lockUnknownMove");
                 else if (!_state.ManagedTransitionsAvailable) notice = new(false, "web.admin.settings.storage.transitionsUnavailable");
                 if (notice == null && !CanQueue(_state)) return;
@@ -593,6 +596,7 @@ public sealed class AdminStorageSettingsController : IDisposable
             {
                 Update(action, () => _state = _state with { Queuing = false });
                 if (_lifetime.IsCurrent(action)) Raise(new(false, "web.admin.settings.storage.transitionQueueFailed"));
+                TryStartReconciliation();
                 return;
             }
             var sent = values.Keys.ToArray();
@@ -601,10 +605,13 @@ public sealed class AdminStorageSettingsController : IDisposable
                 if (_form != null)
                     foreach (var key in AdminStorageRules.KeysResetAfterTransition(new FormDraft(_form), status, backend, sent)) _form.Reset(key);
                 _revision++;
+                // Keep the accepted job visible and polled even if its first read fails or returns no job yet.
+                _acknowledgedTransition = new(jobId, "queued", "queued", null, null, false);
                 // Publish the acknowledgement and settings-read barrier atomically.
-                _state = _state with { Queuing = false, Review = null, Loading = true, PublicCheck = null, PrivateCheck = null };
+                _state = _state with { Queuing = false, Review = null, Loading = true, LatestTransition = _acknowledgedTransition, PublicCheck = null, PrivateCheck = null };
             });
             if (!_lifetime.IsCurrent(action)) return;
+            EvaluatePolls();
             Raise(new(true, "web.admin.settings.storage.transitionQueued", jobId));
             // Official onSuccess invalidates settings, status and jobs.
             _store.Invalidate();
@@ -710,7 +717,13 @@ public sealed class AdminStorageSettingsController : IDisposable
                 {
                     case ReadKind.Status:
                         var status = await _storage.GetArtworkStorageStatusAsync(action).ConfigureAwait(false);
-                        Update(action, () => _state = _state with { ArtworkStorage = status, StatusRead = true, StatusFailed = false, StatusLoading = false });
+                        Update(action, () => _state = _state with
+                        {
+                            ArtworkStorage = status, StatusRead = true, StatusFailed = false, StatusLoading = false,
+                            // A missing status hides the dialog; retire its controller-owned review too.
+                            Review = status == null ? null : _state.Review,
+                            SourceHealth = status == null ? null : _state.SourceHealth,
+                        });
                         break;
                     case ReadKind.Capabilities:
                         var capabilities = await _storage.GetTransitionCapabilitiesAsync(action).ConfigureAwait(false);
@@ -725,10 +738,18 @@ public sealed class AdminStorageSettingsController : IDisposable
                         var job = await _storage.GetLatestTransitionAsync(action).ConfigureAwait(false);
                         Update(action, () =>
                         {
+                            // An invalidation queued behind this read belongs to a newer command. Do not let
+                            // the pre-command response erase its acknowledgement before that follow-up read.
+                            if (_acknowledgedTransition != null && _slots[ReadKind.Jobs].Pending) return;
+                            if (job == null && _acknowledgedTransition != null) return;
+                            _acknowledgedTransition = null;
                             var previous = _state.LatestTransition;
                             if (job != null && (job.Phase is "restart_pending" or "completed" || !job.IsActive || job.ManualRestartRequired) &&
                                 (previous == null || previous.Id != job.Id || previous.Status != job.Status || previous.Phase != job.Phase || previous.ManualRestartRequired != job.ManualRestartRequired))
+                            {
                                 _reconcilePending = true;
+                                _state = _state with { Reconciling = true, Review = null, SourceHealth = null, SourceHealthFailed = false };
+                            }
                             _state = _state with { LatestTransition = job };
                         });
                         TryStartReconciliation();
@@ -790,7 +811,7 @@ public sealed class AdminStorageSettingsController : IDisposable
         _recoveryPoll?.Dispose(); _recoveryPoll = null;
     }
 
-    private void ResetSlotsLocked() { _reconcilePending = false; foreach (var slot in _slots.Values) { slot.Running = false; slot.Pending = false; slot.Last = null; } }
+    private void ResetSlotsLocked() { _reconcilePending = false; _acknowledgedTransition = null; foreach (var slot in _slots.Values) { slot.Running = false; slot.Pending = false; slot.Last = null; } }
 
     // ── State publication ────────────────────────────────────
 
@@ -800,6 +821,9 @@ public sealed class AdminStorageSettingsController : IDisposable
         {
             if (_disposed || !_lifetime.IsCurrent(owner)) return;
             update();
+            if (_state.Reconciling && !_reconcilePending && !_state.Loading && !_state.StatusLoading &&
+                !_slots[ReadKind.Status].Pending && _state.Error == null && _state.StatusKnown)
+                _state = _state with { Reconciling = false };
             if (!owner.IsCurrent) { _form?.Discard(); _form = null; _state = new(); }
             else if (_form != null) _state = _state with
             {
