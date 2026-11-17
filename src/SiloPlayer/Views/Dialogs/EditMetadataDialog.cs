@@ -53,7 +53,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
         var brush = (SolidColorBrush)Brush(key);
         return new SolidColorBrush(brush.Color) { Opacity = opacity };
     }
-    public EditMetadataDialog(MediaItemDetail item)
+    public EditMetadataDialog(MediaItemDetail item, long? openingWriteRevision = null)
     {
         _item = item; _state = new(item); _api = App.Services.GetRequiredService<MediaMaintenanceApi>();
         _client = App.Services.GetRequiredService<SiloApiClient>();
@@ -84,6 +84,9 @@ public sealed partial class EditMetadataDialog : ContentDialog
         _root.Children.Add(_navigationScroll); Grid.SetRow(_navigationScroll, 1);
         _scroll = new() { Content = _body, Padding = new Thickness(24, 20, 24, 20), VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetColumn(_scroll, 1); Grid.SetRow(_scroll, 1); _root.Children.Add(_scroll);
+        _writeNotice = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
+        _writeNotice.Children.Add(_writeStatus); _writeNotice.Children.Add(_retryWriteRefresh); _body.Children.Add(_writeNotice);
+        _retryWriteRefresh.Click += async (_, _) => await FollowPendingWritesAsync(retry: true);
         var general = Section("general", "General");
         foreach (var (key, label) in new[] { ("title","Title"),("sort_title","Sort Title"),("original_title","Original Title"),("overview","Overview"),("tagline","Tagline"),("content_rating","Content Rating") }) Text(general, key, label);
         if (item.Type is "movie" or "episode") Number(general, "runtime", "Runtime (min)", 0, double.PositiveInfinity);
@@ -104,7 +107,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
             {
                 var input = new MetadataTagsInput((string[])_state.Fields[key]!);
                 _tagInputs[key] = input;
-                input.Changed += (_, _) => { _state.Set(key, input.Values); RefreshLocks(); };
+                input.Changed += (_, _) => { if (_updatingForm) return; _state.Set(key, input.Values); RefreshLocks(); };
                 var group = new StackPanel { Spacing = 6 };
                 group.Children.Add(Label(key, char.ToUpper(key[0]) + key[1..])); group.Children.Add(input); tags.Children.Add(group);
             }
@@ -149,19 +152,21 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 var locksToKeep = _item.Type is "season" or "episode"
                     ? _state.EffectiveLocks(_item.LockedFields).Except(_state.FieldLockMap.Values).Order().ToArray()
                     : Array.Empty<int>();
-                var receipt = await _api.ResetToProviderAsync(capability, _item.ContentId, locksToKeep, _lifetime.Token);
+                var completed = false;
+                await RunOwnedWriteAsync(async ct => { completed = await _api.ResetToProviderAndWaitAsync(capability, _item.ContentId, locksToKeep, ct); });
                 if (!CurrentOwner) return;
-                HasSaved = true; Changed();
-                Toast().Success(receipt.Status is "queued" or "running" ? "Metadata reset queued. Provider changes will appear when the job completes." : "Metadata reset request accepted.");
+                HasSaved = true;
+                Toast().Success(completed ? AppStrings.Get("web.item.toast.refreshed")
+                    : "Metadata reset queued. Provider changes will appear when the job completes.");
                 flyout.Hide(); Hide();
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (!CurrentOwner) { }
             catch (ApiException ex) when (capability.AtomicReset && ex.StatusCode == 422)
             { if (CurrentOwner) Toast().Error(ex, "This server does not support atomic metadata reset. Nothing was changed."); }
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
             // Only _reset opens this flyout and the click re-checks CanSubmitReset, so the confirmation
             // must not stay disabled while a reconnect is still reloading the capability.
-            finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = CanSubmitReset; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; } };
+            finally { _pending = false; confirm.IsEnabled = true; RefreshWriteControls(); } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;
         var auth = App.Services.GetRequiredService<AuthService>();
@@ -184,6 +189,10 @@ public sealed partial class EditMetadataDialog : ContentDialog
         Opened += async (_, _) =>
         {
             auth.ProfileChanged += Retire; auth.UserChanged += Retire; auth.LoggedOut += Retire; client.ContextInvalidated += Retire;
+            _api.PendingWrites.WriteStarted += MetadataWriteStarted;
+            // A write can settle between the opening fetch and ShowAsync.
+            _ = FollowPendingWritesAsync(retry: openingWriteRevision is { } revision && revision != _api.PendingWrites.Revision);
+            RefreshWriteControls();
             Reflow();
             await LoadResetCapabilityAsync();
             if (CurrentOwner) await BuildTranslation();
@@ -192,12 +201,13 @@ public sealed partial class EditMetadataDialog : ContentDialog
         Closed += (_, _) =>
         {
             _lifetime.Cancel(); _reset.IsEnabled = false;
+            _api.PendingWrites.WriteStarted -= MetadataWriteStarted;
             auth.ProfileChanged -= Retire; auth.UserChanged -= Retire; auth.LoggedOut -= Retire; client.ContextInvalidated -= Retire;
         };
     }
     private bool CurrentOwner => !_lifetime.IsCancellationRequested && _client.IsCurrentIdentityContext(_identityOwner)
         && AuthorizationPolicy.CanCurateMetadata(App.Services.GetRequiredService<AuthService>());
-    private bool CanSubmitReset => CurrentOwner && !_pending && !_imagePending && _resetCapability is { } capability
+    private bool CanSubmitReset => CurrentOwner && !WritePending && _resetCapability is { } capability
         && _api.IsCurrentContext(capability.Owner);
     private async Task LoadResetCapabilityAsync()
     {
@@ -347,7 +357,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
         _textInputs[key] = input;
         if (key == "overview") { input.AcceptsReturn = true; input.TextWrapping = TextWrapping.Wrap; input.Height = input.MinHeight = 100; input.Padding = new Thickness(12, 10, 12, 10); input.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent); }
         if (key.EndsWith("_date")) input.PlaceholderText = "YYYY-MM-DD";
-        input.TextChanged += (_, _) => { _state.Set(key, input.Text); RefreshLocks(); };
+        input.TextChanged += (_, _) => { if (_updatingForm) return; CaptureVisibleValue(key, input.Text); RefreshLocks(); };
         group.Children.Add(input); panel.Children.Add(group);
     }
     private void Number(StackPanel panel, string key, string label, double min, double max, bool disabled = false)
@@ -355,18 +365,18 @@ public sealed partial class EditMetadataDialog : ContentDialog
         var group = new StackPanel { Spacing = 6 }; _fieldGroups[key] = group; group.Children.Add(Label(key, label));
         var input = new NumberBox { Value = _state.Fields[key] is double value ? value : double.NaN, Minimum = min, Maximum = max, IsEnabled = !disabled, Height = 36, MinHeight = 36, CornerRadius = new CornerRadius(10) };
         if (!disabled) _numberInputs[key] = input;
-        input.ValueChanged += (_, _) => { _state.Set(key, double.IsNaN(input.Value) ? null : input.Value); RefreshLocks(); };
+        input.ValueChanged += (_, _) => { if (_updatingForm) return; CaptureVisibleValue(key, double.IsNaN(input.Value) ? null : input.Value); RefreshLocks(); };
         group.Children.Add(input); panel.Children.Add(group);
     }
     private void Choice(StackPanel panel, string key, string label, string[] options)
     {
         var input = new ComboBox { Header = label, ItemsSource = options, SelectedItem = _state.Fields[key], HorizontalAlignment = HorizontalAlignment.Stretch };
         _choiceInputs[key] = input;
-        input.SelectionChanged += (_, _) => _state.Set(key, input.SelectedItem as string ?? ""); _fieldGroups[key] = input; panel.Children.Add(input);
+        input.SelectionChanged += (_, _) => { if (!_updatingForm) CaptureVisibleValue(key, input.SelectedItem as string ?? ""); }; _fieldGroups[key] = input; panel.Children.Add(input);
     }
     private async void Save(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
-        args.Cancel = true; if (_pending || _imagePending || !CurrentOwner) return;
+        args.Cancel = true; if (WritePending || !CurrentOwner) return;
         // WinUI change notifications can still be queued when Save is invoked.
         // Snapshot the visible form so the submitted draft is the user's latest input.
         foreach (var (key, input) in _textInputs) CaptureVisibleValue(key, input.Text);
@@ -379,9 +389,9 @@ public sealed partial class EditMetadataDialog : ContentDialog
             if (key.EndsWith("_date") && value is string date && date.Length > 0 && !DateOnly.TryParseExact(date, "yyyy-MM-dd", out _)) { Toast().Error("Use YYYY-MM-DD for dates."); return; }
         if (changes.Count == 0) { Hide(); return; }
         _pending = true; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; PrimaryButtonText = AppStrings.Get("web.item.dialog.saving");
-        try { await _api.UpdateMetadataAsync(_item.ContentId, changes, _lifetime.Token); if (!CurrentOwner) return; HasSaved = true; Changed(); Toast().Success(AppStrings.Get("web.item.toast.metadataSaved")); Hide(); }
+        try { await RunOwnedWriteAsync(async ct => { await _api.UpdateMetadataAsync(_item.ContentId, changes, ct); }); if (!CurrentOwner) return; HasSaved = true; Toast().Success(AppStrings.Get("web.item.toast.metadataSaved")); Hide(); }
         catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
-        finally { _pending = false; IsPrimaryButtonEnabled = CurrentOwner && !_imagePending; _reset.IsEnabled = CanSubmitReset; PrimaryButtonText = AppStrings.Get("web.item.editMetadata.saveChanges"); }
+        finally { _pending = false; RefreshWriteControls(); }
     }
     private void CaptureVisibleValue(string key, object? value)
     {
@@ -528,7 +538,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 badge.Visibility = selected && !isCurrent ? Visibility.Visible : Visibility.Collapsed;
             }
             apply.Visibility = selection.ValueKind == JsonValueKind.Object ? Visibility.Visible : Visibility.Collapsed;
-            apply.IsEnabled = !_pending && !_imagePending && selection.ValueKind == JsonValueKind.Object;
+            apply.IsEnabled = !WritePending && CurrentOwner && selection.ValueKind == JsonValueKind.Object;
             apply.Content = _imagePending ? AppStrings.Get("web.item.dialog.applying") : type switch
             {
                 "poster" => AppStrings.Get("web.item.images.applyPoster"),
@@ -537,6 +547,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 _ => "Apply " + char.ToUpperInvariant(type[0]) + type[1..],
             };
         }
+        _refreshImageSelection = SelectionPresentation;
         MediaItemCardActions.BindText(this, "ImageSelection", _ => SelectionPresentation());
         Dictionary<string, string> providerErrors = [];
         void RefreshProviderErrors()
@@ -572,7 +583,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
                     Child = new TextBlock { Text = String(image, "provider_id").ToUpperInvariant(), FontSize = 9, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) } });
                 var button = new Button { Content = body, Tag = original, Padding = new Thickness(0), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
                 cards.Add((button, picture, selectionBadge));
-                button.Click += (_, _) => { if (_pending || _imagePending) return; selection = selection.ValueKind == JsonValueKind.Object && String(selection, "original_url") == original ? default : image;
+                button.Click += (_, _) => { if (WritePending) return; selection = selection.ValueKind == JsonValueKind.Object && String(selection, "original_url") == original ? default : image;
                     SelectionPresentation(); Reflow(); };
                 grid.Children.Add(button);
             }
@@ -588,13 +599,14 @@ public sealed partial class EditMetadataDialog : ContentDialog
         textless.Click += (_, _) => Render();
         apply.Click += async (_, _) =>
         {
-            if (_pending || _imagePending || !CurrentOwner || selection.ValueKind != JsonValueKind.Object || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
+            if (WritePending || !CurrentOwner || selection.ValueKind != JsonValueKind.Object || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
             var selected = selection; var selectedType = String(selected, "type"); _imagePending = true; apply.IsEnabled = false; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; apply.Content = AppStrings.Get("web.item.dialog.applying");
-            try { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id")); if (!CurrentOwner) return;
-                applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true; Changed();
-                var refreshed = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); if (!CurrentOwner) return; _item = refreshed; RefreshLocks(); Render(); Toast().Success(AppStrings.Get("web.item.toast.imageApplied")); }
+            try { var refreshed = await RunOwnedWriteAsync(async ct => { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id"), ct); }); if (!CurrentOwner) return;
+                applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true;
+                if (refreshed != null) RebaseItem(refreshed);
+                Render(); Toast().Success(AppStrings.Get("web.item.toast.imageApplied")); }
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
-            finally { _imagePending = false; IsPrimaryButtonEnabled = CurrentOwner && !_pending; _reset.IsEnabled = CanSubmitReset; SelectionPresentation(); }
+            finally { _imagePending = false; RefreshWriteControls(); }
         };
         Opened += async (_, _) =>
         {

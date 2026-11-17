@@ -138,6 +138,12 @@ internal static class AppLanguageNativeFixture
             Require(!group.OfferedTags.Contains("he") && group.UnavailableNote.Visibility == Visibility.Collapsed, "replaced unknown tag still offered");
             var title = (TextBlock)row.FindName("SectionTitle");
             Require(title.Text == "أحدث الإضافات في ⁨Movies⁩", "retained SectionRow title: " + title.Text);
+            // Official #4294: the pin is named by its translated action and described by the shown row title.
+            var pin = (Button)row.FindName("PinSectionBtn");
+            var pinName = Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(pin);
+            var pinHelp = Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(pin);
+            Require(pinName == locales.Current.Get("web.home.sectionRow.pin") && pinName != "Pin to sidebar" && pinHelp == title.Text,
+                $"retained SectionRow pin not renamed for its row in Arabic: name={pinName} help={pinHelp}");
             Require(keyed.Title == "Recently Added in Movies", "raw section title changed");
             var titleOrigin = group.TitleText.TransformToVisual(shell).TransformPoint(new Windows.Foundation.Point(0, 0));
             var titleRight = group.TitleText.TransformToVisual(shell).TransformPoint(new Windows.Foundation.Point(group.TitleText.ActualWidth, 0));

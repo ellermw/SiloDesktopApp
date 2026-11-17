@@ -10,6 +10,7 @@ namespace SiloPlayer.ViewModels;
 public partial class RequestsViewModel : ObservableObject
 {
     private readonly RequestsApi _requestsApi;
+    public RequestDiscoveryOwner? DiscoveryOwner { get; private set; }
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private bool _loadInProgress;
     private ApiRequestContext? _loadedContext;
@@ -37,6 +38,8 @@ public partial class RequestsViewModel : ObservableObject
     public ObservableCollection<DiscoverBrandCard> Networks { get; } = [];
     public ObservableCollection<DiscoverBrandCard> Genres { get; } = [];
     public RequestFeatureStatus Features { get; private set; } = new();
+    public bool ProfileRequestsAllowed => _requestsApi.ProfileRequestsAllowed;
+    public bool DiscoveryAllowed => _requestsApi.DiscoveryAllowed;
     public System.Collections.Concurrent.ConcurrentDictionary<string, string> BrandErrors { get; } = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _brandPending = new();
     public async Task RetryBrandAsync(string kind) { await LoadBrandAsync(kind); DataVersion++; }
@@ -76,6 +79,7 @@ public partial class RequestsViewModel : ObservableObject
             DiscoverySections.Clear(); DiscoveryRows.Clear(); Studios.Clear(); Networks.Clear(); Genres.Clear();
             MyRequests.Clear(); SearchResults.Clear(); BrandErrors.Clear(); _brandPending.Clear();
         }
+        DiscoveryOwner = _requestsApi.CaptureDiscoveryOwner();
         var revision = ++_loadRevision;
         _loadingContext = context;
         _loadingVisit = isCurrentVisit;
@@ -103,12 +107,18 @@ public partial class RequestsViewModel : ObservableObject
                 return;
             }
 
-            IsLoadingMine = IsLoadingDiscovery = true;
-            if (!status.DiscoverRowsSupported)
+            if (!DiscoveryAllowed)
+            {
+                CancelSearch(); SearchResults.Clear();
+                DiscoverySections.Clear(); DiscoveryRows.Clear(); Studios.Clear(); Networks.Clear(); Genres.Clear();
+                BrandErrors.Clear(); IsLoadingDiscovery = false; ++_discoveryRevision;
+            }
+            IsLoadingMine = true; IsLoadingDiscovery = DiscoveryAllowed;
+            if (DiscoveryAllowed && !status.DiscoverRowsSupported)
                 Replace(DiscoveryRows, RequestDiscoveryLayout.VisibleRows(new()));
             var mineTask = LoadMineAsync();
-            var discoveryTask = LoadDiscoveryAsync(brandsPreloaded: !status.DiscoverRowsSupported);
-            var brandsTask = status.DiscoverRowsSupported ? Task.CompletedTask : LoadBrandsAsync();
+            var discoveryTask = DiscoveryAllowed ? LoadDiscoveryAsync(brandsPreloaded: !status.DiscoverRowsSupported) : Task.CompletedTask;
+            var brandsTask = !DiscoveryAllowed || status.DiscoverRowsSupported ? Task.CompletedTask : LoadBrandsAsync();
             // Each WebUI query owns its loading state. A slow discovery rail
             // must not hide completed account requests or brand results.
             IsLoading = false;
@@ -182,6 +192,7 @@ public partial class RequestsViewModel : ObservableObject
 
     private async Task LoadDiscoveryAsync(bool brandsPreloaded = false)
     {
+        if (!DiscoveryAllowed) return;
         var context = _requestsApi.CaptureContext();
         var revision = ++_discoveryRevision;
         IsLoadingDiscovery = true;
@@ -231,6 +242,7 @@ public partial class RequestsViewModel : ObservableObject
 
     private async Task LoadBrandAsync(string kind)
     {
+        if (!DiscoveryAllowed) return;
         if (!DiscoveryRows.Any(row => RequestDiscoveryLayout.BrandKind(row.Type) == kind)) return;
         var context = _requestsApi.CaptureContext();
         var target = kind switch { "studio" => Studios, "network" => Networks, "genre" => Genres, _ => throw new ArgumentOutOfRangeException(nameof(kind)) };
@@ -261,6 +273,7 @@ public partial class RequestsViewModel : ObservableObject
     [RelayCommand]
     private async Task SearchAsync()
     {
+        if (!DiscoveryAllowed) { ClearSearch(); return; }
         var query = SearchQuery.Trim();
         if (query.Length < 2)
         {
@@ -337,6 +350,7 @@ public partial class RequestsViewModel : ObservableObject
     [RelayCommand]
     private async Task SubmitRequestAsync(RequestMediaResult result)
     {
+        if (!_requestsApi.SubmissionAllowed) return;
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         try
         {
@@ -369,18 +383,23 @@ public partial class RequestsViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task CancelRequestAsync(MediaRequest request)
+    private Task CancelRequestAsync(MediaRequest request) => CancelOwnRequestAsync(request, _requestsApi.CaptureIdentityContext());
+
+    public async Task CancelOwnRequestAsync(MediaRequest request, ApiIdentityContext owner)
     {
-        if (!SiloPlayer.Core.Services.RequestViewerPolicy.CanCancel(request)) return;
+        if (!_requestsApi.IsCurrentIdentityContext(owner) || !SiloPlayer.Core.Services.RequestViewerPolicy.CanCancel(request)) return;
         try
         {
-            await _requestsApi.CancelAsync(request.Id);
+            await _requestsApi.CancelAsync(request.Id, owner);
+            if (!_requestsApi.IsCurrentIdentityContext(owner)) return;
             InvalidateCache();
             await LoadAsync();
+            if (!_requestsApi.IsCurrentIdentityContext(owner)) return;
             SetLocalizedMessage(nameof(StatusMessage), () => SiloPlayer.Core.Localization.AppStrings.Get("web.common.requests.toast.cancelled"), value => StatusMessage = value ?? "");
         }
         catch (Exception ex)
         {
+            if (!_requestsApi.IsCurrentIdentityContext(owner)) return;
             SetLocalizedMessage(nameof(ErrorMessage), () => RequestProblem(ex, "web.common.requests.toast.cancelFailed", "Failed to cancel request"), value => ErrorMessage = value);
         }
     }

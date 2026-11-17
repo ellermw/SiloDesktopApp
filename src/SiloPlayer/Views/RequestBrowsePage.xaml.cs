@@ -24,6 +24,7 @@ public sealed partial class RequestBrowsePage : Page
     private RequestBrowseNavigation? _navigation;
     private RequestDiscoverySection? _sectionTitle;
     private RequestFeatureStatus _features = new();
+    private RequestDiscoveryOwner? _contentOwner;
     private ScrollViewer? _scroll;
     private bool _initialized;
     private string _mediaType = "movie";
@@ -40,6 +41,9 @@ public sealed partial class RequestBrowsePage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        if (!EnsureDiscoveryAccess()) return;
+        App.Services.GetRequiredService<AuthService>().ProfileChanged += ProfileAuthorityChanged;
+        _api.StatusChanged += ProfileAuthorityChanged;
         if (e.Parameter is not RequestBrowseNavigation nav) { Fail("web.requests.discoverSection.notFound"); return; }
         _navigation = nav;
         var title = HumanizeSlug(nav.Slug); TitleText.Text = title; HeaderTileText.Text = title;
@@ -53,18 +57,38 @@ public sealed partial class RequestBrowsePage : Page
     {
         _initialized = false; _browse.Cancel(); _lifetime.Cancel(); DetachScroll();
         if (_presentation != null) _presentation.Changed -= Presentation_Changed;
+        App.Services.GetRequiredService<AuthService>().ProfileChanged -= ProfileAuthorityChanged;
+        _api.StatusChanged -= ProfileAuthorityChanged;
         base.OnNavigatedFrom(e);
     }
+    private void ProfileAuthorityChanged() => DispatcherQueue.TryEnqueue(() => EnsureDiscoveryAccess());
+    private bool EnsureDiscoveryAccess()
+    {
+        if (_api.DiscoveryAllowed) return true;
+        var owner = _api.CaptureIdentityContext();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_lifetime.IsCancellationRequested && _api.IsCurrentIdentityContext(owner) && !_api.DiscoveryAllowed)
+                App.Services.GetRequiredService<NavigationService>().NavigateReplacingCurrentEntry<HomePage>();
+        });
+        return false;
+    }
+
     private async Task LoadAsync()
     {
-        if (_navigation is not { } nav) return;
+        if (!EnsureDiscoveryAccess() || _navigation is not { } nav) return;
         var type = nav.Kind switch { "studio" => "movie", "network" => "series", _ => _mediaType };
         var sort = (SortCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "popularity";
+        var owner = _api.CaptureDiscoveryOwner();
         try { _features = await _api.GetStatusAsync(_lifetime.Token); }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
         catch { _features = new(); }
+        if (_lifetime.IsCancellationRequested) return;
+        if (!_api.IsCurrentDiscoveryOwner(owner)) { EnsureDiscoveryAccess(); return; }
+        _contentOwner = owner;
         await _browse.ResetAsync(async (page, token) =>
         {
+            if (!_api.IsCurrentDiscoveryOwner(owner)) throw new OperationCanceledException("Request browse owner changed.", token);
             if (nav.Kind == "section")
             {
                 var section = await _api.GetDiscoverySectionAsync(nav.Slug, page, token);
@@ -152,7 +176,7 @@ public sealed partial class RequestBrowsePage : Page
     }
     private void BuildCard(ContentControl host, RequestMediaResult item)
     {
-        host.Tag = item; host.Margin = new Thickness(_gap / 2); host.Content = ExternalTitleCard.Build(item, _browseCardWidth,
+        host.Tag = item; host.Margin = new Thickness(_gap / 2); host.Content = ExternalTitleCard.Build(item, _browseCardWidth, discoveryOwner: _contentOwner,
             watchlist: _features.WatchlistTitlesSupported ? async () =>
             {
                 if (item.InWatchlist == true) await _api.RemoveWatchlistTitleAsync(item.MediaType, item.TmdbId, _lifetime.Token);

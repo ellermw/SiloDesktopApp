@@ -18,6 +18,7 @@ public class ToastService
 {
     private ToastContainer? _container;
     private Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
+    private PlaybackToastHost? _playbackHost;
 
     /// <summary>
     /// Called once from <see cref="MainWindow"/> once the container is
@@ -26,12 +27,18 @@ public class ToastService
     /// </summary>
     public void Register(ToastContainer container, Microsoft.UI.Dispatching.DispatcherQueue dispatcher)
     {
+        _playbackHost?.Dispose();
         _container = container;
         _dispatcher = dispatcher;
+        _playbackHost = container.Parent is Panel shell ? new PlaybackToastHost(container, shell, dispatcher) : null;
     }
+
+    internal void SetPlaybackSurface(MpvVideoWindow surface) => _playbackHost?.SetPlaybackSurface(surface);
 
     public void Unregister()
     {
+        _playbackHost?.Dispose();
+        _playbackHost = null;
         _container = null;
         _dispatcher = null;
     }

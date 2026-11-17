@@ -34,6 +34,8 @@ public sealed partial class CollectionsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<CollectionsViewModel>();
         this.InitializeComponent();
+        // Official #4287: Enter or Escape for an IME candidate must not add or cancel the group.
+        ImeCompositionGuard.Attach(AddGroupNameBox);
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
         AttachLocalization();
         ViewModel.Collections.CollectionChanged += (_, _) => QueueCollectionBuild();
@@ -572,8 +574,10 @@ public sealed partial class CollectionsPage : Page
                 CancelRename();
                 return Task.CompletedTask;
             }));
+            var renameComposition = ImeCompositionGuard.Attach(renameBox);
             renameBox.KeyDown += async (_, args) =>
             {
+                if (renameComposition.ShouldIgnore(args)) return;
                 if (args.Key == Windows.System.VirtualKey.Enter)
                 {
                     args.Handled = true;
@@ -866,6 +870,7 @@ public sealed partial class CollectionsPage : Page
 
     private async void AddGroupNameBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
+        if (ImeCompositionGuard.Attach(AddGroupNameBox).ShouldIgnore(e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
             e.Handled = true;

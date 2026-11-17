@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
@@ -19,11 +20,13 @@ internal static class RequestDiscoverCurrentNativeFixture
     {
         using var wire = new Handler(); using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://request-layout.invalid");
-        var api = new RequestsApi(client); var vm = new RequestsViewModel(api);
-        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(api).AddSingleton(vm)
+        using var auth = new AuthService(client, new AuthApi(client), credentialStore: null);
+        var api = new RequestsApi(client, auth); var vm = new RequestsViewModel(api);
+        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(api).AddSingleton(vm)
             .AddSingleton(new CatalogApi(client)).AddSingleton(new PeopleApi(client)).AddSingleton<SearchViewModel>()
             .AddSingleton(new NavigationService()).AddSingleton(new SettingsApi(client))
             .AddSingleton(new UICustomizationService(new SettingsApi(client)))
+            .AddSingleton(new CardOverlayService(new SettingsApi(client)))
             .AddSingleton(new ToastService()).BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var prior = field.GetValue(null); field.SetValue(null, services);
@@ -37,7 +40,7 @@ internal static class RequestDiscoverCurrentNativeFixture
             var headings = list.Children.OfType<StackPanel>().Select(row => Descendants(row).OfType<TextBlock>().FirstOrDefault()?.Text).ToArray();
             if (!headings.SequenceEqual(new[] { "Choose a genre", "Curated picks", "Channels" }))
                 throw new InvalidOperationException("Configured Discover row order/labels were lost: " + string.Join(",", headings));
-            var explore = Descendants(list).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Explore Curated picks");
+            var explore = Descendants(list).OfType<Button>().Single(button => AutomationProperties.GetName(button) == "Explore all Curated picks");
             if (explore.Visibility != Visibility.Visible) throw new InvalidOperationException("Trimmed one-page Discover row lost Explore All.");
             if (wire.Paths.Any(path => path.EndsWith("/studios"))) throw new InvalidOperationException("Hidden Studios row was requested.");
             if (!vm.BrandErrors.ContainsKey("network")) throw new InvalidOperationException("Partial brand failure was not retained.");
@@ -71,7 +74,8 @@ internal static class RequestDiscoverCurrentNativeFixture
         }
         finally
         {
-            foreach (var element in mounted) parent.Children.Remove(element);
+            foreach (var element in mounted)
+                await RequestFixtureLifecycle.DetachAsync((FrameworkElement)element, () => parent.Children.Remove(element));
             field.SetValue(null, prior);
         }
     }

@@ -342,11 +342,11 @@ public sealed class MainWindowSourceTests
         Assert.Contains("Application.Current.Resources[\"SidebarBackgroundBrush\"]", code);
         Assert.DoesNotContain("Content=\"Catalog\" Tag=\"Catalog\"", xaml);
         Assert.Contains("RefreshUserNavigationCapabilitiesAsync", code);
-        Assert.Contains("requestStatus.RequestsEnabled", code);
+        Assert.Contains("_requestsApi.ShouldShowNavigationAsync(requestStatus, cancellationToken)", code);
         Assert.Contains("capability.InApp.Enabled", code);
         Assert.Contains("NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1", code);
         Assert.Contains("_notificationUnreadCount = Math.Max(_notificationUnreadCount, unread)", code);
-        Assert.Contains("_eventChannel.Subscribe(\"notifications\", \"user_settings\", \"user_state\")", code);
+        Assert.Contains("_eventChannel.Subscribe(\"notifications\", \"user_settings\", \"user_state\", \"catalog\")", code);
         Assert.Contains("notification.created", code);
         Assert.Contains("notification.read", code);
         Assert.Contains("NotificationBelongsToSelectedProfile", code);

@@ -463,7 +463,11 @@ public sealed class RealtimeReadOwnershipTests
         var context = f.Client.CaptureContext();
         var recipient = new object();
         var messages = new List<MediaSurfaceChanged>();
-        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) =>
+        {
+            // Retain wrong/missing authority on our target and wrong targets from our backend.
+            if (message.ContentId == Series || message.Context?.BaseUrl == context.BaseUrl) messages.Add(message);
+        });
         try
         {
             await (mutation == "favorite" ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null)
@@ -499,9 +503,14 @@ public sealed class RealtimeReadOwnershipTests
         f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
         f.Wire.WriteStatus = HttpStatusCode.Forbidden;
         f.Wire.OnWrite = () => { };
+        var context = f.Client.CaptureContext();
         var recipient = new object();
         var messages = new List<MediaSurfaceChanged>();
-        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) =>
+        {
+            // Retain wrong/missing authority on our target and wrong targets from our backend.
+            if (message.ContentId == Series || message.Context?.BaseUrl == context.BaseUrl) messages.Add(message);
+        });
         try
         {
             await f.Vm.SetRatingCommand.ExecuteAsync(4);

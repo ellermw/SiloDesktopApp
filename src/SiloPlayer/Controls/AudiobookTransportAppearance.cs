@@ -64,7 +64,7 @@ internal static class AudiobookTransportAppearance
         internal static string RemainingAtSpeed(string time, double rate) => AppStrings.Get("web.audiobooks.player.timeRemainingAtSpeed",
             Args(("time", time), ("rate", Rate(rate))), fallback: $"-{time} at {Rate(rate)}");
 
-        internal static string ChapterNumber(int number) => AppStrings.Get("web.audiobooks.player.chapterNumber",
+        internal static string ChapterNumber(int number) => AppStrings.Get("web.audiobooks.chapter.fallbackTitle",
             Args(("number", number)), fallback: $"Chapter {number}");
 
         internal static string NarratedBy(string narrator) => AppStrings.Get("web.audiobooks.hero.narratedBy",

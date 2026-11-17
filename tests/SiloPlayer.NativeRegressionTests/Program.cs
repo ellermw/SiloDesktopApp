@@ -615,6 +615,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ReaderInteropFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "book-detail-parity")
+            {
+                await BookDetailParityNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "audiobook-detail-interactions")
             {
                 await AudiobookDetailInteractionsNativeFixture.RunAsync(parent);
@@ -799,6 +804,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-calendar-date")
             {
                 await CalendarDateOct20NativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "viewer-localization")
+            {
+                await ViewerLocalizationNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shell-localization")
@@ -1006,6 +1016,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdminPlaybackAuditNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-libraries")
+            {
+                await AdminLibrariesNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-subtitles")
             {
                 await AdminSubtitlesNativeFixture.RunAsync(_window);
@@ -1035,6 +1050,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-security")
             {
                 await AdminSecuritySettingsNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-search")
+            {
+                await AdminSearchSettingsNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-network-access")
@@ -1133,6 +1153,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ToastDiagnosticsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-toasts")
+            {
+                await PlaybackToastNativeFixture.RunAsync(_window, parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-dismissal")
             {
                 await HomeDismissalNativeFixture.RunAsync(parent);
@@ -1178,6 +1203,39 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "personal-lists")
             {
                 await PersonalListsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-authority-review")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                var reviewCase = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REVIEW_CASE");
+                if (reviewCase == "season-reconnect") await RequestInteractionNativeFixture.RunAsync(parent);
+                else if (reviewCase is "disabled-title" or "denied-follow" or "retained-bookmark") await ProfileRequestsNativeFixture.RunAsync(parent);
+                else if (reviewCase == "remote-profile-access") await RequestProfileAccessNativeFixture.RunAsync();
+                else await RequestViewerNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native request authority review case completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-permissions-review")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await ProfileRequestsNativeFixture.RunAsync(parent);
+                await RequestDiscoverCurrentNativeFixture.RunAsync(parent);
+                await RequestViewerNativeFixture.RunAsync(parent);
+                await RequestsLifecycleNativeFixture.RunAsync(parent);
+                await RequestInteractionNativeFixture.RunAsync(parent);
+                await RequestRemovalNativeFixture.RunAsync(parent);
+                await RequestDetailParityNativeFixture.RunAsync(parent);
+                await RequestDetailPollingNativeFixture.RunAsync(parent);
+                await RequestDetailActionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native request permission review completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-requests")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await ProfileRequestsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-removal")

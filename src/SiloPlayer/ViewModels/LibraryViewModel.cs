@@ -113,6 +113,18 @@ public partial class LibraryViewModel : ObservableObject
     [ObservableProperty]
     private int _displayTotalCount;
 
+    /// <summary>
+    /// The latest exact-count read for the current query failed or the server could
+    /// only estimate. The browse count then shows nothing instead of a stale or
+    /// estimated number (official Silo Server #4316). Cleared by the next exact count.
+    /// </summary>
+    [ObservableProperty]
+    private bool _exactCountFailed;
+
+    /// <summary>An exact-count read is in flight for the current catalog query.</summary>
+    [ObservableProperty]
+    private bool _isExactCountLoading;
+
     [ObservableProperty]
     private bool _hasMore;
 
@@ -742,7 +754,6 @@ public partial class LibraryViewModel : ObservableObject
             StartNewCatalogQuery();
             _estimatedTotalItems = estimatedTotal;
             TotalCount = estimatedTotal;
-            DisplayTotalCount = estimatedTotal;
             Items.Reset(estimatedTotal);
             SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_errors.txt",
                 $"catalog_cursor_recovery start={startIndex} count={itemCount} query_version={_queryVersion} prior_scope_retired=true retry_without_cursor=true");
@@ -800,6 +811,7 @@ public partial class LibraryViewModel : ObservableObject
         _lastVisibleEndIndex = PageSize - 1;
         TotalCount = 0;
         DisplayTotalCount = 0;
+        ExactCountFailed = false;
         HasMore = false;
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         ClearActiveWindow(notify: true);
@@ -859,6 +871,7 @@ public partial class LibraryViewModel : ObservableObject
     {
         try { _catalogQueryCts.Cancel(); } catch { }
         _catalogQueryCts.Dispose();
+        IsExactCountLoading = false;
     }
 
     private void CancelWindowLoad()
@@ -987,19 +1000,35 @@ public partial class LibraryViewModel : ObservableObject
     private async Task LoadExactCountAsync(int version, string? snapshot, CancellationToken ct)
     {
         var loadVersion = ++_exactCountLoadVersion;
+        IsExactCountLoading = true;
+        ExactCountFailed = false;
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-exact-count");
         try
         {
             var result = await FetchWindowPageAsync(0, true, snapshot, ct);
-            if (ct.IsCancellationRequested || version != _queryVersion || loadVersion != _exactCountLoadVersion || !result.TotalExact) return;
+            if (ct.IsCancellationRequested || version != _queryVersion || loadVersion != _exactCountLoadVersion) return;
+            if (!result.TotalExact)
+            {
+                // The server could only estimate: the browse count stays hidden.
+                ExactCountFailed = true;
+                return;
+            }
             ApplyExactCatalogTotal(result.Total);
             WindowLoaded?.Invoke();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch
         {
             // Keep the estimated extent and usable cards if the optional
-            // count fails; a later navigation/query can retry it.
+            // count fails; a later navigation/query can retry it. The visible
+            // count drops rather than keep a stale number.
+            if (!ct.IsCancellationRequested && version == _queryVersion && loadVersion == _exactCountLoadVersion)
+                ExactCountFailed = true;
+        }
+        finally
+        {
+            if (version == _queryVersion && loadVersion == _exactCountLoadVersion)
+                IsExactCountLoading = false;
         }
     }
 
@@ -1308,6 +1337,7 @@ public partial class LibraryViewModel : ObservableObject
             _hasExactTotal = true;
             _estimatedTotalItems = exact.Total;
             DisplayTotalCount = exact.Total;
+            ExactCountFailed = false;
             TotalCount = exact.Total;
             Items.SetCount(exact.Total);
             HasMore = exact.HasMore || _pageResponses.Keys.Any(page => !Items.IsPageLoaded(page));

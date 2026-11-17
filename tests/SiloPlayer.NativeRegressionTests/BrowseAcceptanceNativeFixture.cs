@@ -657,8 +657,7 @@ internal static class BrowseAcceptanceNativeFixture
         {
             await Wait(() => page.IsLoaded && page.ViewModel.Notifications.Count == 1 && !page.ViewModel.IsLoading && page.ViewModel.HasLoadedPreferences);
             await Layout(page, 500, 800);
-            var list = (ListView)page.FindName("NotificationsList");
-            var row = (ListViewItem)list.ContainerFromItem(page.ViewModel.Notifications[0]);
+            var row = NotificationFixtureUi.Row(page, page.ViewModel.Notifications[0].Id);
             var mark = Descendants<Button>(row).Single(button => button.Name == "InlineMarkReadButton");
             wire.FailNotificationRead = true;
             mark.Focus(FocusState.Programmatic);
@@ -693,7 +692,7 @@ internal static class BrowseAcceptanceNativeFixture
             await Capture(page, "browse-notification-recovery.png");
             Program.Log("PASS: actual native unread failure/Reload, cutoff/pending Mark all, preference320/288 popup and failed-toggle reconciliation.");
         }
-        finally { wire.FailNotificationRead = wire.FailNotificationPreference = false; wire.HoldReadAll?.TrySetResult(); wire.HoldReadAll = null; flyout?.Hide(); page.ViewModel.CancelPendingLoad(); parent.Children.Remove(page); }
+        finally { wire.FailNotificationRead = wire.FailNotificationPreference = false; wire.HoldReadAll?.TrySetResult(); wire.HoldReadAll = null; flyout?.Hide(); page.ViewModel.CancelPendingLoad(); await NotificationFixtureUi.DetachAsync(page, () => parent.Children.Remove(page)); }
     }
 
     private static async Task Wait(Func<bool> ready) { for (var count = 0; count < 200 && !ready(); count++) await Task.Delay(25); if (!ready()) throw new InvalidOperationException("Native acceptance operation did not settle."); }

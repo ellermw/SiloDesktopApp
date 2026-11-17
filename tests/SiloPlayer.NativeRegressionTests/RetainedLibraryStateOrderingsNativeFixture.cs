@@ -128,6 +128,12 @@ internal static partial class RetainedLibraryNativeFixture
                     Click("AudiobookBooksButton");
                     Require(new[] { "SortComboBox", "OrderComboBox", "OpenFiltersButton" }.All(name =>
                         ((FrameworkElement)page.FindName(name)).Visibility == Visibility.Visible), "Books axis did not restore its catalog toolbar.");
+                    // Official #4316 item count: never forced collapsed, but only a real count
+                    // is shown, and the progress ring and the number never show together.
+                    var countText = (TextBlock)page.FindName("ResultCountText");
+                    var countProgress = (FrameworkElement)page.FindName("ResultCountProgress");
+                    Require(!(countText.Visibility == Visibility.Visible && (string.IsNullOrWhiteSpace(countText.Text) || countProgress.Visibility == Visibility.Visible)),
+                        "Books axis showed an empty item count or the count beside its progress ring.");
                 }
                 else if (scenario is "access-opt-out-mounted" or "access-opt-out-detached")
                 {
@@ -321,7 +327,7 @@ internal static partial class RetainedLibraryNativeFixture
             {
                 Require(Field<string>(page!, "_currentAudiobookAxis") == audiobookAxis &&
                     ((ScrollViewer)page!.FindName("AudiobookGroupsPanel")).Visibility == Visibility.Visible &&
-                    new[] { "SortComboBox", "OrderComboBox", "OpenFiltersButton", "ResultCountText" }.All(name =>
+                    new[] { "SortComboBox", "OrderComboBox", "OpenFiltersButton", "ResultCountText", "ResultCountProgress" }.All(name =>
                         ((FrameworkElement)page.FindName(name)).Visibility == Visibility.Collapsed),
                     "Fresh/retained/refreshed audiobook groups exposed book-only catalog controls: " + audiobookAxis);
             }

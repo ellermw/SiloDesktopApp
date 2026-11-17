@@ -97,7 +97,12 @@ internal static partial class MediaLocalizationNativeFixture
                 Require(Text(episodeCarousel, "TitleText") == AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = 12 }), "Episode carousel number did not refresh");
                 Require(Text(episodeCarousel, "SubtitleText") == raw, "Episode carousel raw title changed");
                 Require(Text(episodeCarousel, "TimeLeftText") == AppStrings.Get("web.item.card.runtimeMinutes", new Dictionary<string, object?> { ["minutes"] = 44 }), "Episode carousel runtime did not refresh");
-                CheckInlineChoiceLabels(seriesFilters, "ReasonCombo", "SortCombo");
+                CheckInlineChoiceLabels(seriesFilters, "SortCombo");
+                // The reason ComboBox became WebUI-style filter tabs, including the capability-gated Muted tab.
+                var seriesTabs = ((StackPanel)seriesFilters.FindName("FilterTabs")).Children.OfType<Button>().ToArray();
+                Require(seriesTabs.Select(tab => tab.Tag as string).SequenceEqual(new[] { "all", "next_up", "favorite", "watchlist", "continue_watching", "muted" }), "Series reason filter tabs changed");
+                foreach (var tab in seriesTabs)
+                    Require(Localized.GetContent(tab) is { } tabKey && Equals(tab.Content, AppStrings.Get(tabKey)), "Series filter tab did not translate: " + tab.Tag);
                 CheckInlineChoiceLabels(favorites, "SortComboBox");
                 CheckInlineChoiceLabels(watchlist, "WatchlistScope", "SortComboBox");
                 CheckInlineChoiceLabels(search, "ResultTypeCombo", "ResultSortCombo", "ResultOrderCombo");

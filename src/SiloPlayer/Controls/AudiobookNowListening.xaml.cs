@@ -266,6 +266,10 @@ public sealed partial class AudiobookNowListening : UserControl
         return submenu;
     }
 
+    /// <summary>Official #4296: opening Now Listening starts keyboard focus on its Back control.</summary>
+    public bool FocusCollapseButton() =>
+        Visibility == Visibility.Visible && global::SiloPlayer.Helpers.NowListeningFocusScope.TryFocus(CollapseButton);
+
     private void Collapse_Click(object sender, RoutedEventArgs e) => _player.Minimize();
     private void PlayPause_Click(object sender, RoutedEventArgs e) => _player.ToggleAudiobookPlayback();
     private void PreviousChapter_Click(object sender, RoutedEventArgs e) => _player.SeekToPreviousAudiobookChapter();

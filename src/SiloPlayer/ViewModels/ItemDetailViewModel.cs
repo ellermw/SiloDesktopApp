@@ -398,7 +398,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                 .Concat(later.ViewerStateContentIds ?? new HashSet<string>()).ToHashSet(StringComparer.Ordinal),
             PlaybackStateContentIds = PlaybackScope(earlier).Concat(PlaybackScope(later)).ToHashSet(StringComparer.Ordinal),
             CatchUp = earlier.CatchUp || later.CatchUp,
-            RefreshDetails = earlier.RefreshDetails || later.RefreshDetails
+            RefreshDetails = earlier.RefreshDetails || later.RefreshDetails,
+            ReloadStructure = earlier.ReloadStructure || later.ReloadStructure
         };
 
     private async Task RefreshRemoteStateLoopAsync()
@@ -426,6 +427,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             var libraryId = LibraryId;
             var selectedSeason = SelectedSeasonNumber;
             var episodesSeasonContentId = EpisodesSeasonContentId;
+            var episodesGeneration = Volatile.Read(ref _episodesLoadGeneration);
             var revision = Volatile.Read(ref _localStateGeneration);
             using var readOwner = new CancellationTokenSource();
             var ct = readOwner.Token;
@@ -535,14 +537,21 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (!Current()) continue;
                 // LoadSeasonsAsync stays active through auto-selected episodes;
                 // its already-committed seasons still need remote count refreshes.
-                if (item.Type == "series" && (_seasonsLoaded || !IsSeasonsLoading && Seasons.Count > 0))
+                if (item.Type == "series" && (message.ReloadStructure || _seasonsLoaded || !IsSeasonsLoading && Seasons.Count > 0))
                 {
                     try
                     {
                         var seasons = await ReadRemoteStateAsync(
                             () => _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct), message.CatchUp, Current, ct);
                         if (!Current()) continue;
-                        seasonsChanged = ApplySeasonState(seasons);
+                        if (message.ReloadStructure)
+                        {
+                            Seasons.Clear();
+                            foreach (var season in seasons.Seasons) Seasons.Add(season);
+                            _seasonsLoaded = true;
+                            seasonsChanged = true;
+                        }
+                        else seasonsChanged = ApplySeasonState(seasons);
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
@@ -552,9 +561,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                 }
                 if (!Current()) continue;
                 // A named series relates its aggregate seasons, not its other episode leaves.
-                // The episode companion refreshes user data on retained rows only;
-                // navigation/season selection still owns episode list membership.
-                var refreshEpisodes = Episodes.Count > 0 && (message.CatchUp || message.ContentIds.Contains(item.ContentId)
+                // Ordinary state events only patch retained rows. Metadata refresh
+                // also reconciles membership, without changing the selected season.
+                var refreshEpisodes = (Episodes.Count > 0 || message.ReloadStructure) && (message.CatchUp || message.ContentIds.Contains(item.ContentId)
                     || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
                     || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
                     || Episodes.Any(e => message.ContentIds.Contains(e.ContentId)));
@@ -573,11 +582,21 @@ public partial class ItemDetailViewModel : ObservableObject,
                             episodes = await ReadRemoteStateAsync(
                                 () => _catalogApi.GetEpisodesAsync(item.ContentId, selectedSeason, libraryId, ct), message.CatchUp, Current, ct);
                         if (!Current()) continue;
-                        if (episodes != null && SelectedSeasonNumber == selectedSeason && EpisodesSeasonContentId == episodesSeasonContentId)
-                            foreach (var loaded in Episodes)
-                                if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { UserData: { } fresh }
-                                    && !SameUserData(loaded.UserData, fresh))
-                                { loaded.UserData = fresh; episodesChanged = true; }
+                        if (episodes != null && SelectedSeasonNumber == selectedSeason && EpisodesSeasonContentId == episodesSeasonContentId
+                            && episodesGeneration == Volatile.Read(ref _episodesLoadGeneration))
+                        {
+                            if (message.ReloadStructure)
+                            {
+                                Episodes.Clear();
+                                foreach (var episode in episodes.Episodes) Episodes.Add(episode);
+                                episodesChanged = true;
+                            }
+                            else
+                                foreach (var loaded in Episodes)
+                                    if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { UserData: { } fresh }
+                                        && !SameUserData(loaded.UserData, fresh))
+                                    { loaded.UserData = fresh; episodesChanged = true; }
+                        }
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
@@ -1331,6 +1350,31 @@ public partial class ItemDetailViewModel : ObservableObject,
             ? ReloadContainerMetadataAsync(item) : LoadAsync(contentId);
     }
 
+    /// <summary>
+    /// A remote metadata change or a finished refresh job: drops cached detail
+    /// and patches the mounted item in place for any type. Container rows are
+    /// reconciled by the owned state sweep; selections and companions stay
+    /// mounted. Returns false if the refresh did not commit.
+    /// </summary>
+    public async Task<bool> RefreshServerMetadataAsync(string contentId)
+    {
+        _detailPrefetchCache.Invalidate(contentId);
+        if (!_stateRefreshActive || IsLoading || Item is not { } item || item.ContentId != contentId) return false;
+        var context = _catalogApi.CaptureContext();
+        var libraryId = LibraryId;
+        if (!await ReloadContainerMetadataAsync(item)) return false;
+        if (item.Type is "series" or "season")
+        {
+            // Metadata refresh can discover files, including from another device.
+            // Reuse the owned sweep's write barriers for counts and row membership.
+            await RefreshMediaStateAsync(new(context, new HashSet<string>([contentId]), new HashSet<string>(),
+                CatchUp: true, ReloadStructure: true));
+            if (RemoteStateErrorMessage != null) return false;
+        }
+        return _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
+            && _catalogApi.IsCurrentContext(context);
+    }
+
     /// <summary>A same-ID Match can also change structure and the server play target.</summary>
     public async Task ReloadAfterMatchAsync(string contentId)
     {
@@ -1356,7 +1400,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         Episodes.Clear();
     }
 
-    private async Task ReloadContainerMetadataAsync(MediaItemDetail item)
+    private async Task<bool> ReloadContainerMetadataAsync(MediaItemDetail item)
     {
         _metadataLoadCts?.Cancel();
         using var owner = new CancellationTokenSource();
@@ -1371,7 +1415,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             var fresh = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, owner.Token);
-            if (!Current()) return;
+            if (!Current() || fresh.ContentId != item.ContentId) return false;
             // Metadata polling/editing must not retire companion reads, selected
             // rows, or newer local/remote viewer state. Keep the mounted snapshot
             // identity too: initial companion reads may still be using it.
@@ -1414,6 +1458,9 @@ public partial class ItemDetailViewModel : ObservableObject,
             item.LockedFields = fresh.LockedFields;
             item.Videos = fresh.Videos;
             item.Extras = fresh.Extras;
+            item.Audiobook = fresh.Audiobook;
+            item.Ebook = fresh.Ebook;
+            item.Manga = fresh.Manga;
             item.ReleaseDate = fresh.ReleaseDate;
             item.FirstAirDate = fresh.FirstAirDate;
             item.LastAirDate = fresh.LastAirDate;
@@ -1440,12 +1487,12 @@ public partial class ItemDetailViewModel : ObservableObject,
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
             OnPropertyChanged(nameof(RatingDisplay));
-            completed = true;
+            completed = Current();
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (!Current()) return;
+            if (!Current()) return false;
             LocalLog.AppendException("state_trace.txt", ex, "container_metadata_refresh");
             SetLocalizedMessage(nameof(MetadataRefreshErrorMessage), () => "Silo couldn't refresh this item's metadata. Displayed information may be out of date.", value => MetadataRefreshErrorMessage = value);
         }
@@ -1459,6 +1506,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 _metadataLoadCts = null;
             }
         }
+        return completed;
     }
 
     private async Task CheckFavoriteWatchlistAsync(string contentId, CancellationTokenSource owner)

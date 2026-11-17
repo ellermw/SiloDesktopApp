@@ -10,7 +10,14 @@ public readonly record struct CardOverlayGeometry(
     double StackGap)
 {
     public const double PosterReferenceWidth = 185;
+    /// <summary>
+    /// Extra space bottom badge corners keep above a watch-progress bar along the artwork's
+    /// bottom edge (added to <see cref="EdgeInset"/>). Top corners never move for it.
+    /// </summary>
+    public const double ProgressBarClearance = 8;
     public double WatchStatusSize => 22 * Scale;
+
+    public static double ProgressClearance(bool progressBarVisible) => progressBarVisible ? ProgressBarClearance : 0;
 
     public static CardOverlayGeometry ForPoster(double cardWidth, string preset = "classic")
     {

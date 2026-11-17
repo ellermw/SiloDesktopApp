@@ -239,7 +239,7 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("ElementPrepared=\"ExternalRequestCard_Prepared\"", pageXaml);
         Assert.Contains("ExternalTitleCard.Build(item", pageCode);
         var sharedCard = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");
-        Assert.Contains("if (pending) return", sharedCard);
+        Assert.Contains("if (pending || !CanDiscover()) return", sharedCard);
         Assert.Contains("finally { pending = false", sharedCard);
         Assert.DoesNotContain("await ViewModel.RequestOutsideTitleAsync(item)", pageCode);
         Assert.Contains("_requestsApi.CreateAsync(new()", viewModel);

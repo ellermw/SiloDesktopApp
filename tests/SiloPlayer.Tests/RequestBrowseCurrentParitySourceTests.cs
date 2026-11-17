@@ -27,7 +27,7 @@ public sealed class RequestBrowseCurrentParitySourceTests
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "RequestBrowsePage.xaml.cs");
         var sharedCard = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");
         Assert.Contains("ExternalTitleCard.Build", page);
-        Assert.Contains("if (pending) return", sharedCard);
+        Assert.Contains("if (pending || !CanDiscover()) return", sharedCard);
         Assert.Contains("finally { pending = false; button.IsEnabled = true; button.Content = NormalContent(); MediaItemCardActions.BindText(button, \"Name\"", sharedCard);
         Assert.Contains("ToastService>().Error", sharedCard);
     }

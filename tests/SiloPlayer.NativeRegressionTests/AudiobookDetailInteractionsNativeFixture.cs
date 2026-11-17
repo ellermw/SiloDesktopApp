@@ -71,7 +71,7 @@ internal static class AudiobookDetailInteractionsNativeFixture
             await UntilAsync(() => !VisualTreeHelper.GetOpenPopupsForXamlRoot(parent.XamlRoot).Any(popup => Descendants(popup.Child).Contains(alternate!)));
 
             var settingsFlyout = (Flyout)typeof(PlayerService).Assembly.GetType("SiloPlayer.Controls.AudiobookSettingsFlyout")!.GetMethod("Create")!.Invoke(null, [player, settings])!;
-            settingsFlyout.ShowAt((FrameworkElement)page.FindName("PrimaryPlayButton"));
+            settingsFlyout.ShowAt((FrameworkElement)page.FindName("AudiobookListenButton"));
             var panel = (StackPanel)settingsFlyout.Content;
             await UntilAsync(() => panel.IsLoaded && panel.ActualWidth > 0 && panel.ActualHeight > 0);
             var intervalRows = panel.Children.OfType<StackPanel>().Where(row => row.Children.OfType<WrapPanel>().Any()).ToArray();
@@ -148,17 +148,17 @@ internal static class AudiobookDetailInteractionsNativeFixture
                 throw;
             }
             Invoke(page, "UpdateActiveAudiobook");
-            Program.Log($"TRACE active narration: item={page.ViewModel.Item?.ContentId}/{page.ViewModel.Item?.Type}, player={player.ContentId}/{player.State}, audio={player.IsAudiobook}, paused={player.IsPaused}, attached={ReferenceEquals(typeof(ItemDetailPage).GetField("_playerService", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page),player)}, button={((TextBlock)page.FindName("PlayButtonText")).Text}, progress={((FrameworkElement)page.FindName("BookProgressSummaryText")).Visibility}");
-            if (((TextBlock)page.FindName("PlayButtonText")).Text != "Pause" || ((FrameworkElement)page.FindName("BookProgressSummaryText")).Visibility != Visibility.Visible)
+            Program.Log($"TRACE active narration: item={page.ViewModel.Item?.ContentId}/{page.ViewModel.Item?.Type}, player={player.ContentId}/{player.State}, audio={player.IsAudiobook}, paused={player.IsPaused}, attached={ReferenceEquals(typeof(ItemDetailPage).GetField("_playerService", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page),player)}, button={((TextBlock)page.FindName("AudiobookListenText")).Text}, progress={((FrameworkElement)page.FindName("AudiobookProgressPanel")).Visibility}");
+            if (((TextBlock)page.FindName("AudiobookListenText")).Text != "Pause" || ((FrameworkElement)page.FindName("AudiobookProgressPanel")).Visibility != Visibility.Visible)
                 throw new InvalidOperationException("Active audiobook detail does not show Pause and current progress.");
-            var play = (Button)page.FindName("PrimaryPlayButton");
-            if (play.Visibility != Visibility.Visible || ((FrameworkElement)page.FindName("SplitPlayButton")).Visibility != Visibility.Visible)
+            var play = (Button)page.FindName("AudiobookListenButton");
+            if (play.Visibility != Visibility.Visible || ((FrameworkElement)page.FindName("AudiobookSidePanel")).Visibility != Visibility.Visible)
                 throw new InvalidOperationException("Active audiobook transport is not visible.");
             ((IInvokeProvider)new ButtonAutomationPeer(play).GetPattern(PatternInterface.Invoke)).Invoke();
-            await UntilAsync(() => (bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && ((TextBlock)page.FindName("PlayButtonText")).Text == "Resume");
+            await UntilAsync(() => (bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && ((TextBlock)page.FindName("AudiobookListenText")).Text == "Resume");
             await MediaParityNativeFixture.CaptureAsync(page, "media-audiobook-active-paused.png");
             ((IInvokeProvider)new ButtonAutomationPeer(play).GetPattern(PatternInterface.Invoke)).Invoke();
-            await UntilAsync(() => !(bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && ((TextBlock)page.FindName("PlayButtonText")).Text == "Pause");
+            await UntilAsync(() => !(bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && ((TextBlock)page.FindName("AudiobookListenText")).Text == "Pause");
             if (handler.Calls != 0) throw new InvalidOperationException("Active audiobook detail starts a new remote playback request.");
             mpv.GetType().GetEvent("PauseChanged")!.RemoveEventHandler(mpv, pauseChanged);
             mpv.GetType().GetEvent("PositionChanged")!.RemoveEventHandler(mpv, positionChanged);

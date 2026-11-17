@@ -1,29 +1,12 @@
 using System.Globalization;
-using System.Runtime.CompilerServices;
-using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Notifications;
-using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class NotificationsPage
 {
-    private static readonly ConditionalWeakTable<Grid, IDisposable> LocalizedRows = new();
-
-    private static void RegisterNotificationRow(Grid row) => LocalizedRows.GetValue(row,
-        element => AppLocalization.Register(element, () => UpdateNotificationRow(element)));
-
-    private void RefreshNotificationRows()
-    {
-        void Refresh(DependencyObject element)
-        {
-            if (element is Grid row && row.DataContext is AppNotification) UpdateNotificationRow(row);
-            for (var index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++)
-                Refresh(VisualTreeHelper.GetChild(element, index));
-        }
-        Refresh(NotificationsList);
-    }
+    private void RefreshNotificationRows() => RenderInbox();
 
     private static string NotificationTitle(AppNotification item) => item.Type switch
     {
@@ -71,15 +54,5 @@ public sealed partial class NotificationsPage
         return age < TimeSpan.FromDays(7)
             ? AppStrings.Get(key, new Dictionary<string, object?> { [argument] = Math.Max(1, (int)Math.Round(count)).ToString(AppStrings.FormatCulture) })
             : SiloPlayer.Helpers.DateTimeDisplay.FormatDate(created, medium: true);
-    }
-
-    private static List<string> NotificationReasons(AppNotification item)
-    {
-        var labels = new List<string>();
-        if (item.ReasonFlags.Favorite) labels.Add(AppStrings.Get("web.notifications.reason.favorite"));
-        if (item.ReasonFlags.Watchlist) labels.Add(AppStrings.Get("web.notifications.reason.watchlist"));
-        if (item.ReasonFlags.ContinueWatching) labels.Add(AppStrings.Get("web.notifications.reason.continueWatching"));
-        if (item.ReasonFlags.NextUp) labels.Add(AppStrings.Get("web.notifications.reason.nextUp"));
-        return labels;
     }
 }
