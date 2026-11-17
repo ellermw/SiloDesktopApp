@@ -364,6 +364,78 @@ public sealed class AdminMaintenanceTests
         }
     }
 
+    public static IEnumerable<object[]> NonObjectCommandErrors()
+    {
+        foreach (var status in new[] { 408, 500, 503 })
+            foreach (var body in new[] { "[]", "null", "\"error\"", "42", "true", "false" })
+                yield return [status, body];
+    }
+
+    [Theory]
+    [MemberData(nameof(NonObjectCommandErrors))]
+    public async Task NonObjectCommandErrorsPreserveTheirHttpStatus(int status, string body)
+    {
+        var (kit, authority, api, server) = Setup();
+        using (kit) using (authority)
+        {
+            using var lease = authority.Capture();
+            server.Override = _ => Task.FromResult<HttpResponseMessage?>(AdminMonitorKit.Json(body, (HttpStatusCode)status));
+            var error = await Assert.ThrowsAsync<ApiException>(() => api.CreateExportJobAsync(lease));
+            Assert.Equal(status, error.StatusCode);
+            Assert.Equal("unknown", error.ErrorCode);
+            Assert.Equal($"HTTP {status}", error.Message);
+            Assert.Single(Posts(kit));
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(NonObjectCommandErrors))]
+    public async Task NonObjectCommandErrorsRemainUnknownAndNeverReplay(int status, string body)
+    {
+        foreach (var command in new[] { "export", "publish", "queuedImport", "synchronousImport" })
+        {
+            var (kit, authority, controller, server) = Create();
+            using (kit) using (authority) using (controller)
+            {
+                server.Override = request => Task.FromResult<HttpResponseMessage?>(request.RequestUri!.PathAndQuery == ExportsRead.Split(' ')[1]
+                    ? AdminMonitorKit.Json(Page(null, Job("done"))) : null);
+                await controller.OpenAsync();
+                var notices = new List<AdminMaintenanceNotice>();
+                controller.Notice += notices.Add;
+                server.Override = request => Task.FromResult<HttpResponseMessage?>(request.Method == HttpMethod.Post
+                    ? AdminMonitorKit.Json(body, (HttpStatusCode)status) : null);
+
+                if (command == "export") await controller.StartExportAsync();
+                else if (command == "publish") await controller.PublishAsync("done");
+                else
+                {
+                    controller.SetDialogOpen(true);
+                    controller.EditDraft(draft => draft with
+                    {
+                        Execution = command == "queuedImport" ? AdminCatalogImportExecution.Queued : AdminCatalogImportExecution.Synchronous,
+                    });
+                    await controller.SubmitImportAsync();
+                    Assert.True(controller.State.ImportOutcomeUnknown);
+                    Assert.False(controller.State.CanSubmitImport);
+                    Assert.True(controller.Api.HasUnconfirmedImport(controller.State.Owner!));
+                    await controller.SubmitImportAsync();
+                    controller.SetDialogOpen(false);
+                    controller.SetDialogOpen(true);
+                    Assert.True(controller.State.ImportOutcomeUnknown);
+                    Assert.False(controller.State.CanSubmitImport);
+                    await controller.SubmitImportAsync();
+                }
+
+                Assert.Single(Posts(kit));
+                Assert.Equal(AdminMaintenanceNoticeKind.Warning, Assert.Single(notices).Kind);
+                Assert.False(controller.State.AnyCommandPending);
+                Assert.Equal(command is "export" or "publish" ? 2 : 1, Count(kit, ExportsRead));
+                Assert.Equal(command == "queuedImport" ? 2 : 1, Count(kit, ImportsRead));
+                Assert.Equal(1, Count(kit, HistoryRead));
+            }
+        }
+    }
+
     [Fact]
     public async Task AConflictAdoptsOnlyTheJobItsLocationNames()
     {
