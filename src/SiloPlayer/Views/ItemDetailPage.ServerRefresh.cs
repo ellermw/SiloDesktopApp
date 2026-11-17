@@ -76,7 +76,7 @@ public sealed partial class ItemDetailPage
         var navigation = _navigationCts;
         var scroll = ContentScroll.VerticalOffset;
         var focused = XamlRoot is { } root ? FocusManager.GetFocusedElement(root) as Control : null;
-        var applied = await ViewModel.RefreshServerMetadataAsync(contentId);
+        var applied = await ViewModel.RefreshServerMetadataAsync(contentId, structural);
         if (token.IsCancellationRequested || !watch.IsActive || !ReferenceEquals(_serverMetadataWatch, watch)
             || !ReferenceEquals(_navigationCts, navigation)
             || !string.Equals(_currentContentId, contentId, StringComparison.Ordinal))

@@ -410,7 +410,8 @@ public static class MediaItemMenu
         foreach (var change in MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId))
             hub?.NotifyItemChanged(change.ContentId, change.Structural);
         WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-            MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
+            MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId,
+            context: maintenanceApi.CaptureContext()));
     }
 
     private static async Task ShowMatchItemDialogAsync(

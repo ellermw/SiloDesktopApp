@@ -60,6 +60,7 @@ public sealed partial class CatalogPage : Page,
     private string? _initialGenre;
     private string? _snapshot;
     private int? _retainedSectionWindowSize;
+    private bool _retainedMetadataRefresh;
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<QueryRule> _advancedRules = [];
     private bool _advancedMode;
@@ -270,9 +271,27 @@ public sealed partial class CatalogPage : Page,
     public void Receive(MediaSurfaceChanged message)
     {
         var visit = _navigationCts;
+        var context = message.Context ?? _api.CaptureContext();
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (visit == null || visit.IsCancellationRequested || visit != _navigationCts) return;
+            if (visit == null || visit.IsCancellationRequested || visit != _navigationCts
+                || !_api.IsCurrentContext(context)) return;
+            if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed)
+            {
+                // Requery even if the old ID is absent: a refresh can merge or
+                // rematch it, or change membership of this filtered catalog.
+                _debounce?.Stop();
+                var timer = _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+                timer.Tick += async (_, _) =>
+                {
+                    timer.Stop();
+                    if (!ReferenceEquals(_debounce, timer) || visit.IsCancellationRequested || visit != _navigationCts
+                        || !_api.IsCurrentContext(context)) return;
+                    await LoadCatalogAsync(true, Math.Max(PageSize, _items.Count), refreshMetadata: true);
+                };
+                timer.Start();
+                return;
+            }
             if (message.Kind == MediaSurfaceChangeKind.HomeDismissed)
             {
                 _pendingUndoDismissals.Remove(message.ContentId, out var applied);
@@ -699,7 +718,7 @@ public sealed partial class CatalogPage : Page,
 
     private Task LoadAsync(bool reset) => LoadCatalogAsync(reset);
 
-    private async Task LoadCatalogAsync(bool reset, int? retainedWindowSize = null)
+    private async Task LoadCatalogAsync(bool reset, int? retainedWindowSize = null, bool refreshMetadata = false)
     {
         if (_queryFilters?.IsValid == false) return;
         if (_undoBusy)
@@ -716,6 +735,7 @@ public sealed partial class CatalogPage : Page,
         {
             reset = true;
             retainedWindowSize = _retainedSectionWindowSize;
+            refreshMetadata = _retainedMetadataRefresh;
         }
         if (reset)
         {
@@ -725,6 +745,7 @@ public sealed partial class CatalogPage : Page,
             _snapshot = null;
             _sectionPrefixStale = false;
             _retainedSectionWindowSize = retainedWindowSize;
+            _retainedMetadataRefresh = refreshMetadata;
             if (retainedWindowSize == null)
             {
                 _offset = 0;
@@ -736,6 +757,7 @@ public sealed partial class CatalogPage : Page,
         if (_loadCts == null) _loadCts = new CancellationTokenSource();
         var generation = Volatile.Read(ref _loadGeneration);
         var loadToken = _loadCts.Token;
+        var context = _api.CaptureContext();
         _loading = true;
         var initialLoad = reset && retainedWindowSize == null && _items.Count == 0;
         CatalogLoadingRepeater.Visibility = initialLoad ? Visibility.Visible : Visibility.Collapsed;
@@ -783,7 +805,7 @@ public sealed partial class CatalogPage : Page,
                 queryGroupsMatch: _catalogQuery.Match,
                 ct: loadToken);
             var response = await ReadWindowAsync(retainedWindowSize == null ? _offset : 0, PageSize, _snapshot);
-            if (generation != Volatile.Read(ref _loadGeneration)) return;
+            if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
             if (retainedWindowSize is { } windowSize)
             {
                 var refreshed = new List<MediaItem>(response.Items);
@@ -792,7 +814,7 @@ public sealed partial class CatalogPage : Page,
                 {
                     response = await ReadWindowAsync(refreshed.Count,
                         Math.Min(PageSize, windowSize - refreshed.Count), response.Snapshot);
-                    if (generation != Volatile.Read(ref _loadGeneration)) return;
+                    if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
                     refreshed.AddRange(response.Items);
                 }
                 response.Items = refreshed;
@@ -816,7 +838,13 @@ public sealed partial class CatalogPage : Page,
                         _items[existingIndex].ContentId, item.ContentId, StringComparison.OrdinalIgnoreCase))
                         existingIndex++;
                     if (existingIndex == _items.Count) _items.Insert(index, item);
-                    else if (existingIndex != index) _items.Move(existingIndex, index);
+                    else
+                    {
+                        if (existingIndex != index) _items.Move(existingIndex, index);
+                        // Matching IDs do not imply unchanged title/artwork. Replace
+                        // the card snapshot for an explicit metadata reread.
+                        if (refreshMetadata) _items[index] = item;
+                    }
                 }
                 while (_items.Count > response.Items.Count) _items.RemoveAt(_items.Count - 1);
                 _selectedIds.IntersectWith(_items.Select(item => item.ContentId));
@@ -825,6 +853,7 @@ public sealed partial class CatalogPage : Page,
             _snapshot = response.Snapshot ?? _snapshot;
             _offset = retainedWindowSize != null ? response.Items.Count : _offset + response.Items.Count;
             _retainedSectionWindowSize = null;
+            _retainedMetadataRefresh = false;
             _hasMore = response.HasMore || _offset < response.Total;
             _totalItems = response.Total;
             SiloPlayer.Controls.MediaItemCardActions.BindText(CountText, "Text", element => element.Text = _totalItems.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));

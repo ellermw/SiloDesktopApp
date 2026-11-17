@@ -90,8 +90,8 @@ public static class MetadataRefreshFollow
 
     /// <summary>
     /// The items whose open detail pages reread after a refresh from a card, which has no page of
-    /// its own to reload. Only a finished job changed anything; every ID the refresh touched is named,
-    /// and the refreshed item itself may have gained files.
+    /// its own to reload. Every ID the refresh touched is named; the original item and explicit
+    /// refresh/replacement destinations may have gained files, but an ancestor is metadata-only.
     /// </summary>
     public static IReadOnlyList<MetadataRefreshChange> ChangedItems(
         MaintenanceJobWaitResult result, string contentId, string mode, string? type, string? seriesId)
@@ -103,9 +103,13 @@ public static class MetadataRefreshFollow
             return InvalidatedIds(new MaintenanceJobWaitResult(result.Outcome), contentId, type, seriesId)
                 .Select(id => new MetadataRefreshChange(id, mode == "complete" && string.Equals(id, contentId, StringComparison.Ordinal)))
                 .ToArray();
-        var structural = mode == "complete" || result.Job?.ItemResult?.NewFiles > 0;
+        var item = result.Job?.ItemResult;
+        var structural = mode == "complete" || item?.NewFiles > 0;
         return InvalidatedIds(result, contentId, type, seriesId)
-            .Select(id => new MetadataRefreshChange(id, structural && string.Equals(id, contentId, StringComparison.Ordinal)))
+            .Select(id => new MetadataRefreshChange(id, structural && (
+                string.Equals(id, contentId, StringComparison.Ordinal)
+                || string.Equals(id, item?.RefreshContentId, StringComparison.Ordinal)
+                || string.Equals(id, item?.DetailContentId, StringComparison.Ordinal))))
             .ToArray();
     }
 

@@ -2208,8 +2208,8 @@ public sealed partial class ItemDetailPage : Page
             if (ViewModel.Item?.ContentId != item.ContentId) return;
             if (progress.Progress > 0)
             {
-                _readerTargetFileId = progress.FileId;
-                _selectedVersion = item.Versions.FirstOrDefault(v => v.FileId == progress.FileId) ?? _selectedVersion;
+                _selectedVersion = ChooseReadableBookVersion(item.Versions, progress.FileId);
+                _readerTargetFileId = _selectedVersion?.FileId;
                 SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.continueReading") + "  " + Math.Clamp(progress.Progress, 0, 1).ToString("P0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));
                 _playProgressFraction = Math.Clamp(progress.Progress, 0, 1);
                 UpdatePlayProgressWidth();
