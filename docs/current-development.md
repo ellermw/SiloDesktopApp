@@ -1,3 +1,40 @@
+# November 17 — Admin Monitor corrections verified for Beta submission
+
+The Monitor worktree `t3-34a4a55a-46179de38e52767b` is based on exact Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`, unchanged version
+`1.2.1181-beta.1` / `1.2.1180.1`. Official WebUI pin
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` defines custom Admin branding,
+Activity reasons/bitrate/details and retained IP Lookup, Concurrent streams
+presentations, and the confirmed Dashboard/Logs catalog changes in this increment.
+Other Admin families and pipeline-owned Now Playing/Plugin Apps workflows remain
+separate; no version stamp or installed-player change is included.
+
+Observed final verification: r7 fresh nonincremental units **562 focused / 8,057
+full**, zero failures/skips; r8 **527** affected/source-reading cases, app build
+and publish passed with unchanged sealed unit inputs. All eight native groups
+completed in r11 against the exact rehashed r8 product: Activity corrections,
+shell branding, Concurrent streams, Monitor, Dashboard, Logs, Manage foundation
+and Configure General. Product/reference/host DLL/PDB/PRI equality, source/PDB
+proofs and the final **2,315-file** source seal passed. Wide/compact changed-state
+captures were inspected. Review corrections cover the observed Lookup COM crash,
+cached route variation, menu-only termination, and bounded shared image transfers;
+the final bounded independent recheck reported no findings.
+
+Final actual lease: ACQ `2026-11-17T12:49:55.3843759Z`, REL
+`2026-11-17T12:52:27.7185261Z`, PID 44140. No owned runtime or mutex waiter
+remains. Inclusive preflight **27.9610 GiB** stays below the 50 GiB cap and both
+drives exceed the free-space floor. Outputs/evidence reuse
+`D:/SiloPlayer-build/admin-completion-monitor`; earlier payloads and receipts
+remain preserved. See the [scoped verification record](parity/2026-11-17-admin-monitor-completion.md)
+for per-group counts, fixture-only continuations and exact provenance.
+
+This is a verified coordinator Beta-submission candidate, not a stable release.
+Live-server interoperability, all DPI/themes/locales, IME/Narrator and complete
+visual parity remain uncertified. Installed player PID 39668 and settings remain
+untouched. Source/evidence are retained for the Beta pipeline handoff.
+
+---
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
