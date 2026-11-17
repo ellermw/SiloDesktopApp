@@ -1,0 +1,10 @@
+diff --git a/src/SiloPlayer.Core/Services/Admin/Users/AdminUserAvatarImages.cs b/src/SiloPlayer.Core/Services/Admin/Users/AdminUserAvatarImages.cs
+--- a/src/SiloPlayer.Core/Services/Admin/Users/AdminUserAvatarImages.cs
++++ b/src/SiloPlayer.Core/Services/Admin/Users/AdminUserAvatarImages.cs
+@@ -25,5 +25,5 @@
+         if (parts.Length != 3 || parts[0] != "dicebear" || !AdminUserAvatars.Styles.Contains(parts[1]) || string.IsNullOrWhiteSpace(parts[2]) || parts[2].Length > 256)
+             throw new ArgumentException("Only a known profile preset can be previewed.");
+-        return new Uri("https://api.dicebear.com/9.x/" + parts[1] + "/svg?seed=" + Uri.EscapeDataString(parts[2]) + "&size=128&radius=24&backgroundType=gradientLinear");
++        return new Uri("https://wrong-preview.invalid/9.x/" + parts[1] + "/svg?seed=" + Uri.EscapeDataString(parts[2]) + "&size=128&radius=24&backgroundType=gradientLinear");
+     }
+ 
