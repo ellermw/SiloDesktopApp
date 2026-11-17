@@ -20,6 +20,23 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
 
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
+
+    /// <summary>
+    /// Reads an admin job (<c>GET /api/v2/admin/jobs/{id}</c>) for the account and
+    /// profile that started it. Bound to identity rather than the request context,
+    /// so a transport catch-up or socket rebind does not end a wait; a sign-out or
+    /// account, profile or server switch does.
+    /// </summary>
+    public async Task<MaintenanceJobRead> GetJobAsync(ApiIdentityContext identity, string jobId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
+        EnsureSecureBaseUrl();
+        var (job, retryAfter) = await client.SendIdentityBoundReadWithRetryAfterAsync<MaintenanceJobStatus>(identity,
+            $"/api/v2/admin/jobs/{Uri.EscapeDataString(jobId)}", ct).ConfigureAwait(false);
+        return new MaintenanceJobRead(job ?? new MaintenanceJobStatus(), retryAfter);
+    }
 
     public async Task<MetadataResetCapability> GetResetCapabilityAsync(ApiRequestContext owner, CancellationToken ct = default)
     {

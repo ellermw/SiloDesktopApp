@@ -384,6 +384,7 @@ public partial class App : Application
         AdminConfigureServices.Add(services);
         services.AddAdminPlaybackAudit();
         services.AddAdminSubtitleFiles();
+        services.AddAdminUsers();
         services.AddAdminLibraries();
 
         services.AddSingleton<LogsStreamClient>();
@@ -417,6 +418,9 @@ public partial class App : Application
                 isCurrentIdentity: provider.GetRequiredService<SiloApiClient>().IsCurrentIdentityContext);
             return cache;
         });
+        // Remote catalog item changes: drop cached detail and refresh an open detail page.
+        services.AddSingleton(provider => new DetailMetadataChangeHub(
+            provider.GetRequiredService<ItemDetailPrefetchCache>()));
         services.AddSingleton<EpisodeSpoilerPreferences>();
 
         // Player service (owns mpv lifecycle, not tied to page navigation)

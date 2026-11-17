@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
+    <Compile Include="..\..\src\SiloPlayer\Services\ToastHostPlacement.cs" Link="Production\ToastHostPlacement.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackQualityMenuModel.cs" Link="Production\PlaybackQualityMenuModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\PlaybackMenus\PlaybackSpeedMenuModel.cs" Link="Production\PlaybackSpeedMenuModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\PlayerService.OscLocalization.cs" Link="Production\PlayerService.OscLocalization.cs" />
@@ -53,6 +54,7 @@
     <Compile Include="..\..\src\SiloPlayer\Helpers\ServerOriginDisplay.cs" Link="Production\ServerOriginDisplay.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\LibraryResultCount.cs" Link="Production\LibraryResultCount.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\InviteDeepLink.cs" Link="Production\InviteDeepLink.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Helpers\ReversibleInertness.cs" Link="Production\ReversibleInertness.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\EbookPackageExtractor.cs" Link="Production\EbookPackageExtractor.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\CardOverlayService.cs" Link="Production\CardOverlayService.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\UICustomizationService.cs" Link="Production\UICustomizationService.cs" />

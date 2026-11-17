@@ -374,6 +374,32 @@ public sealed class ItemDetailPrefetchCache
         CancelAll(cancel);
     }
 
+    /// <summary>
+    /// Drops every library scope of the item when the cache holds one, after a
+    /// remote catalog change (another device's metadata save, a refresh job).
+    /// A consumer still awaiting a dropped request reads again, as with
+    /// <see cref="Invalidate"/>. Unlike that, an uncached item records nothing,
+    /// so a scan's stream of catalog events cannot grow the per-item marks.
+    /// </summary>
+    public bool InvalidateCached(string? contentId)
+    {
+        if (string.IsNullOrWhiteSpace(contentId)) return false;
+        List<CancellationTokenSource>? cancel = null;
+        var removed = false;
+        lock (_sync)
+        {
+            EnsureCurrentContext(ref cancel);
+            foreach (var entry in _entries.Values.Where(candidate => candidate.Key.ContentId == contentId).ToList())
+            {
+                RemoveEntryLocked(entry, ref cancel);
+                removed = true;
+            }
+            if (removed) _invalidatedAt[contentId] = ++_sequence;
+        }
+        CancelAll(cancel);
+        return removed;
+    }
+
     public void Clear()
     {
         List<CancellationTokenSource>? cancel = null;

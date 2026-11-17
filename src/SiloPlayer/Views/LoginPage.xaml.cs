@@ -3,6 +3,8 @@ using SiloPlayer.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Automation;
+using System.Runtime.CompilerServices;
 using SiloPlayer.Core.Models;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -16,11 +18,14 @@ public sealed partial class LoginPage : Page
     public LoginViewModel ViewModel { get; }
     private ServerEntry? _server;
     private CancellationTokenSource? _appearanceCancellation;
+    private readonly ConditionalWeakTable<Button, IDisposable> _oauthProviderText = new();
 
     public LoginPage()
     {
         ViewModel = App.Services.GetRequiredService<LoginViewModel>();
         this.InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not submit the sign-in.
+        ImeCompositionGuard.Attach(UsernameBox);
         AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); RefreshDeviceAddress(); });
         ViewModel.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ViewModel.DeviceSession)) RefreshDeviceAddress(); };
         PasswordReveal.WrapInParent(PasswordBox, LoginPasswordGroup);
@@ -122,12 +127,33 @@ public sealed partial class LoginPage : Page
 
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // The password box has no composition events; only the username TextBox can compose.
+        if (sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter && ViewModel.LoginCommand.CanExecute(null))
         {
             // Sync password from PasswordBox since PasswordBox two-way binding needs explicit sync
             ViewModel.Password = PasswordBox.Password;
             ViewModel.LoginCommand.Execute(null);
         }
+    }
+
+    private void AuthProviderButton_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        if (!_oauthProviderText.TryGetValue(button, out _))
+            _oauthProviderText.Add(button, AppLocalization.Register(button, () => RefreshAuthProviderText(button)));
+        else
+            RefreshAuthProviderText(button);
+    }
+
+    private static void RefreshAuthProviderText(Button button)
+    {
+        if (button.Tag is not AuthProvider provider || button.Content is not Grid content) return;
+        var label = content.Children.OfType<TextBlock>().Single();
+        var text = AppStrings.Get("signIn.withProvider", new Dictionary<string, object?> { ["provider"] = provider.DisplayName },
+            fallback: "Sign in with " + provider.DisplayName);
+        label.Text = text;
+        AutomationProperties.SetName(button, text);
     }
 
     private async void AuthProviderButton_Click(object sender, RoutedEventArgs e)
