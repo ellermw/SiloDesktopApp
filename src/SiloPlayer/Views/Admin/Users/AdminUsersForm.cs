@@ -113,7 +113,10 @@ internal sealed class AdminUsersForm : IDisposable
                     _read[key] = () =>
                     {
                         if (key == "pin") AdminUserAvatars.ValidateEditorPin(password.Password);
-                        return JsonValue.Create(password.Password);
+                        var entered = JsonValue.Create(password.Password);
+                        // Validate before sparse-update comparison can discard an unchanged blank password.
+                        if (key == "password") AdminUsersContract.ValidateValue(key, definition, entered);
+                        return entered;
                     };
                     block.Children.Add(password);
                 }

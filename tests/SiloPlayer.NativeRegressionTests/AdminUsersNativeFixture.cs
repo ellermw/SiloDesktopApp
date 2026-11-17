@@ -233,9 +233,18 @@ internal static class AdminUsersNativeFixture
                 var password = Descendants((DependencyObject)passwordDialog.Content).OfType<PasswordBox>().Single();
                 var requirement = Descendants((DependencyObject)passwordDialog.Content).OfType<ComboBox>().Single();
                 Check((requirement.SelectedItem as ComboBoxItem)?.Tag is JsonValue initialRequirement && initialRequirement.GetValue<bool>(), "Set password initially selects temporary password");
-                password.Password = "Synthetic-Fixture-Password-1!";
                 if (!requirePasswordChange)
                     requirement.SelectedItem = requirement.Items.OfType<ComboBoxItem>().Single(item => item.Tag is JsonValue value && !value.GetValue<bool>());
+                foreach (var invalidPassword in new[] { "", "short" })
+                {
+                    password.Password = invalidPassword;
+                    await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                    await SettledAsync(() => passwordDialog.IsPrimaryButtonEnabled && passwordDialog.IsSecondaryButtonEnabled &&
+                        Descendants((DependencyObject)passwordDialog.Content).OfType<TextBlock>().Any(text => text.Text == "password: invalid length."));
+                    Check(ReferenceEquals(Field(users, "_dialog"), passwordDialog) && server.Writes == writesBeforePassword && server.PasswordRequirements.IsEmpty,
+                        "blank or short password keeps the editor open with a validation error and no mutation, temporary=" + requirePasswordChange);
+                }
+                password.Password = "Synthetic-Fixture-Password-1!";
                 await InvokeAsync(DialogButton(window, "PrimaryButton"));
                 await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
                 Check(server.PasswordRequirements.TryDequeue(out var sentRequirement) && sentRequirement == requirePasswordChange,
