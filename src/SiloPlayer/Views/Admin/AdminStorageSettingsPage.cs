@@ -74,7 +74,8 @@ public sealed partial class AdminStorageSettingsPage : Page, IAdminGutterScrollP
     private bool _active, _navigated, _syncing, _opening, _hostVisible = true, _hostFocused = true;
 
     public FrameworkElement ScrollContent => _scrollContent;
-    public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true;
+    public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true ||
+        _controller?.State is { Owner.IsCurrent: true } state && (state.Saving || state.Queuing);
     public AdminStorageSettingsController? Controller => _controller;
     /// <summary>The open transition review dialog, if any (native fixtures await its Closed event).</summary>
     public ContentDialog? ReviewDialog => _review;

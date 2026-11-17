@@ -12,6 +12,7 @@ using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using SiloPlayer.Core.Api;
@@ -52,6 +53,7 @@ internal static class AdminStorageSettingsNativeFixture
             ["artwork.storage_backend"] = "", ["artwork.local_path"] = "/data/art", ["metadata.cache_images"] = "true", ["s3.public_url_auth"] = "",
         };
         internal bool StatusKnown = true, RecoveryPending, MissingStatus, RejectQueue, AmbiguousQueue, FailJobs;
+        internal string Backend = "local";
         internal string? JobState;
         internal TaskCompletionSource? QueueGate, StatusGate;
         internal int Version = 1;
@@ -83,11 +85,11 @@ internal static class AdminStorageSettingsNativeFixture
                     return Json(new
                     {
                         restart_required = false, restart_mark_count = 0, restart_requested = false,
-                        artwork_storage = new { backend = "local", locked = true, status_known = StatusKnown, private_locked = false },
+                        artwork_storage = new { backend = Backend, locked = true, status_known = StatusKnown, private_locked = false },
                     });
                 case "GET /api/v2/admin/storage-transitions/capabilities": return Json(new { revision = "fixture", state = "available" });
                 case "GET /api/v2/admin/storage-transitions/source-health":
-                    return Json(new { current_backend = "local", reachable = true, recovery_pending = RecoveryPending, recovery_state = RecoveryPending ? "running" : null, recovery_progress_percent = 40 });
+                    return Json(new { current_backend = Backend, reachable = true, recovery_pending = RecoveryPending, recovery_state = RecoveryPending ? "running" : null, recovery_progress_percent = 40 });
                 case "GET /api/v2/admin/jobs":
                     if (FailJobs) return Json(new { }, HttpStatusCode.ServiceUnavailable);
                     return Json(new { items = JobState == null ? Array.Empty<object>() : [Job()] });
@@ -351,15 +353,29 @@ internal static class AdminStorageSettingsNativeFixture
             foreach (var missingStatus in new[] { true, false })
             {
                 await Until(() => !controller.State.Loading && !controller.State.Reconciling && !controller.State.StatusLoading, "invalidation baseline");
-                controller.Set(AdminStorageRules.LocalPath, "/mnt/invalidated-art");
-                await controller.SaveAsync();
+                if (missingStatus)
+                {
+                    server.Backend = "s3";
+                    server.Values[AdminStorageRules.Backend] = "s3";
+                    server.Values["s3.public_bucket"] = "media";
+                    await controller.ReloadAsync(preserveDraft: false);
+                    await Until(() => controller.State.StatusKnown && !controller.State.StatusLoading && controller.State.ManagedTransitionsAvailable, "clean S3 baseline");
+                    controller.ChangeBackend("local");
+                    Check(controller.State.DirtyKeys.Count == 0, "S3-to-local review does not stage form keys");
+                }
+                else
+                {
+                    controller.Set(AdminStorageRules.LocalPath, "/mnt/invalidated-art");
+                    await controller.SaveAsync();
+                }
                 await Until(() => page.ReviewDialog is { IsLoaded: true }, "invalidation review");
                 var invalidatedReview = page.ReviewDialog!;
                 controller.SetReviewPolicy("start_fresh");
                 await Until(() => Button(invalidatedReview, "StorageReviewQueue").IsEnabled, "invalidation queue enabled");
                 var invalidatedClosed = Closed(invalidatedReview);
                 server.QueueGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                server.RejectQueue = true;
+                server.RejectQueue = !missingStatus;
+                server.AmbiguousQueue = missingStatus;
                 if (missingStatus)
                 {
                     // Start the status read before Queue, but return its missing status afterward.
@@ -393,6 +409,28 @@ internal static class AdminStorageSettingsNativeFixture
                     Check(controller.State.Queuing && controller.State.Review == null && page.ReviewDialog == null && ReferenceEquals(page.Controller, controller),
                         missingStatus ? "missing status closes the active review before Queue settles" : "commit notification closes the active review before Queue settles");
                     Check(invalidatedReview.Content is ScrollViewer { Content: null }, "closed invalidated review releases its shared content");
+                    if (missingStatus)
+                    {
+                        Check(controller.State.DirtyKeys.Count == 0 && page.RequiresLeaveConfirmation && shell.RequiresLeaveConfirmation,
+                            "a clean pending queue reaches the outer navigation guard after review invalidation");
+                        Task<bool>? departure = null;
+                        // Mirror MainWindow's outer-frame eligibility gate, not just a direct CanLeaveAsync call.
+                        void GuardDeparture(object sender, NavigatingCancelEventArgs args)
+                        {
+                            if (!shell.RequiresLeaveConfirmation) return;
+                            args.Cancel = true;
+                            departure = shell.CanLeaveAsync();
+                        }
+                        outer.Navigating += GuardDeparture;
+                        try
+                        {
+                            outer.Navigate(typeof(Page));
+                            Check(departure != null && !await departure && ReferenceEquals(outer.Content, shell) &&
+                                ReferenceEquals(page.Controller, controller) && controller.State.Owner?.IsCurrent == true && !pendingQueue.IsCompleted,
+                                "outer-frame departure refuses to retire a clean in-flight transition");
+                        }
+                        finally { outer.Navigating -= GuardDeparture; }
+                    }
                 }
                 finally
                 {
@@ -401,16 +439,24 @@ internal static class AdminStorageSettingsNativeFixture
                     await pendingQueue;
                     server.StatusGate = null;
                     server.QueueGate = null;
-                    server.RejectQueue = false;
+                    server.RejectQueue = server.AmbiguousQueue = false;
                     server.MissingStatus = false;
                 }
+                if (missingStatus)
+                    Check(controller.State.CommandUnknownKey == "configure.native.storage.transitionUnknown",
+                        "the retained owner publishes the invalidated queue's unknown outcome");
                 await Until(() => !controller.State.Loading && !controller.State.Queuing && !controller.State.Reconciling, "invalidated command settled");
+                server.Backend = "local";
+                server.Values[AdminStorageRules.Backend] = "";
+                server.Values.Remove("s3.public_bucket");
                 server.JobState = null;
                 controller.RefreshTransitions();
                 await Until(() => controller.State.LatestTransition == null, "invalidation job cleared");
                 await controller.ReloadAsync(preserveDraft: false);
                 await Until(() => controller.State.StatusKnown && !controller.State.StatusLoading, "invalidation status restored");
                 Check(page.ReviewDialog == null, "command completion does not reopen the invalidated review");
+                Check(!page.RequiresLeaveConfirmation && !shell.RequiresLeaveConfirmation && await shell.CanLeaveAsync(),
+                    "a settled clean transition no longer blocks departure");
             }
 
             // An accepted command with a lost acknowledgement and failed discovery still offers Refresh.
