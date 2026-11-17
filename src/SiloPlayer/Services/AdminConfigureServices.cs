@@ -38,5 +38,7 @@ internal static class AdminConfigureServices
             deferBackground: () => sp.GetService<PlayerService>()?.IsLoading == true));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.SearchSettings, typeof(AdminSearchSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
+        services.AddSingleton<AdminTasksApi>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.ScheduledTasks, typeof(AdminScheduledTasksPage)));
     }
 }
