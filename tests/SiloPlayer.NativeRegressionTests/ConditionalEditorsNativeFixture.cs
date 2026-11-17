@@ -12,6 +12,8 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Helpers;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.Messaging;
@@ -37,7 +39,7 @@ internal static class ConditionalEditorsNativeFixture
         auth.SetTokens("fixture-only", "fixture-refresh-only", 86400); Admin(auth);
         var toast = new ToastService(); var toasts = new ToastContainer(); owner.Children.Add(toasts); toast.Register(toasts, owner.DispatcherQueue);
         using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(new PeopleApi(client)).AddSingleton(new CatalogApi(client))
-            .AddSingleton(new MediaMaintenanceApi(client)).AddSingleton(toast).BuildServiceProvider();
+            .AddSingleton(new MediaMaintenanceApi(client)).AddSingleton(new CardOverlayService(new SettingsApi(client))).AddSingleton(toast).BuildServiceProvider();
         field.SetValue(null, services);
         try
         {
@@ -51,7 +53,7 @@ internal static class ConditionalEditorsNativeFixture
             await CaseAsync("metadata unchanged save", () => UnchangedAsync(new EditMetadataDialog(Movie()), owner, wire));
             await CaseAsync("metadata tag entry duplicate removal and save", () => TagsAsync(owner, wire));
             await CaseAsync("audiobook form fields hidden controls and owned save", () => AudiobookAsync(owner, wire));
-            await CaseAsync("audiobook generic provider search and match", () => AudiobookMatchAsync(owner, wire, auth));
+            await CaseAsync("scoped audiobook card curator hints search and match", () => AudiobookMatchAsync(owner, wire, auth));
             await CaseAsync("person unchanged save", () => UnchangedAsync(new EditPersonDialog(Person()), owner, wire));
             await CaseAsync("metadata diff clear pending rejection retry", () => MetadataSaveAsync(owner, wire));
             await CaseAsync("person diff clear pending rejection retry", () => PersonSaveAsync(owner, wire));
@@ -500,13 +502,28 @@ internal static class ConditionalEditorsNativeFixture
     private static async Task AudiobookMatchAsync(FrameworkElement owner, Wire wire, AuthService auth)
     {
         wire.Reset();
-        // Curators search without the admin-only file inventory, retaining the page's library scope.
+        // Use the production card menu, not a dialog supplied with the scope by the test.
+        // A delegated curator has no inventory picker to recover a lost launching library.
         auth.SetCurrentUser(new() { Id = "fixture", Role = "user", Permissions = [AuthorizationPolicy.MetadataCuration] });
-        var dialog = new MatchItemDialog("fixture-audiobook", "Fixture Book", 2019, "audiobook", 7, [], []) { XamlRoot = owner.XamlRoot };
-        var showing = dialog.ShowAsync();
+        wire.DetailItem = new() { ContentId = "fixture-audiobook", Title = "Fixture Book", Year = 2019, Type = "audiobook" };
+        var host = new Grid { Tag = new ItemDetailNavigationArgs("fixture-audiobook", 7) };
+        var card = new LibraryGridCard();
+        var item = new MediaItem { ContentId = "fixture-audiobook", Title = "Fixture Book", Type = "audiobook" };
+        card.Bind(item, null); host.Children.Add(card); ((Grid)owner).Children.Add(host);
+        MatchItemDialog? active = null; MenuFlyout? menu = null; MenuFlyoutItem? action = null;
         try
         {
+            await UntilAsync(() => card.IsLoaded);
+            menu = MediaItemMenu.Build(item, owner: card);
+            menu.ShowAt(card); await Task.Delay(140);
+            action = menu.Items.OfType<MenuFlyoutItem>().Single(row => row.Text == "Match Item");
+            ((IInvokeProvider)new MenuFlyoutItemAutomationPeer(action).GetPattern(PatternInterface.Invoke)).Invoke();
+            menu.Hide();
+            await UntilAsync(() => (active = OpenDialogs(owner.XamlRoot).OfType<MatchItemDialog>().SingleOrDefault()) != null);
+            var dialog = active ?? throw new InvalidOperationException("Audiobook card Match did not open its dialog.");
             await UntilAsync(() => ((Button)dialog.FindName("SearchButton")).IsEnabled);
+            Check(wire.MatchHintsUri?.Query.TrimStart('?').Split('&').Contains("library_id=7") == true, "audiobook card hints lost the launching library scope");
+            Check(((FrameworkElement)dialog.FindName("LibraryScopeHost")).Visibility == Visibility.Collapsed, "delegated curator unexpectedly has a library scope picker");
             Check(((FrameworkElement)dialog.FindName("VideoSearchFields")).Visibility == Visibility.Collapsed && ((FrameworkElement)dialog.FindName("GenericSearchFields")).Visibility == Visibility.Visible, "audiobook Match uses video provider fields");
             ((TextBox)dialog.FindName("GenericTitleBox")).Text = "Book Search";
             ((TextBox)dialog.FindName("GenericYearBox")).Text = "2001";
@@ -519,12 +536,28 @@ internal static class ConditionalEditorsNativeFixture
             Invoke(((StackPanel)dialog.FindName("ResultsPanel")).Children.OfType<Button>().Single());
             await CaptureAsync(dialog, "match-audiobook-provider.png");
             Invoke((Button)dialog.FindName("ApplyMatchButton"));
-            await UntilAsync(() => dialog.HasAppliedMatch); await showing;
+            await UntilAsync(() => dialog.HasAppliedMatch && action.IsEnabled);
             var apply = wire.Writes.Single(write => write.Path.EndsWith("/match/apply")).Body;
             Check(apply.GetProperty("library_id").GetString() == "7" && apply.GetProperty("provider_ids").GetProperty("isbn").GetString() == "9781234567890", "audiobook apply lost candidate provider IDs/library scope");
             Check(dialog.AppliedContentId == "audiobook-isbn-9781234567890", "audiobook match discarded replacement identity");
         }
-        finally { dialog.Hide(); await showing; Admin(auth); }
+        finally
+        {
+            active?.Hide(); menu?.Hide();
+            try { if (action != null) await UntilAsync(() => action.IsEnabled); }
+            finally { ((Grid)owner).Children.Remove(host); Admin(auth); }
+        }
+    }
+    private static IEnumerable<ContentDialog> OpenDialogs(XamlRoot root)
+    {
+        var found = new HashSet<ContentDialog>();
+        foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+        {
+            foreach (var dialog in Descendants<ContentDialog>(popup.Child)) found.Add(dialog);
+            for (DependencyObject? node = popup.Child; node != null; node = VisualTreeHelper.GetParent(node))
+                if (node is ContentDialog dialog) found.Add(dialog);
+        }
+        return found;
     }
     private static async Task TranslationVisibilityAsync(FrameworkElement owner, Wire wire)
     {
@@ -608,10 +641,11 @@ internal static class ConditionalEditorsNativeFixture
         public IReadOnlyList<Write> Writes { get { lock (_writes) return _writes.ToArray(); } }
         public IReadOnlyList<string> Reads { get { lock (_reads) return _reads.ToArray(); } }
         public MediaItemDetail? DetailItem;
+        public Uri? MatchHintsUri;
         public TaskCompletionSource<HttpResponseMessage>? PatchGate, ImageGate, DetailGate;
         public int DetailReads;
         public int? TranslationTotal;
-        public void Reset() { lock (_writes) _writes.Clear(); lock (_reads) _reads.Clear(); _applied = false; PatchGate = ImageGate = DetailGate = null; DetailReads = 0; DetailItem = null; }
+        public void Reset() { lock (_writes) _writes.Clear(); lock (_reads) _reads.Clear(); _applied = false; PatchGate = ImageGate = DetailGate = null; DetailReads = 0; DetailItem = null; MatchHintsUri = null; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "editors-fixture.invalid") throw new InvalidOperationException("Fixture attempted external networking");
@@ -626,7 +660,11 @@ internal static class ConditionalEditorsNativeFixture
                 if (path.EndsWith("/images/apply")) { _applied = true; if (ImageGate != null) return await ImageGate.Task.WaitAsync(ct); return Response(HttpStatusCode.OK, "{}"); }
                 if (request.Method == HttpMethod.Patch && PatchGate != null) return await PatchGate.Task.WaitAsync(ct);
             }
-            if (path.EndsWith("/match/hints")) return Response(HttpStatusCode.OK, """{"title":"Fixture Book","year":2019,"provider_ids":{}}""");
+            if (path.EndsWith("/match/hints"))
+            {
+                MatchHintsUri = request.RequestUri;
+                return Response(HttpStatusCode.OK, """{"title":"Fixture Book","year":2019,"provider_ids":{}}""");
+            }
             if (path.EndsWith("/images")) return Response(HttpStatusCode.OK, """{"items":[{"type":"poster","url":"","original_url":"https://fixture.invalid/old-poster","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-1","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-2","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/new-poster","provider_id":"fixture","language":"en"}],"current":{"poster_url":"https://fixture.invalid/old-poster"},"provider_errors":{},"page":{"has_more":false,"next_cursor":""}}""");
             if (path.EndsWith("/metadata-translation/jobs")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(new { jobs = new[] { new { id = "fixture-translation", status = "completed", fields_total = TranslationTotal ?? 0, fields_done = TranslationTotal ?? 0 } } }, Json));
             if (path.Contains("metadata-ai")) return Response(HttpStatusCode.OK, TranslationTotal == null ? "{\"state\":\"disabled\"}" : "{\"state\":\"available\"}");

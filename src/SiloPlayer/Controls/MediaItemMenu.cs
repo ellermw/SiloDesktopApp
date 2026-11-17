@@ -432,7 +432,7 @@ public static class MediaItemMenu
                 detail.Title,
                 detail.Year > 0 ? detail.Year : null,
                 detail.Type,
-                libraryId: null,
+                libraryId: library,
                 versions: detail.Versions,
                 folderPaths: detail.FolderPaths,
                 seriesId: detail.SeriesId)
