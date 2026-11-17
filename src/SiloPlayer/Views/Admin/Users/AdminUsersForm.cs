@@ -46,9 +46,10 @@ internal sealed class AdminUsersForm : IDisposable
             var typeNode = definition["type"];
             var nullable = typeNode is JsonArray types && types.Any(node => node?.GetValue<string>() == "null");
             var type = typeNode is JsonArray variants ? variants.First(node => node?.GetValue<string>() != "null")!.GetValue<string>() : typeNode?.GetValue<string>() ?? "object";
-            if (_create && !required.Contains(key))
+            if (_create && !required.Contains(key) || !_create && !initial.ContainsKey(key))
             {
-                var include = new CheckBox { Content = "Set an explicit value", IsChecked = initial.ContainsKey(key) };
+                // Missing readback fields are unknown, not the editor's displayed defaults.
+                var include = new CheckBox { Content = _create ? "Set an explicit value" : "Set an explicit value (not present in server readback)", IsChecked = _create && initial.ContainsKey(key) };
                 block.Children.Add(include); _include[key] = include;
             }
             if (key == "avatar")
@@ -154,7 +155,11 @@ internal sealed class AdminUsersForm : IDisposable
             result[pair.Key] = value;
         }
         if (!_create && result.ContainsKey("password") && _read.TryGetValue("require_password_change", out var passwordChange))
+        {
+            if (_include.TryGetValue("require_password_change", out var includePasswordChange) && includePasswordChange.IsChecked != true)
+                throw new ArgumentException("Choose an explicit temporary-password requirement; the server readback did not provide one.");
             result["require_password_change"] = passwordChange();
+        }
         AdminUsersContract.Validate(_schema, result);
         if (result.Count == 0) throw new ArgumentException("No changes are selected.");
         return result;

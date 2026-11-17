@@ -36,11 +36,14 @@ internal static class AdminUsersNativeFixture
     {
         internal readonly ConcurrentQueue<string> Requests = new();
         internal readonly ConcurrentQueue<bool?> PasswordRequirements = new();
+        internal readonly ConcurrentQueue<JsonObject> ProfileUpdates = new();
         internal readonly JsonObject Target = JsonNode.Parse("""{"id":"2","username":"Target","email":"target@example.test","role":"user","is_owner":false,"enabled":true,"password_login":true,"password_change_required":false,"break_glass":false,"access_group_id":null,"max_profiles":null,"effective_policy":{"max_profiles":3,"max_streams":0,"max_transcodes":0,"transcode_allowed":true,"permissions":[],"library_ids":null},"created_at":"2026-11-16T00:00:00Z"}""")!.AsObject();
         internal int Version = 1;
         internal int Writes;
         internal bool LoseNextWriteResponse;
         internal int AvatarReads;
+        internal bool FailNextFixturePage;
+        internal int FixturePageCalls;
         private const string Capabilities = """{"available":true,"allowed":true,"state":"available","guarded_configuration":true,"access_groups":true,"default_profile":true,"profile_limits":true,"profile_management":true,"profile_sections":true,"profile_avatars":true,"account_devices":true,"account_downloads":true,"login_sessions":true,"password_reset_link":true,"password_reset_email":true,"ownership_transfer":true,"exact_identity_filter":true,"policy_defaults":true,"request_usage":true,"watch_summary":true,"admin_identities":true,"break_glass":true,"admin_management":true,"email_delivery":true,"profileless":true,"client_selected_code":true,"manifest_revision":30,"scopes":["account","profile","profile_device","profile_client","profile_library","profile_series"],"client_families":["tv","mobile","tablet","desktop","web"]}""";
         private const string Profiles = """{"items":[{"id":"p2","name":"Primary","is_primary":true,"is_child":false,"has_pin":true,"avatar":null},{"id":"p3","name":"Second","is_primary":false,"is_child":false,"has_pin":false,"avatar":null}]}""";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
@@ -75,7 +78,21 @@ internal static class AdminUsersNativeFixture
                     }
                     return new(HttpStatusCode.NoContent);
                 }
+                if (request.Method == HttpMethod.Patch && path == "/api/v2/admin/users/2/profiles/p3")
+                {
+                    ProfileUpdates.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
+                    return new(HttpStatusCode.NoContent);
+                }
                 throw new InvalidOperationException("Unexpected synthetic U1 mutation route.");
+            }
+            if (path == "/api/v2/admin/fixture-pages")
+            {
+                FixturePageCalls++;
+                if (FailNextFixturePage) { FailNextFixturePage = false; throw new HttpRequestException("Synthetic continuation failure."); }
+                var cursor = request.RequestUri.Query.Split('&').FirstOrDefault(part => part.StartsWith("cursor=", StringComparison.Ordinal));
+                var index = cursor == null ? 0 : int.Parse(cursor[7..]);
+                return Json(new JsonObject { ["items"] = new JsonArray(new JsonObject { ["id"] = index.ToString() }),
+                    ["page"] = new JsonObject { ["has_more"] = true, ["next_cursor"] = (index + 1).ToString() } }.ToJsonString());
             }
             if (path.EndsWith("/capabilities", StringComparison.Ordinal)) return Json(Capabilities);
             if (path == "/api/v2/admin/users/1") return Json("""{"id":"1","username":"Owner","role":"admin","is_owner":true,"enabled":true,"password_login":true}""", "\"owner-1\"");
@@ -226,6 +243,20 @@ internal static class AdminUsersNativeFixture
                 Check(server.Writes == writesBeforePassword + 1 && server.Target.Flag("password_change_required") == requirePasswordChange,
                     "one guarded password submission preserves the selected server requirement");
             }
+            await InvokeAsync(FindButton(users, "Profiles"));
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
+            await InvokeAsync(Descendants(users).OfType<Button>().Last(button => button.Content as string == "Edit profile"));
+            await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+            var sparseProfileDialog = (ContentDialog)Field(users, "_dialog")!;
+            Descendants((DependencyObject)sparseProfileDialog.Content).OfType<TextBox>().Single(box => box.Text == "Second").Text = "Second Renamed";
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
+            Check(server.ProfileUpdates.TryDequeue(out var profilePatch) && profilePatch.Count == 1 && profilePatch.Text("name") == "Second Renamed",
+                "renaming sparse p3 submits only name, preserving absent library and playback policy fields");
+            await InvokeAsync(FindButton(users, "Access"));
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "access");
+            await ContinuationRetryChecksAsync(users, server);
+            await PreviewChecksAsync(users);
             var detachedAction = FindButton(users, "Set password");
             var detachedWorkspace = (AdminUsersWorkspace)Field(users, "_workspace")!;
             var detachedGeneration = detachedWorkspace.Generation;
@@ -255,6 +286,97 @@ internal static class AdminUsersNativeFixture
             try { await RestoreContentAsync(window, previousContent); }
             finally { servicesField.SetValue(null, previousServices); }
         }
+    }
+    private static Task CallAsync(AdminUsersPage page, string method, params object?[] args) =>
+        (Task)typeof(AdminUsersPage).GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, args)!;
+    private static async Task ContinuationRetryChecksAsync(AdminUsersPage page, Server server)
+    {
+        var generation = (long)Field(page, "_generation")!;
+        await CallAsync(page, "RowsAsync", "retry-pages", "/api/v2/admin/fixture-pages", generation, false, 100);
+        for (var index = 0; index < 8; index++) await CallAsync(page, "MoreAsync", "retry-pages");
+        var rows = (System.Collections.IDictionary)Field(page, "_rows")!;
+        var state = rows["retry-pages"]!;
+        var seen = (HashSet<string>)state.GetType().GetProperty("Seen")!.GetValue(state)!;
+        Check(seen.Count == 8, "eight accepted continuations consume eight page slots");
+        server.FailNextFixturePage = true;
+        await CallAsync(page, "MoreAsync", "retry-pages");
+        Check(seen.Count == 8 && !seen.Contains("9"), "failed ninth continuation preserves cursor and page budget");
+        await CallAsync(page, "MoreAsync", "retry-pages");
+        Check(seen.Count == 9 && seen.Contains("9") && server.FixturePageCalls == 11, "retry sends and adopts the same ninth continuation exactly once");
+        await CallAsync(page, "MoreAsync", "retry-pages");
+        Check(server.FixturePageCalls == 11, "accepted-page bound still blocks a tenth continuation");
+    }
+    private sealed class PreviewServer : HttpMessageHandler
+    {
+        internal readonly List<string> Requests = new();
+        internal Func<HttpRequestMessage, Task<HttpResponseMessage>> Read = _ => Task.FromResult(AdminMonitorReply("{}"));
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            Requests.Add(request.Method + " " + request.RequestUri!.PathAndQuery);
+            return request.Method == HttpMethod.Post ? Task.FromResult(AdminMonitorReply("{}")) : Read(request);
+        }
+    }
+    private static HttpResponseMessage AdminMonitorReply(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+    private static AdminUserViewAs AdoptPreview(AdminUsersPage page, PreviewServer server)
+    {
+        var workspace = (AdminUsersWorkspace)Field(page, "_workspace")!;
+        var generation = workspace.Generation;
+        var preview = new AdminUserViewAs("https://fixture.invalid/silo", "2",
+            JsonNode.Parse("""{"access_token":"synthetic-target","user":{"id":"2"}}""")!.AsObject(), workspace.Token, () => workspace.IsCurrent(generation), server);
+        typeof(AdminUsersPage).GetField("_preview", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(page, preview);
+        typeof(AdminUsersPage).GetField("_previewName", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(page, "Target");
+        return preview;
+    }
+    private static async Task PreviewChecksAsync(AdminUsersPage page)
+    {
+        foreach (var timeout in new[] { false, true })
+        {
+            var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var server = new PreviewServer { Read = _ => pending.Task };
+            using var preview = AdoptPreview(page, server);
+            var read = CallAsync(page, "PreviewReadAsync", "/api/v2/profiles", "profiles", null, null);
+            Check(FindButton(page, "Return to admin") != null && Descendants(page).OfType<TextBlock>().Any(text => text.Text.StartsWith("VIEWING AS Target", StringComparison.Ordinal)),
+                "temporary-session banner and return exist before initial read completes");
+            pending.SetException(timeout ? new TaskCanceledException("Synthetic timeout.") : new HttpRequestException("Synthetic initial read failure."));
+            await read;
+            Check(FindButton(page, "Return to admin") != null && FindButton(page, "Retry scoped read") != null && ((TextBlock)Field(page, "_notice")!).Text.Length > 0,
+                "initial preview failure or timeout retains explicit error, retry and return controls");
+            server.Read = _ => Task.FromResult(AdminMonitorReply("""{"items":[],"page":{"has_more":false}}"""));
+            await InvokeAsync(FindButton(page, "Retry scoped read"));
+            Check(FindButton(page, "Return to admin") != null && FindButton(page, "Retry scoped read") == null, "initial preview can be retried without losing return");
+            await InvokeAsync(FindButton(page, "Return to admin"));
+            await SettledAsync(() => Ready(page) && Field(page, "_preview") == null && !(bool)Field(page, "_actionBusy")!);
+            Check(server.Requests.Count(request => request == "POST /silo/api/v2/auth/logout") == 1, "return after failed initial preview revokes the temporary sub-path session once");
+        }
+        var failNext = false; var repeat = false;
+        var pages = new PreviewServer();
+        pages.Read = request =>
+        {
+            if (failNext) { failNext = false; throw new HttpRequestException("Synthetic scoped continuation failure."); }
+            var query = request.RequestUri!.Query.TrimStart('?').Split('&');
+            Check(query.Count(part => part.StartsWith("limit=", StringComparison.Ordinal)) == 1 && query.Count(part => part.StartsWith("cursor=", StringComparison.Ordinal)) <= 1,
+                "scoped pages retain one limit and at most one cursor");
+            var cursor = query.FirstOrDefault(part => part.StartsWith("cursor=", StringComparison.Ordinal));
+            var index = cursor == null ? 0 : int.Parse(cursor[7..]);
+            var next = repeat && index == 2 ? 1 : index + 1;
+            return Task.FromResult(AdminMonitorReply(new JsonObject { ["items"] = new JsonArray(new JsonObject { ["id"] = index.ToString() }),
+                ["page"] = new JsonObject { ["has_more"] = true, ["next_cursor"] = next.ToString() } }.ToJsonString()));
+        };
+        using var pagedPreview = AdoptPreview(page, pages);
+        await CallAsync(page, "PreviewReadAsync", "/api/v2/catalog?q=fixture", "catalog", null, null);
+        for (var index = 0; index < 8; index++) await InvokeAsync(FindButton(page, "Next scoped page (replaces retained rows)"));
+        failNext = true;
+        await InvokeAsync(FindButton(page, "Next scoped page (replaces retained rows)"));
+        await InvokeAsync(FindButton(page, "Retry scoped read"));
+        Check(FindButton(page, "Next scoped page (replaces retained rows)") is { IsEnabled: false } && pages.Requests.Count == 11,
+            "scoped retry preserves the ninth slot and accepted continuations stop at nine");
+        repeat = true;
+        await CallAsync(page, "PreviewReadAsync", "/api/v2/catalog?q=fixture", "catalog", null, null);
+        await InvokeAsync(FindButton(page, "Next scoped page (replaces retained rows)"));
+        await InvokeAsync(FindButton(page, "Next scoped page (replaces retained rows)"));
+        Check(((TextBlock)Field(page, "_notice")!).Text.Contains("Repeated scoped continuation", StringComparison.Ordinal), "one collection walk rejects a cursor repeated across different pages");
+        await InvokeAsync(FindButton(page, "Return to admin"));
+        await SettledAsync(() => Ready(page) && Field(page, "_preview") == null && !(bool)Field(page, "_actionBusy")!);
     }
     private static async Task RestoreContentAsync(Window window, UIElement previousContent)
     {

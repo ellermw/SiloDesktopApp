@@ -149,17 +149,19 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         try
         {
             var next = rows.Next;
-            if (!rows.Seen.Add(next)) throw new InvalidDataException("Repeated collection continuation; reload.");
+            if (rows.Seen.Contains(next)) throw new InvalidDataException("Repeated collection continuation; reload.");
             var page = await _workspace.ReadAsync(generation, (lease, token) => _api.PageAsync(lease, rows.Path, rows.Limit, next, ct: token));
             if (!_workspace.IsCurrent(generation)) return;
             if (page.NextCursor != null && rows.Seen.Contains(page.NextCursor)) throw new InvalidDataException("Repeated collection continuation; reload.");
             if (rows.Items.Count + page.Items.Count > AdminUsersApi.MaxRows) throw new InvalidDataException("The retained-row bound was reached; narrow the filter.");
+            var baseline = new AdminUsersReadback(AdminPaging.WithPage(rows.Path, rows.Limit, next), page.Envelope.Copy());
             rows.Items.AddRange(page.Items);
-            rows.Baselines.Add(new(AdminPaging.WithPage(rows.Path, rows.Limit, next), page.Envelope.Copy()));
+            rows.Baselines.Add(baseline);
+            rows.Seen.Add(next);
             _rows[key] = rows with { Next = page.NextCursor, Complete = page.NextCursor == null };
             Render();
         }
-        catch (OperationCanceledException error) { if (_workspace.IsCurrent(generation)) ShowError(new TimeoutException("The read timed out or was cancelled. Reload this tab before continuing.", error)); }
+        catch (OperationCanceledException error) { if (_workspace.IsCurrent(generation)) ShowError(new TimeoutException("The read timed out or was cancelled. The retained page is unchanged; try loading the next page again.", error)); }
         catch (Exception error) { if (_workspace.IsCurrent(generation)) ShowError(error); }
         finally { if (_workspace.IsCurrent(generation)) _loading = false; }
     }

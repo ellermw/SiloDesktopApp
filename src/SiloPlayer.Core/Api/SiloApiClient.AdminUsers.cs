@@ -74,7 +74,7 @@ public partial class SiloApiClient
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(origin.TrimEnd('/') + "/"), "/api/v2/auth/logout"));
+            using var request = new HttpRequestMessage(HttpMethod.Post, AdminUserViewAs.ServerUri(origin, "/api/v2/auth/logout"));
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", access);
             // No admin context, profile headers, token refresh or replay.
             using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);

@@ -30,6 +30,7 @@ public sealed class AdminUserViewAs : IDisposable
         _current = current;
         _http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
     }
+    internal static Uri ServerUri(string baseUrl, string path) => new(baseUrl.TrimEnd('/') + "/" + path.TrimStart('/'), UriKind.Absolute);
     public Task<JsonObject> ReadAsync(string path, CancellationToken ct = default) => SendAsync(HttpMethod.Get, path, null, ct);
     public async Task SelectProfileAsync(string id, string? pin, CancellationToken ct = default)
     {
@@ -80,7 +81,7 @@ public sealed class AdminUserViewAs : IDisposable
         try
         {
             Current();
-            var target = new Uri(_origin, path);
+            var target = ServerUri(_origin.AbsoluteUri, path);
             if (target.Scheme != _origin.Scheme || target.Authority != _origin.Authority) throw new InvalidOperationException("View-as is restricted to the connected server.");
             using var request = new HttpRequestMessage(method, target);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _access);
@@ -128,7 +129,7 @@ public sealed class AdminUserViewAs : IDisposable
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_origin, "/api/v2/auth/logout"));
+            using var request = new HttpRequestMessage(HttpMethod.Post, ServerUri(_origin.AbsoluteUri, "/api/v2/auth/logout"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
             using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
             succeeded = response.IsSuccessStatusCode;

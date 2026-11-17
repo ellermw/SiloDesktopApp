@@ -64,17 +64,21 @@ public sealed class AdminUsersTransportTests
         Assert.Single(kit.Http.Requests.Where(path => path.EndsWith("/impersonate")));
     }
 
-    [Fact]
-    public async Task UnadoptedReceiptUsesOriginalOriginAndTemporaryBearerForOneLogout()
+    [Theory]
+    [InlineData("https://silo.test", "")]
+    [InlineData("https://silo.test/silo", "/silo")]
+    [InlineData("https://silo.test/silo/", "/silo")]
+    public async Task UnadoptedReceiptUsesOriginalOriginAndTemporaryBearerForOneLogout(string baseUrl, string prefix)
     {
         using var kit = AdminMonitorKit.Create();
+        kit.Client.SetBaseUrl(baseUrl);
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         using var lease = authority.Capture();
         var logouts = new List<(Uri Uri, string? Bearer, bool Profile, bool Body, bool Cancelled)>();
         kit.Http.Respond = (request, token) =>
         {
             if (request.Method == HttpMethod.Get) return Task.FromResult(Reply(request.RequestUri!.AbsolutePath));
-            if (request.RequestUri!.AbsolutePath == "/api/v2/auth/logout")
+            if (request.RequestUri!.AbsolutePath == prefix + "/api/v2/auth/logout")
             {
                 logouts.Add((request.RequestUri, request.Headers.Authorization?.Parameter,
                     request.Headers.Contains("X-Profile-Id") || request.Headers.Contains("X-Profile-Token"), request.Content != null, token.IsCancellationRequested));
@@ -84,11 +88,12 @@ public sealed class AdminUsersTransportTests
         };
         var api = new AdminUsersApi(kit.Client);
         var result = await api.WriteAsync(lease, await api.ReviewAsync(lease, "2"), new(AdminUsersOperation.ViewAs));
+        Assert.Contains("POST " + prefix + "/api/v2/admin/users/2/impersonate", kit.Http.Requests);
         kit.Client.SetBaseUrl("https://replacement.test");
         await result.DiscardViewAsAsync();
         await result.DiscardViewAsAsync();
         var logout = Assert.Single(logouts);
-        Assert.Equal("https://silo.test/api/v2/auth/logout", logout.Uri.AbsoluteUri);
+        Assert.Equal("https://silo.test" + prefix + "/api/v2/auth/logout", logout.Uri.AbsoluteUri);
         Assert.Equal("synthetic-target", logout.Bearer);
         Assert.False(logout.Profile);
         Assert.False(logout.Body);

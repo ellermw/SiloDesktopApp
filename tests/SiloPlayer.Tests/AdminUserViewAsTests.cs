@@ -6,32 +6,40 @@ namespace SiloPlayer.Tests;
 
 public sealed class AdminUserViewAsTests
 {
-    [Fact]
-    public async Task ScopedViewAsUsesOnlyItsOwnInMemoryIdentityAndRetiresWithOwner()
+    [Theory]
+    [InlineData("https://silo.test", "")]
+    [InlineData("https://silo.test/silo", "/silo")]
+    [InlineData("https://silo.test/silo/", "/silo")]
+    public async Task ScopedViewAsUsesOnlyItsOwnInMemoryIdentityAndRetiresWithOwner(string baseUrl, string prefix)
     {
         using var owner = new CancellationTokenSource();
         var handler = new PreviewHandler();
         var pair = JsonNode.Parse("""{"access_token":"synthetic-target","user":{"id":"2"}}""")!.AsObject();
-        using var preview = new AdminUserViewAs("https://silo.test", "2", pair, owner.Token, () => !owner.IsCancellationRequested, handler);
+        using var preview = new AdminUserViewAs(baseUrl, "2", pair, owner.Token, () => !owner.IsCancellationRequested, handler);
         await preview.ReadAsync("/api/v2/profiles");
+        Assert.Equal("GET " + prefix + "/api/v2/profiles", handler.LastRequest);
         Assert.Equal("synthetic-target", handler.Bearer);
         Assert.Equal("", handler.Profile);
         await preview.SelectProfileAsync("target-profile", null);
         await preview.ReadAsync("/api/v2/catalog?limit=25");
         Assert.Equal("target-profile", handler.Profile);
+        Assert.Equal("GET " + prefix + "/api/v2/catalog", handler.LastRequest);
         owner.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => preview.ReadAsync("/api/v2/catalog?limit=25"));
         Assert.Equal(2, handler.Calls);
     }
 
-    [Fact]
-    public async Task ExplicitReturnRevokesOnlyTemporarySessionAndDisposeIsIdempotent()
+    [Theory]
+    [InlineData("https://silo.test", "")]
+    [InlineData("https://silo.test/silo", "/silo")]
+    [InlineData("https://silo.test/silo/", "/silo")]
+    public async Task ExplicitReturnRevokesOnlyTemporarySessionAndDisposeIsIdempotent(string baseUrl, string prefix)
     {
         var handler = new PreviewHandler();
         var pair = JsonNode.Parse("""{"access_token":"synthetic-target","user":{"id":"2"}}""")!.AsObject();
-        var preview = new AdminUserViewAs("https://silo.test", "2", pair, CancellationToken.None, () => true, handler);
+        var preview = new AdminUserViewAs(baseUrl, "2", pair, CancellationToken.None, () => true, handler);
         await preview.EndAsync();
-        Assert.Equal("POST /api/v2/auth/logout", handler.LastRequest);
+        Assert.Equal("POST " + prefix + "/api/v2/auth/logout", handler.LastRequest);
         Assert.Equal("synthetic-target", handler.Bearer);
         Assert.False(handler.HadBody);
         preview.Dispose(); preview.Dispose();
@@ -117,7 +125,7 @@ public sealed class AdminUserViewAsTests
             Calls++; Bearer = request.Headers.Authorization?.Parameter;
             LastRequest = request.Method + " " + request.RequestUri!.AbsolutePath; HadBody = request.Content != null;
             Profile = request.Headers.TryGetValues("X-Profile-Id", out var values) ? values.Single() : "";
-            if (request.RequestUri.AbsolutePath == "/api/v2/auth/logout") LogoutAttempt.TrySetResult();
+            if (request.RequestUri.AbsolutePath.EndsWith("/api/v2/auth/logout", StringComparison.Ordinal)) LogoutAttempt.TrySetResult();
             else if (HoldReads)
             {
                 ReadStarted.TrySetResult();
