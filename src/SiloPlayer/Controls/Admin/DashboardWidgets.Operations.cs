@@ -30,7 +30,10 @@ internal static class DashboardSessionBadges
 
     private static Border Tag(Border pill)
     {
-        ((TextBlock)pill.Child).LineHeight = TagLineHeight;
+        var text = (TextBlock)pill.Child;
+        text.LineHeight = TagLineHeight;
+        text.MaxLines = 1;
+        ToolTipService.SetToolTip(pill, text.Text);
         return pill;
     }
 
@@ -99,11 +102,14 @@ internal static class DashboardSessionBadges
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         var prefix = Text(label, 9, Semibold, foreground, lineHeight: TagLineHeight);
+        prefix.MaxLines = 1;
         prefix.Opacity = 0.7;
         row.Children.Add(prefix);
         var separator = Text("·", 9, Semibold, foreground, lineHeight: TagLineHeight);
+        separator.MaxLines = 1;
         Grid.SetColumn(separator, 1); row.Children.Add(separator);
         var value = Text(name, 9, Semibold, foreground, trim: true, lineHeight: TagLineHeight);
+        value.MaxLines = 1;
         Grid.SetColumn(value, 2); row.Children.Add(value);
         pill.Child = row;
         return pill;
@@ -111,7 +117,7 @@ internal static class DashboardSessionBadges
 
     public static Border ProfilePill(string label)
     {
-        var pill = Pill(label, Alpha(Primary, 0.15), Primary, Alpha(Primary, 0.3));
+        var pill = Tag(Pill(label, Alpha(Primary, 0.15), Primary, Alpha(Primary, 0.3)));
         ((TextBlock)pill.Child).LineHeight = 9.9;
         return pill;
     }
@@ -133,17 +139,33 @@ internal sealed class DashboardTagViewport : Panel
         // Measure without a height cap: both Windows text scaling and the app's
         // accessibility typography must leave the first row's pills whole.
         _wrap.Measure(new Windows.Foundation.Size(availableSize.Width, double.PositiveInfinity));
-        var rowHeight = _wrap.Children.OfType<FrameworkElement>()
-            .Where(child => child.Visibility != Visibility.Collapsed)
-            .Select(child => child.DesiredSize.Height).DefaultIfEmpty(0).Max();
-        return new Windows.Foundation.Size(_wrap.DesiredSize.Width, rowHeight);
+        return new Windows.Foundation.Size(_wrap.DesiredSize.Width, FirstRowHeight(availableSize.Width));
+    }
+
+    private double FirstRowHeight(double width)
+    {
+        // Match WrapPanel's row break rule; a taller pill on a later row must
+        // not enlarge the viewport and expose that row above the clip.
+        double rowWidth = 0, rowHeight = 0;
+        var first = true;
+        foreach (var child in _wrap.Children)
+        {
+            if (child.Visibility == Visibility.Collapsed) continue;
+            var desired = child.DesiredSize;
+            var withGap = desired.Width + (first ? 0 : _wrap.HorizontalSpacing);
+            if (!first && rowWidth + withGap > width) break;
+            rowWidth += withGap;
+            rowHeight = Math.Max(rowHeight, desired.Height);
+            first = false;
+        }
+        return rowHeight;
     }
 
     protected override Windows.Foundation.Size ArrangeOverride(Windows.Foundation.Size finalSize)
     {
         // Keep wrapped rows laid out below the clip, not squeezed into it.
         _wrap.Arrange(new Windows.Foundation.Rect(0, 0, finalSize.Width, Math.Max(finalSize.Height, _wrap.DesiredSize.Height)));
-        Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, finalSize.Width, finalSize.Height) };
+        Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, finalSize.Width, Math.Min(finalSize.Height, FirstRowHeight(finalSize.Width))) };
         return finalSize;
     }
 }

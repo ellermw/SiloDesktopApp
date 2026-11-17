@@ -19,6 +19,9 @@ using SiloPlayer.Views.Admin;
 internal static partial class AdminDashboardNativeFixture
 {
     private const string LongUser = "averyveryverylongusername-for-truncation-checks-0123456789";
+    private const string MultilineProfile = "A\nB\nC";
+    private const string MultilineClient = "Synthetic Client\r\nSecond line";
+    private const string MultilineNetwork = "synthetic-network-provider-with-a-very-long-name-0123456789-abcdefghij\u2028Second line";
 
     private static string CurrentSession(int i, Action<JsonObject> configure)
     {
@@ -39,8 +42,9 @@ internal static partial class AdminDashboardNativeFixture
         // Enough tags to need a second line, which WebUI #4401 clips whole.
         CurrentSession(3, row =>
         {
-            row["is_jellyfin_client"] = true; row["client_name"] = "Synthetic Client"; row["client_version"] = "1.0";
-            row["routing_network_provider"] = "synthetic-network-provider-with-a-very-long-name-0123456789-abcdefghij";
+            row["is_jellyfin_client"] = true; row["client_name"] = MultilineClient; row["client_version"] = "1.0";
+            row["routing_network_provider"] = MultilineNetwork;
+            row["profile_name"] = MultilineProfile;
         }),
     ];
 
@@ -198,6 +202,13 @@ internal static partial class AdminDashboardNativeFixture
             var tagRows = Descendants(nowPlaying).OfType<Panel>().Where(panel => panel.GetType().Name == "DashboardTagViewport").ToArray();
             Check(tagRows.Length == 4 && tagRows.All(row => row.ActualHeight <= 18.5 && row.Clip != null), "each card's tag row is clipped to one 18px line");
             AssertTagRows(tagRows, "default", 18);
+            var badgeTexts = tagRows.SelectMany(row => Descendants(row).OfType<TextBlock>()).ToArray();
+            Check(badgeTexts.All(text => text.MaxLines == 1), "all badge text, including explicit line breaks, is limited to one actual line");
+            var profileText = badgeTexts.Single(text => text.Text == MultilineProfile);
+            var profilePill = (Border)profileText.Parent;
+            Check((string?)ToolTipService.GetToolTip(profilePill) == MultilineProfile, "profile tooltip retains the full multiline label");
+            Check(badgeTexts.Any(text => text.Text.Contains(MultilineClient, StringComparison.Ordinal))
+                && badgeTexts.Any(text => text.Text == MultilineNetwork), "multiline client and route labels reach the badge regression");
 
             // Exercise typography changes on already rendered cards. 1.25 is
             // AccessibilityService's x-large scale; 2 also covers larger text.
@@ -229,6 +240,25 @@ internal static partial class AdminDashboardNativeFixture
             }
             AssertTagRows(tagRows, "restored", 18);
             Check(tagRows.All(row => row.ActualHeight <= 18.5), "tag viewports shrink back after enlarged text is restored");
+
+            // A later row may still have different typography. Its taller pill
+            // must not determine the first-row viewport or peek through it.
+            var profileRow = tagRows.Single(row => Descendants(row).Contains(profilePill));
+            var profileLineHeight = profileText.LineHeight;
+            try
+            {
+                profileText.LineHeight = 48;
+                nowPlaying.UpdateLayout();
+                Check(profilePill.DesiredSize.Height > 18.5 && profileRow.ActualHeight <= 18.5
+                    && profilePill.TransformToVisual(profileRow).TransformPoint(new Windows.Foundation.Point(0, 0)).Y >= profileRow.ActualHeight,
+                    "a taller wrapped profile badge stays wholly below the first-row clip");
+            }
+            finally
+            {
+                profileText.LineHeight = profileLineHeight;
+                nowPlaying.UpdateLayout();
+            }
+            AssertTagRows(tagRows, "restored after taller wrapped badge", 18);
 
             await AssertNowPlayingColumnsAsync(page, "span12-1440", expectColumns: 2);
             await CaptureAsync(nowPlaying, "current-ui-now-playing-span12-1440.png");
