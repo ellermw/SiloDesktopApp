@@ -47,8 +47,13 @@ internal static class ReaderOpeningFixture
         serviceField.SetValue(null, new FixtureServices(services, (IServiceProvider)previousServices!));
         var frame = new Frame { Width = 1100, Height = 740 };
         navigation.Frame = frame;
+        frame.Navigating += (_, args) =>
+        {
+            if (args.SourcePageType == typeof(EbookReaderPage)) wire.ReaderNavigationStarted = true;
+        };
         parent.Children.Add(frame);
         EbookReaderPage? page = null;
+        WebView2? warmupWeb = null;
         try
         {
             Environment.SetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY", readerDataDirectory);
@@ -67,6 +72,12 @@ internal static class ReaderOpeningFixture
                     Program.Log("PASS: protected install denies default WebView2 user-data creation with E_ACCESSDENIED (80070005).");
                 }
             }
+            // Keep the browser warm so delayed handoff observation cannot hide an ordering race.
+            var warmEnvironment = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateWithOptionsAsync(
+                null, readerDataDirectory, new Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions());
+            warmupWeb = new WebView2 { Width = 1, Height = 1 };
+            parent.Children.Add(warmupWeb);
+            await warmupWeb.EnsureCoreWebView2Async(warmEnvironment);
             var entry = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_ENTRY")
                 ?? (wire.Format is "cbz" or "cbr" ? "comic-chapter" : "ebook");
             if (entry is not ("direct" or "ebook" or "comic" or "comic-chapter"))
@@ -74,7 +85,7 @@ internal static class ReaderOpeningFixture
             if (entry == "direct") frame.Navigate(typeof(EbookReaderPage), new EbookReaderNavigation("fixture-book", 42));
             else
             {
-                wire.CatalogReady.SetResult();
+                wire.DetailCatalogReady.SetResult();
                 navigation.Navigate<ItemDetailPage>(new ItemDetailNavigationArgs(entry.StartsWith("comic", StringComparison.Ordinal) ? "fixture-series" : "fixture-book", 7));
                 var detail = (ItemDetailPage)frame.Content;
                 var detailDeadline = DateTime.UtcNow.AddSeconds(10);
@@ -87,6 +98,7 @@ internal static class ReaderOpeningFixture
                     : (Button)detail.FindName("PrimaryPlayButton");
                 if (button.Visibility != Visibility.Visible || !button.IsEnabled) throw new InvalidOperationException("Detail Read is unavailable: " + entry);
                 ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Task.Delay(250);
                 var handoffDeadline = DateTime.UtcNow.AddSeconds(3);
                 while (DateTime.UtcNow < handoffDeadline && frame.Content is not EbookReaderPage) await Task.Delay(25);
                 if (frame.Content is not EbookReaderPage) throw new InvalidOperationException("Detail Read did not navigate: " + entry);
@@ -95,7 +107,11 @@ internal static class ReaderOpeningFixture
             page = (EbookReaderPage)frame.Content;
             if (entry != "direct" && (int?)typeof(EbookReaderPage).GetField("_libraryId", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page) != 7)
                 throw new InvalidOperationException("Detail Read lost its library scope.");
+            await wire.ReaderCatalogRequested.Task.WaitAsync(TimeSpan.FromSeconds(3));
             var diagnosticWeb = (WebView2)page.FindName("ReaderWebView");
+            if (diagnosticWeb.CoreWebView2 != null ||
+                typeof(EbookReaderPage).GetField("_item", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page) != null)
+                throw new InvalidOperationException("Reader startup escaped its catalog gate before fixture isolation and diagnostics.");
             diagnosticWeb.CoreWebView2Initialized += async (_, initialization) =>
             {
                 var core = diagnosticWeb.CoreWebView2;
@@ -129,7 +145,8 @@ internal static class ReaderOpeningFixture
             var directory = Path.Combine(Program.ResultDirectory, "reader-settings");
             Directory.CreateDirectory(directory);
             typeof(EbookReaderPage).GetField("_readerSettingsDirectory", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, directory);
-            wire.CatalogReady.TrySetResult();
+            wire.ReaderCatalogReady.SetResult();
+            Program.Log("PASS: warm reader startup stayed gated through delayed handoff observation until isolation and diagnostics were installed.");
             var deadline = DateTime.UtcNow.AddSeconds(15);
             var readyField = typeof(EbookReaderPage).GetField("_rendererReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
             while (DateTime.UtcNow < deadline && !(bool)readyField.GetValue(page)!
@@ -178,6 +195,11 @@ internal static class ReaderOpeningFixture
                 ((DispatcherTimer)typeof(EbookReaderPage).GetField("_progressTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).Stop();
                 ((DispatcherTimer)typeof(EbookReaderPage).GetField("_contextTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).Stop();
                 ((WebView2)page.FindName("ReaderWebView")).Close();
+            }
+            if (warmupWeb != null)
+            {
+                warmupWeb.Close();
+                parent.Children.Remove(warmupWeb);
             }
             parent.Children.Remove(frame);
             frame.BackStack.Clear();
@@ -243,7 +265,10 @@ internal static class ReaderOpeningFixture
     {
         internal string Format { get; } = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FORMAT") ?? "epub";
         internal int ProgressSaves { get; private set; }
-        internal TaskCompletionSource CatalogReady { get; } = new();
+        internal bool ReaderNavigationStarted { get; set; }
+        internal TaskCompletionSource DetailCatalogReady { get; } = new();
+        internal TaskCompletionSource ReaderCatalogReady { get; } = new();
+        internal TaskCompletionSource ReaderCatalogRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -252,7 +277,11 @@ internal static class ReaderOpeningFixture
                 throw new InvalidOperationException("Reader sent a request under the replacement profile.");
             if (path.StartsWith("/api/v2/catalog/items/", StringComparison.Ordinal))
             {
-                await CatalogReady.Task.WaitAsync(cancellationToken);
+                // Select the gate when the request arrives, not after navigation changes phase.
+                var readerRequest = ReaderNavigationStarted;
+                var ready = readerRequest ? ReaderCatalogReady : DetailCatalogReady;
+                if (readerRequest) ReaderCatalogRequested.TrySetResult();
+                await ready.Task.WaitAsync(cancellationToken);
                 if (path.EndsWith("/fixture-series", StringComparison.Ordinal))
                     return Json("""{"content_id":"fixture-series","type":"manga","title":"Fixture series","manga":{"chapters":[{"content_id":"fixture-chapter-2","title":"Second chapter","volume":"v01","chapter_index":2},{"content_id":"fixture-book","title":"First loose chapter","chapter_index":1}]}}""");
                 var format = Format == "svg-epub" ? "epub" : Format;
