@@ -63,6 +63,14 @@ public sealed partial class CatalogPage : Page,
     private bool _retainedMetadataRefresh;
     private long _cardMutationRevision;
     private PendingCatalogWrites _pendingProgressSaves = new();
+    private ItemDetailPrefetchCache ProgressSaves => App.Services.GetRequiredService<ItemDetailPrefetchCache>();
+
+    private async Task WaitForCatalogWritesAsync(CancellationToken ct)
+    {
+        await _pendingProgressSaves.WaitAsync(ct);
+        // Final saves can begin while this page is unsubscribed.
+        await ProgressSaves.WaitForProgressSettlementAsync(ct);
+    }
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<QueryRule> _advancedRules = [];
     private bool _advancedMode;
@@ -576,10 +584,11 @@ public sealed partial class CatalogPage : Page,
     {
         while (current())
         {
-            await _pendingProgressSaves.WaitAsync(ct);
+            await WaitForCatalogWritesAsync(ct);
             if (!current()) return;
             var revision = _sectionMutationRevision;
             var cardRevision = _cardMutationRevision;
+            var progressRevision = ProgressSaves.ProgressSaveRevision;
             var refreshMetadata = _retainedMetadataRefresh;
             var reset = _undoResetPending;
             _undoResetPending = false;
@@ -602,7 +611,8 @@ public sealed partial class CatalogPage : Page,
                     offset: items.Count, snapshot: snapshot, source: "section", scope: _scope,
                     sectionId: _sectionId, ct: ct);
                 if (!current()) return;
-                if (revision != _sectionMutationRevision || cardRevision != _cardMutationRevision || _undoResetPending) break;
+                if (revision != _sectionMutationRevision || cardRevision != _cardMutationRevision
+                    || progressRevision != ProgressSaves.ProgressSaveRevision || _undoResetPending) break;
                 foreach (var item in response.Items)
                     item.ItemSource = HomeDismissalPolicy.SectionCardItemSource("section", item.ItemSource);
                 items.AddRange(response.Items);
@@ -611,6 +621,7 @@ public sealed partial class CatalogPage : Page,
                 hasMore = response.Items.Count > 0 && (response.HasMore || items.Count < total);
             } while (hasMore && items.Count < target);
             if (revision != _sectionMutationRevision || cardRevision != _cardMutationRevision || _undoResetPending
+                || progressRevision != ProgressSaves.ProgressSaveRevision
                 || refreshMetadata != _retainedMetadataRefresh) continue;
             // Cards already shown in the server's order stay realized and only the rows after
             // them are added; any other difference replaces the window.
@@ -863,8 +874,8 @@ public sealed partial class CatalogPage : Page,
             }
             var response = retainedWindowSize is { } windowSize
                 ? await RetainedCatalogRead.ReadAsync(ReadWindowAsync, windowSize, PageSize,
-                    () => refreshMetadata ? _cardMutationRevision : 0, loadToken,
-                    refreshMetadata ? _pendingProgressSaves.WaitAsync : null)
+                    () => refreshMetadata ? _cardMutationRevision + ProgressSaves.ProgressSaveRevision : 0, loadToken,
+                    refreshMetadata ? WaitForCatalogWritesAsync : null)
                 : await ReadWindowAsync(_offset, PageSize, _snapshot);
             if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
             foreach (var item in response.Items)

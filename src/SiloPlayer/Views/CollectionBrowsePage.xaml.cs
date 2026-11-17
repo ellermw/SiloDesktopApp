@@ -56,6 +56,7 @@ public sealed partial class CollectionBrowsePage : Page
     private int _total;
     private bool _hasMore;
     private bool _isLoadingMore;
+    private bool _retainedRefreshPending;
     private string? _windowCursor;
     private int _nextOffset;
     private bool _suppressSortEvents = true;
@@ -162,7 +163,8 @@ public sealed partial class CollectionBrowsePage : Page
         var query = JsonSerializer.Serialize(_browseQuery);
         _windowCursor = null;
         _nextOffset = 0;
-        _isLoadingMore = retainWindow;
+        _isLoadingMore = true;
+        _retainedRefreshPending = retainWindow;
         LoadMoreRing.IsActive = false;
         LoadMoreRing.Visibility = Visibility.Collapsed;
         if (!retainWindow)
@@ -195,6 +197,7 @@ public sealed partial class CollectionBrowsePage : Page
                     () => _cardMutationRevision + ProgressSaves.ProgressSaveRevision, loadCts.Token, WaitForWritesAsync)
                 : await ReadWindowAsync(0, PageSize, null);
             if (!Current()) return;
+            _retainedRefreshPending = false;
             _windowCursor = response.Snapshot;
             _nextOffset = response.Items.Count;
             ApplyServerEffectiveSort(response);
@@ -245,7 +248,11 @@ public sealed partial class CollectionBrowsePage : Page
 
     private async Task LoadMoreAsync()
     {
-        if (_isLoadingMore || !_hasMore || _currentArgs == null || _loadCts is not { } owner || owner.IsCancellationRequested) return;
+        if (!_isNavigated || _isLoadingMore || _currentArgs == null) return;
+        // A failed retained reread retired its cursor. Paging demand must retry
+        // that fresh window, never append to the still-mounted stale cards.
+        if (_retainedRefreshPending) { await LoadFirstPageAsync(retainWindow: true); return; }
+        if (!_hasMore || _loadCts is not { } owner || owner.IsCancellationRequested) return;
         var context = _apiClient.CaptureContext();
         _isLoadingMore = true;
         LoadMoreRing.Visibility = Visibility.Visible;
@@ -418,14 +425,16 @@ public sealed partial class CollectionBrowsePage : Page
     private async void FiltersButton_Click(object sender, RoutedEventArgs e)
     {
         CollectionQueryFilters.ConfigureSort();
-        _browseQuery.Sort = new() { Field = _sort ?? "added_at", Order = _order ?? "desc" };
-        CollectionQueryFilters.Load(_browseQuery, _mediaScope, _currentArgs?.LibraryId);
+        var draft = QueryEditing.Clone(_browseQuery);
+        draft.Sort = new() { Field = _sort ?? "added_at", Order = _order ?? "desc" };
+        CollectionQueryFilters.Load(draft, _mediaScope, _currentArgs?.LibraryId);
         FiltersSheet.IsOpen = true;
         if (_currentArgs is not {} args) return;
         try
         {
             var filters = await _catalogApi.GetFiltersAsync(libraryId: args.LibraryId, source: args.IsUserCollection ? "user_collection" : "library_collection", collectionId: args.CollectionId, type: _mediaScope, ct: _loadCts?.Token ?? CancellationToken.None);
-            if (_currentArgs == args) CollectionQueryFilters.Load(_browseQuery, _mediaScope, args.LibraryId, filters);
+            if (_currentArgs == args && ReferenceEquals(CollectionQueryFilters.Query, draft))
+                CollectionQueryFilters.UpdateOptions(filters);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
@@ -434,6 +443,7 @@ public sealed partial class CollectionBrowsePage : Page
     private async void ApplyFilters_Click(object sender, RoutedEventArgs e)
     {
         if (!CollectionQueryFilters.IsValid) return;
+        _browseQuery = QueryEditing.Clone(CollectionQueryFilters.Query);
         if (_browseQuery.Sort is {} sort && (sort.Field != (_sort ?? "added_at") || sort.Order != (_order ?? "desc")))
         {
             _sort = sort.Field; _order = sort.Order; _explicitSourceOrder = false;

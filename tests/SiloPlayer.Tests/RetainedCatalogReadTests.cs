@@ -191,6 +191,40 @@ public sealed class RetainedCatalogReadTests
     }
 
     [Fact]
+    public async Task MetadataRereadWaitsForAnAppLifetimeFinalSaveThatPredatesThePageVisit()
+    {
+        var cache = new ItemDetailPrefetchCache((string _, CancellationToken _) =>
+            Task.FromResult(new MediaItemDetail()));
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The app receives this before Catalog is mounted and has a local write registry.
+        cache.TrackProgressSave(persisted.Task, "movie:a");
+        var localWrites = new PendingCatalogWrites();
+        var reads = 0;
+        var serverPosition = 10d;
+        async Task Wait(CancellationToken ct)
+        {
+            await localWrites.WaitAsync(ct);
+            await cache.WaitForProgressSettlementAsync(ct);
+        }
+        var refresh = RetainedCatalogRead.ReadAsync((_, _, _) =>
+        {
+            reads++;
+            return Task.FromResult(new CatalogResponse
+            {
+                Items = serverPosition < 100 ? [new() { ContentId = "movie:a", PositionSeconds = serverPosition }] : [],
+                Total = serverPosition < 100 ? 1 : 0
+            });
+        }, 60, 60, () => cache.ProgressSaveRevision, CancellationToken.None, Wait);
+        Assert.False(refresh.IsCompleted);
+        Assert.Equal(0, reads);
+        // The final save removes the title from Continue Watching before the new snapshot.
+        serverPosition = 100;
+        persisted.SetResult();
+        Assert.Empty((await refresh).Items);
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
     public async Task CancellationWhilePersistenceIsPendingCannotStartARereadAfterNavigation()
     {
         var writes = new PendingCatalogWrites();

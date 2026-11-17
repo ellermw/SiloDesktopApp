@@ -103,6 +103,66 @@ public sealed class SearchMetadataRefreshTests
         Assert.Equal("Old 0", model.Results[0].Title);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompletionRestartsUnfinishedPeopleAndStartsDiscoveryEvenDuringTheInitialCatalogRead(bool initialCatalogPending)
+    {
+        using var wire = new Wire { DelayPeople = true };
+        if (initialCatalogPending) wire.HoldOffset = 0;
+        var model = wire.Model();
+        model.MediaScope = "video"; model.MediaType = "movie";
+        var search = model.SearchCommand.ExecuteAsync(null);
+        if (initialCatalogPending) await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        else await search;
+        await wire.PeopleStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        wire.Rows[0].Title = "Fresh";
+
+        Assert.True(await model.RefreshCatalogMetadataAsync());
+        await Until(() => wire.PeopleReads == 2);
+        wire.ReleasePeople.SetResult();
+        wire.Release.TrySetResult();
+        await search;
+        await Until(() => model.PeopleResults.Count == 1 && model.OutsideLibraryResults.Count == 1);
+        Assert.Equal("person:one", model.PeopleResults[0].Id);
+        Assert.Equal("Fresh", model.Results[0].Title);
+        Assert.Null(model.PeopleError);
+        var catalogReads = wire.Reads.Count;
+        await model.SearchCommand.ExecuteAsync(null);
+        Assert.Equal(catalogReads, wire.Reads.Count);
+    }
+
+    [Fact]
+    public async Task CanceledMetadataReadCanResumeTheRetainedQueryOnBack()
+    {
+        using var wire = new Wire();
+        var model = wire.Model();
+        await model.SearchCommand.ExecuteAsync(null);
+        wire.Rows[0].Title = "Fresh";
+        wire.HoldOffset = 0;
+        var refresh = model.RefreshCatalogMetadataAsync();
+        await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        model.CancelPendingSearch();
+        wire.Release.SetResult();
+        Assert.False(await refresh);
+        Assert.Equal("Old 0", model.Results[0].Title);
+        model.BeginSearchVisit();
+        Assert.True(await model.RefreshCatalogMetadataAsync());
+        Assert.Equal("Fresh", model.Results[0].Title);
+        await model.LoadMoreAsync();
+        Assert.Equal(120, model.Results.Count);
+    }
+
+    private static async Task Until(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException();
+            await Task.Delay(10);
+        }
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         public List<MediaItem> Rows { get; } = Enumerable.Range(0, 181)
@@ -110,6 +170,10 @@ public sealed class SearchMetadataRefreshTests
         public List<(int Offset, int Limit)> Reads { get; } = [];
         public int? HoldOffset;
         public bool FailNext;
+        public bool DelayPeople;
+        public int PeopleReads;
+        public TaskCompletionSource PeopleStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleasePeople { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly Dictionary<string, List<MediaItem>> _snapshots = [];
@@ -124,7 +188,18 @@ public sealed class SearchMetadataRefreshTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            if (request.RequestUri!.AbsolutePath != "/api/v2/catalog") return Reply("{\"items\":[]}");
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/catalog/search/capabilities") return Reply("{\"people_media_scope\":true}");
+            if (path.StartsWith("/api/v2/catalog/people") && DelayPeople)
+            {
+                Interlocked.Increment(ref PeopleReads);
+                PeopleStarted.TrySetResult();
+                await ReleasePeople.Task; // Ignore cancellation; the retired owner must not publish.
+                return Reply("{\"items\":[{\"id\":\"person:one\",\"name\":\"Fixture Person\"}]}");
+            }
+            if (path == "/api/v2/requests/status") return Reply("{\"requests_enabled\":true}");
+            if (path == "/api/v2/requests/search") return Reply("{\"page\":1,\"total_pages\":1,\"results\":[{\"media_type\":\"movie\",\"tmdb_id\":42,\"availability\":\"missing\"}]}");
+            if (path != "/api/v2/catalog") return Reply("{\"items\":[]}");
             if (FailNext)
             {
                 FailNext = false;

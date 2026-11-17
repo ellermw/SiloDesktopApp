@@ -65,6 +65,8 @@ public partial class SearchViewModel : ObservableObject
         SetLocalizedMessage(nameof(OutsideError), () => null, value => OutsideError = value);
     }
     private CancellationTokenSource? _searchCts;
+    private bool _peopleSearchPending;
+    private bool _outsideSearchStarted;
     private CancellationTokenSource? _filtersCts;
     private string? _snapshot;
     private string? _lastAppliedSearchKey;
@@ -325,6 +327,7 @@ public partial class SearchViewModel : ObservableObject
         var ct = searchCts.Token;
         _snapshot = null;
         _hasMore = false;
+        _outsideSearchStarted = false;
 
         if (string.IsNullOrWhiteSpace(Query))
         {
@@ -356,7 +359,8 @@ public partial class SearchViewModel : ObservableObject
             // request-provider discovery must never hold those results behind
             // a slow plugin or network timeout.
             var catalogTask = FetchCatalogPageAsync(0, null, ct, querySnapshot);
-            var peopleTask = SearchPeopleAsync(querySnapshot, ct);
+            _peopleSearchPending = true;
+            _ = PublishPeopleAsync(SearchPeopleAsync(querySnapshot, ct), querySnapshot, searchCts);
             _ = RefreshBoxSetSearchAsync(false);
 
             var primaryTimer = Stopwatch.StartNew();
@@ -365,8 +369,6 @@ public partial class SearchViewModel : ObservableObject
             LocalLog.AppendLine(
                 "search_timing.txt",
                 $"catalog_complete | elapsed_ms={primaryTimer.ElapsedMilliseconds} | query_length={querySnapshot.Length} | scope={MediaScope} | type={MediaType ?? "all"} | sort={SortField} | request_sort={GetRequestSortField() ?? "server_default"} | count={response.Items.Count} | has_more={response.HasMore}");
-
-            _ = PublishPeopleAsync(peopleTask, querySnapshot, searchCts);
 
             // Use server results directly — server handles text search
             ReplaceMediaResults(response.Items);
@@ -378,10 +380,7 @@ public partial class SearchViewModel : ObservableObject
             // Match the WebUI's secondary discovery cadence without allowing
             // provider/plugin work to compete with the local catalog request.
             // Local results are already visible before this task begins.
-            if (RequestSearchType() != null)
-            {
-                _ = SetOutsidePageAsync(1);
-            }
+            StartOutsideSearchIfNeeded();
         }
         catch (OperationCanceledException)
         {
@@ -403,12 +402,12 @@ public partial class SearchViewModel : ObservableObject
     }
 
     /// <summary>Rereads the mounted query window without resetting scroll or optional discovery.</summary>
-    public async Task RefreshCatalogMetadataAsync()
+    public async Task<bool> RefreshCatalogMetadataAsync()
     {
         // Invalidate same-query reuse even when the retained read fails.
         _lastAppliedSearchKey = null;
         RecordCatalogMutation();
-        if (!_boxSetSearchActive || string.IsNullOrWhiteSpace(Query)) return;
+        if (!_boxSetSearchActive || string.IsNullOrWhiteSpace(Query)) return false;
         var query = Query.Trim();
         var key = BuildSearchKey(query);
         var context = _catalogApi.CaptureContext();
@@ -424,6 +423,10 @@ public partial class SearchViewModel : ObservableObject
         IsLoadingMore = false;
         _hasMore = false; // A failed reread must not append using the retired snapshot.
         _snapshot = null;
+        // The replaced owner also owned the initial people read. Restart only
+        // unfinished companion work; retain already published optional results.
+        if (_peopleSearchPending)
+            _ = PublishPeopleAsync(SearchPeopleAsync(query, ct), query, owner);
         try
         {
             async Task<CatalogResponse> ReadWindowAsync(int offset, int limit, string? snapshot)
@@ -435,13 +438,15 @@ public partial class SearchViewModel : ObservableObject
             }
             var response = await RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, 60,
                 () => CatalogMutationRevision, ct, WaitForCatalogWritesAsync);
-            if (!Current()) return;
+            if (!Current()) return false;
             MediaItemCollectionReconciler.Apply(Results, response.Items);
             TotalCount = response.Total > 0 ? response.Total : Results.Count;
             _snapshot = response.Snapshot;
             _hasMore = response.HasMore || (response.Items.Count > 0 && Results.Count < response.Total);
             _lastAppliedSearchKey = key;
             SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+            StartOutsideSearchIfNeeded();
+            return true;
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -449,6 +454,14 @@ public partial class SearchViewModel : ObservableObject
             if (Current()) SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not refresh search results: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally { if (ReferenceEquals(_searchCts, owner)) IsLoading = false; }
+        return false;
+    }
+
+    private void StartOutsideSearchIfNeeded()
+    {
+        if (_outsideSearchStarted || RequestSearchType() == null) return;
+        _outsideSearchStarted = true;
+        _ = SetOutsidePageAsync(1);
     }
 
     public void CancelPendingSearch()
@@ -609,6 +622,7 @@ public partial class SearchViewModel : ObservableObject
         try { var people = await task; if (IsCurrentSearchOwner(owner, query)) { ReplacePeopleResults(people); SetLocalizedMessage(nameof(PeopleError), () => null, value => PeopleError = value); } }
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (IsCurrentSearchOwner(owner, query)) SetLocalizedMessage(nameof(PeopleError), () => $"Could not load people: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => PeopleError = value); }
+        finally { if (IsCurrentSearchOwner(owner, query)) _peopleSearchPending = false; }
     }
 
     public async Task SetOutsidePageAsync(int page)

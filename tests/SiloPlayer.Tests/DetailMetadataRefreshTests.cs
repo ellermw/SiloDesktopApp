@@ -852,7 +852,9 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("await LoadCatalogAsync(true, Math.Max(PageSize, _items.Count), refreshMetadata: true)", catalogReceiver);
         Assert.Contains("if (refreshMetadata) _items[index] = item;", catalog);
         Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, windowSize, PageSize,", catalog);
-        Assert.Contains("() => refreshMetadata ? _cardMutationRevision : 0, loadToken,\n                    refreshMetadata ? _pendingProgressSaves.WaitAsync : null)", catalog);
+        Assert.Contains("() => refreshMetadata ? _cardMutationRevision + ProgressSaves.ProgressSaveRevision : 0, loadToken,\n                    refreshMetadata ? WaitForCatalogWritesAsync : null)", catalog);
+        Assert.Contains("await _pendingProgressSaves.WaitAsync(ct);", catalog);
+        Assert.Contains("await ProgressSaves.WaitForProgressSettlementAsync(ct);", catalog);
         Assert.Contains("_cardMutationRevision++;", catalogReceiver);
         Assert.True(catalogReceiver.IndexOf("_cardMutationRevision++;", StringComparison.Ordinal)
             < catalogReceiver.IndexOf("if (item == null) return;", StringComparison.Ordinal));
@@ -887,8 +889,10 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("if (!shown) _items.Clear();", reconcile);
         Assert.Contains("else if (refreshMetadata)\n                for (var index = 0; index < _items.Count; index++) _items[index] = items[index];", reconcile);
         Assert.Contains("_retainedMetadataRefresh = false;", reconcile);
-        Assert.Contains("await _pendingProgressSaves.WaitAsync(ct);", reconcile);
+        Assert.Contains("await WaitForCatalogWritesAsync(ct);", reconcile);
         Assert.Contains("cardRevision != _cardMutationRevision", reconcile);
+        Assert.Contains("var progressRevision = ProgressSaves.ProgressSaveRevision;", reconcile);
+        Assert.Equal(2, reconcile.Split("progressRevision != ProgressSaves.ProgressSaveRevision").Length - 1);
     }
 
     [Fact]
@@ -1036,7 +1040,14 @@ public sealed class DetailMetadataRefreshTests
         var model = Read("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
         var collection = Read("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
         Assert.Contains("visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)", search);
-        Assert.Contains("_ = ViewModel.RefreshCatalogMetadataAsync();", search);
+        Assert.Contains("_ = RefreshCatalogMetadataAsync();", search);
+        var refresh = search[search.IndexOf("private async Task RefreshCatalogMetadataAsync()", StringComparison.Ordinal)..];
+        refresh = refresh[..refresh.IndexOf("private async Task OpenQueryAsync", StringComparison.Ordinal)];
+        Assert.Contains("if (await ViewModel.RefreshCatalogMetadataAsync() && _isNavigated && visit == _navigationGeneration", refresh);
+        Assert.Contains("_metadataRevision = revision;", refresh);
+        var receiver = search[search.IndexOf("Register<MediaSurfaceChanged>", StringComparison.Ordinal)..];
+        receiver = receiver[..receiver.IndexOf("Register<PlaybackProgressUpdated>", StringComparison.Ordinal)];
+        Assert.DoesNotContain("_metadataRevision =", receiver);
         Assert.Contains("ViewModel.RecordCatalogMutation(change.Persisted);", search);
         Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, 60,", model);
         Assert.Contains("key == BuildSearchKey(Query.Trim())", model);
@@ -1047,6 +1058,45 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("_cardMutationRevision + ProgressSaves.ProgressSaveRevision", collection);
         Assert.Contains("await ProgressSaves.WaitForProgressSettlementAsync(ct);", collection);
         Assert.Contains("MediaItemCollectionReconciler.Apply(_items, response.Items);", collection);
+    }
+
+    [Fact]
+    public void CollectionPagingRetriesAFailedRetainedWindowBeforeAppending()
+    {
+        var source = Read("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+        var load = source[source.IndexOf("private async Task LoadFirstPageAsync", StringComparison.Ordinal)..];
+        load = load[..load.IndexOf("private Task<CatalogResponse> LoadPageAsync", StringComparison.Ordinal)];
+        Assert.Contains("_retainedRefreshPending = retainWindow;", load);
+        Assert.Contains("_windowCursor = null;", load);
+        Assert.Contains("_nextOffset = 0;", load);
+        Assert.True(load.IndexOf("_retainedRefreshPending = false;", StringComparison.Ordinal)
+            > load.IndexOf("if (!Current()) return;", StringComparison.Ordinal));
+        var failure = load[load.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("_retainedRefreshPending = false", failure);
+        var more = source[source.IndexOf("private async Task LoadMoreAsync()", StringComparison.Ordinal)..];
+        more = more[..more.IndexOf("private void UpdateCountDisplay", StringComparison.Ordinal)];
+        Assert.Contains("if (_retainedRefreshPending) { await LoadFirstPageAsync(retainWindow: true); return; }", more);
+        Assert.True(more.IndexOf("if (_retainedRefreshPending)", StringComparison.Ordinal)
+            < more.IndexOf("if (!_hasMore", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CollectionFilterSheetEditsADetachedDraftInsteadOfRetiringAppliedReads()
+    {
+        var source = Read("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+        var open = source[source.IndexOf("private async void FiltersButton_Click", StringComparison.Ordinal)..];
+        open = open[..open.IndexOf("private async void ApplyFilters_Click", StringComparison.Ordinal)];
+        Assert.Contains("var draft = QueryEditing.Clone(_browseQuery);", open);
+        Assert.Contains("draft.Sort = new()", open);
+        Assert.Contains("CollectionQueryFilters.Load(draft,", open);
+        Assert.DoesNotContain("_browseQuery.Sort =", open);
+        Assert.Contains("_browseQuery = QueryEditing.Clone(CollectionQueryFilters.Query);", source);
+        var applied = new SiloPlayer.Core.Models.Collections.QueryDefinition();
+        var before = JsonSerializer.Serialize(applied);
+        var draft = QueryEditing.Clone(applied);
+        draft.Sort = new() { Field = "title", Order = "asc" };
+        draft.Groups.Add(new() { Rules = [new() { Field = "year", Op = "gte", Value = 2020 }] });
+        Assert.Equal(before, JsonSerializer.Serialize(applied));
     }
 
     // ===== helpers =====

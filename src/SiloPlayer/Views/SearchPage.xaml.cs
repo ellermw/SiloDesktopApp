@@ -99,11 +99,7 @@ public sealed partial class SearchPage : Page
                 if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)) return;
                 ViewModel.RecordCatalogMutation();
                 if (change.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed)
-                {
-                    _metadataIdentity = _catalogApi.CaptureIdentityContext();
-                    _metadataRevision = MetadataRefreshFlow.GetCatalogRevision(_metadataIdentity.Value);
-                    _ = ViewModel.RefreshCatalogMetadataAsync();
-                }
+                    _ = RefreshCatalogMetadataAsync();
                 if (change.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.ItemMetadataRefreshed)
                     RefreshBoxSetSearch();
             });
@@ -132,8 +128,6 @@ public sealed partial class SearchPage : Page
         var metadataIdentity = _catalogApi.CaptureIdentityContext();
         var metadataRevision = MetadataRefreshFlow.GetCatalogRevision(metadataIdentity);
         var metadataChanged = _metadataIdentity != metadataIdentity || _metadataRevision != metadataRevision;
-        _metadataIdentity = metadataIdentity;
-        _metadataRevision = metadataRevision;
         _catalogApi.LibraryCacheInvalidated += RefreshBoxSetSearch;
         _localizedReads.Invalidated += BoxSetLanguageChanged;
         _uiCustomizationService.Changed += UICustomization_Changed;
@@ -145,13 +139,16 @@ public sealed partial class SearchPage : Page
             UpdateScopeButtons();
             UpdateResultsState();
             _ = ViewModel.RefreshBoxSetSearchAsync();
-            if (metadataChanged && metadataRevision != 0) _ = ViewModel.RefreshCatalogMetadataAsync();
+            if (metadataChanged && metadataRevision != 0) _ = RefreshCatalogMetadataAsync();
             var replaysQuery = e.Parameter is string routeQuery && !string.IsNullOrWhiteSpace(routeQuery) ||
                 e.Parameter is SearchNavigation scopedQuery && !string.IsNullOrWhiteSpace(scopedQuery.Query);
             if (!replaysQuery) _ = ViewModel.RefreshRetainedOutsideAsync();
         }
         else
         {
+            // No retained query needs this revision; any new search reads fresh.
+            _metadataIdentity = metadataIdentity;
+            _metadataRevision = metadataRevision;
             ViewModel.CancelPendingSearch();
             ViewModel.BeginSearchVisit();
             ViewModel.LibraryId = e.Parameter is SearchNavigation scoped ? scoped.LibraryId : null;
@@ -176,6 +173,20 @@ public sealed partial class SearchPage : Page
         _ = RefreshRatingSortChoicesAsync(generation);
         if (e.Parameter is string query && !string.IsNullOrWhiteSpace(query)) _ = OpenQueryAsync(query, generation);
         else if (e.Parameter is SearchNavigation route && !string.IsNullOrWhiteSpace(route.Query)) _ = OpenQueryAsync(route.Query, generation, route.MediaScope);
+    }
+
+    private async Task RefreshCatalogMetadataAsync()
+    {
+        var visit = _navigationGeneration;
+        var identity = _catalogApi.CaptureIdentityContext();
+        var revision = MetadataRefreshFlow.GetCatalogRevision(identity);
+        // A canceled/failed reread leaves the revision unconsumed for Back.
+        if (await ViewModel.RefreshCatalogMetadataAsync() && _isNavigated && visit == _navigationGeneration
+            && _catalogApi.IsCurrentIdentityContext(identity))
+        {
+            _metadataIdentity = identity;
+            _metadataRevision = revision;
+        }
     }
 
     private async Task OpenQueryAsync(string query, long generation, string? requestedScope = null)
