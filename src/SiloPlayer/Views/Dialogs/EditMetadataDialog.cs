@@ -88,22 +88,14 @@ public sealed partial class EditMetadataDialog : ContentDialog
         _writeNotice.Children.Add(_writeStatus); _writeNotice.Children.Add(_retryWriteRefresh); _body.Children.Add(_writeNotice);
         _retryWriteRefresh.Click += async (_, _) => await FollowPendingWritesAsync(retry: true);
         var general = Section("general", "General");
-        foreach (var (key, label) in new[] { ("title","Title"),("sort_title","Sort Title"),("original_title","Original Title"),("overview","Overview"),("tagline","Tagline"),("content_rating","Content Rating") }) Text(general, key, label);
-        if (item.Type is "movie" or "episode") Number(general, "runtime", "Runtime (min)", 0, double.PositiveInfinity);
-        if (item.Type is "season" or "episode") Number(general, "season_number", "Season Number", 0, double.PositiveInfinity, item.Type == "episode");
-        if (item.Type == "episode") Number(general, "episode_number", "Episode Number", 0, double.PositiveInfinity);
+        BuildFields(general, "general");
         var dates = Section("dates", "Dates & Ratings");
-        if (item.Type is "movie" or "series") Number(dates, "year", "Year", 0, double.PositiveInfinity);
-        if (item.Type == "movie") Text(dates, "release_date", "Release Date");
-        if (item.Type == "series")
-        { Text(dates, "first_air_date", "First Air Date"); Text(dates, "last_air_date", "Last Air Date"); Text(dates, "air_time", "Air Time"); Text(dates, "air_timezone", "Air Timezone"); }
-        if (item.Type is "season" or "episode") Text(dates, "air_date", "Air Date");
-        if (item.Type is "movie" or "series")
+        BuildFields(dates, "dates");
+        var tagFields = MetadataEditorFormPolicy.FieldsFor(item.Type, "tags");
+        if (tagFields.Count > 0)
         {
-            Number(dates, "rating_imdb", "IMDb Rating", 0, 10); Number(dates, "rating_tmdb", "TMDB Rating", 0, 10);
-            Number(dates, "rating_rt_critic", "RT Critic Score", 0, 100); Number(dates, "rating_rt_audience", "RT Audience Score", 0, 100);
             var tags = Section("tags", "Tags & Genres");
-            foreach (var key in item.Type == "series" ? new[] { "genres", "studios", "networks", "countries" } : new[] { "genres", "studios", "countries" })
+            foreach (var key in tagFields)
             {
                 var input = new MetadataTagsInput((string[])_state.Fields[key]!);
                 _tagInputs[key] = input;
@@ -112,9 +104,13 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 group.Children.Add(Label(key, char.ToUpper(key[0]) + key[1..])); group.Children.Add(input); tags.Children.Add(group);
             }
         }
-        var ids = Section("ids", "External IDs");
-        Text(ids, "imdb_id", "IMDb ID"); Text(ids, "tmdb_id", "TMDB ID"); Text(ids, "tvdb_id", "TVDB ID");
-        if (item.Type != "episode" && AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>()))
+        if (MetadataEditorFormPolicy.FieldsFor(item.Type, "ids").Count > 0)
+        {
+            var ids = Section("ids", "External IDs");
+            BuildFields(ids, "ids");
+            BuildFieldLayout(ids, [["imdb_id"], ["tmdb_id"], ["tvdb_id"]]);
+        }
+        if (MetadataEditorFormPolicy.CanEditImages(item.Type, AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())))
             BuildImages(Section("images", "Images"));
         var generalRows = new List<string[]> { new[] { "title" }, new[] { "sort_title", "original_title" }, new[] { "overview" }, new[] { "tagline" },
             item.Type switch
@@ -127,7 +123,6 @@ public sealed partial class EditMetadataDialog : ContentDialog
         if (item.Type == "episode") generalRows.Add(["episode_number", "runtime"]);
         BuildFieldLayout(general, generalRows.ToArray());
         BuildFieldLayout(dates, [["year", "release_date", "first_air_date"], ["last_air_date", "air_time", "air_timezone"], ["air_date"], ["rating_imdb", "rating_tmdb"], ["rating_rt_critic", "rating_rt_audience"]]);
-        BuildFieldLayout(ids, [["imdb_id"], ["tmdb_id"], ["tvdb_id"]]);
         // An unselected section has not acquired a visual Parent yet. Its stored
         // layout still owns the rating row and is the authority for insertion.
         if (_fieldGroups.TryGetValue("rating_imdb", out var rating) && _fieldLayouts.Select(layout => layout.Grid).FirstOrDefault(grid => grid.Children.Contains(rating)) is Grid ratingRow)
@@ -138,7 +133,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
             Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left };
         // Not a keyed control: rewriting the flyout owner's content on load/open can stop its
         // confirmation flyout from opening. RefreshLocale updates it only on a real language change.
-        _reset.Visibility = item.Type is "movie" or "series" or "season" or "episode" ? Visibility.Visible : Visibility.Collapsed;
+        _reset.Visibility = MetadataEditorFormPolicy.CanResetToProvider(item.Type) ? Visibility.Visible : Visibility.Collapsed;
         _reset.IsEnabled = false;
         var reset = _reset;
         var confirmation = new StackPanel { Spacing = 12, MaxWidth = 340 };
@@ -207,7 +202,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
     }
     private bool CurrentOwner => !_lifetime.IsCancellationRequested && _client.IsCurrentIdentityContext(_identityOwner)
         && AuthorizationPolicy.CanCurateMetadata(App.Services.GetRequiredService<AuthService>());
-    private bool CanSubmitReset => CurrentOwner && !WritePending && _resetCapability is { } capability
+    private bool CanSubmitReset => MetadataEditorFormPolicy.CanResetToProvider(_item.Type) && CurrentOwner && !WritePending && _resetCapability is { } capability
         && _api.IsCurrentContext(capability.Owner);
     private async Task LoadResetCapabilityAsync()
     {
@@ -238,6 +233,21 @@ public sealed partial class EditMetadataDialog : ContentDialog
     }
     private ToastService Toast() => App.Services.GetRequiredService<ToastService>();
     private void Changed() => WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, _item.ContentId, _item.SeriesId));
+    private void BuildFields(StackPanel panel, string section)
+    {
+        foreach (var key in MetadataEditorFormPolicy.FieldsFor(_item.Type, section))
+        {
+            // Every field in this policy has an existing web.* label in the shipped catalog.
+            var label = AppStrings.Get(FieldKey(key)!);
+            if (key is "runtime" or "year" or "season_number" or "episode_number" || key.StartsWith("rating_"))
+            {
+                var max = key is "rating_imdb" or "rating_tmdb" ? 10d
+                    : key is "rating_rt_critic" or "rating_rt_audience" ? 100d : double.PositiveInfinity;
+                Number(panel, key, label, 0, max, key == "season_number" && _item.Type == "episode");
+            }
+            else Text(panel, key, label);
+        }
+    }
     private StackPanel Section(string key, string title)
     {
         var panel = new StackPanel { Spacing = 16 }; _sections[key] = panel; _body.Children.Add(panel);
@@ -400,6 +410,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
     private static string String(JsonElement element, string key) => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
     private async Task BuildTranslation()
     {
+        if (_item.Type is not ("movie" or "series" or "season" or "episode")) return;
         try
         {
             var capability = await _api.GetMetadataAiCapabilityAsync(_lifetime.Token);
