@@ -429,7 +429,7 @@ public sealed partial class ItemDetailPage : Page
             _ => 0,
         };
         if (delta == 0) return;
-        scroller.ChangeView(Math.Max(0, scroller.HorizontalOffset + delta), null, null);
+        scroller.ChangeView(Math.Max(0, scroller.HorizontalOffset + delta), null, null, !SystemMotion.AnimationsEnabled);
         e.Handled = true;
     }
 
@@ -466,7 +466,7 @@ public sealed partial class ItemDetailPage : Page
     {
         var delta = Math.Max(minimumStep, scroller.ViewportWidth * 0.82d) * direction;
         var target = Math.Clamp(scroller.HorizontalOffset + delta, 0, Math.Max(0, scroller.ScrollableWidth));
-        scroller.ChangeView(target, null, null);
+        scroller.ChangeView(target, null, null, !SystemMotion.AnimationsEnabled);
         UpdateDetailCarouselButtons(scroller, previousButton, nextButton);
     }
 
@@ -658,7 +658,7 @@ public sealed partial class ItemDetailPage : Page
             SeasonsScrollViewer.HorizontalOffset + delta,
             0,
             Math.Max(0, SeasonsScrollViewer.ScrollableWidth));
-        SeasonsScrollViewer.ChangeView(target, null, null);
+        SeasonsScrollViewer.ChangeView(target, null, null, !SystemMotion.AnimationsEnabled);
         UpdateSeasonScrollButtons();
     }
 
@@ -1131,6 +1131,9 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnPlayerStateChanged(Services.PlayerState state)
     {
+        // A player no longer covering the page releases a held server metadata reload.
+        if (state is not (Services.PlayerState.Expanded or Services.PlayerState.Fullscreen))
+            _serverMetadataWatch?.Resume();
         if (state == Services.PlayerState.Idle)
         {
             DispatcherQueue?.TryEnqueue(() =>
@@ -1167,6 +1170,7 @@ public sealed partial class ItemDetailPage : Page
         SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged;
         ++_titleArtRevision;
         ViewModel.CancelPendingLoads();
+        EndServerMetadataWatch();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
@@ -1284,6 +1288,8 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrEmpty(contentId))
         {
             _currentContentId = contentId;
+            // Watch before the first read, so a change that lands during it is not lost.
+            BeginServerMetadataWatch(contentId);
             await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
                 _playerService?.PendingProgressSave ?? Task.CompletedTask);
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
@@ -1301,6 +1307,7 @@ public sealed partial class ItemDetailPage : Page
             // episode queries are companion requests in the WebUI and must not
             // hold the entire page behind another network round trip.
             UpdateUI();
+            _serverMetadataWatch?.Resume();
             AdvisoryAgeBadge.Visibility = Visibility.Collapsed;
             _ = RefreshVersionQualityAsync();
             _ = LoadAdvisoryDisplayAsync(ViewModel.Item, navigationToken);
@@ -3305,11 +3312,49 @@ public sealed partial class ItemDetailPage : Page
             {
                 var client = App.Services.GetRequiredService<SiloApiClient>();
                 var authority = client.CaptureContext();
-                if (!IsCurrentDetail(item.ContentId)) return;
-                var dialog = new SiloPlayer.Views.Dialogs.EditMetadataDialog(item) { XamlRoot = XamlRoot };
-                await dialog.ShowAsync();
-                if (dialog.HasSaved && IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority))
-                { await ViewModel.ReloadAsync(item.ContentId); if (IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority)) UpdateUI(); }
+                var identity = client.CaptureIdentityContext();
+                var auth = App.Services.GetRequiredService<AuthService>();
+                var navigation = _navigationCts;
+                if (navigation == null || !IsCurrentDetail(item.ContentId) || !AuthorizationPolicy.CanCurateMetadata(auth)) return;
+                using var loading = CancellationTokenSource.CreateLinkedTokenSource(navigation.Token);
+                loading.CancelAfter(TimeSpan.FromSeconds(30));
+                bool IdentityCurrent() => ReferenceEquals(_navigationCts, navigation) && !navigation.IsCancellationRequested
+                    && IsCurrentDetail(item.ContentId) && client.IsCurrentIdentityContext(identity)
+                    && client.CaptureContext().AccessGeneration == authority.AccessGeneration && AuthorizationPolicy.CanCurateMetadata(auth);
+                bool OwnerCurrent() => IdentityCurrent() && client.IsCurrentContext(authority);
+                bool Current() => !loading.IsCancellationRequested && OwnerCurrent();
+                void RetireRead() { if (!OwnerCurrent()) loading.Cancel(); }
+                void DetachRead()
+                {
+                    client.ContextInvalidated -= RetireRead;
+                    auth.UserChanged -= RetireRead; auth.LoggedOut -= RetireRead;
+                }
+                client.ContextInvalidated += RetireRead;
+                auth.UserChanged += RetireRead; auth.LoggedOut += RetireRead;
+                edit.IsEnabled = false;
+                var writeRevision = App.Services.GetRequiredService<MediaMaintenanceApi>().PendingWrites.Revision;
+                try
+                {
+                    var detail = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(item.ContentId, loading.Token);
+                    if (!Current()) return;
+                    DetachRead();
+                    var dialog = new SiloPlayer.Views.Dialogs.EditMetadataDialog(detail, writeRevision) { XamlRoot = XamlRoot };
+                    // The timeout bounds the opening read, not time spent editing.
+                    loading.CancelAfter(Timeout.InfiniteTimeSpan);
+                    await dialog.ShowAsync();
+                    if (dialog.HasSaved && IdentityCurrent())
+                    { await ViewModel.ReloadAsync(item.ContentId); if (IdentityCurrent()) UpdateUI(); }
+                }
+                catch (OperationCanceledException) when (!IdentityCurrent()) { }
+                catch (Exception ex)
+                {
+                    if (IdentityCurrent()) App.Services.GetRequiredService<Services.ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex));
+                }
+                finally
+                {
+                    DetachRead();
+                    edit.IsEnabled = true;
+                }
             };
             MoreFlyout.Items.Add(edit); hasOverflowActions = true;
         }
@@ -3949,22 +3994,7 @@ public sealed partial class ItemDetailPage : Page
             : label;
     }
 
-    private async Task ShowRefreshMetadataDialogAsync()
-    {
-        var item = ViewModel.Item;
-        if (item == null) return;
-        var toast = App.Services.GetRequiredService<Services.ToastService>();
-        var dialog = new Controls.RefreshMetadataDialog(async mode =>
-        {
-            await App.Services.GetRequiredService<MediaMaintenanceApi>()
-                .RefreshMetadataAsync(item.ContentId, mode);
-            toast.Success(mode == "complete" ? "Complete refresh queued" : "Metadata refresh queued");
-        })
-        {
-            XamlRoot = XamlRoot,
-        };
-        await dialog.ShowAsync();
-    }
+    // ShowRefreshMetadataDialogAsync and its job follow: ItemDetailPage.ServerRefresh.cs.
 
     private async void FavoriteButton_Click(object sender, RoutedEventArgs e)
     {
@@ -7738,7 +7768,11 @@ public sealed partial class ItemDetailPage : Page
 
     private void UpdateSeasonPosterState(Grid posterHost, Season season)
     {
-        var state = (season.EpisodeCount, season.UserData?.Played, season.UserData?.WatchedCount, season.UserData?.InProgressCount);
+        var overlays = App.Services.GetRequiredService<global::SiloPlayer.Services.CardOverlayService>();
+        // The availability badge depends on the season's counts and on the profile's badge settings.
+        var overlayState = (overlays.IsLoaded, overlays.Preset, overlays.ManifestRevision, overlays.GetPrefs()?.GetValueOrDefault("availability"));
+        var state = (season.EpisodeCount, season.UserData?.Played, season.UserData?.WatchedCount, season.UserData?.InProgressCount,
+            season.Availability?.Have, season.Availability?.Total, overlayState);
         if (Equals(posterHost.Tag, state)) return;
         posterHost.Tag = state;
         // Retain the poster and focusable card; only the small state overlays change.
@@ -7772,9 +7806,10 @@ public sealed partial class ItemDetailPage : Page
 
         // Season progress bar (3px at bottom): green when completed, accent
         // otherwise. Fills proportional to watched/total episodes.
-        if ((isCompleted || hasProgress) && season.UserData != null && season.EpisodeCount > 0)
+        var progressVisible = (isCompleted || hasProgress) && season.UserData != null && season.EpisodeCount > 0;
+        if (progressVisible)
         {
-            int watched = isCompleted ? season.EpisodeCount : (season.UserData.WatchedCount);
+            int watched = isCompleted ? season.EpisodeCount : (season.UserData!.WatchedCount);
             double ratio = Math.Clamp((double)watched / season.EpisodeCount, 0, 1);
             var progressLayout = MediaCardProgressGeometry.Calculate(cardWidth, ratio, episodeCard: false);
             var barTrack = new Grid
@@ -7804,6 +7839,35 @@ public sealed partial class ItemDetailPage : Page
             posterHost.Children.Add(barTrack);
         }
 
+        AddSeasonAvailabilityBadge(posterHost, season, cardWidth, progressVisible, overlays);
+    }
+
+    /// <summary>
+    /// The availability ribbon of a season card: episodes in the library out of known episodes,
+    /// from the season list's own field (no extra read). Corners lift clear of the progress bar.
+    /// </summary>
+    private void AddSeasonAvailabilityBadge(Grid posterHost, Season season, double cardWidth, bool progressVisible,
+        global::SiloPlayer.Services.CardOverlayService overlays)
+    {
+        if (!overlays.IsLoaded)
+        {
+            _ = RebuildSeasonCardsAfterOverlaysLoadAsync(overlays);
+            return;
+        }
+        var geometry = CardOverlayGeometry.ForPoster(cardWidth, overlays.Preset);
+        var badges = CardBadgeHosts.ForData(global::SiloPlayer.Services.OverlayData.FromSeason(season), overlays, geometry.Scale);
+        if (badges.Count == 0) return;
+        CardBadgeHosts.Create(posterHost, geometry, CardOverlayGeometry.ProgressClearance(progressVisible)).Show(badges);
+    }
+
+    private async Task RebuildSeasonCardsAfterOverlaysLoadAsync(global::SiloPlayer.Services.CardOverlayService overlays)
+    {
+        try
+        {
+            await overlays.EnsureLoadedAsync();
+            DispatcherQueue.TryEnqueue(() => { if (IsLoaded && overlays.IsLoaded) BuildSeasonCards(); });
+        }
+        catch { }
     }
 
     private TextBlock BuildSeasonProgressText(Season season)

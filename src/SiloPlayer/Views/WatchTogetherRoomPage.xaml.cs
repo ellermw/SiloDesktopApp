@@ -73,6 +73,8 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         ViewModel = App.Services.GetRequiredService<WatchTogetherCoordinator>().ActiveRoom ?? App.Services.GetRequiredService<WatchTogetherRoomViewModel>();
         this.InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not start the host content search.
+        ImeCompositionGuard.Attach(HostSearchBox);
         Loaded += (_, _) => ObservePickerSpoilers();
         Unloaded += (_, _) => { if (!IsLoaded && _pickerSpoilers != null) _pickerSpoilers.Changed -= PickerSpoilersChanged; };
         InitializeSeriesPicker();
@@ -812,6 +814,7 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private async void HostSearchBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
+        if (ImeCompositionGuard.Attach(HostSearchBox).ShouldIgnore(e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter) await RunHostSearchAsync();
     }
 

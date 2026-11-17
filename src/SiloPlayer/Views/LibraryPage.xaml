@@ -256,17 +256,34 @@
                 </StackPanel>
             </Button>
 
-            <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal"
-                        HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="12">
+            <!-- Item count (official #4316): right after the Filters button, as in the WebUI filter bar.
+                 The right-hand margin keeps it clear of the poster-size button sharing this column. -->
             <TextBlock
                 x:Name="ResultCountText"
                 Grid.Row="1"
                 Grid.Column="4"
-                HorizontalAlignment="Right"
+                HorizontalAlignment="Left"
                 VerticalAlignment="Center"
+                Margin="0,0,48,0"
                 FontSize="13"
+                TextTrimming="CharacterEllipsis"
+                AutomationProperties.LiveSetting="Polite"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 Visibility="Collapsed" />
+            <ProgressRing
+                x:Name="ResultCountProgress"
+                Grid.Row="1"
+                Grid.Column="4"
+                Width="16"
+                Height="16"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Center"
+                IsActive="False"
+                Visibility="Collapsed"
+                AutomationProperties.Name="Loading item count"
+                loc:Localized.Name="web.catalog.filters.loadingCount" />
+            <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal"
+                        HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="12">
             <Button Style="{StaticResource OutlineButtonStyle}" Height="36" MinWidth="36" Padding="8"
                     AutomationProperties.Name="Poster size" ToolTipService.ToolTip="Poster size">
                 <FontIcon Glyph="&#xE8A9;" FontSize="16" />
@@ -428,6 +445,7 @@
             Grid.Row="3"
             Padding="48,0,48,24"
             ViewChanged="AudiobookGroupsPanel_ViewChanged"
+            SizeChanged="AudiobookGroupsPanel_SizeChanged"
             Visibility="Collapsed">
             <StackPanel Spacing="20">
                 <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">

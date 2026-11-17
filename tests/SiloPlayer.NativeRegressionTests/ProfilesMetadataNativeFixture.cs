@@ -324,6 +324,7 @@ internal static class ProfilesMetadataNativeFixture
                 "/api/v2/profiles" => new { items = new[] { new { id = "primary", name = "Primary", is_primary = true } }, max_profiles = Maximum },
                 "/api/v2/libraries" => new { items = new[] { new { id = "7", name = "Movies", type = "movie" } } },
                 "/api/v2/admin/catalog/capabilities" => new { item_match_hints = SupportsHints },
+                "/api/v2/admin/jobs/fixture-job" => new { id = "fixture-job", state = "succeeded" },
                 "/api/v2/admin/items/item/files" => new { items = new[] { new { id = "1", library_id = "7" }, new { id = "2", library_id = "8" } }, page = new { has_more = false } },
                 _ => (object)new { items = Array.Empty<object>(), state = "unavailable", sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() },
             });

@@ -25,16 +25,23 @@ public sealed class MetadataTagsInput : UserControl
             _input.Resources[key] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         Tapped += (_, _) => _input.Focus(FocusState.Programmatic);
         Render();
+        // Official #4287: IME candidate Enter, Backspace and commas are not tag edits.
+        var composition = SiloPlayer.Helpers.ImeCompositionGuard.Attach(_input);
         _input.KeyDown += (_, e) =>
         {
+            if (SiloPlayer.Helpers.ImeCompositionGuard.ShouldIgnore(composition, e)) return;
             if (e.Key == VirtualKey.Enter) { Commit(); e.Handled = true; }
             if (e.Key == VirtualKey.Back && _input.Text.Length == 0 && _values.Count > 0)
             { _values.RemoveAt(_values.Count - 1); Render(); Changed?.Invoke(this, EventArgs.Empty); e.Handled = true; }
         };
         _input.LostFocus += (_, _) => Commit();
-        _input.TextChanged += (_, _) => { if (_input.Text.Contains(',')) Commit(); };
+        _input.TextChanged += (_, _) => { if (!composition.IsComposing && _input.Text.Contains(',')) Commit(); };
     }
     public void CommitPending() => Commit();
+    public void SetValues(IEnumerable<string> values)
+    {
+        _values.Clear(); _values.AddRange(values); Render();
+    }
     private void Commit()
     {
         var additions = _input.Text.Split(',').Select(value => value.Trim()).Where(value => value.Length > 0).ToArray();

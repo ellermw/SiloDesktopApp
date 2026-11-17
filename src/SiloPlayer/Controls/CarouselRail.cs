@@ -43,8 +43,8 @@ public sealed class CarouselRail : Grid
         {
             if (e.Key == Windows.System.VirtualKey.Left) { Move(-1); e.Handled = true; }
             else if (e.Key == Windows.System.VirtualKey.Right) { Move(1); e.Handled = true; }
-            else if (e.Key == Windows.System.VirtualKey.Home) { scroll.ChangeView(0, null, null); e.Handled = true; }
-            else if (e.Key == Windows.System.VirtualKey.End) { scroll.ChangeView(scroll.ScrollableWidth, null, null); e.Handled = true; }
+            else if (e.Key == Windows.System.VirtualKey.Home) { scroll.ChangeView(0, null, null, ReduceMotion); e.Handled = true; }
+            else if (e.Key == Windows.System.VirtualKey.End) { scroll.ChangeView(scroll.ScrollableWidth, null, null, ReduceMotion); e.Handled = true; }
         };
         scroll.AddHandler(PointerPressedEvent, new PointerEventHandler((_, e) =>
         {
@@ -106,8 +106,11 @@ public sealed class CarouselRail : Grid
             if (step > 0)
                 distance = Math.Max(1, Math.Floor((_scroll.ViewportWidth - panel.Margin.Left - panel.Margin.Right + panel.Spacing) / step)) * step;
         }
-        _scroll.ChangeView(Math.Clamp(_scroll.HorizontalOffset + direction * distance, 0, _scroll.ScrollableWidth), null, null);
+        _scroll.ChangeView(Math.Clamp(_scroll.HorizontalOffset + direction * distance, 0, _scroll.ScrollableWidth), null, null, ReduceMotion);
     }
+    // Official #4311: with Windows animation effects off, paging and Home/End jump
+    // instead of sliding (the WebUI's prefers-reduced-motion). Cached by SystemMotion.
+    private static bool ReduceMotion => !SiloPlayer.Helpers.SystemMotion.AnimationsEnabled;
     private void UpdateArrows()
     {
         _previous.IsEnabled = _scroll.HorizontalOffset > 1;

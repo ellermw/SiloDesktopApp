@@ -38,6 +38,7 @@ public sealed partial class CollectionEditorPage : Page
         this.InitializeComponent();
         // TextBox handles arrow navigation before ordinary routed handlers.
         SearchBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(SearchBox_KeyDown), true);
+        ImeCompositionGuard.Attach(SearchBox);
         ImportedRemoveSelectedPoster.Content = SiloPlayer.Controls.WebUiIcon.Create("x", 12);
         ImportedRemovePosterButton.Content = SiloPlayer.Controls.WebUiIcon.Create("x", 12);
         _importedSortChoices = SiloPlayer.Controls.CatalogSortChoices.Capture(ImportedDefaultSortCombo);
@@ -839,6 +840,8 @@ public sealed partial class CollectionEditorPage : Page
 
     private async void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Official #4287: candidate Enter, arrows and Escape belong to the IME.
+        if (ImeCompositionGuard.Attach(SearchBox).ShouldIgnore(e)) return;
         if (e.Key is Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Down or Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Escape)
         {
             e.Handled = true;

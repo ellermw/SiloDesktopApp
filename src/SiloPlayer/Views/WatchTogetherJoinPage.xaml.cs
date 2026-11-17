@@ -32,6 +32,8 @@ public sealed partial class WatchTogetherJoinPage : Page
     {
         ViewModel = App.Services.GetRequiredService<WatchTogetherJoinViewModel>();
         this.InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not join the room.
+        SiloPlayer.Helpers.ImeCompositionGuard.Attach(RoomCodeBox);
         var accent = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
         Border IconTile(string name) => new() { Width = 32, Height = 32, CornerRadius = new CornerRadius(12),
             Background = name == "sparkles" ? new SolidColorBrush(Windows.UI.Color.FromArgb(38, accent.Color.R, accent.Color.G, accent.Color.B)) : (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
@@ -319,6 +321,7 @@ public sealed partial class WatchTogetherJoinPage : Page
 
     private async void RoomCodeBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (SiloPlayer.Helpers.ImeCompositionGuard.ShouldIgnore(SiloPlayer.Helpers.ImeCompositionGuard.Attach(RoomCodeBox), e)) return;
         if (e.Key == VirtualKey.Enter && ViewModel.CanJoin)
         {
             await ViewModel.JoinByCodeCommand.ExecuteAsync(null);
