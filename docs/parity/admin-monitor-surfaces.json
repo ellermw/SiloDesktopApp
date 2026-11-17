@@ -151,6 +151,7 @@
     "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.SignIn.cs",
     "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.ViewAs.cs",
     "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.cs",
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.xaml",
     "src/SiloPlayer/Views/Admin/Users/AdminUsersRegistration.cs"
   ]
 }
