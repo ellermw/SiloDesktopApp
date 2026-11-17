@@ -187,6 +187,7 @@ public sealed partial class AdminStorageSettingsPage
             var input = U.Input(label, "Storage_" + key, hint, number);
             Add(key, labelKey, input, description, parent, unit);
             input.TextChanging += (_, _) => _page.SetText(key, input.Text);
+            input.LostFocus += (_, _) => _page.QueueRender();
         }
 
         private void Add(string key, string labelKey, Control input, string description, StackPanel? parent = null, string? unit = null)
@@ -230,8 +231,15 @@ public sealed partial class AdminStorageSettingsPage
             {
                 foreach (var (key, control) in _controls)
                 {
-                    var value = DisplayValue(key, state.Get(key));
-                    if (control is TextBox text && text.Text != value) text.Text = value;
+                    var raw = state.Get(key);
+                    var value = DisplayValue(key, raw);
+                    if (control is TextBox text)
+                    {
+                        // Keep a focused raw draft (including empty text) until editing ends. A changed
+                        // controller value still wins, so Discard and Reload can replace the draft.
+                        var typing = text.FocusState != FocusState.Unfocused && text.Text == raw;
+                        if (text.Text != value && !typing) text.Text = value;
+                    }
                     else if (control is ToggleSwitch toggle) toggle.IsOn = value == "true";
                     else if (control is ComboBox select) SetSelected(select, value);
                     var enabled = editable && !Managed(key) && (!identity.Contains(key) || (!state.Saving && state.StatusKnown));

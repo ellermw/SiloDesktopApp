@@ -220,6 +220,61 @@ internal static class AdminStorageSettingsNativeFixture
             Invoke(Button(page, "StorageDiscard"));
             await Until(() => controller.State.DirtyKeys.Count == 0, "discard");
 
+            // Clearing saved token fields must survive the queued render before replacement typing.
+            server.Backend = "s3";
+            server.Values[AdminStorageRules.Backend] = "s3";
+            server.Values["s3.public_bucket"] = "media";
+            server.Values[AdminStorageRules.UrlAuth] = "cloudflare_token";
+            server.Values[AdminStorageRules.TokenTtl] = "3600";
+            server.Values[AdminStorageRules.TokenParam] = "saved_verify";
+            await controller.ReloadAsync(preserveDraft: false);
+            await Until(() => !controller.State.StatusLoading, "saved token settings loaded");
+            await RenderQueuedAsync(page);
+            var tokenDisclosure = Button(page, "StorageAdvanced");
+            if (AutomationProperties.GetItemStatus(tokenDisclosure) == "collapsed") Invoke(tokenDisclosure);
+            await RenderQueuedAsync(page);
+            foreach (var (key, saved, replacement, fallback) in new[]
+            {
+                (AdminStorageRules.TokenTtl, "3600", "7200", "10800"),
+                (AdminStorageRules.TokenParam, "saved_verify", "auth", "verify"),
+            })
+            {
+                var input = Input(page, "Storage_" + key);
+                Check(input.Text == saved && input.Focus(FocusState.Keyboard), key + " focuses its saved value");
+                input.SelectAll();
+                input.SelectedText = "";
+                await RenderQueuedAsync(page);
+                Check(input.FocusState != FocusState.Unfocused && input.Text == "" && controller.State.Get(key) == "",
+                    key + " keeps the focused empty draft through a queued render");
+                foreach (var character in replacement)
+                {
+                    input.SelectedText = character.ToString();
+                    input.Select(input.Text.Length, 0);
+                    await RenderQueuedAsync(page);
+                }
+                Check(input.Text == replacement && controller.State.Get(key) == replacement,
+                    key + " stages exactly the replacement without a restored default");
+                input.SelectAll();
+                input.SelectedText = "";
+                await RenderQueuedAsync(page);
+                Check(backend.Focus(FocusState.Programmatic), key + " ends editing");
+                await RenderQueuedAsync(page);
+                Check(input.Text == fallback && controller.State.Get(key) == "",
+                    key + " restores its displayed default only after blur without staging it");
+                controller.Discard();
+                await RenderQueuedAsync(page);
+                Check(input.Text == saved && !controller.State.IsDirty(key), key + " discards to its saved value");
+            }
+            server.Backend = "local";
+            server.Values[AdminStorageRules.Backend] = "";
+            server.Values[AdminStorageRules.UrlAuth] = "";
+            server.Values.Remove("s3.public_bucket");
+            server.Values.Remove(AdminStorageRules.TokenTtl);
+            server.Values.Remove(AdminStorageRules.TokenParam);
+            await controller.ReloadAsync(preserveDraft: false);
+            await Until(() => !controller.State.StatusLoading, "token regression baseline restored");
+            await RenderQueuedAsync(page);
+
             // Choosing S3 on locked local storage stages the backend and routes Save through review.
             Select(backend, "s3");
             await Until(() => controller.State.IsDirty("artwork.storage_backend"), "backend staged");
@@ -542,6 +597,16 @@ internal static class AdminStorageSettingsNativeFixture
             }
         }
         if (Failures.Count > 0) throw new InvalidOperationException("Storage fixture failures: " + string.Join("; ", Failures));
+    }
+
+    // A dispatcher fence lets renders queued by TextChanging/LostFocus run before assertions or more typing.
+    private static async Task RenderQueuedAsync(FrameworkElement element)
+    {
+        var rendered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!element.DispatcherQueue.TryEnqueue(() => rendered.TrySetResult()))
+            throw new InvalidOperationException("Could not queue the Storage render fence.");
+        await rendered.Task.WaitAsync(TimeSpan.FromSeconds(6));
+        element.UpdateLayout();
     }
 
     private static Task Closed(ContentDialog dialog)
