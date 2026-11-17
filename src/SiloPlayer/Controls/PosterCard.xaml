@@ -164,6 +164,7 @@
                  hover/focus; touch uses the card's long-press menu. -->
             <StackPanel
                 x:Name="QuickActions"
+                FlowDirection="{Binding FlowDirection, ElementName=RootGrid}"
                 Orientation="Horizontal"
                 Spacing="6"
                 Margin="10"
@@ -205,6 +206,7 @@
             <!-- Current WebUI poster menu: bottom-right, revealed on hover. -->
             <Button
                 x:Name="MoreButton"
+                FlowDirection="{Binding FlowDirection, ElementName=RootGrid}"
                 Width="32"
                 Height="32"
                 MinWidth="0"

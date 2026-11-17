@@ -14,24 +14,14 @@ internal sealed class ArtworkReveal(UIElement wrapper, Image image, UIElement pl
 {
     internal static readonly TimeSpan InstantReveal = TimeSpan.FromMilliseconds(100);
     internal static readonly TimeSpan RevealDuration = TimeSpan.FromMilliseconds(250);
-    private static readonly Windows.UI.ViewManagement.UISettings? s_uiSettings = CreateUISettings();
-
     private long _requested;
     private bool _opened;
     private bool _pending;
     private ScalarTransition? _transition;
     private DispatcherQueueTimer? _placeholderTimer;
 
-    private static Windows.UI.ViewManagement.UISettings? CreateUISettings()
-    {
-        try { return new Windows.UI.ViewManagement.UISettings(); } catch { return null; }
-    }
-
     // Reduced motion (Windows "Animation effects" off) reveals at once, as HeroCarousel does.
-    internal static bool AnimationsEnabled
-    {
-        get { try { return s_uiSettings?.AnimationsEnabled ?? true; } catch { return true; } }
-    }
+    internal static bool AnimationsEnabled => SystemMotion.AnimationsEnabled;
 
     internal bool IsFading => _placeholderTimer?.IsRunning == true;
 

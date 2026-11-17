@@ -1635,7 +1635,7 @@ _webhookPlexAuthCts?.Cancel();
         for (var index = 0; index < _interfaceMenuDraft.Count; index++)
         {
             var item = _interfaceMenuDraft[index];
-            var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(10, 7, 8, 7) };
+            var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(10, 7, 8, 7), Tag = item };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1798,10 +1798,31 @@ _webhookPlexAuthCts?.Cancel();
         "builtin" when item.Destination == "calendar" => L("web.settings.interface.builtin.calendar", "Calendar"),
         "builtin" => item.Destination ?? "Destination",
         "library" => L("web.settings.interface.menuLibrary", $"{item.Label} · Library", Args(("name", item.Label))),
-        "section" => L("web.settings.interface.menuSection", $"{item.Label} · Section", Args(("name", item.Label))),
-        "collection" => L("web.settings.interface.menuCollection", $"{item.Label} · Collection", Args(("name", item.Label))),
+        "section" => PinMenuDescription(item, "web.settings.interface.menuSection", "Section"),
+        "collection" => PinMenuDescription(item, "web.settings.interface.menuCollection", "Collection"),
         _ => item.Label ?? "Destination",
     };
+
+    private static string PinMenuDescription(PrimaryMenuItem item, string key, string kind)
+    {
+        var title = App.MainWindowInstance?.ResolveMenuPinLabel(item) ?? item.Label ?? "";
+        return L(key, $"{title} · {kind}", Args(("name", title)));
+    }
+
+    public void RefreshInterfacePinLabels()
+    {
+        if (!IsLoaded) return;
+        foreach (var border in InterfacePrimaryMenuHost.Children.OfType<Border>())
+        {
+            if (border.Child is not Grid { Tag: PrimaryMenuItem item } row || item.Type is not ("section" or "collection")) continue;
+            var label = row.Children.OfType<TextBlock>().Last();
+            label.Text = InterfaceMenuLabel(item);
+            var actions = row.Children.OfType<StackPanel>().Single().Children.OfType<Button>().ToArray();
+            AutomationProperties.SetName(actions[0], L("web.settings.interface.moveUp", $"Move {label.Text} up", Args(("label", label.Text))));
+            AutomationProperties.SetName(actions[1], L("web.settings.interface.moveDown", $"Move {label.Text} down", Args(("label", label.Text))));
+            AutomationProperties.SetName(actions[2], L("web.settings.interface.remove", $"Remove {label.Text}", Args(("label", label.Text))));
+        }
+    }
 
     private async Task LoadPersonalizeSummaryAsync()
     {
@@ -1909,7 +1930,8 @@ _webhookPlexAuthCts?.Cancel();
     private IReadOnlySet<string> _overlayShownRatings = new HashSet<string>();
     private bool OverlayOffered(string id) => id switch
     {
-        "resolution_hdr_audio" => _cardOverlayService.OffersOverlay(id),
+        // A server below the badge's settings revision rejects a document that holds it.
+        "resolution_hdr_audio" or "availability" => _cardOverlayService.OffersOverlay(id),
         "rating_imdb" or "imdb_top_250" => _overlayShownRatings.Contains("imdb"),
         "rating_tmdb" => _overlayShownRatings.Contains("tmdb"),
         "rating_rt" or "rt_certified_fresh" => _overlayShownRatings.Contains("rt_critic"),
@@ -2006,7 +2028,7 @@ _webhookPlexAuthCts?.Cancel();
         ("Metadata", "Year, runtime, language, studio, and network context.",
             ["year", "runtime", "original_language", "studio", "network"]),
         ("Ribbons", "Show status, awards, and chart recognition.",
-            ["show_status", "request_status"]),
+            ["show_status", "request_status", "availability"]),
     ];
 
     private static (string Label, string? Value)[] OverlayAccentOptions =>
@@ -2077,7 +2099,7 @@ _webhookPlexAuthCts?.Cancel();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var label = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        label.Children.Add(new TextBlock { Text = definition.Label, FontSize = 14, FontWeight = FontWeights.Medium });
+        label.Children.Add(new TextBlock { Text = definition.Id == "availability" ? L("web.settings.overlays.badge.availability.label", definition.Label) : definition.Label, FontSize = 14, FontWeight = FontWeights.Medium });
         label.Children.Add(new TextBlock
         {
             Text = OverlayDescription(definition.Id),
@@ -2427,6 +2449,8 @@ _webhookPlexAuthCts?.Cancel();
             ContentRating = _cardOverlayPreviewVariant == "movie" ? "PG-13" : "TV-MA", Year = _cardOverlayPreviewVariant == "show" ? 2024 : 2026,
             Runtime = _cardOverlayPreviewVariant == "show" ? 47 * 60 : 118 * 60, OriginalLanguage = "en", Studio = "Studio",
             Network = _cardOverlayPreviewVariant == "show" ? "Network" : null, ShowStatus = _cardOverlayPreviewVariant == "show" ? "Returning" : null,
+            // The WebUI's show sample: two of three seasons complete.
+            AvailabilityHave = _cardOverlayPreviewVariant == "show" ? 2 : null, AvailabilityTotal = _cardOverlayPreviewVariant == "show" ? 3 : null,
         };
         if (_cardOverlayPreviewVariant == "requested") data = new OverlayData { RequestStatus = "Requested", Year = 2026 };
         var geometry = SiloPlayer.Core.Services.CardOverlayGeometry.ForPoster(NavigationPreviewPoster.Width - 2);
@@ -2466,6 +2490,7 @@ _webhookPlexAuthCts?.Cancel();
         "studio" => L("web.settings.overlays.badge.studio.description", "Primary production studio (movies)"),
         "network" => L("web.settings.overlays.badge.network.description", "Primary network (series)"),
         "show_status" => L("web.settings.overlays.badge.showStatus.description", "Series lifecycle: Returning, Ended, Cancelled"),
+        "availability" => L("web.settings.overlays.badge.availability.description", "Complete seasons on a series, or episodes in the library on a season"),
         _ => "Poster card badge.",
     };
 

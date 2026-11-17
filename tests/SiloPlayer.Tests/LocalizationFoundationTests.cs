@@ -12,14 +12,14 @@ namespace SiloPlayer.Tests;
 
 public sealed class LocalizationCatalogTests
 {
-    private static readonly string[] Shipped = ["en", "es", "de", "fr", "pt-BR", "ja", "zh-Hans", "ar"];
+    private static readonly string[] Shipped = ["en", "es", "de", "fr", "pt-BR", "nl", "it", "pl", "tr", "sv", "da", "nb", "fi", "cs", "hr", "ru", "uk", "ja", "ko", "zh-Hans", "zh-Hant", "ar"];
 
     [Fact]
     public void ManifestPinsTheAuthoritativeReleaseAndShipsOnlyImportedLanguages()
     {
         var manifest = MessageCatalog.Manifest;
-        Assert.Equal("2026.11.15-5201582", manifest.Release);
-        Assert.Equal("1452ea2d10efbe7d3ea5ce7140fb49756b493670", manifest.SourceCommit);
+        Assert.Equal("2026.11.16-20af7f8", manifest.Release);
+        Assert.Equal("17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8", manifest.SourceCommit);
         Assert.Equal(Shipped, MessageCatalog.ShippedLanguages.Select(language => language.Tag));
         Assert.Equal(["ar"], MessageCatalog.ShippedLanguages.Where(language => language.IsRightToLeft).Select(language => language.Tag));
         Assert.Equal("العربية", MessageCatalog.ShippedLanguages.Single(language => language.Tag == "ar").Endonym);
@@ -28,6 +28,7 @@ public sealed class LocalizationCatalogTests
             var catalog = MessageCatalog.Load(entry.Tag);
             Assert.Equal(entry.Messages, catalog.Count);
             Assert.True(catalog.Count > 6000);
+            Assert.DoesNotContain(Keys(entry.Tag), key => key.StartsWith("web.admin.", StringComparison.Ordinal));
         }
     }
 
@@ -36,6 +37,10 @@ public sealed class LocalizationCatalogTests
     {
         var directory = Path.Combine(TestRepository.Root, "src", "SiloPlayer.Core", "Localization", "Generated");
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "catalog-manifest.json")));
+        Assert.Equal("e3be70437abe1190ba4daef6bd9774906201c6ab501c308e852eb9af097945e6",
+            manifest.RootElement.GetProperty("catalog_release_tarball_sha256").GetString());
+        Assert.Equal("f22874bd5a7c7fb80f81de9f94f4a5cdb3b56d6479fa2ff02c451a4dcd70de60",
+            manifest.RootElement.GetProperty("source_keys_sha256").GetString());
         var listed = new HashSet<string>(StringComparer.Ordinal) { "catalog-manifest.json" };
         Assert.Equal("web.admin.", manifest.RootElement.GetProperty("excluded_key_prefixes")[0].GetString());
         foreach (var language in manifest.RootElement.GetProperty("languages").EnumerateArray())
@@ -75,10 +80,29 @@ public sealed class AppLanguageMatchingTests
     [InlineData("ja-JP", "ja")]
     [InlineData("de-CH", "de")]
     [InlineData("fr-CA", "fr")]
+    [InlineData("nl-BE", "nl")]
+    [InlineData("it-CH", "it")]
+    [InlineData("pl-PL", "pl")]
+    [InlineData("tr-TR", "tr")]
+    [InlineData("sv-FI", "sv")]
+    [InlineData("da-DK", "da")]
+    [InlineData("fi-FI", "fi")]
+    [InlineData("cs-CZ", "cs")]
+    [InlineData("hr-HR", "hr")]
+    [InlineData("ru-RU", "ru")]
+    [InlineData("uk-UA", "uk")]
+    [InlineData("ko-KR", "ko")]
     [InlineData("English", "en")]
-    [InlineData("zh-TW", null)]
-    [InlineData("zh-HK", null)]
-    [InlineData("zh-Hant", null)]
+    [InlineData("zh-TW", "zh-Hant")]
+    [InlineData("zh-HK", "zh-Hant")]
+    [InlineData("zh-MO", "zh-Hant")]
+    [InlineData("zh-Hant", "zh-Hant")]
+    [InlineData("zh-Hant-TW", "zh-Hant")]
+    [InlineData("no", "nb")]
+    [InlineData("no-NO", "nb")]
+    [InlineData("nb-NO", "nb")]
+    [InlineData("nn", null)]
+    [InlineData("nn-NO", null)]
     [InlineData("he", null)]
     [InlineData("tlh", null)]
     [InlineData("", null)]
@@ -138,8 +162,8 @@ public sealed class AppLanguageMatchingTests
         Assert.True(resolution.LocalizedFormats);
 
         var traditional = AppLocaleResolution.Resolve("zh-TW", ["zh-TW", "es-ES"], "zh-TW");
-        Assert.Equal("es", traditional.Language);
-        Assert.True(traditional.StoredTagUnsupported);
+        Assert.Equal("zh-Hant", traditional.Language);
+        Assert.False(traditional.StoredTagUnsupported);
         Assert.Equal("en", AppLocaleResolution.Resolve(null, [], "").Language);
     }
 

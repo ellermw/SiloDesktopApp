@@ -80,13 +80,18 @@ window.runReaderChecks = async function(fixtureRoot) {
     check(!await reader.go('chapter:999;fraction:0'),'out-of-range legacy rejected');
     reader.close();check(reader.snapshot()===null,'close stops progress');
     const canceled=reader.open(options);reader.close();check(await canceled===false,'close cancels in-flight open');check(reader.snapshot()===null,'canceled open cannot resurrect progress');
-    let invalidFailed=false;try {await reader.open({...options,location:'unrecognized saved value'});} catch {invalidFailed=true;}
-    check(invalidFailed && reader.snapshot()===null,'invalid restore suppresses progress writes');
+    const invalidRestore=await reader.open({...options,location:'unrecognized saved value'});
+    check(invalidRestore===false && reader.snapshot()===null,'invalid restore remains recoverable and suppresses progress writes');
     check(await reader.chapter(1),'explicit chapter choice recovers invalid restore');check(reader.snapshot()!==null,'explicit recovery enables progress');
     await reader.open({...options,location:'fraction:invalid',progress:.5});await settle();check(reader.snapshot().index===1,'malformed fraction uses valid saved numeric progress like WebUI');
     await reader.open({...options,location:cfi});await settle();check(reader.snapshot().index===1,'reopen resumes CFI');
     await reader.open({url:fixtureRoot+'/four-pages.pdf',format:'pdf',settings:{spread:'none'}});await settle();
     check(reader.snapshot().count===4,'PDF has four observable pages');
+    check(view().renderer.getAttribute('spread')==='none','fixed-layout renderer receives the single-page preference');
+    const pdfDestination=JSON.stringify([{num:7,gen:0},{name:'Fit'}]);
+    view().book.toc=[{label:'Fixture page three',href:pdfDestination}];
+    check(await reader.go(pdfDestination),'PDF outline destination navigates through the actual book resolver');
+    await settle();check(reader.snapshot().index===2,'PDF outline destination opens page three');
     check(await reader.go('chapter:0;fraction:0'),'legacy desktop PDF location opens at original beginning');
     await reader.chapter(2);await settle();const pdf=reader.snapshot();check(pdf.index===2,'PDF navigates page three');check(pdf.progress>0,'PDF emits progress');
     check(pdf.location.startsWith('epubcfi(')||pdf.location.startsWith('fraction:'),'PDF emits shared location');

@@ -202,11 +202,34 @@
                         AnchorY="0.2"
                         EnableKenBurns="True" />
 
+                    <!-- audiobooks.css .audiobook-tint: audiobooks have square covers
+                         and no backdrop art, so the book page mixes the cover's
+                         average colour (useAmbientColor) into the page background. -->
+                    <Grid x:Name="AudiobookTint" VerticalAlignment="Top" IsHitTestVisible="False" Visibility="Collapsed">
+                        <Border>
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop x:Name="AudiobookTintTop" Color="#101722" Offset="0" />
+                                    <GradientStop x:Name="AudiobookTintMiddle" Color="#101722" Offset="0.55" />
+                                    <GradientStop x:Name="AudiobookTintBottom" Color="#101722" Offset="1" />
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        <Border>
+                            <Border.Background>
+                                <RadialGradientBrush Center="0.18,0" GradientOrigin="0.18,0" RadiusX="0.6" RadiusY="0.9">
+                                    <GradientStop x:Name="AudiobookTintGlow" Color="#00000000" Offset="0" />
+                                    <GradientStop x:Name="AudiobookTintGlowEnd" Color="#00000000" Offset="0.65" />
+                                </RadialGradientBrush>
+                            </Border.Background>
+                        </Border>
+                    </Grid>
+
                     <!-- Current WebUI detail heroes use a10% background tint. -->
                     <Border x:Name="DetailBackdropTint" Background="{StaticResource AppBackgroundBrush}" Opacity="0.1" />
 
                     <!-- Bottom-to-top gradient (hero-gradient) -->
-                    <Border>
+                    <Border x:Name="DetailBottomGradient">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                                 <GradientStop x:Name="DetailBottomTransparent" Color="Transparent" Offset="0.0" />
@@ -219,7 +242,7 @@
                     </Border>
 
                     <!-- Left-to-right gradient (hero-gradient-left) -->
-                    <Border>
+                    <Border x:Name="DetailLeftGradient">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
                                 <GradientStop x:Name="DetailLeftSolid" Color="#EB101722" Offset="0.0" />
@@ -231,7 +254,7 @@
                     </Border>
 
                     <!-- Current soft radial edge vignette. -->
-                    <Border>
+                    <Border x:Name="DetailVignette">
                         <Border.Background>
                             <RadialGradientBrush Center="0.62,0.4" RadiusX="1.2" RadiusY="1">
                                 <GradientStop x:Name="DetailVignetteTransparent" Color="Transparent" Offset="0" />
@@ -257,6 +280,7 @@
                          hero from the below-fold shell without altering the
                          min-height layout. -->
                     <Border
+                        x:Name="DetailHeroDivider"
                         VerticalAlignment="Bottom"
                         Height="1"
                         Background="{StaticResource BorderBrush}"
@@ -294,7 +318,151 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
+
+                        <!-- AudiobookContent.tsx .audiobook-detail-side: the square
+                             cover with the listening controls under it. From lg it
+                             is a column beside the head and body; below lg the
+                             code-behind places the cover beside the head and the
+                             actions across the page under them (audiobooks.css). -->
+                        <StackPanel x:Name="AudiobookSidePanel" Grid.Column="0" Grid.RowSpan="2"
+                                    Spacing="16" VerticalAlignment="Top" Visibility="Collapsed">
+                            <Border x:Name="AudiobookCover" CornerRadius="16" Width="260" Height="260"
+                                    Background="{StaticResource SurfaceBrush}" HorizontalAlignment="Left"
+                                    VerticalAlignment="Bottom">
+                                <Grid>
+                                    <FontIcon x:Name="AudiobookCoverFallback" Glyph="&#xE8D6;" FontSize="40"
+                                              Foreground="{StaticResource TertiaryTextBrush}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    <Image x:Name="AudiobookCoverImage" Stretch="UniformToFill"
+                                           Source="{Binding Source, ElementName=HeroPosterImage}" FlowDirection="LeftToRight" />
+                                </Grid>
+                            </Border>
+                            <StackPanel x:Name="AudiobookActionsPanel" Spacing="12">
+                                <Button x:Name="AudiobookListenButton"
+                                        Click="PlayButton_Click"
+                                        Style="{StaticResource DetailPlayButtonStyle}"
+                                        Background="{StaticResource AccentBrush}"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Height="44" Padding="20,0" CornerRadius="22"
+                                        AutomationProperties.Name="{Binding Text, ElementName=AudiobookListenText}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon x:Name="AudiobookListenIcon" Glyph="&#xF5B0;" FontSize="14"
+                                                  Foreground="{StaticResource AccentForegroundBrush}" />
+                                        <TextBlock x:Name="AudiobookListenText" Text="Listen" FontSize="15" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource AccentForegroundBrush}"
+                                                   TextTrimming="CharacterEllipsis" loc:Localized.Text="web.detail.audiobook.listen" />
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel x:Name="AudiobookProgressPanel" Spacing="6" Visibility="Collapsed">
+                                    <Grid x:Name="AudiobookProgressTrack" Height="6" CornerRadius="3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="AudiobookProgressDone" Width="0*" />
+                                            <ColumnDefinition x:Name="AudiobookProgressRest" Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- bg-foreground/15 track; bg-primary fill. -->
+                                        <Border Grid.ColumnSpan="2" CornerRadius="3" Background="{StaticResource PrimaryTextBrush}" Opacity="0.15" />
+                                        <Border x:Name="AudiobookProgressFill" CornerRadius="3" Background="{StaticResource AccentBrush}" />
+                                    </Grid>
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="AudiobookListenedText" FontSize="12"
+                                                   Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock x:Name="AudiobookTimeLeftText" Grid.Column="1" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                                    </Grid>
+                                </StackPanel>
+                                <Grid x:Name="AudiobookSecondaryActions" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="AudiobookListenFromStartButton"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Height="40" Padding="16,0" CornerRadius="20"
+                                            Click="PlayFromStart_Click" Visibility="Collapsed"
+                                            AutomationProperties.Name="Listen from Start" loc:Localized.Name="web.detail.audiobook.listenFromStart">
+                                        <StackPanel x:Name="AudiobookListenFromStartContent" Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="Listen from Start" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" loc:Localized.Text="web.detail.audiobook.listenFromStart" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="AudiobookCollectionButton" Grid.Column="1"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Width="40" Height="40" Padding="0" CornerRadius="20"
+                                            Click="AudiobookCollectionButton_Click"
+                                            ToolTipService.ToolTip="Add to a manual collection"
+                                            AutomationProperties.Name="Add to Collection"
+                                            loc:Localized.ToolTip="web.detail.audiobook.addToCollectionHint"
+                                            loc:Localized.Name="web.detail.actions.addToCollection">
+                                        <FontIcon Glyph="&#xE8F4;" FontSize="15" />
+                                    </Button>
+                                    <Button x:Name="AudiobookMoreButton" Grid.Column="2"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Width="40" Height="40" Padding="0" CornerRadius="20" Visibility="Collapsed"
+                                            ToolTipService.ToolTip="More" AutomationProperties.Name="More actions"
+                                            loc:Localized.ToolTip="web.detail.actions.more" loc:Localized.Name="web.detail.actions.moreActions">
+                                        <FontIcon Glyph="&#xE712;" FontSize="15" />
+                                        <Button.Flyout>
+                                            <MenuFlyout x:Name="AudiobookMoreFlyout" Placement="BottomEdgeAlignedLeft" />
+                                        </Button.Flyout>
+                                    </Button>
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- .audiobook-detail-head: series, title, author, narrator. -->
+                        <StackPanel x:Name="AudiobookHeadPanel" Grid.Column="1" Spacing="6"
+                                    VerticalAlignment="Bottom" Visibility="Collapsed">
+                            <!-- WebUI links this line to a series-filtered library
+                                 browse; LibraryPage has no series-rule entry yet. -->
+                            <TextBlock x:Name="AudiobookSeriesText" FontSize="14" FontWeight="SemiBold"
+                                       Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.8"
+                                       TextWrapping="Wrap" Visibility="Collapsed" />
+                            <TextBlock x:Name="AudiobookTitleText"
+                                       Style="{StaticResource DisplayTextStyle}"
+                                       FontSize="48" FontWeight="ExtraBold" CharacterSpacing="-30"
+                                       LineStackingStrategy="BlockLineHeight" LineHeight="52"
+                                       TextWrapping="Wrap" />
+                            <!-- AudiobookContent renders these as two distinct subtitle
+                                 lines between the title and metadata. -->
+                            <TextBlock
+                                x:Name="BookAuthorLine"
+                                FontSize="16"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
+                            <TextBlock
+                                x:Name="BookNarratorLine"
+                                FontSize="16"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
+                            <HyperlinkButton x:Name="NarrationPickerButton" Visibility="Collapsed"
+                                             Click="NarrationPicker_Click" Padding="0" HorizontalAlignment="Left"
+                                             Foreground="{StaticResource SecondaryTextBrush}"
+                                             FontSize="16" />
+                        </StackPanel>
+
+                        <!-- .audiobook-detail-body: facts, overview and genres, then
+                             chapters and the related rails. The shared overview and
+                             genre controls and both sections move here while the
+                             page shows an audiobook. -->
+                        <StackPanel x:Name="AudiobookBodyPanel" Grid.Column="1" Grid.Row="1"
+                                    Spacing="48" Visibility="Collapsed">
+                            <StackPanel x:Name="AudiobookAboutPanel" Spacing="24">
+                                <Border x:Name="AudiobookFactsBorder" Padding="0,16"
+                                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,1">
+                                    <controls:WrapPanel x:Name="AudiobookFactsPanel" HorizontalSpacing="36" VerticalSpacing="12" />
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
 
                         <!-- Portrait poster column -->
                         <Border
@@ -396,24 +564,6 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- AudiobookContent renders these as two distinct subtitle
-                                 lines between the title and metadata. Keeping them out of
-                                 HeroCrewLine preserves the exact WebUI information order. -->
-                            <TextBlock
-                                x:Name="BookAuthorLine"
-                                FontSize="15"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                TextWrapping="Wrap"
-                                Visibility="Collapsed" />
-                            <TextBlock
-                                x:Name="BookNarratorLine"
-                                FontSize="15"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                TextWrapping="Wrap"
-                                Visibility="Collapsed" />
-                            <HyperlinkButton x:Name="NarrationPickerButton" Visibility="Collapsed"
-                                             Click="NarrationPicker_Click" Padding="0" HorizontalAlignment="Left"
-                                             FontSize="15" />
                         </StackPanel>
                     </Grid>
                 </Grid>
@@ -882,75 +1032,34 @@
                         </Grid>
                     </StackPanel>
 
-                    <StackPanel x:Name="AudiobookNarratorSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
-                        <TextBlock Text="Narrator" Style="{StaticResource TitleTextStyle}" FontSize="20"  loc:Localized.Text="catalog.sort.narrator"/>
-                        <Border
-                            HorizontalAlignment="Left"
-                            MinWidth="280"
-                            Padding="16"
-                            CornerRadius="12"
-                            Background="{StaticResource SurfaceBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1">
-                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                <Border Width="64" Height="64" CornerRadius="32"
-                                        Background="{StaticResource SurfaceRaisedBrush}">
-                                    <TextBlock x:Name="AudiobookNarratorInitials"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"
-                                               FontSize="18" FontWeight="SemiBold" />
-                                </Border>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock x:Name="AudiobookNarratorName"
-                                               FontSize="15" FontWeight="SemiBold" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
+                    <!-- RelatedRail.tsx rails: In <series>, Also by <author>, You might also like. -->
+                    <StackPanel x:Name="BookRelatedSection" Visibility="Collapsed" Spacing="48">
+                        <StackPanel x:Name="BookRelatedGroupsPanel" Spacing="48" />
                     </StackPanel>
 
-                    <StackPanel x:Name="BookRelatedSection" Visibility="Collapsed" Spacing="28" Margin="0,16,0,0">
-                        <StackPanel x:Name="BookRelatedGroupsPanel" Spacing="28" />
-                    </StackPanel>
-
-                    <StackPanel x:Name="AudiobookChaptersSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
+                    <!-- ChaptersSection.tsx: open by default; a long book shows a
+                         window around the current chapter with a Show all toggle. -->
+                    <StackPanel x:Name="AudiobookChaptersSection" Visibility="Collapsed" Spacing="12">
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="AudiobookChaptersHeading" Text="Chapters"
+                                       Style="{StaticResource TitleTextStyle}" FontSize="20"
+                                       VerticalAlignment="Bottom" loc:Localized.Text="web.audiobooks.chapters.heading" />
                             <Button x:Name="AudiobookChaptersToggleButton"
-                                    Style="{StaticResource GhostButtonStyle}"
-                                    HorizontalAlignment="Left"
-                                    Padding="0,8"
-                                    Click="AudiobookChaptersToggleButton_Click"
-                                    AutomationProperties.Name="Toggle audiobook chapters">
-                                <StackPanel Orientation="Horizontal" Spacing="9">
-                                    <FontIcon x:Name="AudiobookChaptersChevron" Glyph="&#xE70D;" FontSize="13" />
-                                    <TextBlock x:Name="AudiobookChapterCountText"
-                                               Style="{StaticResource TitleTextStyle}"
-                                               FontSize="20" />
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="AudiobookChapterSortButton"
                                     Grid.Column="1"
-                                    Visibility="Collapsed"
                                     Style="{StaticResource GhostButtonStyle}"
-                                    Padding="10,7"
-                                    Click="AudiobookChapterSortButton_Click">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon Glyph="&#xE8CB;" FontSize="13" />
-                                    <TextBlock x:Name="AudiobookChapterSortText" Text="By position" FontSize="12"  loc:Localized.Text="web.audiobooks.chapters.sortPosition"/>
-                                </StackPanel>
+                                    Padding="6,2"
+                                    VerticalAlignment="Bottom"
+                                    Visibility="Collapsed"
+                                    Click="AudiobookChaptersToggleButton_Click">
+                                <TextBlock x:Name="AudiobookChaptersToggleText" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
                             </Button>
                         </Grid>
-                        <Border x:Name="AudiobookChaptersBorder"
-                                Visibility="Collapsed"
-                                CornerRadius="12"
-                                BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1"
-                                Background="{StaticResource SurfaceBrush}">
-                            <StackPanel x:Name="AudiobookChaptersPanel" Spacing="0" />
-                        </Border>
+                        <StackPanel x:Name="AudiobookChaptersPanel" Spacing="2" />
                     </StackPanel>
 
                     <StackPanel x:Name="MangaChaptersSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">

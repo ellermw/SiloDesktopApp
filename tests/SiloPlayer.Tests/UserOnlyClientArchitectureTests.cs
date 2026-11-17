@@ -95,7 +95,8 @@ public sealed class UserOnlyClientArchitectureTests
     public void BothMetadataRefreshCallersUseTheFocusedMaintenanceApi()
     {
         var root = FindRepositoryRoot();
-        var detail = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+        var detail = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"))
+            + File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs"));
         var menu = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "MediaItemMenu.cs"));
 
         Assert.Contains("RefreshMetadataDialog", detail, StringComparison.Ordinal);

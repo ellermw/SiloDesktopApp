@@ -71,8 +71,11 @@ export const makeComicBook = async ({ entries, loadBlob, getSize, getComment }, 
     const exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.jxl', '.avif']
     const files = entries
         .map(entry => entry.filename)
-        .filter(name => exts.some(ext => name.endsWith(ext)))
-        .sort()
+        .filter(name => exts.some(ext => name.toLowerCase().endsWith(ext)))
+        .sort((left, right) => {
+            const first = left.toUpperCase(), second = right.toUpperCase()
+            return first < second ? -1 : first > second ? 1 : 0
+        })
     if (!files.length) throw new Error('No supported image files in archive')
 
     const book = {}

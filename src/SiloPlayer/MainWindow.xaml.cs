@@ -122,6 +122,8 @@ public sealed partial class MainWindow : Window
         _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         _settingsApi = App.Services.GetRequiredService<SettingsApi>();
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
+        _catalogApi.PinTitlesChanged += OnPinTitlesChanged;
+        _apiClient.LocalizedReads.Invalidated += OnPinMetadataLanguageChanged;
         _requestsApi = App.Services.GetRequiredService<RequestsApi>();
         _notificationsApi = App.Services.GetRequiredService<NotificationsApi>();
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
@@ -558,9 +560,12 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        _catalogApi.PinTitlesChanged -= OnPinTitlesChanged;
+        _apiClient.LocalizedReads.Invalidated -= OnPinMetadataLanguageChanged;
         _realtimeMediaStateRefresh.Dispose();
         DisposeAdminMonitor();
         _windowClosed = true;
+        App.Services.GetRequiredService<ToastService>().Unregister();
         if (ContentFrame.Content is ItemDetailPage detail) detail.ViewModel.CancelPendingLoads();
         Interlocked.Exchange(ref _loadingOverlayOwner, null);
         if (!_updateSessionEnding)
@@ -2002,7 +2007,9 @@ public sealed partial class MainWindow : Window
 
         ReleaseNotificationSubscription();
         _notificationSubscriptionShellKey = shellKey;
-        _notificationSubscription = _eventChannel.Subscribe("notifications", "user_settings", "user_state");
+        // catalog: another device's metadata save must drop cached item detail and
+        // refresh an open detail page (DetailMetadataChangeHub), not only Home and Library.
+        _notificationSubscription = _eventChannel.Subscribe("notifications", "user_settings", "user_state", "catalog");
         if (_eventChannel.TryGetLatestSnapshot("notifications", out var cached))
             OnShellEventSnapshot("notifications", cached);
     }
@@ -2061,6 +2068,7 @@ public sealed partial class MainWindow : Window
         if (_notificationSubscription != null && CanExposeAuthenticatedNavigation)
         {
             _realtimeMediaStateRefresh.ReceiveRealtime(channel, eventName, data);
+            App.Services.GetService<DetailMetadataChangeHub>()?.Receive(channel, eventName, data);
             _apiClient.LocalizedReads.NotifyRealtime(channel, eventName, data, _authService.SelectedProfileId);
             App.Services.GetRequiredService<SettingsApi>().LibraryPageState.NotifyRealtime(channel, eventName, data);
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
@@ -3036,6 +3044,11 @@ public sealed partial class MainWindow : Window
         }
 
         LogState($"  Executing state={state} on UI thread");
+        // Official #4296: remember the control that opens Now Listening before
+        // the mini player collapses, so collapsing can return focus to it.
+        var nowListeningOpener = state is PlayerState.Expanded or PlayerState.Fullscreen && _playerService.IsAudiobook
+            ? CaptureNowListeningOpener()
+            : null;
         switch (state)
         {
             case PlayerState.Idle:
@@ -3100,6 +3113,9 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Activate();
                 break;
         }
+        // Every path above settles Now Listening's visibility; the covered shell
+        // is inert exactly while it is shown (open, collapse, stop, PiP, video).
+        SyncNowListeningFocusScope(state, nowListeningOpener);
         UpdateAdminChrome();
         ApplyPendingAccessRefresh();
     }
@@ -3369,14 +3385,14 @@ public sealed partial class MainWindow : Window
         else if (source.Type == "section" && source.LibraryId > 0 && !string.IsNullOrWhiteSpace(source.SectionId))
         {
             if (!_viewModel.Libraries.Any(candidate => candidate.Id == source.LibraryId)) return null;
-            label = source.Label ?? "Section";
+            label = ResolveMenuPinLabel(source);
             icon = "layout-grid";
         }
         else if (source.Type == "collection" && !string.IsNullOrWhiteSpace(source.CollectionId))
         {
             if (source.LibraryId is int ownerId && !_viewModel.Libraries.Any(candidate => candidate.Id == ownerId))
                 return null;
-            label = source.Label ?? "Collection";
+            label = ResolveMenuPinLabel(source);
             icon = "folder-open";
         }
         else
@@ -3386,6 +3402,7 @@ public sealed partial class MainWindow : Window
 
         var item = existing ?? new NavigationViewItem();
         if (!Equals(item.Content, label)) item.Content = label;
+        AutomationProperties.SetName(item, label);
         SetSidebarIcon(item, icon);
         item.Tag = new PrimaryMenuNavTag(source.Clone());
         return item;
@@ -4073,7 +4090,7 @@ public sealed partial class MainWindow : Window
         {
             _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
                 Source: "section",
-                Title: item.Label ?? "Section",
+                Title: ResolveMenuPinLabel(item),
                 Scope: "library",
                 SectionId: item.SectionId,
                 LibraryId: sectionLibraryId));
@@ -4085,7 +4102,7 @@ public sealed partial class MainWindow : Window
             _navigationService.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
             {
                 CollectionId = item.CollectionId,
-                Title = item.Label ?? "Collection",
+                Title = ResolveMenuPinLabel(item),
                 IsUserCollection = item.LibraryId is null,
                 LibraryId = item.LibraryId,
             });

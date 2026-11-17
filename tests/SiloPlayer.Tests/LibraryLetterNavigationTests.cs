@@ -419,6 +419,140 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(800, model.Items.Count);
     }
 
+    [Fact]
+    public async Task BrowseCountShowsOnlyTheExactTotalTheCountReadReturned()
+    {
+        // Official #4316: the count beside Filters is the exact total, never the
+        // pager's estimated extent, and it needs no read beyond the count read.
+        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, IndexTotal = 1200 }; var model = wire.Create();
+        var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.WindowLoaded += () => { if (model.DisplayTotalCount == 800) counted.TrySetResult(); };
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        // Before the count lands the pager has an estimate but no exact total: wait, show no number.
+        Assert.True(model.TotalCount > 0);
+        Assert.Equal(0, model.DisplayTotalCount);
+        Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Loading,
+            SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.IsExactCountLoading, model.IsLoading, model.ExactCountFailed));
+        wire.ReleaseExactCount.TrySetResult();
+        await counted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(model.ExactCountFailed);
+        Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Label,
+            SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.IsExactCountLoading, model.IsLoading, model.ExactCountFailed));
+    }
+
+    [Fact]
+    public async Task BrowseCountHidesWhenTheServerCanOnlyEstimateTheTotal()
+    {
+        using var wire = new Wire { CatalogExact = false }; var model = wire.Create();
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(model.ExactCountFailed) && model.ExactCountFailed) failed.TrySetResult();
+        };
+        await model.LoadCommand.ExecuteAsync(null);
+        await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, model.DisplayTotalCount);
+        Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Hidden,
+            SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.IsExactCountLoading, model.IsLoading, model.ExactCountFailed));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CursorRecoveryDoesNotPublishThePagerEstimateAsAnExactCount(bool recoveryFails)
+    {
+        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, UseSnapshots = true };
+        var model = wire.Create();
+        try
+        {
+            await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+            Assert.True(model.TotalCount > 0);
+            Assert.True(model.IsExactCountLoading);
+            Assert.Equal(0, model.DisplayTotalCount);
+            var version = model.QueryVersion;
+            wire.RejectNextCursor = true;
+            wire.FailCursorRecovery = recoveryFails;
+
+            await model.LoadWindowAsync(300, 100, force: true);
+
+            Assert.False(wire.RejectNextCursor);
+            Assert.True(model.QueryVersion > version);
+            Assert.True(model.TotalCount > 0);
+            Assert.Equal(0, model.DisplayTotalCount);
+            Assert.Equal(!recoveryFails, model.IsExactCountLoading);
+            Assert.Equal(recoveryFails ? SiloPlayer.Helpers.LibraryResultCountMode.Hidden : SiloPlayer.Helpers.LibraryResultCountMode.Loading,
+                SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.IsExactCountLoading, model.IsLoading, model.ExactCountFailed));
+            if (recoveryFails)
+            {
+                Assert.Equal(-1, model.WindowStartIndex);
+                Assert.NotNull(model.ErrorMessage);
+                Assert.Equal(1, wire.ExactCountRequests);
+            }
+            else
+            {
+                Assert.Equal(2, wire.ExactCountRequests);
+                var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                model.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(model.IsExactCountLoading) && !model.IsExactCountLoading) settled.TrySetResult();
+                };
+                wire.ReleaseExactCount.TrySetResult();
+                await settled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(800, model.DisplayTotalCount);
+                Assert.False(model.ExactCountFailed);
+            }
+        }
+        finally { wire.ReleaseExactCount.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData("timeout")]
+    [InlineData("authority")]
+    [InlineData("navigation")]
+    public async Task AbortedExactCountReadStopsLoading(string cause)
+    {
+        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, TimeOutExactCount = cause == "timeout" };
+        var model = wire.Create(); model.SelectedSort = "added_at";
+        var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(model.IsExactCountLoading) && !model.IsExactCountLoading) settled.TrySetResult();
+        };
+        try
+        {
+            await model.LoadCommand.ExecuteAsync(null);
+            Assert.True(model.IsExactCountLoading);
+            Assert.True(model.TotalCount > 0);
+            if (cause == "authority") wire.Client.SetProfile("new-synthetic-profile");
+            if (cause == "navigation") model.SuspendCatalogLoads();
+            wire.ReleaseExactCount.TrySetResult();
+            await settled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(model.IsExactCountLoading);
+            Assert.Equal(cause != "navigation", model.ExactCountFailed);
+            Assert.Equal(0, model.DisplayTotalCount);
+            Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Hidden,
+                SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.IsExactCountLoading, model.IsLoading, model.ExactCountFailed));
+        }
+        finally { wire.ReleaseExactCount.TrySetResult(); }
+    }
+
+    [Fact]
+    public async Task FailedFirstWindowWithAnIndexExtentDoesNotLeaveTheCountLoading()
+    {
+        using var wire = new Wire { FailCatalog = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        Assert.Equal(1000, model.TotalCount);
+        Assert.Equal(-1, model.WindowStartIndex);
+        Assert.NotNull(model.ErrorMessage);
+        Assert.Equal(0, wire.ExactCountRequests);
+        Assert.False(model.IsLoading);
+        Assert.False(model.IsExactCountLoading);
+        Assert.False(model.ExactCountFailed);
+        Assert.Equal(0, model.DisplayTotalCount);
+        Assert.Equal(SiloPlayer.Helpers.LibraryResultCountMode.Hidden,
+            SiloPlayer.Helpers.LibraryResultCount.Mode(true, model.DisplayTotalCount, model.IsExactCountLoading, model.IsLoading, model.ExactCountFailed));
+    }
+
     [Theory]
     [InlineData(900, 800, false)] // Empty page beyond the newly counted end.
     [InlineData(900, 1000, false)] // Older non-empty page beyond that end.
@@ -1248,6 +1382,8 @@ public sealed class LibraryLetterNavigationTests
         internal int TailPosition = 749;
         internal bool CatalogExact = true;
         internal bool WindowTotalExact;
+        internal bool TimeOutExactCount, UseSnapshots, RejectNextCursor, FailCursorRecovery;
+        internal int ExactCountRequests;
         internal int? ExactCountTotal;
         internal readonly TaskCompletionSource ReleaseExactCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool HoldCatalog, FailCatalog;
@@ -1302,6 +1438,12 @@ public sealed class LibraryLetterNavigationTests
                 CatalogGroups = q.GetValueOrDefault("groups"); CatalogMatch = q.GetValueOrDefault("match", "all");
                 var limit = int.Parse(q["limit"]); var seek = q.TryGetValue("seek", out var value) ? int.Parse(value) : 0;
                 Seeks.Add(seek); if (limit == 1) ProbeRequests++;
+                if (RejectNextCursor && q.ContainsKey("cursor"))
+                {
+                    RejectNextCursor = false;
+                    if (FailCursorRecovery) FailCatalog = true;
+                    return Reply(new { error = "invalid_cursor", detail = "Synthetic retired cursor" }, HttpStatusCode.BadRequest);
+                }
                 if (heldReads.TryDequeue(out var gate))
                 {
                     gate.Started.TrySetResult();
@@ -1311,12 +1453,17 @@ public sealed class LibraryLetterNavigationTests
                 if (HoldCatalog) await ReleaseCatalog.Task;
                 if (FailCatalog) return Reply(new { detail = "Synthetic unavailable catalog window" }, HttpStatusCode.ServiceUnavailable);
                 var countOnly = !q.ContainsKey("skip_total") && ExactCountTotal.HasValue;
-                if (countOnly) await ReleaseExactCount.Task;
+                if (!q.ContainsKey("skip_total")) ExactCountRequests++;
+                if (countOnly)
+                {
+                    await ReleaseExactCount.Task;
+                    if (TimeOutExactCount) throw new TaskCanceledException("Synthetic exact-count timeout.");
+                }
                 var total = countOnly ? ExactCountTotal!.Value : CatalogTotal;
                 // Normal skip-total windows have no authoritative count.
                 // Only explicit opt-in cases model a server returning one anyway.
                 var exact = q.ContainsKey("skip_total") ? WindowTotalExact : countOnly || CatalogExact;
-                return Reply(new { total = exact ? total : 0, total_exact = exact, items = Enumerable.Range(seek, Math.Max(0, Math.Min(limit, total - seek))).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < TailPosition ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < total } });
+                return Reply(new { total = exact ? total : 0, total_exact = exact, window_cursor = UseSnapshots ? "synthetic-window" : null, items = Enumerable.Range(seek, Math.Max(0, Math.Min(limit, total - seek))).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < TailPosition ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < total } });
             }
             return Reply(new { }, HttpStatusCode.NotFound);
         }
