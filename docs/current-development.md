@@ -1,3 +1,31 @@
+# November 16 - Configure Maintenance bounded verification for Beta submission
+
+Configure › Server › Maintenance (`/admin/maintenance`) implements Catalog Import & Export
+and read-only Job History through the real Admin registration. Only the Maintenance unsupported
+route gate changes; Backups and other Admin candidates are separate. Base Beta is
+`19a66e547a78bad9fdc88925c3deae308e05d4ba`; version `1.2.1168-beta.1` stays pipeline-owned.
+Official Server/WebUI was freshly fetched at `94797c3e2e39ef12bf2796fa08df12e3b3525b3e`: no
+Maintenance contract changes since implementation reference `92ee051878c2a791940ec9598e2bdd0f04890b3e`.
+
+Bounded verification: nonincremental units/app/host builds, Release publish, source/payload
+binding, source-root proof (1), focused units (323) and full units (7,949) passed. Native
+Maintenance (43), foundation (36), General (188), Email (297), Security (374) and Network (346)
+passed. Downloads timed out at its unchanged fixture line 316; Libraries failed unchanged
+active-scans/Show-all checks and timed out at line 368. These neighbors are not certified.
+A foundation GC/COM finalizer access violation after its completed marker did not recur on
+the unchanged rerun; its cause is unconfirmed. Evidence is retained under
+`.codex-tmp/admin-maintenance-verification` (r4, r6-r8); every run kept source unchanged.
+The only post-r4 runtime source change was Maintenance fixture readiness waits before editing.
+
+Two page-departure regression cases were observed RED then GREEN. Three incomplete synchronous
+import acknowledgements were also observed RED then GREEN; required result fields prevent a
+malformed success clearing the per-authority/epoch unknown-outcome block. Commands never replay.
+No polling timer, installed-player changes, installer execution or release publication. Visual
+parity, live server, real browser/clipboard/OS dialogs, IME, Narrator and DPI remain unverified.
+See `docs/parity/admin-maintenance.md` for exact evidence and intentional differences.
+
+---
+
 # November 16 — Configure Storage verified scoped Beta handoff
 
 Configure > Server > Storage (C5) is ready for its separate Beta PR on deliberate base `522007cf7e20d8dbce7f72234c2f2af382d1c921` (1.2.1165; pipeline-owned). It covers local/public-private S3 storage, write-only keys and checks, asset links, transition review/queue/cancel, recovery and active-only polling. Source review repairs retain coalesced post-command refreshes and last-good capabilities, and permit review retirement while queuing.

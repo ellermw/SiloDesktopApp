@@ -182,8 +182,8 @@
         "Job page controls / job history"
       ],
       "children": [],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Bounded verification on Beta 19a66e547a78; official 94797c3e has unchanged Maintenance contracts from 92ee0518. Full units 7949 and focused 323 pass; app/publish/binding and Maintenance native43 plus five neighbors pass. Downloads/Libraries native failures remain disclosed, not certified. Ready for separate Beta pipeline submission; visual/live-server acceptance remains. See docs/parity/admin-maintenance.md."
     },
     {
       "id": "backups",
