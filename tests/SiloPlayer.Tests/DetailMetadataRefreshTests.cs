@@ -946,6 +946,70 @@ public sealed class DetailMetadataRefreshTests
         Assert.DoesNotContain("new MaintenanceJobFollower(", detail, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void OffscreenLibraryCompletionIsRetainedOutsideThePageSubscription()
+    {
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var catchUp = Read("src", "SiloPlayer", "Views", "LibraryPage.CatchUp.cs");
+        var library = Read("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        Assert.Contains("Dictionary<ApiIdentityContext, long> CatalogRevisions", flow);
+        Assert.Contains("if (!MetadataRefreshFollow.IsDefiniteFailure(result))\n            AdvanceCatalogRevision(identity);", flow);
+        Assert.Contains("MetadataRefreshFlow.GetCatalogRevision(identity)", catchUp);
+        Assert.Contains("_metadataCatalogIdentity != identity || _metadataCatalogRevision != revision", catchUp);
+        Assert.Contains("if (revision != 0) QueueCatalogContentRefresh(_stateSettings.CaptureContext(), libraryId: null);", catchUp);
+        Assert.Contains("kind: LibraryViewModel.CatalogRefreshKind.ContentChanged", catchUp);
+        // The resume hooks run even though OnNavigatedFrom removed the active subscription.
+        Assert.Contains("UnregisterMediaMessages();", library);
+        Assert.Contains("ViewModel.SuspendCatalogLoads();", library);
+        Assert.Contains("private void LibraryPage_Loaded", library);
+        Assert.Contains("WakeCatalogContentRefresh();", library);
+    }
+
+    [Fact]
+    public void RetainedMetadataReadDuringUndoMergesItsWindowWithoutRequestingAQueryReset()
+    {
+        var catalog = Read("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var load = catalog[catalog.IndexOf("private async Task LoadCatalogAsync", StringComparison.Ordinal)..];
+        var busy = load[..load.IndexOf("if (_loading && !reset)", StringComparison.Ordinal)];
+        Assert.Contains("if (retainedWindowSize is { } retained)", busy);
+        Assert.Contains("_retainedSectionWindowSize = Math.Max(_retainedSectionWindowSize ?? 0, retained);", busy);
+        Assert.Contains("_cardMutationRevision++;", busy);
+        Assert.Contains("else if (reset)", busy);
+        var reconcile = catalog[catalog.IndexOf("private async Task ReconcileSectionAfterUndoAsync", StringComparison.Ordinal)..];
+        reconcile = reconcile[..reconcile.IndexOf("private async Task AutoHideUndoBannerAsync", StringComparison.Ordinal)];
+        Assert.Contains("else target = Math.Max(target, _retainedSectionWindowSize ?? 0);", reconcile);
+        Assert.Contains("cardRevision != _cardMutationRevision", reconcile);
+    }
+
+    [Fact]
+    public void SharedCompletionRetiresPlaybackBeforeEitherCallerCanReload()
+    {
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
+        var invalidate = flow.IndexOf("player?.InvalidateWatchDetail(id);", StringComparison.Ordinal);
+        Assert.InRange(invalidate, 1, flow.IndexOf("Show(toast, MetadataRefreshFollow.FinishToast", StringComparison.Ordinal));
+        Assert.Contains("_userStateRevision.Advance(contentId);", player);
+        Assert.Contains("_watchDetailPrefetches.Invalidate(contentId);", player);
+    }
+
+    [Fact]
+    public void EbookMetadataRepaintRetainsFileScopedProgressAndReconcilesFreshInventory()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var restore = page[page.IndexOf("private void RestoreEbookResumeState", StringComparison.Ordinal)..];
+        restore = restore[..restore.IndexOf("private async Task LoadEbookProgressAsync", StringComparison.Ordinal)];
+        Assert.Contains("ReferenceEquals(_ebookProgressOwner, item)", restore);
+        Assert.Contains("ChooseReadableBookVersion(item.Versions,", restore);
+        Assert.Contains("retained ? _ebookProgressFileId : item.UserData?.LastFileId", restore);
+        Assert.Contains("retained && _readerTargetFileId == _ebookProgressFileId", restore);
+        Assert.Contains("? _ebookProgressFraction : 0", restore);
+        Assert.Contains("web.detail.books.continueReading", restore);
+        Assert.Contains("UpdatePlayProgressWidth();", restore);
+        Assert.Contains("_ebookProgressFileId = progress.FileId;", page);
+        Assert.Contains("RestoreEbookResumeState(item);", page);
+        Assert.Contains("_ebookProgressOwner = null;", page);
+    }
+
     // ===== helpers =====
 
     private static bool Send(DetailMetadataChangeHub hub, string channel, string eventName, string json)

@@ -73,6 +73,42 @@ public sealed class DetailCacheInvalidationTests
         GC.KeepAlive(revision);
     }
 
+    [Fact]
+    public async Task PollingOnlyDetailRefreshRetiresWarmWatchWithoutASurfaceNotification()
+    {
+        var revision = new UserStateRevision();
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, TimeSpan.FromSeconds(1),
+            detail => detail.ContentId, detail => detail.SeriesId);
+        var cache = new WatchDetailPrefetchCache<WatchDetailResponse>(8, TimeSpan.FromMinutes(2));
+        var now = DateTimeOffset.UtcNow;
+        var reads = 0;
+        var fileId = 1;
+        Task<WatchDetailResponse> Get(CancellationToken ct) => cache.GetOrAdd("movie:source", "profile", () =>
+            freshness.ReadAsync("movie:source", _ =>
+            {
+                reads++;
+                return Task.FromResult(new WatchDetailResponse
+                {
+                    ContentId = "movie:source", Versions = [new() { FileId = fileId }]
+                });
+            }, ct), now, out _);
+        var warm = await Get(CancellationToken.None);
+        Assert.Same(warm, await Get(CancellationToken.None));
+        fileId = 2;
+        var result = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded);
+        // The shared flow's playback invalidation, without the card caller's messenger publication.
+        foreach (var id in MetadataRefreshFollow.InvalidatedIds(result, "movie:source", "movie", null))
+        {
+            revision.Advance(id);
+            cache.Invalidate(id);
+        }
+        Assert.False(freshness.IsCurrent(warm));
+        var current = await freshness.GetCurrentAsync(Get,
+            detail => cache.Invalidate(detail.ContentId), CancellationToken.None);
+        Assert.Equal(2, reads);
+        Assert.Equal(2, Assert.Single(current.Versions).FileId);
+    }
+
     [Theory]
     [InlineData(MediaSurfaceChangeKind.WatchedMarked)]
     [InlineData(MediaSurfaceChangeKind.WatchedCleared)]

@@ -583,7 +583,13 @@ public sealed partial class CatalogPage : Page,
             var refreshMetadata = _retainedMetadataRefresh;
             var reset = _undoResetPending;
             _undoResetPending = false;
-            if (reset) { target = PageSize; ClearUndoState(); }
+            if (reset)
+            {
+                target = PageSize;
+                _retainedSectionWindowSize = null;
+                ClearUndoState();
+            }
+            else target = Math.Max(target, _retainedSectionWindowSize ?? 0);
             var items = new List<MediaItem>();
             string? snapshot = null;
             var total = 0;
@@ -750,7 +756,18 @@ public sealed partial class CatalogPage : Page,
         if (_undoBusy)
         {
             _retainedMetadataRefresh |= refreshMetadata;
-            if (reset) { _undoResetPending = true; ClearUndoState(); }
+            if (retainedWindowSize is { } retained)
+            {
+                _retainedSectionWindowSize = Math.Max(_retainedSectionWindowSize ?? 0, retained);
+                // Retire any reconciliation already reading the older snapshot.
+                _cardMutationRevision++;
+            }
+            else if (reset)
+            {
+                _undoResetPending = true;
+                _retainedSectionWindowSize = null;
+                ClearUndoState();
+            }
             return;
         }
         if (_loading && !reset) return;

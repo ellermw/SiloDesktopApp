@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.MediaMaintenance;
@@ -17,6 +18,20 @@ public readonly record struct MetadataRefreshStart(ApiIdentityContext Identity, 
 /// </summary>
 public static class MetadataRefreshFlow
 {
+    // Completion can outlive the Library page's active messenger subscription.
+    private static readonly Dictionary<ApiIdentityContext, long> CatalogRevisions = new();
+
+    public static long GetCatalogRevision(ApiIdentityContext identity)
+    {
+        lock (CatalogRevisions) return CatalogRevisions.GetValueOrDefault(identity);
+    }
+
+    private static void AdvanceCatalogRevision(ApiIdentityContext identity)
+    {
+        lock (CatalogRevisions)
+            CatalogRevisions[identity] = CatalogRevisions.GetValueOrDefault(identity) + 1;
+    }
+
     /// <summary>
     /// Posts the refresh and shows the running toast. Null when the account or profile changed
     /// while the request was out: nothing failed, so nothing is said.
@@ -64,9 +79,15 @@ public static class MetadataRefreshFlow
         // Signed out or switched account or profile while it ran: nothing failed, so say nothing.
         if (result.Outcome == MaintenanceJobWaitOutcome.Stale || !api.IsCurrentIdentityContext(identity)) return null;
         // Every later read of the item, from any page, must skip detail cached before the refresh.
-        if (cache != null)
-            foreach (var id in MetadataRefreshFollow.InvalidatedIds(result, contentId, type, seriesId))
-                cache.Invalidate(id);
+        var player = App.Services.GetService<PlayerService>();
+        foreach (var id in MetadataRefreshFollow.InvalidatedIds(result, contentId, type, seriesId))
+        {
+            cache?.Invalidate(id);
+            // Both callers must retire warm /watch reads before reloading or following a replacement.
+            player?.InvalidateWatchDetail(id);
+        }
+        if (!MetadataRefreshFollow.IsDefiniteFailure(result))
+            AdvanceCatalogRevision(identity);
 
         if (result.Error != null)
             LocalLog.AppendException("state_trace.txt", result.Error, "metadata_refresh_job_read");
