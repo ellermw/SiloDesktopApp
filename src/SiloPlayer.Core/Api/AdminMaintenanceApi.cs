@@ -21,6 +21,9 @@ public sealed class AdminMaintenanceApi(SiloApiClient client)
     private Guid? _importAttempt;
     private bool _importPending;
 
+    /// <summary>Raised after a confirmed synchronous commit, scoped to its request context and authority epoch.</summary>
+    public event Action<ApiRequestContext, long>? CatalogChanged;
+
     public bool HasUnconfirmedImport(MonitorAuthorityLease lease)
     {
         lock (_importGate) return ReferenceEquals(_importAuthority, lease.Owner) && _importEpoch == lease.Epoch && _importAttempt != null;
@@ -95,7 +98,7 @@ public sealed class AdminMaintenanceApi(SiloApiClient client)
         var path = AdminPaging.WithPage(string.IsNullOrEmpty(kind) ? "/api/v2/admin/jobs" : "/api/v2/admin/jobs?kind=" + Uri.EscapeDataString(kind), limit, cursor);
         var answer = await client.AdminMaintenanceSendAsync<AdminMaintenanceJobCollection>(lease, HttpMethod.Get, path, ct: ct).ConfigureAwait(false);
         var page = AdminLibrariesApi.ValidatePage(answer.Body.Items, answer.Body.Page, limit, cursor, job => IsJobId(job?.Id) ? job!.Id : null);
-        if (!string.IsNullOrEmpty(kind) && page.Items.Any(job => !string.Equals(job.Kind, kind, StringComparison.Ordinal)))
+        if (page.Items.Any(job => !IsReadableJob(job) || (!string.IsNullOrEmpty(kind) && !string.Equals(job.Kind, kind, StringComparison.Ordinal))))
             throw new AdminListInconsistentException(AdminListProblem.InvalidPage);
         return page;
     }
@@ -105,7 +108,8 @@ public sealed class AdminMaintenanceApi(SiloApiClient client)
     {
         RequireJobId(jobId);
         var answer = await client.AdminMaintenanceSendAsync<AdminMaintenanceJob>(lease, HttpMethod.Get, JobLocationPrefix + Uri.EscapeDataString(jobId), ct: ct).ConfigureAwait(false);
-        if (!string.Equals(answer.Body.Id, jobId, StringComparison.Ordinal)) throw new InvalidDataException("The server answered with a different job.");
+        if (!IsReadableJob(answer.Body) || !string.Equals(answer.Body.Id, jobId, StringComparison.Ordinal))
+            throw new AdminListInconsistentException(AdminListProblem.InvalidPage);
         return answer.Body;
     }
 
@@ -139,12 +143,23 @@ public sealed class AdminMaintenanceApi(SiloApiClient client)
     {
         ArgumentNullException.ThrowIfNull(request);
         var body = request.ToBody();
-        return await ImportOnceAsync(lease, async () =>
+        var result = await ImportOnceAsync(lease, async () =>
         {
             var answer = await SendCommandAsync<AdminCatalogImportResult>(lease, "/api/v2/admin/catalog/import", body, ct).ConfigureAwait(false);
             if (answer.Status != 200 || answer.Body.ItemsCreated < 0 || answer.Body.FilesCreated < 0) throw new AdminCatalogOutcomeUnknownException(null);
             return answer.Body;
         }).ConfigureAwait(false);
+        // Notification failures cannot turn a proven commit into an unknown outcome or replay it.
+        if (lease.IsCurrent)
+        {
+            var context = lease.Context;
+            foreach (var handler in CatalogChanged?.GetInvocationList() ?? [])
+            {
+                try { ((Action<ApiRequestContext, long>)handler)(context, lease.Epoch); }
+                catch (Exception error) { LocalLog.AppendLine("admin_monitor.txt", $"catalog change handler failed: {error.GetType().Name}"); }
+            }
+        }
+        return result;
     }
 
     /// <summary>
@@ -175,6 +190,11 @@ public sealed class AdminMaintenanceApi(SiloApiClient client)
 
     public static bool IsJobId(string? id) => !string.IsNullOrWhiteSpace(id) && id.Length <= MaxJobIdLength && !id.Any(char.IsControl);
 
+    // Nullable annotations do not prevent explicit JSON nulls. Reject malformed rows before UI adoption.
+    private static bool IsReadableJob(AdminMaintenanceJob? job) => job != null && IsJobId(job.Id)
+        && !string.IsNullOrWhiteSpace(job.Kind) && !string.IsNullOrWhiteSpace(job.State)
+        && (job.Failure == null || (job.Failure.Type != null && job.Failure.Detail != null));
+
     private static void RequireJobId(string? id)
     {
         if (!IsJobId(id)) throw new ArgumentException("Invalid job ID.", nameof(id));
@@ -185,7 +205,7 @@ public sealed class AdminMaintenanceApi(SiloApiClient client)
         var answer = await SendCommandAsync<AdminMaintenanceJob>(lease, path, body, ct).ConfigureAwait(false);
         var job = answer.Body;
         // A receipt is trusted only when it is a 202 for a job of this kind that the Location names.
-        if (answer.Status != 202 || !IsJobId(job.Id) || !string.Equals(job.Kind, kind, StringComparison.Ordinal)
+        if (answer.Status != 202 || !IsReadableJob(job) || !string.Equals(job.Kind, kind, StringComparison.Ordinal)
             || !string.Equals(JobIdFromLocation(answer.Location), job.Id, StringComparison.Ordinal))
             throw new AdminCatalogOutcomeUnknownException(null);
         return job;

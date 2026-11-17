@@ -48,7 +48,7 @@ internal static class AdminMaintenanceNativeFixture
     {
         internal readonly ConcurrentQueue<string> Requests = new();
         internal readonly ConcurrentQueue<string> Bodies = new();
-        internal volatile bool LinkPublished, SyncLost;
+        internal volatile bool LinkPublished, SyncLost, EmptyCatalog;
         internal TaskCompletionSource? QueuedGate;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -71,6 +71,8 @@ internal static class AdminMaintenanceNativeFixture
                     if (SyncLost) throw new HttpRequestException("synthetic lost answer");
                     return Json("""{"items_created":2,"files_created":3}""");
             }
+            if (EmptyCatalog && request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/api/v2/admin/jobs"
+                && request.RequestUri.Query.Contains("kind=catalog_", StringComparison.Ordinal)) return Json(Page(null));
             return query switch
             {
                 "/api/v2/admin/jobs?kind=catalog_export&limit=10" => Json(Page(null,
@@ -157,6 +159,28 @@ internal static class AdminMaintenanceNativeFixture
             Check(texts.Contains("The operation could not finish. Inspect administrator diagnostics before submitting new work."), "the fixed safe failure sentence is shown");
             Check(texts.Contains("Canceled after deleting 41 cached objects; 2 prefixes fully cleaned"), "a cancelled image cache cleanup keeps its partial totals");
             Check(texts.Contains("future_kind") && texts.Contains("paused"), "an unknown future job kind keeps a generic row");
+
+            // Empty non-polling catalog lists retain read-only, independent header refresh actions.
+            server.EmptyCatalog = true;
+            await Task.WhenAll(controller.RefreshAsync(AdminMaintenanceListKind.Imports), controller.RefreshAsync(AdminMaintenanceListKind.Exports));
+            await Until(() => Find<TextBlock>(page, "MaintenanceImportsEmpty") is { IsLoaded: true }
+                && Find<TextBlock>(page, "MaintenanceExportsEmpty") is { IsLoaded: true }, "empty catalog lists rendered");
+            var importRefresh = Find<Button>(page, "MaintenanceImportsRefresh");
+            var exportRefresh = Find<Button>(page, "MaintenanceExportsRefresh");
+            Check(importRefresh is { IsEnabled: true } && IsShown(importRefresh)
+                && exportRefresh is { IsEnabled: true } && IsShown(exportRefresh), "both empty catalog lists keep header Refresh actions");
+            var historyReads = server.Requests.Count(sent => sent == "GET /api/v2/admin/jobs?limit=30");
+            var posts = server.Requests.Count(sent => sent.StartsWith("POST ", StringComparison.Ordinal));
+            server.EmptyCatalog = false;
+            Invoke(importRefresh!);
+            await Until(() => controller.State.Imports.Items.Count == 2 && !controller.State.Imports.IsFetching, "imports discovered by header refresh");
+            Check(controller.State.Exports.Items.Count == 0, "import header refresh leaves the export chain unchanged");
+            Invoke(exportRefresh!);
+            await Until(() => controller.State.Exports.Items.Count == 3 && !controller.State.Exports.IsFetching, "exports discovered by header refresh");
+            await Until(() => Find<Button>(page, "MaintenanceDownload_e-done") is { IsLoaded: true }, "refreshed exports rendered");
+            Check(controller.State.CompletedExports.Count == 2, "export header refresh updates completed-export choices");
+            Check(server.Requests.Count(sent => sent == "GET /api/v2/admin/jobs?limit=30") == historyReads
+                && server.Requests.Count(sent => sent.StartsWith("POST ", StringComparison.Ordinal)) == posts, "catalog header refreshes only read their own lists");
 
             // Export actions: Download for an artifact, Create link only when unpublished, Copy URL only when published.
             Check(Find<Button>(page, "MaintenanceDownload_e-done") is { Visibility: Visibility.Visible, IsEnabled: true }, "Download is offered for an export artifact");

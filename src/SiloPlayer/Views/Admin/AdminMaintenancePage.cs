@@ -99,10 +99,10 @@ public sealed partial class AdminMaintenancePage : Page, IAdminGutterScrollPage,
 
         _imports = new JobList(this, AdminMaintenanceListKind.Imports, "MaintenanceImports", T("web.admin.catalogMaintenance.imports.title"),
             T("web.admin.catalogMaintenance.imports.body"), T("web.admin.catalogMaintenance.imports.empty"), T("web.admin.catalogMaintenance.imports.loadOlder"),
-            T("web.admin.catalogMaintenance.jobs.refreshing"), controlsFirst: true);
+            T("web.admin.catalogMaintenance.jobs.refreshing"), controlsFirst: true, refreshName: T("web.admin.catalogMaintenance.refresh"));
         _exports = new JobList(this, AdminMaintenanceListKind.Exports, "MaintenanceExports", T("web.admin.catalogMaintenance.exports.title"),
             T("web.admin.catalogMaintenance.exports.body"), T("web.admin.catalogMaintenance.exports.empty"), T("web.admin.catalogMaintenance.exports.loadOlder"),
-            T("web.admin.catalogMaintenance.jobs.refreshing"), controlsFirst: true);
+            T("web.admin.catalogMaintenance.jobs.refreshing"), controlsFirst: true, refreshName: T("web.admin.catalogMaintenance.refresh"));
         _history = new JobList(this, AdminMaintenanceListKind.History, "MaintenanceHistory", T("web.admin.common.jobHistory.title"),
             T("web.admin.common.jobHistory.subtitle"), T("web.admin.common.jobHistory.empty"), T("web.admin.common.jobPageControls.loadOlder"),
             T("web.admin.common.jobHistory.refreshing"), controlsFirst: false, refreshName: T("web.admin.common.jobHistory.refresh"));
@@ -485,6 +485,7 @@ public sealed partial class AdminMaintenancePage : Page, IAdminGutterScrollPage,
         private readonly StackPanel _rows = new();
         private readonly StackPanel _controls = new() { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new(12) };
         private readonly Button? _refresh;
+        private MonitorAuthorityLease? _refreshOwner;
         private object? _rendered;
         private bool _renderedWide;
 
@@ -508,7 +509,7 @@ public sealed partial class AdminMaintenancePage : Page, IAdminGutterScrollPage,
             if (refreshName != null)
             {
                 _refresh = UI.IconButton("refresh-cw", refreshName, id + "Refresh", 36, 16);
-                _refresh.Click += async (_, _) => { if (_page._controller is { } controller && controller.State.Owner is { IsCurrent: true }) await controller.RefreshAsync(_kind); };
+                _refresh.Click += async (_, _) => { if (_page._controller is { } controller && controller.IsCurrentOwner(_refreshOwner)) await controller.RefreshAsync(_kind); };
                 trailing.Children.Add(_refresh);
             }
             Grid.SetColumn(trailing, 1); header.Children.Add(trailing);
@@ -528,6 +529,7 @@ public sealed partial class AdminMaintenancePage : Page, IAdminGutterScrollPage,
                 list.IsFetching ? UI.BadgeTone.Outline : UI.BadgeTone.Secondary);
             AutomationProperties.SetAutomationId(count, _id + "Count");
             _badge.Content = count;
+            _refreshOwner = state.Owner;
             if (_refresh != null) _refresh.IsEnabled = current;
             RenderControls(list, state.Owner, current);
             // Rows are rebuilt only when the list or the state they show changed, so focus survives unrelated renders.
@@ -591,6 +593,8 @@ public sealed partial class AdminMaintenancePage : Page, IAdminGutterScrollPage,
         internal void Clear()
         {
             _rendered = null;
+            _refreshOwner = null;
+            if (_refresh != null) _refresh.IsEnabled = false;
             _rows.Children.Clear(); _controls.Children.Clear(); _badge.Content = null;
         }
     }

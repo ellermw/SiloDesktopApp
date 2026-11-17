@@ -29,7 +29,7 @@ public static class AdminMaintenancePresentation
         "succeeded" => "completed",
         "canceled" => "cancelled",
         "canceling" => "running",
-        var other => other,
+        var other => other ?? "",
     };
 
     /// <summary>The raw status word the catalog lists show, limited to a plain identifier.</summary>
@@ -76,8 +76,9 @@ public static class AdminMaintenancePresentation
     public static string? FailureText(AdminMaintenanceJob job)
     {
         if (job.Failure == null || job.Kind == "storage_transition") return null;
-        if (job.Failure.Type.EndsWith(SafeFailureType, StringComparison.Ordinal) && job.Failure.Detail.Length is > 0 and <= 512 && !job.Failure.Detail.Any(char.IsControl))
-            return job.Failure.Detail;
+        if (job.Failure.Type?.EndsWith(SafeFailureType, StringComparison.Ordinal) == true
+            && job.Failure.Detail is { Length: > 0 and <= 512 } detail && !detail.Any(char.IsControl))
+            return detail;
         return AppStrings.Get("web.common.job.failed", fallback: "Job failed");
     }
 
@@ -109,7 +110,7 @@ public static class AdminMaintenancePresentation
     }
 
     /// <summary>Job type label; a newer kind shows its plain identifier.</summary>
-    public static string KindLabel(string kind) => kind switch
+    public static string KindLabel(string? kind) => kind switch
     {
         "delete_library" => T("web.admin.common.jobHistory.jobType.deleteLibrary"),
         "image_cache_cleanup" => T("web.admin.common.jobHistory.jobType.imageCacheCleanup"),
@@ -248,7 +249,7 @@ public static class AdminMaintenancePresentation
         .Where(root => root.Length is > 0 and <= AdminCatalogImportDraft.MaxValueLength && !root.Any(char.IsControl))
         .Distinct(StringComparer.Ordinal).ToArray();
 
-    private static string Identifier(string value) => KindPattern.IsMatch(value) ? value : "";
+    private static string Identifier(string? value) => value != null && KindPattern.IsMatch(value) ? value : "";
 
     /// <summary>A conjunction list (WebUI <c>joinList</c>, <c>Intl.ListFormat</c> conjunction): English uses “a, b, and c”.</summary>
     internal static string JoinList(IReadOnlyList<string> parts)

@@ -105,6 +105,34 @@ public sealed class AdminMaintenanceTests
         }
     }
 
+    [Theory]
+    [InlineData("{\"id\":\"i1\",\"kind\":\"catalog_import\",\"state\":null}")]
+    [InlineData("{\"id\":\"i1\",\"kind\":null,\"state\":\"failed\"}")]
+    [InlineData("{\"id\":\"i1\",\"kind\":\"catalog_import\",\"state\":\"failed\",\"failure\":{\"type\":null,\"detail\":\"Fixed\"}}")]
+    [InlineData("{\"id\":\"i1\",\"kind\":\"catalog_import\",\"state\":\"failed\",\"failure\":{\"type\":\"https://silo.test/job_failed\",\"detail\":null}}")]
+    [InlineData("{\"id\":\"i1\",\"kind\":\"catalog_import\",\"state\":\"failed\",\"failure\":{\"type\":null,\"detail\":null}}")]
+    public async Task NullPresentationFieldsAreRejectedBeforePublishingRows(string malformed)
+    {
+        var (kit, authority, api, server) = Setup();
+        using (kit) using (authority) using (var controller = new AdminMaintenanceController(api, authority))
+        {
+            server.Override = request => Task.FromResult<HttpResponseMessage?>(request.RequestUri!.AbsolutePath == "/api/v2/admin/jobs"
+                ? AdminMonitorKit.Json(Page(null, malformed)) : null);
+            using var lease = authority.Capture();
+            await Assert.ThrowsAsync<AdminListInconsistentException>(() => api.ListJobsAsync(lease, null, 30, null));
+            await Assert.ThrowsAsync<AdminListInconsistentException>(() => api.ListJobsAsync(lease, AdminMaintenanceApi.ImportKind, 10, null));
+            await controller.OpenAsync();
+            Assert.Equal(AdminFailureKind.InvalidResponse, controller.State.History.Failure);
+            Assert.Equal(AdminFailureKind.InvalidResponse, controller.State.Imports.Failure);
+            Assert.Empty(controller.State.History.Items);
+            Assert.Empty(controller.State.Imports.Items);
+            server.Override = _ => Task.FromResult<HttpResponseMessage?>(AdminMonitorKit.Json(Page(null, Job("valid", AdminMaintenanceApi.ImportKind))));
+            await controller.RestartAsync(AdminMaintenanceListKind.Imports);
+            Assert.Null(controller.State.Imports.Failure);
+            Assert.Equal("valid", Assert.Single(controller.State.Imports.Items).Id);
+        }
+    }
+
     [Fact]
     public async Task ExportJobIsAcceptedOnlyForA202ThatNamesItsJob()
     {
@@ -471,6 +499,97 @@ public sealed class AdminMaintenanceTests
         }
     }
 
+    [Theory]
+    [InlineData("committed", 1)]
+    [InlineData("queued", 0)]
+    [InlineData("refused", 0)]
+    [InlineData("unknown", 0)]
+    public async Task OnlyAConfirmedSynchronousImportPublishesAnOwnerScopedCatalogChange(string outcome, int expected)
+    {
+        var (kit, authority, controller, server) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var changes = new List<(ApiRequestContext Context, long Epoch)>();
+            controller.Api.CatalogChanged += (changedContext, changedEpoch) => changes.Add((changedContext, changedEpoch));
+            controller.EditDraft(draft => draft with
+            {
+                Execution = outcome == "queued" ? AdminCatalogImportExecution.Queued : AdminCatalogImportExecution.Synchronous,
+            });
+            server.Override = request => Task.FromResult<HttpResponseMessage?>(request.Method != HttpMethod.Post ? null : outcome switch
+            {
+                "committed" => AdminMonitorKit.Json("{\"items_created\":1,\"files_created\":2}"),
+                "queued" => Accepted(Job("i1", AdminMaintenanceApi.ImportKind, "queued"), "/api/v2/admin/jobs/i1"),
+                "refused" => Problem(HttpStatusCode.BadRequest, "bad_request"),
+                _ => AdminMonitorKit.Json("{}"),
+            });
+            var context = kit.Client.CaptureContext();
+            var epoch = authority.Epoch;
+            await controller.SubmitImportAsync();
+            Assert.Equal(expected, changes.Count);
+            if (expected != 0)
+            {
+                Assert.Equal((context, epoch), changes.Single());
+                Assert.False(controller.State.ImportOutcomeUnknown);
+                Assert.False(controller.State.Draft.IsDirty);
+                Assert.Equal(1, Count(kit, ImportsRead));
+            }
+            Assert.Single(Posts(kit));
+        }
+    }
+
+    [Fact]
+    public async Task ARetiredImportsLateSuccessCannotNotifyTheReplacementOwner()
+    {
+        var (kit, authority, controller, server) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var changes = 0;
+            controller.Api.CatalogChanged += (_, _) => changes++;
+            var reply = new TaskCompletionSource<HttpResponseMessage?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.Override = request => request.Method == HttpMethod.Post ? reply.Task : Task.FromResult<HttpResponseMessage?>(null);
+            controller.EditDraft(draft => draft with { Execution = AdminCatalogImportExecution.Synchronous });
+            var pending = controller.SubmitImportAsync();
+            try
+            {
+                await Until(() => Posts(kit).Length == 1);
+                kit.SetRole("user");
+                kit.SetRole("admin");
+                reply.TrySetResult(AdminMonitorKit.Json("{\"items_created\":1,\"files_created\":2}"));
+                await pending;
+                Assert.Equal(0, changes);
+                Assert.Single(Posts(kit));
+            }
+            finally
+            {
+                reply.TrySetResult(AdminMonitorKit.Json("{}"));
+                await pending;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ANotificationFailureCannotChangeACommittedImportOrReplayIt()
+    {
+        var (kit, authority, controller, server) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            await controller.OpenAsync();
+            var notified = 0;
+            controller.Api.CatalogChanged += (_, _) => throw new InvalidOperationException("synthetic observer failure");
+            controller.Api.CatalogChanged += (_, _) => notified++;
+            controller.EditDraft(draft => draft with { Execution = AdminCatalogImportExecution.Synchronous });
+            server.Override = request => Task.FromResult<HttpResponseMessage?>(request.Method == HttpMethod.Post
+                ? AdminMonitorKit.Json("{\"items_created\":1,\"files_created\":2}") : null);
+            await controller.SubmitImportAsync();
+            Assert.Equal(1, notified);
+            Assert.False(controller.State.ImportOutcomeUnknown);
+            Assert.False(controller.State.Draft.IsDirty);
+            Assert.Single(Posts(kit));
+        }
+    }
+
     [Fact]
     public async Task RefusalsKeepTheDraftWithSafeReasonsAndRewriteFieldErrors()
     {
@@ -699,6 +818,27 @@ public sealed class AdminMaintenanceTests
         Assert.Equal("paused", Presentation.StatusLabel(future));
         Assert.Null(Presentation.Result(future));
         Assert.Equal("", Presentation.Description(future));
+    }
+
+    [Fact]
+    public void ExplicitNullKindAndStateHaveSafePresentationFallbacks()
+    {
+        var job = Read("{\"id\":\"i1\",\"kind\":null,\"state\":null}");
+        Assert.Equal("", Presentation.KindLabel(job.Kind));
+        Assert.Equal("", Presentation.Status(job));
+        Assert.Equal("", Presentation.StatusWord(job));
+        Assert.Equal("", Presentation.StatusLabel(job));
+        Assert.Null(Presentation.Result(job));
+    }
+
+    [Theory]
+    [InlineData("{\"type\":null,\"detail\":null}")]
+    [InlineData("{\"type\":null,\"detail\":\"Fixed\"}")]
+    [InlineData("{\"type\":\"https://silo.test/job_failed\",\"detail\":null}")]
+    public void ExplicitNullFailureFieldsHaveAGenericFallback(string failure)
+    {
+        var job = Read(Job("i1", AdminMaintenanceApi.ImportKind, "failed", ",\"failure\":" + failure));
+        Assert.Equal("Job failed", Presentation.FailureText(job));
     }
 
     [Fact]
