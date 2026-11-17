@@ -68,6 +68,7 @@ public sealed class AdminBackupRestoreController : IDisposable
     private IDisposable? _jobTimer;
     private long _generation;
     private bool _jobInFlight, _visible = true, _disposed;
+    private readonly HashSet<string> _finishedJobs = new(StringComparer.Ordinal);
 
     public AdminBackupRestoreController(AdminBackupsApi api, AdminMonitorAuthority authority, IAdminScheduler? scheduler = null)
     {
@@ -97,6 +98,7 @@ public sealed class AdminBackupRestoreController : IDisposable
         lock (_gate)
         {
             _jobTimer?.Dispose(); _jobTimer = null; _generation++; _jobInFlight = false;
+            _finishedJobs.Clear();
             _index = new Dictionary<string, AdminRestoreEntry>();
             _state = new() { Owner = owner, Source = source, JobId = jobId, PreviewLoading = jobId == null, OutcomeUnknown = _api.HasUnconfirmedRestore(owner, source) };
         }
@@ -127,6 +129,7 @@ public sealed class AdminBackupRestoreController : IDisposable
         lock (_gate)
         {
             _jobTimer?.Dispose(); _jobTimer = null; _generation++; _jobInFlight = false;
+            _finishedJobs.Clear();
             _index = new Dictionary<string, AdminRestoreEntry>(); _state = new();
         }
         Changed?.Invoke();
@@ -282,8 +285,9 @@ public sealed class AdminBackupRestoreController : IDisposable
         var finished = false;
         lock (_gate)
         {
+            if (_disposed || generation != _generation || !_lifetime.IsCurrent(owner)) return;
             _jobInFlight = false;
-            if (_disposed || generation != _generation || !_lifetime.IsCurrent(owner) || _state.JobId != jobId) return;
+            if (_state.JobId != jobId) return;
             if (job != null && _state.Source is { } source && !AdminBackupValidation.NamesSource(job, source))
             {
                 // A job that is not this source's restore is never shown here.
@@ -291,19 +295,38 @@ public sealed class AdminBackupRestoreController : IDisposable
             }
             if (job != null)
             {
-                finished = job.Terminal == true && _state.Job?.Terminal != true;
-                _state = _state with { Job = job, JobError = null };
+                finished = AcceptJob(job);
             }
             else if (failure != null) _state = _state with { JobError = failure };
         }
         Changed?.Invoke();
         if (finished)
         {
-            await ReadListAsync(owner).ConfigureAwait(false);
-            try { Finished?.Invoke(); } catch { }
+            await CompleteJobAsync(owner, generation).ConfigureAwait(false);
             return;
         }
-        if (job?.Terminal != true && failure is null or not (ApiException { StatusCode: 404 } or InvalidDataException)) ScheduleJob(owner, JobInterval);
+        if (State.Job?.Terminal != true && failure is null or not (ApiException { StatusCode: 404 } or InvalidDataException)) ScheduleJob(owner, JobInterval);
+    }
+
+    // Called under _gate by every path that receives a job snapshot.
+    private bool AcceptJob(AdminBackupRestoreJob job)
+    {
+        // An older poll cannot undo a terminal acknowledgement from Stop.
+        if (_state.Job is { Terminal: true } previous && previous.Id == job.Id && job.Terminal != true) return false;
+        _state = _state with { Job = job, JobError = null };
+        if (job.Terminal != true) return false;
+        _jobTimer?.Dispose(); _jobTimer = null;
+        return _finishedJobs.Add(job.Id!);
+    }
+
+    private async Task CompleteJobAsync(MonitorAuthorityLease owner, long generation)
+    {
+        await ReadListAsync(owner).ConfigureAwait(false);
+        lock (_gate)
+        {
+            if (_disposed || generation != _generation || !_lifetime.IsCurrent(owner)) return;
+        }
+        try { Finished?.Invoke(); } catch { }
     }
 
     private void ScheduleJob(MonitorAuthorityLease owner, TimeSpan delay)
@@ -417,7 +440,7 @@ public sealed class AdminBackupRestoreController : IDisposable
             }
             catch (AdminBackupOutcomeUnknownException)
             {
-                Update(action, () => _state = _state with { Starting = false, OutcomeUnknown = true });
+                Update(action, () => _state = _state with { Starting = false, Reviewing = false, OutcomeUnknown = true });
                 await ReconcileUnknownAsync(action, source).ConfigureAwait(false);
             }
             catch (AdminBackupApiException error) when (error.StatusCode == 409)
@@ -448,17 +471,21 @@ public sealed class AdminBackupRestoreController : IDisposable
     private void AdoptJob(MonitorAuthorityLease action, string jobId, AdminBackupRestoreJob? job)
     {
         var adopted = false;
+        var finished = false;
+        long generation = 0;
         Update(action, () =>
         {
-            _state = _state with { Starting = false, Reviewing = false, Refusal = null, OutcomeUnknown = false, JobId = jobId, Job = job, JobError = null };
+            _state = _state with { Starting = false, Reviewing = false, Refusal = null, OutcomeUnknown = false, JobId = jobId, Job = null, JobError = null };
+            if (job != null) finished = AcceptJob(job);
+            generation = _generation;
             adopted = true;
         });
         if (!adopted) return;
         JobChanged?.Invoke(jobId);
         if (_lifetime.Owner is { IsCurrent: true } owner)
         {
-            if (job?.Terminal == true) _ = ReadJobAsync(owner, background: false);
-            else ScheduleJob(owner, job == null ? TimeSpan.Zero : JobInterval);
+            if (finished) _ = CompleteJobAsync(owner, generation);
+            else if (job?.Terminal != true) ScheduleJob(owner, job == null ? TimeSpan.Zero : JobInterval);
         }
     }
 
@@ -494,7 +521,15 @@ public sealed class AdminBackupRestoreController : IDisposable
             try
             {
                 var job = await _api.CancelJobAsync(action, displayedJobId).ConfigureAwait(false);
-                Update(action, () => { if (_state.JobId == displayedJobId) _state = _state with { Job = job }; });
+                var finished = false;
+                long generation = 0;
+                Update(action, () =>
+                {
+                    if (_state.JobId == displayedJobId) finished = AcceptJob(job);
+                    generation = _generation;
+                });
+                if (finished && _lifetime.Owner is { IsCurrent: true } readOwner)
+                    await CompleteJobAsync(readOwner, generation).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
             catch (Exception error)

@@ -52,7 +52,7 @@ internal static class AdminBackupsNativeFixture
             ["backup.s3.bucket"] = "", ["backup.s3.key_prefix"] = "", ["backup.s3.access_key"] = "", ["backup.s3.path_style"] = "false", ["s3.private_bucket"] = "",
         };
         internal bool Encrypted, KeyConfirmed = true, Unauthenticated, JobTerminal;
-        internal int Version = 1, Parts;
+        internal int Version = 1, Parts, JobReadStatus;
         internal bool PauseUpload;
         internal readonly TaskCompletionSource UploadPartStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string? LastPut, LastIfMatch, LastRestoreBody;
@@ -122,7 +122,7 @@ internal static class AdminBackupsNativeFixture
                 "/api/v2/admin/backups/uploads" => Json("{\"items\":[]}"),
                 "/api/v2/admin/tasks/backup" => Json("""{"key":"backup","next_run_at":"2099-11-17T04:00:00.000Z"}"""),
                 "/api/v2/admin/jobs" => Json("{\"items\":[]}"),
-                "/api/v2/admin/jobs/job-1" => Json(Job(JobTerminal ? "completed" : "running", JobTerminal)),
+                "/api/v2/admin/jobs/job-1" => JobReadStatus == 0 ? Json(Job(JobTerminal ? "completed" : "running", JobTerminal)) : Json("{}", (HttpStatusCode)JobReadStatus),
                 "/api/v2/libraries" => Json("{\"items\":[]}"),
                 "/api/v2/admin/settings/effective" => Json(JsonSerializer.Serialize(Values), etag: true),
                 "/api/v2/admin/settings/sensitive-status" => Json("""{"configured":[],"managed_by_env":[]}"""),
@@ -307,6 +307,14 @@ internal static class AdminBackupsNativeFixture
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "upload dialog");
             var uploadDialog = (ContentDialog)Field(page, "_dialog")!;
             await Until(() => Find<Button>(uploadDialog, "BackupsUploadChoose") is { IsLoaded: true }, "choose button");
+            var createsBeforeSelection = server.Requests.Count(request => request == "POST /api/v2/admin/backups/uploads");
+            Func<Task<(string Name, Stream Stream)?>> unreadable = () => throw new IOException("Synthetic picker/file-open failure");
+            uploadPicker.SetValue(null, unreadable);
+            Invoke(Find<Button>(uploadDialog, "BackupsUploadChoose")!);
+            await Until(() => Descendants(uploadDialog).OfType<TextBlock>().Any(text => text.Text == AdminText.T("configure.native.backups.fileUnreadable")), "unreadable selection explained");
+            Check(server.Requests.Count(request => request == "POST /api/v2/admin/backups/uploads") == createsBeforeSelection
+                && Find<Button>(uploadDialog, "BackupsUploadChoose") is { IsEnabled: true }, "picker/file-open failure is recoverable without a server upload");
+            uploadPicker.SetValue(null, pickUpload);
             Invoke(Find<Button>(uploadDialog, "BackupsUploadChoose")!);
             await Until(() => Find<Button>(uploadDialog, "BackupsUploadChooseWhat") is { IsLoaded: true, IsEnabled: true }, "upload opened");
             Check(server.Parts == 3 && server.Requests.Count(request => request == "POST /api/v2/admin/backups/uploads") == 1, "three parts sent for one created upload");
@@ -338,6 +346,14 @@ internal static class AdminBackupsNativeFixture
             Check(server.LastRestoreBody?.Contains("\"digest\":\"" + Digest + "\"", StringComparison.Ordinal) == true &&
                   server.LastRestoreBody.Contains("\"settings\":[\"general\"]", StringComparison.Ordinal), "the reviewed digest and selection are sent");
             Check(server.Requests.Count(request => request == "POST /api/v2/admin/backups/" + BackupId + "/restore") == 1, "the restore is sent once");
+            server.JobReadStatus = 404;
+            await restore.RetryJobAsync();
+            await Until(() => Find<Button>(restorePage, "RestoreJobRetry") is { IsLoaded: true, IsEnabled: true }, "retained job retry shown");
+            Check(restore.State.Job != null && Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text == AdminText.T("configure.native.backups.restore.staleJob")),
+                "failed monitoring labels retained progress as stale and offers Retry");
+            server.JobReadStatus = 0;
+            Invoke(Find<Button>(restorePage, "RestoreJobRetry")!);
+            await Until(() => restore.State.JobError == null, "job retry recovered");
             await Until(() => Find<Button>(restorePage, "RestoreStop") is { IsLoaded: true, IsEnabled: true }, "stop enabled");
             Invoke(Find<Button>(restorePage, "RestoreStop")!);
             await Until(() => Field(restorePage, "_dialog") is ContentDialog { IsLoaded: true }, "stop dialog");

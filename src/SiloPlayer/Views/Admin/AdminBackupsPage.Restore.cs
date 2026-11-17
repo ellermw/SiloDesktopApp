@@ -150,13 +150,19 @@ public sealed partial class AdminBackupsPage
         if (state.JobId != null)
         {
             if (state.Job == null && state.JobError == null) return UiKit.Skeleton(160);
-            if (state.Job == null)
+            if (state.JobError != null)
             {
                 var retry = Action(T("common.tryAgain"), "RestoreJobRetry");
                 retry.Click += async (_, _) => await controller.RetryJobAsync();
-                return Alert(T("web.admin.backups.restore.jobLoadFailed", new { reason = Present.ErrorMessage(state.JobError) }), retry);
+                var error = Alert(T("web.admin.backups.restore.jobLoadFailed", new { reason = Present.ErrorMessage(state.JobError) }), retry);
+                if (state.Job == null) return error;
+                var retained = new StackPanel { Spacing = 12 };
+                retained.Children.Add(error);
+                retained.Children.Add(Text(T("configure.native.backups.restore.staleJob"), 14, true));
+                retained.Children.Add(RunView(state, state.Job));
+                return retained;
             }
-            return RunView(state, state.Job);
+            return RunView(state, state.Job!);
         }
         if (state.PreviewLoading)
         {

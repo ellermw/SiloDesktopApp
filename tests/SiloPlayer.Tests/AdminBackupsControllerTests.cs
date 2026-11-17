@@ -217,6 +217,78 @@ public sealed class AdminBackupsControllerTests
         Assert.Null(h.Controller.State.UnknownOutcome);
     }
 
+    [Fact]
+    public async Task FailedReconciliationKeepsUnknownBackupBlocked()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        h.Override = request => request.Method == HttpMethod.Post ? throw new HttpRequestException("lost acknowledgement") : null;
+        await h.Controller.BackUpNowAsync();
+        h.Override = request => request.RequestUri!.AbsolutePath == "/api/v2/admin/backups"
+            ? Task.FromResult(BackupJson.Json(BackupJson.Problem("dependency_unavailable", 503), HttpStatusCode.ServiceUnavailable)) : null;
+        await h.Controller.RefreshAsync();
+        await Eventually.True(() => h.Controller.State.ListError != null, "failed reconciliation completed");
+        Assert.Equal("backup", h.Controller.State.UnknownOutcome);
+        await h.Controller.BackUpNowAsync();
+        Assert.Single(h.Requests, request => request == "POST /api/v2/admin/backups");
+        h.Override = null;
+        await h.Controller.RefreshAsync();
+        await Eventually.True(() => h.Controller.State.UnknownOutcome == null, "successful reconciliation completed");
+    }
+
+    [Fact]
+    public async Task ReconciliationCannotBeSatisfiedByAnOlderListRead()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var old = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fresh = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        h.Override = request => request.Method == HttpMethod.Post ? throw new HttpRequestException("lost acknowledgement")
+            : request.RequestUri!.AbsolutePath == "/api/v2/admin/backups" ? (Interlocked.Increment(ref reads) == 1 ? old.Task : fresh.Task) : null;
+        await h.Controller.BackUpNowAsync();
+        await h.Controller.RefreshAsync(); // queued behind the automatic follow-up
+        Assert.Equal("backup", h.Controller.State.UnknownOutcome);
+        try
+        {
+            old.SetResult(BackupJson.Json(h.List));
+            await Eventually.True(() => reads == 2, "fresh reconciliation read started");
+            Assert.Equal("backup", h.Controller.State.UnknownOutcome);
+        }
+        finally { fresh.TrySetResult(BackupJson.Json(h.List)); }
+        await Eventually.True(() => h.Controller.State.UnknownOutcome == null, "fresh successful read reconciled");
+    }
+
+    [Fact]
+    public async Task RetiredListCompletionCannotReleaseTheReplacementFlightOrLoseItsQueuedRefresh()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var old = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacement = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        h.Override = request => request.RequestUri!.AbsolutePath == "/api/v2/admin/backups"
+            ? Interlocked.Increment(ref reads) switch { 1 => old.Task, 2 => replacement.Task, _ => Task.FromResult(BackupJson.Json(h.List)) } : null;
+        var retired = h.Controller.RefreshAsync();
+        var reopened = h.Controller.OpenAsync();
+        try
+        {
+            await Eventually.True(() => reads == 2, "replacement read started");
+            await h.Controller.RefreshAsync(); // queues behind replacement
+            old.SetResult(BackupJson.Json(h.List));
+            await retired;
+            await h.Controller.RefreshAsync();
+            Assert.Equal(2, reads);
+        }
+        finally
+        {
+            old.TrySetResult(BackupJson.Json(h.List));
+            replacement.TrySetResult(BackupJson.Json(h.List));
+            await Task.WhenAll(retired, reopened);
+        }
+        await Eventually.True(() => reads == 3, "one queued refresh survived retirement");
+    }
+
     [Theory]
     [InlineData("start", false)]
     [InlineData("start", true)]
@@ -377,6 +449,77 @@ public sealed class AdminBackupsControllerTests
     [InlineData("04:0", false)]
     [InlineData("0400", false)]
     public void TimeValidationFollowsTheServersParser(string value, bool valid) => Assert.Equal(valid, AdminBackupsController.IsTime(value));
+
+    [Fact]
+    public async Task OrdinarySaveUpdatesTheValidatorUsedByS3WithoutDiscardingThePageDraft()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var puts = 0;
+        h.Override = request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/acknowledge-key", StringComparison.Ordinal))
+                return Task.FromResult(BackupJson.Json("""{"key_check":"abcd-ef01-2345-6789"}"""));
+            if (request.Method != HttpMethod.Put) return null;
+            Assert.Equal(++puts == 1 ? "\"one\"" : "\"two\"", request.Headers.IfMatch.Single().ToString());
+            var saved = AdminMonitorKit.Json("""{"values":{"backup.keep":"14","backup.destination":"s3"},"restart_required":false}""");
+            saved.Headers.ETag = new(puts == 1 ? "\"two\"" : "\"three\"");
+            return Task.FromResult(saved);
+        };
+        h.Controller.Set(Present.KeepKey, "14");
+        await h.Controller.SaveAsync();
+        h.Controller.Set(Present.TimeKey, "05:00");
+        Assert.Null(await h.Controller.SaveS3Async(new("https://s3.example.invalid", "", "bucket", "", "AKIA", "secret", false), "abcd-ef01-2345-6789"));
+        Assert.Equal(2, puts);
+        Assert.Equal("05:00", h.Controller.State.Values[Present.TimeKey]);
+        Assert.Contains(Present.TimeKey, h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task S3ConflictRequiresExplicitReloadAndKeepsTheDraftForReview()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.KeepKey, "14");
+        var fields = new AdminBackupS3Fields("https://s3.example.invalid", "", "typed-bucket", "", "AKIA", "typed-secret", false);
+        var puts = 0;
+        var reloadsFail = true;
+        h.Override = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/acknowledge-key", StringComparison.Ordinal))
+                return Task.FromResult(BackupJson.Json("""{"key_check":"abcd-ef01-2345-6789"}"""));
+            if (request.Method == HttpMethod.Put)
+            {
+                if (++puts == 1) return Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.PreconditionFailed));
+                Assert.Equal("\"two\"", request.Headers.IfMatch.Single().ToString());
+                Assert.Contains("typed-secret", request.Content!.ReadAsStringAsync().Result);
+                var saved = AdminMonitorKit.Json("""{"values":{"backup.destination":"s3"},"restart_required":false}""");
+                saved.Headers.ETag = new("\"three\"");
+                return Task.FromResult(saved);
+            }
+            if (path == "/api/v2/admin/settings/effective")
+            {
+                if (reloadsFail) return Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+                var snapshot = AdminMonitorKit.Json(Effective); snapshot.Headers.ETag = new("\"two\"");
+                return Task.FromResult(snapshot);
+            }
+            return null;
+        };
+        Assert.NotNull(await h.Controller.SaveS3Async(fields, "abcd-ef01-2345-6789"));
+        Assert.True(h.Controller.State.Conflict);
+        Assert.NotNull(await h.Controller.SaveS3Async(fields, "abcd-ef01-2345-6789"));
+        Assert.Equal(1, puts);
+        Assert.False(await h.Controller.ReloadS3SettingsAsync());
+        Assert.True(h.Controller.State.Conflict);
+        reloadsFail = false;
+        Assert.True(await h.Controller.ReloadS3SettingsAsync());
+        Assert.False(h.Controller.State.Conflict);
+        Assert.Equal("14", h.Controller.State.Values[Present.KeepKey]);
+        Assert.Equal(1, puts); // Reload never replays the write.
+        Assert.Null(await h.Controller.SaveS3Async(fields, "abcd-ef01-2345-6789"));
+        Assert.Equal(2, puts);
+    }
 
     [Fact]
     public async Task S3SaveConfirmsTheKeyFirstAndNeverKeepsTheTypedSecret()

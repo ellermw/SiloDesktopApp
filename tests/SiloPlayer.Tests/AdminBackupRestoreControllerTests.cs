@@ -227,6 +227,8 @@ public sealed class AdminBackupRestoreControllerTests
         await h.Controller.StartAsync();
         var state = h.Controller.State;
         Assert.True(state.OutcomeUnknown);
+        Assert.False(state.Reviewing); // Chooser exposes uncertainty, Check status and Reload preview directly.
+        Assert.Equal(0, state.Step);
         Assert.Null(state.JobId);
         Assert.False(AdminBackupRestoreController.CanRestore(state, h.Controller.Selection));
         await h.Controller.StartAsync();
@@ -263,6 +265,86 @@ public sealed class AdminBackupRestoreControllerTests
         h.Scheduler.Advance(AdminBackupRestoreController.JobInterval);
         await Task.Delay(30);
         Assert.Equal(reads, h.Requests.Count(request => request == "GET /api/v2/admin/jobs/job-1"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TerminalAcknowledgementsRunCompletionSideEffectsExactlyOnce(bool fromCancel)
+    {
+        using var h = new Harness();
+        var finished = 0;
+        h.Controller.Finished += () => finished++;
+        var terminal = BackupJson.Job(state: "completed", terminal: true, cancelable: false, report: BackupJson.Report());
+        var original = h.Kit.Http.Respond;
+        h.Kit.Http.Respond = (request, token) => request.RequestUri!.AbsolutePath.EndsWith("/cancel", StringComparison.Ordinal)
+            ? Task.FromResult(BackupJson.Json(terminal, HttpStatusCode.Accepted)) : original(request, token);
+        if (fromCancel) await h.Controller.OpenAsync(Source, "job-1");
+        else await h.ChooseAndReview();
+        var before = h.Requests.Count(request => request == "GET /api/v2/admin/backups");
+        if (fromCancel) await h.Controller.CancelAsync("job-1");
+        else
+        {
+            h.Start = _ => BackupJson.Json(terminal, HttpStatusCode.Accepted, "/api/v2/admin/jobs/job-1");
+            await h.Controller.StartAsync();
+        }
+        await Eventually.True(() => finished == 1, "terminal acknowledgement raised Finished");
+        Assert.True(h.Controller.State.Job!.Terminal);
+        Assert.Equal(before + 1, h.Requests.Count(request => request == "GET /api/v2/admin/backups"));
+        h.JobBody = terminal;
+        await h.Controller.RetryJobAsync();
+        Assert.Equal(1, finished);
+        Assert.Equal(before + 1, h.Requests.Count(request => request == "GET /api/v2/admin/backups"));
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(503)]
+    [InlineData(200)]
+    public async Task FailedJobPollRetainsProgressAndRetryClearsTheError(int status)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync(Source, "job-1");
+        var retained = h.Controller.State.Job;
+        var original = h.Kit.Http.Respond;
+        h.Kit.Http.Respond = (request, token) => request.RequestUri!.AbsolutePath == "/api/v2/admin/jobs/job-1"
+            ? Task.FromResult(BackupJson.Json("{}", (HttpStatusCode)status)) : original(request, token);
+        await h.Controller.RetryJobAsync();
+        Assert.Same(retained, h.Controller.State.Job);
+        Assert.NotNull(h.Controller.State.JobError);
+        h.Kit.Http.Respond = original;
+        await h.Controller.RetryJobAsync();
+        Assert.NotNull(h.Controller.State.Job);
+        Assert.Null(h.Controller.State.JobError);
+    }
+
+    [Fact]
+    public async Task RetiredJobCompletionCannotReleaseTheReplacementFlight()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync(Source, "job-1");
+        var old = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacement = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var original = h.Kit.Http.Respond;
+        h.Kit.Http.Respond = (request, token) => request.RequestUri!.AbsolutePath == "/api/v2/admin/jobs/job-1"
+            ? Interlocked.Increment(ref reads) == 1 ? old.Task : replacement.Task : original(request, token);
+        var retired = h.Controller.RetryJobAsync();
+        var reopened = h.Controller.OpenAsync(Source, "job-1");
+        try
+        {
+            await Eventually.True(() => reads == 2, "replacement job read started");
+            old.SetResult(BackupJson.Json(h.JobBody));
+            await retired;
+            await h.Controller.RetryJobAsync();
+            Assert.Equal(2, reads);
+        }
+        finally
+        {
+            old.TrySetResult(BackupJson.Json(h.JobBody));
+            replacement.TrySetResult(BackupJson.Json(h.JobBody));
+            await Task.WhenAll(retired, reopened);
+        }
     }
 
     [Fact]

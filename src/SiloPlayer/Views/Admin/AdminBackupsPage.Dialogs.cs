@@ -285,6 +285,9 @@ public sealed partial class AdminBackupsPage
             var save = Action(T("web.admin.backups.s3.save"), "BackupsS3Save", primary: true);
             var blockerText = Text("", 12, true); AutomationProperties.SetAutomationId(blockerText, "BackupsS3Blocker");
             var saving = false;
+            var reloading = false;
+            var reload = Action(T("configure.native.backups.s3.reload"), "BackupsS3Reload");
+            var recovery = Text("", 13, true);
             CheckBox? keptBox = null;
             var (keyBox, kept) = KeyBox(keyCheck, () => Refresh());
             keptBox = kept;
@@ -292,13 +295,16 @@ public sealed partial class AdminBackupsPage
             void Refresh()
             {
                 var fields = Fields();
-                test.IsEnabled = !testing && fields.Endpoint.Trim().Length > 0 && fields.Bucket.Trim().Length > 0;
+                var needsReload = controller.State.Conflict || controller.State.SettingsOutcomeUnknown;
+                reload.Visibility = needsReload || reloading ? Visibility.Visible : Visibility.Collapsed;
+                reload.IsEnabled = !saving && !testing && !reloading;
+                test.IsEnabled = !testing && !saving && !reloading && !needsReload && fields.Endpoint.Trim().Length > 0 && fields.Bucket.Trim().Length > 0;
                 result.Children.Clear();
                 if (Present.CurrentS3Test(fields, outcome) is { } current && !testing) result.Children.Add(Status(current.Message, current.Ok ? "ok" : "warn", "BackupsS3Result"));
-                var blocker = Present.S3SaveBlocker(fields, outcome, keptBox?.IsChecked == true);
+                var blocker = needsReload ? T("configure.native.backups.settingsChanged") : Present.S3SaveBlocker(fields, outcome, keptBox?.IsChecked == true);
                 blockerText.Text = blocker ?? "";
                 blockerText.Visibility = blocker == null ? Visibility.Collapsed : Visibility.Visible;
-                save.IsEnabled = blocker == null && !saving;
+                save.IsEnabled = blocker == null && !saving && !reloading && !testing;
                 if (blocker != null) AutomationProperties.SetHelpText(save, blocker); else AutomationProperties.SetHelpText(save, "");
             }
             foreach (var box in new[] { endpoint, region, bucket, folder, access }) box.TextChanged += (_, _) => Refresh();
@@ -313,6 +319,19 @@ public sealed partial class AdminBackupsPage
                 if (answer != null) outcome = (body, answer);
                 Refresh();
             };
+            reload.Click += async (_, _) =>
+            {
+                reloading = true;
+                outcome = null; // The stored secret can change even when its configured flag stays true.
+                kept.IsChecked = false;
+                Refresh();
+                var loaded = await controller.ReloadS3SettingsAsync();
+                reloading = false;
+                if (!state.Owner.IsCurrent || !ReferenceEquals(controller, Controller)) return;
+                secretBox!.PlaceholderText = controller.State.SecretConfigured ? T("web.admin.backups.s3.secretSet") : "";
+                recovery.Text = T(loaded ? "configure.native.backups.s3.reloaded" : "configure.native.backups.s3.reloadFailed");
+                Refresh();
+            };
             cancel.Click += (_, _) => close();
             save.Click += async (_, _) =>
             {
@@ -325,7 +344,8 @@ public sealed partial class AdminBackupsPage
             };
             Refresh();
             root.Children.Add(blockerText);
-            root.Children.Add(Footer(cancel, save));
+            root.Children.Add(recovery);
+            root.Children.Add(Footer(cancel, reload, save));
             return root;
         }, () => { if (secretBox != null) secretBox.Password = ""; });
     }
@@ -344,12 +364,44 @@ public sealed partial class AdminBackupsPage
         _upload = session;
         StackPanel? root = null;
         Action? closeDialog = null;
+        string? fileProblem = null;
+        async Task ChooseFileAsync(Func<Task<(string Name, Stream Stream)?>> pick)
+        {
+            Stream? unowned = null;
+            try
+            {
+                var picked = await pick();
+                if (picked is not { } file) return;
+                unowned = file.Stream;
+                if (!ReferenceEquals(_upload, session) || !lease.IsCurrent) return;
+                if (!unowned.CanRead || !unowned.CanSeek) throw new IOException("A readable, seekable file is required.");
+                fileProblem = null;
+                var running = session.StartAsync(file.Name, unowned);
+                unowned = null; // StartAsync now owns it, including cancellation and retirement.
+                await running;
+                _ = controller.RefreshUploadsAsync();
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception)
+            {
+                if (ReferenceEquals(_upload, session) && lease.IsCurrent)
+                {
+                    fileProblem = T("configure.native.backups.fileUnreadable");
+                    Render();
+                }
+            }
+            finally
+            {
+                try { unowned?.Dispose(); } catch { /* A failed/retired selection must not escape the UI handler. */ }
+            }
+        }
         void Render()
         {
             if (root == null || closeDialog == null || !ReferenceEquals(_upload, session)) return;
             var phase = session.Phase;
             root.Children.Clear();
             root.Children.Add(Text(T("web.admin.backups.upload.description"), 14, true));
+            if (fileProblem != null) root.Children.Add(Alert(fileProblem));
             var footer = new List<Button>();
             switch (phase.Step)
             {
@@ -358,24 +410,19 @@ public sealed partial class AdminBackupsPage
                     var dropText = Text(T("web.admin.backups.upload.drop"), 14, true); dropText.TextAlignment = TextAlignment.Center; dropText.HorizontalAlignment = HorizontalAlignment.Center;
                     drop.Children.Add(dropText);
                     var choose = Action(T("web.admin.backups.upload.choose"), "BackupsUploadChoose"); choose.HorizontalAlignment = HorizontalAlignment.Center;
-                    choose.Click += async (_, _) =>
-                    {
-                        var picked = await PickUploadAsync();
-                        if (picked is not { } file || !ReferenceEquals(_upload, session)) { picked?.Stream.Dispose(); return; }
-                        await session.StartAsync(file.Name, file.Stream);
-                        _ = controller.RefreshUploadsAsync();
-                    };
+                    choose.Click += async (_, _) => await ChooseFileAsync(PickUploadAsync);
                     drop.Children.Add(choose);
                     var area = new Border { Child = drop, CornerRadius = new(12), BorderThickness = new(1), BorderBrush = UiKit.Brush("BorderBrush"), AllowDrop = true };
                     area.DragOver += (_, args) => args.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy;
                     area.Drop += async (_, args) =>
                     {
-                        if (!args.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems)) return;
-                        var items = await args.DataView.GetStorageItemsAsync();
-                        if (items.FirstOrDefault() is not Windows.Storage.StorageFile dropped || !ReferenceEquals(_upload, session)) return;
-                        var stream = new FileStream(dropped.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous);
-                        await session.StartAsync(dropped.Name, stream);
-                        _ = controller.RefreshUploadsAsync();
+                        await ChooseFileAsync(async () =>
+                        {
+                            if (!args.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems)) return null;
+                            var items = await args.DataView.GetStorageItemsAsync();
+                            if (items.FirstOrDefault() is not Windows.Storage.StorageFile dropped || !ReferenceEquals(_upload, session)) return null;
+                            return (dropped.Name, new FileStream(dropped.Path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous));
+                        });
                     };
                     root.Children.Add(area);
                     break;

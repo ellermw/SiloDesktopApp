@@ -53,7 +53,7 @@ public partial class SiloApiClient
     {
         try
         {
-            using var response = await SendWithRetryAsync(request, ct, allowTokenRefresh).ConfigureAwait(false);
+            using var response = await SendWithRetryAsync(request, ct, allowTokenRefresh, _backupsHttp).ConfigureAwait(false);
             lease.ThrowIfRetired();
             var location = response.Headers.Location?.OriginalString;
             var bytes = await MonitorLogsReadBoundedAsync(response.Content, lease, maxBytes, ct).ConfigureAwait(false);

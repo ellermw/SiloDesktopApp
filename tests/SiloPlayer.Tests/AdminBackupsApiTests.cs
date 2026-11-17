@@ -2,6 +2,7 @@ using System.Net;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Models.Auth;
 
 namespace SiloPlayer.Tests;
 
@@ -23,6 +24,39 @@ public sealed class AdminBackupsApiTests
         internal void Respond(Func<HttpRequestMessage, HttpResponseMessage> respond) => Kit.Http.Respond = (request, _) => Task.FromResult(respond(request));
         internal string[] Requests => Kit.Http.Requests.ToArray();
         public void Dispose() { Lease.Dispose(); Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    [Fact]
+    public async Task BackupHeadersCanOutwaitTheSharedTransportTimeoutWhileCancellationStillWorks()
+    {
+        using var configuredShared = SiloHttpClientFactory.CreateClient();
+        using var configuredBackups = SiloHttpClientFactory.CreateBackupsClient();
+        Assert.Equal(TimeSpan.FromSeconds(100), configuredShared.Timeout);
+        Assert.Equal(Timeout.InfiniteTimeSpan, configuredBackups.Timeout);
+
+        // Scale the shared timeout and delayed headers down so this regression does not wait 100 seconds.
+        using var handler = new AdminMonitorHttp();
+        using var shared = new HttpClient(handler, disposeHandler: false) { Timeout = TimeSpan.FromMilliseconds(50) };
+        using var backups = new HttpClient(handler, disposeHandler: false) { Timeout = configuredBackups.Timeout };
+        var client = new SiloApiClient(shared, backups);
+        client.SetBaseUrl("https://silo.test");
+        using var auth = new AuthService(client, new AuthApi(client));
+        auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+        auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic", Role = "admin" });
+        auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
+        using var authority = new AdminMonitorAuthority(client, auth);
+        using var lease = authority.Capture();
+        var api = new AdminBackupsApi(client);
+        handler.Respond = async (_, token) =>
+        {
+            await Task.Delay(200, token);
+            return BackupJson.Json(BackupJson.RestoreSet(BackupJson.Section("settings", BackupJson.Item("general"))));
+        };
+        Assert.NotNull(await api.GetRestoreSetAsync(lease, AdminBackupRestoreSourceRef.Backup(BackupJson.BackupId), false));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetBytesAsync("/ordinary"));
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.GetRestoreSetAsync(lease,
+            AdminBackupRestoreSourceRef.Backup(BackupJson.BackupId), false, cancel.Token));
     }
 
     [Fact]

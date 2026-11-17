@@ -78,7 +78,8 @@ public sealed class AdminBackupsController : IDisposable
     private AdminSettingsForm? _form;
     private AdminSettingsSnapshot? _snapshot;
     private IDisposable? _listTimer, _uploadTimer;
-    private long _generation;
+    private long _generation, _listReadSequence;
+    private long? _reconcileAfterRead;
     private bool _listInFlight, _refreshAgain, _visible = true, _disposed;
     private bool _capabilitiesInFlight, _capabilitiesAgain, _uploadsInFlight, _uploadsAgain;
     private DateTimeOffset _capabilitiesReadAt;
@@ -112,7 +113,7 @@ public sealed class AdminBackupsController : IDisposable
         lock (_gate)
         {
             CancelTimers(); _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
-            _listInFlight = false; _refreshAgain = false;
+            _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null;
             _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
             _state = new() { Owner = owner, Loading = true, SettingsLoading = true };
         }
@@ -150,7 +151,7 @@ public sealed class AdminBackupsController : IDisposable
         lock (_gate)
         {
             CancelTimers(); _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
-            _listInFlight = false; _refreshAgain = false; _state = new();
+            _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null; _state = new();
             _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
         }
         Changed?.Invoke();
@@ -166,18 +167,22 @@ public sealed class AdminBackupsController : IDisposable
 
     // ── Reads ────────────────────────────────────────────────────────
 
-    /// <summary>An explicit refresh (Try again, after a command, after an unknown outcome): also releases a blocked control.</summary>
+    /// <summary>An explicit refresh: only a successful list read started afterwards releases an unknown-outcome block.</summary>
     public Task RefreshAsync()
     {
         var owner = _lifetime.Owner;
         if (owner is not { IsCurrent: true }) return Task.CompletedTask;
-        Update(owner, () => _state = _state with { UnknownOutcome = null });
+        lock (_gate)
+        {
+            if (!_lifetime.IsCurrent(owner)) return Task.CompletedTask;
+            if (_state.UnknownOutcome != null) _reconcileAfterRead = _listReadSequence;
+        }
         return Task.WhenAll(RefreshListAsync(owner, background: false), ReadCapabilitiesAsync(owner));
     }
 
     private async Task RefreshListAsync(MonitorAuthorityLease owner, bool background)
     {
-        long generation;
+        long generation, readSequence;
         lock (_gate)
         {
             if (_disposed || !_lifetime.IsCurrent(owner)) return;
@@ -189,29 +194,32 @@ public sealed class AdminBackupsController : IDisposable
             }
             if (background && (!_visible || DeferBackground())) { ScheduleList(owner, DeferRetry); return; }
             _listInFlight = true; _refreshAgain = false;
-            generation = _generation;
+            generation = _generation; readSequence = ++_listReadSequence;
         }
         AdminBackupList? list = null;
         Exception? failure = null;
         try { list = await _api.ListAsync(owner).ConfigureAwait(false); }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (Exception error) { failure = error; }
-        var stale = false;
         var finishedNotice = (AdminBackupNotice?)null;
         bool again;
         lock (_gate)
         {
+            if (_disposed || generation != _generation || !_lifetime.IsCurrent(owner)) return;
             _listInFlight = false;
             again = _refreshAgain; _refreshAgain = false;
-            if (_disposed || generation != _generation || !_lifetime.IsCurrent(owner)) stale = true;
-            else if (list != null)
+            if (list != null)
             {
                 _state = _state with { List = list, ListError = null, Loading = false, ListReadAt = _scheduler.UtcNow };
+                if (_reconcileAfterRead is { } after && readSequence > after)
+                {
+                    _state = _state with { UnknownOutcome = null };
+                    _reconcileAfterRead = null;
+                }
                 finishedNotice = StartedOutcome(list);
             }
             else if (failure != null) _state = _state with { ListError = failure, Loading = false };
         }
-        if (stale) return;
         Changed?.Invoke();
         if (finishedNotice != null) Notified?.Invoke(finishedNotice);
         var interval = list is { } read && (read.Busy == true || read.Active != null || Running(read)) ? BusyInterval : IdleInterval;
@@ -358,20 +366,23 @@ public sealed class AdminBackupsController : IDisposable
 
     // ── Settings (guarded shared settings API) ───────────────────────
 
-    private async Task LoadSettingsAsync(MonitorAuthorityLease owner, bool preserveDraft)
+    private async Task<bool> LoadSettingsAsync(MonitorAuthorityLease owner, bool preserveDraft, bool requireSensitiveStatus = false)
     {
         long generation;
         lock (_gate) generation = _generation;
         AdminSettingsSensitiveStatus? status = null;
         try { status = await _store.GetSensitiveStatusAsync(owner).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { return false; }
         catch { }
+        var loaded = false;
         try
         {
+            if (requireSensitiveStatus && status == null) throw new InvalidDataException("Sensitive settings status is unavailable.");
             var snapshot = await _store.GetEffectiveAsync(owner).ConfigureAwait(false);
             Update(owner, generation, () =>
             {
                 _snapshot = snapshot;
+                loaded = true;
                 if (preserveDraft && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft: true);
                 else _form = new(Present.SettingKeys, [], snapshot.Values, snapshot.ETag);
                 _state = _state with
@@ -384,6 +395,25 @@ public sealed class AdminBackupsController : IDisposable
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (Exception) { Update(owner, generation, () => _state = _state with { SettingsLoading = false, SettingsLoadFailed = !_state.SettingsLoaded }); }
+        return loaded;
+    }
+
+    /// <summary>Explicit dialog-local rebase. The caller retains its draft and must test and review it again.</summary>
+    public async Task<bool> ReloadS3SettingsAsync()
+    {
+        MonitorAuthorityLease action;
+        try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
+        using (action)
+        {
+            lock (_gate)
+            {
+                if (!_lifetime.IsCurrent(action) || _state.Saving || _state.SettingsLoading) return false;
+                _state = _state with { SettingsLoading = true };
+            }
+            Changed?.Invoke();
+            _store.Invalidate();
+            return await LoadSettingsAsync(action, preserveDraft: true, requireSensitiveStatus: true).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Explicit settings reload (Try again, Reload after a conflict or an unknown save).</summary>
@@ -460,7 +490,12 @@ public sealed class AdminBackupsController : IDisposable
             try
             {
                 var result = await _settingsApi.PutAsync(action, intent.Values, intent.ETag, Present.SettingKeys, []).ConfigureAwait(false);
-                Update(action, () => { _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired); _state = _state with { Saving = false }; });
+                Update(action, () =>
+                {
+                    MergeSettingsSnapshot(intent, result);
+                    _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired);
+                    _state = _state with { Saving = false };
+                });
                 saved = _lifetime.IsCurrent(action);
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
@@ -510,7 +545,7 @@ public sealed class AdminBackupsController : IDisposable
             catch (OperationCanceledException) when (!action.IsCurrent) { return; }
             catch (AdminBackupOutcomeUnknownException)
             {
-                Update(action, () => _state = _state with { UnknownOutcome = "backup" });
+                Update(action, () => { _reconcileAfterRead = null; _state = _state with { UnknownOutcome = "backup" }; });
                 notice = new(AdminText.T("web.admin.backups.toast.startFailed"), AdminText.T("configure.native.backups.unknownOutcome"), true);
             }
             catch (Exception error) { notice = new(AdminText.T("web.admin.backups.toast.startFailed"), Present.ErrorMessage(error), true); }
@@ -638,8 +673,8 @@ public sealed class AdminBackupsController : IDisposable
 
     /// <summary>
     /// Official S3 setup save: confirm the key first, then one guarded settings write of the bucket and the
-    /// destination. Returns null on success; on a 412 the typed fields stay in the dialog and the page reloads.
-    /// The typed secret is sent at most once and never kept.
+    /// destination. Returns null on success; on a 412 the dialog retains its draft for an explicit reload/review.
+    /// The typed secret is sent at most once per explicit save and never kept by this controller.
     /// </summary>
     public async Task<string?> SaveS3Async(AdminBackupS3Fields fields, string keyCheck)
     {
@@ -653,7 +688,8 @@ public sealed class AdminBackupsController : IDisposable
             AdminSettingsSaveIntent intent;
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _snapshot == null || _state.Saving) return AdminText.T("configure.native.backups.settingsBusy");
+                if (!_lifetime.IsCurrent(action) || _snapshot == null || _state.Saving || _state.SettingsLoading) return AdminText.T("configure.native.backups.settingsBusy");
+                if (_state.Conflict || _state.SettingsOutcomeUnknown) return AdminText.T("configure.native.backups.settingsChanged");
                 s3Form = new([Present.DestinationKey, .. Present.S3Keys], [Present.S3SecretKey], _snapshot.Values, _snapshot.ETag);
                 // The official dialog writes the whole bucket batch, unchanged values included.
                 foreach (var (key, value) in Present.S3SettingsValues(fields)) s3Form.Set(key, value, stage: true);
@@ -663,7 +699,13 @@ public sealed class AdminBackupsController : IDisposable
             Changed?.Invoke();
             try
             {
-                await _settingsApi.PutAsync(action, intent.Values, intent.ETag, [Present.DestinationKey, .. Present.S3Keys], [Present.S3SecretKey]).ConfigureAwait(false);
+                var result = await _settingsApi.PutAsync(action, intent.Values, intent.ETag, [Present.DestinationKey, .. Present.S3Keys], [Present.S3SecretKey]).ConfigureAwait(false);
+                Update(action, () =>
+                {
+                    MergeSettingsSnapshot(intent, result);
+                    _form?.Reload(_snapshot!.Values, _snapshot.ETag, preserveDraft: true);
+                    _form?.Reset(Present.DestinationKey);
+                });
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { return null; }
             catch (AdminSettingsConflictException) { s3Form.EndSave(intent); Update(action, () => _state = _state with { Saving = false, Conflict = true }); return AdminText.T("configure.native.backups.settingsChanged"); }
@@ -736,6 +778,14 @@ public sealed class AdminBackupsController : IDisposable
 
     /// <summary>A lease for the upload dialog's session; it dies with this page's owner.</summary>
     public MonitorAuthorityLease CaptureAction() => _lifetime.CaptureAction();
+
+    private void MergeSettingsSnapshot(AdminSettingsSaveIntent intent, AdminSettingsSaveResult result)
+    {
+        var baseline = new Dictionary<string, string>(_snapshot!.Values, StringComparer.Ordinal);
+        foreach (var key in intent.Values.Keys.Where(key => key != Present.S3SecretKey))
+            baseline[key] = result.Values.GetValueOrDefault(key, intent.Values[key]);
+        _snapshot = new(baseline, result.ETag);
+    }
 
     // ── State plumbing ───────────────────────────────────────────────
 
