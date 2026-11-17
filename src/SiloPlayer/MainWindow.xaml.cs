@@ -565,6 +565,7 @@ public sealed partial class MainWindow : Window
         _realtimeMediaStateRefresh.Dispose();
         DisposeAdminMonitor();
         _windowClosed = true;
+        App.Services.GetRequiredService<ToastService>().Unregister();
         if (ContentFrame.Content is ItemDetailPage detail) detail.ViewModel.CancelPendingLoads();
         Interlocked.Exchange(ref _loadingOverlayOwner, null);
         if (!_updateSessionEnding)
