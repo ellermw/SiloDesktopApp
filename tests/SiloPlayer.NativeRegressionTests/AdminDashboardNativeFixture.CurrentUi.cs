@@ -195,17 +195,40 @@ internal static partial class AdminDashboardNativeFixture
                 .Select(border => Math.Round(border.ActualHeight)).Distinct().ToArray();
             Program.Log($"TRACE dashboard Now Playing card heights: {string.Join(",", cardHeights)}");
             Check(cardHeights.Length == 1, $"every Now Playing card has the same height ({string.Join(",", cardHeights)})");
-            var tagRows = Descendants(nowPlaying).OfType<Grid>().Where(grid => grid.MaxHeight == 18).ToArray();
+            var tagRows = Descendants(nowPlaying).OfType<Panel>().Where(panel => panel.GetType().Name == "DashboardTagViewport").ToArray();
             Check(tagRows.Length == 4 && tagRows.All(row => row.ActualHeight <= 18.5 && row.Clip != null), "each card's tag row is clipped to one 18px line");
-            var wrappedTag = false;
-            foreach (var row in tagRows)
-                foreach (var pill in row.Children.OfType<Panel>().SelectMany(panel => panel.Children.OfType<FrameworkElement>()))
+            AssertTagRows(tagRows, "default", 18);
+
+            // Exercise typography changes on already rendered cards. 1.25 is
+            // AccessibilityService's x-large scale; 2 also covers larger text.
+            // Keep system text scaling enabled and restore exact baselines.
+            var tagText = tagRows.SelectMany(row => Descendants(row).OfType<TextBlock>())
+                .Select(text => (Text: text, FontSize: text.FontSize, LineHeight: text.LineHeight)).ToArray();
+            try
+            {
+                foreach (var textScale in new[] { 1.25, 2.0 })
                 {
-                    var top = pill.TransformToVisual(row).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
-                    if (top >= 18) wrappedTag = true;
-                    else Check(top + pill.ActualHeight <= 18.5, $"a first-line tag fits the 18px line ({top:0.#}+{pill.ActualHeight:0.#})");
+                    foreach (var baseline in tagText)
+                    {
+                        baseline.Text.FontSize = baseline.FontSize * textScale;
+                        baseline.Text.LineHeight = baseline.LineHeight * textScale;
+                    }
+                    nowPlaying.UpdateLayout();
+                    await Task.Delay(100);
+                    AssertTagRows(tagRows, $"text scale {textScale}", 12 * textScale + 6);
                 }
-            Check(wrappedTag, "a tag that would wrap falls wholly below the one-line clip");
+            }
+            finally
+            {
+                foreach (var baseline in tagText)
+                {
+                    baseline.Text.FontSize = baseline.FontSize;
+                    baseline.Text.LineHeight = baseline.LineHeight;
+                }
+                nowPlaying.UpdateLayout();
+            }
+            AssertTagRows(tagRows, "restored", 18);
+            Check(tagRows.All(row => row.ActualHeight <= 18.5), "tag viewports shrink back after enlarged text is restored");
 
             await AssertNowPlayingColumnsAsync(page, "span12-1440", expectColumns: 2);
             await CaptureAsync(nowPlaying, "current-ui-now-playing-span12-1440.png");
@@ -258,6 +281,28 @@ internal static partial class AdminDashboardNativeFixture
             server.SessionRows = null;
             server.LayoutETag = "\"L1\"";
         }
+    }
+
+    private static void AssertTagRows(Panel[] rows, string label, double minimumHeight)
+    {
+        Check(rows.Length == 4, $"{label} renders all four tag viewports");
+        var wrappedTag = false;
+        foreach (var row in rows)
+        {
+            var pills = row.Children.OfType<Panel>().SelectMany(panel => panel.Children.OfType<FrameworkElement>()).ToArray();
+            var pillHeight = pills.Select(pill => pill.DesiredSize.Height).DefaultIfEmpty(0).Max();
+            Check(row.ActualHeight >= minimumHeight - 0.5 && Math.Abs(row.ActualHeight - pillHeight) <= 0.5
+                && row.Clip is Microsoft.UI.Xaml.Media.RectangleGeometry clip && Math.Abs(clip.Rect.Height - row.ActualHeight) <= 0.5,
+                $"{label} clips at one measured pill height ({row.ActualHeight:0.#}, pills {pillHeight:0.#})");
+            foreach (var pill in pills)
+            {
+                var top = pill.TransformToVisual(row).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
+                if (top >= row.ActualHeight) wrappedTag = true;
+                else Check(top + pill.ActualHeight <= row.ActualHeight + 0.5,
+                    $"{label} first-line tag fits wholly ({top:0.#}+{pill.ActualHeight:0.#} <= {row.ActualHeight:0.#})");
+            }
+        }
+        Check(wrappedTag, $"{label} wrapped tags fall wholly below the one-line clip");
     }
 
     private static async Task AssertColumnFocusAsync(AdminDashboardPage page)

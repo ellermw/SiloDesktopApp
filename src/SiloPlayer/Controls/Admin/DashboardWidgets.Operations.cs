@@ -27,7 +27,6 @@ internal static class DashboardSessionBadges
     /// <c>leading-[1.1]</c>.
     /// </summary>
     public const double TagLineHeight = 12;
-    public const double TagRowHeight = 18;
 
     private static Border Tag(Border pill)
     {
@@ -115,6 +114,37 @@ internal static class DashboardSessionBadges
         var pill = Pill(label, Alpha(Primary, 0.15), Primary, Alpha(Primary, 0.3));
         ((TextBlock)pill.Child).LineHeight = 9.9;
         return pill;
+    }
+}
+
+/// <summary>One complete tag row at the current native/system typography size.</summary>
+internal sealed class DashboardTagViewport : Panel
+{
+    private readonly WrapPanel _wrap = new() { HorizontalSpacing = 4, VerticalSpacing = 4 };
+
+    public DashboardTagViewport(IEnumerable<FrameworkElement> badges)
+    {
+        foreach (var badge in badges) _wrap.Children.Add(badge);
+        Children.Add(_wrap);
+    }
+
+    protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size availableSize)
+    {
+        // Measure without a height cap: both Windows text scaling and the app's
+        // accessibility typography must leave the first row's pills whole.
+        _wrap.Measure(new Windows.Foundation.Size(availableSize.Width, double.PositiveInfinity));
+        var rowHeight = _wrap.Children.OfType<FrameworkElement>()
+            .Where(child => child.Visibility != Visibility.Collapsed)
+            .Select(child => child.DesiredSize.Height).DefaultIfEmpty(0).Max();
+        return new Windows.Foundation.Size(_wrap.DesiredSize.Width, rowHeight);
+    }
+
+    protected override Windows.Foundation.Size ArrangeOverride(Windows.Foundation.Size finalSize)
+    {
+        // Keep wrapped rows laid out below the clip, not squeezed into it.
+        _wrap.Arrange(new Windows.Foundation.Rect(0, 0, finalSize.Width, Math.Max(finalSize.Height, _wrap.DesiredSize.Height)));
+        Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, finalSize.Width, finalSize.Height) };
+        return finalSize;
     }
 }
 
@@ -348,14 +378,9 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             Grid.SetRow(sub, 1);
             info.Children.Add(sub);
         }
-        // Tags are capped at one 18px line so every card is the same height and
-        // the rows stay even; a tag that would wrap falls wholly below the clip
-        // (WebUI #4401 max-h-[18px] overflow-hidden).
-        var tagWrap = new WrapPanel { HorizontalSpacing = 4, VerticalSpacing = 4, VerticalAlignment = VerticalAlignment.Top };
-        foreach (var badge in DashboardSessionBadges.For(session)) tagWrap.Children.Add(badge);
-        var tags = new Grid { MaxHeight = DashboardSessionBadges.TagRowHeight, Margin = new Thickness(0, 0, 0, 6) };
-        tags.Children.Add(tagWrap);
-        tags.SizeChanged += (_, e) => tags.Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height) };
+        // WebUI #4401's single-row clip is 18 DIPs at default typography,
+        // but grows with the measured pills when accessible text is enlarged.
+        var tags = new DashboardTagViewport(DashboardSessionBadges.For(session)) { Margin = new Thickness(0, 0, 0, 6) };
         Grid.SetRow(tags, 2);
         info.Children.Add(tags);
         var userRow = new Grid { ColumnSpacing = 6 };
