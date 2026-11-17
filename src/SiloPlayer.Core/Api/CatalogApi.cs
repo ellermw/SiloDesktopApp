@@ -89,7 +89,7 @@ public partial class CatalogApi(SiloApiClient client)
     }
 
     public Task<HomeLayoutResponse> GetLibraryLayoutAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<HomeLayoutResponse>($"/api/v2/library/{libraryId}/layout", ct);
+        => ReadLibraryPinMetadataAsync<HomeLayoutResponse>(libraryId, false, ct);
 
     public Task<CatalogResponse> GetCatalogAsync(
         int? libraryId,
@@ -232,6 +232,10 @@ public partial class CatalogApi(SiloApiClient client)
     public Task<MediaItemDetail> GetItemDetailAsync(string contentId, CancellationToken ct = default)
         => client.GetAsync<MediaItemDetail>($"/api/v2/catalog/items/{Uri.EscapeDataString(contentId)}", ct);
 
+    public Task<MediaItemDetail> GetItemDetailAsync(ApiIdentityContext owner, string contentId, CancellationToken ct)
+        => client.SendIdentityBoundRequestAsync<MediaItemDetail>(owner, HttpMethod.Get,
+            $"/api/v2/catalog/items/{Uri.EscapeDataString(contentId)}", null, ct);
+
     public Task<ItemListResponse> GetFavoritesAsync(CancellationToken ct = default)
         => GetFavoritesAsync(limit: 50, offset: 0, ct);
 
@@ -327,7 +331,7 @@ public partial class CatalogApi(SiloApiClient client)
     // ===== Library Collections =====
 
     public Task<LibraryTabResponse> GetLibraryCollectionsAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<LibraryTabResponse>($"/api/v2/library/{libraryId}/collections", ct);
+        => ReadLibraryPinMetadataAsync<LibraryTabResponse>(libraryId, true, ct);
 
     public async Task<CatalogResponse> GetLibraryCollectionItemsAsync(int libraryId, string collectionId, CancellationToken ct = default)
     {

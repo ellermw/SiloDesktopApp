@@ -7,6 +7,7 @@ public class ProfilesResponse
     public bool AvatarUploadEnabled { get; set; }
     public bool MaxAdvisoryAgeSupported { get; set; }
     public bool RequireAdvisoryAgeSupported { get; set; }
+    public bool RequestsAllowedSupported { get; set; }
 }
 public class Profile
 {
@@ -32,6 +33,8 @@ public class Profile
     public string MaxContentRating { get; set; } = "";
     public int? MaxAdvisoryAge { get; set; }
     public bool RequireAdvisoryAge { get; set; }
+    // Older servers omit this member; their profiles may still use Requests.
+    public bool RequestsAllowed { get; set; } = true;
     public string QualityPreference { get; set; } = "";
     public string Language { get; set; } = "";
     public string? PreferredMetadataLanguage { get; set; }

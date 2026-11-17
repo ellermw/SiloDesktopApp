@@ -1,3 +1,82 @@
+# November 16 - Admin Manage Libraries for separate Beta submission
+
+Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
+`AddAdminLibraries()`: the sortable table and compact cards, scan queue popover, Scan all, row
+commands (scan/stop, metadata refresh mode dialog/stop, mount check, delete and empty-root cleanup
+confirmations), keyboard/pointer/card-menu reorder as serialized whole-order writes, the add/edit
+editor (General, Folders with server folder browsing and path completion, Metadata with provider
+chains and translation prewarm, Advanced), and the Unmatched, Matcher queue, Ambiguous roots,
+Skipped roots and Stale ID sections. Official reference 17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8
+(Libraries contracts unchanged from abd85d0c); tested Beta base 173c3797, version
+1.2.1165-beta.1 unchanged and pipeline-owned. Writes are sent
+once; lost answers are reported as unknown and reloaded; 202 receipts are never shown as completion.
+
+Historical verification of the earlier candidate on Beta base 173c3797: 7,576 unit cases passed
+(108 Libraries/folder-browser cases), including the actual source-root proof. A host-only
+continuation after one fixture readiness correction passed all five selected native stages:
+remediation 211, full Libraries 378, Manage foundation 36, Configure General 188, Monitor 113
+PASS lines. All seven historical build/binding/native captures had numeric exit 0 and verified
+containment. Source/PDB binding covered 1,007 app and 240 host documents; readback rehashed
+2,233 source entries and 666 published application files for that earlier candidate only.
+
+Later fixes c4192cde, 53fa9ca7 and afef78f9 changed production code and added regression tests,
+including concurrency coverage. They address matcher summary polling, last-page ignore/restore,
+scan hydration on open and controller channel locking. These fixes are source-reviewed only;
+no builds or tests were run for them. The historical counts, receipts and hashes do not verify
+head afef78f98544, and the 7,576 count does not include its new regression tests. Pipeline
+verification of the updated source is pending.
+
+Historical native lease: 2026-11-16T16:37:47.9426263Z-16:39:59.8164148Z. Receipt SHA256
+DB4A061FE7043E50AF112175FD11FD7D01BD5FDEC556C8523434DB230F8A6216; evidence in
+`.codex-tmp/admin-libraries-reliability-20261116T153001Z/beta-173c-native-r4-current-render/`.
+Details and historical failures: `docs/parity/admin-manage-libraries.md`.
+Remote Beta was observed at 7ba72bed (stable 1.2.1165 release/docs/version-only changes since the
+tested base); this feature does not alter version stamps. Users, Search and the remaining Admin
+sections are separate increments, not bundled into this Libraries change.
+
+Limits: synthetic server and current DPI only; no live-server, real pointer-device drag, poster
+file picker, IME/Narrator, all-DPI or complete visual parity certification. The installed player
+and settings remain untouched. A hidden-file-inclusive storage readback found 10.191 GiB of
+global generated output, over the owner's 10 GiB limit; further local builds/native execution
+are on hold. Historical restore-cache cleanup was policy-denied with zero bytes removed and
+was not retried. Functional test success is not a claim of storage-bound compliance.
+---
+
+# November 16 — Books reader/detail Beta handoff; local runtime held
+
+Books changes are integrated but uncommitted in the dedicated Books worktree
+on Beta `173c37974894fe5d52a4a4437c356c84e5c897d9`, version
+`1.2.1165-beta.1` / numeric `1.2.1164.1`. Official Server/WebUI main remains
+`17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8` on a fresh remote check. Beta
+has since advanced to `7ba72bed148a29e737ec708997d8fedc259f7a0d`; that
+source has not yet been integrated or verified for these changes.
+
+Worker checks retain their original scope and payload provenance. Independent
+reviews found reader lifetime/error recovery, comic ordering and additional
+parity gaps; this is not an all-books parity certification. Source corrections
+now separate reader identity from request retirement, limit bootstrap failure
+reporting to startup, preserve recoverable saved-location errors and FB2/FBZ
+overall progress, canonicalize comic volume groups/Next order, stretch comic
+sections, and resize retained ebook rails. New regression sources are unexecuted.
+Earlier worker payload verification does not cover these final corrections.
+
+The owner's latest scheduling report puts shared generated outputs at
+10.191 GiB, above the 10 GiB cap. Admin released at
+2026-11-16T16:39:59.8164148Z, but all new runtime/build launches remain held
+pending bounded recovery. Books holds no lease, starts no new test/build/browser
+runtime and does not retry denied cleanup. Preserved payloads, evidence and the
+installed player/settings remain untouched. See the
+[delivery plan](plans/2026-11-16-books-parity.md) and three dated Books parity
+handoffs for scope and outstanding corrections. The owner explicitly directs
+immediate qualifying non-draft Beta PR submission despite this local hold;
+pipeline review/QA must verify final source. Do not infer a successful final
+build, native pass or complete parity from submission. Remaining gaps include
+normal detail Read entry coverage, clickable audiobook series navigation,
+library empty/no-match/Retry recovery, translated new audiobook strings, sticky
+controls and legacy FB2 highlights. Browsing/card changes are a separate PR.
+
+---
+
 # November 16 — Books browsing/card Beta handoff
 
 The owner explicitly directs immediate non-draft Beta submission while local
@@ -1512,7 +1591,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1528,7 +1607,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1544,7 +1623,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1562,7 +1641,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1578,7 +1657,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1596,7 +1675,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -1796,7 +1875,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -1804,7 +1883,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -1812,7 +1891,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -1842,7 +1921,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1165`; numeric version: `1.2.1165.0`.
+Source version: `1.2.1175-beta.1`; numeric version: `1.2.1174.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

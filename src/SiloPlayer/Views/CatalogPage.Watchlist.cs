@@ -19,6 +19,8 @@ public sealed partial class CatalogPage
     private bool _externalWatchlist;
     private double _externalTitleWidth = 180;
     private bool _watchlistAttached;
+    private bool _watchlistProfileAllowed;
+    private ApiIdentityContext _watchlistIdentity;
 
     private void InitializeWatchlistTitles()
     {
@@ -30,6 +32,9 @@ public sealed partial class CatalogPage
         ExternalTitlesDiscoverIcon.Content = WebUiIcon.Create("compass", 16);
         _watchlistTitles.ExternalTitles.CollectionChanged += ExternalTitles_Changed;
         _watchlistAttached = true;
+        var api = App.Services.GetRequiredService<RequestsApi>();
+        _watchlistProfileAllowed = api.ProfileRequestsAllowed; _watchlistIdentity = api.CaptureIdentityContext();
+        App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().ProfileChanged += WatchlistProfileChanged;
         ExternalWatchlistScroller.SizeChanged += ExternalWatchlist_SizeChanged;
         _ = LoadWatchlistTitlesAsync();
     }
@@ -38,6 +43,7 @@ public sealed partial class CatalogPage
     {
         if (!_watchlistAttached || _watchlistTitles == null) return;
         _watchlistAttached = false;
+        App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().ProfileChanged -= WatchlistProfileChanged;
         _watchlistTitles.CancelExternalLoad();
         _watchlistTitles.ExternalTitles.CollectionChanged -= ExternalTitles_Changed;
         // This collection is shared across successive catalog pages. Release
@@ -46,6 +52,22 @@ public sealed partial class CatalogPage
         ExternalTitlesRepeater.ItemsSource = null;
         ExternalWatchlistScroller.SizeChanged -= ExternalWatchlist_SizeChanged;
     }
+
+    private void WatchlistProfileChanged() => DispatcherQueue.TryEnqueue(async () =>
+    {
+        var api = App.Services.GetRequiredService<RequestsApi>();
+        var identity = api.CaptureIdentityContext();
+        if (!_watchlistAttached || identity.AuthenticationGeneration != _watchlistIdentity.AuthenticationGeneration ||
+            identity.BaseUrl != _watchlistIdentity.BaseUrl || identity.ProfileId != _watchlistIdentity.ProfileId) return;
+        var allowed = api.ProfileRequestsAllowed;
+        if (allowed == _watchlistProfileAllowed) return;
+        _watchlistIdentity = identity;
+        _watchlistProfileAllowed = allowed;
+        if (allowed) { await LoadWatchlistTitlesAsync(); return; }
+        _watchlistTitles?.RetireBlockedExternalTitles();
+        WatchlistTabs.Visibility = Visibility.Collapsed; _externalWatchlist = false;
+        UpdateWatchlistTabs();
+    });
 
     private async Task LoadWatchlistTitlesAsync()
     {
@@ -179,7 +201,7 @@ public sealed partial class CatalogPage
         var status = SiloPlayer.Core.Services.RequestViewerPolicy.WatchlistPresentation(title);
         var caption = status.Caption;
         title.InWatchlist = true;
-        var card = ExternalTitleCard.Build(title, _externalTitleWidth,
+        var card = ExternalTitleCard.Build(title, _externalTitleWidth, discoveryOwner: _watchlistTitles!.ExternalDiscoveryOwner,
             request: status.Requestable ? async () =>
             {
                 await App.Services.GetRequiredService<RequestsApi>().CreateAsync(new CreateMediaRequestInput { MediaType = title.MediaType, TmdbId = title.TmdbId,

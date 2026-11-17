@@ -49,7 +49,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="288"/></Grid.ColumnDefinitions>
                 <StackPanel Spacing="4">
                     <TextBlock x:Name="PageTitleText" Text="Requests" FontSize="30" FontWeight="Bold" CharacterSpacing="-25" loc:Localized.Text="web.requests.title"/>
-                    <TextBlock Text="Ask for movies and series that aren’t in the library yet, and follow your requests." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" loc:Localized.Text="web.requests.hub.intro"/>
+                    <TextBlock x:Name="HubIntroText" Text="Ask for movies and series that aren’t in the library yet, and follow your requests." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" loc:Localized.Text="web.requests.hub.intro"/>
                 </StackPanel>
                 <Grid x:Name="SearchBarGrid" Grid.Column="1" VerticalAlignment="Bottom">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -66,7 +66,7 @@
             <TextBlock x:Name="ErrorText" FontSize="13" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
 
             <!-- Intrinsic-width tabs aligned at the left edge, matching current WebUI. -->
-            <Grid BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Height="36" Padding="3,0" ColumnSpacing="4">
+            <Grid x:Name="RequestTabs" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Height="36" Padding="3,0" ColumnSpacing="4">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
@@ -126,7 +126,7 @@
                         <StackPanel Grid.Column="2" Spacing="7"><TextBlock Text="Needs attention" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.requests.hub.needsAttention"/><TextBlock Text="Declined  ·  Declined by an admin" FontSize="12" /><TextBlock Text="Cancelled  ·  Cancelled before completion" FontSize="12" /><TextBlock Text="Failed  ·  Automation reported an error" FontSize="12" /></StackPanel>
                     </Grid>
                 </Border>
-                <Border x:Name="MineEmptyPanel" Padding="0,64" Visibility="Collapsed"><StackPanel Spacing="12" HorizontalAlignment="Center"><TextBlock Text="You haven’t requested anything." FontSize="14" FontWeight="Medium" HorizontalAlignment="Center"  loc:Localized.Text="web.requests.hub.empty"/><TextBlock Text="Find a title on Discover or with search, and request it from its page. It shows up here with its status." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="384"  loc:Localized.Text="web.requests.hub.emptyHint"/><Button Content="Browse Discover" Click="BrowseDiscover_Click" HorizontalAlignment="Center" loc:Localized.Content="web.requests.hub.browseDiscover"/></StackPanel></Border>
+                <Border x:Name="MineEmptyPanel" Padding="0,64" Visibility="Collapsed"><StackPanel Spacing="12" HorizontalAlignment="Center"><TextBlock Text="You haven’t requested anything." FontSize="14" FontWeight="Medium" HorizontalAlignment="Center"  loc:Localized.Text="web.requests.hub.empty"/><TextBlock x:Name="MineEmptyHint" Text="Find a title on Discover or with search, and request it from its page. It shows up here with its status." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="384"  loc:Localized.Text="web.requests.hub.emptyHint"/><Button x:Name="MineBrowseButton" Content="Browse Discover" Click="BrowseDiscover_Click" HorizontalAlignment="Center" loc:Localized.Content="web.requests.hub.browseDiscover"/></StackPanel></Border>
                 <Border x:Name="MineErrorPanel" Padding="0,64" Visibility="Collapsed"><StackPanel Spacing="16" HorizontalAlignment="Center"><TextBlock Text="Couldn’t load your requests." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.requests.hub.loadFailed"/><Button Content="Retry" Click="RetryMine_Click" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center" loc:Localized.Content="common.retry"/></StackPanel></Border>
                 <StackPanel x:Name="MyRequestsList" Spacing="32" />
             </StackPanel>

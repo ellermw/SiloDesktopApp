@@ -72,6 +72,10 @@ public class MediaItem : IJsonOnDeserialized
     public string? ContentRating { get; set; }
     public string Status { get; set; } = "";
     public string? ShowStatus { get; set; }
+    /// <summary>Series: complete released seasons out of released seasons. Season: episodes in the
+    /// library out of known episodes. The server sends it only while this profile's badges include
+    /// the availability overlay; a missing value means no ribbon.</summary>
+    public CatalogAvailability? Availability { get; set; }
     public string Overview { get; set; } = "";
     public string? PendingTranslationLanguage { get; set; }
     public List<string>? MachineTranslatedFields { get; set; }
@@ -177,7 +181,14 @@ public class AudiobookRelatedItem
     public string Title { get; set; } = "";
     public int? Year { get; set; }
     public string? PosterUrl { get; set; }
+    public string? PosterThumbhash { get; set; }
     public double? SeriesIndex { get; set; }
+    /// <summary>Audiobooks only: total listening time in seconds.</summary>
+    public double? DurationSeconds { get; set; }
+    /// <summary>The profile finished this book; absent when not.</summary>
+    public bool? Played { get; set; }
+    /// <summary>0-1, only while the book is started and not played.</summary>
+    public double? ProgressRatio { get; set; }
 }
 
 public class AudiobookSeriesGroup
@@ -219,6 +230,12 @@ public class EbookDetailExtension
     public AudiobookRelatedItems Related { get; set; } = new();
 }
 
+/// <summary>The server's CatalogAvailability: <c>have</c> out of <c>total</c> on a series or season card.</summary>
+public sealed class CatalogAvailability
+{
+    public int Have { get; set; }
+    public int Total { get; set; }
+}
 public class OverlaySummary
 {
     public string Resolution { get; set; } = "";

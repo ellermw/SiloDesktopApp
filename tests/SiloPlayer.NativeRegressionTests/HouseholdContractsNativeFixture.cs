@@ -110,7 +110,7 @@ internal static class HouseholdContractsNativeFixture
         {
             foreach (var unsupported in new[] { false, true })
             {
-                wire.ResetUnsupported = unsupported; wire.MetadataOrder.Clear();
+                wire.ResetUnsupported = unsupported; wire.MetadataOrder.Clear(); wire.ForbiddenJobReads = 0;
                 var dialog = new EditMetadataDialog(new() { ContentId = "season", Type = "season" }) { XamlRoot = parent.XamlRoot };
                 var showing = dialog.ShowAsync();
                 try
@@ -121,6 +121,7 @@ internal static class HouseholdContractsNativeFixture
                     await Until(() => wire.MetadataOrder.Count > 0 && !Field<bool>(dialog, "_pending"));
                     Check(wire.MetadataOrder.SequenceEqual(new[] { "POST:reset" }), "Curator reset used an unlock or legacy fallback.");
                     Check(dialog.HasSaved == !unsupported, "Curator reset reported wrong acceptance state.");
+                    Check(wire.ForbiddenJobReads == (unsupported ? 0 : 1), "Curator fixture did not exercise forbidden admin job reads.");
                 }
                 finally { dialog.Hide(); await showing; await Task.Delay(80); }
             }
@@ -326,7 +327,7 @@ internal static class HouseholdContractsNativeFixture
     { for (var i = 0; i < VisualTreeHelper.GetChildrenCount(owner); i++) { var child = VisualTreeHelper.GetChild(owner, i); yield return child; foreach (var next in Descendants(child)) yield return next; } }
     private sealed class Wire : HttpMessageHandler
     {
-        internal int WebhookRequests;
+        internal int WebhookRequests, ForbiddenJobReads;
         internal bool SupportsReset = true, Held, HoldWrites, ProviderFails, CapabilityForbidden, ResetUnsupported;
         internal string? Refusal, HoldPath;
         internal TaskCompletionSource? Gate;
@@ -337,6 +338,11 @@ internal static class HouseholdContractsNativeFixture
             var path = request.RequestUri.AbsolutePath;
             if (path == "/api/v2/admin/catalog/capabilities" && CapabilityForbidden)
                 return Json(new { detail = "Only acting admins can read capabilities" }, HttpStatusCode.Forbidden);
+            if (path == "/api/v2/admin/jobs/job" && CapabilityForbidden)
+            {
+                ForbiddenJobReads++;
+                return Json(new { detail = "Only acting admins can read jobs" }, HttpStatusCode.Forbidden);
+            }
             if (HoldPath != null && path.EndsWith(HoldPath) && (!HoldWrites || request.Method != HttpMethod.Get)) { Held = true; await Gate!.Task; }
             if (path.Contains("/webhook-sync/"))
             {
@@ -360,6 +366,7 @@ internal static class HouseholdContractsNativeFixture
             {
                 "/api/v2/profiles" => new { items = new[] { new { id = "primary", name = "Primary", is_primary = true } } },
                 "/api/v2/admin/catalog/capabilities" => new { item_metadata_reset = SupportsReset },
+                "/api/v2/admin/jobs/job" => new { id = "job", state = "succeeded" },
                 _ => (object)new { items = Array.Empty<object>(), state = "unavailable", sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() },
             });
         }

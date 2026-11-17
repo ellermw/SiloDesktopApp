@@ -36,25 +36,24 @@
 
 Local results on this source:
 
-- **Unit tests:** all 8,133 pass, including `ViewerLocalizationRefreshTests`,
+- **Unit tests:** all 8,578 pass on current Beta, including `ViewerLocalizationRefreshTests`,
   the exact release, language order, hash and key contracts, and the
   `SourceWalkingResolvesThisCheckoutNotPhysicalBuildRoot` proof.
 - **`viewer-localization` native:** passes all 96 checks. They cover login,
-  the retained hero, UIA names and the chapter fallback.
+  the retained hero, UIA names and the translated untitled chapter title.
 - **`shell-localization` native:** completes with all checks passing.
 
-## Integration with open PR #182
+## Reconciled with #182
 
-PR #182 replaces the old audiobook chapter implementation in
-`ItemDetailPage.xaml.cs` that holds this change's three chapter fallback
-hunks. Whichever merges second needs a small fix-up:
-
-- keep #182's new layout, and keep the fallbacks only where the retired keys
-  are still called;
-- retarget the native chapter assertion and the old-layout source guard to
-  #182's `AudiobookDetailPresentation`.
-
-PR #184 merges without conflict.
+Books #182 merged first and replaced the old audiobook chapter code in
+`ItemDetailPage.xaml.cs`, including this change's three chapter fallback
+hunks. The merge keeps #182's layout. Of the six retired keys, only
+`web.audiobooks.player.chapterNumber` is still called
+(`AudiobookTransportAppearance`), and it carries an explicit fallback. Untitled
+chapter rows now use the surviving `web.audiobooks.chapter.fallbackTitle`. The
+source guard checks every remaining retired-key call in `src` for an explicit
+fallback. The native case checks that an untitled chapter row shows the
+translated chapter title in English, Polish, Russian and Korean.
 
 ## Not certified
 

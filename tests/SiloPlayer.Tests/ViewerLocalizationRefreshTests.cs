@@ -197,15 +197,23 @@ public sealed class ViewerLocalizationRefreshTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void RemovedKeyCallsitesCarryExplicitFallbacksBeforeAudiobookRedesign()
+    public void RemovedKeyCallsitesCarryExplicitFallbacks()
     {
-        var detail = File.ReadAllText(Path.Combine(TestRepository.Root, "src/SiloPlayer/Views/ItemDetailPage.xaml.cs"));
-        var count = detail.Split('\n').Single(line => line.Contains("Get(\"web.audiobooks.chapters.count\""));
-        var chapter = detail.Split('\n').Single(line => line.Contains("Get(\"web.audiobooks.player.chapterNumber\""));
-        Assert.Contains("fallback:", count);
-        Assert.Contains("fallback:", chapter);
-        Assert.Contains("AudiobookChapterSortText.Text = option.Label", detail);
-        Assert.Contains("Text = \"listening\"", detail);
+        // Every remaining call to a key the 22-language catalog retired must carry an explicit
+        // readable fallback, wherever it lives (the #182 audiobook redesign moved chapter rows).
+        string[] removed = ["web.audiobooks.chapters.count", "web.audiobooks.chapters.listening", "web.audiobooks.chapters.sortPosition", "web.audiobooks.chapters.sortLongest", "web.audiobooks.hero.eyebrow", "web.audiobooks.player.chapterNumber"];
+        foreach (var path in Directory.EnumerateFiles(Path.Combine(TestRepository.Root, "src"), "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(path);
+            foreach (var key in removed)
+                for (var at = source.IndexOf("\"" + key + "\"", StringComparison.Ordinal); at >= 0; at = source.IndexOf("\"" + key + "\"", at + 1, StringComparison.Ordinal))
+                {
+                    var call = source[at..source.IndexOf(';', at)];
+                    Assert.True(call.Contains("fallback:", StringComparison.Ordinal), $"{Path.GetFileName(path)} calls retired {key} without a fallback");
+                }
+        }
+        var rows = File.ReadAllText(Path.Combine(TestRepository.Root, "src/SiloPlayer.Core/Helpers/AudiobookDetailPresentation.cs"));
+        Assert.Contains("\"web.audiobooks.chapter.fallbackTitle\"", rows);
         var hero = File.ReadAllText(Path.Combine(TestRepository.Root, "src/SiloPlayer/Controls/NowListeningHero.xaml.cs"));
         Assert.Contains("web.audiobooks.hero.ariaLabel", hero);
         var transport = File.ReadAllText(Path.Combine(TestRepository.Root, "src/SiloPlayer/Controls/AudiobookTransportAppearance.cs"));

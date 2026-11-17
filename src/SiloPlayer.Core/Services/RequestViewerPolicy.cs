@@ -47,6 +47,10 @@ public static class RequestViewerPolicy
         features.FollowSupported && request.Reason == "already_requested" && request.RequestedByViewer == false &&
         (!string.IsNullOrEmpty(request.Status) || !string.IsNullOrEmpty(request.State)) && Label(request.Status, null, request.State) != "Available";
 
+    public static bool ShowFollowAction(RequestFeatureStatus features, RequestState request, bool submissionAllowed) =>
+        // The WebUI keeps the toggle after Unfollow, including account denial. The server answers Follow.
+        CanFollow(features, request);
+
     public static bool ShowAutoRequestControl(RequestFeatureStatus features, bool profileValue) =>
         features.RequestsEnabled && features.WatchlistTitlesSupported && features.Allowed == true &&
         (features.WatchlistRequests || !profileValue);

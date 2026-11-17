@@ -9,6 +9,9 @@ namespace SiloPlayer.Core.Api;
 /// </summary>
 public sealed class MediaMaintenanceApi(SiloApiClient client)
 {
+    // MediaMaintenanceApi is a singleton, shared by card/detail editor openings.
+    public Services.ItemMetadataWriteRegistry PendingWrites { get; } = new();
+
     public Task<MetadataRefreshReceipt> ResetToProviderAsync(string itemId, CancellationToken ct = default)
         => ResetToProviderAsync(itemId, Array.Empty<int>(), ct);
 
@@ -59,6 +62,63 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
             path + "/refresh-metadata", new { mode = capability.AtomicReset ? "reset" : "quick" }, ct).ConfigureAwait(false);
         RequireCommitted(identity, owner, ct);
         return receipt;
+    }
+
+    /// <summary>Wait within the write budget; false means accepted, completion still unknown.</summary>
+    public async Task<bool> ResetToProviderAndWaitAsync(MetadataResetCapability capability, string itemId,
+        IReadOnlyCollection<int> locksToKeep, CancellationToken ct)
+    {
+        var identity = client.CaptureIdentityContext();
+        var receipt = await ResetToProviderAsync(capability, itemId, locksToKeep, ct).ConfigureAwait(false);
+        var state = receipt.Status;
+        try
+        {
+            while (state is not ("succeeded" or "completed"))
+            {
+                RequireCommitted(identity, capability.Owner, ct);
+                if (state is "failed" or "canceled" or "cancelled")
+                    throw new InvalidOperationException(SiloPlayer.Core.Localization.AppStrings.Get("web.item.toast.refreshFailed"));
+                if (state is not ("queued" or "running" or "canceling") || string.IsNullOrWhiteSpace(receipt.Id))
+                    return false;
+                try
+                {
+                    var job = await client.SendIdentityBoundRequestAsync<JsonElement>(identity, HttpMethod.Get,
+                        $"/api/v2/admin/jobs/{Uri.EscapeDataString(receipt.Id)}", null, ct).ConfigureAwait(false);
+                    RequireCommitted(identity, capability.Owner, ct);
+                    state = job.TryGetProperty("state", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+                }
+                catch (ApiException ex) when (ex.StatusCode is 403 or 404)
+                {
+                    // Delegated curators can submit a reset without access to
+                    // admin job reads. The accepted POST must not be replayed.
+                    RequireCommitted(identity, capability.Owner, ct);
+                    return false;
+                }
+                catch (ApiException ex) when (ex.StatusCode is 429 or 502 or 503 or 504)
+                {
+                    var delay = Math.Max(1.5, ex.RetryAfterSeconds ?? 1.5);
+                    await Task.Delay(delay > 120 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false);
+                    continue;
+                }
+                catch (Exception)
+                {
+                    // A failed job read cannot undo the accepted POST. Only
+                    // owner retirement prevents publishing the queued outcome.
+                    RequireCommitted(identity, capability.Owner, ct);
+                    return false;
+                }
+                if (state is "queued" or "running" or "canceling")
+                    await Task.Delay(TimeSpan.FromMilliseconds(1500), ct).ConfigureAwait(false);
+            }
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // A budget expiry cannot undo an accepted reset. Identity/access
+            // retirement still cancels publication, rather than becoming success.
+            RequireCommitted(identity, capability.Owner, CancellationToken.None);
+            return false;
+        }
     }
 
     // Transport catch-up retires reads only. A write the server has already

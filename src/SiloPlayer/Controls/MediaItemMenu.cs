@@ -258,11 +258,12 @@ public static class MediaItemMenu
                 var root = DialogRoot();
                 if (root == null || !AuthorizationPolicy.CanCurateMetadata(authService)) return;
                 var context = client.CaptureContext();
+                var writeRevision = maintenanceApi.PendingWrites.Revision;
                 try
                 {
                     var detail = await catalog.GetItemDetailAsync(item.ContentId);
                     if (!client.IsCurrentContext(context) || (owner != null && !owner.IsLoaded)) return;
-                    var dialog = new EditMetadataDialog(detail) { XamlRoot = root };
+                    var dialog = new EditMetadataDialog(detail, writeRevision) { XamlRoot = root };
                     await dialog.ShowAsync();
                     if (!dialog.HasSaved || !client.IsCurrentContext(context)) return;
                     stateChanged?.Invoke();

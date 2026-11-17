@@ -40,6 +40,16 @@ public sealed class MetadataEditState
         Fields[key] = value;
         if (FieldLockMap.TryGetValue(key, out var field)) _overrides[field] = true;
     }
+    /// <summary>Let a write's refetch show through without discarding this opening's edits.</summary>
+    public void Rebase(MediaItemDetail item)
+    {
+        var fresh = new MetadataEditState(item);
+        foreach (var (key, value) in fresh.Fields)
+        {
+            if (JsonSerializer.Serialize(Fields[key]) == JsonSerializer.Serialize(_original[key])) Fields[key] = value;
+            _original[key] = value;
+        }
+    }
     public void SetLock(int field, bool locked)
     {
         if (FieldLockMap.Values.Contains(field) || field == 10 && FieldLockMap.Count > 0) _overrides[field] = locked;

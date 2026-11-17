@@ -110,14 +110,15 @@ internal static class ViewerLocalizationNativeFixture
             host.Children.Clear();
             var hero = new NowListeningHero();
             host.Children.Add(hero);
-            var rowType = typeof(ItemDetailPage).GetNestedType("AudiobookChapterRow", BindingFlags.NonPublic)!;
-            var row = Activator.CreateInstance(rowType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [7, "", 0d, 60d, 1], null)!;
-            var displayLabel = rowType.GetProperty("DisplayLabel", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            // After the #182 audiobook redesign an untitled chapter row uses the surviving
+            // web.audiobooks.chapter.fallbackTitle key (the retired chapterNumber key is gone from rows).
+            var row = new SiloPlayer.Core.Helpers.AudiobookDetailPresentation.ChapterRow(7, 6, "", 0d, 60d, 1);
             foreach (var language in new[] { "en", "pl", "ru", "ko" })
             {
                 Apply(language);
                 await Settle(host);
-                Require((string)displayLabel.GetValue(row)! == "Chapter 7", language + " retired chapter-number key has actual row fallback");
+                var expectedChapter = AppStrings.Get("web.audiobooks.chapter.fallbackTitle", new Dictionary<string, object?> { ["number"] = 7 });
+                Require(row.Label == expectedChapter && (language != "en" || row.Label == "Chapter 7"), language + " untitled chapter row uses the surviving localized chapter title");
                 Require(((TextBlock)hero.FindName("EyebrowText")).Text == AppStrings.Uppercase(AppStrings.Get("web.audiobooks.hero.ariaLabel")), language + " actual hero uses surviving localized key");
             }
         }

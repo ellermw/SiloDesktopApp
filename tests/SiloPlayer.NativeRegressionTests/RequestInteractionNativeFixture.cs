@@ -42,39 +42,43 @@ internal static class RequestInteractionNativeFixture
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         field.SetValue(null, services);
         var failures = new List<string>();
+        var seasonReview = Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_REVIEW_CASE") == "season-reconnect";
         try
         {
-            await HubPresentationAsync(parent, vm);
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_HUB_CASE") == "status-help") return;
-            var page = new RequestsPage();
-            var result = new RequestMediaResult { MediaType = "series", TmdbId = 42, Title = "Interaction fixture", Request = new() { Requestable = true } };
-            var card = (Grid)typeof(RequestsPage).GetMethod("BuildMediaPosterCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [result])!;
-            parent.Children.Add(card);
-            await Task.Delay(100); card.UpdateLayout();
-            // DefaultArtwork owns a separate collapsed thumbhash image.
-            // Exercise the visible poster, rather than that fallback's decoder surface.
-            var image = ((Grid)card.Children.OfType<Border>().First().Child).Children.OfType<Image>().Single();
-            var bitmap = new WriteableBitmap(2, 2);
-            using (var stream = bitmap.PixelBuffer.AsStream()) stream.Write(Enumerable.Repeat(new byte[] { 0, 0, 255, 255 }, 4).SelectMany(bytes => bytes).ToArray());
-            bitmap.Invalidate(); image.Source = bitmap;
-            await Task.Delay(100); card.UpdateLayout();
-            var open = card.Children.OfType<Button>().Single(button => button.Tag is RequestDetailNavigation);
-            open.ApplyTemplate();
-            VisualStateManager.GoToState(open, "Normal", false);
-            var before = await RedPixelsAsync(card);
-            VisualStateManager.GoToState(open, "PointerOver", false);
-            await Task.Delay(40);
-            var hover = await RedPixelsAsync(card);
-            VisualStateManager.GoToState(open, "Pressed", false);
-            var pressed = await RedPixelsAsync(card);
-            VisualStateManager.GoToState(open, "Normal", false);
-            var restored = await RedPixelsAsync(card);
-            Program.Log($"Request poster red pixels: normal={before}, hover={hover}, pressed={pressed}, exit={restored}");
-            if (before < 1000 || hover < before * .9 || pressed < before * .9 || restored < before * .9)
-                failures.Add("Hover/press obscures the native request poster.");
-            parent.Children.Remove(card);
+            if (!seasonReview)
+            {
+                await HubPresentationAsync(parent, vm);
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_HUB_CASE") == "status-help") return;
+                var page = new RequestsPage();
+                var result = new RequestMediaResult { MediaType = "series", TmdbId = 42, Title = "Interaction fixture", Request = new() { Requestable = true } };
+                var card = (Grid)typeof(RequestsPage).GetMethod("BuildMediaPosterCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [result])!;
+                parent.Children.Add(card);
+                await Task.Delay(100); card.UpdateLayout();
+                // DefaultArtwork owns a separate collapsed thumbhash image.
+                // Exercise the visible poster, rather than that fallback's decoder surface.
+                var image = ((Grid)card.Children.OfType<Border>().First().Child).Children.OfType<Image>().Single();
+                var bitmap = new WriteableBitmap(2, 2);
+                using (var stream = bitmap.PixelBuffer.AsStream()) stream.Write(Enumerable.Repeat(new byte[] { 0, 0, 255, 255 }, 4).SelectMany(bytes => bytes).ToArray());
+                bitmap.Invalidate(); image.Source = bitmap;
+                await Task.Delay(100); card.UpdateLayout();
+                var open = card.Children.OfType<Button>().Single(button => button.Tag is RequestDetailNavigation);
+                open.ApplyTemplate();
+                VisualStateManager.GoToState(open, "Normal", false);
+                var before = await RedPixelsAsync(card);
+                VisualStateManager.GoToState(open, "PointerOver", false);
+                await Task.Delay(40);
+                var hover = await RedPixelsAsync(card);
+                VisualStateManager.GoToState(open, "Pressed", false);
+                var pressed = await RedPixelsAsync(card);
+                VisualStateManager.GoToState(open, "Normal", false);
+                var restored = await RedPixelsAsync(card);
+                Program.Log($"Request poster red pixels: normal={before}, hover={hover}, pressed={pressed}, exit={restored}");
+                if (before < 1000 || hover < before * .9 || pressed < before * .9 || restored < before * .9)
+                    failures.Add("Hover/press obscures the native request poster.");
+                parent.Children.Remove(card);
+            }
 
-            foreach (var (staged, promoted) in new[] { (false, true), (true, true), (false, false) })
+            foreach (var (staged, promoted) in seasonReview ? new[] { (false, true) } : new[] { (false, true), (true, true), (false, false) })
             {
                 handler.LibraryAvailable = promoted;
                 var frame = new Frame { Width = 1000, Height = 700, CacheSize = 8 };
@@ -97,35 +101,64 @@ internal static class RequestInteractionNativeFixture
                     // private loader at that intermediate point races the real
                     // navigation's capability reset. Require the actual page to
                     // load its own action instead of synthesizing that lifecycle.
+                    MenuFlyoutItem? seasonsAction = null;
                     await UntilAsync(() => !detail.ViewModel.IsLoading && detail.ViewModel.Item != null &&
-                        more.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "Request Seasons"));
+                        (seasonsAction = more.Items.OfType<MenuFlyoutItem>().SingleOrDefault(item =>
+                            Localized.GetText(item) == "web.detail.actions.requestSeasons")) != null,
+                        "promoted-series-action", () => SeasonSetupState(detail, more, handler));
+                    // Detached MenuFlyoutItems retain their literal fallback until
+                    // Loaded applies Localized.Text. Locate the production key,
+                    // then mount the menu before invoking its real Click handler.
+                    Program.Log($"TRACE: seasons action before opening: text={seasonsAction!.Text}; loaded={seasonsAction.IsLoaded}.");
+                    more.ShowAt((Button)detail.FindName("MoreButton"));
+                    await UntilAsync(() => seasonsAction!.IsLoaded && seasonsAction.IsEnabled,
+                        "season-menu-open", () => SeasonSetupState(detail, more, handler));
                     Program.Log($"PASS: promoted series naturally exposes Request seasons (staged={staged}) after its actual navigation load.");
                     if (!staged)
                     {
-                        var requesting = (Task)typeof(ItemDetailPage).GetMethod("RequestSeriesSeasonsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                            .Invoke(detail, [detail.ViewModel.Item!, 42])!;
+                        var actionPeer = new Microsoft.UI.Xaml.Automation.Peers.MenuFlyoutItemAutomationPeer(seasonsAction!);
+                        ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)actionPeer.GetPattern(
+                            Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
                         ContentDialog? dialog = null;
                         await UntilAsync(() => (dialog = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(parent.XamlRoot)
                             .SelectMany(popup => new[] { popup.Child }.Concat(Descendants(popup.Child)))
-                            .OfType<ContentDialog>().FirstOrDefault()) != null);
+                            .OfType<ContentDialog>().FirstOrDefault()) != null,
+                            "season-picker-open", () => SeasonSetupState(detail, more, handler));
+                        var pickerClosed = false;
+                        dialog!.Closed += (_, _) => pickerClosed = true;
                         ToggleSwitch[] seasonChecks = [];
                         await UntilAsync(() =>
                         {
                             seasonChecks = Descendants(dialog!).OfType<ToggleSwitch>().Where(toggle => toggle.Tag is int).ToArray();
                             return seasonChecks.Any(check => (int)check.Tag == 1) && seasonChecks.Any(check => (int)check.Tag == 2);
-                        });
+                        }, "season-picker-choices", () => SeasonSetupState(detail, more, handler));
                         var first = seasonChecks.Single(check => (int)check.Tag == 1);
                         var second = seasonChecks.Single(check => (int)check.Tag == 2);
                         if (first.IsEnabled || !second.IsEnabled) throw new InvalidOperationException("Available Season 1 and missing Season 2 have incorrect selection gates.");
                         second.IsOn = false; second.IsOn = true;
                         var primary = Descendants(dialog!).OfType<Button>().Single(button => (string?)button.Content == "Request Season 2");
+                        var discoveryOwner = api.CaptureDiscoveryOwner();
+                        if (!client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true))
+                            throw new InvalidOperationException("Season picker catch-up setup did not advance transport context.");
+                        if (!api.IsCurrentDiscoveryOwner(discoveryOwner))
+                            throw new InvalidOperationException("Season picker catch-up unexpectedly retired discovery authority.");
                         var peer = new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(primary);
                         ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)peer.GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
-                        await requesting;
+                        await UntilAsync(() => handler.LastSeasons != null || Descendants(dialog!).OfType<TextBlock>().Any(text =>
+                            text.Visibility == Visibility.Visible && text.Text.StartsWith("Request failed:", StringComparison.Ordinal)),
+                            "season-picker-submit", () => SeasonSetupState(detail, more, handler));
+                        if (handler.LastSeasons == null)
+                        {
+                            dialog!.Hide();
+                            await UntilAsync(() => pickerClosed, "season-picker-close", () => SeasonSetupState(detail, more, handler));
+                            throw new InvalidOperationException("Season-request confirmation rejects a current viewer after routine transport catch-up.");
+                        }
+                        await UntilAsync(() => pickerClosed, "season-picker-close", () => SeasonSetupState(detail, more, handler));
                         if (handler.LastSeasons == null || !handler.LastSeasons.SequenceEqual(new[] { 2 }))
                             failures.Add("The library missing-season picker did not submit only Season 2.");
                         else Program.Log("PASS: library Request seasons opens the real picker and submits only Season 2 to the isolated fixture.");
                     }
+                    else more.Hide();
                 }
                 navigation.GoBack();
                 await Task.Delay(200);
@@ -133,12 +166,29 @@ internal static class RequestInteractionNativeFixture
                     ((TextBox)original.FindName("SearchBox")).Text != "Scrubs")
                     failures.Add($"Back (staged={staged}, promoted={promoted}) returned to {frame.Content?.GetType().Name} instead of the original request search.");
                 navigation.NavigationRequestHandler = null;
-                frame.BackStack.Clear(); frame.Content = null; parent.Children.Remove(frame); navigation.Frame = null;
+                await RequestFixtureLifecycle.DetachAsync(frame, () =>
+                {
+                    frame.BackStack.Clear(); frame.Content = null; parent.Children.Remove(frame); navigation.Frame = null;
+                });
             }
             if (failures.Count > 0) throw new InvalidOperationException(string.Join(" ", failures));
             Program.Log("PASS: request posters survive native hover/press/exit and promoted title Back returns to the original search.");
         }
-        finally { field.SetValue(null, outer); }
+        finally
+        {
+            // A setup failure can leave the promoted page mounted. Retire it
+            // while its own fixture graph still supplies lifecycle services.
+            navigation.NavigationRequestHandler = null;
+            if (navigation.Frame is { } frame)
+            {
+                await RequestFixtureLifecycle.DetachAsync(frame, () =>
+                {
+                    frame.BackStack.Clear(); frame.Content = null;
+                    parent.Children.Remove(frame); navigation.Frame = null;
+                });
+            }
+            field.SetValue(null, outer);
+        }
     }
 
     private static async Task HubPresentationAsync(StackPanel parent, RequestsViewModel vm)
@@ -207,7 +257,7 @@ internal static class RequestInteractionNativeFixture
                 await MediaParityNativeFixture.CaptureAsync(page, $"requests-hub-yours-loading-{width:0}.png");
                 vm.IsLoading = false;
             }
-            finally { vm.IsLoading = false; parent.Children.Remove(page); }
+            finally { vm.IsLoading = false; await RequestFixtureLifecycle.DetachAsync(page, () => parent.Children.Remove(page)); }
         }
         vm.MyRequests.Clear(); vm.DiscoverySections.Clear(); vm.Genres.Clear();
         Program.Log("PASS: request hub wide/narrow discovery, four request groups, row progress, long titles and Yours row skeletons.");
@@ -230,16 +280,45 @@ internal static class RequestInteractionNativeFixture
             foreach (var item in Descendants(child)) yield return item;
         }
     }
-    private static async Task UntilAsync(Func<bool> ready)
-    { var deadline = DateTime.UtcNow.AddSeconds(5); while (!ready()) { if (DateTime.UtcNow > deadline) throw new TimeoutException("Request navigation did not finish."); await Task.Delay(20); } }
+    private static string SeasonSetupState(ItemDetailPage detail, MenuFlyout more, Handler handler)
+    {
+        var item = detail.ViewModel.Item;
+        var actionState = string.Join(" | ", more.Items.OfType<MenuFlyoutItem>().Select(action =>
+            $"{Localized.GetText(action)}:text={action.Text},loaded={action.IsLoaded},enabled={action.IsEnabled}"));
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var navigation = (CancellationTokenSource?)typeof(ItemDetailPage).GetField("_navigationCts", flags)!.GetValue(detail);
+        return $"loading={detail.ViewModel.IsLoading}; failure={detail.ViewModel.FailureKind}; error={detail.ViewModel.ErrorMessage}; " +
+            $"item={item?.ContentId}/{item?.Type}/tmdb={item?.TmdbId}; navigationCancelled={navigation?.IsCancellationRequested}; " +
+            $"current={typeof(ItemDetailPage).GetField("_currentContentId", flags)!.GetValue(detail)}; " +
+            $"seasonOwner={typeof(ItemDetailPage).GetField("_requestSeasonsContentId", flags)!.GetValue(detail)}; " +
+            $"companionLoads={typeof(ItemDetailPage).GetField("_detailCompanionLoads", flags)!.GetValue(detail)}; " +
+            $"companionInterrupted={typeof(ItemDetailPage).GetField("_detailCompanionInterrupted", flags)!.GetValue(detail)}; " +
+            $"menu=[{actionState}]; wire=[{string.Join(" | ", handler.Paths)}]";
+    }
+
+    private static async Task UntilAsync(Func<bool> ready, string stage = "request-navigation", Func<string>? describe = null)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!ready())
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                Program.Log($"INFRA: Request setup timeout at {stage}. {describe?.Invoke()}");
+                throw new TimeoutException($"Request navigation did not finish at {stage}.");
+            }
+            await Task.Delay(20);
+        }
+    }
     private sealed class Handler : HttpMessageHandler
     {
         internal bool LibraryAvailable = true;
         internal int[]? LastSeasons;
+        internal System.Collections.Concurrent.ConcurrentQueue<string> Paths { get; } = new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            await Task.Delay(20, ct);
             var path = request.RequestUri!.AbsolutePath;
+            Paths.Enqueue($"{request.Method} {path}");
+            await Task.Delay(20, ct);
             if (path == "/api/v2/requests" && request.Method == HttpMethod.Post)
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
@@ -252,6 +331,48 @@ internal static class RequestInteractionNativeFixture
                 _ => new { items = Array.Empty<object>(), settings = Array.Empty<object>() }
             };
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(data)) };
+        }
+    }
+}
+
+internal static class RequestFixtureLifecycle
+{
+    internal static async Task DetachAsync(FrameworkElement root, Action detach, params FrameworkElement?[] retainedPages)
+    {
+        // Subscribe after the production handlers and before changing the tree.
+        // An ancestor notification alone does not settle its child page callbacks.
+        var elements = new[] { root }.Concat(Pages(root)).Concat(retainedPages.OfType<FrameworkElement>())
+            .Where(element => element.IsLoaded).Distinct().ToArray();
+        var barriers = new List<(FrameworkElement Element, RoutedEventHandler Handler, Task Completion)>();
+        foreach (var element in elements)
+        {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            RoutedEventHandler handler = (_, _) => completion.TrySetResult();
+            element.Unloaded += handler;
+            barriers.Add((element, handler, completion.Task));
+        }
+        try
+        {
+            detach();
+            await Task.WhenAll(barriers.Select(barrier => barrier.Completion)).WaitAsync(TimeSpan.FromSeconds(5));
+            if (barriers.Count > 0)
+                Program.Log("PASS: Requests fixture lifecycle barrier completed actual Unloaded for " +
+                    string.Join(", ", barriers.Select(barrier => barrier.Element.GetType().Name)) + ".");
+        }
+        finally
+        {
+            foreach (var barrier in barriers) barrier.Element.Unloaded -= barrier.Handler;
+        }
+    }
+
+    private static IEnumerable<FrameworkElement> Pages(DependencyObject root)
+    {
+        if (root is Frame { Content: FrameworkElement content }) yield return content;
+        for (var index = 0; index < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, index);
+            if (child is Page page) yield return page;
+            foreach (var descendant in Pages(child)) yield return descendant;
         }
     }
 }
