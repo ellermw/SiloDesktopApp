@@ -11,9 +11,9 @@ internal static class AdminConfigureServices
 {
     /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
     internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).Concat(AdminSecuritySettingsController.Keys)
-        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).ToArray());
+        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminBackupsController.Keys).ToArray());
     internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).Concat(AdminSecuritySettingsController.Secrets)
-        .Concat(AdminDownloadSettingsController.Secrets).ToArray());
+        .Concat(AdminDownloadSettingsController.Secrets).Concat(AdminBackupsController.Secrets).ToArray());
 
     internal static void Add(IServiceCollection services)
     {
@@ -32,5 +32,11 @@ internal static class AdminConfigureServices
         services.AddSingleton(new AdminPageRegistration(AdminRoute.NetworkAccessSettings, typeof(AdminNetworkAccessSettingsPage)));
         services.AddTransient<AdminDownloadSettingsController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
+        // Configure > Server > Backups: the list page and both restore routes share one page type.
+        services.AddSingleton<AdminBackupsApi>();
+        services.AddTransient(sp => new AdminBackupsController(sp.GetRequiredService<AdminBackupsApi>(), sp.GetRequiredService<AdminServerSettingsApi>(),
+            sp.GetRequiredService<AdminServerSettingsStore>(), sp.GetRequiredService<AdminMonitorAuthority>(), download: sp.GetService<AdminBackupSignedDownload>()));
+        services.AddTransient(sp => new AdminBackupRestoreController(sp.GetRequiredService<AdminBackupsApi>(), sp.GetRequiredService<AdminMonitorAuthority>()));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.Backups, typeof(AdminBackupsPage)));
     }
 }

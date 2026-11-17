@@ -1,3 +1,44 @@
+# November 16 — Configure Backups verification and Beta handoff
+
+Configure > Server > Backups is implemented as one route family: `/admin/backups`,
+`/admin/backups/:id/restore` and `/admin/backups/uploads/:uploadId/restore`, through the
+production Configure registration. Tested base: Beta
+`542dec13c7d45c7520116c559166023ecb4ee987`, version `1.2.1168-beta.1` unchanged.
+The pipeline owns reconciliation, version assignment, QA, fixes, merge and packaging.
+
+Contracts were implemented against official Server/WebUI
+`92ee051878c2a791940ec9598e2bdd0f04890b3e` and checked against the Go handlers/OpenAPI.
+Direct official-main recheck at `94797c3e2e39ef12bf2796fa08df12e3b3525b3e` found no
+subsequent Backups contract changes. Desktop Beta was rechecked at
+`3d9b642242b0539684fcb055b00690dbd242a93e`; the tested candidate base is retained.
+
+Independent review corrections cover expired-token GET refresh, durable per-source/epoch
+restore uncertainty across page departure, a fresh-preview gate, foreign-source conflict
+jobs, coalesced capabilities/uploads reads and visibility resume, and discard-before-dispose
+for known uploads under the same authority epoch. Native testing also found and fixed
+late download progress overwriting the verified terminal result.
+
+Verification (November 17 UTC): source proof 1/1, focused 226/226 and full 7852/7852;
+nonincremental app/host builds, Release publish, PDB/source, payload/engine and XBF binding;
+Backups native 30 PASS records and foundation 36, both including completion. Review/preview
+regressions and native download completion have retained RED/GREEN evidence. Every runtime
+used one nonblocking shared lease, with actual ACQ/REL relayed; final REL
+`2026-11-17T01:25:12.2338806Z`. Original feature implementation was not test-first.
+
+Limit: unchanged Downloads native fixture line 316 timed out expecting empty after unchecking
+Unlimited with finite 250 remembered. That group is not passing and no clean runtime baseline
+was established. Live-server, visual, DPI, IME, Narrator and real OS-picker verification remain
+unperformed. Closing during unidentified upload creation may leave an upload for the server
+sweep; no create replay or guessed deletion. Checklist stays In progress, not Done.
+
+Evidence: `.codex-tmp/admin-backups-verification` in the task worktree; reusable output
+`D:/SiloPlayer-build/admin-backups-active`. Measured generated output 16.658 GiB under the
+owner-approved 50 GiB cap, with C/D free 169.91/461.815 GiB. No installed player/updater,
+installer, release publication, cleanup or production action occurred. See the
+[parity record](parity/admin-backups.md) and [contract plan](plans/2026-11-16-admin-backups.md).
+
+---
+
 # November 16 — Books reader/detail Beta handoff; local runtime held
 
 Books changes are integrated but uncommitted in the dedicated Books worktree

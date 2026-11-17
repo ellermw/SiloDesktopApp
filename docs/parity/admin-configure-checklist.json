@@ -210,7 +210,7 @@
             "Upload-source restore"
           ],
           "unknownOutcome": "Restore run unknown: never restart; re-read run state",
-          "status": "Remaining",
+          "status": "In progress",
           "official": {
             "entry": "web/src/pages/AdminBackupRestore.tsx",
             "pageFiles": [
@@ -246,11 +246,11 @@
               "POST /api/v2/admin/jobs/{id}/cancel"
             ]
           },
-          "statusReason": "Unstarted; owned by C10b after its page group prerequisites."
+          "statusReason": "Verified locally on Beta 542dec13 against official 92ee0518, main rechecked 94797c3e: focused 226/226, full 7852/7852, app/publish/host/source binding, Backups native 30 and foundation 36 PASS records. Review fixes and RED/GREEN evidence retained. Downloads neighbor fixture316 times out; visual/live-server/DPI/Narrator acceptance remains unverified. In progress for pipeline acceptance; see docs/parity/admin-backups.md."
         }
       ],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Verified locally on Beta 542dec13 against official 92ee0518, main rechecked 94797c3e: focused 226/226, full 7852/7852, app/publish/host/source binding, Backups native 30 and foundation 36 PASS records. Review fixes and RED/GREEN evidence retained. Downloads neighbor fixture316 times out; visual/live-server/DPI/Narrator acceptance remains unverified. In progress for pipeline acceptance; see docs/parity/admin-backups.md."
     },
     {
       "id": "signIn",
