@@ -53,6 +53,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     private readonly List<RequestMediaResult> _requestResults = [];
     private readonly List<Person> _peopleResults = [];
     private readonly SearchSelectionState _selection = new();
+    private readonly ImeCompositionState _imeComposition;
     private string _renderedQuery = "";
     private bool _hasMore;
     private bool _searchFailed;
@@ -88,6 +89,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _boxSets.PropertyChanged += (_, _) => Render();
         // TextBox consumes arrow navigation before ordinary routed handlers.
         SearchBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(SearchBox_KeyDown), true);
+        _imeComposition = ImeCompositionGuard.Attach(SearchBox);
         _scopeLoadTask = LoadScopeAsync();
         CornerRadius = new CornerRadius(12);
         SearchFooterHints.Children.Add(CreateKeyHint(["↑", "↓"], () => SiloPlayer.Core.Localization.AppStrings.Get("web.search.navigate")));
@@ -835,6 +837,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Official #4287: candidate Enter, arrows and Escape belong to the IME.
+        if (_imeComposition.ShouldIgnore(e)) return;
         switch (e.Key)
         {
             case VirtualKey.K when (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)

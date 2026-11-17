@@ -447,7 +447,17 @@ internal static class ConditionalEditorsNativeFixture
         {
             Section(dialog, "Tags & Genres"); await Task.Delay(60);
             var tags = Field<Dictionary<string, MetadataTagsInput>>(dialog, "_tagInputs")["genres"];
-            var input = Descendants<TextBox>(tags).Single(); input.Text = "Comedy, Drama"; await Task.Delay(60);
+            var input = Descendants<TextBox>(tags).Single();
+            // Official #4287: a comma inside an active IME composition is not a tag commit.
+            var composition = SiloPlayer.Helpers.ImeCompositionGuard.For(input);
+            Check(composition != null, "metadata tag entry has no IME composition tracker");
+            if (composition != null)
+            {
+                composition.Start(); input.Text = "kome,"; await Task.Delay(60);
+                Check(tags.Values.SequenceEqual(new[] { "Drama" }) && input.Text == "kome,", "IME composition text with a comma committed a tag mid-conversion");
+                composition.Reset(); input.Text = ""; await Task.Delay(30);
+            }
+            input.Text = "Comedy, Drama"; await Task.Delay(60);
             Check(tags.Values.SequenceEqual(new[] { "Drama", "Comedy" }), "comma tag entry loses input or duplicates an existing value");
             var remove = Descendants<Button>(tags).Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Remove Drama");
             Invoke(remove); await Task.Delay(60);

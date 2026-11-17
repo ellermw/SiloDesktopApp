@@ -21,6 +21,8 @@ public sealed partial class LoginPage : Page
     {
         ViewModel = App.Services.GetRequiredService<LoginViewModel>();
         this.InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not submit the sign-in.
+        ImeCompositionGuard.Attach(UsernameBox);
         AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); RefreshDeviceAddress(); });
         ViewModel.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(ViewModel.DeviceSession)) RefreshDeviceAddress(); };
         PasswordReveal.WrapInParent(PasswordBox, LoginPasswordGroup);
@@ -122,6 +124,8 @@ public sealed partial class LoginPage : Page
 
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // The password box has no composition events; only the username TextBox can compose.
+        if (sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter && ViewModel.LoginCommand.CanExecute(null))
         {
             // Sync password from PasswordBox since PasswordBox two-way binding needs explicit sync
