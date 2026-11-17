@@ -82,19 +82,20 @@ internal sealed class AdminTaskReadSlot
 {
     public bool Running { get; private set; }
     private bool _pending;
+    public bool Pending => _pending;
 
-    /// <summary>True when the caller should start a read now.</summary>
-    public bool Request(bool foreground)
+    /// <summary>True when the caller should start a read now. Inactive invalidations are retained without starting work.</summary>
+    public bool Request(bool foreground, bool active = true)
     {
-        if (!Running) { Running = true; return true; }
+        if (active && !Running) { Running = true; _pending = false; return true; }
         if (foreground) _pending = true;
         return false;
     }
 
-    /// <summary>True when one queued invalidation needs another read; otherwise the slot becomes idle.</summary>
-    public bool Complete()
+    /// <summary>Inactive owners retain a queued invalidation until reactivation instead of starting a trailing read.</summary>
+    public bool Complete(bool active = true)
     {
-        if (_pending) { _pending = false; return true; }
+        if (active && _pending) { _pending = false; return true; }
         Running = false;
         return false;
     }

@@ -136,10 +136,10 @@ public sealed partial class AdminScheduledTasksPage
     {
         var current = state.IsOpen && state.Owner?.IsCurrent == true;
         _listLoading.Visibility = current && state.Loading ? Visibility.Visible : Visibility.Collapsed;
-        var failed = current && !state.Loaded && state.Failure != null && !state.Loading;
+        var failed = current && state.Failure != null;
         _listAlert.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
         if (failed) AdminSettingsUi.UpdateLiveText(_listAlertText, AdminTasksText.Message("configure.native.tasks.listFailed") + " " + AdminTasksText.Failure(state.Failure));
-        if (_listRetry != null) _listRetry.IsEnabled = failed;
+        if (_listRetry != null) _listRetry.IsEnabled = failed && !state.Refreshing;
         RenderGroups(current ? state : AdminTasksState.Closed);
     }
 

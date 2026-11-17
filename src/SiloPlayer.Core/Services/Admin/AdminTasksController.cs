@@ -14,7 +14,8 @@ public sealed record AdminTasksState
     /// <summary>No list has been read yet and a read is running (official isLoading).</summary>
     public bool Loading { get; init; }
     public bool Loaded { get; init; }
-    /// <summary>The latest list read failed. A loaded list is kept; only an unread page shows the failure.</summary>
+    public bool Refreshing { get; init; }
+    /// <summary>The latest list read failed. A loaded list is kept alongside the retryable failure.</summary>
     public AdminFailureKind? Failure { get; init; }
     public IReadOnlyList<AdminTaskInfo> Tasks { get; init; } = [];
     public IReadOnlyList<AdminTaskGroup> Groups { get; init; } = [];
@@ -159,13 +160,15 @@ public sealed class AdminTasksController : IDisposable
             {
                 _now = _time.GetUtcNow();
                 StartTickLocked();
+                if (_listRead.Pending) RequestList(foreground: true, requireActive: true);
+                if (_metricsRead.Pending) RequestMetrics(foreground: true, requireActive: true);
             }
             PublishLocked();
         }
         Raise();
     }
 
-    /// <summary>Explicit retry after a failed first read.</summary>
+    /// <summary>Explicit retry after a failed list read, including a failed reconciliation.</summary>
     public Task RetryAsync()
     {
         RequestList(foreground: true);
@@ -212,11 +215,15 @@ public sealed class AdminTasksController : IDisposable
             notice = new(AdminTaskNoticeKind.OutcomeUnknown, AdminTasksText.Message("web.admin.tasks.hooks.tasks.outcomeUnknown"));
             reconcile = true;
         }
-        catch (Exception error) when (AdminFailures.Classify(error, action) is not (AdminFailureKind.Retired or AdminFailureKind.Cancelled) || action.IsCurrent)
+        catch (Exception error)
         {
-            notice = new(AdminTaskNoticeKind.Failed, AdminTasksText.Failure(AdminFailures.Classify(error, action), run, !run));
+            var kind = AdminFailures.Classify(error, action);
+            if (kind is not (AdminFailureKind.Retired or AdminFailureKind.Cancelled) || action.IsCurrent)
+            {
+                notice = new(AdminTaskNoticeKind.Failed, AdminTasksText.Failure(kind, run, !run));
+                reconcile = kind is AdminFailureKind.NotFound or AdminFailureKind.Conflict;
+            }
         }
-        catch (Exception) { }
         finally { action.Dispose(); }
 
         var hold = run ? HoldAsync(started, token) : Task.CompletedTask;
@@ -250,21 +257,24 @@ public sealed class AdminTasksController : IDisposable
 
     private void Invalidate(long generation, bool metrics)
     {
-        lock (_gate) if (generation != _generation || !_open) return;
-        RequestList(foreground: true);
-        if (metrics) RequestMetrics(foreground: true);
+        lock (_gate)
+        {
+            if (generation != _generation || !_open) return;
+            RequestList(foreground: true, requireActive: true);
+            if (metrics) RequestMetrics(foreground: true, requireActive: true);
+        }
     }
 
-    private void RequestList(bool foreground)
+    private void RequestList(bool foreground, bool requireActive = false)
     {
         MonitorAuthorityLease lease;
         CancellationToken token;
         long generation;
         lock (_gate)
         {
-            if (!_open || _lease is not { IsCurrent: true } current || _work == null || !_listRead.Request(foreground)) return;
+            if (!_open || _lease is not { IsCurrent: true } current || _work == null || !_listRead.Request(foreground, !requireActive || _active)) return;
             lease = current; token = _work.Token; generation = _generation;
-            if (!_loaded) { PublishLocked(); }
+            PublishLocked();
         }
         Raise();
         _ = ReadListAsync(lease, token, generation);
@@ -278,10 +288,11 @@ public sealed class AdminTasksController : IDisposable
             AdminFailureKind? failure = null;
             try { tasks = await _api.ListAsync(lease, token).ConfigureAwait(false); }
             catch (Exception error) { failure = AdminFailures.Classify(error, lease); }
-            bool again, metrics = false;
+            bool again, metrics = false, metricsRequireActive;
             lock (_gate)
             {
                 if (generation != _generation || !lease.IsCurrent) return;
+                metricsRequireActive = _loaded;
                 if (tasks != null)
                 {
                     _tasks = tasks; _loaded = true; _failure = null;
@@ -290,16 +301,16 @@ public sealed class AdminTasksController : IDisposable
                     metrics = listed && _metrics == null;
                 }
                 else if (failure is not AdminFailureKind.Retired) _failure = failure;
-                again = _listRead.Complete();
+                again = _listRead.Complete(_active);
                 PublishLocked();
             }
             Raise();
-            if (metrics) RequestMetrics(foreground: true);
+            if (metrics) RequestMetrics(foreground: true, requireActive: metricsRequireActive);
             if (!again) return;
         }
     }
 
-    private void RequestMetrics(bool foreground)
+    private void RequestMetrics(bool foreground, bool requireActive = false)
     {
         MonitorAuthorityLease lease;
         CancellationToken token;
@@ -308,7 +319,7 @@ public sealed class AdminTasksController : IDisposable
         {
             if (!_open || _lease is not { IsCurrent: true } current || _work == null) return;
             if (!_tasks.Any(task => task.Key == AdminTasksApi.MetricsTaskKey)) return;
-            if (!_metricsRead.Request(foreground)) return;
+            if (!_metricsRead.Request(foreground, !requireActive || _active)) return;
             lease = current; token = _work.Token; generation = _generation;
         }
         _ = ReadMetricsAsync(lease, token, generation);
@@ -328,7 +339,7 @@ public sealed class AdminTasksController : IDisposable
                 if (generation != _generation || !lease.IsCurrent) return;
                 if (metrics != null) _metrics = metrics;
                 else if (notFound) _metrics = null;
-                again = _metricsRead.Complete();
+                again = _metricsRead.Complete(_active);
                 PublishLocked();
             }
             Raise();
@@ -359,7 +370,7 @@ public sealed class AdminTasksController : IDisposable
             PublishLocked();
         }
         Raise();
-        RequestMetrics(foreground: false);
+        RequestMetrics(foreground: false, requireActive: true);
     }
 
 
@@ -396,6 +407,7 @@ public sealed class AdminTasksController : IDisposable
             IsOpen = _open,
             Loading = current && !_loaded && _listRead.Running,
             Loaded = current && _loaded,
+            Refreshing = current && _listRead.Running,
             Failure = current ? _failure : null,
             Tasks = current ? _tasks : [],
             Groups = current ? Group(_tasks) : [],

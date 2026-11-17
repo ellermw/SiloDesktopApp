@@ -161,6 +161,57 @@ public sealed class AdminTasksControllerTests
         await Until(() => fixture.Count(ListRead) == lists + 1 && fixture.Count(MetricsRead) == metrics + 1, "snapshot catch-up");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InactiveEventsAndSnapshotsCoalesceUntilReactivation(bool snapshot)
+    {
+        using var fixture = await OpenedAsync();
+        fixture.Controller.SetActive(false);
+        var (lists, metrics) = (fixture.Count(ListRead), fixture.Count(MetricsRead));
+        var revision = fixture.Controller.State.Revision;
+        for (var i = 0; i < 5; i++)
+        {
+            if (snapshot) fixture.Channel.Snapshot();
+            else fixture.Channel.Updated("""{"key":"refresh_metadata","state":"idle"}""");
+        }
+        await Task.Delay(40);
+        Assert.Equal(lists, fixture.Count(ListRead));
+        Assert.Equal(metrics, fixture.Count(MetricsRead));
+        Assert.Equal(revision, fixture.Controller.State.Revision);
+        var owner = fixture.Controller.State.Owner;
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Count(ListRead) == lists + 1 && fixture.Count(MetricsRead) == metrics + 1, "one catch-up per resource");
+        await Task.Delay(40);
+        Assert.Equal(lists + 1, fixture.Count(ListRead));
+        Assert.Equal(metrics + 1, fixture.Count(MetricsRead));
+        Assert.Same(owner, fixture.Controller.State.Owner);
+    }
+
+    [Fact]
+    public async Task DeactivationDefersAlreadyQueuedListAndMetricsTrailingReads()
+    {
+        using var fixture = await OpenedAsync();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes[ListRead] = async (_, ct) => { await release.Task.WaitAsync(ct); return AdminMonitorKit.Json(fixture.List); };
+        fixture.Routes[MetricsRead] = async (_, ct) => { await release.Task.WaitAsync(ct); return AdminMonitorKit.Json(AdminTasksApiTests.MetricsJson); };
+        var (lists, metrics) = (fixture.Count(ListRead), fixture.Count(MetricsRead));
+        fixture.Channel.Snapshot();
+        await Until(() => fixture.Count(ListRead) == lists + 1 && fixture.Count(MetricsRead) == metrics + 1, "reads started");
+        fixture.Channel.Snapshot();
+        fixture.Controller.SetActive(false);
+        release.SetResult();
+        await Until(() => !fixture.Controller.State.Refreshing, "list settled");
+        await Task.Delay(40);
+        Assert.Equal(lists + 1, fixture.Count(ListRead));
+        Assert.Equal(metrics + 1, fixture.Count(MetricsRead));
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Count(ListRead) == lists + 2 && fixture.Count(MetricsRead) == metrics + 2, "deferred trailing reads");
+        await Task.Delay(40);
+        Assert.Equal(lists + 2, fixture.Count(ListRead));
+        Assert.Equal(metrics + 2, fixture.Count(MetricsRead));
+    }
+
     [Fact]
     public async Task MetricsAndClockTickOnlyWhileActiveAndTheListIsNeverPolled()
     {
@@ -257,6 +308,50 @@ public sealed class AdminTasksControllerTests
         fixture.Routes["POST /api/v2/admin/tasks/cleanup/cancel"] = (_, _) => Fixture.Json(TaskJson("cleanup", state: "cancelling"));
         await fixture.Controller.StopAsync("cleanup", fixture.Controller.State.Owner);
         Assert.Equal("Cancellation requested on this server", fixture.Notices.Last().Message);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Conflict)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task StopRejectionReconcilesAfterAFailedTerminalRefresh(HttpStatusCode status)
+    {
+        using var fixture = new Fixture { List = "{\"items\":[" + TaskJson("cleanup", state: "running") + "]}" };
+        fixture.Controller.SetActive(true);
+        fixture.Controller.Open();
+        await Until(() => fixture.Controller.State.Loaded, "running task loaded");
+        fixture.Routes[ListRead] = (_, _) => Fixture.Json("{}", HttpStatusCode.ServiceUnavailable);
+        fixture.Channel.Updated("""{"key":"cleanup","state":"idle"}""");
+        await Until(() => fixture.Controller.State.Failure != null, "terminal refresh failed");
+        Assert.True(Assert.Single(fixture.Controller.State.Tasks).IsActive);
+        fixture.List = "{\"items\":[" + TaskJson("cleanup") + "]}";
+        fixture.Routes[ListRead] = (_, _) => Fixture.Json(fixture.List);
+        fixture.Routes["POST /api/v2/admin/tasks/cleanup/cancel"] = (_, _) => Fixture.Json("{}", status);
+        var lists = fixture.Count(ListRead);
+        await fixture.Controller.StopAsync("cleanup", fixture.Controller.State.Owner);
+        await Until(() => fixture.Count(ListRead) == lists + 1 && fixture.Controller.State.Failure == null, "rejection reconciled");
+        Assert.False(Assert.Single(fixture.Controller.State.Tasks).IsActive);
+        Assert.Equal(AdminTaskNoticeKind.Failed, Assert.Single(fixture.Notices).Kind);
+        Assert.Equal(1, fixture.Count("POST /api/v2/admin/tasks/cleanup/cancel"));
+    }
+
+    [Fact]
+    public async Task FailedConflictReconciliationCanBeRetriedWithoutReplayingStop()
+    {
+        using var fixture = await OpenedAsync();
+        fixture.Routes[ListRead] = (_, _) => Fixture.Json("{}", HttpStatusCode.ServiceUnavailable);
+        fixture.Routes["POST /api/v2/admin/tasks/cleanup/cancel"] = (_, _) => Fixture.Json("{}", HttpStatusCode.Conflict);
+        var lists = fixture.Count(ListRead);
+        await fixture.Controller.StopAsync("cleanup", fixture.Controller.State.Owner);
+        await Until(() => fixture.Count(ListRead) == lists + 1 && fixture.Controller.State.Failure != null, "reconciliation failed");
+        Assert.True(fixture.Controller.State.Loaded);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes[ListRead] = async (_, ct) => { await release.Task.WaitAsync(ct); return AdminMonitorKit.Json(fixture.List); };
+        await fixture.Controller.RetryAsync();
+        Assert.True(fixture.Controller.State.Refreshing);
+        Assert.NotNull(fixture.Controller.State.Failure);
+        release.SetResult();
+        await Until(() => !fixture.Controller.State.Refreshing && fixture.Controller.State.Failure == null, "read-only retry");
+        Assert.Equal(1, fixture.Count("POST /api/v2/admin/tasks/cleanup/cancel"));
     }
 
     [Fact]

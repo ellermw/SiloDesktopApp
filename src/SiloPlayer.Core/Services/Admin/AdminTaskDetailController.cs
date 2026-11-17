@@ -165,7 +165,13 @@ public sealed class AdminTaskDetailController : IDisposable
             if (_disposed || _active == active) return;
             _active = active;
             if (!active) StopTickLocked();
-            else if (_open && !_notFound) StartTickLocked();
+            else if (_open)
+            {
+                if (!_notFound) StartTickLocked();
+                if (_taskRead.Pending) _ = RequestTask(foreground: true, requireActive: true);
+                if (_historyRestartPending) _ = RequestHistory(restart: true, requireActive: true);
+                if (_metricsRead.Pending) RequestMetrics(foreground: true, requireActive: true);
+            }
             PublishLocked();
         }
         Raise();
@@ -419,21 +425,24 @@ public sealed class AdminTaskDetailController : IDisposable
 
     private void Invalidate(long generation, bool everything)
     {
-        lock (_gate) if (generation != _generation || !_open) return;
-        _ = RequestTask(foreground: true);
-        if (!everything) return;
-        _ = RequestHistory(restart: true);
-        RequestMetrics(foreground: true);
+        lock (_gate)
+        {
+            if (generation != _generation || !_open) return;
+            _ = RequestTask(foreground: true, requireActive: true);
+            if (!everything) return;
+            _ = RequestHistory(restart: true, requireActive: true);
+            RequestMetrics(foreground: true, requireActive: true);
+        }
     }
 
-    private Task RequestTask(bool foreground)
+    private Task RequestTask(bool foreground, bool requireActive = false)
     {
         MonitorAuthorityLease lease;
         CancellationToken token;
         long generation;
         lock (_gate)
         {
-            if (!_open || _lease is not { IsCurrent: true } current || _work == null || !AdminTasksApi.IsTaskKey(_key) || !_taskRead.Request(foreground))
+            if (!_open || _lease is not { IsCurrent: true } current || _work == null || !AdminTasksApi.IsTaskKey(_key) || !_taskRead.Request(foreground, !requireActive || _active))
                 return Task.CompletedTask;
             lease = current; token = _work.Token; generation = _generation;
             PublishLocked();
@@ -460,7 +469,7 @@ public sealed class AdminTaskDetailController : IDisposable
                     _task = null; _notFound = true; _failure = null; ClearEditorLocked();
                 }
                 else if (failure is not AdminFailureKind.Retired && _task == null) _failure = failure;
-                again = _taskRead.Complete();
+                again = _taskRead.Complete(_active);
                 PublishLocked();
             }
             Raise();
@@ -468,7 +477,7 @@ public sealed class AdminTaskDetailController : IDisposable
         }
     }
 
-    private Task RequestHistory(bool restart)
+    private Task RequestHistory(bool restart, bool requireActive = false)
     {
         MonitorAuthorityLease lease;
         CancellationToken token;
@@ -477,6 +486,11 @@ public sealed class AdminTaskDetailController : IDisposable
         lock (_gate)
         {
             if (!_open || _lease is not { IsCurrent: true } current || _work == null || !AdminTasksApi.IsTaskKey(_key)) return Task.CompletedTask;
+            if (requireActive && !_active)
+            {
+                if (restart) _historyRestartPending = true;
+                return Task.CompletedTask;
+            }
             if (_historyRunning)
             {
                 if (restart) _historyRestartPending = true;
@@ -484,6 +498,7 @@ public sealed class AdminTaskDetailController : IDisposable
             }
             if (!restart && (!_historyHasMore || _cursor == null)) return Task.CompletedTask;
             _historyRunning = true;
+            if (restart) _historyRestartPending = false;
             cursor = restart ? null : _cursor;
             lease = current; token = _work.Token; generation = _generation;
             _historyTask = ReadHistoryAsync(lease, token, generation, cursor);
@@ -519,7 +534,7 @@ public sealed class AdminTaskDetailController : IDisposable
                     else { _history.AddRange(page.Items); _cursor = page.NextCursor; _historyHasMore = page.HasMore; _historyFailed = false; }
                 }
                 else if (failure is not AdminFailureKind.Retired) _historyFailed = true;
-                if (_historyRestartPending) { _historyRestartPending = false; cursor = null; }
+                if (_historyRestartPending && _active) { _historyRestartPending = false; cursor = null; }
                 else { _historyRunning = false; PublishLocked(); break; }
                 PublishLocked();
             }
@@ -528,14 +543,14 @@ public sealed class AdminTaskDetailController : IDisposable
         Raise();
     }
 
-    private void RequestMetrics(bool foreground)
+    private void RequestMetrics(bool foreground, bool requireActive = false)
     {
         MonitorAuthorityLease lease;
         CancellationToken token;
         long generation;
         lock (_gate)
         {
-            if (_key != AdminTasksApi.MetricsTaskKey || !_open || _lease is not { IsCurrent: true } current || _work == null || _notFound || !_metricsRead.Request(foreground)) return;
+            if (_key != AdminTasksApi.MetricsTaskKey || !_open || _lease is not { IsCurrent: true } current || _work == null || _notFound || !_metricsRead.Request(foreground, !requireActive || _active)) return;
             lease = current; token = _work.Token; generation = _generation;
         }
         _ = ReadMetricsAsync(lease, token, generation);
@@ -555,7 +570,7 @@ public sealed class AdminTaskDetailController : IDisposable
                 if (generation != _generation || !lease.IsCurrent) return;
                 if (metrics != null) _metrics = metrics;
                 else if (notFound) _metrics = null;
-                again = _metricsRead.Complete();
+                again = _metricsRead.Complete(_active);
                 PublishLocked();
             }
             Raise();
@@ -575,7 +590,7 @@ public sealed class AdminTaskDetailController : IDisposable
     private void OnTick(long generation)
     {
         lock (_gate) if (generation != _generation || !_open || !_active) return;
-        RequestMetrics(foreground: false);
+        RequestMetrics(foreground: false, requireActive: true);
     }
 
 

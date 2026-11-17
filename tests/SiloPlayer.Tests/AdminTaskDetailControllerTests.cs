@@ -228,6 +228,97 @@ public sealed class AdminTaskDetailControllerTests
         Assert.Equal(reads + 1, fixture.Count("GET " + fixture.Path + "/metrics"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InactiveEventsAndSnapshotsCatchUpOnceWithoutReplacingTheDraft(bool snapshot)
+    {
+        using var fixture = await OpenedAsync("refresh_metadata");
+        await Until(() => fixture.Controller.State.Metrics != null, "metrics");
+        await fixture.Controller.BeginEditAsync(fixture.Controller.State.Owner);
+        fixture.Controller.UpdateDraft(draft => draft.Add());
+        var draft = fixture.Controller.State.Draft;
+        var owner = fixture.Controller.State.Owner;
+        fixture.Controller.SetActive(false);
+        var reads = fixture.Kit.Http.Requests.Count;
+        var tasks = fixture.Kit.Http.Requests.Count(entry => entry == "GET " + fixture.Path);
+        var histories = fixture.Count("GET " + fixture.Path + "/history");
+        var metrics = fixture.Count("GET " + fixture.Path + "/metrics");
+        var revision = fixture.Controller.State.Revision;
+        for (var i = 0; i < 5; i++)
+        {
+            if (snapshot) fixture.Channel.Snapshot();
+            else fixture.Channel.Updated("""{"key":"refresh_metadata","state":"idle"}""");
+        }
+        await Task.Delay(40);
+        Assert.Equal(reads, fixture.Kit.Http.Requests.Count);
+        Assert.Equal(revision, fixture.Controller.State.Revision);
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Kit.Http.Requests.Count == reads + 3 && !fixture.Controller.State.HistoryLoading, "one catch-up per resource");
+        await Task.Delay(40);
+        Assert.Equal(tasks + 1, fixture.Kit.Http.Requests.Count(entry => entry == "GET " + fixture.Path));
+        Assert.Equal(histories + 1, fixture.Count("GET " + fixture.Path + "/history"));
+        Assert.Equal(metrics + 1, fixture.Count("GET " + fixture.Path + "/metrics"));
+        Assert.Same(owner, fixture.Controller.State.Owner);
+        Assert.Same(draft, fixture.Controller.State.Draft);
+        Assert.True(fixture.Controller.State.Dirty);
+        Assert.Equal(1, fixture.ScheduleReads);
+    }
+
+    [Fact]
+    public async Task DeactivationDefersQueuedTaskHistoryAndMetricsTrailingReads()
+    {
+        using var fixture = await OpenedAsync("refresh_metadata");
+        await Until(() => fixture.Controller.State.Metrics != null, "metrics");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes["GET " + fixture.Path] = async (_, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(AdminTasksControllerTests.TaskJson(fixture.Key));
+        };
+        fixture.Routes["GET " + fixture.Path + "/history"] = async (_, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(AdminTasksApiTests.HistoryJson.Replace("\"fixture\"", "\"refresh_metadata\""));
+        };
+        fixture.Routes["GET " + fixture.Path + "/metrics"] = async (_, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(AdminTasksApiTests.MetricsJson);
+        };
+        var reads = fixture.Kit.Http.Requests.Count;
+        fixture.Channel.Snapshot();
+        await Until(() => fixture.Kit.Http.Requests.Count == reads + 3, "reads started");
+        fixture.Channel.Snapshot();
+        fixture.Controller.SetActive(false);
+        release.SetResult();
+        await Until(() => !fixture.Controller.State.HistoryLoading, "history settled");
+        await Task.Delay(40);
+        Assert.Equal(reads + 3, fixture.Kit.Http.Requests.Count);
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Kit.Http.Requests.Count == reads + 6 && !fixture.Controller.State.HistoryLoading, "deferred trailing reads");
+        await Task.Delay(40);
+        Assert.Equal(reads + 6, fixture.Kit.Http.Requests.Count);
+    }
+
+    [Fact]
+    public async Task InactiveProgressEventsCatchUpOnlyTheMatchingTask()
+    {
+        using var fixture = await OpenedAsync("refresh_metadata");
+        await Until(() => fixture.Controller.State.Metrics != null, "metrics");
+        fixture.Controller.SetActive(false);
+        var reads = fixture.Kit.Http.Requests.Count;
+        fixture.Channel.Updated("""{"key":"other","state":"idle"}""");
+        fixture.Controller.SetActive(true);
+        Assert.Equal(reads, fixture.Kit.Http.Requests.Count);
+        fixture.Controller.SetActive(false);
+        for (var i = 0; i < 5; i++) fixture.Channel.Updated("""{"key":"refresh_metadata","state":"running"}""");
+        Assert.Equal(reads, fixture.Kit.Http.Requests.Count);
+        fixture.Controller.SetActive(true);
+        await Until(() => fixture.Kit.Http.Requests.Count == reads + 1, "task-only catch-up");
+        Assert.Equal("GET " + fixture.Path, fixture.Kit.Http.Requests.Last());
+    }
+
     [Fact]
     public async Task EditingCapturesTheStrongValidatorAndDraft()
     {

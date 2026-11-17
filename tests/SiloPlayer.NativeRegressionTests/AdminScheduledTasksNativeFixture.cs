@@ -67,6 +67,7 @@ internal static class AdminScheduledTasksNativeFixture
         internal readonly Dictionary<string, string> States = new(StringComparer.Ordinal) { ["cleanup_activity_log"] = "idle", ["scan_libraries"] = "idle" };
         internal int ScheduleRevision = 1;
         internal bool ConflictNext;
+        internal bool FailListReads;
         internal static readonly string Past = DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O");
         internal static readonly string Future = DateTimeOffset.UtcNow.AddMinutes(150).ToString("O");
 
@@ -88,6 +89,7 @@ internal static class AdminScheduledTasksNativeFixture
             var path = request.RequestUri!.AbsolutePath;
             Requests.Enqueue(request.Method + " " + request.RequestUri.PathAndQuery);
             const string prefix = "/api/v2/admin/tasks";
+            if (path == prefix && FailListReads) return Json("{}", HttpStatusCode.ServiceUnavailable);
             if (path == prefix)
                 return Json("{\"items\":[" + string.Join(",", new[] { "scan_libraries", "refresh_metadata", "cleanup_activity_log", "repair_provider_id_integrity" }.Select(Detail)) + "]}");
             if (!path.StartsWith(prefix + "/", StringComparison.Ordinal)) return Json(path switch
@@ -222,6 +224,15 @@ internal static class AdminScheduledTasksNativeFixture
             server.States["cleanup_activity_log"] = "idle";
             channel.Updated("cleanup_activity_log", "idle");
             await Until(() => AutomationProperties.GetName(Button(page, "TaskAction_cleanup_activity_log")) == "Run Now", "idle again");
+
+            server.FailListReads = true;
+            channel.Updated("cleanup_activity_log", "idle");
+            await Until(() => page.ListController!.State.Failure != null && Button(page, "TasksRetry").IsEnabled && IsLaidOut(Button(page, "TasksRetry")), "loaded-list Retry");
+            Check(page.ListController!.State.Loaded, "a refresh failure retains the loaded list and exposes Retry");
+            server.FailListReads = false;
+            await InvokeAsync(Button(page, "TasksRetry"));
+            await Until(() => page.ListController!.State.Failure == null && !IsLaidOut(Button(page, "TasksRetry")), "list recovered");
+            Check(server.Count("POST /api/v2/admin/tasks/cleanup_activity_log/cancel") == 1, "Retry refreshes the list without replaying Stop");
 
             page.SetHostActivity(visible: true, focused: false);
             Check(!page.ListController!.IsTicking, "an inactive window stops the 30 s tick");
