@@ -102,11 +102,11 @@
         "Meilisearch URL, API key, Check connection",
         "Multi-word behaviour, semantic toggle, index prefix, query timeout, batch size, semantic share",
         "Search status panel (2s poll only while rebuild_required and page visible)",
-        "Reindex action"
+        "Rebuild index and Automatic maintenance task links (disabled until Scheduled Tasks is registered)"
       ],
       "children": [],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Verified pre-submission snapshot on deliberate Beta bdd033c1; proof 1, focused 187 and full 7537 units passed; final exact-payload native R6 passed Search and seven shared Admin groups. Official main 5b3dcaa2 retains reviewed Search contracts. Provider diagnostics are safe-message allowlisted, forced status refreshes coalesce, and task controls only navigate (disabled with help until Scheduled Tasks is registered). No screenshots/live Meilisearch/every-DPI/full visual claim; health dot remains separate. Separate qualifying Beta PR submission follows this verified snapshot."
     },
     {
       "id": "network-access",
