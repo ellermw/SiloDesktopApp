@@ -7,44 +7,144 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 using SiloPlayer.Services;
+using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
 internal static class ReaderOpeningFixture
 {
     internal static async Task RunAsync(StackPanel parent)
     {
+        var previousReaderData = Environment.GetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY");
+        var previousBrowserData = Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER");
+        var readerDataDirectory = Path.Combine(Program.ResultDirectory, "reader-webview");
+        EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs> initializationFailure = (_, args) =>
+        {
+            if (args.Exception is UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+                Program.Log($"READER NATIVE EXCEPTION: {args.Exception.GetType().Name} HRESULT={args.Exception.HResult:X8}");
+        };
         using var wire = new ReaderWire();
         using var http = new HttpClient(wire);
         var client = new SiloApiClient(http);
         client.SetBaseUrl("https://reader-opening.invalid");
         client.SetProfile("reader-opening");
+        var navigation = new NavigationService();
+        var catalog = new CatalogApi(client);
         using var services = new ServiceCollection().AddSingleton(new EbooksApi(client))
-            .AddSingleton(new CatalogApi(client)).AddSingleton(new ToastService()).BuildServiceProvider();
+            .AddSingleton(catalog).AddSingleton(client).AddSingleton(http).AddSingleton(navigation)
+            .AddSingleton(new SettingsApi(client)).AddSingleton(new ToastService())
+            .AddSingleton(new ItemDetailPrefetchCache((id, ct) => catalog.GetItemDetailAsync(id, ct)))
+            .AddTransient<ItemDetailViewModel>().BuildServiceProvider();
         var serviceField = typeof(App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previousServices = serviceField.GetValue(null);
-        serviceField.SetValue(null, services);
+        serviceField.SetValue(null, new FixtureServices(services, (IServiceProvider)previousServices!));
         var frame = new Frame { Width = 1100, Height = 740 };
+        navigation.Frame = frame;
         parent.Children.Add(frame);
         EbookReaderPage? page = null;
         try
         {
-            frame.Navigate(typeof(EbookReaderPage), new EbookReaderNavigation("fixture-book", 42));
+            Environment.SetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY", readerDataDirectory);
+            Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", null);
+            AppDomain.CurrentDomain.FirstChanceException += initializationFailure;
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_REQUIRE_USER_DATA_DIRECTORY") == "1")
+            {
+                try
+                {
+                    await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateWithOptionsAsync(
+                        null, null, new Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions());
+                    throw new InvalidOperationException("Protected-install fixture unexpectedly permits the default browser data directory.");
+                }
+                catch (Exception exception) when (exception.HResult == unchecked((int)0x80070005))
+                {
+                    Program.Log("PASS: protected install denies default WebView2 user-data creation with E_ACCESSDENIED (80070005).");
+                }
+            }
+            var entry = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_ENTRY")
+                ?? (wire.Format is "cbz" or "cbr" ? "comic-chapter" : "ebook");
+            if (entry is not ("direct" or "ebook" or "comic" or "comic-chapter"))
+                throw new InvalidOperationException("Unknown fixture reader entry: " + entry);
+            if (entry == "direct") frame.Navigate(typeof(EbookReaderPage), new EbookReaderNavigation("fixture-book", 42));
+            else
+            {
+                wire.CatalogReady.SetResult();
+                navigation.Navigate<ItemDetailPage>(new ItemDetailNavigationArgs(entry.StartsWith("comic", StringComparison.Ordinal) ? "fixture-series" : "fixture-book", 7));
+                var detail = (ItemDetailPage)frame.Content;
+                var detailDeadline = DateTime.UtcNow.AddSeconds(10);
+                while (DateTime.UtcNow < detailDeadline && (detail.ViewModel.Item == null ||
+                       ((TextBlock)detail.FindName("PlayButtonText")).Text == "")) await Task.Delay(50);
+                detail.UpdateLayout();
+                await Task.Delay(200);
+                var button = entry == "comic-chapter"
+                    ? Descendants((StackPanel)detail.FindName("MangaChaptersPanel")).OfType<Button>().Single(candidate => Equals(candidate.Tag, "fixture-book"))
+                    : (Button)detail.FindName("PrimaryPlayButton");
+                if (button.Visibility != Visibility.Visible || !button.IsEnabled) throw new InvalidOperationException("Detail Read is unavailable: " + entry);
+                ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                var handoffDeadline = DateTime.UtcNow.AddSeconds(3);
+                while (DateTime.UtcNow < handoffDeadline && frame.Content is not EbookReaderPage) await Task.Delay(25);
+                if (frame.Content is not EbookReaderPage) throw new InvalidOperationException("Detail Read did not navigate: " + entry);
+                Program.Log("PASS: " + entry + " actual detail Read button handed off to EbookReaderPage.");
+            }
             page = (EbookReaderPage)frame.Content;
+            if (entry != "direct" && (int?)typeof(EbookReaderPage).GetField("_libraryId", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page) != 7)
+                throw new InvalidOperationException("Detail Read lost its library scope.");
+            var diagnosticWeb = (WebView2)page.FindName("ReaderWebView");
+            diagnosticWeb.CoreWebView2Initialized += async (_, initialization) =>
+            {
+                var core = diagnosticWeb.CoreWebView2;
+                if (core == null)
+                {
+                    Program.Log($"READER INITIALIZATION FAILED: {initialization.Exception?.GetType().Name} HRESULT={initialization.Exception?.HResult:X8}");
+                    return;
+                }
+                foreach (var name in new[] { "Runtime.exceptionThrown", "Log.entryAdded", "Network.loadingFailed" })
+                    core.GetDevToolsProtocolEventReceiver(name).DevToolsProtocolEventReceived += (_, args) =>
+                        Program.Log("READER DIAGNOSTIC " + name + ": " + args.ParameterObjectAsJson);
+                core.GetDevToolsProtocolEventReceiver("Network.responseReceived").DevToolsProtocolEventReceived += (_, args) =>
+                {
+                    using var message = JsonDocument.Parse(args.ParameterObjectAsJson);
+                    var response = message.RootElement.GetProperty("response");
+                    if (Uri.TryCreate(response.GetProperty("url").GetString(), UriKind.Absolute, out var uri)
+                        && uri.Host is "silo-reader.local" or "silo-book.local")
+                        Program.Log($"READER RESOURCE {uri.Host}{uri.AbsolutePath}: status={response.GetProperty("status")} mime={response.GetProperty("mimeType")}");
+                };
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_BLOCK_MODULE") == "1")
+                    core.WebResourceRequested += (_, args) =>
+                    {
+                        if (args.Request.Uri == "https://silo-reader.local/reader.mjs")
+                            args.Response = core.Environment.CreateWebResourceResponse(new Windows.Storage.Streams.InMemoryRandomAccessStream(),
+                                503, "Fixture startup block", "Content-Type: text/javascript");
+                    };
+                await core.CallDevToolsProtocolMethodAsync("Runtime.enable", "{}");
+                await core.CallDevToolsProtocolMethodAsync("Log.enable", "{}");
+                await core.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
+            };
             var directory = Path.Combine(Program.ResultDirectory, "reader-settings");
             Directory.CreateDirectory(directory);
             typeof(EbookReaderPage).GetField("_readerSettingsDirectory", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, directory);
-            wire.CatalogReady.SetResult();
+            wire.CatalogReady.TrySetResult();
             var deadline = DateTime.UtcNow.AddSeconds(15);
             var readyField = typeof(EbookReaderPage).GetField("_rendererReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            while (DateTime.UtcNow < deadline && !(bool)readyField.GetValue(page)!)
+            while (DateTime.UtcNow < deadline && !(bool)readyField.GetValue(page)!
+                   && !((TextBlock)page.FindName("LoadingText")).Text.Contains("Unable to open ebook", StringComparison.Ordinal))
                 await Task.Delay(100);
             var loading = (TextBlock)page.FindName("LoadingText");
             if (!(bool)readyField.GetValue(page)!)
+            {
+                Program.Log($"READER STARTUP STATE: browserInitialized={diagnosticWeb.CoreWebView2 != null}, downloaded={typeof(EbookReaderPage).GetField("_sourceBytes", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page) != null}");
                 throw new InvalidOperationException("Read navigation did not render the fixture " + wire.Format + ". Loading state: " + loading?.Text);
+            }
             var web = (WebView2)page.FindName("ReaderWebView");
+            if (!string.Equals(Path.GetFullPath(web.CoreWebView2.Environment.UserDataFolder), Path.GetFullPath(readerDataDirectory), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Reader did not use its explicit writable user-data directory.");
+            Program.Log("PASS: reader explicitly uses writable per-user data outside the executable directory without a WebView2 SDK environment override.");
             var result = await web.ExecuteScriptAsync("JSON.stringify({ready:!!window.siloReader?.snapshot(),text:window.siloReader?.text()})");
             if (wire.Format is "cbz" or "cbr")
             {
@@ -68,7 +168,7 @@ internal static class ReaderOpeningFixture
             if ((bool)readyField.GetValue(page)!) throw new InvalidOperationException("Retired reader remained ready after profile replacement.");
             await (Task)typeof(EbookReaderPage).GetMethod("SaveProgressAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
             if (wire.ProgressSaves != savesBeforeRetirement) throw new InvalidOperationException("Retired reader saved into its replacement profile.");
-            Program.Log("PASS: reader-opening " + wire.Format + " actual navigation, v2 download, materialization, packaged rendering, script sandbox, progress and profile retirement.");
+            Program.Log("PASS: reader-opening " + wire.Format + " entry=" + entry + " actual navigation, v2 download, materialization, packaged rendering, script sandbox, progress and profile retirement.");
         }
         finally
         {
@@ -80,8 +180,30 @@ internal static class ReaderOpeningFixture
                 ((WebView2)page.FindName("ReaderWebView")).Close();
             }
             parent.Children.Remove(frame);
+            frame.BackStack.Clear();
+            frame.ForwardStack.Clear();
+            frame.Content = null;
+            await Task.Delay(150);
             serviceField.SetValue(null, previousServices);
+            AppDomain.CurrentDomain.FirstChanceException -= initializationFailure;
+            Environment.SetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY", previousReaderData);
+            Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", previousBrowserData);
         }
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            yield return child;
+            foreach (var descendant in Descendants(child)) yield return descendant;
+        }
+    }
+
+    private sealed class FixtureServices(IServiceProvider local, IServiceProvider original) : IServiceProvider
+    {
+        public object? GetService(Type type) => local.GetService(type) ?? original.GetService(type);
     }
 
     private static async Task AssertRuntimeResilienceAsync(EbookReaderPage page, WebView2 web,
@@ -125,6 +247,7 @@ internal static class ReaderOpeningFixture
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/settings/values/effective") return Json("""{"items":[]}""");
             if (request.Headers.GetValues("X-Profile-Id").Single() != "reader-opening")
                 throw new InvalidOperationException("Reader sent a request under the replacement profile.");
             if (path.StartsWith("/api/v2/catalog/items/", StringComparison.Ordinal))
