@@ -23,6 +23,20 @@ public sealed class AdminStorageRulesTests
         new("s3", reachable, true, reachable, privateConfigured, reachable, true, null, false, null, null, 0);
 
     [Fact]
+    public void TransitionValuesExcludeAllEnvironmentManagedKeysIncludingReviewValues()
+    {
+        var draft = new Draft();
+        draft.Staged["s3.public_bucket"] = "stale-bucket";
+        draft.Staged["s3.private_secret_key"] = "stale-secret";
+        draft.Staged["s3.public_region"] = "eu";
+        var s3 = R.TransitionValues(draft, LockedLocal, "s3", "/reviewed",
+            [R.Backend, "s3.public_bucket", "s3.private_secret_key"]);
+        Assert.Equal(new[] { "s3.public_region" }, s3.Keys);
+        var local = R.TransitionValues(draft, LockedLocal, "local", "/reviewed", [R.LocalPath, "s3.private_secret_key"]);
+        Assert.Equal(new[] { R.Backend }, local.Keys);
+    }
+
+    [Fact]
     public void ScopeIsExactlyTheOfficialStorageKeysWithFiveWriteOnlyCredentials()
     {
         Assert.Equal(22, R.Keys.Count);

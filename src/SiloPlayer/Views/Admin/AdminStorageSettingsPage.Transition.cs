@@ -318,7 +318,7 @@ public sealed partial class AdminStorageSettingsPage
         try
         {
             if (_reviewLocalPath.Text != review.LocalPath) _reviewLocalPath.Text = review.LocalPath;
-            _reviewLocalPath.IsEnabled = !state.Queuing;
+            _reviewLocalPath.IsEnabled = !state.Queuing && !state.ManagedByEnv.Contains(R.LocalPath);
             var rows = R.PolicyRows(plan.PrivateOnly, plan.PrivateLocationChanging);
             for (var index = 0; index < rows.Count; index++)
             {

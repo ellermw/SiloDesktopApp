@@ -179,6 +179,21 @@ public sealed class AdminStorageApiTests
         Assert.Empty(h.Requests);
     }
 
+    [Theory]
+    [InlineData("public")]
+    [InlineData("private")]
+    public async Task S3ConnectionChecksRedactOverlappingCredentialsLongestFirst(string scope)
+    {
+        using var h = new Harness();
+        h.Reply("""{"success":false,"message":"Denied for minio-long-password / minio"}""");
+        var settings = new AdminServerSettingsApi(h.Kit.Client);
+        var access = $"s3.{scope}_access_key";
+        var secret = $"s3.{scope}_secret_key";
+        var result = await settings.CheckConnectionAsync(h.Lease, "s3_" + scope,
+            new Dictionary<string, string> { [access] = "minio", [secret] = "minio-long-password" }, [access, secret]);
+        Assert.Equal("Denied for <redacted> / <redacted>", result.Message);
+    }
+
     [Fact]
     public async Task S3ConnectionChecksUseTheirKindAndNeverEchoSubmittedCredentials()
     {

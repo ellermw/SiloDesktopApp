@@ -200,8 +200,10 @@ public static partial class AdminStorageRules
     /// <summary>
     /// The exact transition request values (official <c>handleStorageTransition</c>). Leaving S3 clears the private
     /// bucket on the server, so a local target sends staged private keys only when the source is local.
+    /// Environment-owned keys are excluded even when the value comes from the review rather than a dirty field.
     /// </summary>
-    public static IReadOnlyDictionary<string, string> TransitionValues(IAdminStorageDraft draft, AdminArtworkStorageStatus status, string targetBackend, string localPath)
+    public static IReadOnlyDictionary<string, string> TransitionValues(IAdminStorageDraft draft, AdminArtworkStorageStatus status, string targetBackend, string localPath,
+        IEnumerable<string>? managedByEnv = null)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal) { [Backend] = targetBackend };
         if (targetBackend == "local")
@@ -211,6 +213,7 @@ public static partial class AdminStorageRules
                 foreach (var key in PrivateS3Keys.Where(draft.IsDirty)) values[key] = draft.Get(key);
         }
         else foreach (var key in PublicS3Keys.Concat(PrivateS3Keys).Where(draft.IsDirty)) values[key] = draft.Get(key);
+        foreach (var key in managedByEnv ?? []) values.Remove(key);
         return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(values);
     }
 

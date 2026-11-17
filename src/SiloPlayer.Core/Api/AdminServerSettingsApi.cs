@@ -122,9 +122,9 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
                 message = message.Replace(component, "<redacted>", StringComparison.Ordinal);
         }
         // S3 credentials are write-only: a submitted access or secret key is never shown back.
-        foreach (var key in ConnectionCheckSecrets)
-            if (values.TryGetValue(key, out var credential) && credential.Length > 0)
-                message = message.Replace(credential, "<redacted>", StringComparison.Ordinal);
+        foreach (var credential in ConnectionCheckSecrets.Select(key => values.GetValueOrDefault(key, ""))
+            .Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
+            message = message.Replace(credential, "<redacted>", StringComparison.Ordinal);
         if (message.Length > 500) message = message[..500] + "…";
         return new(response.Body.Success.Value, message);
     }
