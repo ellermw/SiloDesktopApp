@@ -51,7 +51,7 @@ internal static class AdminStorageSettingsNativeFixture
         {
             ["artwork.storage_backend"] = "", ["artwork.local_path"] = "/data/art", ["metadata.cache_images"] = "true", ["s3.public_url_auth"] = "",
         };
-        internal bool StatusKnown = true, RecoveryPending, MissingStatus, RejectQueue;
+        internal bool StatusKnown = true, RecoveryPending, MissingStatus, RejectQueue, AmbiguousQueue, FailJobs;
         internal string? JobState;
         internal TaskCompletionSource? QueueGate, StatusGate;
         internal int Version = 1;
@@ -89,11 +89,13 @@ internal static class AdminStorageSettingsNativeFixture
                 case "GET /api/v2/admin/storage-transitions/source-health":
                     return Json(new { current_backend = "local", reachable = true, recovery_pending = RecoveryPending, recovery_state = RecoveryPending ? "running" : null, recovery_progress_percent = 40 });
                 case "GET /api/v2/admin/jobs":
+                    if (FailJobs) return Json(new { }, HttpStatusCode.ServiceUnavailable);
                     return Json(new { items = JobState == null ? Array.Empty<object>() : [Job()] });
                 case "POST /api/v2/admin/storage-transitions":
                     if (QueueGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
                     if (RejectQueue) return Json(new { status = 422, code = "validation_failed" }, HttpStatusCode.UnprocessableEntity);
                     JobState = "queued";
+                    if (AmbiguousQueue) return Json(new { }, HttpStatusCode.BadGateway);
                     return Json(new { job = Job(), preflight = new { current_backend = "local", target_backend = "s3" } }, HttpStatusCode.Accepted);
                 case "POST /api/v2/admin/jobs/job-1/cancel":
                     JobState = "canceling";
@@ -410,6 +412,34 @@ internal static class AdminStorageSettingsNativeFixture
                 await Until(() => controller.State.StatusKnown && !controller.State.StatusLoading, "invalidation status restored");
                 Check(page.ReviewDialog == null, "command completion does not reopen the invalidated review");
             }
+
+            // An accepted command with a lost acknowledgement and failed discovery still offers Refresh.
+            controller.Set(AdminStorageRules.LocalPath, "/mnt/ambiguous-art");
+            await controller.SaveAsync();
+            await Until(() => page.ReviewDialog is { IsLoaded: true }, "ambiguous review");
+            var ambiguousClosed = Closed(page.ReviewDialog!);
+            controller.SetReviewPolicy("start_fresh");
+            server.AmbiguousQueue = server.FailJobs = true;
+            var ambiguousWrites = server.Count("POST /api/v2/admin/storage-transitions");
+            var discoveryReads = server.Count("GET /api/v2/admin/jobs");
+            await controller.QueueTransitionAsync();
+            await ambiguousClosed.WaitAsync(TimeSpan.FromSeconds(6));
+            await Until(() => server.Count("GET /api/v2/admin/jobs") > discoveryReads &&
+                Field<FrameworkElement>(page, "_unknownAlert").Visibility == Visibility.Visible, "ambiguous discovery failed");
+            Check(controller.State.LatestTransition == null && Field<FrameworkElement>(page, "_activePanel").Visibility == Visibility.Collapsed &&
+                Button(page, "StorageCommandUnknownRefresh").IsEnabled, "unknown command keeps a visible Refresh action without an active job");
+            Check(!Text(page, "StorageCommandUnknownText").Text.Contains("was refreshed", StringComparison.Ordinal), "unknown notice does not claim discovery succeeded");
+            server.FailJobs = server.AmbiguousQueue = false;
+            server.JobState = "succeeded";
+            server.Values[AdminStorageRules.LocalPath] = "/mnt/ambiguous-art";
+            Invoke(Button(page, "StorageCommandUnknownRefresh"));
+            await Until(() => controller.State.GetPersisted(AdminStorageRules.LocalPath) == "/mnt/ambiguous-art" &&
+                !controller.State.Loading && !controller.State.Reconciling, "explicit Refresh discovers commitment");
+            Check(server.Count("POST /api/v2/admin/storage-transitions") == ambiguousWrites + 1, "explicit discovery never resends the ambiguous command");
+            server.JobState = null;
+            controller.RefreshTransitions();
+            await Until(() => controller.State.LatestTransition == null, "ambiguous job cleared");
+            await controller.ReloadAsync(preserveDraft: false);
 
             Input(page, "Storage_artwork.local_path").Text = "/mnt/retiring-art";
             await Until(() => controller.State.IsDirty("artwork.local_path"), "retirement draft");

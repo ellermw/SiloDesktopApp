@@ -53,6 +53,7 @@ public sealed partial class AdminStorageSettingsPage : Page, IAdminGutterScrollP
     private readonly Button _retryStatus = U.Action(T("web.admin.settings.storage.retryStatus"), "StorageRetryStatus");
     private readonly Border _unknownAlert;
     private readonly TextBlock _unknownText = U.Text("", 13);
+    private readonly Button _unknownRefresh = U.Action(T("web.admin.settings.storage.active.refresh"), "StorageCommandUnknownRefresh");
     private readonly AdminSettingsGroup _storageGroup = new(T("web.admin.settings.storage.group"));
     private readonly ComboBox _backend;
     private readonly TextBox _localPath;
@@ -120,7 +121,9 @@ public sealed partial class AdminStorageSettingsPage : Page, IAdminGutterScrollP
         _retryStatus.Click += (_, _) => _controller?.RetryStatus();
         _fields.Children.Add(_lockAlert);
         AutomationProperties.SetAutomationId(_unknownText, "StorageCommandUnknownText");
-        _unknownAlert = Card(_unknownText, null, AdminMonitorUi.Amber500, .25, .05, "alert");
+        // Ambiguous commands retain an explicit discovery action even when no active job is known.
+        _unknownAlert = Card(_unknownText, _unknownRefresh, AdminMonitorUi.Amber500, .25, .05, "alert");
+        _unknownRefresh.Click += (_, _) => _controller?.RefreshTransitions();
         _fields.Children.Add(_unknownAlert);
 
         // Storage group.

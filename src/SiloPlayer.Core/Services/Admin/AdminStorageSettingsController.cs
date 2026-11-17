@@ -50,7 +50,7 @@ public sealed record AdminStorageSettingsState : IAdminStorageDraft
     public bool Cancelling { get; init; }
     /// <summary>A committed transition invalidated the review; settings and storage status must settle first.</summary>
     public bool Reconciling { get; init; }
-    /// <summary>Catalog key of an ambiguous transition/cancel result: shown until the next explicit command or reload.</summary>
+    /// <summary>Ambiguous command reconciliation notice and explicit jobs-refresh action, independent of any known job; retained until the next explicit command or reload.</summary>
     public string? CommandUnknownKey { get; init; }
 
     public bool CheckingPublic { get; init; }
@@ -101,7 +101,7 @@ public sealed class AdminStorageSettingsController : IDisposable
     private AdminSettingsForm? _form;
     private AdminStorageSettingsState _state = new();
     private string _policy = "preserve_uploads";
-    private long _epoch, _revision;
+    private long _epoch, _revision, _jobsGeneration, _probeGeneration;
     private ITimer? _jobsPoll, _recoveryPoll;
     private bool _active, _disposed, _reconcilePending;
     private AdminStorageTransitionJob? _acknowledgedTransition;
@@ -227,6 +227,7 @@ public sealed class AdminStorageSettingsController : IDisposable
                 // A formerly editable draft must not survive becoming environment-owned.
                 foreach (var key in (status?.ManagedByEnv ?? []).Where(Keys.Contains)) _form.Reset(key);
                 _revision++;
+                InvalidateProbeLocked();
                 _state = _state with
                 {
                     Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, ErrorCode = null, Failure = null,
@@ -441,6 +442,7 @@ public sealed class AdminStorageSettingsController : IDisposable
             Update(action, () =>
             {
                 _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired);
+                InvalidateProbeLocked();
                 var configured = new HashSet<string>(_state.Configured, StringComparer.Ordinal);
                 foreach (var (key, present) in presence) { if (present) configured.Add(key); else configured.Remove(key); }
                 _state = _state with { Saving = false, Configured = Array.AsReadOnly(configured.ToArray()) };
@@ -448,13 +450,14 @@ public sealed class AdminStorageSettingsController : IDisposable
             if (_lifetime.IsCurrent(action)) savedKeys = keys;
         }
         catch (OperationCanceledException) when (!action.IsCurrent) { return false; }
-        catch (AdminSettingsConflictException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, Conflict = true, Review = null, SourceHealth = null, Error = "Settings changed on the server. Reload and review your changes." }; }); return false; }
-        catch (AdminSettingsOutcomeUnknownException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, OutcomeUnknown = true, Review = null, SourceHealth = null, Error = "The save outcome is unknown. Reload and review before saving again." }; }); return false; }
+        catch (AdminSettingsConflictException) { Update(action, () => { _form?.EndSave(intent); InvalidateProbeLocked(); _state = _state with { Saving = false, Conflict = true, Review = null, SourceHealth = null, Error = "Settings changed on the server. Reload and review your changes." }; }); return false; }
+        catch (AdminSettingsOutcomeUnknownException) { Update(action, () => { _form?.EndSave(intent); InvalidateProbeLocked(); _state = _state with { Saving = false, OutcomeUnknown = true, Review = null, SourceHealth = null, Error = "The save outcome is unknown. Reload and review before saving again." }; }); return false; }
         catch (Exception error) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, Error = "Failed to update settings.", ErrorCode = (error as ApiException)?.ErrorCode, Failure = AdminFailures.Classify(error, action) }; }); return false; }
         finally { TryStartReconciliation(); }
         if (savedKeys == null) return false;
         // The saved settings can change the storage lock and restart state.
         Start(ReadKind.Status, false);
+        StartProbeIfNeeded();
         RaiseSaved(savedKeys);
         return true;
     }
@@ -497,13 +500,22 @@ public sealed class AdminStorageSettingsController : IDisposable
 
     // ── Transition review ────────────────────────────────────
 
+    private void InvalidateProbeLocked()
+    {
+        _probeGeneration++;
+        // An obsolete in-flight probe may finish, but cannot publish into another review/source snapshot.
+        _slots[ReadKind.Probe].Pending = false;
+        _state = _state with { SourceHealth = null, SourceHealthFailed = false, SourceHealthFetching = false };
+    }
+
     private void OpenReviewLocked(string backend)
     {
         if (_state.Conflict || _state.OutcomeUnknown) return;
+        InvalidateProbeLocked();
         _state = _state with
         {
             Review = new(backend, _form!.Get(AdminStorageRules.LocalPath), _policy),
-            SourceHealth = null, SourceHealthFailed = false, CommandUnknownKey = null,
+            SourceHealth = null, SourceHealthFailed = false,
         };
     }
 
@@ -540,7 +552,7 @@ public sealed class AdminStorageSettingsController : IDisposable
     {
         var owner = _lifetime.Owner;
         if (owner == null) return;
-        Update(owner, () => { if (!_state.Queuing) _state = _state with { Review = null }; });
+        Update(owner, () => { if (!_state.Queuing) { InvalidateProbeLocked(); _state = _state with { Review = null }; } });
         TryStartReconciliation();
     }
 
@@ -589,7 +601,12 @@ public sealed class AdminStorageSettingsController : IDisposable
             catch (AdminStorageCommandOutcomeUnknownException)
             {
                 // Keep the draft, close the review and re-read: the server rejects a second active transition anyway.
-                Update(action, () => _state = _state with { Queuing = false, Review = null, CommandUnknownKey = "configure.native.storage.transitionUnknown" });
+                Update(action, () =>
+                {
+                    _jobsGeneration++;
+                    InvalidateProbeLocked();
+                    _state = _state with { Queuing = false, Review = null, CommandUnknownKey = "configure.native.storage.transitionUnknown" };
+                });
                 Start(ReadKind.Jobs, false); Start(ReadKind.Status, false);
                 TryStartReconciliation();
                 return;
@@ -609,7 +626,9 @@ public sealed class AdminStorageSettingsController : IDisposable
                 _revision++;
                 // Keep the accepted job visible and polled even if its first read fails or returns no job yet.
                 _acknowledgedTransition = new(jobId, "queued", "queued", null, null, false);
-                // Publish the acknowledgement and settings-read barrier atomically.
+                _jobsGeneration++;
+                InvalidateProbeLocked();
+                // Publish the acknowledgement and read-generation/settings barriers atomically.
                 _state = _state with { Queuing = false, Review = null, Loading = true, LatestTransition = _acknowledgedTransition, PublicCheck = null, PrivateCheck = null };
             });
             if (!_lifetime.IsCurrent(action)) return;
@@ -683,19 +702,22 @@ public sealed class AdminStorageSettingsController : IDisposable
 
     private void Start(ReadKind kind, bool background, long? expectedEpoch = null)
     {
-        long epoch;
+        long epoch, generation;
         var visible = kind is ReadKind.Status or ReadKind.Probe;
         lock (_gate)
         {
             var slot = _slots[kind];
             if (_disposed || (expectedEpoch.HasValue && expectedEpoch.Value != _epoch) || _state.Owner is not { IsCurrent: true }) return;
+            if (kind == ReadKind.Probe && _state.Review == null) return;
             if (background && (!_active || _deferBackground())) return;
             if (slot.Running)
             {
                 if (!background) slot.Pending = true;
+                if (kind == ReadKind.Probe) _state = _state with { SourceHealthFetching = true };
                 return;
             }
             slot.Running = true; epoch = _epoch;
+            generation = kind == ReadKind.Probe ? _probeGeneration : _jobsGeneration;
             if (kind == ReadKind.Status) _state = _state with { StatusLoading = true };
             if (kind == ReadKind.Probe) _state = _state with { SourceHealthFetching = true };
         }
@@ -703,10 +725,10 @@ public sealed class AdminStorageSettingsController : IDisposable
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); }
         catch (OperationCanceledException) { lock (_gate) if (epoch == _epoch) _slots[kind].Running = false; return; }
-        _ = RunAsync(kind, action, epoch);
+        _ = RunAsync(kind, action, epoch, generation);
     }
 
-    private async Task RunAsync(ReadKind kind, MonitorAuthorityLease action, long epoch)
+    private async Task RunAsync(ReadKind kind, MonitorAuthorityLease action, long epoch, long generation)
     {
         await Task.Yield();
         var startRecovery = false;
@@ -719,13 +741,19 @@ public sealed class AdminStorageSettingsController : IDisposable
                 {
                     case ReadKind.Status:
                         var status = await _storage.GetArtworkStorageStatusAsync(action).ConfigureAwait(false);
-                        Update(action, () => _state = _state with
+                        var sourceChanged = false;
+                        Update(action, () =>
                         {
-                            ArtworkStorage = status, StatusRead = true, StatusFailed = false, StatusLoading = false,
-                            // A missing status hides the dialog; retire its controller-owned review too.
-                            Review = status == null ? null : _state.Review,
-                            SourceHealth = status == null ? null : _state.SourceHealth,
+                            sourceChanged = status != _state.ArtworkStorage;
+                            if (sourceChanged) InvalidateProbeLocked();
+                            _state = _state with
+                            {
+                                ArtworkStorage = status, StatusRead = true, StatusFailed = false, StatusLoading = false,
+                                // A missing status hides the dialog; retire its controller-owned review too.
+                                Review = status == null ? null : _state.Review,
+                            };
                         });
+                        if (sourceChanged) StartProbeIfNeeded();
                         break;
                     case ReadKind.Capabilities:
                         var capabilities = await _storage.GetTransitionCapabilitiesAsync(action).ConfigureAwait(false);
@@ -740,9 +768,8 @@ public sealed class AdminStorageSettingsController : IDisposable
                         var job = await _storage.GetLatestTransitionAsync(action).ConfigureAwait(false);
                         Update(action, () =>
                         {
-                            // An invalidation queued behind this read belongs to a newer command. Do not let
-                            // the pre-command response erase its acknowledgement before that follow-up read.
-                            if (_acknowledgedTransition != null && _slots[ReadKind.Jobs].Pending) return;
+                            // The command barrier is published with its result, before observers or refreshes run.
+                            if (generation != _jobsGeneration) return;
                             if (job == null && _acknowledgedTransition != null) return;
                             _acknowledgedTransition = null;
                             var previous = _state.LatestTransition;
@@ -750,6 +777,7 @@ public sealed class AdminStorageSettingsController : IDisposable
                                 (previous == null || previous.Id != job.Id || previous.Status != job.Status || previous.Phase != job.Phase || previous.ManualRestartRequired != job.ManualRestartRequired))
                             {
                                 _reconcilePending = true;
+                                InvalidateProbeLocked();
                                 _state = _state with { Reconciling = true, Review = null, SourceHealth = null, SourceHealthFailed = false };
                             }
                             _state = _state with { LatestTransition = job };
@@ -758,7 +786,11 @@ public sealed class AdminStorageSettingsController : IDisposable
                         break;
                     case ReadKind.Probe:
                         var health = await _storage.GetSourceHealthAsync(action, probe: true).ConfigureAwait(false);
-                        Update(action, () => _state = _state with { SourceHealth = _state.Review != null ? health : null, SourceHealthFailed = false, SourceHealthFetching = false });
+                        Update(action, () =>
+                        {
+                            if (generation != _probeGeneration || _state.Review == null) return;
+                            _state = _state with { SourceHealth = health, SourceHealthFailed = false, SourceHealthFetching = false };
+                        });
                         break;
                 }
             }
@@ -769,7 +801,7 @@ public sealed class AdminStorageSettingsController : IDisposable
                 Update(action, () => _state = kind switch
                 {
                     ReadKind.Status => _state with { StatusRead = true, StatusFailed = true, StatusLoading = false },
-                    ReadKind.Probe => _state with { SourceHealthFailed = true, SourceHealthFetching = false },
+                    ReadKind.Probe when generation == _probeGeneration && _state.Review != null => _state with { SourceHealthFailed = true, SourceHealthFetching = false },
                     _ => _state,
                 });
             }
@@ -783,7 +815,7 @@ public sealed class AdminStorageSettingsController : IDisposable
                         slot.Running = false; slot.Last = _time.GetUtcNow();
                         followUp = slot.Pending; slot.Pending = false;
                         if (kind == ReadKind.Status && _state.StatusLoading) _state = _state with { StatusLoading = false };
-                        if (kind == ReadKind.Probe && _state.SourceHealthFetching) _state = _state with { SourceHealthFetching = false };
+                        if (kind == ReadKind.Probe && generation == _probeGeneration && _state.SourceHealthFetching) _state = _state with { SourceHealthFetching = false };
                     }
                 }
             }
@@ -813,7 +845,7 @@ public sealed class AdminStorageSettingsController : IDisposable
         _recoveryPoll?.Dispose(); _recoveryPoll = null;
     }
 
-    private void ResetSlotsLocked() { _reconcilePending = false; _acknowledgedTransition = null; foreach (var slot in _slots.Values) { slot.Running = false; slot.Pending = false; slot.Last = null; } }
+    private void ResetSlotsLocked() { _jobsGeneration++; _probeGeneration++; _reconcilePending = false; _acknowledgedTransition = null; foreach (var slot in _slots.Values) { slot.Running = false; slot.Pending = false; slot.Last = null; } }
 
     // ── State publication ────────────────────────────────────
 

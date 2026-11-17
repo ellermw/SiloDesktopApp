@@ -186,8 +186,8 @@ public static class AdminText
         ["web.admin.settings.storage.unitSeconds"] = "seconds",
         ["web.admin.settings.storage.verifiedObjects"] = "{count, plural, one {{count_text} object verified} other {{count_text} objects verified}}",
         // Native-only Storage text: an ambiguous single-shot command is re-read, never resent.
-        ["configure.native.storage.transitionUnknown"] = "The transition request may or may not have reached the server. Its status was refreshed; check it before trying again.",
-        ["configure.native.storage.cancelUnknown"] = "The cancellation request may or may not have reached the server. Its status was refreshed; check it before trying again.",
+        ["configure.native.storage.transitionUnknown"] = "The transition request may or may not have reached the server. Refresh its status to check the outcome before trying again.",
+        ["configure.native.storage.cancelUnknown"] = "The cancellation request may or may not have reached the server. Refresh its status to check the outcome before trying again.",
         // Manage > Downloads > Settings: official silo-server abd85d0cadac28f4ab7db6821dad9634fc114790 (en.json and SettingField/LimitField/PathSettingField/AdvancedSection).
         ["web.admin.settings.downloads.artifactDir.description"] = "Leave blank for a silo-download-artifacts folder beside this server's transcode directory. Transcode nodes use download-artifacts inside their own transcode directory unless a node has its own directory.",
         ["web.admin.settings.downloads.artifactDir.label"] = "Prepared file directory",

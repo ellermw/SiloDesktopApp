@@ -547,6 +547,146 @@ public sealed class AdminStorageSettingsControllerTests
     }
 
     [Fact]
+    public async Task AmbiguousQueueRetainsExplicitDiscoveryAfterAFailedJobsReadThroughCompletion()
+    {
+        using var h = new Harness();
+        await h.OpenAsync();
+        h.Controller.Set("artwork.local_path", "/mnt/art");
+        await h.Controller.SaveAsync();
+        var reads = 0;
+        var readSettled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Controller.Changed += () => { if (Volatile.Read(ref reads) == 1) readSettled.TrySetResult(); };
+        h.Routes["GET /api/v2/admin/jobs"] = _ =>
+        {
+            Interlocked.Increment(ref reads);
+            return Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+        };
+        h.Routes["POST /api/v2/admin/storage-transitions"] = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.BadGateway));
+        await h.Controller.QueueTransitionAsync();
+        await readSettled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Null(h.Controller.State.LatestTransition);
+        Assert.Null(h.Controller.State.Review);
+        // This notice owns a Refresh action independently of the hidden active-job panel.
+        Assert.Equal("configure.native.storage.transitionUnknown", h.Controller.State.CommandUnknownKey);
+        Assert.DoesNotContain("was refreshed", AdminText.T(h.Controller.State.CommandUnknownKey!));
+
+        h.Effective = """{"artwork.storage_backend":"local","artwork.local_path":"/mnt/art"}""";
+        h.Routes["GET /api/v2/admin/jobs"] = _ => Task.FromResult(AdminMonitorKit.Json(
+            """{"items":[{"id":"job-9","kind":"storage_transition","state":"succeeded","storage_transition_result":{"phase":"completed"}}]}"""));
+        h.Controller.RefreshTransitions();
+        await Until(() => h.Controller.State.GetPersisted("artwork.local_path") == "/mnt/art" && !h.Controller.State.Reconciling, "explicit discovery reconciles completed transition");
+        Assert.Equal("completed", h.Controller.State.LatestTransition?.Status);
+        Assert.Equal(["POST /api/v2/admin/storage-transitions"], h.Writes);
+    }
+
+    [Fact]
+    public async Task PreCommandTerminalResponseCannotEraseAcknowledgementBeforeRefreshRegistration()
+    {
+        using var published = new ManualResetEventSlim();
+        using var h = new Harness();
+        await h.OpenAsync();
+        h.Controller.Set("artwork.local_path", "/mnt/art");
+        await h.Controller.SaveAsync();
+        await Until(() => !h.Controller.State.StatusLoading, "review status settled");
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var oldReturned = 0;
+        var observedBeforeRefresh = false;
+        string? jobAfterOldRead = null;
+        h.Routes["GET /api/v2/admin/jobs"] = async _ =>
+        {
+            if (Interlocked.Increment(ref reads) != 1)
+                return AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable);
+            started.SetResult();
+            await release.Task;
+            Volatile.Write(ref oldReturned, 1);
+            return AdminMonitorKit.Json("""{"items":[{"id":"old-job","kind":"storage_transition","state":"failed"}]}""");
+        };
+        h.Controller.Changed += () => { if (Volatile.Read(ref oldReturned) == 1) published.Set(); };
+        h.Controller.Notice += notice =>
+        {
+            if (notice.Key != "web.admin.settings.storage.transitionQueued") return;
+            // Notice is raised after acknowledgement publication but before Start(Jobs).
+            release.TrySetResult();
+            observedBeforeRefresh = published.Wait(TimeSpan.FromSeconds(2));
+            jobAfterOldRead = h.Controller.State.LatestTransition?.Id;
+        };
+        h.Routes["POST /api/v2/admin/storage-transitions"] = _ => Task.FromResult(AdminMonitorKit.Json(Accepted, HttpStatusCode.Accepted));
+        try
+        {
+            h.Controller.RefreshTransitions();
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await h.Controller.QueueTransitionAsync();
+            await Until(() => Volatile.Read(ref reads) == 2, "post-command discovery fails");
+            Assert.True(observedBeforeRefresh);
+            Assert.Equal("job-9", jobAfterOldRead);
+            Assert.Equal("job-9", h.Controller.State.LatestTransition?.Id);
+            Assert.True(h.Controller.IsJobsPolling);
+            Assert.Single(h.Writes);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetiredReviewProbeCannotPublishIntoAReviewOfSavedSourceCredentials(bool oldProbeFails)
+    {
+        using var h = new Harness
+        {
+            Status = """{"artwork_storage":{"backend":"s3","locked":true,"status_known":true}}""",
+            Effective = """{"artwork.storage_backend":"s3","artwork.local_path":"/data/art","s3.public_bucket":"media"}""",
+        };
+        await h.OpenAsync();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseNew = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probes = 0;
+        h.Routes["GET /api/v2/admin/storage-transitions/source-health"] = async request =>
+        {
+            if (request.RequestUri!.Query != "?probe=true") return AdminMonitorKit.Json(h.Health);
+            if (Interlocked.Increment(ref probes) == 1)
+            {
+                started.SetResult();
+                await releaseOld.Task;
+                return oldProbeFails ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable)
+                    : AdminMonitorKit.Json("""{"current_backend":"s3","reachable":true,"reachability_probed":true,"recovery_pending":false}""");
+            }
+            await releaseNew.Task;
+            return AdminMonitorKit.Json("""{"current_backend":"s3","reachable":false,"reachability_probed":true,"recovery_pending":false}""");
+        };
+        h.Routes["PUT /api/v2/admin/settings"] = _ => Task.FromResult(Saved());
+        try
+        {
+            h.Controller.ChangeBackend("local");
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            h.Controller.CloseReview();
+            Assert.False(h.Controller.State.SourceHealthFetching);
+            h.Controller.SetSecret("s3.public_secret_key", "replacement");
+            await h.Controller.SaveAsync();
+            h.Controller.ChangeBackend("local");
+            Assert.NotNull(h.Controller.State.Review);
+            releaseOld.SetResult();
+            await Until(() => Volatile.Read(ref probes) == 2, "replacement source probe");
+            var pending = h.Controller.State;
+            Assert.Null(pending.SourceHealth);
+            Assert.False(pending.SourceHealthFailed);
+            Assert.True(pending.SourceHealthPending);
+            Assert.True(pending.SourceHealthFetching);
+            Assert.False(AdminStorageSettingsController.CanQueue(pending));
+            Assert.False(AdminStorageSettingsController.CanQueue(pending with { Review = pending.Review! with { Policy = "start_fresh" } }));
+            releaseNew.SetResult();
+            await Until(() => h.Controller.State.SourceHealth is { Reachable: false } && !h.Controller.State.SourceHealthFetching, "current source result");
+            Assert.False(AdminStorageSettingsController.CanQueue(h.Controller.State));
+            h.Controller.SetReviewPolicy("start_fresh");
+            Assert.True(AdminStorageSettingsController.CanQueue(h.Controller.State));
+            Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);
+        }
+        finally { releaseOld.TrySetResult(); releaseNew.TrySetResult(); }
+    }
+
+    [Fact]
     public async Task KnownQueueRejectionKeepsTheReviewOpenForCorrection()
     {
         using var h = new Harness();
