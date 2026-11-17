@@ -3044,6 +3044,11 @@ public sealed partial class MainWindow : Window
         }
 
         LogState($"  Executing state={state} on UI thread");
+        // Official #4296: remember the control that opens Now Listening before
+        // the mini player collapses, so collapsing can return focus to it.
+        var nowListeningOpener = state is PlayerState.Expanded or PlayerState.Fullscreen && _playerService.IsAudiobook
+            ? CaptureNowListeningOpener()
+            : null;
         switch (state)
         {
             case PlayerState.Idle:
@@ -3108,6 +3113,9 @@ public sealed partial class MainWindow : Window
                 MiniPlayerBarControl.Activate();
                 break;
         }
+        // Every path above settles Now Listening's visibility; the covered shell
+        // is inert exactly while it is shown (open, collapse, stop, PiP, video).
+        SyncNowListeningFocusScope(state, nowListeningOpener);
         UpdateAdminChrome();
         ApplyPendingAccessRefresh();
     }

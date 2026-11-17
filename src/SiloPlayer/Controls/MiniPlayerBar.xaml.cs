@@ -367,6 +367,14 @@ public sealed partial class MiniPlayerBar : UserControl
     private void VideoThumbnail_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e) => _playerService.Expand();
     private void Expand_Click(object sender, RoutedEventArgs e) => _playerService.Expand();
 
+    /// <summary>
+    /// Official #4296: collapsing Now Listening returns focus to the audiobook
+    /// cover tile that opens it. False while the bar or tile is not shown.
+    /// </summary>
+    public bool FocusNowListeningOpener() =>
+        Visibility == Visibility.Visible && AudiobookBar.Visibility == Visibility.Visible
+        && global::SiloPlayer.Helpers.NowListeningFocusScope.TryFocus(AudiobookCoverButton);
+
     private void PlayPause_Click(object sender, RoutedEventArgs e)
     {
         if (_playerService.IsAudiobook) _playerService.ToggleAudiobookPlayback();
