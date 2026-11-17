@@ -205,6 +205,43 @@ public sealed class AdminConfigureNavigationTests
             AdminText.T("web.admin.settings.downloads.artifactDir.description"));
     }
 
+    [Theory]
+    [InlineData("bucket")]
+    [InlineData("cloudflare")]
+    [InlineData("artwork.storage_backend")]
+    public void StorageIsAServerLeafSearchableOnlyWhenRegistered(string query)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/settings/storage", out var resolution));
+        Assert.Equal(AdminRoute.StorageSettings, resolution.Request!.Route);
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/settings/infrastructure", out var alias));
+        Assert.Equal("/admin/settings/storage", alias.CanonicalHref);
+        var topic = AdminRouteCatalog.Sections.Single(section => section.Id == "configure").Entries.Cast<AdminNavTopic>()
+            .Single(entry => entry.Leaves.Any(leaf => leaf.Route == AdminRoute.StorageSettings));
+        Assert.Equal("server", topic.Id);
+        Assert.Equal("Storage", AdminText.T(topic.Leaves.Single(leaf => leaf.Route == AdminRoute.StorageSettings).SidebarLabelKey));
+        Assert.Empty(AdminRouteCatalog.MissingTextKeys(AdminRoute.StorageSettings));
+        Assert.False(new AdminPageRegistry([]).CanOpen(resolution.Request));
+        var registry = new AdminPageRegistry([new(AdminRoute.StorageSettings, typeof(object))]);
+        Assert.True(registry.CanOpen(resolution.Request));
+        Assert.Contains(AdminNavigation.SearchGroups(query, registry.IsRegistered).SelectMany(group => group.Pages), page => page.Route == AdminRoute.StorageSettings);
+    }
+
+    [Fact]
+    public void ProductionConfigureRegistrationIncludesTheFinishedStoragePage()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "AdminConfigureServices.cs"));
+        Assert.Contains("new AdminPageRegistration(AdminRoute.StorageSettings, typeof(AdminStorageSettingsPage))", source);
+        Assert.Contains("AddSingleton<AdminStorageApi>", source);
+        Assert.Contains("Concat(AdminStorageSettingsController.Keys)", source);
+        Assert.Contains("Concat(AdminStorageSettingsController.Secrets)", source);
+        var installer = File.ReadAllText(Path.Combine(TestRepository.Root, "installer", "build.ps1"));
+        Assert.Contains("'Views/Admin/AdminStorageSettingsPage.xbf'", installer);
+        // The storage domain API stays separate from Monitor and never targets unrelated administration.
+        var api = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer.Core", "Api", "AdminStorageApi.cs"));
+        Assert.DoesNotContain("/api/v1/", api);
+        Assert.DoesNotContain("AdminMonitorApi", api);
+    }
+
     [Fact]
     public void ProductionConfigureRegistrationIncludesScheduledTasksUnderServer()
     {
