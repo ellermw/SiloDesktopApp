@@ -618,6 +618,7 @@ internal static class AdminBackupTextCatalog
         ["configure.native.backups.download.mismatch"] = "The downloaded file did not match the backup's checksum, so nothing was saved. Any file already at that location was kept.",
         ["configure.native.backups.download.saved"] = "Saved.",
         ["configure.native.backups.download.savedVerified"] = "Saved and checked against the backup's checksum.",
+        ["configure.native.backups.download.timeout"] = "The download timed out, so nothing was saved. Any file already at that location was kept.",
         ["configure.native.backups.fileType"] = "Backup file",
         ["configure.native.backups.fileUnreadable"] = "The file could not be read. Choose it again.",
         ["configure.native.backups.keepInvalid"] = "Enter a whole number from 1 to 60.",

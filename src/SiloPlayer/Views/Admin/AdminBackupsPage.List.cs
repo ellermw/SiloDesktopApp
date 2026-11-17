@@ -30,7 +30,7 @@ public sealed partial class AdminBackupsPage
     private AdminLeaveGuard? _leave;
     private AdminBackupUploadSession? _upload;
     private CancellationTokenSource? _downloadCancel;
-    private bool _showAll, _syncing;
+    private bool _showAll, _syncing, _linkedRowRevealed;
     private string? _selectedId;
 
     private void ActivateList()
@@ -38,6 +38,7 @@ public sealed partial class AdminBackupsPage
         var controller = App.Services.GetRequiredService<AdminBackupsController>();
         Controller = controller;
         _selectedId = _location?.Get("backup");
+        _linkedRowRevealed = false;
         _showAll = false; _expandedRows.Clear();
         _leave = new(() => Controller?.State.Owner, () => Controller?.State.DirtyKeys.Count > 0, () => Controller?.Discard());
         controller.Changed += QueueListRender; controller.Notified += OnNotified; controller.Saved += OnSaved;
@@ -323,8 +324,19 @@ public sealed partial class AdminBackupsPage
             toggle.Click += (_, _) => { _showAll = !showAll; if (!_showAll) _selectedId = null; QueueListRender(); };
             frame.Children.Add(toggle);
         }
-        if (linkedIndex >= 0)
-            DispatcherQueue.TryEnqueue(() => { if (Find(_body, "BackupRow-" + _selectedId) is FrameworkElement target) target.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = .5 }); });
+        if (linkedIndex >= 0 && !_linkedRowRevealed)
+        {
+            var selectedId = _selectedId;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_active || _selectedId != selectedId || _linkedRowRevealed) return;
+                if (Find(_body, "BackupRow-" + selectedId) is FrameworkElement target)
+                {
+                    _linkedRowRevealed = true;
+                    target.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = .5 });
+                }
+            });
+        }
         return frame;
     }
 

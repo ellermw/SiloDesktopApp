@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using Present = SiloPlayer.Core.Services.Admin.AdminBackupPresentation;
@@ -30,12 +31,12 @@ public sealed class AdminBackupsControllerTests
         internal TaskCompletionSource? ListGate;
         internal int ListReads;
 
-        internal Harness()
+        internal Harness(AdminBackupSignedDownload? download = null)
         {
             Authority = new AdminMonitorAuthority(Kit.Client, Kit.Auth);
             SettingsApi = new AdminServerSettingsApi(Kit.Client);
             Store = new AdminServerSettingsStore(SettingsApi, Authority, AdminBackupsController.Keys, AdminBackupsController.Secrets);
-            Controller = new AdminBackupsController(new AdminBackupsApi(Kit.Client), SettingsApi, Store, Authority, Scheduler);
+            Controller = new AdminBackupsController(new AdminBackupsApi(Kit.Client), SettingsApi, Store, Authority, Scheduler, download);
             Controller.Notified += Notices.Enqueue;
             Kit.Http.Respond = async (request, ct) =>
             {
@@ -58,6 +59,64 @@ public sealed class AdminBackupsControllerTests
         }
         internal string[] Requests => Kit.Http.Requests.ToArray();
         public void Dispose() { Controller.Dispose(); Store.Dispose(); Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    private sealed class DownloadServer(Func<CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => respond(cancellationToken);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DownloadDeadlinesAreFailuresIncludingWhenRefreshingLinks(bool refreshing)
+    {
+        using var download = new AdminBackupSignedDownload(new DownloadServer(_ => Task.FromException<HttpResponseMessage>(new OperationCanceledException())));
+        using var h = new Harness(download);
+        await h.Controller.OpenAsync();
+        h.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/download-links", StringComparison.Ordinal)
+            ? Task.FromException<HttpResponseMessage>(new OperationCanceledException()) : null;
+        var link = new AdminBackupDownloadLink
+        {
+            Name = "db.dump", SizeBytes = 4, Url = "https://bucket.example.invalid/db.dump",
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(refreshing ? -1 : 15),
+        };
+        var directory = Path.Combine(Path.GetTempPath(), "silo-backup-deadline-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "db.dump");
+        try
+        {
+            await File.WriteAllTextAsync(path, "previous");
+            await Assert.ThrowsAsync<TimeoutException>(() => h.Controller.DownloadAsync(h.Controller.State.List!.Items![0], link, "full", path));
+            Assert.Equal("previous", await File.ReadAllTextAsync(path));
+            Assert.Equal(["db.dump"], Directory.GetFiles(directory).Select(Path.GetFileName));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public async Task DialogCancellationIsNotReportedAsADownloadTimeout()
+    {
+        using var cancel = new CancellationTokenSource();
+        using var download = new AdminBackupSignedDownload(new DownloadServer(token =>
+        {
+            cancel.Cancel();
+            return Task.FromCanceled<HttpResponseMessage>(token);
+        }));
+        using var h = new Harness(download);
+        await h.Controller.OpenAsync();
+        var link = new AdminBackupDownloadLink
+        {
+            Name = "db.dump", SizeBytes = 4, Url = "https://bucket.example.invalid/db.dump", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15),
+        };
+        var directory = Path.Combine(Path.GetTempPath(), "silo-backup-cancel-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => h.Controller.DownloadAsync(h.Controller.State.List!.Items![0], link, "full", Path.Combine(directory, "db.dump"), ct: cancel.Token));
+            Assert.Empty(Directory.GetFiles(directory));
+        }
+        finally { Directory.Delete(directory, true); }
     }
 
     [Fact]
@@ -519,6 +578,55 @@ public sealed class AdminBackupsControllerTests
         Assert.Equal(1, puts); // Reload never replays the write.
         Assert.Null(await h.Controller.SaveS3Async(fields, "abcd-ef01-2345-6789"));
         Assert.Equal(2, puts);
+    }
+
+    [Fact]
+    public async Task S3TestProblemResponsesRedactBothTypedCredentials()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        const string secret = "Q7mExampleValue";
+        const string access = "P9kExampleAccess";
+        h.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/s3/test", StringComparison.Ordinal)
+            ? Task.FromResult(BackupJson.Json(BackupJson.Problem("invalid_argument", 400, "Rejected credential " + secret + " for " + access), HttpStatusCode.BadRequest)) : null;
+        var result = await h.Controller.TestS3Async(new("https://s3.example.invalid", "", "bucket", "", " " + access + " ", secret, false));
+        Assert.NotNull(result);
+        Assert.False(result.Ok);
+        Assert.DoesNotContain(secret, result.Message);
+        Assert.DoesNotContain(access, result.Message);
+        Assert.Contains("<redacted>", result.Message);
+    }
+
+    [Fact]
+    public async Task S3SaveCannotRecaptureAuthorityAfterAcknowledgingTheKey()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var oldOwner = h.Controller.State.Owner;
+        h.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/acknowledge-key", StringComparison.Ordinal)
+            ? Task.FromResult(BackupJson.Json("""{"key_check":"abcd-ef01-2345-6789"}""")) : null;
+        var acknowledging = false;
+        var reopened = false;
+        void OnChanged()
+        {
+            if (reopened) return;
+            if (h.Controller.State.AcknowledgingKey) { acknowledging = true; return; }
+            if (!acknowledging) return;
+            // Retire/reopen synchronously at the acknowledgement's Changed boundary, before Save resumes.
+            reopened = true;
+            h.Controller.Suspend();
+            h.Controller.OpenAsync().GetAwaiter().GetResult();
+        }
+        h.Controller.Changed += OnChanged;
+        try
+        {
+            Assert.NotNull(await h.Controller.SaveS3Async(new("https://s3.example.invalid", "", "bucket", "", "AKIA", "typed-secret", false), "abcd-ef01-2345-6789"));
+            Assert.True(reopened);
+            Assert.False(oldOwner!.IsCurrent);
+            Assert.True(h.Controller.State.Owner!.IsCurrent);
+            Assert.DoesNotContain(h.Requests, request => request.StartsWith("PUT", StringComparison.Ordinal));
+        }
+        finally { h.Controller.Changed -= OnChanged; }
     }
 
     [Fact]

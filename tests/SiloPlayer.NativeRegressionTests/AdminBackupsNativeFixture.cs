@@ -155,9 +155,11 @@ internal static class AdminBackupsNativeFixture
     private sealed class ObjectServer : HttpMessageHandler
     {
         internal readonly List<HttpRequestMessage> Requests = [];
+        internal bool Timeout;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
+            if (Timeout) return Task.FromException<HttpResponseMessage>(new OperationCanceledException());
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Encoding.ASCII.GetBytes("test")) });
         }
     }
@@ -214,7 +216,7 @@ internal static class AdminBackupsNativeFixture
             navigation.Frame = outer;
 
             // ── List route ─────────────────────────────────────────
-            var page = await OpenAsync(outer, "/admin/backups");
+            var page = await OpenAsync(outer, "/admin/backups?backup=" + BackupId);
             lastPage = page;
             var controller = page.Controller!;
             await Until(() => controller.State.List != null && controller.State.SettingsLoaded, "list and settings loaded");
@@ -227,6 +229,20 @@ internal static class AdminBackupsNativeFixture
             Check(Find<Button>(page, "BackupsUpload") is { IsEnabled: true }, "Upload is offered because the server reports upload capability");
             Check(Find<Button>(page, "BackupRestore-" + BackupId) is { IsEnabled: true }, "Restore… is offered for a backup with a restore set");
             Check(Find<TextBlock>(page, "BackupsRestoreCommand")?.Text == "silo backup restore --from /data/backups/" + BackupId, "full-restore command names the newest verified backup");
+
+            // A linked row stays highlighted, but settings edits and refreshes must not reveal it again.
+            await Task.Delay(200); // Let the initial linked-row reveal and layout drain.
+            var repeatedReveals = 0;
+            ((StackPanel)Field(page, "_body")!).BringIntoViewRequested += (_, args) =>
+            {
+                if (args.TargetElement is FrameworkElement target && AutomationProperties.GetAutomationId(target) == "BackupRow-" + BackupId) repeatedReveals++;
+            };
+            controller.Set("backup.time", "05:01");
+            await controller.RefreshAsync();
+            await Task.Delay(200);
+            Check(repeatedReveals == 0 && Find<Grid>(page, "BackupRow-" + BackupId)?.Background != null,
+                "linked backup remains highlighted without repeated scrolling on settings edits or refreshes");
+            controller.Discard();
 
             // Back up now: sent once.
             Invoke(Find<Button>(page, "BackupsBackUpNow")!);
@@ -271,6 +287,14 @@ internal static class AdminBackupsNativeFixture
             Check(objectRequest.Headers.Authorization == null && !objectRequest.Headers.Any(header => header.Key.StartsWith("X-Profile", StringComparison.OrdinalIgnoreCase)),
                 "the signed object request carries no account or profile credentials");
             Check(objectRequest.RequestUri!.AbsolutePath == "/api/v2/admin/backups/" + BackupId + "/objects/db.dump", "the object came from this backup's signed path");
+            objects.Timeout = true;
+            await Until(() => Find<Button>(downloadDialog, "BackupsDownloadFile-db.dump") is { IsEnabled: true }, "download can be retried");
+            Invoke(Find<Button>(downloadDialog, "BackupsDownloadFile-db.dump")!);
+            await Until(() => Find<TextBlock>(downloadDialog, "BackupsDownloadState-db.dump")?.Text == AdminText.T("configure.native.backups.download.timeout"), "download timeout explained");
+            await Task.Delay(100);
+            Check(File.ReadAllText(saved) == "test" && Find<TextBlock>(downloadDialog, "BackupsDownloadState-db.dump")?.Text == AdminText.T("configure.native.backups.download.timeout"),
+                "download deadline shows a terminal error and preserves the existing destination");
+            objects.Timeout = false;
             Invoke(Find<Button>(downloadDialog, "BackupsDownloadClose")!);
             await Until(() => Field(page, "_dialog") == null, "download dialog closed");
 

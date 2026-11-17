@@ -621,12 +621,19 @@ public sealed class AdminBackupsController : IDisposable
         IProgress<long>? progress = null, CancellationToken ct = default)
     {
         using var action = _lifetime.CaptureAction();
-        try { return await _download.SaveAsync(action, backup, link, scope, destinationPath, progress, ct).ConfigureAwait(false); }
-        catch (AdminBackupLinkExpiredException)
+        try
         {
-            var fresh = await _api.CreateDownloadLinksAsync(action, backup.Id!, scope, ct).ConfigureAwait(false);
-            var same = fresh.FirstOrDefault(candidate => candidate.Name == link.Name) ?? throw new AdminBackupLinkExpiredException();
-            return await _download.SaveAsync(action, backup, same, scope, destinationPath, progress, ct).ConfigureAwait(false);
+            try { return await _download.SaveAsync(action, backup, link, scope, destinationPath, progress, ct).ConfigureAwait(false); }
+            catch (AdminBackupLinkExpiredException)
+            {
+                var fresh = await _api.CreateDownloadLinksAsync(action, backup.Id!, scope, ct).ConfigureAwait(false);
+                var same = fresh.FirstOrDefault(candidate => candidate.Name == link.Name) ?? throw new AdminBackupLinkExpiredException();
+                return await _download.SaveAsync(action, backup, same, scope, destinationPath, progress, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && action.IsCurrent)
+        {
+            throw new TimeoutException("The download timed out. Nothing was saved; any existing destination was kept.");
         }
     }
 
@@ -638,7 +645,7 @@ public sealed class AdminBackupsController : IDisposable
         {
             try { return await _api.TestS3Async(action, Present.S3TestBody(fields)).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!action.IsCurrent) { return null; }
-            catch (Exception error) { return new(false, null, Present.ErrorMessage(error)); }
+            catch (Exception error) { return new(false, null, AdminBackupValidation.SafeServerText(Present.ErrorMessage(error), fields.SecretKey, fields.AccessKey.Trim())); }
         }
     }
 
@@ -647,27 +654,29 @@ public sealed class AdminBackupsController : IDisposable
     {
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return null; }
-        using (action)
+        using (action) return await AcknowledgeKeyAsync(action, keyCheck).ConfigureAwait(false);
+    }
+
+    private async Task<string?> AcknowledgeKeyAsync(MonitorAuthorityLease action, string keyCheck)
+    {
+        lock (_gate)
         {
-            lock (_gate)
-            {
-                if (!_lifetime.IsCurrent(action) || _state.AcknowledgingKey || _state.List?.KeyCheck != keyCheck) return AdminText.T("web.admin.backups.key.changedError");
-                _state = _state with { AcknowledgingKey = true };
-            }
-            Changed?.Invoke();
-            try
-            {
-                await _api.AcknowledgeKeyAsync(action, keyCheck).ConfigureAwait(false);
-                return null;
-            }
-            catch (OperationCanceledException) when (!action.IsCurrent) { return AdminText.T("web.admin.backups.error.noAnswer"); }
-            catch (ApiException error) when (error.StatusCode == 409) { return AdminText.T("web.admin.backups.key.changedError"); }
-            catch (Exception error) { return error is AdminBackupOutcomeUnknownException ? AdminText.T("configure.native.backups.unknownOutcome") : Present.ErrorMessage(error); }
-            finally
-            {
-                Update(action, () => _state = _state with { AcknowledgingKey = false });
-                if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
-            }
+            if (!_lifetime.IsCurrent(action) || _state.AcknowledgingKey || _state.List?.KeyCheck != keyCheck) return AdminText.T("web.admin.backups.key.changedError");
+            _state = _state with { AcknowledgingKey = true };
+        }
+        Changed?.Invoke();
+        try
+        {
+            await _api.AcknowledgeKeyAsync(action, keyCheck).ConfigureAwait(false);
+            return null;
+        }
+        catch (OperationCanceledException) when (!action.IsCurrent) { return AdminText.T("web.admin.backups.error.noAnswer"); }
+        catch (ApiException error) when (error.StatusCode == 409) { return AdminText.T("web.admin.backups.key.changedError"); }
+        catch (Exception error) { return error is AdminBackupOutcomeUnknownException ? AdminText.T("configure.native.backups.unknownOutcome") : Present.ErrorMessage(error); }
+        finally
+        {
+            Update(action, () => _state = _state with { AcknowledgingKey = false });
+            if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
         }
     }
 
@@ -678,12 +687,12 @@ public sealed class AdminBackupsController : IDisposable
     /// </summary>
     public async Task<string?> SaveS3Async(AdminBackupS3Fields fields, string keyCheck)
     {
-        var keyProblem = await AcknowledgeKeyAsync(keyCheck).ConfigureAwait(false);
-        if (keyProblem != null) return keyProblem;
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return AdminText.T("web.admin.backups.error.noAnswer"); }
         using (action)
         {
+            var keyProblem = await AcknowledgeKeyAsync(action, keyCheck).ConfigureAwait(false);
+            if (keyProblem != null) return keyProblem;
             AdminSettingsForm s3Form;
             AdminSettingsSaveIntent intent;
             lock (_gate)

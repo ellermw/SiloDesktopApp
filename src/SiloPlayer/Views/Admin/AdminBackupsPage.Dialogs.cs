@@ -132,6 +132,7 @@ public sealed partial class AdminBackupsPage
 
     private FrameworkElement DownloadRow(AdminBackupsController controller, AdminBackup backup, AdminBackupDownloadLink link, string scope, CancellationToken token)
     {
+        var owner = controller.State.Owner;
         var row = new Grid { ColumnSpacing = 12, Padding = new(12, 8, 12, 8), CornerRadius = new(10), BorderThickness = new(1), BorderBrush = UiKit.Brush("BorderBrush") };
         row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var info = new StackPanel { Spacing = 2 };
@@ -154,7 +155,7 @@ public sealed partial class AdminBackupsPage
             {
                 // The suggested name is a known object name: no path separators can come from the server.
                 var path = await PickSavePathAsync(link.Name!);
-                if (path == null || token.IsCancellationRequested) return;
+                if (path == null || token.IsCancellationRequested || !controller.IsCurrent(owner)) return;
                 var reporter = new Progress<long>(bytes => DispatcherQueue.TryEnqueue(() =>
                 {
                     if (running && !token.IsCancellationRequested) Show(Present.ProgressLabel(bytes, Math.Max(1, link.SizeBytes ?? 1)));
@@ -162,7 +163,8 @@ public sealed partial class AdminBackupsPage
                 var result = await controller.DownloadAsync(backup, link, scope, path, reporter, token);
                 Show(T(result.HashVerified ? "configure.native.backups.download.savedVerified" : "configure.native.backups.download.saved"));
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (token.IsCancellationRequested || !controller.IsCurrent(owner)) { }
+            catch (Exception error) when (error is TimeoutException or OperationCanceledException) { Show(T("configure.native.backups.download.timeout")); }
             catch (AdminBackupLinkExpiredException) { Show(T("configure.native.backups.download.expired")); }
             catch (AdminBackupDownloadMismatchException) { Show(T("configure.native.backups.download.mismatch")); }
             catch (Exception) { Show(T("configure.native.backups.download.failed")); }

@@ -348,6 +348,56 @@ public sealed class AdminBackupRestoreControllerTests
     }
 
     [Fact]
+    public async Task ADelayedPollAcrossTerminalCancellationCannotStopTheNextRestore()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync(Source, "job-1");
+        var old = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacement = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementReads = 0;
+        var original = h.Kit.Http.Respond;
+        h.Kit.Http.Respond = (request, token) => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v2/admin/jobs/job-1" => old.Task,
+            "/api/v2/admin/jobs/job-1/cancel" => Task.FromResult(BackupJson.Json(BackupJson.Job(state: "canceled", terminal: true, cancelable: false))),
+            "/api/v2/admin/jobs/job-2" => ReadReplacement(),
+            _ => original(request, token),
+        };
+        Task<HttpResponseMessage> ReadReplacement()
+        {
+            return Interlocked.Increment(ref replacementReads) == 1
+                ? replacement.Task : Task.FromResult(BackupJson.Json(BackupJson.Job(id: "job-2")));
+        }
+        h.Start = _ => BackupJson.Json(BackupJson.Job(id: "job-2"), HttpStatusCode.Accepted, "/api/v2/admin/jobs/job-2");
+        var retired = h.Controller.RetryJobAsync();
+        try
+        {
+            await h.Controller.CancelAsync("job-1");
+            await h.Controller.ChooseAgainAsync();
+            h.Controller.Toggle(["settings:general"], true);
+            h.Controller.Review();
+            await h.Controller.StartAsync();
+            h.Scheduler.Advance(AdminBackupRestoreController.JobInterval);
+            await Eventually.True(() => replacementReads == 1, "replacement polls before the old read settles");
+            old.SetResult(BackupJson.Json(BackupJson.Job()));
+            await retired;
+            await h.Controller.RetryJobAsync();
+            Assert.Equal(1, replacementReads); // The old completion must not release the replacement flight.
+            Assert.Equal("job-2", h.Controller.State.JobId);
+            replacement.SetResult(BackupJson.Json(BackupJson.Job(id: "job-2")));
+            await Eventually.True(() => replacementReads == 2 && h.Scheduler.Pending.Contains(AdminBackupRestoreController.JobInterval), "queued foreground read and polling survive");
+            h.Scheduler.Advance(AdminBackupRestoreController.JobInterval);
+            await Eventually.True(() => replacementReads == 3, "replacement polling continues");
+        }
+        finally
+        {
+            old.TrySetResult(BackupJson.Json(BackupJson.Job()));
+            replacement.TrySetResult(BackupJson.Json(BackupJson.Job(id: "job-2")));
+            await retired;
+        }
+    }
+
+    [Fact]
     public async Task AJobForAnotherSourceIsNeverShown()
     {
         using var h = new Harness { JobBody = BackupJson.Job(source: "{\"upload_id\":\"" + BackupJson.UploadId + "\"}") };
