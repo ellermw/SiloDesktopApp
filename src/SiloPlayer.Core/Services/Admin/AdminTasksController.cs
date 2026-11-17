@@ -186,16 +186,16 @@ public sealed class AdminTasksController : IDisposable
         lock (_gate)
         {
             if (!_open || _lease is not { IsCurrent: true } lease || !ReferenceEquals(owner, lease) || _work == null) return;
-            if (run ? _starting.Contains(key) : _stopping.Contains(key)) return;
+            if (_starting.Contains(key) || _stopping.Contains(key)) return;
             if (!_tasks.Any(task => task.Key == key)) return;
             generation = _generation; token = _work.Token;
         }
         try { action = _lifetime.CaptureAction(); }
         catch (OperationCanceledException) { return; }
-        var started = _time.GetUtcNow();
+        var started = _time.GetTimestamp();
         lock (_gate)
         {
-            if (generation != _generation) { action.Dispose(); return; }
+            if (generation != _generation || _starting.Contains(key) || _stopping.Contains(key)) { action.Dispose(); return; }
             (run ? _starting : _stopping).Add(key);
             PublishLocked();
         }
@@ -241,9 +241,9 @@ public sealed class AdminTasksController : IDisposable
         Raise();
     }
 
-    private async Task HoldAsync(DateTimeOffset started, CancellationToken token)
+    private async Task HoldAsync(long started, CancellationToken token)
     {
-        var remaining = RunFeedbackMinimum - (_time.GetUtcNow() - started);
+        var remaining = RunFeedbackMinimum - _time.GetElapsedTime(started);
         if (remaining <= TimeSpan.Zero) return;
         try { await Task.Delay(remaining, _time, token).ConfigureAwait(false); }
         catch (OperationCanceledException) { }

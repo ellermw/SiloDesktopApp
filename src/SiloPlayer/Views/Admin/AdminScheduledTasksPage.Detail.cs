@@ -207,7 +207,7 @@ public sealed partial class AdminScheduledTasksPage
         SetButton(_detailCommand!, running ? "square" : "play",
             AdminTasksText.Message(running ? "web.admin.tasks.detail.cancelRun" : "web.admin.tasks.actions.runNow"), AdminMonitorUi.Foreground, spinner: false);
         _detailCommand!.Tag = running ? "cancel" : "run";
-        _detailCommand.IsEnabled = running ? !state.CancelPending && task.State != AdminTaskStates.Cancelling : !state.RunPending;
+        _detailCommand.IsEnabled = !state.RunPending && !state.CancelPending && task.State != AdminTaskStates.Cancelling;
 
         RenderScanNote(task);
         RenderProgress(_runningPanel, _runningFill, _runningRest, _runningBar, _runningLabel, _runningPercent, task);

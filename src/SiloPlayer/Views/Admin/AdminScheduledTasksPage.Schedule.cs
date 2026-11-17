@@ -219,7 +219,8 @@ public sealed partial class AdminScheduledTasksPage
             if (_syncingSchedule || view.Type.SelectedItem is not ComboBoxItem { Tag: string type }) return;
             _detail?.UpdateDraft(draft => draft.SetType(id, type));
         };
-        view.IntervalBox.TextChanged += (_, _) =>
+        // TextChanging captures input synchronously, before any queued controller render can restore old draft text.
+        view.IntervalBox.TextChanging += (_, _) =>
         {
             if (_syncingSchedule) return;
             var unit = SelectedUnit(view);
@@ -245,7 +246,7 @@ public sealed partial class AdminScheduledTasksPage
             var text = $"{time.Hours:00}:{time.Minutes:00}";
             _detail?.UpdateDraft(draft => draft.SetTime(id, text));
         };
-        view.Runtime.TextChanged += (_, _) =>
+        view.Runtime.TextChanging += (_, _) =>
         {
             if (_syncingSchedule) return;
             var text = view.Runtime.Text;

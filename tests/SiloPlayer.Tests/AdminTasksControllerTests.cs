@@ -44,11 +44,29 @@ public sealed class AdminTasksControllerTests
     internal static string TaskJson(string key, string category = "system", string state = "idle", bool manual = false, string extra = "") =>
         $$"""{"key":"{{key}}","name":"{{key}} name","description":"","category":"{{category}}","state":"{{state}}","progress":0,"manual_only":{{(manual ? "true" : "false")}},"triggers":[]{{extra}},"execution_scope":"process"}""";
 
+    // Timers and elapsed time advance together; wall time can be adjusted independently.
+    private sealed class TaskManualTime : TimeProvider
+    {
+        private readonly DashboardManualTime _timers = new();
+        private long _timestamp;
+        public TimeSpan UtcOffset { get; set; }
+        public override DateTimeOffset GetUtcNow() => _timers.GetUtcNow() + UtcOffset;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _timestamp;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            _timers.CreateTimer(callback, state, dueTime, period);
+        public void Advance(TimeSpan by)
+        {
+            _timestamp += by.Ticks;
+            _timers.Advance(by);
+        }
+    }
+
     private sealed class Fixture : IDisposable
     {
         public readonly AdminMonitorKit Kit = AdminMonitorKit.Create();
         public readonly AdminMonitorAuthority Authority;
-        public readonly DashboardManualTime Time = new();
+        public readonly TaskManualTime Time = new();
         public readonly AdminTasksFakeChannel Channel = new();
         public readonly AdminTasksController Controller;
         public readonly ConcurrentDictionary<string, Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>> Routes = new();
@@ -279,6 +297,73 @@ public sealed class AdminTasksControllerTests
         await run;
         Assert.DoesNotContain("cleanup", fixture.Controller.State.Starting);
         Assert.Equal(1, fixture.Count("POST /api/v2/admin/tasks/cleanup/run"));
+    }
+
+    [Fact]
+    public async Task RunFeedbackUsesMonotonicTimeWhenUtcMovesBackwardDuringTheRequest()
+    {
+        using var fixture = await OpenedAsync();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes["POST /api/v2/admin/tasks/cleanup/run"] = async (_, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(TaskJson("cleanup", state: "running"));
+        };
+        var run = fixture.Controller.RunAsync("cleanup", fixture.Controller.State.Owner);
+        try
+        {
+            await Until(() => fixture.Count("POST /api/v2/admin/tasks/cleanup/run") == 1, "held run");
+            fixture.Time.Advance(TimeSpan.FromMilliseconds(400));
+            fixture.Time.UtcOffset = TimeSpan.FromHours(-1);
+            release.TrySetResult();
+            await Until(() => fixture.Notices.Any(), "response settled and feedback hold scheduled");
+            fixture.Time.Advance(TimeSpan.FromMilliseconds(599));
+            Assert.Contains("cleanup", fixture.Controller.State.Starting);
+            Assert.False(run.IsCompleted);
+            fixture.Time.Advance(TimeSpan.FromMilliseconds(1));
+            await run.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.DoesNotContain("cleanup", fixture.Controller.State.Starting);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpposingCommandsAreIgnoredWhileARequestIsHeldDespiteARealtimeStateChange(bool run)
+    {
+        using var fixture = new Fixture { List = "{\"items\":[" + TaskJson("cleanup", state: run ? "idle" : "running") + "]}" };
+        fixture.Controller.SetActive(true);
+        Assert.True(fixture.Controller.Open());
+        await Until(() => fixture.Controller.State.Loaded, "initial task state");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = run ? "run" : "cancel";
+        var opposite = run ? "cancel" : "run";
+        fixture.Routes["POST /api/v2/admin/tasks/cleanup/" + operation] = async (_, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(TaskJson("cleanup", state: run ? "running" : "cancelling"));
+        };
+        var owner = fixture.Controller.State.Owner;
+        var command = run ? fixture.Controller.RunAsync("cleanup", owner) : fixture.Controller.StopAsync("cleanup", owner);
+        try
+        {
+            await Until(() => fixture.Count("POST /api/v2/admin/tasks/cleanup/" + operation) == 1, "held command");
+            var state = run ? "running" : "idle";
+            fixture.List = "{\"items\":[" + TaskJson("cleanup", state: state) + "]}";
+            fixture.Channel.Updated($$"""{"key":"cleanup","state":"{{state}}"}""");
+            await Until(() => fixture.Controller.State.Tasks.Count == 1 && fixture.Controller.State.Tasks[0].State == state, "realtime refresh during command");
+            await (run ? fixture.Controller.StopAsync("cleanup", owner) : fixture.Controller.RunAsync("cleanup", owner)).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(0, fixture.Count("POST /api/v2/admin/tasks/cleanup/" + opposite));
+            Assert.Contains("cleanup", run ? fixture.Controller.State.Starting : fixture.Controller.State.Stopping);
+            release.TrySetResult();
+            await Until(() => fixture.Notices.Any(), "command settled");
+            if (run) fixture.Time.Advance(AdminTasksController.RunFeedbackMinimum);
+            await command.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Empty(fixture.Controller.State.Starting);
+            Assert.Empty(fixture.Controller.State.Stopping);
+        }
+        finally { release.TrySetResult(); }
     }
 
     [Fact]

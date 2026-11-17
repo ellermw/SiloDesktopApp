@@ -195,7 +195,7 @@ public sealed class AdminTaskDetailController : IDisposable
         long generation;
         lock (_gate)
         {
-            if (!IsOwnerLocked(owner) || _task == null || _work == null || (run ? _runPending : _cancelPending)) return;
+            if (!IsOwnerLocked(owner) || _task == null || _work == null || _runPending || _cancelPending) return;
             token = _work.Token; generation = _generation;
         }
         MonitorAuthorityLease action;
@@ -203,7 +203,7 @@ public sealed class AdminTaskDetailController : IDisposable
         catch (OperationCanceledException) { return; }
         lock (_gate)
         {
-            if (generation != _generation) { action.Dispose(); return; }
+            if (generation != _generation || _runPending || _cancelPending) { action.Dispose(); return; }
             if (run) _runPending = true; else _cancelPending = true;
             PublishLocked();
         }

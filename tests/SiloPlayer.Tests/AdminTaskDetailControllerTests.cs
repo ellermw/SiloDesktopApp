@@ -423,6 +423,47 @@ public sealed class AdminTaskDetailControllerTests
         Assert.False(fixture.Controller.State.Dirty);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpposingCommandsAreIgnoredWhileARequestIsHeldDespiteARealtimeStateChange(bool run)
+    {
+        using var fixture = await OpenedAsync();
+        if (!run)
+        {
+            fixture.Routes["GET " + fixture.Path] = (_, _) => Fixture.Json(AdminTasksControllerTests.TaskJson("fixture", state: "running"));
+            await fixture.Controller.RetryAsync();
+            Assert.True(fixture.Controller.State.Task!.IsActive);
+        }
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = run ? "/run" : "/cancel";
+        var opposite = run ? "/cancel" : "/run";
+        fixture.Routes["POST " + fixture.Path + operation] = async (_, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(AdminTasksControllerTests.TaskJson("fixture", state: run ? "running" : "cancelling"));
+        };
+        var owner = fixture.Controller.State.Owner;
+        var command = run ? fixture.Controller.RunAsync(owner) : fixture.Controller.CancelAsync(owner);
+        try
+        {
+            await Until(() => fixture.Count("POST " + fixture.Path + operation) == 1, "held command");
+            var state = run ? "running" : "idle";
+            fixture.Routes["GET " + fixture.Path] = (_, _) => Fixture.Json(AdminTasksControllerTests.TaskJson("fixture", state: state));
+            var revision = fixture.Controller.State.Revision;
+            fixture.Channel.Updated($$"""{"key":"fixture","state":"{{state}}"}""");
+            await Until(() => fixture.Controller.State.Revision > revision && fixture.Controller.State.Task?.State == state, "refresh during command");
+            await (run ? fixture.Controller.CancelAsync(owner) : fixture.Controller.RunAsync(owner));
+            Assert.Equal(0, fixture.Count("POST " + fixture.Path + opposite));
+            Assert.True(run ? fixture.Controller.State.RunPending : fixture.Controller.State.CancelPending);
+            release.TrySetResult();
+            await command.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(fixture.Controller.State.RunPending);
+            Assert.False(fixture.Controller.State.CancelPending);
+        }
+        finally { release.TrySetResult(); }
+    }
+
     [Fact]
     public async Task RunAndCancelAreSentOnceAndInvalidateTheTask()
     {

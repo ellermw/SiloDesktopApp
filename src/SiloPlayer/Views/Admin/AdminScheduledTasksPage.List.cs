@@ -248,14 +248,14 @@ public sealed partial class AdminScheduledTasksPage
             var label = AdminTasksText.Message(cancelling ? "web.admin.tasks.row.stopping" : running ? "web.admin.tasks.row.stop" : "web.admin.tasks.row.starting");
             var tone = running && !cancelling ? AdminMonitorUi.Destructive : AdminMonitorUi.Foreground;
             SetButton(row.Action, running ? "square" : null, label, tone, spinner: !running);
-            row.Action.IsEnabled = running && !stopping && !cancelling;
+            row.Action.IsEnabled = running && !starting && !stopping && !cancelling;
             ToolTipService.SetToolTip(row.Action, running ? AdminTasksText.Message("web.admin.tasks.row.stopTitle") : null);
             row.Action.Tag = running ? "stop" : null;
         }
         else
         {
             SetButton(row.Action, "play", AdminTasksText.Message("web.admin.tasks.actions.runNow"), AdminMonitorUi.Foreground, spinner: false);
-            row.Action.IsEnabled = true;
+            row.Action.IsEnabled = !stopping;
             ToolTipService.SetToolTip(row.Action, null);
             row.Action.Tag = "run";
         }

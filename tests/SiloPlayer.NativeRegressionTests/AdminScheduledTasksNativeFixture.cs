@@ -68,6 +68,7 @@ internal static class AdminScheduledTasksNativeFixture
         internal int ScheduleRevision = 1;
         internal bool ConflictNext;
         internal bool FailListReads;
+        internal TaskCompletionSource? CancelRelease;
         internal static readonly string Past = DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O");
         internal static readonly string Future = DateTimeOffset.UtcNow.AddMinutes(150).ToString("O");
 
@@ -107,7 +108,10 @@ internal static class AdminScheduledTasksNativeFixture
             {
                 case "GET ": return Json(detail);
                 case "POST run": States[key] = "running"; return Json(Detail(key));
-                case "POST cancel": States[key] = "cancelling"; return Json(Detail(key));
+                case "POST cancel":
+                    States[key] = "cancelling";
+                    if (CancelRelease is { } release) await release.Task.WaitAsync(cancellationToken);
+                    return Json(Detail(key));
                 case "GET metrics":
                     return Json("""{"total":12,"due":3,"leased":1,"reason_counts":[{"reason":"refresh_failure","count":2},{"reason":"provider_artwork","count":0}],"attempt_buckets":[{"label":"1-2","count":5}],"due_samples":[],"recent_errors":[]}""");
                 case "GET history":
@@ -216,6 +220,7 @@ internal static class AdminScheduledTasksNativeFixture
             Check(Descendants(page).OfType<FrameworkElement>().Any(element => AutomationProperties.GetAutomationId(element) == "TaskProgress_cleanup_activity_log" && element.Visibility == Visibility.Visible),
                 "a running task shows its progress bar");
             Check(server.Count("POST /api/v2/admin/tasks/cleanup_activity_log/run") == 1, "Run Now is sent exactly once");
+            server.CancelRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
             await InvokeAsync(Button(page, "TaskAction_cleanup_activity_log"));
             await Until(() => server.Count("POST /api/v2/admin/tasks/cleanup_activity_log/cancel") == 1, "cancel sent");
             channel.Updated("cleanup_activity_log", "cancelling");
@@ -224,6 +229,13 @@ internal static class AdminScheduledTasksNativeFixture
             server.States["cleanup_activity_log"] = "idle";
             channel.Updated("cleanup_activity_log", "idle");
             await Until(() => AutomationProperties.GetName(Button(page, "TaskAction_cleanup_activity_log")) == "Run Now", "idle again");
+            Check(page.ListController!.State.Stopping.Contains("cleanup_activity_log") && !Button(page, "TaskAction_cleanup_activity_log").IsEnabled,
+                "an idle realtime refresh cannot enable Run Now while Stop is in flight");
+            await page.ListController.RunAsync("cleanup_activity_log", page.ListController.State.Owner);
+            Check(server.Count("POST /api/v2/admin/tasks/cleanup_activity_log/run") == 1, "the list controller rejects Run during a held Stop");
+            server.CancelRelease.TrySetResult();
+            server.CancelRelease = null;
+            await Until(() => Button(page, "TaskAction_cleanup_activity_log").IsEnabled, "cancellation settled");
 
             server.FailListReads = true;
             channel.Updated("cleanup_activity_log", "idle");
@@ -260,7 +272,10 @@ internal static class AdminScheduledTasksNativeFixture
             await Task.Delay(100);
             var interval = Box(detail, "TriggerInterval_0");
             Check(interval.Text == "1" && Combo(detail, "TriggerUnit_0").SelectedIndex == 0, "the captured interval shows in seconds");
-            interval.Text = "3";
+            await TypeWithQueuedRenderAsync(detail, interval, "3", () => detail.DetailController!.State.Draft!.Rows[0].IntervalText, "interval");
+            var runtime = Box(detail, "TriggerRuntime_0");
+            await TypeWithQueuedRenderAsync(detail, runtime, "2", () => detail.DetailController!.State.Draft!.Rows[0].RuntimeText, "runtime");
+            runtime.Text = "";
             await Until(() => detail.DetailController!.State.Dirty, "dirty");
             server.ConflictNext = true;
             await InvokeAsync(Button(detail, "TaskSaveSchedule"));
@@ -323,6 +338,21 @@ internal static class AdminScheduledTasksNativeFixture
             Check(Button(manual, "TaskEditSchedule").Visibility == Visibility.Collapsed && Texts(manual).Contains("Manual only. Select Run Now to start this task."),
                 "a manual-only task shows its sentence and no editor");
 
+            await InvokeAsync(Button(manual, "TaskCommand"));
+            await Until(() => manual.DetailController!.State.Task!.IsActive && Button(manual, "TaskCommand").IsEnabled, "manual task running");
+            server.CancelRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            await InvokeAsync(Button(manual, "TaskCommand"));
+            await Until(() => manual.DetailController!.State.CancelPending && server.States.GetValueOrDefault("repair_provider_id_integrity") == "cancelling", "detail cancellation held");
+            server.States["repair_provider_id_integrity"] = "idle";
+            channel.Updated("repair_provider_id_integrity", "idle");
+            await Until(() => manual.DetailController!.State.Task!.State == "idle" && AutomationProperties.GetName(Button(manual, "TaskCommand")) == "Run Now", "detail idle refresh");
+            Check(!Button(manual, "TaskCommand").IsEnabled, "detail Run Now stays disabled during a held Cancel");
+            await manual.DetailController!.RunAsync(manual.DetailController.State.Owner);
+            Check(server.Count("POST /api/v2/admin/tasks/repair_provider_id_integrity/run") == 1, "the detail controller rejects Run during a held Cancel");
+            server.CancelRelease.TrySetResult();
+            server.CancelRelease = null;
+            await Until(() => Button(manual, "TaskCommand").IsEnabled, "detail cancellation settled");
+
             AdminShellPage.TryOpenHref("/admin/tasks/gone_task");
             await Until(() => inner.Content is AdminScheduledTasksPage { DetailController.State.NotFound: true }, "not found");
             var missing = (AdminScheduledTasksPage)inner.Content;
@@ -359,6 +389,23 @@ internal static class AdminScheduledTasksNativeFixture
             field.SetValue(null, previous);
         }
         if (Failures.Count > 0) throw new InvalidOperationException("Scheduled Tasks fixture failures: " + string.Join("; ", Failures));
+    }
+
+    private static async Task TypeWithQueuedRenderAsync(AdminScheduledTasksPage page, TextBox box, string text, Func<string> draftText, string label)
+    {
+        // Queue a controller render before input, then inspect the draft at the synchronous input boundary,
+        // before TextChanged can run. Drain the queued renders to check that the edit also remains visible.
+        page.DetailController!.UpdateDraft(draft => draft);
+        var capturedSynchronously = false;
+        void OnChanging(TextBox sender, TextBoxTextChangingEventArgs args) => capturedSynchronously = draftText() == text;
+        box.TextChanging += OnChanging;
+        try { box.Text = text; }
+        finally { box.TextChanging -= OnChanging; }
+        Check(capturedSynchronously, label + " is captured before asynchronous TextChanged and queued renders");
+        var rendered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        page.DispatcherQueue.TryEnqueue(() => rendered.TrySetResult());
+        await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(box.Text == text && draftText() == text, label + " survives the queued controller render");
     }
 
     private static async Task CloseDialogAsync(AdminScheduledTasksPage? page)
