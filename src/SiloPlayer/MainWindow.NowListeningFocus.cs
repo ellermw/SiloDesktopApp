@@ -7,7 +7,7 @@ namespace SiloPlayer;
 /// <summary>
 /// Official Silo Server #4296 (385d90755): the expanded audiobook player
 /// (Now Listening) covers the shell, so the covered navigation, page content
-/// and shell controls are inert while it is open, focus starts on its Back
+/// and shell controls are keyboard-inert while it is open, focus starts on its Back
 /// control, and collapsing it returns focus to the mini-player cover tile that
 /// opened it. Every player state change resynchronises the scope, so stop,
 /// picture-in-picture and a video takeover restore the shell too.
@@ -26,12 +26,17 @@ public sealed partial class MainWindow
             ? null
             : FocusManager.GetFocusedElement(root) as DependencyObject;
 
+    // Match Playing Next: never request focus from an inactive playback shell.
+    // Evaluate at each attempt, including the deferred post-layout retry.
+    private bool CanMoveNowListeningFocus() => _isWindowActive || _playerService.IsPlaybackSurfaceForeground;
+
     private void SyncNowListeningFocusScope(PlayerState state, DependencyObject? opener)
     {
         if (AudiobookNowListeningControl.Visibility == Visibility.Visible)
         {
             _nowListeningFocus.Open(RootGrid, AudiobookNowListeningControl, opener,
-                AudiobookNowListeningControl.FocusCollapseButton);
+                AudiobookNowListeningControl.FocusCollapseButton,
+                canMoveFocus: CanMoveNowListeningFocus);
             return;
         }
 
@@ -41,6 +46,7 @@ public sealed partial class MainWindow
         _nowListeningFocus.Close(AudiobookNowListeningControl,
             returnFocus: state is PlayerState.Minimized or PlayerState.Idle,
             preferred: MiniPlayerBarControl.FocusNowListeningOpener,
-            fallbackScope: ContentFrame);
+            fallbackScope: ContentFrame,
+            canMoveFocus: CanMoveNowListeningFocus);
     }
 }

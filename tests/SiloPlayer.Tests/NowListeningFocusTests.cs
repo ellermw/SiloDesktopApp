@@ -158,11 +158,13 @@ public sealed class NowListeningFocusTests
         var focus = ReadRepoFile("src", "SiloPlayer", "MainWindow.NowListeningFocus.cs");
         Assert.Contains("if (AudiobookNowListeningControl.Visibility == Visibility.Visible)", focus);
         Assert.Contains("_nowListeningFocus.Open(RootGrid, AudiobookNowListeningControl, opener,", focus);
-        Assert.Contains("AudiobookNowListeningControl.FocusCollapseButton);", focus);
+        Assert.Contains("AudiobookNowListeningControl.FocusCollapseButton,", focus);
         Assert.Contains("_nowListeningFocus.Close(AudiobookNowListeningControl,", focus);
         Assert.Contains("returnFocus: state is PlayerState.Minimized or PlayerState.Idle,", focus);
         Assert.Contains("preferred: MiniPlayerBarControl.FocusNowListeningOpener,", focus);
-        Assert.Contains("fallbackScope: ContentFrame);", focus);
+        Assert.Contains("fallbackScope: ContentFrame,", focus);
+        Assert.Contains("private bool CanMoveNowListeningFocus() => _isWindowActive || _playerService.IsPlaybackSurfaceForeground;", focus);
+        Assert.Equal(2, Count(focus, "canMoveFocus: CanMoveNowListeningFocus"));
         Assert.Contains("_nowListeningFocus.IsOpen || Content?.XamlRoot is not { } root", focus);
     }
 
@@ -177,9 +179,19 @@ public sealed class NowListeningFocusTests
         Assert.Contains("if (element is Control control)", scope);
         Assert.Contains("(target, value) => target.IsEnabled = value, false);", scope);
         Assert.Contains("_inertness.Restore();", scope);
-        Assert.Contains("if (generation == _generation) focus(true);", scope);
+        Assert.Contains("if (canMoveFocus?.Invoke() == false || focus(false)) return;", scope);
+        Assert.Contains("if (generation == _generation && canMoveFocus?.Invoke() != false) focus(true);", scope);
         Assert.Contains("new WeakReference<DependencyObject>(opener)", scope);
         Assert.DoesNotContain("+=", scope);
+    }
+
+    [Fact]
+    public void CollapseRetriesThePreferredTargetBeforeTryingTheRememberedOpener()
+    {
+        var scope = ReadRepoFile("src", "SiloPlayer", "Helpers", "NowListeningFocusScope.cs");
+        var close = MethodBody(scope, "public bool Close(");
+        Assert.Contains("preferred?.Invoke() == true\n                || (final && (TryFocus(opener)", close.Replace("\r\n", "\n"));
+        Assert.Contains("fallbackScope != null && TryFocus(FocusManager.FindFirstFocusableElement(fallbackScope))", close);
     }
 
     [Fact]

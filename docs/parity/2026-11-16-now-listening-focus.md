@@ -20,13 +20,14 @@ WinUI has no `inert`. The port does this:
 
 - **Covered shell.** `NowListeningFocusScope.Open` covers every `RootGrid` sibling that paints beneath Now Listening (`Canvas.ZIndex` 55): a lower ZIndex, or an equal ZIndex earlier in document order. In practice that is `NavView` (navigation pane, header and `ContentFrame`), the Server Activity button, the loading, player and Playing Next overlays, toasts and the standalone update button.
   - Each covered element gets `AutomationProperties.AccessibilityView=Raw`.
-  - Each covered `Control` gets `IsEnabled=false`. That makes every descendant unfocusable by Tab, Shift+Tab, access keys and programmatic focus, and UIA reports them unavailable.
+  - Each covered `Control` gets `IsEnabled=false`. That prevents descendant keyboard focus via Tab, Shift+Tab, access keys and programmatic focus. It does not remove descendants from UIA; non-`Control` text can still be read (see the recorded deviation below).
   - The mini player (z60) and the buffering pill (z65) draw above Now Listening and are left alone. The mini player is collapsed while Now Listening is open anyway.
 - **Containment.** `AudiobookNowListening` sets `TabFocusNavigation="Cycle"`, so Tab and Shift+Tab wrap inside it.
 - **Open.** Focus goes to the Back control (`CollapseButton`, through `FocusCollapseButton`). The first attempt is synchronous. If the control is not focusable until layout, one low-priority retry follows.
-- **Collapse (Minimized).** Focus returns to the mini player's "Open Now Listening" cover tile (`MiniPlayerBar.FocusNowListeningOpener`). If that fails, it goes to the element that was focused before the expand. If that also fails, it goes to the first focusable element of `ContentFrame`.
+- **Collapse (Minimized).** Focus returns to the mini player's "Open Now Listening" cover tile (`MiniPlayerBar.FocusNowListeningOpener`). Only after both the synchronous attempt and the post-layout retry fail does it try the element focused before expansion, then the first focusable element of `ContentFrame`. A page opener must not preempt the cover tile's retry.
 - **Stop while expanded (Idle).** The shell is restored. With no mini player left, focus goes to the opener if it is still focusable, otherwise to the first control of the current page.
 - **PiP or video takeover.** The shell is restored and focus is not moved, because that surface owns focus.
+- **Inactive window.** Inertness is always applied/restored, but focus is requested only when `_isWindowActive || _playerService.IsPlaybackSurfaceForeground`, matching Playing Next. The predicate is checked again before the low-priority retry. Inactive transitions skip focus rather than queueing a target for activation.
 - **Repeated expansion.** An expand while already open is a no-op: the original opener is kept and focus is not taken again. Every open/collapse cycle returns focus to the cover tile.
 - **Exact, leak-free restore.** `ReversibleInertness` records each write it made and reverses them newest-first.
   - A target that was already inert is skipped.
@@ -36,9 +37,11 @@ WinUI has no `inert`. The port does this:
 - **Wiring.** `MainWindow.OnPlayerStateChanged` captures the opener before the mini player collapses. After every state case, it calls `SyncNowListeningFocusScope`, so open, collapse, stop, PiP and the video takeover all go through one path.
 - **No motion.** No page-navigation, slide or entrance animation was added.
 
-### Known difference from `inert`
+### Recorded accessibility deviation from `inert`
 
-`AccessibilityView=Raw` removes only the element itself from the UIA control and content views. Its descendants remain in the raw tree as disabled, non-focusable elements. Collapsing the shell would remove them completely, but it would re-measure the whole page and the navigation pane on every collapse, and `MainWindow` deliberately does not hide `NavView`.
+This port provides **keyboard containment, not Narrator/automation-tree containment**. `AccessibilityView=Raw` removes only the element itself from the UIA control and content views. Descendants are re-parented to the nearest included ancestor and remain reachable in those views. Disabling a `Control` does not hide its descendants, and non-`Control` elements such as page text, headings and named images are not disabled. Narrator scan mode and item navigation can therefore still announce the covered page and sidebar while Now Listening is open. This is a parity gap, not equivalent to upstream `inert`.
+
+The native fixture explicitly records this deviation by adding covered page text and asserting that its peer remains a UIA content element while the navigation parent is Raw and disabled. The existing disabled/focusability assertions establish keyboard behavior only; they do not establish screen-reader isolation. Subtree suppression would need a separate automation-peer or dialog design and Narrator verification. Collapsing the shell is not done here because it would re-measure the whole page and navigation pane, and `MainWindow` deliberately does not hide `NavView`.
 
 Covered non-`Control` panels (the loading and Playing Next overlay `Grid`s) can only get `Raw`, not `IsEnabled=false`. They are normally collapsed while Now Listening is open, and Tab cycling keeps keyboard focus out of them in any case.
 
@@ -57,7 +60,7 @@ Covered non-`Control` panels (the loading and Playing Next overlay `Grid`s) can 
 
 ## Verification
 
-Local results on this source:
+Original PR verification (before the review fixes below):
 
 - **Unit tests:** all 7,548 pass, including `NowListeningFocusTests`.
 - **`media-parity` with `SILO_NATIVE_TEST_MEDIA_ACTION_CASE=now-listening-focus`:**
@@ -72,9 +75,15 @@ Local results on this source:
   fixture accepts that combination only for controls that are themselves
   `Raw`. Covered controls inside them must report disabled.
 
+Review fixes add native cases for a page opener whose cover tile needs a retry,
+inactive open/close and deactivation before a queued retry, and the recorded
+UIA content-view deviation. These changes were inspected only; builds and tests
+were not run during review fixing and must be run by the pipeline.
+
 Still needs manual checks in the installed app:
 
 - **Keyboard:** Tab and Shift+Tab never reach the sidebar or page, and
   Escape, E and Back return focus to the cover tile.
-- **Narrator:** it lands on "Back to player" on open. Check how it describes
-  the covered sidebar and page while Now Listening is open.
+- **Narrator:** it lands on "Back to player" on an active-window open. Confirm
+  the recorded limitation: scan/item navigation can still reach the covered
+  sidebar and page; keyboard Tab containment does not imply Narrator isolation.
