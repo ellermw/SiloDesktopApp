@@ -33,7 +33,7 @@ public sealed class AdminSearchApi(SiloApiClient client)
     /// <summary>
     /// One synchronous Meilisearch check. <paramref name="values"/> carries the form's value for every Meilisearch key and
     /// <paramref name="dirtyKeys"/> says which of them are staged edits (the server uses its saved value for the rest, including
-    /// the API key). A typed API key and the URL's credentials are removed from the returned message.
+    /// the API key). Only client-owned result text is displayed: diagnostics may echo credentials known only to the server.
     /// </summary>
     public async Task<AdminSettingsConnectionResult> CheckMeilisearchAsync(MonitorAuthorityLease lease, IReadOnlyDictionary<string, string> values,
         IReadOnlyCollection<string> dirtyKeys, CancellationToken ct = default)
@@ -53,20 +53,9 @@ public sealed class AdminSearchApi(SiloApiClient client)
         catch (ApiException error) { throw Sanitize(error); }
         catch (Exception) { throw new InvalidDataException("Connection check failed."); }
         if (response.Body.Success == null || response.Body.Message == null) throw new InvalidDataException("Invalid connection result.");
-        var message = LocalLog.RedactDiagnosticText(response.Body.Message);
-        var secrets = new List<string>();
-        if (values.TryGetValue(AdminSearchSettingsRules.MeilisearchApiKey, out var key) && key.Length > 0) secrets.Add(key);
-        if (values.TryGetValue(AdminSearchSettingsRules.MeilisearchUrl, out var url) && Uri.TryCreate(url, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo))
-        {
-            // Servers may echo credentials separately, either escaped or decoded.
-            secrets.Add(uri.UserInfo);
-            secrets.AddRange(uri.UserInfo.Split(':', 2));
-            secrets.AddRange(secrets.ToArray().Select(Uri.UnescapeDataString));
-        }
-        foreach (var component in secrets.Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
-            message = message.Replace(component, "<redacted>", StringComparison.Ordinal);
-        if (message.Length > MaxTextLength) message = message[..MaxTextLength] + "…";
-        return new(response.Body.Success.Value, message);
+        // The saved key is write-only and may not be among the submitted values. Regex redaction
+        // cannot safely identify arbitrary or encoded provider echoes of that unknown credential.
+        return new(response.Body.Success.Value, response.Body.Success.Value ? "Meilisearch is reachable." : "Connection check failed.");
     }
 
     private static AdminSearchStatus Validate(StatusWire body)

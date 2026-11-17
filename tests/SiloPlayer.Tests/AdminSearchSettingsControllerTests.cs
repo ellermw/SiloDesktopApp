@@ -23,6 +23,7 @@ public sealed class AdminSearchSettingsControllerTests
         internal readonly AdminServerSettingsStore Store;
         internal readonly AdminSearchSettingsController Controller;
         internal string Effective;
+        internal string ETag = "\"one\"";
         internal string Sensitive = """{"configured":["catalog.search.meilisearch.api_key"],"managed_by_env":[]}""";
         internal string Status = AdminSearchApiTests.StatusJson();
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
@@ -42,10 +43,10 @@ public sealed class AdminSearchSettingsControllerTests
                 var path = request.RequestUri!.AbsolutePath;
                 if (request.Method != HttpMethod.Get) return Write?.Invoke(request) ?? Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.InternalServerError));
                 if (path == AdminSearchApiTests.StatusPath) return StatusResponseAsync?.Invoke() ?? Task.FromResult(StatusResponse?.Invoke() ?? AdminMonitorKit.Json(Status));
-                var response = path.EndsWith("effective") ? AdminMonitorKit.Json(Effective)
+                var response = path.EndsWith("effective") ? (Effective == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(Effective))
                     : path.EndsWith("sensitive-status") ? (Sensitive == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(Sensitive))
                     : AdminMonitorKit.Json("""{"keys":[],"prefixes":[]}""");
-                response.Headers.ETag = new("\"one\"");
+                response.Headers.ETag = new(ETag);
                 return Task.FromResult(response);
             };
         }
@@ -117,6 +118,35 @@ public sealed class AdminSearchSettingsControllerTests
         Assert.Empty(state.DirtyKeys);
         Assert.Equal(0, h.StatusReads);
         Assert.False(h.Controller.IsPolling);
+    }
+
+    [Fact]
+    public async Task OpeningSearchRevalidatesAPrimedSharedSnapshotWithinTheCacheWindow()
+    {
+        using var h = new Harness();
+        using (var owner = h.Authority.Capture())
+        {
+            await h.Store.GetEffectiveAsync(owner);
+            await h.Store.GetSensitiveStatusAsync(owner);
+        }
+        h.Effective = h.Effective.Replace("http://localhost:7700", "http://fresh.example.test:7700").Replace("\"meilisearch\"", "\"postgres\"");
+        h.Sensitive = """{"configured":[],"managed_by_env":["catalog.search.meilisearch.url"]}""";
+        h.ETag = "\"fresh\"";
+        await h.OpenedAsync();
+        Assert.Equal("postgres", h.Controller.State.Values[Provider]);
+        Assert.Equal("http://fresh.example.test:7700", h.Controller.State.Values[Url]);
+        Assert.False(h.Controller.State.ApiKeyConfigured);
+        Assert.Contains(Url, h.Controller.State.ManagedByEnv);
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r.EndsWith("/effective", StringComparison.Ordinal)));
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r.EndsWith("/sensitive-status", StringComparison.Ordinal)));
+        h.Write = request =>
+        {
+            Assert.Equal("\"fresh\"", Assert.Single(request.Headers.IfMatch).ToString());
+            return Task.FromResult(Saved("""{"catalog.search.meilisearch.index":"custom"}"""));
+        };
+        h.Controller.Set(AdminSearchSettingsRules.Index, "custom");
+        await h.Controller.SaveAsync();
+        Assert.Single(h.Writes);
     }
 
     [Fact]
@@ -399,6 +429,49 @@ public sealed class AdminSearchSettingsControllerTests
         await h.Controller.ReloadAsync(preserveDraft: true);
         Assert.False(h.Controller.State.SensitiveStatusError);
         Assert.Contains(AdminSearchSettingsRules.Index, h.Controller.State.DirtyKeys);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FailedEffectiveAndSensitiveReloadErasesTheKeyAndKeepsCredentialWritesProtected(bool preserveDraft)
+    {
+        using var h = new Harness();
+        await h.OpenedAsync();
+        var effective = h.Effective;
+        var sensitive = h.Sensitive;
+        h.Controller.SetApiKey("replacement-draft");
+        h.Controller.Set(Url, "http://draft.example.test");
+        h.Controller.Set(Provider, "postgres");
+        h.Effective = "fail";
+        h.Sensitive = "fail";
+        await h.Controller.ReloadAsync(preserveDraft);
+        Assert.False(h.Controller.State.Loading);
+        Assert.NotNull(h.Controller.State.Error);
+        Assert.True(h.Controller.State.SensitiveStatusError);
+        Assert.Equal("", h.Controller.State.Values[ApiKey]);
+        Assert.DoesNotContain(ApiKey, h.Controller.State.DirtyKeys);
+        h.Controller.SetApiKey("another-draft");
+        h.Controller.Set(Url, "http://blocked.example.test");
+        h.Controller.Set(Provider, "meilisearch");
+        Assert.Equal("", h.Controller.State.Values[ApiKey]);
+        Assert.Equal("http://draft.example.test", h.Controller.State.Values[Url]);
+        Assert.Equal("postgres", h.Controller.State.Values[Provider]);
+        await h.Controller.SaveAsync();
+        Assert.Empty(h.Writes);
+
+        // A successful sensitive read alone must not lift protection after failed reconciliation.
+        h.Sensitive = sensitive;
+        await h.Controller.ReloadAsync(preserveDraft);
+        Assert.True(h.Controller.State.SensitiveStatusError);
+        await h.Controller.SaveAsync();
+        Assert.Empty(h.Writes);
+        h.Effective = effective;
+        await h.Controller.ReloadAsync(preserveDraft);
+        Assert.False(h.Controller.State.SensitiveStatusError);
+        Assert.Equal("", h.Controller.State.Values[ApiKey]);
+        h.Controller.SetApiKey("reviewed-draft");
+        Assert.Contains(ApiKey, h.Controller.State.DirtyKeys);
     }
 
     [Fact]

@@ -313,6 +313,25 @@ internal static class AdminSearchSettingsNativeFixture
             inner.GoBack(); await Until(() => inner.Content is AdminSearchSettingsPage { Controller.State.Loaded: true }, "Back restored production Search", diagnostics: () =>
                 $"page={inner.Content?.GetType().Name}; loaded={(inner.Content as FrameworkElement)?.IsLoaded}; back={inner.BackStack.Count}; forward={inner.ForwardStack.Count}; controller={(inner.Content as AdminSearchSettingsPage)?.Controller != null}; loading={(inner.Content as AdminSearchSettingsPage)?.Controller?.State.Loading}; failed={(inner.Content as AdminSearchSettingsPage)?.Controller?.State.Error != null}");
             page = (AdminSearchSettingsPage)inner.Content; controller = page.Controller!;
+
+            // Reproduce activation's closed local disclosure with persisted Advanced=true, but
+            // status already complete before the dispatcher can drain any queued snapshots.
+            await Until(() => controller.State.Status != null && Field(controller, "_statusFlight") == null, "Back status completed");
+            Check(services.GetRequiredService<LoggingDisclosurePreferences>().Read("search"), "Advanced open preference survives departure");
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(AdminSearchSettingsPage).GetMethod("ClearStatusUi", flags)!.Invoke(page, null);
+            typeof(AdminSearchSettingsPage).GetField("_advancedOpen", flags)!.SetValue(page, false);
+            typeof(AdminSearchSettingsPage).GetField("_override", flags)!.SetValue(page, null);
+            typeof(AdminSearchSettingsPage).GetMethod("RenderDisclosure", flags)!.Invoke(page, null);
+            controller.SetAdvancedOpen(false);
+            reads = server.StatusReads;
+            typeof(AdminSearchSettingsPage).GetMethod("QueueRender", flags)!.Invoke(page, null);
+            controller.Discard(); // supersedes the queued snapshot without changing fresh status
+            await Until(() => AutomationProperties.GetItemStatus(Button(page, "SearchAdvanced")) == "expanded" &&
+                Descendants(page).Any(e => AutomationProperties.GetName(e) == "Documents: 1234"), "persisted Advanced renders already completed status");
+            Check(server.StatusReads == reads && !controller.IsPolling && Shown(Input(page, Timeout), page),
+                "restoring Advanced populates fresh status without an interaction, extra read or polling");
+
             // PasswordChanged is deferred: retirement must clear typing even before the controller sees it.
             secret = Secret(page);
             await Until(() => Shown(Input(page, Timeout), page) || Shown(Secret(page), page), "Back fields rendered");

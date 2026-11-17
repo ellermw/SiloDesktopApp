@@ -406,14 +406,14 @@ public sealed partial class AdminSearchSettingsPage : Page, IAdminGutterScrollPa
         U.UpdateLiveText(_checkResult, current ? state.ConnectionResult?.Message ?? "" : "");
         _checkResult.Foreground = AdminMonitorUi.Solid(state.ConnectionResult?.Success == true ? Emerald600 : Red600);
 
-        RenderStatusParts(state, current, meili);
-
         var allRestart = R.Keys.All(state.RestartKeys.Has);
         var groupDescription = T("web.admin.settings.search.description");
         _group.State(R.Keys.Any(Dirty), allRestart ? T("web.admin.settings.fields.restartAllWithDescription", new { description = groupDescription }) : groupDescription);
         // SecretField carries no per-field dirty dot; the group dot covers it.
         foreach (var key in R.Keys) _rows[key].State(key != R.MeilisearchApiKey && Dirty(key), !allRestart && state.RestartKeys.Has(key));
         UpdateAdvanced(current && showMeili && R.AnyAdvancedDirty(state.DirtyKeys), showMeili);
+        // Restoring Advanced may not raise Changed when status is already fresh.
+        RenderStatusParts(state, current, meili);
 
         // Provider, URL and key cannot be told apart from environment-managed ones without the sensitive status.
         bool Writable(string key) => !Managed(key) && (!unknown || key is not (R.Provider or R.MeilisearchUrl or R.MeilisearchApiKey));

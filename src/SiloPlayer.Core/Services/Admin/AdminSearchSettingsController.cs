@@ -82,6 +82,8 @@ public sealed class AdminSearchSettingsController : IDisposable
         MonitorAuthorityLease owner;
         try { _lifetime.Resume(); owner = _lifetime.Open(); }
         catch (OperationCanceledException) { Clear(); return; }
+        // Other Configure pages share this store; page entry must revalidate values and credential presence.
+        _store.Invalidate();
         lock (_gate) { ResetLocked(); _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke();
         await LoadAsync(owner, false, false).ConfigureAwait(false);
@@ -111,7 +113,17 @@ public sealed class AdminSearchSettingsController : IDisposable
         var sensitiveError = false;
         try { status = await sensitive.ConfigureAwait(false); }
         catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
-        catch { sensitiveError = true; }
+        catch
+        {
+            sensitiveError = true;
+            // Fail closed even if the effective settings read also fails.
+            Update(owner, () =>
+            {
+                _form?.Reset(ApiKey);
+                _revision++;
+                _state = _state with { SensitiveStatusError = true, ConnectionResult = null };
+            });
+        }
         try { restartKeys = await restart.ConfigureAwait(false); }
         catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
         catch { }

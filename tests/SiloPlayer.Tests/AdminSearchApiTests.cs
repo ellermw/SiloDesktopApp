@@ -192,6 +192,30 @@ public sealed class AdminSearchApiTests
         }
     }
 
+    [Theory]
+    [InlineData(false, "Rejected credential saved-key-9", "")]
+    [InlineData(true, "Proxy accepted saved-key-9", "")]
+    [InlineData(false, "Rejected typed%2Fkey%2B9", "typed/key+9")]
+    [InlineData(true, "Accepted dHlwZWQva2V5Kzk=", "typed/key+9")]
+    public async Task ConnectionCheckWithholdsUnknownSavedAndEncodedTypedCredentialEchoes(bool success, string diagnostic, string typedKey)
+    {
+        var (kit, authority, lease, api) = Create();
+        using (kit) using (authority) using (lease)
+        {
+            kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(System.Text.Json.JsonSerializer.Serialize(new { success, message = diagnostic })));
+            var values = AdminSearchSettingsRules.MeilisearchKeys.ToDictionary(key => key, _ => "", StringComparer.Ordinal);
+            values[AdminSearchSettingsRules.MeilisearchApiKey] = typedKey;
+            string[] dirty = typedKey.Length == 0 ? [] : [AdminSearchSettingsRules.MeilisearchApiKey];
+            var result = await api.CheckMeilisearchAsync(lease, values, dirty);
+            Assert.Equal(success, result.Success);
+            Assert.Equal(success ? "Meilisearch is reachable." : "Connection check failed.", result.Message);
+            Assert.DoesNotContain(diagnostic, result.Message);
+            using var body = System.Text.Json.JsonDocument.Parse(kit.Http.Bodies.Single());
+            Assert.Equal(typedKey, body.RootElement.GetProperty("values").GetProperty(AdminSearchSettingsRules.MeilisearchApiKey).GetString());
+            Assert.Equal(dirty.Length, body.RootElement.GetProperty("dirty_keys").GetArrayLength());
+        }
+    }
+
     [Fact]
     public async Task ConnectionCheckRejectsForeignKeysBeforeAnyRequest()
     {
