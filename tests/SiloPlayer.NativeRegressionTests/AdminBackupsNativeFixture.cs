@@ -326,7 +326,9 @@ internal static class AdminBackupsNativeFixture
             await Until(() => Field(page, "_dialog") == null, "key dialog closed");
             Check(server.Requests.Contains("POST /api/v2/admin/backups/s3/acknowledge-key"), "the key is acknowledged once confirmed");
 
-            // Upload: parts, check, then Choose what to restore opens the upload's restore route.
+            // Upload navigation must wait for dialog cleanup so a dirty draft can ask to discard.
+            controller.Set("backup.time", "05:02");
+            await Until(() => controller.State.DirtyKeys.Contains("backup.time"), "dirty settings before upload");
             Invoke(Find<Button>(page, "BackupsUpload")!);
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "upload dialog");
             var uploadDialog = (ContentDialog)Field(page, "_dialog")!;
@@ -343,6 +345,10 @@ internal static class AdminBackupsNativeFixture
             await Until(() => Find<Button>(uploadDialog, "BackupsUploadChooseWhat") is { IsLoaded: true, IsEnabled: true }, "upload opened");
             Check(server.Parts == 3 && server.Requests.Count(request => request == "POST /api/v2/admin/backups/uploads") == 1, "three parts sent for one created upload");
             Invoke(Find<Button>(uploadDialog, "BackupsUploadChooseWhat")!);
+            await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true } dialog && !ReferenceEquals(dialog, uploadDialog), "discard confirmation after upload closes");
+            var discardDialog = (ContentDialog)Field(page, "_dialog")!;
+            Check(controller.State.DirtyKeys.Contains("backup.time"), "upload navigation keeps the dirty draft until discard is confirmed");
+            Invoke(DialogButton(discardDialog, AdminText.T("web.shell.unsavedChanges.discard")));
             var uploadPage = await WaitForPageAsync(outer, page);
             lastPage = uploadPage;
             await Until(() => uploadPage.RestoreController?.State.Unauthenticated == true, "upload preview needs consent");

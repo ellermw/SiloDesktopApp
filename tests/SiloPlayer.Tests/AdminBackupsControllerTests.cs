@@ -119,6 +119,30 @@ public sealed class AdminBackupsControllerTests
         finally { Directory.Delete(directory, true); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeleteConfirmationCannotUseAReplacementOwner(bool upload)
+    {
+        using var h = new Harness();
+        h.Override = request => request.Method == HttpMethod.Delete
+            ? Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)) : null;
+        await h.Controller.OpenAsync();
+        var confirmedOwner = h.Controller.State.Owner!;
+        Task Delete(MonitorAuthorityLease owner) => upload
+            ? h.Controller.DeleteUploadAsync(BackupJson.UploadId, owner)
+            : h.Controller.DeleteBackupAsync(BackupJson.BackupId, owner);
+        using var otherLease = h.Authority.Capture();
+        await Delete(otherLease);
+        Assert.DoesNotContain(h.Requests, request => request.StartsWith("DELETE ", StringComparison.Ordinal));
+        await h.Controller.OpenAsync();
+        Assert.False(confirmedOwner.IsCurrent);
+        await Delete(confirmedOwner);
+        Assert.DoesNotContain(h.Requests, request => request.StartsWith("DELETE ", StringComparison.Ordinal));
+        await Delete(h.Controller.State.Owner!);
+        Assert.Single(h.Requests, request => request.StartsWith("DELETE ", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task OpensWithListCapabilitiesScheduleAndOnlyBackupSettings()
     {

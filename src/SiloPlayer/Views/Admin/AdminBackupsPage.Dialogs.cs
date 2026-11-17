@@ -48,16 +48,17 @@ public sealed partial class AdminBackupsPage
         var controller = Controller; if (controller?.State.Owner is not { IsCurrent: true } owner) return;
         var description = T("web.admin.backups.table.deleteDescription", new { taken = AdminBackupText.DateTimeText(backup.CreatedAt!.Value) });
         if (await ShowDialogAsync(T("web.admin.backups.table.deleteTitle"), Text(description), T("web.admin.backups.table.deleteConfirm"), T("common.cancel"), true, owner, "BackupsDeleteDialog")
-            && ReferenceEquals(controller, Controller))
-            await controller.DeleteBackupAsync(backup.Id!);
+            && ReferenceEquals(controller, Controller) && owner.IsCurrent && ReferenceEquals(owner, controller.State.Owner))
+            await controller.DeleteBackupAsync(backup.Id!, owner);
     }
 
     private async Task ConfirmDeleteUploadAsync(AdminBackupUpload upload, string label)
     {
         var controller = Controller; if (controller?.State.Owner is not { IsCurrent: true } owner) return;
         if (await ShowDialogAsync(T("web.admin.backups.uploads.deleteTitle"), Text(T("web.admin.backups.uploads.deleteDescription", new { label })),
-                T("web.admin.backups.uploads.deleteConfirm"), T("common.cancel"), true, owner, "BackupsDeleteUploadDialog") && ReferenceEquals(controller, Controller))
-            await controller.DeleteUploadAsync(upload.Id!);
+                T("web.admin.backups.uploads.deleteConfirm"), T("common.cancel"), true, owner, "BackupsDeleteUploadDialog")
+            && ReferenceEquals(controller, Controller) && owner.IsCurrent && ReferenceEquals(owner, controller.State.Owner))
+            await controller.DeleteUploadAsync(upload.Id!, owner);
     }
 
     // ── Download ─────────────────────────────────────────────────────
@@ -367,6 +368,7 @@ public sealed partial class AdminBackupsPage
         StackPanel? root = null;
         Action? closeDialog = null;
         string? fileProblem = null;
+        string? restoreUploadId = null;
         async Task ChooseFileAsync(Func<Task<(string Name, Stream Stream)?>> pick)
         {
             Stream? unowned = null;
@@ -456,7 +458,7 @@ public sealed partial class AdminBackupsPage
                     var opened = Text(Present.OpenedSentence(phase.Upload!)); AutomationProperties.SetAutomationId(opened, "BackupsUploadOpened");
                     root.Children.Add(opened);
                     var next = Action(T("web.admin.backups.upload.chooseWhat"), "BackupsUploadChooseWhat", primary: true);
-                    next.Click += (_, _) => { var id = phase.Upload!.Id!; closeDialog(); AdminShellPage.Open(Present.UploadRestoreRequest(id)); };
+                    next.Click += (_, _) => { restoreUploadId = phase.Upload!.Id!; closeDialog(); };
                     footer.Add(next);
                     break;
                 case AdminBackupUploadStep.Failed:
@@ -502,5 +504,8 @@ public sealed partial class AdminBackupsPage
                 RetireUpload();
             }
         });
+        // Navigation may need the settings leave guard's dialog; wait for upload dialog cleanup first.
+        if (restoreUploadId != null && _active && state.Owner.IsCurrent && ReferenceEquals(controller, Controller) && ReferenceEquals(state.Owner, controller.State.Owner))
+            AdminShellPage.Open(Present.UploadRestoreRequest(restoreUploadId));
     }
 }

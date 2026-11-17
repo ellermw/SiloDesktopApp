@@ -557,7 +557,7 @@ public sealed class AdminBackupsController : IDisposable
     }
 
     /// <summary>Deletes one confirmed backup. Delete is idempotent: an unknown outcome is reconciled by the next list read.</summary>
-    public async Task DeleteBackupAsync(string backupId)
+    public async Task DeleteBackupAsync(string backupId, MonitorAuthorityLease? expectedOwner = null)
     {
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
@@ -565,7 +565,8 @@ public sealed class AdminBackupsController : IDisposable
         {
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _state.DeletingBackupId != null || _state.List?.Items?.Any(item => item.Id == backupId) != true) return;
+                if (!_lifetime.IsCurrent(action) || expectedOwner != null && (!expectedOwner.IsCurrent || !ReferenceEquals(expectedOwner, _state.Owner)) ||
+                    _state.DeletingBackupId != null || _state.List?.Items?.Any(item => item.Id == backupId) != true) return;
                 _state = _state with { DeletingBackupId = backupId };
             }
             Changed?.Invoke();
@@ -738,7 +739,7 @@ public sealed class AdminBackupsController : IDisposable
         }
     }
 
-    public async Task DeleteUploadAsync(string uploadId)
+    public async Task DeleteUploadAsync(string uploadId, MonitorAuthorityLease? expectedOwner = null)
     {
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
@@ -746,7 +747,8 @@ public sealed class AdminBackupsController : IDisposable
         {
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _state.DeletingUploadId != null) return;
+                if (!_lifetime.IsCurrent(action) || expectedOwner != null && (!expectedOwner.IsCurrent || !ReferenceEquals(expectedOwner, _state.Owner)) ||
+                    _state.DeletingUploadId != null) return;
                 _state = _state with { DeletingUploadId = uploadId };
             }
             Changed?.Invoke();

@@ -86,6 +86,27 @@ public sealed class AdminBackupRestoreModelTests
         Assert.Equal(["settings:general"], Model.Effective(reloaded, chosen));
     }
 
+    [Theory]
+    [InlineData("blocked")]
+    [InlineData("missing")]
+    [InlineData("new_requirement")]
+    public void ReloadRemovesChoicesWithUnsatisfiedRequirementsTransitively(string change)
+    {
+        var chosen = Model.Choose(Model.Index(Library()), new HashSet<string>(), ["home_sections:section:9"]).Selection;
+        var libraries = change == "missing" ? BackupJson.Section("libraries") : BackupJson.Section("libraries",
+            BackupJson.Item("4", "library", selectable: change != "blocked"), BackupJson.Item("5", "library"));
+        var reloaded = Set(libraries,
+            BackupJson.Section("collections", BackupJson.Item("c1", "collection", requires: change == "new_requirement" ? "\"libraries:5\"" : "\"libraries:4\"")),
+            BackupJson.Section("home_sections", BackupJson.Item("section:9", "home_section", requires: "\"collections:c1\"")));
+        var effective = Model.Effective(Model.Index(reloaded), chosen);
+        Assert.DoesNotContain("collections:c1", effective);
+        Assert.DoesNotContain("home_sections:section:9", effective);
+        Assert.DoesNotContain("libraries:5", effective); // Reload never silently adds a new dependency.
+        var request = Model.SelectionRequest(reloaded, effective, Model.DefaultDataTypes);
+        Assert.Empty(request.Collections);
+        Assert.Empty(request.HomeSections);
+    }
+
     [Fact]
     public void SectionsGroupBlockedReasonsLargestFirstAndCountStates()
     {

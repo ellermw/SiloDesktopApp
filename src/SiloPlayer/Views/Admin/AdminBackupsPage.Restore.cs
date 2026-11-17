@@ -186,10 +186,12 @@ public sealed partial class AdminBackupsPage
         }
         if (state.Preview is not { } set)
         {
-            var retry = Action(T("common.tryAgain"), "RestorePreviewRetry");
+            var changed = state.Refusal is { PreviewChanged: true };
+            var retry = Action(T(changed ? "web.admin.backups.restore.review.reloadPreview" : "common.tryAgain"), changed ? "RestoreReloadPreview" : "RestorePreviewRetry");
             retry.Click += async (_, _) => await controller.ReloadPreviewAsync();
-            return Alert(T(state.Source?.Upload == true ? "web.admin.backups.restore.openFailedUpload" : "web.admin.backups.restore.openFailed",
-                new { reason = Present.ErrorMessage(state.PreviewError) }), retry);
+            return Alert(changed ? T("web.admin.backups.restore.review.refused", new { reason = state.Refusal!.Message })
+                : T(state.Source?.Upload == true ? "web.admin.backups.restore.openFailedUpload" : "web.admin.backups.restore.openFailed",
+                    new { reason = Present.ErrorMessage(state.PreviewError) }), retry);
         }
         var selection = controller.Selection;
         return state.Reviewing ? ReviewView(state, set, selection) : ChooseView(state, set, selection);
@@ -751,11 +753,14 @@ public sealed partial class AdminBackupsPage
             var displayed = job.Id!;
             stop.Click += async (_, _) =>
             {
+                var owner = state.Owner;
+                if (owner is not { IsCurrent: true } || !ReferenceEquals(owner, controller.State.Owner)) return;
                 _confirmingStop = true;
                 var confirmed = await ShowDialogAsync(T("web.admin.backups.restore.run.stopTitle"), Text(T("web.admin.backups.restore.run.stopDescription")),
-                    T("web.admin.backups.restore.run.stop"), T("web.admin.backups.restore.run.keepRestoring"), true, state.Owner, "RestoreStopDialog");
+                    T("web.admin.backups.restore.run.stop"), T("web.admin.backups.restore.run.keepRestoring"), true, owner, "RestoreStopDialog");
                 _confirmingStop = false;
-                if (confirmed && ReferenceEquals(controller, RestoreController)) await controller.CancelAsync(displayed);
+                if (confirmed && ReferenceEquals(controller, RestoreController) && owner.IsCurrent && ReferenceEquals(owner, controller.State.Owner))
+                    await controller.CancelAsync(displayed, owner);
                 else QueueRestoreRender();
             };
             box.Children.Add(stop);

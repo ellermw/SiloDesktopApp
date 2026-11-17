@@ -198,9 +198,13 @@ public static class AdminBackupRestoreModel
         return new(next, T("web.admin.backups.restore.notice.alsoUnchose", new { count = dependents.Count, names }));
     }
 
-    /// <summary>Only what the current preview still offers counts as chosen.</summary>
-    public static IReadOnlySet<string> Effective(IReadOnlyDictionary<string, AdminRestoreEntry> index, IReadOnlySet<string> chosen) =>
-        chosen.Where(key => index.TryGetValue(key, out var entry) && Selectable(entry)).ToHashSet(StringComparer.Ordinal);
+    /// <summary>Retains only offered choices whose requirements are also retained, transitively.</summary>
+    public static IReadOnlySet<string> Effective(IReadOnlyDictionary<string, AdminRestoreEntry> index, IReadOnlySet<string> chosen)
+    {
+        var offered = chosen.Where(key => index.TryGetValue(key, out var entry) && Selectable(entry)).ToHashSet(StringComparer.Ordinal);
+        // Reload must not silently add newly required items, or keep dependents of unavailable choices.
+        return Unchoose(index, offered, []).Selection;
+    }
 
     /// <summary>The keys an item's checkbox toggles: the item and, for an account, its choosable profiles.</summary>
     public static IReadOnlyList<string> ToggleKeys(string section, AdminBackupRestoreItem item) =>

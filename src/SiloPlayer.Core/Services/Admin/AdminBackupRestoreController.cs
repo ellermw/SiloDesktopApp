@@ -66,7 +66,7 @@ public sealed class AdminBackupRestoreController : IDisposable
     private AdminBackupRestoreState _state = new();
     private IReadOnlyDictionary<string, AdminRestoreEntry> _index = new Dictionary<string, AdminRestoreEntry>();
     private IDisposable? _jobTimer;
-    private long _generation, _jobGeneration;
+    private long _generation, _jobGeneration, _previewGeneration;
     private bool _jobInFlight, _jobAgain, _visible = true, _disposed;
     private readonly HashSet<string> _finishedJobs = new(StringComparer.Ordinal);
 
@@ -93,11 +93,13 @@ public sealed class AdminBackupRestoreController : IDisposable
         if (source.Upload ? !AdminBackupIdentifiers.IsUploadId(source.Id) : !AdminBackupIdentifiers.IsBackupId(source.Id)) throw new ArgumentException("Invalid restore source.", nameof(source));
         if (jobId != null && !AdminBackupIdentifiers.IsJobId(jobId)) jobId = null;
         MonitorAuthorityLease owner;
+        long previewGeneration;
         try { _lifetime.Resume(); owner = _lifetime.Open(); }
         catch (OperationCanceledException) { Clear(); return; }
         lock (_gate)
         {
             RetireJobRead(); _generation++;
+            previewGeneration = ++_previewGeneration;
             _finishedJobs.Clear();
             _index = new Dictionary<string, AdminRestoreEntry>();
             _state = new() { Owner = owner, Source = source, JobId = jobId, PreviewLoading = jobId == null, OutcomeUnknown = _api.HasUnconfirmedRestore(owner, source) };
@@ -105,7 +107,7 @@ public sealed class AdminBackupRestoreController : IDisposable
         Changed?.Invoke();
         var reads = new List<Task> { ReadContextAsync(owner, source), ReadJobsAsync(owner, source, jobId == null) };
         if (jobId != null) reads.Add(ReadJobAsync(owner, background: false));
-        else reads.Add(ReadPreviewAsync(owner, source, accept: false));
+        else reads.Add(ReadPreviewAsync(owner, source, accept: false, previewGeneration));
         await Task.WhenAll(reads).ConfigureAwait(false);
     }
 
@@ -196,23 +198,33 @@ public sealed class AdminBackupRestoreController : IDisposable
             {
                 running = active.Id;
                 RetireJobRead();
-                _state = _state with { JobId = active.Id, Job = active, Reviewing = false, Refusal = null };
+                _previewGeneration++;
+                _state = _state with { JobId = active.Id, Job = active, Reviewing = false, Refusal = null, PreviewLoading = false };
             }
         });
         if (running != null) { JobChanged?.Invoke(running); _ = ReadJobAsync(owner, background: false); }
     }
 
-    private async Task ReadPreviewAsync(MonitorAuthorityLease owner, AdminBackupRestoreSourceRef source, bool accept)
+    private async Task ReadPreviewAsync(MonitorAuthorityLease owner, AdminBackupRestoreSourceRef source, bool accept, long previewGeneration)
     {
         long generation;
-        lock (_gate) generation = _generation;
+        lock (_gate)
+        {
+            if (_disposed || !_lifetime.IsCurrent(owner) || previewGeneration != _previewGeneration || _state.JobId != null) return;
+            generation = _generation;
+        }
+        // Requests are reserved by the initiating transition, before Changed can start another attempt.
+        void Publish(Action update) => Update(owner, generation, () =>
+        {
+            if (previewGeneration == _previewGeneration && _state.JobId == null) update();
+        });
         var libraries = _api.GetLibrariesAsync(owner);
         try
         {
             var set = await _api.GetRestoreSetAsync(owner, source, accept).ConfigureAwait(false);
             IReadOnlyList<AdminBackupLocalLibrary> local = [];
             try { local = await libraries.ConfigureAwait(false); } catch (Exception error) when (error is not OperationCanceledException || owner.IsCurrent) { }
-            Update(owner, generation, () =>
+            Publish(() =>
             {
                 _index = AdminBackupRestoreModel.Index(set);
                 _state = _state with
@@ -226,11 +238,11 @@ public sealed class AdminBackupRestoreController : IDisposable
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (ApiException error) when (error.StatusCode == 409 && error.ProblemType == "backup_unauthenticated")
         {
-            Update(owner, generation, () => _state = _state with { PreviewLoading = false, Unauthenticated = true, Preview = null, PreviewError = null });
+            Publish(() => _state = _state with { PreviewLoading = false, Unauthenticated = true, Preview = null, PreviewError = null });
         }
         catch (Exception error)
         {
-            Update(owner, generation, () => _state = _state with { PreviewLoading = false, PreviewError = error, Preview = null });
+            Publish(() => _state = _state with { PreviewLoading = false, PreviewError = error, Preview = null });
         }
         finally { _ = libraries.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default); }
     }
@@ -240,14 +252,16 @@ public sealed class AdminBackupRestoreController : IDisposable
     {
         var owner = _lifetime.Owner;
         AdminBackupRestoreSourceRef? source;
+        long previewGeneration;
         lock (_gate)
         {
-            if (owner is not { IsCurrent: true } || !_state.Unauthenticated || _state.Source == null) return Task.CompletedTask;
+            if (owner is not { IsCurrent: true } || !_state.Unauthenticated || _state.Source == null || _state.JobId != null) return Task.CompletedTask;
+            previewGeneration = ++_previewGeneration;
             source = _state.Source;
             _state = _state with { OpenedUnverified = true, AcceptUnauthenticated = true, PreviewLoading = true, Unauthenticated = false };
         }
         Changed?.Invoke();
-        return ReadPreviewAsync(owner, source, accept: true);
+        return ReadPreviewAsync(owner, source, accept: true, previewGeneration);
     }
 
     /// <summary>Read the preview again (Try again, Reload the preview after a change or an unknown outcome).</summary>
@@ -256,15 +270,17 @@ public sealed class AdminBackupRestoreController : IDisposable
         var owner = _lifetime.Owner;
         AdminBackupRestoreSourceRef? source;
         bool accept;
+        long previewGeneration;
         lock (_gate)
         {
             if (owner is not { IsCurrent: true } || _state.Source == null || _state.JobId != null || _state.Starting) return Task.CompletedTask;
             if (!_api.AcknowledgeRestoreOutcome(owner, _state.Source)) return Task.CompletedTask;
+            previewGeneration = ++_previewGeneration;
             source = _state.Source; accept = _state.OpenedUnverified;
             _state = _state with { Preview = null, PreviewLoading = true, Reviewing = false, Refusal = null, OutcomeUnknown = false };
         }
         Changed?.Invoke();
-        return ReadPreviewAsync(owner, source, accept);
+        return ReadPreviewAsync(owner, source, accept, previewGeneration);
     }
 
     private async Task ReadJobAsync(MonitorAuthorityLease owner, bool background, long? expectedJobGeneration = null)
@@ -468,10 +484,21 @@ public sealed class AdminBackupRestoreController : IDisposable
                     }
                     catch { running = null; }
                 }
-                Update(action, () => _state = _state with
+                Update(action, () =>
                 {
-                    Starting = false,
-                    Refusal = new(AdminBackupPresentation.ErrorMessage(error), error.ProblemType == "restore_set_changed" ? null : running, error.ProblemType == "restore_set_changed"),
+                    var changed = error.ProblemType == "restore_set_changed";
+                    if (changed)
+                    {
+                        _previewGeneration++;
+                        _index = new Dictionary<string, AdminRestoreEntry>();
+                    }
+                    _state = _state with
+                    {
+                        Starting = false,
+                        Preview = changed ? null : _state.Preview,
+                        Reviewing = !changed && _state.Reviewing,
+                        Refusal = new(AdminBackupPresentation.ErrorMessage(error), changed ? null : running, changed),
+                    };
                 });
             }
             catch (Exception error)
@@ -489,6 +516,7 @@ public sealed class AdminBackupRestoreController : IDisposable
         Update(action, () =>
         {
             RetireJobRead();
+            _previewGeneration++;
             jobGeneration = _jobGeneration;
             _state = _state with { Starting = false, Reviewing = false, Refusal = null, OutcomeUnknown = false, JobId = jobId, Job = null, JobError = null };
             if (job != null) finished = AcceptJob(job);
@@ -521,7 +549,7 @@ public sealed class AdminBackupRestoreController : IDisposable
     }
 
     /// <summary>Stops the displayed job only (confirmed by the page). Sent once.</summary>
-    public async Task CancelAsync(string displayedJobId)
+    public async Task CancelAsync(string displayedJobId, MonitorAuthorityLease? expectedOwner = null)
     {
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
@@ -529,7 +557,8 @@ public sealed class AdminBackupRestoreController : IDisposable
         {
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _state.Cancelling || _state.JobId != displayedJobId || _state.Job is not { Terminal: false, Cancelable: true }) return;
+                if (!_lifetime.IsCurrent(action) || expectedOwner != null && (!expectedOwner.IsCurrent || !ReferenceEquals(expectedOwner, _state.Owner)) ||
+                    _state.Cancelling || _state.JobId != displayedJobId || _state.Job is not { Terminal: false, Cancelable: true }) return;
                 _state = _state with { Cancelling = true };
             }
             Changed?.Invoke();
@@ -564,18 +593,20 @@ public sealed class AdminBackupRestoreController : IDisposable
         var owner = _lifetime.Owner;
         AdminBackupRestoreSourceRef? source;
         bool accept;
+        long previewGeneration;
         lock (_gate)
         {
             if (owner is not { IsCurrent: true } || _state.Source == null || _state.Job?.Terminal != true) return Task.CompletedTask;
             if (!_api.AcknowledgeRestoreOutcome(owner, _state.Source)) return Task.CompletedTask;
             RetireJobRead();
+            previewGeneration = ++_previewGeneration;
             source = _state.Source; accept = _state.OpenedUnverified;
             _index = new Dictionary<string, AdminRestoreEntry>();
             _state = _state with { JobId = null, Job = null, JobError = null, Preview = null, PreviewLoading = true, Chosen = new HashSet<string>(), Reviewing = false, Notice = null };
         }
         Changed?.Invoke();
         JobChanged?.Invoke(null);
-        return Task.WhenAll(ReadPreviewAsync(owner, source, accept), ReadJobsAsync(owner, source, openRunning: false));
+        return Task.WhenAll(ReadPreviewAsync(owner, source, accept, previewGeneration), ReadJobsAsync(owner, source, openRunning: false));
     }
 
     // ── Plumbing ─────────────────────────────────────────────────────

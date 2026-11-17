@@ -160,11 +160,99 @@ public sealed class AdminBackupRestoreControllerTests
         var refusal = h.Controller.State.Refusal!;
         Assert.True(refusal.PreviewChanged);
         Assert.Null(refusal.RunningJobId);
+        Assert.Null(h.Controller.State.Preview);
+        Assert.False(AdminBackupRestoreController.CanRestore(h.Controller.State, h.Controller.Selection));
+        await h.Controller.StartAsync();
+        h.Controller.LeaveReview();
+        h.Controller.Review();
+        Assert.False(h.Controller.State.Reviewing);
+        await h.Controller.StartAsync();
+        Assert.Equal(1, h.Starts);
         await h.Controller.ReloadPreviewAsync();
         Assert.False(h.Controller.State.Reviewing);
         Assert.Null(h.Controller.State.Refusal);
         Assert.Equal(2, h.Requests.Count(request => request.EndsWith("/restore-set", StringComparison.Ordinal)));
         Assert.Equal(1, h.Starts);
+        Assert.NotNull(h.Controller.State.Preview);
+        h.Controller.Review();
+        Assert.True(AdminBackupRestoreController.CanRestore(h.Controller.State, h.Controller.Selection));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnInitialPreviewCannotOverwriteTheChooserAfterAnAdoptedJob(bool oldReadFails)
+    {
+        using var h = new Harness { JobBody = BackupJson.Job(state: "completed", terminal: true, cancelable: false) };
+        var old = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var jobs = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var jobReads = 0;
+        var original = h.Kit.Http.Respond;
+        var freshSet = BackupJson.RestoreSet(BackupJson.Section("settings", BackupJson.Item("email"))).Replace(BackupJson.Digest, new string('b', 64));
+        h.Kit.Http.Respond = (request, token) => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v2/admin/jobs" => Interlocked.Increment(ref jobReads) == 1 ? jobs.Task : original(request, token),
+            var path when path.EndsWith("/restore-set", StringComparison.Ordinal) => Interlocked.Increment(ref reads) == 1
+                ? old.Task : Task.FromResult(BackupJson.Json(freshSet)),
+            _ => original(request, token),
+        };
+        var opening = h.Controller.OpenAsync(Source, null);
+        try
+        {
+            await Eventually.True(() => reads == 1, "initial preview in flight");
+            jobs.SetResult(BackupJson.Json("{\"items\":[" + BackupJson.Job() + "]}"));
+            await Eventually.True(() => h.Controller.State.Job?.Terminal == true, "adopted job completed");
+            await h.Controller.ChooseAgainAsync();
+            var fresh = h.Controller.State.Preview;
+            Assert.NotNull(fresh);
+            h.Controller.Toggle(["settings:email"], true);
+            h.Controller.Review();
+            Assert.True(h.Controller.State.Reviewing);
+            old.SetResult(oldReadFails ? BackupJson.Json(BackupJson.Problem("dependency_unavailable", 503), HttpStatusCode.ServiceUnavailable)
+                : BackupJson.Json(BackupJson.RestoreSet(BackupJson.Section("settings", BackupJson.Item("general")))));
+            await opening;
+            Assert.Same(fresh, h.Controller.State.Preview);
+            Assert.Null(h.Controller.State.PreviewError);
+            Assert.Equal(["settings:email"], h.Controller.Selection);
+            Assert.True(h.Controller.State.Reviewing);
+            Assert.True(AdminBackupRestoreController.CanRestore(h.Controller.State, h.Controller.Selection));
+        }
+        finally
+        {
+            jobs.TrySetResult(BackupJson.Json("{\"items\":[]}"));
+            old.TrySetResult(BackupJson.Json(BackupJson.RestoreSet(BackupJson.Section("settings", BackupJson.Item("general")))));
+            await opening;
+        }
+    }
+
+    [Fact]
+    public async Task OnlyTheNewestExplicitPreviewReloadMayPublish()
+    {
+        using var h = new Harness();
+        await h.ChooseAndReview();
+        var old = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var original = h.Kit.Http.Respond;
+        var reads = 0;
+        h.Kit.Http.Respond = (request, token) => request.RequestUri!.AbsolutePath.EndsWith("/restore-set", StringComparison.Ordinal) && Interlocked.Increment(ref reads) == 1
+            ? old.Task : original(request, token);
+        var first = h.Controller.ReloadPreviewAsync();
+        try
+        {
+            await Eventually.True(() => reads == 1, "first reload in flight");
+            await h.Controller.ReloadPreviewAsync();
+            var fresh = h.Controller.State.Preview;
+            Assert.NotNull(fresh);
+            old.SetResult(BackupJson.Json(BackupJson.Problem("dependency_unavailable", 503), HttpStatusCode.ServiceUnavailable));
+            await first;
+            Assert.Same(fresh, h.Controller.State.Preview);
+            Assert.Null(h.Controller.State.PreviewError);
+        }
+        finally
+        {
+            old.TrySetResult(BackupJson.Json(BackupJson.RestoreSet(BackupJson.Section("settings", BackupJson.Item("general")))));
+            await first;
+        }
     }
 
     [Fact]
@@ -395,6 +483,23 @@ public sealed class AdminBackupRestoreControllerTests
             replacement.TrySetResult(BackupJson.Json(BackupJson.Job(id: "job-2")));
             await retired;
         }
+    }
+
+    [Fact]
+    public async Task StopConfirmationCannotUseAReplacementOwnerEvenForTheSameJob()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync(Source, "job-1");
+        var confirmedOwner = h.Controller.State.Owner!;
+        using var otherLease = h.Authority.Capture();
+        await h.Controller.CancelAsync("job-1", otherLease);
+        Assert.DoesNotContain(h.Requests, request => request.EndsWith("/cancel", StringComparison.Ordinal));
+        await h.Controller.OpenAsync(Source, "job-1");
+        Assert.False(confirmedOwner.IsCurrent);
+        await h.Controller.CancelAsync("job-1", confirmedOwner);
+        Assert.DoesNotContain(h.Requests, request => request.EndsWith("/cancel", StringComparison.Ordinal));
+        await h.Controller.CancelAsync("job-1", h.Controller.State.Owner);
+        Assert.Single(h.Requests, request => request.EndsWith("/cancel", StringComparison.Ordinal));
     }
 
     [Fact]
