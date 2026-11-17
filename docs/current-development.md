@@ -26,6 +26,16 @@ See `docs/parity/admin-maintenance.md` for exact evidence and intentional differ
 
 ---
 
+# November 16 — Admin Dashboard Now Playing row parity verified
+
+Official #4401 (`5b3dcaa2fdfec6de2a537a2e10897352a1078689`) removes the +N more link, uses the full card viewport and clips tag rows to one 18px line. This separate two-source-file Dashboard change matches those rules on deliberate Beta base `21233391575c09c2dfd2c39a96211b5ecc10f4f7` (pipeline-owned `1.2.1168-beta.1`). Fresh official main `92ee051878c2a791940ec9598e2bdd0f04890b3e` leaves the widget unchanged.
+
+`dashboard-full-r1`: proof **1**, focused **26**, app/publish/host and source binding pass; `admin-dashboard` passes **207** markers with one completion, numeric0. Actual release **2026-11-16T21:56:06.3893368Z**, receipt SHA256 `061933A0BA15EBB90ED0B2BA688BE5EC1BE5E2A5379511E7068A18F533008586`; released audit verifies **2574** source entries, **665** payload files and **9** contained captures. Only documentation changed after acceptance.
+
+No full-unit repeat, live-server/installer/every-DPI/Narrator or comprehensive visual-parity claim. Installed player/settings untouched. Scope and the separate Downloads baseline limit are recorded in [Dashboard parity evidence](parity/admin-dashboard-even-rows.md).
+
+---
+
 # November 16 — Admin Manage Users Beta handoff
 
 One scoped Users increment adds Users/Invitations/Invite Codes and the account
