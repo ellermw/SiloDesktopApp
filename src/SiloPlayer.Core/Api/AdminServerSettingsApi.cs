@@ -107,7 +107,8 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         catch (ApiException error) { throw Sanitize(error); }
         catch (Exception) { throw new InvalidDataException("Connection check failed."); }
         if (response.Body.Success == null || response.Body.Message == null) throw new InvalidDataException("Invalid connection result.");
-        var message = LocalLog.RedactDiagnosticText(response.Body.Message);
+        // Replace submitted literals before diagnostic rewriting can change only part of a credential.
+        var message = response.Body.Message;
         if (values.TryGetValue("redis.url", out var secret) && !string.IsNullOrEmpty(secret))
         {
             var secrets = new List<string> { secret };
@@ -125,6 +126,7 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         foreach (var credential in ConnectionCheckSecrets.Select(key => values.GetValueOrDefault(key, ""))
             .Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
             message = message.Replace(credential, "<redacted>", StringComparison.Ordinal);
+        message = LocalLog.RedactDiagnosticText(message);
         if (message.Length > 500) message = message[..500] + "…";
         return new(response.Body.Success.Value, message);
     }

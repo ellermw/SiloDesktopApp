@@ -200,6 +200,27 @@ public sealed class AdminStorageApiTests
         Assert.Equal("Denied for <redacted> / <redacted>", result.Message);
     }
 
+    [Theory]
+    [InlineData("public", "alpha?token=***")]
+    [InlineData("private", "alpha?token=***")]
+    [InlineData("public", "alphahttps://storage.example.test/path?token=synthetic")]
+    [InlineData("private", "alphahttps://storage.example.test/path?token=synthetic")]
+    public async Task S3ConnectionChecksRedactCredentialLiteralsBeforeDiagnosticRewriting(string scope, string credential)
+    {
+        using var h = new Harness();
+        h.Reply(JsonSerializer.Serialize(new
+        {
+            success = false,
+            message = $"Denied for {credential} / alpha; see https://diagnostic.example.test/path?token=other"
+        }));
+        var settings = new AdminServerSettingsApi(h.Kit.Client);
+        var access = $"s3.{scope}_access_key";
+        var secret = $"s3.{scope}_secret_key";
+        var result = await settings.CheckConnectionAsync(h.Lease, "s3_" + scope,
+            new Dictionary<string, string> { [access] = "alpha", [secret] = credential }, [access, secret]);
+        Assert.Equal("Denied for <redacted> / <redacted>; see <url redacted>", result.Message);
+    }
+
     [Fact]
     public async Task S3ConnectionChecksUseTheirKindAndNeverEchoSubmittedCredentials()
     {
