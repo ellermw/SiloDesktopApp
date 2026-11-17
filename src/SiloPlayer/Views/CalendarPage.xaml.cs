@@ -459,7 +459,7 @@ public sealed partial class CalendarPage : Page
         {
             if (ContentScrollViewer.Content is not UIElement content) return;
             var point = group.TransformToVisual(content).TransformPoint(new Point(0, 0));
-            ContentScrollViewer.ChangeView(null, Math.Max(0, point.Y - WeekNavigatorBorder.ActualHeight - 24), null, false);
+            ContentScrollViewer.ChangeView(null, Math.Max(0, point.Y - WeekNavigatorBorder.ActualHeight - 24), null, !SystemMotion.AnimationsEnabled);
         });
     }
 

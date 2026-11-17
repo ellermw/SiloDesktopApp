@@ -80,6 +80,7 @@
             <!-- Remaining time badge -->
             <Border
                 x:Name="RemainingBadge"
+                FlowDirection="{Binding FlowDirection, ElementName=RootGrid}"
                 VerticalAlignment="Bottom"
                 HorizontalAlignment="Right"
                 Margin="0,0,8,8"
@@ -96,6 +97,7 @@
 
             <Border
                 x:Name="CurrentItemBadge"
+                FlowDirection="{Binding FlowDirection, ElementName=RootGrid}"
                 HorizontalAlignment="Left"
                 VerticalAlignment="Top"
                 Margin="10"
@@ -131,6 +133,7 @@
             <!-- Circular Play button — fades and scales in on hover. -->
             <Button
                 x:Name="HoverPlayButton"
+                FlowDirection="{Binding FlowDirection, ElementName=RootGrid}"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"
                 Width="44" Height="44"
@@ -170,6 +173,7 @@
 
             <Button
                 x:Name="QuickWatchedButton"
+                FlowDirection="{Binding FlowDirection, ElementName=RootGrid}"
                 Width="36" Height="36"
                 MinWidth="0" MinHeight="0"
                 Padding="0"
@@ -192,6 +196,7 @@
                  the top-right, revealed on hover. -->
             <Button
                 x:Name="DismissButton"
+                FlowDirection="{Binding FlowDirection, ElementName=RootGrid}"
                 Width="36" Height="36"
                 CornerRadius="6"
                 Padding="0"

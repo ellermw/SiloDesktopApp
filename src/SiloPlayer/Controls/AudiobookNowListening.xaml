@@ -7,7 +7,10 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:loc="using:SiloPlayer.Services"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    TabFocusNavigation="Cycle">
+    <!-- Official #4296: while expanded, Tab and Shift+Tab stay inside Now Listening;
+         MainWindow makes the covered shell inert (NowListeningFocusScope). -->
     <Grid Background="{StaticResource AppBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -15,7 +18,7 @@
         </Grid.RowDefinitions>
 
         <Grid Padding="24,16">
-            <Button HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}"
+            <Button x:Name="CollapseButton" HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}"
                     Padding="12,6" Margin="-8,0,0,0" Foreground="{StaticResource SecondaryTextBrush}" Click="Collapse_Click"
                     AutomationProperties.Name="Back to player" loc:Localized.Name="web.audiobooks.player.backToPlayer">
                 <StackPanel Orientation="Horizontal" Spacing="7">

@@ -397,6 +397,7 @@ public partial class LibraryViewModel
         _estimatedTotalItems = Math.Max(0, total);
         _hasExactTotal = true;
         TotalCount = DisplayTotalCount = _estimatedTotalItems;
+        ExactCountFailed = false;
         Items.SetCount(TotalCount);
     }
 }

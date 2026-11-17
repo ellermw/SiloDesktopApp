@@ -18,6 +18,8 @@ public sealed partial class SignupPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SignupViewModel>();
         this.InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not submit the signup.
+        foreach (var input in new[] { UsernameBox, EmailBox, InviteCodeBox }) ImeCompositionGuard.Attach(input);
         AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); });
         PasswordReveal.WrapInParent(PasswordBox, SignupPasswordGroup);
         PasswordReveal.WrapInParent(ConfirmPasswordBox, SignupConfirmationGroup);
@@ -96,6 +98,8 @@ public sealed partial class SignupPage : Page
 
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // Password boxes have no composition events; only the TextBoxes can compose.
+        if (sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter && ViewModel.SignupCommand.CanExecute(null))
         {
             // Sync passwords from PasswordBoxes

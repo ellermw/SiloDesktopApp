@@ -285,6 +285,7 @@ public sealed class MpvVideoWindow : IDisposable
     private struct RECT { public int Left, Top, Right, Bottom; }
 
     public IntPtr Hwnd => _hwnd;
+    internal bool CoversShell => !_isMiniBar && !_isPictureInPicture;
 
     public void SetMpv(SiloPlayer.Player.MpvPlayer mpv) => _mpv = mpv;
 

@@ -7,7 +7,10 @@ using SharpCompress.Readers;
 namespace SiloPlayer.Services;
 
 internal sealed record EbookReaderChapter(string Title, string RelativePath);
-internal sealed record ExtractedEbook(string RootDirectory, IReadOnlyList<EbookReaderChapter> Chapters, string Format);
+internal sealed record ExtractedEbook(string RootDirectory, IReadOnlyList<EbookReaderChapter> Chapters, string Format)
+{
+    public IReadOnlyList<string>? LegacyChapterPaths { get; init; }
+}
 
 internal static class EbookPackageExtractor
 {
@@ -17,7 +20,7 @@ internal static class EbookPackageExtractor
     internal const int MaxEntries = 50_000;
 
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
-        { ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".svg" };
+        { ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".svg", ".avif", ".jxl" };
 
     public static ExtractedEbook Extract(byte[] bytes, string targetDirectory, string declaredFormat)
         => Extract(bytes, targetDirectory, declaredFormat, MaxExtractedBytes, MaxEntries);
@@ -30,6 +33,9 @@ internal static class EbookPackageExtractor
         if (Directory.Exists(targetDirectory))
             Directory.Delete(targetDirectory, recursive: true);
         Directory.CreateDirectory(targetDirectory);
+        if (declaredFormat.ToLowerInvariant() is "mobi" or "azw" or "azw3" &&
+            bytes.Length >= 68 && bytes.AsSpan(60, 8).SequenceEqual("BOOKMOBI"u8))
+            return new ExtractedEbook(targetDirectory, [new EbookReaderChapter("Book", "")], declaredFormat.ToLowerInvariant());
         if (IsPdf(bytes))
         {
             var path = Path.Combine(targetDirectory, "book.pdf");
@@ -69,8 +75,25 @@ internal static class EbookPackageExtractor
             return ReadEpub(targetDirectory, containerPath);
         var fb2 = Directory.EnumerateFiles(targetDirectory, "*.fb2", SearchOption.AllDirectories).FirstOrDefault();
         if (fb2 != null)
-            return ReadFb2(File.ReadAllBytes(fb2), targetDirectory);
+            return ReadFb2(File.ReadAllBytes(fb2), targetDirectory) with { Format = "fbz" };
         return ReadComicArchive(targetDirectory);
+    }
+
+    public static async Task WriteReaderSourceAsync(ExtractedEbook book, byte[] bytes, CancellationToken ct)
+    {
+        var path = Path.Combine(book.RootDirectory, "reader-source." + book.Format);
+        if (book.Format != "cbz" || IsZip(bytes))
+        {
+            await File.WriteAllBytesAsync(path, bytes, ct);
+            return;
+        }
+        using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+        foreach (var file in Directory.EnumerateFiles(book.RootDirectory, "*", SearchOption.AllDirectories))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!ImageExtensions.Contains(Path.GetExtension(file)) && !Path.GetFileName(file).Equals("ComicInfo.xml", StringComparison.OrdinalIgnoreCase)) continue;
+            archive.CreateEntryFromFile(file, Path.GetRelativePath(book.RootDirectory, file).Replace('\\', '/'), CompressionLevel.Fastest);
+        }
     }
 
     private static void ExtractArchive(byte[] bytes, string targetDirectory, ExtractionBudget budget)
@@ -183,7 +206,7 @@ internal static class EbookPackageExtractor
         {
             var id = itemRef.Attribute("idref")?.Value;
             if (id == null || !manifest.TryGetValue(id, out var item)) continue;
-            if (item.Type is not ("application/xhtml+xml" or "text/html")) continue;
+            if (item.Type is not ("application/xhtml+xml" or "text/html" or "image/svg+xml")) continue;
             var decoded = Uri.UnescapeDataString(item.Href!.Split('#')[0]);
             var full = SafeCombine(packageDirectory, decoded);
             var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
@@ -197,14 +220,22 @@ internal static class EbookPackageExtractor
 
     private static ExtractedEbook ReadComicArchive(string root)
     {
-        var chapters = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+        var pages = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Where(path => ImageExtensions.Contains(Path.GetExtension(path)))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select((path, index) => new EbookReaderChapter($"Page {index + 1}", ComicPage(root, path, index)))
             .ToList();
+        // Base desktop indices used Windows path ordering and did not include
+        // AVIF/JXL. Keep original image paths (not SVG wrappers) for migration.
+        var legacyPaths = pages
+            .Where(path => !Path.GetExtension(path).Equals(".avif", StringComparison.OrdinalIgnoreCase)
+                && !Path.GetExtension(path).Equals(".jxl", StringComparison.OrdinalIgnoreCase))
+            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
+            .OrderBy(path => path.Replace('/', '\\'), StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var chapters = pages.Select((path, index) => new EbookReaderChapter($"Page {index + 1}", ComicPage(root, path, index))).ToList();
         if (chapters.Count == 0)
             throw new InvalidDataException("The comic archive contains no readable images.");
-        return new ExtractedEbook(root, chapters, "cbz");
+        return new ExtractedEbook(root, chapters, "cbz") { LegacyChapterPaths = legacyPaths };
     }
 
     // The reader navigates straight to each page on its trusted origin. An SVG

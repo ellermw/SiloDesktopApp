@@ -6,13 +6,13 @@ public sealed class NotificationsInteractionParitySourceTests
     public void NotificationActionsRemainVisibleToKeyboardFocusAndAnnounceState()
     {
         var xaml = Read("src", "SiloPlayer", "Views", "NotificationsPage.xaml");
-        var code = Read("src", "SiloPlayer", "Views", "NotificationsPage.xaml.cs");
+        var code = Read("src", "SiloPlayer", "Views", "NotificationsPage.Inbox.cs");
 
-        Assert.Contains("GotFocus=\"InlineMarkReadButton_GotFocus\"", xaml);
-        Assert.Contains("LostFocus=\"InlineMarkReadButton_LostFocus\"", xaml);
-        Assert.Contains("AutomationProperties.Name=\"Mark as read\"", xaml);
+        Assert.Contains("AutomationProperties.SetName(row.MarkRead", code);
+        Assert.Contains("AutomationProperties.SetName(mark", code);
+        Assert.DoesNotContain("Opacity = 0", code);
         Assert.Contains("AutomationProperties.LiveSetting=\"Polite\"", xaml);
-        Assert.Contains("notification.IsUnread ? FontWeights.SemiBold : FontWeights.Medium", code);
+        Assert.Contains("unread > 0 ? FontWeights.SemiBold : FontWeights.Medium", code);
     }
 
     private static string Read(params string[] parts)
