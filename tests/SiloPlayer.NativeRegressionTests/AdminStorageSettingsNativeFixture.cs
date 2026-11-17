@@ -51,9 +51,9 @@ internal static class AdminStorageSettingsNativeFixture
         {
             ["artwork.storage_backend"] = "", ["artwork.local_path"] = "/data/art", ["metadata.cache_images"] = "true", ["s3.public_url_auth"] = "",
         };
-        internal bool StatusKnown = true, RecoveryPending;
+        internal bool StatusKnown = true, RecoveryPending, MissingStatus, RejectQueue;
         internal string? JobState;
-        internal TaskCompletionSource? QueueGate;
+        internal TaskCompletionSource? QueueGate, StatusGate;
         internal int Version = 1;
         internal int Count(string prefix) => Requests.Count(r => r.StartsWith(prefix, StringComparison.Ordinal));
 
@@ -78,6 +78,8 @@ internal static class AdminStorageSettingsNativeFixture
                     return Tagged(Json(new { values = new Dictionary<string, string>(), restart_required = false }));
                 }
                 case "GET /api/v2/admin/server/status":
+                    if (StatusGate is { } statusGate) await statusGate.Task.WaitAsync(cancellationToken);
+                    if (MissingStatus) return Json(new { restart_required = false });
                     return Json(new
                     {
                         restart_required = false, restart_mark_count = 0, restart_requested = false,
@@ -90,6 +92,7 @@ internal static class AdminStorageSettingsNativeFixture
                     return Json(new { items = JobState == null ? Array.Empty<object>() : [Job()] });
                 case "POST /api/v2/admin/storage-transitions":
                     if (QueueGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
+                    if (RejectQueue) return Json(new { status = 422, code = "validation_failed" }, HttpStatusCode.UnprocessableEntity);
                     JobState = "queued";
                     return Json(new { job = Job(), preflight = new { current_backend = "local", target_backend = "s3" } }, HttpStatusCode.Accepted);
                 case "POST /api/v2/admin/jobs/job-1/cancel":
@@ -104,7 +107,7 @@ internal static class AdminStorageSettingsNativeFixture
         private object Job() => new
         {
             id = "job-1", kind = "storage_transition", state = JobState, terminal = false, cancelable = true, created_at = "2026-11-16T00:00:00Z",
-            storage_transition_result = new { phase = JobState == "queued" ? "queued" : "copying", verified_objects = 3, manual_restart_required = false },
+            storage_transition_result = new { phase = JobState == "succeeded" ? "completed" : JobState == "queued" ? "queued" : "copying", verified_objects = 3, manual_restart_required = false },
         };
         private HttpResponseMessage Tagged(HttpResponseMessage response) { response.Headers.ETag = new($"\"v{Version}\""); return response; }
         private static HttpResponseMessage Json(object body, HttpStatusCode status = HttpStatusCode.OK) =>
@@ -342,6 +345,72 @@ internal static class AdminStorageSettingsNativeFixture
             Check(!await leave && controller.State.DirtyKeys.Count > 0, "Cancel keeps the Storage page and its draft");
             Invoke(Button(page, "StorageDiscard"));
             await Until(() => controller.State.DirtyKeys.Count == 0, "final discard");
+            // Controller invalidation must close a live modal while its queue POST is still held.
+            foreach (var missingStatus in new[] { true, false })
+            {
+                await Until(() => !controller.State.Loading && !controller.State.Reconciling && !controller.State.StatusLoading, "invalidation baseline");
+                controller.Set(AdminStorageRules.LocalPath, "/mnt/invalidated-art");
+                await controller.SaveAsync();
+                await Until(() => page.ReviewDialog is { IsLoaded: true }, "invalidation review");
+                var invalidatedReview = page.ReviewDialog!;
+                controller.SetReviewPolicy("start_fresh");
+                await Until(() => Button(invalidatedReview, "StorageReviewQueue").IsEnabled, "invalidation queue enabled");
+                var invalidatedClosed = Closed(invalidatedReview);
+                server.QueueGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                server.RejectQueue = true;
+                if (missingStatus)
+                {
+                    // Start the status read before Queue, but return its missing status afterward.
+                    server.StatusGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var statusReads = server.Count("GET /api/v2/admin/server/status");
+                    controller.RetryStatus();
+                    await Until(() => server.Count("GET /api/v2/admin/server/status") > statusReads, "held status read");
+                }
+                var writesBefore = server.Count("POST /api/v2/admin/storage-transitions");
+                var pendingQueue = controller.QueueTransitionAsync();
+                try
+                {
+                    await Until(() => controller.State.Queuing && server.Count("POST /api/v2/admin/storage-transitions") > writesBefore, "held queue POST");
+                    invalidatedReview.Hide();
+                    await Task.Delay(100);
+                    Check(!invalidatedClosed.IsCompleted && ReferenceEquals(page.ReviewDialog, invalidatedReview) &&
+                        invalidatedReview.Content is ScrollViewer { Content: not null }, "user dismissal while queuing keeps the tracked review and content");
+                    invalidatedReview.Closing += (_, args) => Check(!args.Cancel && ReferenceEquals(page.ReviewDialog, invalidatedReview) &&
+                        invalidatedReview.Content is ScrollViewer { Content: not null }, "forced closure retains review ownership and content until Closed");
+                    if (missingStatus)
+                    {
+                        server.MissingStatus = true;
+                        server.StatusGate!.SetResult();
+                    }
+                    else
+                    {
+                        server.JobState = "succeeded";
+                        controller.RefreshTransitions();
+                    }
+                    await invalidatedClosed.WaitAsync(TimeSpan.FromSeconds(6));
+                    Check(controller.State.Queuing && controller.State.Review == null && page.ReviewDialog == null && ReferenceEquals(page.Controller, controller),
+                        missingStatus ? "missing status closes the active review before Queue settles" : "commit notification closes the active review before Queue settles");
+                    Check(invalidatedReview.Content is ScrollViewer { Content: null }, "closed invalidated review releases its shared content");
+                }
+                finally
+                {
+                    server.StatusGate?.TrySetResult();
+                    server.QueueGate.TrySetResult();
+                    await pendingQueue;
+                    server.StatusGate = null;
+                    server.QueueGate = null;
+                    server.RejectQueue = false;
+                    server.MissingStatus = false;
+                }
+                await Until(() => !controller.State.Loading && !controller.State.Queuing && !controller.State.Reconciling, "invalidated command settled");
+                server.JobState = null;
+                controller.RefreshTransitions();
+                await Until(() => controller.State.LatestTransition == null, "invalidation job cleared");
+                await controller.ReloadAsync(preserveDraft: false);
+                await Until(() => controller.State.StatusKnown && !controller.State.StatusLoading, "invalidation status restored");
+                Check(page.ReviewDialog == null, "command completion does not reopen the invalidated review");
+            }
+
             Input(page, "Storage_artwork.local_path").Text = "/mnt/retiring-art";
             await Until(() => controller.State.IsDirty("artwork.local_path"), "retirement draft");
             Invoke(Button(page, "StorageSave"));

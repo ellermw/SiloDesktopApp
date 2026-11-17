@@ -27,6 +27,7 @@ public sealed partial class AdminStorageSettingsPage
 
     // Review dialog parts, rebuilt in place while one review is open.
     private ContentDialog? _review;
+    private bool _reviewClosing;
     private readonly TextBlock _reviewDescription = U.Text(T("web.admin.settings.storage.dialog.description"), 14, true);
     private readonly StackPanel _sourceChecking = new() { Spacing = 8, Padding = new(16) };
     private Border _sourceCheckingBox = null!;
@@ -278,7 +279,7 @@ public sealed partial class AdminStorageSettingsPage
         var review = state.Owner?.IsCurrent == true ? state.Review : null;
         if (review == null || state.ArtworkStorage is not { } status || !_active) { HideReview(); return; }
         if (_review == null) ShowReview();
-        if (_review == null) return;
+        if (_review == null || _reviewClosing) return;
         var plan = R.Plan(state, status, review.Backend, state.SourceHealth, state.SourceHealthFailed, review.LocalPath);
         _review!.Title = T(plan.PrivateOnly ? "web.admin.settings.storage.dialog.titlePrivate" : "web.admin.settings.storage.dialog.titleArtwork");
 
@@ -374,14 +375,17 @@ public sealed partial class AdminStorageSettingsPage
         // sm:max-w-2xl. The dialog owns its Cancel/Queue actions so their order and states do not depend on template internals.
         dialog.Resources["ContentDialogMaxWidth"] = 672d;
         AutomationProperties.SetAutomationId(dialog, "StorageTransitionReview");
-        dialog.Closing += (_, args) => { if (_active && _controller?.State.Queuing == true) args.Cancel = true; };
+        dialog.Closing += (_, args) => { if (!_reviewClosing && _active && _controller?.State.Queuing == true) args.Cancel = true; };
         dialog.Closed += (_, _) =>
         {
             if (!ReferenceEquals(_review, dialog)) return;
-            // Escape or light dismissal: close the review without queuing anything.
+            var forced = _reviewClosing;
             _review = null;
+            _reviewClosing = false;
             if (dialog.Content is ScrollViewer viewer) viewer.Content = null;
-            _controller?.CloseReview();
+            // Only user dismissal closes controller state; forced closure may outlive the invalidated review.
+            if (!forced) _controller?.CloseReview();
+            else QueueRender();
         };
         _review = dialog;
         _ = ShowAsync(dialog);
@@ -395,6 +399,7 @@ public sealed partial class AdminStorageSettingsPage
             // Another dialog owns the root: close the review; the draft stays staged for a later Save.
             if (!ReferenceEquals(_review, dialog)) return;
             _review = null;
+            _reviewClosing = false;
             if (dialog.Content is ScrollViewer viewer) viewer.Content = null;
             _controller?.CloseReview();
         }
@@ -402,10 +407,10 @@ public sealed partial class AdminStorageSettingsPage
 
     private void HideReview()
     {
-        if (_review is not { } dialog) return;
-        _review = null;
+        if (_review is not { } dialog || _reviewClosing) return;
+        // Controller invalidation must close even while a queue command is pending. Keep ownership and
+        // shared content until Closed so no live modal is orphaned or reused during its closing animation.
+        _reviewClosing = true;
         dialog.Hide();
-        // Detach the shared parts so the next review can host them.
-        if (dialog.Content is ScrollViewer viewer) viewer.Content = null;
     }
 }

@@ -246,13 +246,14 @@ public sealed class AdminStorageSettingsController : IDisposable
     }
 
     // Coalesce job-driven invalidations without adopting a snapshot over a pending write or review.
+    // A failed save requires explicit Reload; a background commitment must not clear that barrier.
     private void TryStartReconciliation()
     {
         MonitorAuthorityLease action;
         lock (_gate)
         {
             if (!_reconcilePending || _disposed || _state.Owner is not { IsCurrent: true } ||
-                _state.Loading || _state.Saving || _state.Queuing || _state.Review != null) return;
+                _state.Loading || _state.Saving || _state.Queuing || _state.Review != null || _state.Conflict || _state.OutcomeUnknown) return;
             try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
             _reconcilePending = false;
             _state = _state with { Loading = true, PublicCheck = null, PrivateCheck = null };
@@ -287,7 +288,7 @@ public sealed class AdminStorageSettingsController : IDisposable
         if (Secrets.Contains(key) && s.Saving) return false;
         if (AdminStorageRules.S3IdentityKeys.Contains(key) && (s.Saving || !s.StatusKnown)) return false;
         if (key == AdminStorageRules.LocalPath && (s.Saving || !s.StatusKnown || (s.ArtworkStorage!.Locked && AdminStorageRules.CurrentSourceIsS3(s.ArtworkStorage)))) return false;
-        if (key == AdminStorageRules.Backend && !s.StatusKnown) return false;
+        if (key == AdminStorageRules.Backend && (!s.StatusKnown || s.Conflict || s.OutcomeUnknown)) return false;
         return true;
     }
 
@@ -447,8 +448,8 @@ public sealed class AdminStorageSettingsController : IDisposable
             if (_lifetime.IsCurrent(action)) savedKeys = keys;
         }
         catch (OperationCanceledException) when (!action.IsCurrent) { return false; }
-        catch (AdminSettingsConflictException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, Conflict = true, Error = "Settings changed on the server. Reload and review your changes." }; }); return false; }
-        catch (AdminSettingsOutcomeUnknownException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, OutcomeUnknown = true, Error = "The save outcome is unknown. Reload and review before saving again." }; }); return false; }
+        catch (AdminSettingsConflictException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, Conflict = true, Review = null, SourceHealth = null, Error = "Settings changed on the server. Reload and review your changes." }; }); return false; }
+        catch (AdminSettingsOutcomeUnknownException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, OutcomeUnknown = true, Review = null, SourceHealth = null, Error = "The save outcome is unknown. Reload and review before saving again." }; }); return false; }
         catch (Exception error) { Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, Error = "Failed to update settings.", ErrorCode = (error as ApiException)?.ErrorCode, Failure = AdminFailures.Classify(error, action) }; }); return false; }
         finally { TryStartReconciliation(); }
         if (savedKeys == null) return false;
@@ -498,6 +499,7 @@ public sealed class AdminStorageSettingsController : IDisposable
 
     private void OpenReviewLocked(string backend)
     {
+        if (_state.Conflict || _state.OutcomeUnknown) return;
         _state = _state with
         {
             Review = new(backend, _form!.Get(AdminStorageRules.LocalPath), _policy),
@@ -549,7 +551,7 @@ public sealed class AdminStorageSettingsController : IDisposable
     {
         // The transition API requires an explicit backend value; never submit an environment-owned key.
         if (state.Review is not { } review || state.ArtworkStorage is not { } status || !state.StatusKnown ||
-            state.Queuing || state.Loading || state.Saving || state.Reconciling || state.ManagedByEnv.Contains(AdminStorageRules.Backend)) return false;
+            state.Queuing || state.Loading || state.Saving || state.Reconciling || state.Conflict || state.OutcomeUnknown || state.ManagedByEnv.Contains(AdminStorageRules.Backend)) return false;
         var plan = AdminStorageRules.Plan(state, status, review.Backend, state.SourceHealth, state.SourceHealthFailed, review.LocalPath);
         return !(AdminStorageRules.CurrentSourceUsesS3(state, status) && state.SourceHealthPending) &&
                !(plan.CopyPolicyUnavailable && review.Policy != "start_fresh") &&
@@ -571,7 +573,7 @@ public sealed class AdminStorageSettingsController : IDisposable
             AdminStorageNotice? notice = null;
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _form == null || _state.Review is not { } review || _state.Queuing || _state.Saving || _reconcilePending || _state.Reconciling) return;
+                if (!_lifetime.IsCurrent(action) || _form == null || _state.Review is not { } review || _state.Queuing || _state.Saving || _reconcilePending || _state.Reconciling || _state.Conflict || _state.OutcomeUnknown) return;
                 if (!_state.StatusKnown) notice = new(false, "web.admin.settings.storage.lockUnknownMove");
                 else if (!_state.ManagedTransitionsAvailable) notice = new(false, "web.admin.settings.storage.transitionsUnavailable");
                 if (notice == null && !CanQueue(_state)) return;

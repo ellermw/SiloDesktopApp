@@ -659,6 +659,76 @@ public sealed class AdminStorageSettingsControllerTests
         Assert.Equal(2, h.Writes.Length);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.PreconditionFailed, false)]
+    [InlineData(HttpStatusCode.InternalServerError, false)]
+    [InlineData(HttpStatusCode.PreconditionFailed, true)]
+    [InlineData(HttpStatusCode.InternalServerError, true)]
+    public async Task FailedSettingsSaveBlocksTransitionsUntilExplicitSuccessfulReload(HttpStatusCode failure, bool openWhileSaving)
+    {
+        using var h = new Harness
+        {
+            Status = """{"artwork_storage":{"backend":"s3","locked":true,"status_known":true}}""",
+            Effective = """{"artwork.storage_backend":"s3","artwork.local_path":"/data/art","metadata.cache_images":"true","s3.public_bucket":"media"}""",
+        };
+        await h.OpenAsync();
+        h.Controller.Set("metadata.cache_images", "false");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Routes["PUT /api/v2/admin/settings"] = async _ => { await release.Task; return AdminMonitorKit.Json("{}", failure); };
+        var save = h.Controller.SaveAsync();
+        try
+        {
+            await Until(() => h.Controller.State.Saving, "pending settings save");
+            if (openWhileSaving)
+            {
+                h.Controller.ChangeBackend("local");
+                Assert.NotNull(h.Controller.State.Review);
+                await Until(() => h.Controller.State.SourceHealth != null, "source probe during save");
+            }
+            release.SetResult();
+            await save;
+            Assert.Equal(failure == HttpStatusCode.PreconditionFailed, h.Controller.State.Conflict);
+            Assert.Equal(failure != HttpStatusCode.PreconditionFailed, h.Controller.State.OutcomeUnknown);
+            Assert.Null(h.Controller.State.Review);
+            Assert.Null(h.Controller.State.SourceHealth);
+            var stale = h.Controller.State with { Review = new("local", "/data/art", "start_fresh"), SourceHealthFailed = true };
+            Assert.True(AdminStorageSettingsController.CanQueue(stale with { Conflict = false, OutcomeUnknown = false }));
+            Assert.False(AdminStorageSettingsController.CanQueue(stale with { Conflict = true, OutcomeUnknown = false }));
+            Assert.False(AdminStorageSettingsController.CanQueue(stale with { Conflict = false, OutcomeUnknown = true }));
+            h.Controller.ChangeBackend("local");
+            await h.Controller.QueueTransitionAsync();
+            await h.Controller.SaveAsync();
+            Assert.Null(h.Controller.State.Review);
+            Assert.Single(h.Writes);
+            Assert.Contains("metadata.cache_images", h.Controller.State.DirtyKeys);
+
+            // An automatic commitment refresh must not lift the explicit-reload barrier.
+            h.Jobs = """{"items":[{"id":"job-1","kind":"storage_transition","state":"succeeded","storage_transition_result":{"phase":"completed"}}]}""";
+            h.Controller.RefreshTransitions();
+            await Until(() => h.Controller.State.Reconciling, "commit observed after failed save");
+            Assert.Equal(1, h.Count("GET /api/v2/admin/settings/effective"));
+            h.Routes["GET /api/v2/admin/settings/effective"] = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.Conflict || h.Controller.State.OutcomeUnknown);
+            h.Controller.ChangeBackend("local");
+            Assert.Null(h.Controller.State.Review);
+
+            h.Routes.TryRemove("GET /api/v2/admin/settings/effective", out _);
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            await Until(() => !h.Controller.State.Loading && !h.Controller.State.StatusLoading && !h.Controller.State.Reconciling, "explicit reconciliation");
+            Assert.False(h.Controller.State.Conflict);
+            Assert.False(h.Controller.State.OutcomeUnknown);
+            h.Controller.ChangeBackend("local");
+            await Until(() => h.Controller.State.SourceHealth != null, "fresh review probe");
+            h.Controller.SetReviewPolicy("start_fresh");
+            Assert.True(AdminStorageSettingsController.CanQueue(h.Controller.State));
+            h.Routes["POST /api/v2/admin/storage-transitions"] = _ => Task.FromResult(AdminMonitorKit.Json(Accepted, HttpStatusCode.Accepted));
+            await h.Controller.QueueTransitionAsync();
+            Assert.Equal(1, h.Count("POST /api/v2/admin/storage-transitions"));
+        }
+        finally { release.TrySetResult(); }
+    }
+
     [Fact]
     public async Task RecoveryPollsEveryFiveSecondsOnlyWhileActiveAndPending()
     {
