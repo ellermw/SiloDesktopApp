@@ -32,5 +32,9 @@ internal static class AdminConfigureServices
         services.AddSingleton(new AdminPageRegistration(AdminRoute.NetworkAccessSettings, typeof(AdminNetworkAccessSettingsPage)));
         services.AddTransient<AdminDownloadSettingsController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
+        // Maintenance is a tool page (catalog seed export/import and read-only job history) with its own domain API.
+        services.AddSingleton<AdminMaintenanceApi>();
+        services.AddTransient<AdminMaintenanceController>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.Maintenance, typeof(AdminMaintenancePage)));
     }
 }
