@@ -98,7 +98,11 @@ public sealed class AdminSearchSettingsController : IDisposable
         {
             lock (_gate) { if (_state.Saving || _state.Loading) return; }
             _store.Invalidate();
-            Update(action, () => _state = _state with { Loading = true, Error = null });
+            Update(action, () =>
+            {
+                _revision++;
+                _state = _state with { Loading = true, Error = null, ConnectionResult = null };
+            });
             await LoadAsync(action, true, preserveDraft).ConfigureAwait(false);
         }
     }

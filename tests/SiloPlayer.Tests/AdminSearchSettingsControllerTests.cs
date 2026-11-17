@@ -27,6 +27,7 @@ public sealed class AdminSearchSettingsControllerTests
         internal string Sensitive = """{"configured":["catalog.search.meilisearch.api_key"],"managed_by_env":[]}""";
         internal string Status = AdminSearchApiTests.StatusJson();
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
+        internal Func<Task<HttpResponseMessage>>? EffectiveResponseAsync;
         internal Func<HttpResponseMessage>? StatusResponse;
         internal Func<Task<HttpResponseMessage>>? StatusResponseAsync;
         internal bool Defer;
@@ -43,6 +44,7 @@ public sealed class AdminSearchSettingsControllerTests
                 var path = request.RequestUri!.AbsolutePath;
                 if (request.Method != HttpMethod.Get) return Write?.Invoke(request) ?? Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.InternalServerError));
                 if (path == AdminSearchApiTests.StatusPath) return StatusResponseAsync?.Invoke() ?? Task.FromResult(StatusResponse?.Invoke() ?? AdminMonitorKit.Json(Status));
+                if (path.EndsWith("effective") && EffectiveResponseAsync != null) return EffectiveResponseAsync();
                 var response = path.EndsWith("effective") ? (Effective == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(Effective))
                     : path.EndsWith("sensitive-status") ? (Sensitive == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(Sensitive))
                     : AdminMonitorKit.Json("""{"keys":[],"prefixes":[]}""");
@@ -565,6 +567,76 @@ public sealed class AdminSearchSettingsControllerTests
         h.Controller.Set(Url, "http://new.example.test");
         gate.SetResult();
         await check;
+        Assert.False(h.Controller.State.Checking);
+        Assert.Null(h.Controller.State.ConnectionResult);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReloadClearsAnExistingConnectionResultEvenWhenOnlyEffectiveSettingsFail(bool preserveDraft)
+    {
+        using var h = new Harness();
+        await h.OpenedAsync(active: false);
+        h.Write = _ => Task.FromResult(AdminMonitorKit.Json("""{"success":true,"message":"ok"}"""));
+        await h.Controller.CheckConnectionAsync();
+        Assert.True(h.Controller.State.ConnectionResult!.Success);
+        var effective = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.EffectiveResponseAsync = () => effective.Task;
+        var reload = h.Controller.ReloadAsync(preserveDraft);
+        try
+        {
+            Assert.True(h.Controller.State.Loading);
+            Assert.Null(h.Controller.State.ConnectionResult);
+        }
+        finally { effective.TrySetResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable)); }
+        await reload;
+        Assert.False(h.Controller.State.Loading);
+        Assert.NotNull(h.Controller.State.Error);
+        Assert.False(h.Controller.State.SensitiveStatusError);
+        Assert.Null(h.Controller.State.ConnectionResult);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task ReloadDropsAnOlderCheckDuringOrAfterAFailedEffectiveRead(bool completeDuringReload, bool success)
+    {
+        using var h = new Harness();
+        await h.OpenedAsync(active: false);
+        var response = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Write = _ => response.Task;
+        var check = h.Controller.CheckConnectionAsync();
+        Assert.True(h.Controller.State.Checking);
+        var effective = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.EffectiveResponseAsync = () => effective.Task;
+        var reload = h.Controller.ReloadAsync(preserveDraft: true);
+        try
+        {
+            Assert.True(h.Controller.State.Loading);
+            if (!completeDuringReload)
+            {
+                effective.TrySetResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+                await reload;
+            }
+            response.TrySetResult(success
+                ? AdminMonitorKit.Json("""{"success":true,"message":"ok"}""")
+                : AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+            await check;
+            Assert.False(h.Controller.State.Checking);
+            Assert.Null(h.Controller.State.ConnectionResult);
+        }
+        finally
+        {
+            response.TrySetResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+            effective.TrySetResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+        }
+        await reload;
+        Assert.False(h.Controller.State.Loading);
+        Assert.NotNull(h.Controller.State.Error);
+        Assert.False(h.Controller.State.SensitiveStatusError);
         Assert.False(h.Controller.State.Checking);
         Assert.Null(h.Controller.State.ConnectionResult);
     }
