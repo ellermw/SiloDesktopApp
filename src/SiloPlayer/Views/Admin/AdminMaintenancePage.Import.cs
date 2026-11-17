@@ -324,9 +324,10 @@ public sealed partial class AdminMaintenancePage
             view.BucketPanel.Visibility = Show(draft.Source == AdminCatalogImportSourceKind.BucketArtifact);
             view.RemotePanel.Visibility = Show(draft.Source == AdminCatalogImportSourceKind.RemoteUrl);
 
-            // Detected local files: shown only when some exist; choosing one fills File Path.
+            // Keep the header and Refresh available even when no local files were detected.
+            // Only the picker is conditional; choosing a file fills File Path.
             var local = state.LocalSources;
-            view.LocalDetected.Visibility = Show(local.Items.Count > 0);
+            view.LocalChoices.Visibility = Show(local.Items.Count > 0);
             if (!ReferenceEquals(view.RenderedLocal, local.Items))
             {
                 view.RenderedLocal = local.Items;

@@ -49,6 +49,7 @@ internal static class AdminMaintenanceNativeFixture
         internal readonly ConcurrentQueue<string> Requests = new();
         internal readonly ConcurrentQueue<string> Bodies = new();
         internal volatile bool LinkPublished, SyncLost, EmptyCatalog;
+        internal volatile bool EmptyLocalSources = true;
         internal TaskCompletionSource? QueuedGate;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -88,7 +89,7 @@ internal static class AdminMaintenanceNativeFixture
                     Job("h-2", "future_kind", "paused"),
                     Job("h-3", "library_refresh", "running", ",\"progress\":{\"current\":1,\"total\":4,\"unit\":\"items\"}"))),
                 "/api/v2/admin/jobs?limit=30&cursor=history-2" => Json(Page(null, Job("h-4", "delete_library", "succeeded", ",\"library_id\":\"7\",\"library_result\":{\"deleted_media_files\":1}"))),
-                "/api/v2/admin/catalog/local-import-sources?limit=50" => Json(Page(null, """{"key":"/catalog-seeds/a.json.gz","size_bytes":10}""")),
+                "/api/v2/admin/catalog/local-import-sources?limit=50" => Json(EmptyLocalSources ? Page(null) : Page(null, """{"key":"/catalog-seeds/a.json.gz","size_bytes":10}""")),
                 "/api/v2/admin/catalog/import-sources?limit=50" => Json(Page("bucket-2", """{"key":"catalog-seeds/one.json.gz","size_bytes":10,"last_modified":"2026-11-15T10:00:00Z"}""")),
                 "/api/v2/admin/catalog/import-sources?limit=50&cursor=bucket-2" => Json(Page(null, """{"key":"catalog-seeds/two.json.gz","size_bytes":10}""")),
                 "/api/v2/admin/server/status" => Json("""{"restart_required":false,"restart_mark_count":0,"restart_requested":false}"""),
@@ -217,7 +218,30 @@ internal static class AdminMaintenanceNativeFixture
             var source = Find<ComboBox>(dialog, "MaintenanceImportSource")!;
             var submit = Find<Button>(dialog, "MaintenanceImportSubmit")!;
             Check(source.SelectedIndex == 0 && Find<TextBox>(dialog, "MaintenanceImportLocalPath")!.Text == "/catalog-seeds/" && submit.IsEnabled, "the dialog opens on Local File with the official default path");
-            Check(Find<ComboBox>(dialog, "MaintenanceImportLocalChoices") is { IsLoaded: true }, "detected local files are offered");
+            // An initially empty local source list can discover a new seed without closing the dialog or losing edits.
+            var localRefresh = Find<Button>(dialog, "MaintenanceImportLocalRefresh")!;
+            var localChoices = Find<ComboBox>(dialog, "MaintenanceImportLocalChoices")!;
+            await Until(() => localRefresh.IsEnabled && IsShown(localRefresh), "empty local source Refresh ready");
+            Check(controller.State.LocalSources.Items.Count == 0 && !IsShown(localChoices), "an empty local source list hides only the picker");
+            var localPath = Find<TextBox>(dialog, "MaintenanceImportLocalPath")!;
+            localPath.Text = "/catalog-seeds/manual.json.gz";
+            await Until(() => controller.State.Draft.LocalPath == localPath.Text, "local path draft staged");
+            var draftBeforeRefresh = controller.State.Draft;
+            var localReads = server.Requests.Count(sent => sent == "GET /api/v2/admin/catalog/local-import-sources?limit=50");
+            var postsBeforeRefresh = server.Requests.Count(sent => sent.StartsWith("POST ", StringComparison.Ordinal));
+            server.EmptyLocalSources = false;
+            Invoke(localRefresh);
+            await Until(() => controller.State.LocalSources.Items.Count == 1 && !controller.State.LocalSources.IsFetching, "local seed discovered by visible Refresh");
+            await Until(() => localChoices.Items.Count == 1 && IsShown(localChoices), "refreshed local picker shown");
+            Check(ReferenceEquals(page.Controller, controller) && controller.State.DialogOpen && ReferenceEquals(controller.State.Draft, draftBeforeRefresh)
+                && localPath.Text == "/catalog-seeds/manual.json.gz", "local Refresh preserves the page, open dialog and draft");
+            Check(server.Requests.Count(sent => sent == "GET /api/v2/admin/catalog/local-import-sources?limit=50") == localReads + 1
+                && server.Requests.Count(sent => sent.StartsWith("POST ", StringComparison.Ordinal)) == postsBeforeRefresh, "local Refresh rereads sources without sending a command");
+            localChoices.SelectedIndex = 0;
+            await Until(() => controller.State.Draft.LocalPath == "/catalog-seeds/a.json.gz", "newly discovered local seed chosen");
+            localPath.Text = AdminCatalogImportDraft.DefaultLocalPath;
+            await Until(() => controller.State.Draft.LocalPath == AdminCatalogImportDraft.DefaultLocalPath, "default local path restored");
+            Check(IsShown(localChoices), "detected local files are offered");
             foreach (var (index, panel, enabled) in new[] { (1, "MaintenanceImportExportChoices", false), (2, "MaintenanceImportBucketChoices", false), (3, "MaintenanceImportRemoteUrl", false), (0, "MaintenanceImportLocalPath", true) })
             {
                 source.SelectedIndex = index;
