@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email and Security settings pages and the Network access tool page",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email, Notifications and Security settings pages and the Network access tool page",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminLibrariesApi.Diagnostics.cs",
     "src/SiloPlayer.Core/Api/AdminLibrariesApi.cs",
@@ -117,6 +117,15 @@
     "src/SiloPlayer/Views/Admin/AdminGeneralSettingsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminGeneralSettingsPage.xaml",
     "src/SiloPlayer.Core/Services/Admin/AdminEmailSettingsController.cs",
+    "src/SiloPlayer.Core/Api/AdminNotificationSettingsApi.cs",
+    "src/SiloPlayer.Core/Api/SiloApiClient.AdminNotificationSettings.cs",
+    "src/SiloPlayer.Core/Models/Admin/AdminNotificationSettingsModels.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminNotificationSettingsController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminNotificationText.cs",
+    "src/SiloPlayer/Views/Admin/AdminNotificationSettingsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminNotificationSettingsPage.Fields.cs",
+    "src/SiloPlayer/Views/Admin/AdminNotificationSettingsPage.Channels.cs",
+    "src/SiloPlayer/Views/Admin/AdminNotificationSettingsPage.xaml",
     "src/SiloPlayer/Views/Admin/AdminEmailSettingsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminEmailSettingsPage.xaml",
     "src/SiloPlayer.Core/Api/AdminRateLimitApi.cs",
