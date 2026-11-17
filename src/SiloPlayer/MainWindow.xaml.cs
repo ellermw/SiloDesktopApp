@@ -2006,7 +2006,9 @@ public sealed partial class MainWindow : Window
 
         ReleaseNotificationSubscription();
         _notificationSubscriptionShellKey = shellKey;
-        _notificationSubscription = _eventChannel.Subscribe("notifications", "user_settings", "user_state");
+        // catalog: another device's metadata save must drop cached item detail and
+        // refresh an open detail page (DetailMetadataChangeHub), not only Home and Library.
+        _notificationSubscription = _eventChannel.Subscribe("notifications", "user_settings", "user_state", "catalog");
         if (_eventChannel.TryGetLatestSnapshot("notifications", out var cached))
             OnShellEventSnapshot("notifications", cached);
     }
@@ -2065,6 +2067,7 @@ public sealed partial class MainWindow : Window
         if (_notificationSubscription != null && CanExposeAuthenticatedNavigation)
         {
             _realtimeMediaStateRefresh.ReceiveRealtime(channel, eventName, data);
+            App.Services.GetService<DetailMetadataChangeHub>()?.Receive(channel, eventName, data);
             _apiClient.LocalizedReads.NotifyRealtime(channel, eventName, data, _authService.SelectedProfileId);
             App.Services.GetRequiredService<SettingsApi>().LibraryPageState.NotifyRealtime(channel, eventName, data);
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
