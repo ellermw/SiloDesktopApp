@@ -57,9 +57,12 @@ public partial class LibraryViewModel : ObservableObject
     private int _exactCountQueryVersion = -1;
     private long _exactCountLoadVersion;
 
-    public LibraryViewModel(CatalogApi catalogApi)
+    private readonly SiloPlayer.Core.Services.ItemDetailPrefetchCache? _detailPrefetchCache;
+
+    public LibraryViewModel(CatalogApi catalogApi, SiloPlayer.Core.Services.ItemDetailPrefetchCache? detailPrefetchCache = null)
     {
         _catalogApi = catalogApi;
+        _detailPrefetchCache = detailPrefetchCache;
         AdvancedGroups.Add(CreateEmptyAdvancedGroup());
     }
 

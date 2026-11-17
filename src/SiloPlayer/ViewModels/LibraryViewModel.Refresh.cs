@@ -39,9 +39,18 @@ public partial class LibraryViewModel
         _pendingProgressSaves.Track(persisted);
     }
 
-    private Task WaitForProgressSavesAsync(CancellationToken ct) =>
-        _progressSaveIdentity == _catalogApi.CaptureIdentityContext()
-            ? _pendingProgressSaves.WaitAsync(ct) : Task.CompletedTask;
+    private async Task WaitForProgressSavesAsync(CancellationToken ct)
+    {
+        if (_progressSaveIdentity == _catalogApi.CaptureIdentityContext())
+            await _pendingProgressSaves.WaitAsync(ct);
+        // This app-lifetime registry also sees final saves while LibraryPage
+        // is unsubscribed. Its identity scope survives request-context changes.
+        if (_detailPrefetchCache != null)
+            await _detailPrefetchCache.WaitForProgressSettlementAsync(ct);
+    }
+
+    private (long Card, long Progress) CatalogMutationRevision =>
+        (_cardMutationRevision, _detailPrefetchCache?.ProgressSaveRevision ?? 0);
 
     /// <summary>Content rereads retain authorized rows; transport recovery paints only confirmed rows.</summary>
     public MediaItem? GetRenderableWindowItem(int index)
@@ -216,7 +225,7 @@ public partial class LibraryViewModel
         var replacements = new List<(int Start, int Count, CatalogResponse Response)>();
         var pending = new List<(int Start, int Count, bool Viewport)>();
         var refreshed = 0;
-        var mutationRevision = _cardMutationRevision;
+        var mutationRevision = CatalogMutationRevision;
         void TakeRequestedViewport()
         {
             if (_refreshRequestedViewport is not { } requested) return;
@@ -279,7 +288,7 @@ public partial class LibraryViewModel
                 // fresh snapshot is authoritative only after those writes settle.
                 await WaitForProgressSavesAsync(ct);
                 if (!Current()) return CatalogRefreshResult.Deferred;
-                mutationRevision = _cardMutationRevision;
+                mutationRevision = CatalogMutationRevision;
                 snapshot = null;
                 replacements.Clear();
                 // Keep viewport rows already read under this context renderable;
@@ -296,7 +305,7 @@ public partial class LibraryViewModel
                     while (pending.Count > 0)
                     {
                         if (!Current()) return CatalogRefreshResult.Deferred;
-                        if (mutationRevision != _cardMutationRevision) break;
+                        if (mutationRevision != CatalogMutationRevision) break;
                         TakeRequestedViewport();
                         var (start, count, viewportChunk) = pending[0];
                         pending.RemoveAt(0);
@@ -315,7 +324,7 @@ public partial class LibraryViewModel
                         await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, ct,
                             publishState: false);
                         if (!Current()) return CatalogRefreshResult.Deferred;
-                        if (mutationRevision != _cardMutationRevision) break;
+                        if (mutationRevision != CatalogMutationRevision) break;
                         if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot))
                             return FailRefresh("The server did not return a catalog snapshot.");
                         snapshot ??= replacement.Snapshot;
@@ -336,7 +345,7 @@ public partial class LibraryViewModel
                 {
                     snapshotChanged = true;
                 }
-                if (mutationRevision != _cardMutationRevision)
+                if (mutationRevision != CatalogMutationRevision)
                 {
                     // Neither early viewport publication nor the final held-row
                     // merge may install any part of a pre-mutation snapshot.

@@ -28,6 +28,8 @@ public sealed partial class SearchPage : Page
     private Task? _searchFiltersTask;
     private string? _searchFiltersTaskKey;
     private long _navigationGeneration;
+    private SiloPlayer.Core.Api.ApiIdentityContext? _metadataIdentity;
+    private long _metadataRevision;
     private readonly SiloPlayer.Core.Api.CatalogApi _catalogApi;
     private readonly SiloPlayer.Core.Services.LocalizedMediaReads _localizedReads;
     private readonly CatalogSortChoices.Choice[] _resultSortChoices;
@@ -90,11 +92,32 @@ public sealed partial class SearchPage : Page
         Loaded += (_, _) => PositionSearchSurface();
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
         {
-            if (change.Context is {} owner && !_catalogApi.IsCurrentContext(owner)) return;
-            if (change.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.ItemMetadataRefreshed)
-                DispatcherQueue.TryEnqueue(RefreshBoxSetSearch);
+            var visit = _navigationGeneration;
+            var context = change.Context ?? _catalogApi.CaptureContext();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)) return;
+                ViewModel.RecordCatalogMutation();
+                if (change.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed)
+                {
+                    _metadataIdentity = _catalogApi.CaptureIdentityContext();
+                    _metadataRevision = MetadataRefreshFlow.GetCatalogRevision(_metadataIdentity.Value);
+                    _ = ViewModel.RefreshCatalogMetadataAsync();
+                }
+                if (change.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared or MediaSurfaceChangeKind.ItemMetadataRefreshed)
+                    RefreshBoxSetSearch();
+            });
         });
-        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) => RefreshBoxSetsAfterPlayback(change));
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) =>
+        {
+            var visit = _navigationGeneration;
+            var identity = change.Identity ?? _catalogApi.CaptureIdentityContext();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentIdentityContext(identity))
+                    RefreshBoxSetsAfterPlayback(change);
+            });
+        });
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -106,6 +129,11 @@ public sealed partial class SearchPage : Page
         _requestIdentity = requestApi.CaptureIdentityContext(); _requestProfileAllowed = requestApi.ProfileRequestsAllowed;
         App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().ProfileChanged += RequestAuthorityChanged;
         ViewModel.BeginSearchVisit();
+        var metadataIdentity = _catalogApi.CaptureIdentityContext();
+        var metadataRevision = MetadataRefreshFlow.GetCatalogRevision(metadataIdentity);
+        var metadataChanged = _metadataIdentity != metadataIdentity || _metadataRevision != metadataRevision;
+        _metadataIdentity = metadataIdentity;
+        _metadataRevision = metadataRevision;
         _catalogApi.LibraryCacheInvalidated += RefreshBoxSetSearch;
         _localizedReads.Invalidated += BoxSetLanguageChanged;
         _uiCustomizationService.Changed += UICustomization_Changed;
@@ -117,6 +145,7 @@ public sealed partial class SearchPage : Page
             UpdateScopeButtons();
             UpdateResultsState();
             _ = ViewModel.RefreshBoxSetSearchAsync();
+            if (metadataChanged && metadataRevision != 0) _ = ViewModel.RefreshCatalogMetadataAsync();
             var replaysQuery = e.Parameter is string routeQuery && !string.IsNullOrWhiteSpace(routeQuery) ||
                 e.Parameter is SearchNavigation scopedQuery && !string.IsNullOrWhiteSpace(scopedQuery.Query);
             if (!replaysQuery) _ = ViewModel.RefreshRetainedOutsideAsync();
@@ -242,7 +271,8 @@ public sealed partial class SearchPage : Page
     private async void RefreshBoxSetsAfterPlayback(PlaybackProgressUpdated change)
     {
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(() => RefreshBoxSetsAfterPlayback(change)); return; }
-        if (!_isNavigated) return;
+        if (!_isNavigated || (change.Identity is { } identity && !_catalogApi.IsCurrentIdentityContext(identity))) return;
+        ViewModel.RecordCatalogMutation(change.Persisted);
         var visit = _navigationGeneration; var owner = _catalogApi.CaptureContext();
         try { await change.Persisted; } catch { return; }
         DispatcherQueue.TryEnqueue(() =>

@@ -788,7 +788,9 @@ public sealed partial class CatalogPage : Page,
         }
         if (reset)
         {
-            ClearUndoState();
+            // A retained metadata reread is not a new query. Leave the available
+            // dismissal and its existing auto-hide deadline untouched.
+            if (!refreshMetadata) ClearUndoState();
             Interlocked.Increment(ref _loadGeneration);
             _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new CancellationTokenSource();
             _snapshot = null;

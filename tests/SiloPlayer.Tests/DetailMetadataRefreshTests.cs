@@ -1010,6 +1010,45 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("_ebookProgressOwner = null;", page);
     }
 
+    [Fact]
+    public void MetadataCompletionKeepsAnIdleUndoBannerAndItsOriginalExpiry()
+    {
+        var catalog = Read("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var load = catalog[catalog.IndexOf("private async Task LoadCatalogAsync", StringComparison.Ordinal)..];
+        var reset = load[load.IndexOf("        if (reset)\n", StringComparison.Ordinal)..];
+        reset = reset[..reset.IndexOf("if (_loadCts == null)", StringComparison.Ordinal)];
+        // _undoBusy is false for an available, unclicked opportunity. A retained
+        // completion must neither clear its target nor restart its five-second timer.
+        Assert.Contains("if (!refreshMetadata) ClearUndoState();", reset);
+        Assert.DoesNotContain("ShowUndoBanner", reset);
+        Assert.DoesNotContain("AutoHideUndoBannerAsync", reset);
+        Assert.DoesNotContain("_undoGeneration", reset);
+        var expiry = catalog[catalog.IndexOf("private async Task AutoHideUndoBannerAsync", StringComparison.Ordinal)..];
+        expiry = expiry[..expiry.IndexOf("private void ClearUndoState", StringComparison.Ordinal)];
+        Assert.Contains("await Task.Delay(5000);", expiry);
+        Assert.Contains("generation == _undoGeneration) ClearUndoState();", expiry);
+    }
+
+    [Fact]
+    public void SearchAndCollectionConsumePolledCompletionWithVisitAndMutationGuards()
+    {
+        var search = Read("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
+        var model = Read("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
+        var collection = Read("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+        Assert.Contains("visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)", search);
+        Assert.Contains("_ = ViewModel.RefreshCatalogMetadataAsync();", search);
+        Assert.Contains("ViewModel.RecordCatalogMutation(change.Persisted);", search);
+        Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, 60,", model);
+        Assert.Contains("key == BuildSearchKey(Query.Trim())", model);
+        Assert.Contains("_lastAppliedSearchKey = null;", model);
+        Assert.Contains("_ = LoadFirstPageAsync(retainWindow: true);", collection);
+        Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, PageSize,", collection);
+        Assert.Contains("visit == _navigationGeneration && loadCts == _loadCts", collection);
+        Assert.Contains("_cardMutationRevision + ProgressSaves.ProgressSaveRevision", collection);
+        Assert.Contains("await ProgressSaves.WaitForProgressSettlementAsync(ct);", collection);
+        Assert.Contains("MediaItemCollectionReconciler.Apply(_items, response.Items);", collection);
+    }
+
     // ===== helpers =====
 
     private static bool Send(DetailMetadataChangeHub hub, string channel, string eventName, string json)

@@ -19,6 +19,34 @@ public partial class SearchViewModel : ObservableObject
     private readonly PeopleApi _peopleApi;
     private readonly RequestsApi _requestsApi;
     private readonly SettingsApi _settingsApi;
+    private readonly ItemDetailPrefetchCache? _detailPrefetchCache;
+    private PendingCatalogWrites _pendingProgressSaves = new();
+    private ApiIdentityContext? _progressSaveIdentity;
+    private long _cardMutationRevision;
+
+    public void RecordCatalogMutation(Task? persisted = null)
+    {
+        _cardMutationRevision++;
+        if (persisted != null)
+        {
+            var identity = _catalogApi.CaptureIdentityContext();
+            if (_progressSaveIdentity != identity)
+            {
+                _pendingProgressSaves = new PendingCatalogWrites();
+                _progressSaveIdentity = identity;
+            }
+            _pendingProgressSaves.Track(persisted);
+        }
+    }
+
+    private long CatalogMutationRevision => _cardMutationRevision + (_detailPrefetchCache?.ProgressSaveRevision ?? 0);
+
+    private async Task WaitForCatalogWritesAsync(CancellationToken ct)
+    {
+        if (_progressSaveIdentity == _catalogApi.CaptureIdentityContext())
+            await _pendingProgressSaves.WaitAsync(ct);
+        if (_detailPrefetchCache != null) await _detailPrefetchCache.WaitForProgressSettlementAsync(ct);
+    }
     public RequestDiscoveryOwner? OutsideDiscoveryOwner { get; private set; }
     public bool OutsideDiscoveryAllowed => _requestsApi.DiscoveryAllowed;
     public Task RefreshRetainedOutsideAsync()
@@ -103,16 +131,19 @@ public partial class SearchViewModel : ObservableObject
         finally { if (_peopleRetryCts == owner) { _peopleRetryCts = null; IsPeopleLoading = false; } owner.Dispose(); }
     }
 
-    public SearchViewModel(CatalogApi catalogApi, PeopleApi peopleApi, RequestsApi requestsApi, SettingsApi settingsApi)
+    public SearchViewModel(CatalogApi catalogApi, PeopleApi peopleApi, RequestsApi requestsApi, SettingsApi settingsApi,
+        ItemDetailPrefetchCache? detailPrefetchCache = null)
     {
         _catalogApi = catalogApi;
         _peopleApi = peopleApi;
         _requestsApi = requestsApi;
         _settingsApi = settingsApi;
+        _detailPrefetchCache = detailPrefetchCache;
         BoxSets = new BoxSetSearchState(catalogApi);
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
         {
             if (!_catalogApi.IsCurrentContext(change.Context) || !change.Marked.HasValue) return;
+            RecordCatalogMutation();
             foreach (var item in Results.Where(item => item.ContentId == change.ItemId)) MediaItemStateUpdater.SetNotInterested(item, change.Marked.Value);
         });
     }
@@ -369,6 +400,55 @@ public partial class SearchViewModel : ObservableObject
             if (IsCurrentSearchOwner(searchCts, querySnapshot))
                 IsLoading = false;
         }
+    }
+
+    /// <summary>Rereads the mounted query window without resetting scroll or optional discovery.</summary>
+    public async Task RefreshCatalogMetadataAsync()
+    {
+        // Invalidate same-query reuse even when the retained read fails.
+        _lastAppliedSearchKey = null;
+        RecordCatalogMutation();
+        if (!_boxSetSearchActive || string.IsNullOrWhiteSpace(Query)) return;
+        var query = Query.Trim();
+        var key = BuildSearchKey(query);
+        var context = _catalogApi.CaptureContext();
+        var target = Math.Max(60, Results.Count);
+        var owner = new CancellationTokenSource();
+        var previous = _searchCts;
+        _searchCts = owner;
+        previous?.Cancel(); previous?.Dispose();
+        var ct = owner.Token;
+        bool Current() => IsCurrentSearchOwner(owner, query) && _boxSetSearchActive
+            && _catalogApi.IsCurrentContext(context) && key == BuildSearchKey(Query.Trim());
+        IsLoading = true;
+        IsLoadingMore = false;
+        _hasMore = false; // A failed reread must not append using the retired snapshot.
+        _snapshot = null;
+        try
+        {
+            async Task<CatalogResponse> ReadWindowAsync(int offset, int limit, string? snapshot)
+            {
+                if (!Current()) throw new OperationCanceledException();
+                var response = await FetchCatalogPageAsync(offset, snapshot, ct, query);
+                if (!Current()) throw new OperationCanceledException();
+                return response;
+            }
+            var response = await RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, 60,
+                () => CatalogMutationRevision, ct, WaitForCatalogWritesAsync);
+            if (!Current()) return;
+            MediaItemCollectionReconciler.Apply(Results, response.Items);
+            TotalCount = response.Total > 0 ? response.Total : Results.Count;
+            _snapshot = response.Snapshot;
+            _hasMore = response.HasMore || (response.Items.Count > 0 && Results.Count < response.Total);
+            _lastAppliedSearchKey = key;
+            SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (Current()) SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not refresh search results: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+        }
+        finally { if (ReferenceEquals(_searchCts, owner)) IsLoading = false; }
     }
 
     public void CancelPendingSearch()

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using CommunityToolkit.Mvvm.Messaging;
 using System.Net;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
@@ -147,6 +148,42 @@ public sealed class LibraryBackgroundRefreshTests
             if (completion == "settle") Assert.Equal(80, model.GetWindowItem(500)!.PositionSeconds);
             else Assert.Equal(requests, wire.Requests.Count);
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetainedRefreshUsesAppLifetimeProgressBarrierWithoutALibraryRecipient(bool duringRead)
+    {
+        using var wire = new Catalog();
+        var cache = new ItemDetailPrefetchCache((string _, CancellationToken _) =>
+            Task.FromResult(new SiloPlayer.Core.Models.Catalog.MediaItemDetail()));
+        var messenger = new CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger();
+        SiloPlayer.Services.DetailCacheInvalidation.Attach(cache, messenger);
+        var model = new LibraryViewModel(new CatalogApi(wire.Client), cache)
+        { Library = new Library { Id = 1, Type = "movie" } };
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.LoadWindowAsync(500, 60);
+        await wire.Idle();
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void FinalSave() => messenger.Send(new SiloPlayer.Messaging.PlaybackProgressUpdated(
+            "item-500", 80, 100, false) { Persisted = persisted.Task });
+        if (!duringRead) FinalSave();
+        else wire.HoldWindowAt = 500;
+        var before = wire.Requests.Count;
+        var refresh = model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+        if (duringRead)
+        {
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            FinalSave(); // No LibraryPage recipient calls TrackPendingProgressSave.
+            wire.ReleaseChunk.SetResult();
+        }
+        else Assert.Equal(before, wire.Requests.Count);
+        Assert.False(refresh.IsCompleted);
+        wire.PositionSeconds = 80;
+        persisted.SetResult();
+        Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await refresh);
+        Assert.Equal(80, model.GetWindowItem(500)!.PositionSeconds);
     }
 
     [Theory]
