@@ -852,10 +852,43 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("await LoadCatalogAsync(true, Math.Max(PageSize, _items.Count), refreshMetadata: true)", catalogReceiver);
         Assert.Contains("if (refreshMetadata) _items[index] = item;", catalog);
         Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, windowSize, PageSize,", catalog);
-        Assert.Contains("() => refreshMetadata ? _cardMutationRevision : 0, loadToken)", catalog);
+        Assert.Contains("() => refreshMetadata ? _cardMutationRevision : 0, loadToken,\n                    refreshMetadata ? _pendingProgressSaves.WaitAsync : null)", catalog);
         Assert.Contains("_cardMutationRevision++;", catalogReceiver);
         Assert.True(catalogReceiver.IndexOf("_cardMutationRevision++;", StringComparison.Ordinal)
             < catalogReceiver.IndexOf("if (item == null) return;", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CatalogMutationChannelsAndBusyUndoRetainMetadataReadProtection()
+    {
+        var catalog = Read("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var notInterested = catalog[catalog.IndexOf("Register<NotInterestedChange>", StringComparison.Ordinal)..];
+        notInterested = notInterested[..notInterested.IndexOf("Register<PlaybackProgressUpdated>", StringComparison.Ordinal)];
+        Assert.Contains("visit != _navigationCts", notInterested);
+        Assert.Contains("!_api.IsCurrentContext(message.Context) || !message.Marked.HasValue", notInterested);
+        Assert.Contains("_cardMutationRevision++;", notInterested);
+        Assert.True(notInterested.IndexOf("_cardMutationRevision++;", StringComparison.Ordinal) <
+            notInterested.IndexOf("foreach (var item in _items", StringComparison.Ordinal));
+
+        var progress = catalog[catalog.IndexOf("public void Receive(PlaybackProgressUpdated message)", StringComparison.Ordinal)..];
+        progress = progress[..progress.IndexOf("private void RefreshRealizedItemState", StringComparison.Ordinal)];
+        Assert.Contains("visit != _navigationCts", progress);
+        Assert.Contains("!_api.IsCurrentIdentityContext(owner)", progress);
+        Assert.True(progress.IndexOf("_pendingProgressSaves.Track(message.Persisted);", StringComparison.Ordinal) <
+            progress.IndexOf("if (item == null) return;", StringComparison.Ordinal));
+
+        var load = catalog[catalog.IndexOf("private async Task LoadCatalogAsync", StringComparison.Ordinal)..];
+        var busy = load[..load.IndexOf("if (_loading && !reset)", StringComparison.Ordinal)];
+        Assert.Contains("_retainedMetadataRefresh |= refreshMetadata;", busy);
+        var reconcile = catalog[catalog.IndexOf("private async Task ReconcileSectionAfterUndoAsync", StringComparison.Ordinal)..];
+        reconcile = reconcile[..reconcile.IndexOf("private async Task AutoHideUndoBannerAsync", StringComparison.Ordinal)];
+        Assert.Contains("var refreshMetadata = _retainedMetadataRefresh;", reconcile);
+        Assert.Contains("refreshMetadata != _retainedMetadataRefresh) continue;", reconcile);
+        Assert.Contains("if (!shown) _items.Clear();", reconcile);
+        Assert.Contains("else if (refreshMetadata)\n                for (var index = 0; index < _items.Count; index++) _items[index] = items[index];", reconcile);
+        Assert.Contains("_retainedMetadataRefresh = false;", reconcile);
+        Assert.Contains("await _pendingProgressSaves.WaitAsync(ct);", reconcile);
+        Assert.Contains("cardRevision != _cardMutationRevision", reconcile);
     }
 
     [Fact]

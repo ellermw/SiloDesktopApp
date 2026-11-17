@@ -8,10 +8,13 @@ public static class RetainedCatalogRead
 {
     public static async Task<CatalogResponse> ReadAsync(
         Func<int, int, string?, Task<CatalogResponse>> readWindow,
-        int windowSize, int pageSize, Func<long> mutationRevision, CancellationToken ct)
+        int windowSize, int pageSize, Func<long> mutationRevision, CancellationToken ct,
+        Func<CancellationToken, Task>? waitForWrites = null)
     {
         while (true)
         {
+            ct.ThrowIfCancellationRequested();
+            if (waitForWrites != null) await waitForWrites(ct);
             ct.ThrowIfCancellationRequested();
             var revision = mutationRevision();
             var response = await readWindow(0, pageSize, null);
@@ -20,7 +23,9 @@ public static class RetainedCatalogRead
             while (revision == mutationRevision() && items.Count < windowSize && response.Items.Count > 0
                 && (response.HasMore || items.Count < response.Total))
             {
-                response = await readWindow(items.Count, Math.Min(pageSize, windowSize - items.Count), response.Snapshot);
+                // The limit is signed into the snapshot scope. Keep the extra rows
+                // in the retained window so its next offset follows every fetched row.
+                response = await readWindow(items.Count, pageSize, response.Snapshot);
                 ct.ThrowIfCancellationRequested();
                 items.AddRange(response.Items);
             }

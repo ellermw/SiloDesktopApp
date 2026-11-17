@@ -62,6 +62,7 @@ public sealed partial class CatalogPage : Page,
     private int? _retainedSectionWindowSize;
     private bool _retainedMetadataRefresh;
     private long _cardMutationRevision;
+    private PendingCatalogWrites _pendingProgressSaves = new();
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<QueryRule> _advancedRules = [];
     private bool _advancedMode;
@@ -123,6 +124,7 @@ public sealed partial class CatalogPage : Page,
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
         _navigationCts = new CancellationTokenSource();
+        _pendingProgressSaves = new PendingCatalogWrites();
         var navigationToken = _navigationCts.Token;
         _personalDefaultOrderTouched = false;
         RegisterMediaMessages();
@@ -249,12 +251,19 @@ public sealed partial class CatalogPage : Page,
         if (_messengerRegistered) return;
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
         WeakReferenceMessenger.Default.Register<HomeDismissalApplied>(this);
-        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, message) => DispatcherQueue.TryEnqueue(() =>
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, message) =>
         {
-            if (!App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(message.Context) || !message.Marked.HasValue) return;
-            foreach (var item in _items.Where(item => item.ContentId == message.ItemId))
-                MediaItemStateUpdater.SetNotInterested(item, message.Marked.Value);
-        }));
+            var visit = _navigationCts;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (visit == null || visit.IsCancellationRequested || visit != _navigationCts
+                    || !_api.IsCurrentContext(message.Context) || !message.Marked.HasValue) return;
+                // Absent rows can still be in an outstanding metadata snapshot.
+                _cardMutationRevision++;
+                foreach (var item in _items.Where(item => item.ContentId == message.ItemId))
+                    MediaItemStateUpdater.SetNotInterested(item, message.Marked.Value);
+            });
+        });
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
         _messengerRegistered = true;
     }
@@ -567,7 +576,11 @@ public sealed partial class CatalogPage : Page,
     {
         while (current())
         {
+            await _pendingProgressSaves.WaitAsync(ct);
+            if (!current()) return;
             var revision = _sectionMutationRevision;
+            var cardRevision = _cardMutationRevision;
+            var refreshMetadata = _retainedMetadataRefresh;
             var reset = _undoResetPending;
             _undoResetPending = false;
             if (reset) { target = PageSize; ClearUndoState(); }
@@ -583,7 +596,7 @@ public sealed partial class CatalogPage : Page,
                     offset: items.Count, snapshot: snapshot, source: "section", scope: _scope,
                     sectionId: _sectionId, ct: ct);
                 if (!current()) return;
-                if (revision != _sectionMutationRevision || _undoResetPending) break;
+                if (revision != _sectionMutationRevision || cardRevision != _cardMutationRevision || _undoResetPending) break;
                 foreach (var item in response.Items)
                     item.ItemSource = HomeDismissalPolicy.SectionCardItemSource("section", item.ItemSource);
                 items.AddRange(response.Items);
@@ -591,13 +604,18 @@ public sealed partial class CatalogPage : Page,
                 total = response.Total; exact = response.TotalExact;
                 hasMore = response.Items.Count > 0 && (response.HasMore || items.Count < total);
             } while (hasMore && items.Count < target);
-            if (revision != _sectionMutationRevision || _undoResetPending) continue;
+            if (revision != _sectionMutationRevision || cardRevision != _cardMutationRevision || _undoResetPending
+                || refreshMetadata != _retainedMetadataRefresh) continue;
             // Cards already shown in the server's order stay realized and only the rows after
             // them are added; any other difference replaces the window.
             var shown = items.Count >= _items.Count && !_items.Where((item, index) =>
                 !string.Equals(item.ContentId, items[index].ContentId, StringComparison.OrdinalIgnoreCase)).Any();
             if (!shown) _items.Clear();
+            else if (refreshMetadata)
+                for (var index = 0; index < _items.Count; index++) _items[index] = items[index];
             foreach (var item in items.Skip(_items.Count)) _items.Add(item);
+            _retainedMetadataRefresh = false;
+            _retainedSectionWindowSize = null;
             _offset = items.Count; _snapshot = snapshot; _totalItems = total; _hasMore = hasMore;
             _sectionPrefixStale = false;
             ErrorText.Visibility = Visibility.Collapsed;
@@ -634,12 +652,15 @@ public sealed partial class CatalogPage : Page,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        var visit = _navigationCts;
         var owner = message.Identity ?? _api.CaptureIdentityContext();
         if (!_api.IsCurrentIdentityContext(owner)) return;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_api.IsCurrentIdentityContext(owner)) return;
+            if (visit == null || visit.IsCancellationRequested || visit != _navigationCts
+                || !_api.IsCurrentIdentityContext(owner)) return;
             _cardMutationRevision++;
+            _pendingProgressSaves.Track(message.Persisted);
             var item = _items.FirstOrDefault(candidate =>
                 string.Equals(candidate.ContentId, message.ContentId, StringComparison.OrdinalIgnoreCase));
             if (item == null) return;
@@ -728,13 +749,19 @@ public sealed partial class CatalogPage : Page,
         if (_queryFilters?.IsValid == false) return;
         if (_undoBusy)
         {
+            _retainedMetadataRefresh |= refreshMetadata;
             if (reset) { _undoResetPending = true; ClearUndoState(); }
             return;
         }
         if (_loading && !reset) return;
         // A dismissal or Undo whose follow-up read failed left cards that no longer match
         // the server row: read it again from the start instead of appending to them.
-        if (_sectionPrefixStale) reset = true;
+        if (_sectionPrefixStale)
+        {
+            reset = true;
+            refreshMetadata |= _retainedMetadataRefresh;
+            if (refreshMetadata) retainedWindowSize ??= Math.Max(PageSize, _items.Count);
+        }
         // A failed in-place refresh must be retried before any continuation can append.
         if (!reset && _retainedSectionWindowSize != null)
         {
@@ -817,7 +844,8 @@ public sealed partial class CatalogPage : Page,
             }
             var response = retainedWindowSize is { } windowSize
                 ? await RetainedCatalogRead.ReadAsync(ReadWindowAsync, windowSize, PageSize,
-                    () => refreshMetadata ? _cardMutationRevision : 0, loadToken)
+                    () => refreshMetadata ? _cardMutationRevision : 0, loadToken,
+                    refreshMetadata ? _pendingProgressSaves.WaitAsync : null)
                 : await ReadWindowAsync(_offset, PageSize, _snapshot);
             if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
             foreach (var item in response.Items)

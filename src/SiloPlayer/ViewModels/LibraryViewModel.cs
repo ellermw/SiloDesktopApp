@@ -496,6 +496,9 @@ public partial class LibraryViewModel : ObservableObject
     public int UpdateCachedItems(string contentId, Func<MediaItem, bool> update)
     {
         if (string.IsNullOrWhiteSpace(contentId)) return 0;
+        // An absent item can be present in a pending refresh response, and a
+        // mutation can change filtered membership even when no held DTO changed.
+        _cardMutationRevision++;
 
         var matches = _windowItems
             .Concat(_recentWindows.SelectMany(window => window.Response.Items))

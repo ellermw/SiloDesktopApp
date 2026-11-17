@@ -988,10 +988,12 @@ public sealed partial class LibraryPage : Page,
     {
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var owner = message.Identity ?? catalog.CaptureIdentityContext();
+        var visit = _libraryVisit;
         if (!catalog.IsCurrentIdentityContext(owner)) return;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated || !catalog.IsCurrentIdentityContext(owner)) return;
+            if (!_isNavigated || visit != _libraryVisit || !catalog.IsCurrentIdentityContext(owner)) return;
+            ViewModel.TrackPendingProgressSave(message.Persisted);
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item =>
                 MediaItemStateUpdater.SetPlaybackProgress(
                     item,
