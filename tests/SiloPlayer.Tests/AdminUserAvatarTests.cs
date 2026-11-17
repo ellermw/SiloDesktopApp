@@ -30,11 +30,21 @@ public sealed class AdminUserAvatarTests
         Assert.NotEmpty(bytes);
         Assert.Equal("https://api.dicebear.com/9.x/fun-emoji/svg?seed=pepper%20otter&size=128&radius=24&backgroundType=gradientLinear", handler.Requests.Single());
         await images.ReadAsync("preset:avatar-3", new Uri("https://silo.invalid/base/"));
-        Assert.Equal("https://silo.invalid/profile-avatars/avatar-3.svg", handler.Requests.Last());
+        Assert.Equal("https://silo.invalid/base/profile-avatars/avatar-3.svg", handler.Requests.Last());
         foreach (var reference in new[] { "https://elsewhere.invalid/image.svg", "preset:avatar-9", "preset:dicebear:unknown:seed", "preset:dicebear:initials:" })
             await Assert.ThrowsAsync<ArgumentException>(() => images.ReadAsync(reference, new Uri("https://silo.invalid/")));
         Assert.Equal(2, handler.Requests.Count);
     }
+
+    [Theory]
+    [InlineData("https://silo.invalid", "")]
+    [InlineData("https://silo.invalid/", "")]
+    [InlineData("https://silo.invalid/silo", "/silo")]
+    [InlineData("https://silo.invalid/silo/", "/silo")]
+    [InlineData("https://silo.invalid/silo/?unused=1#fragment", "/silo")]
+    public void LegacyPreviewsPreserveConfiguredServerPrefix(string server, string prefix) =>
+        Assert.Equal("https://silo.invalid" + prefix + "/profile-avatars/avatar-1.svg",
+            AdminUserAvatarImages.PreviewUri("preset:avatar-1", new Uri(server)).AbsoluteUri);
 
     [Fact]
     public async Task PreviewRejectsRedirectsOversizeAndExternalSvgResources()

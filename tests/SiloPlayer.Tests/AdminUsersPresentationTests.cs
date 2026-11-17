@@ -72,6 +72,31 @@ public sealed class AdminUsersPresentationTests
         Assert.Equal(1, row["config"].Count("custom")); Assert.True(row.Flag("hidden"));
     }
 
+    [Theory]
+    [InlineData("ui.disabled_library_ids", false)]
+    [InlineData("ui.disabled_library_ids", true)]
+    [InlineData("ui.library_order", false)]
+    [InlineData("ui.library_order", true)]
+    public void SettingsDocumentValuesAcceptArraysWithoutRelaxingMutationObjects(string key, bool nullable)
+    {
+        var definition = new JsonObject
+        {
+            ["key"] = key,
+            ["value_schema"] = new JsonObject { ["type"] = "object", ["nullable"] = nullable }
+        };
+        var original = definition.ToJsonString();
+        var valueDefinition = AdminUserPreferences.ValueDefinition(definition);
+        foreach (var json in new[] { "[\"3\"]", "[]", "{}" })
+            AdminUsersContract.ValidateValue("value", valueDefinition, JsonNode.Parse(json));
+        foreach (var json in new[] { "\"3\"", "3", "true" })
+            Assert.Throws<ArgumentException>(() => AdminUsersContract.ValidateValue("value", valueDefinition, JsonNode.Parse(json)));
+        if (nullable) AdminUsersContract.ValidateValue("value", valueDefinition, null);
+        else Assert.Throws<ArgumentException>(() => AdminUsersContract.ValidateValue("value", valueDefinition, null));
+        Assert.Equal(original, definition.ToJsonString());
+        Assert.Throws<ArgumentException>(() => AdminUsersContract.ValidateValue("config",
+            AdminUsersContract.Schema("SectionOverrideWrite")["properties"]!["config"]!.AsObject(), new JsonArray("3")));
+    }
+
     [Fact]
     public void ExplicitInheritedNullIsNotTheDefaultValue()
     {

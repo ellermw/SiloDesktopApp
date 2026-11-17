@@ -36,7 +36,7 @@ public sealed partial class AdminUsersPage
         _body.Children.Clear(); _body.Children.Add(_notice);
         _body.Children.Add(Text("VIEWING AS " + _previewName + " — separate, temporary session", 24));
         _body.Children.Add(Text("Return location: " + _previewReturn));
-        _body.Children.Add(Action("Return to admin", EndViewAsAsync));
+        _body.Children.Add(Action("Return to admin", EndViewAsAsync, nested: true));
     }
     private async Task PreviewReadAsync(string path, string kind, string? cursor = null, HashSet<string>? seen = null)
     {
@@ -124,6 +124,8 @@ public sealed partial class AdminUsersPage
     private async Task EndViewAsAsync()
     {
         var generation = _generation;
+        // Retire rendered actions before cancellation can resume their handlers. Only the new load owns busy state.
+        ++_loadRevision; _actionBusy = true;
         var preview = _preview; _preview = null; _previewRead?.Cancel();
         try { if (preview != null) await preview.EndAsync(_workspace.Token); }
         catch (Exception) { if (_workspace.IsCurrent(generation)) _notice.Text = "The temporary sign-out outcome is unknown; the local view-as credentials were discarded without replay."; }

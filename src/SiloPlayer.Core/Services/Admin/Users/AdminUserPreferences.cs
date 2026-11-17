@@ -16,7 +16,11 @@ public static class AdminUserPreferences
             type = example is JsonValue scalar && scalar.TryGetValue<string>(out _) ? "string" : "number";
         }
         if (type == "language_tag") type = "string";
-        wire["type"] = wire.Flag("nullable") ? new JsonArray(type, "null") : JsonValue.Create(type);
+        // Settings-contract objects are JSON documents (objects or arrays), unlike mutation schema objects.
+        if (type == "object")
+            wire["type"] = wire.Flag("nullable") ? new JsonArray("object", "array", "null") : new JsonArray("object", "array");
+        else
+            wire["type"] = wire.Flag("nullable") ? new JsonArray(type, "null") : JsonValue.Create(type);
         return wire;
     }
     public static bool Supports(JsonObject definition, AdminUserSettingIdentity identity) => definition.Text("persistence") == "remote" &&

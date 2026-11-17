@@ -310,10 +310,14 @@ internal static class AdminUsersNativeFixture
     {
         internal readonly List<string> Requests = new();
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>> Read = _ => Task.FromResult(AdminMonitorReply("{}"));
+        internal Func<Task<HttpResponseMessage>> Logout = () => Task.FromResult(AdminMonitorReply("{}"));
+        internal CancellationToken ReadToken;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Requests.Add(request.Method + " " + request.RequestUri!.PathAndQuery);
-            return request.Method == HttpMethod.Post ? Task.FromResult(AdminMonitorReply("{}")) : Read(request);
+            if (request.Method == HttpMethod.Post) return Logout();
+            ReadToken = token;
+            return Read(request);
         }
     }
     private static HttpResponseMessage AdminMonitorReply(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
@@ -327,8 +331,74 @@ internal static class AdminUsersNativeFixture
         typeof(AdminUsersPage).GetField("_previewName", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(page, "Target");
         return preview;
     }
+    private static async Task StartActionAsync(AdminUsersPage page, string label, Func<Task> run)
+    {
+        var button = (Button)typeof(AdminUsersPage).GetMethod("Action", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(page, [label, run, true, false, false])!;
+        ((StackPanel)Field(page, "_body")!).Children.Add(button);
+        await SettledAsync(() => button.IsLoaded);
+        await InvokeAsync(button);
+    }
+    private static async Task PreviewInterruptionChecksAsync(AdminUsersPage page)
+    {
+        foreach (var kind in new[] { "profiles", "catalog", "detail" })
+        {
+            var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var logout = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var server = new PreviewServer { Read = _ => pending.Task, Logout = () => logout.Task };
+            using var preview = AdoptPreview(page, server);
+            var path = kind == "profiles" ? "/api/v2/profiles" : kind == "catalog" ? "/api/v2/catalog" : "/api/v2/catalog/items/3";
+            try
+            {
+                await StartActionAsync(page, "Start held scoped read", async () =>
+                {
+                    try { await CallAsync(page, "PreviewReadAsync", path, kind, null, null); }
+                    finally { completed.TrySetResult(); }
+                });
+                Check((bool)Field(page, "_actionBusy")! && !completed.Task.IsCompleted, kind + " read holds the production action gate");
+                var retainedReturn = FindButton(page, "Return to admin");
+                await InvokeAsync(retainedReturn);
+                await SettledAsync(() => Field(page, "_preview") == null && server.Requests.Contains("POST /silo/api/v2/auth/logout"));
+                Check(server.ReadToken.IsCancellationRequested && !pending.Task.IsCompleted,
+                    kind + " return cancels the pending read and starts independent logout without awaiting it");
+                if (kind == "profiles")
+                {
+                    pending.SetException(new TaskCanceledException("Late scoped cancellation."));
+                    await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    Check((bool)Field(page, "_actionBusy")!, "interrupted action cannot clear busy state during logout");
+                }
+                logout.SetResult(AdminMonitorReply("{}"));
+                await SettledAsync(() => Ready(page) && !(bool)Field(page, "_actionBusy")!);
+                if (kind != "profiles")
+                {
+                    var adminWork = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    try
+                    {
+                        await StartActionAsync(page, "Hold restored admin action", () => adminWork.Task);
+                        var notice = ((TextBlock)Field(page, "_notice")!).Text;
+                        pending.SetException(new HttpRequestException("Late scoped failure."));
+                        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        Check((bool)Field(page, "_actionBusy")! && ((TextBlock)Field(page, "_notice")!).Text == notice && FindButton(page, "Return to admin") == null,
+                            kind + " late completion cannot alter the restored admin page or release its new action gate");
+                    }
+                    finally { adminWork.TrySetResult(); }
+                    await SettledAsync(() => !(bool)Field(page, "_actionBusy")!);
+                }
+                await InvokeAsync(retainedReturn, false);
+                Check(server.Requests.Count(request => request == "POST /silo/api/v2/auth/logout") == 1,
+                    kind + " return revokes once and detached return cannot replay");
+            }
+            finally
+            {
+                pending.TrySetResult(AdminMonitorReply("{}"));
+                logout.TrySetResult(AdminMonitorReply("{}"));
+            }
+        }
+    }
     private static async Task PreviewChecksAsync(AdminUsersPage page)
     {
+        await PreviewInterruptionChecksAsync(page);
         foreach (var timeout in new[] { false, true })
         {
             var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);

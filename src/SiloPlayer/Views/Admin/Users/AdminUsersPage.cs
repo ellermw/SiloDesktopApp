@@ -211,7 +211,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         AutomationProperties.SetName(button, label);
         var generation = _generation;
         var revision = _loadRevision;
-        bool Current() => recovery ? _activePage && revision == _loadRevision : _workspace.IsCurrent(generation);
+        bool Current() => revision == _loadRevision && (recovery ? _activePage : _workspace.IsCurrent(generation));
         button.Click += async (_, _) =>
         {
             if (!Current() || _loading || _actionBusy && !nested) return;
@@ -219,7 +219,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             try { await run(); }
             catch (OperationCanceledException error)
             {
-                if (_workspace.IsCurrent(generation)) ShowError(new TimeoutException("The request timed out or was cancelled. Read back/review before making another change.", error));
+                if (Current()) ShowError(new TimeoutException("The request timed out or was cancelled. Read back/review before making another change.", error));
             }
             catch (Exception error) { if (Current()) ShowError(error, allowInactiveWorkspace: recovery); }
             finally { if (Current()) { if (!nested) _actionBusy = false; button.IsEnabled = enabled; } }

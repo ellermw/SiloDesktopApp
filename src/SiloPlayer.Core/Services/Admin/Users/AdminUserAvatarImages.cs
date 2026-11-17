@@ -20,7 +20,7 @@ public sealed class AdminUserAvatarImages : IDisposable
             throw new ArgumentException("A server origin is required for preset previews.");
         var preset = reference.StartsWith("preset:", StringComparison.Ordinal) ? reference[7..] : reference;
         if (Enumerable.Range(1, 8).Any(index => preset == "avatar-" + index))
-            return new Uri(server, "/profile-avatars/" + preset + ".svg");
+            return new Uri(server.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/profile-avatars/" + preset + ".svg");
         var parts = preset.Split(':');
         if (parts.Length != 3 || parts[0] != "dicebear" || !AdminUserAvatars.Styles.Contains(parts[1]) || string.IsNullOrWhiteSpace(parts[2]) || parts[2].Length > 256)
             throw new ArgumentException("Only a known profile preset can be previewed.");
