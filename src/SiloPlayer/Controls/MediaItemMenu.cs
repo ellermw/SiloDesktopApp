@@ -408,10 +408,14 @@ public static class MediaItemMenu
 
         var hub = App.Services.GetService<DetailMetadataChangeHub>();
         foreach (var change in MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId))
+        {
+            // Retire /watch snapshots for replacement destinations too, before
+            // their detail watches can start a structural reread.
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId, item.SeriesId,
+                context: maintenanceApi.CaptureContext()));
             hub?.NotifyItemChanged(change.ContentId, change.Structural);
-        WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-            MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId,
-            context: maintenanceApi.CaptureContext()));
+        }
     }
 
     private static async Task ShowMatchItemDialogAsync(

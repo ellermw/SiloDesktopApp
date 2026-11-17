@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
@@ -27,6 +28,51 @@ public sealed class DetailCacheInvalidationTests
         Assert.Equal(2, reads);
         Assert.Equal(20, current.Intro?.Start);
     }
+    [Theory]
+    [InlineData("complete", 0)]
+    [InlineData("quick", 1)]
+    public async Task CardRefreshRetiresWarmReplacementAndRefreshDestinationWatchCaches(string mode, int newFiles)
+    {
+        var (freshness, messenger, revision) = CreateFreshness();
+        var cache = new WatchDetailPrefetchCache<WatchDetailResponse>(8, TimeSpan.FromMinutes(2));
+        var now = DateTimeOffset.UtcNow;
+        var reads = new Dictionary<string, int>();
+        var serverFileId = 1;
+        Task<WatchDetailResponse> Get(string id, CancellationToken ct) => cache.GetOrAdd(id, "profile", () =>
+            freshness.ReadAsync(id, _ =>
+            {
+                reads[id] = reads.GetValueOrDefault(id) + 1;
+                return Task.FromResult(new WatchDetailResponse
+                {
+                    ContentId = id, Versions = [new() { FileId = serverFileId }]
+                });
+            }, ct), now, out _);
+        var refresh = await Get("movie:refresh", CancellationToken.None);
+        var destination = await Get("movie:destination", CancellationToken.None);
+        var unrelated = await Get("movie:other", CancellationToken.None);
+        serverFileId = 2;
+        var result = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, new MaintenanceJobStatus
+        {
+            ItemResult = new() { RefreshContentId = "movie:refresh", DetailContentId = "movie:destination", NewFiles = newFiles }
+        });
+        // Polling-only completion: no socket invalidation and no cache expiry.
+        foreach (var change in MetadataRefreshFollow.ChangedItems(result, "movie:source", mode, "movie", null))
+            messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId));
+
+        Assert.False(freshness.IsCurrent(refresh));
+        Assert.False(freshness.IsCurrent(destination));
+        Assert.True(freshness.IsCurrent(unrelated));
+        foreach (var id in new[] { "movie:refresh", "movie:destination" })
+        {
+            var fresh = await freshness.GetCurrentAsync(ct => Get(id, ct),
+                detail => cache.Invalidate(detail.ContentId), CancellationToken.None);
+            Assert.Equal(2, reads[id]);
+            Assert.Equal(2, Assert.Single(fresh.Versions).FileId);
+        }
+        Assert.Equal(1, reads["movie:other"]);
+        GC.KeepAlive(revision);
+    }
+
     [Theory]
     [InlineData(MediaSurfaceChangeKind.WatchedMarked)]
     [InlineData(MediaSurfaceChangeKind.WatchedCleared)]

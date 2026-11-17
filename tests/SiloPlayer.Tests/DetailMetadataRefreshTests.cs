@@ -766,6 +766,56 @@ public sealed class DetailMetadataRefreshTests
         Assert.DoesNotContain("_readerTargetFileId = progress.FileId;", page);
     }
 
+    [Theory]
+    [InlineData("complete", 0)]
+    [InlineData("quick", 1)]
+    public async Task CardCompletionRebuildsAudiobookChaptersFromFreshFilesWithoutReplacingViewerState(string mode, int newFiles)
+    {
+        using var scope = new DetailViewModelTestScope();
+        var fresh = new MediaItemDetail
+        {
+            ContentId = "audiobook-1", Type = "audiobook",
+            Versions =
+            [
+                new() { FileId = 2, Duration = 60, Chapters = [new() { Index = 0, Title = "Replacement", StartSeconds = 0, EndSeconds = 60 }] },
+                new() { FileId = 3, Duration = 90, Chapters = [new() { Index = 0, Title = "Added", StartSeconds = 0, EndSeconds = 90 }] }
+            ]
+        };
+        var vm = scope.CreateWithCatalog((_, _) => Task.FromResult(fresh));
+        var mounted = new MediaItemDetail
+        {
+            ContentId = fresh.ContentId, Type = fresh.Type,
+            Versions = [new() { FileId = 1, Chapters = [new() { Index = 0, Title = "Removed" }] }],
+            UserState = new() { IsFavorite = true }, UserData = new() { PositionSeconds = 30, LastFileId = 1 }
+        };
+        vm.Item = mounted;
+        var state = mounted.UserState;
+        var progress = mounted.UserData;
+        Assert.True(await vm.RefreshServerMetadataAsync(mounted.ContentId));
+        Assert.Equal(1, Assert.Single(mounted.Versions).FileId);
+
+        var result = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded", newFiles: newFiles));
+        var change = Assert.Single(MetadataRefreshFollow.ChangedItems(result, mounted.ContentId, mode, mounted.Type, null));
+        Assert.True(await vm.RefreshServerMetadataAsync(change.ContentId, change.Structural));
+        Assert.Same(mounted, vm.Item);
+        Assert.Same(state, mounted.UserState);
+        Assert.Same(progress, mounted.UserData);
+        var rows = SiloPlayer.Core.Helpers.AudiobookDetailPresentation.BuildChapterRows(mounted.Versions);
+        Assert.Equal(new[] { 2, 3 }, rows.Select(row => row.FileId));
+        Assert.Equal(new[] { "Replacement", "Added" }, rows.Select(row => row.Title));
+        Assert.Equal(60, rows[1].AbsoluteStart);
+        fresh.Versions.Clear();
+        Assert.True(await vm.RefreshServerMetadataAsync(change.ContentId, change.Structural));
+        Assert.Empty(SiloPlayer.Core.Helpers.AudiobookDetailPresentation.BuildChapterRows(mounted.Versions));
+
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var layout = Read("src", "SiloPlayer", "Views", "ItemDetailPage.BookLayout.cs");
+        Assert.Contains("ConfigureAudiobookDetail(item);", page);
+        Assert.Contains("_audiobookChapterRows = AudiobookDetailPresentation.BuildChapterRows(item.Versions);", layout);
+        Assert.Contains("if (!ReferenceEquals(_audiobookChapterOwner, item)) _audiobookChaptersExpanded = false;", layout);
+        Assert.Contains("_audiobookHasFiles = item.Versions.Count > 0;", layout);
+    }
+
     [Fact]
     public async Task PolledCardCompletionQueuesOwnedCatalogRereadsWithoutASocketEvent()
     {
@@ -801,6 +851,11 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("_debounce?.Stop();", catalogReceiver);
         Assert.Contains("await LoadCatalogAsync(true, Math.Max(PageSize, _items.Count), refreshMetadata: true)", catalogReceiver);
         Assert.Contains("if (refreshMetadata) _items[index] = item;", catalog);
+        Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, windowSize, PageSize,", catalog);
+        Assert.Contains("() => refreshMetadata ? _cardMutationRevision : 0, loadToken)", catalog);
+        Assert.Contains("_cardMutationRevision++;", catalogReceiver);
+        Assert.True(catalogReceiver.IndexOf("_cardMutationRevision++;", StringComparison.Ordinal)
+            < catalogReceiver.IndexOf("if (item == null) return;", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -838,7 +893,9 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("hub?.NotifyItemChanged(change.ContentId, change.Structural)", menu, StringComparison.Ordinal);
         // A definite failure stops; the surfaces refresh after the job, not when it was queued.
         var finished = menu.IndexOf("MetadataRefreshFollow.IsDefiniteFailure(result)", StringComparison.Ordinal);
-        Assert.InRange(finished, 1, menu.IndexOf("MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId", StringComparison.Ordinal));
+        var publication = menu.IndexOf("MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId", StringComparison.Ordinal);
+        Assert.InRange(finished, 1, publication);
+        Assert.InRange(publication, 1, menu.IndexOf("hub?.NotifyItemChanged(change.ContentId, change.Structural)", StringComparison.Ordinal));
 
         // The flow owns the bounded, identity-bound follow, the cache drop and every toast.
         Assert.Contains("new MaintenanceJobFollower(", flow, StringComparison.Ordinal);

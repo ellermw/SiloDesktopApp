@@ -61,6 +61,7 @@ public sealed partial class CatalogPage : Page,
     private string? _snapshot;
     private int? _retainedSectionWindowSize;
     private bool _retainedMetadataRefresh;
+    private long _cardMutationRevision;
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<QueryRule> _advancedRules = [];
     private bool _advancedMode;
@@ -292,6 +293,9 @@ public sealed partial class CatalogPage : Page,
                 timer.Start();
                 return;
             }
+            // Even an absent card can be present in an in-flight response.
+            // Do not let that response undo a newer mutation or membership removal.
+            _cardMutationRevision++;
             if (message.Kind == MediaSurfaceChangeKind.HomeDismissed)
             {
                 _pendingUndoDismissals.Remove(message.ContentId, out var applied);
@@ -635,6 +639,7 @@ public sealed partial class CatalogPage : Page,
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_api.IsCurrentIdentityContext(owner)) return;
+            _cardMutationRevision++;
             var item = _items.FirstOrDefault(candidate =>
                 string.Equals(candidate.ContentId, message.ContentId, StringComparison.OrdinalIgnoreCase));
             if (item == null) return;
@@ -779,7 +784,9 @@ public sealed partial class CatalogPage : Page,
                 : _advancedMode
                     ? BuildAdvancedRules()
                     : BuildGuidedRules();
-            Task<CatalogResponse> ReadWindowAsync(int offset, int limit, string? snapshot) => _api.GetCatalogAsync(
+            async Task<CatalogResponse> ReadWindowAsync(int offset, int limit, string? snapshot)
+            {
+                var window = await _api.GetCatalogAsync(
                 isSection ? _fixedLibraryId : SelectedLibrary(),
                 sort: isSection ? null : requestSort,
                 order: isSection || requestSort == null ? null : SelectedTag(OrderCombo),
@@ -804,21 +811,15 @@ public sealed partial class CatalogPage : Page,
                 queryGroups: !isSection && _queryFilters != null ? _catalogQuery.Groups : null,
                 queryGroupsMatch: _catalogQuery.Match,
                 ct: loadToken);
-            var response = await ReadWindowAsync(retainedWindowSize == null ? _offset : 0, PageSize, _snapshot);
-            if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
-            if (retainedWindowSize is { } windowSize)
-            {
-                var refreshed = new List<MediaItem>(response.Items);
-                while (refreshed.Count < windowSize && response.Items.Count > 0
-                    && (response.HasMore || refreshed.Count < response.Total))
-                {
-                    response = await ReadWindowAsync(refreshed.Count,
-                        Math.Min(PageSize, windowSize - refreshed.Count), response.Snapshot);
-                    if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
-                    refreshed.AddRange(response.Items);
-                }
-                response.Items = refreshed;
+                loadToken.ThrowIfCancellationRequested();
+                if (!_api.IsCurrentContext(context)) throw new OperationCanceledException();
+                return window;
             }
+            var response = retainedWindowSize is { } windowSize
+                ? await RetainedCatalogRead.ReadAsync(ReadWindowAsync, windowSize, PageSize,
+                    () => refreshMetadata ? _cardMutationRevision : 0, loadToken)
+                : await ReadWindowAsync(_offset, PageSize, _snapshot);
+            if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
             foreach (var item in response.Items)
             {
                 // A Continue Watching / Next Up row's cards keep the server's item_source in

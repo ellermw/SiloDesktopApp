@@ -1461,9 +1461,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             item.Audiobook = fresh.Audiobook;
             item.Ebook = fresh.Ebook;
             item.Manga = fresh.Manga;
-            // Ebooks have no /watch companion: their catalog inventory owns Read,
-            // downloads and file rows. Keep viewer state and the mounted item intact.
-            if (structural && item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+            // Book chapter/read/download rows use the catalog inventory, not
+            // /watch. Keep viewer state and the mounted item intact.
+            if (structural && (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
+                || item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase)))
                 item.Versions = fresh.Versions;
             item.ReleaseDate = fresh.ReleaseDate;
             item.FirstAirDate = fresh.FirstAirDate;
