@@ -41,5 +41,7 @@ internal static class AdminConfigureServices
         // Storage reuses the shared settings snapshot; status, transitions and jobs use their own domain API. The page owns its controller and polling.
         services.AddSingleton<AdminStorageApi>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.StorageSettings, typeof(AdminStorageSettingsPage)));
+        services.AddSingleton<AdminTasksApi>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.ScheduledTasks, typeof(AdminScheduledTasksPage)));
     }
 }

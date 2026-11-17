@@ -144,7 +144,7 @@
           "parent": "scheduledTasks",
           "route": "/admin/tasks/:key",
           "group": "C8",
-          "status": "Remaining",
+          "status": "In progress",
           "official": {
             "entry": "web/src/pages/AdminTaskDetail.tsx",
             "pageFiles": [
@@ -163,11 +163,11 @@
               "PUT /api/v2/admin/tasks/{key}/triggers"
             ]
           },
-          "statusReason": "Unstarted; owned by C8 after its page group prerequisites."
+          "statusReason": "Verified pre-submission snapshot on Beta6936ae5c against official92ee0518: proof1/focused250/full7724 units, app/publish, final rebuilt/bound native host and all six Admin groups pass. Original failed receipts remain preserved; only the native fixture changed after unit/product acceptance. List/detail, guarded schedules, cursor history, hidden task links, run/cancel and lifetime are complete. Native screenshots/live-server/full visual/every-DPI/localization remain explicit limits. Separate C8 Beta PR submission follows this snapshot."
         }
       ],
-      "status": "Remaining",
-      "statusReason": "Unstarted; delivered in a separate verified group after General."
+      "status": "In progress",
+      "statusReason": "Verified pre-submission snapshot on Beta6936ae5c against official92ee0518: proof1/focused250/full7724 units, app/publish, final rebuilt/bound native host and all six Admin groups pass. Original failed receipts remain preserved; only the native fixture changed after unit/product acceptance. List/detail, guarded schedules, cursor history, hidden task links, run/cancel and lifetime are complete. Native screenshots/live-server/full visual/every-DPI/localization remain explicit limits. Separate C8 Beta PR submission follows this snapshot."
     },
     {
       "id": "maintenance",
