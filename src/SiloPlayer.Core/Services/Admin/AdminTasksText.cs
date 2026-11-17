@@ -32,6 +32,7 @@ public static partial class AdminTasksText
         ["configure.native.tasks.alreadyRunning"] = "Task is already running on this process",
         ["configure.native.tasks.notRunning"] = "Task is not running on this process",
         ["configure.native.tasks.listFailed"] = "Scheduled tasks could not be loaded.",
+        ["configure.native.tasks.refreshFailed"] = "Couldn't refresh this task. Showing its last known state.",
         ["configure.native.tasks.removeTrigger"] = "Remove trigger",
         ["configure.native.tasks.dayOfWeek"] = "Day of week",
         ["configure.native.tasks.time"] = "Time",

@@ -160,9 +160,57 @@ public sealed class AdminTaskDetailControllerTests
         using var fixture = await OpenedAsync();
         fixture.Routes["GET " + fixture.Path] = (_, _) => Fixture.Json("{}", HttpStatusCode.ServiceUnavailable);
         fixture.Channel.Updated("""{"key":"fixture","state":"running"}""");
-        await Task.Delay(50);
+        await Until(() => fixture.Controller.State.Failure != null && !fixture.Controller.State.Refreshing, "refresh failure");
         Assert.NotNull(fixture.Controller.State.Task);
-        Assert.Null(fixture.Controller.State.Failure);
+        Assert.NotNull(fixture.Controller.State.Failure);
+    }
+
+    [Fact]
+    public async Task FailedTerminalRefreshKeepsCancellingTaskAndRetryReadsWithoutReplayingCancel()
+    {
+        using var fixture = await OpenedAsync();
+        fixture.Routes["GET " + fixture.Path] = (_, _) => Fixture.Json(AdminTasksControllerTests.TaskJson("fixture", state: "running"));
+        await fixture.Controller.RetryAsync();
+        fixture.Routes["POST " + fixture.Path + "/cancel"] = (_, _) =>
+        {
+            fixture.Routes["GET " + fixture.Path] = (_, _) => Fixture.Json(AdminTasksControllerTests.TaskJson("fixture", state: "cancelling"));
+            return Fixture.Json(AdminTasksControllerTests.TaskJson("fixture", state: "cancelling"));
+        };
+        await fixture.Controller.CancelAsync(fixture.Controller.State.Owner);
+        await Until(() => fixture.Controller.State.Task?.State == "cancelling" && !fixture.Controller.State.Refreshing, "cancelling");
+        var cached = fixture.Controller.State.Task;
+        fixture.Routes["GET " + fixture.Path] = (_, _) => Fixture.Problem(HttpStatusCode.ServiceUnavailable, "unavailable");
+        fixture.Channel.Updated("""{"key":"fixture","state":"idle"}""");
+        await Until(() => fixture.Controller.State.Failure != null && !fixture.Controller.State.Refreshing, "terminal refresh failure");
+        Assert.Same(cached, fixture.Controller.State.Task);
+        Assert.False(fixture.Controller.State.NotFound);
+
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Routes["GET " + fixture.Path] = async (_, ct) =>
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            return AdminMonitorKit.Json(AdminTasksControllerTests.TaskJson("fixture", state: "idle"));
+        };
+        var reads = fixture.Kit.Http.Requests.Count(entry => entry == "GET " + fixture.Path);
+        try
+        {
+            var retry = fixture.Controller.RetryAsync();
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(fixture.Controller.State.Refreshing);
+            Assert.False(fixture.Controller.State.Loading);
+            Assert.NotNull(fixture.Controller.State.Failure);
+            Assert.Same(cached, fixture.Controller.State.Task);
+            release.TrySetResult();
+            await retry.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("idle", fixture.Controller.State.Task!.State);
+            Assert.Null(fixture.Controller.State.Failure);
+            Assert.False(fixture.Controller.State.Refreshing);
+            Assert.Equal(reads + 1, fixture.Kit.Http.Requests.Count(entry => entry == "GET " + fixture.Path));
+            Assert.Equal("POST " + fixture.Path + "/cancel", Assert.Single(fixture.Kit.Http.Requests.Where(entry => entry.StartsWith("POST ", StringComparison.Ordinal))));
+        }
+        finally { release.TrySetResult(); }
     }
 
     [Fact]

@@ -21,6 +21,8 @@ public sealed partial class AdminScheduledTasksPage
     private readonly TextBlock _unavailableText = AdminSettingsUi.Text("", 14, true);
     private Button? _detailRetry, _allTasks;
     private readonly StackPanel _detailContent = new() { Spacing = 24, Visibility = Visibility.Collapsed };
+    private readonly StackPanel _detailRefreshError = new() { Spacing = 8, Visibility = Visibility.Collapsed };
+    private Button? _detailRefreshRetry;
     private readonly TextBlock _crumbName = AdminSettingsUi.Text("", 14);
     private readonly TextBlock _detailTitle = AdminSettingsUi.Title("");
     private readonly TextBlock _detailSubtitle = AdminSettingsUi.Text("", 14, true);
@@ -110,6 +112,16 @@ public sealed partial class AdminScheduledTasksPage
         _detailHeader.Children.Add(_detailActions);
         _detailContent.Children.Add(_detailHeader);
 
+        var refreshErrorText = AdminSettingsUi.Text(AdminTasksText.Message("configure.native.tasks.refreshFailed"), 14, true);
+        AutomationProperties.SetLiveSetting(refreshErrorText, AutomationLiveSetting.Assertive);
+        AutomationProperties.SetAutomationId(_detailRefreshError, "TaskRefreshError");
+        _detailRefreshRetry = AdminSettingsUi.Action(AdminTasksText.Message("common.retry"), "TaskRefreshRetry");
+        _detailRefreshRetry.HorizontalAlignment = HorizontalAlignment.Left;
+        _detailRefreshRetry.Click += async (_, _) => { if (_detail != null) await _detail.RetryAsync(); };
+        _detailRefreshError.Children.Add(refreshErrorText);
+        _detailRefreshError.Children.Add(_detailRefreshRetry);
+        _detailContent.Children.Add(_detailRefreshError);
+
         _scanNote.Background = AdminMonitorUi.Solid(AdminMonitorUi.Surface, .5);
         AutomationProperties.SetAutomationId(_scanNote, "TaskScanLibrariesNote");
         _detailContent.Children.Add(_scanNote);
@@ -188,6 +200,8 @@ public sealed partial class AdminScheduledTasksPage
             _allTasks!.Visibility = notFound ? Visibility.Visible : Visibility.Collapsed;
         }
         _detailContent.Visibility = task != null ? Visibility.Visible : Visibility.Collapsed;
+        _detailRefreshError.Visibility = task != null && state.Failure != null ? Visibility.Visible : Visibility.Collapsed;
+        _detailRefreshRetry!.IsEnabled = current && !state.Refreshing;
         if (task == null)
         {
             ClearHistoryTable();

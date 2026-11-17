@@ -12,10 +12,12 @@ public sealed record AdminTaskDetailState
     public string Key { get; init; } = "";
     /// <summary>No task has been read yet and the first read is running.</summary>
     public bool Loading { get; init; }
+    /// <summary>A task refresh is running while the last good task remains visible.</summary>
+    public bool Refreshing { get; init; }
     public AdminTaskInfo? Task { get; init; }
     /// <summary>The server reports no such task. This outranks a previously read task.</summary>
     public bool NotFound { get; init; }
-    /// <summary>The first read failed for another reason; the page offers Retry. A read task is kept through later failures.</summary>
+    /// <summary>The task read failed; the page offers read-only Retry and keeps any last good task.</summary>
     public AdminFailureKind? Failure { get; init; }
     public AdminTaskMetrics? Metrics { get; init; }
     public IReadOnlyList<AdminTaskExecution> History { get; init; } = [];
@@ -46,7 +48,7 @@ public sealed record AdminTaskDetailState
 /// <c>TaskSchedulePanel</c>, <c>useTask</c>, <c>useTaskHistory</c>, <c>useTaskMetrics</c>, <c>useUpdateTriggers</c>).
 /// <list type="bullet">
 /// <item>The task is read directly by key, so hidden tasks open too. A 404 replaces any cached task;
-/// other failures keep a read task and only an unread page offers Retry.</item>
+/// other failures keep a read task and expose a read-only Retry.</item>
 /// <item>The schedule editor captures the persisted schedule and its strong validator when editing begins.
 /// A failed or uncertain save keeps the draft and the original validator and requires an explicit review
 /// and revision adoption before another save. Writes are never replayed.</item>
@@ -177,7 +179,7 @@ public sealed class AdminTaskDetailController : IDisposable
         Raise();
     }
 
-    /// <summary>Explicit Retry after a failed first read.</summary>
+    /// <summary>Explicit read-only Retry after a failed task read; commands are never replayed.</summary>
     public Task RetryAsync() => RequestTask(foreground: true);
 
     public Task LoadOlderAsync() => RequestHistory(restart: false);
@@ -468,7 +470,7 @@ public sealed class AdminTaskDetailController : IDisposable
                 {
                     _task = null; _notFound = true; _failure = null; ClearEditorLocked();
                 }
-                else if (failure is not AdminFailureKind.Retired && _task == null) _failure = failure;
+                else if (failure is not AdminFailureKind.Retired) _failure = failure;
                 again = _taskRead.Complete(_active);
                 PublishLocked();
             }
@@ -630,9 +632,10 @@ public sealed class AdminTaskDetailController : IDisposable
             IsOpen = _open,
             Key = _key,
             Loading = current && !_taskLoaded && !_notFound && _taskRead.Running,
+            Refreshing = current && _task != null && _taskRead.Running,
             Task = current ? _task : null,
             NotFound = current && _notFound,
-            Failure = current && _task == null && !_notFound ? _failure : null,
+            Failure = current && !_notFound ? _failure : null,
             Metrics = current && !_notFound ? _metrics : null,
             History = current ? _history.ToArray() : [],
             HistoryLoaded = current && _historyLoaded,
