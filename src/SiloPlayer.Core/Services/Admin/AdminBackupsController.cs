@@ -423,9 +423,13 @@ public sealed class AdminBackupsController : IDisposable
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
         using (action)
         {
-            lock (_gate) { if (_state.Saving || _state.SettingsLoading) return; }
+            lock (_gate)
+            {
+                if (!_lifetime.IsCurrent(action) || _state.Saving || _state.SettingsLoading) return;
+                _state = _state with { SettingsLoading = true };
+            }
+            Changed?.Invoke();
             _store.Invalidate();
-            Update(action, () => _state = _state with { SettingsLoading = true });
             await LoadSettingsAsync(action, preserveDraft).ConfigureAwait(false);
         }
     }
@@ -716,22 +720,24 @@ public sealed class AdminBackupsController : IDisposable
                     _form?.Reload(_snapshot!.Values, _snapshot.ETag, preserveDraft: true);
                     _form?.Reset(Present.DestinationKey);
                 });
+                // Keep settings operations blocked until the read has rebased the draft and reset the destination.
+                _store.Invalidate();
+                await LoadSettingsAsync(action, preserveDraft: true).ConfigureAwait(false);
+                Update(action, () => _form?.Reset(Present.DestinationKey));
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { return null; }
-            catch (AdminSettingsConflictException) { s3Form.EndSave(intent); Update(action, () => _state = _state with { Saving = false, Conflict = true }); return AdminText.T("configure.native.backups.settingsChanged"); }
-            catch (AdminSettingsOutcomeUnknownException) { s3Form.EndSave(intent); Update(action, () => _state = _state with { Saving = false, SettingsOutcomeUnknown = true }); return AdminText.T("configure.native.backups.unknownOutcome"); }
+            catch (AdminSettingsConflictException) { s3Form.EndSave(intent); Update(action, () => _state = _state with { Conflict = true }); return AdminText.T("configure.native.backups.settingsChanged"); }
+            catch (AdminSettingsOutcomeUnknownException) { s3Form.EndSave(intent); Update(action, () => _state = _state with { SettingsOutcomeUnknown = true }); return AdminText.T("configure.native.backups.unknownOutcome"); }
             catch (Exception error)
             {
                 s3Form.EndSave(intent);
-                Update(action, () => _state = _state with { Saving = false });
                 return error is ApiException { StatusCode: 409 } ? AdminText.T("web.admin.backups.backUpNow.keyNotConfirmed") : Present.ErrorMessage(error);
             }
-            finally { s3Form.Discard(); }
-            Update(action, () => _state = _state with { Saving = false });
-            // The dialog saved the destination itself: rebase the page's draft on the new baseline and drop a staged destination.
-            _store.Invalidate();
-            await LoadSettingsAsync(action, preserveDraft: true).ConfigureAwait(false);
-            Update(action, () => _form?.Reset(Present.DestinationKey));
+            finally
+            {
+                s3Form.Discard();
+                Update(action, () => _state = _state with { Saving = false });
+            }
             if (ReadOwner(action) is { } owner) _ = RefreshListAsync(owner, background: false);
             if (_lifetime.IsCurrent(action))
                 Notified?.Invoke(new(AdminText.T("web.admin.backups.s3.saved"), AdminText.T("web.admin.backups.s3.savedDescription"), false));

@@ -132,6 +132,25 @@ public sealed class AdminBackupsApiTests
         Assert.Single(h.Requests, request => request == "POST /api/v2/admin/backups");
     }
 
+    [Theory]
+    [InlineData(408, "[]")]
+    [InlineData(500, "null")]
+    [InlineData(502, "[]")]
+    [InlineData(500, "\"failure\"")]
+    [InlineData(502, "false")]
+    [InlineData(500, "42")]
+    [InlineData(502, "{invalid")]
+    public async Task MalformedProblemBodiesDoNotLoseUnknownCommandOutcomes(int status, string body)
+    {
+        using var h = new Harness();
+        h.Respond(_ => BackupJson.Json(body, (HttpStatusCode)status));
+        await Assert.ThrowsAsync<AdminBackupOutcomeUnknownException>(() => h.Api.StartBackupAsync(h.Lease));
+        Assert.Single(h.Requests, request => request == "POST /api/v2/admin/backups");
+
+        var error = await Assert.ThrowsAsync<AdminBackupApiException>(() => h.Api.ListAsync(h.Lease));
+        Assert.Equal(status, error.StatusCode);
+    }
+
     [Fact]
     public async Task DeleteTreatsAMissingBackupAsGoneAndRejectsForeignIdentifiers()
     {

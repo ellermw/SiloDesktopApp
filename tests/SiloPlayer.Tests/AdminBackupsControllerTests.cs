@@ -558,6 +558,69 @@ public sealed class AdminBackupsControllerTests
         Assert.Contains(Present.TimeKey, h.Controller.State.DirtyKeys);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task S3SaveBlocksSettingsOperationsUntilItsReloadFinishes(bool reloadFails)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.KeepKey, "14");
+        h.Controller.Set(Present.DestinationKey, "s3");
+        var reload = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puts = 0;
+        var reads = 0;
+        h.Override = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/acknowledge-key", StringComparison.Ordinal))
+                return Task.FromResult(BackupJson.Json("""{"key_check":"abcd-ef01-2345-6789"}"""));
+            if (path == "/api/v2/admin/settings/effective")
+            {
+                Interlocked.Increment(ref reads);
+                return reload.Task;
+            }
+            if (request.Method != HttpMethod.Put) return null;
+            var first = Interlocked.Increment(ref puts) == 1;
+            Assert.Equal(first ? "\"one\"" : "\"two\"", request.Headers.IfMatch.Single().ToString());
+            var saved = AdminMonitorKit.Json(first
+                ? """{"values":{"backup.destination":"s3"},"restart_required":false}"""
+                : """{"values":{"backup.keep":"14"},"restart_required":false}""");
+            saved.Headers.ETag = new(first ? "\"two\"" : "\"three\"");
+            return Task.FromResult(saved);
+        };
+        var saving = h.Controller.SaveS3Async(new("https://s3.example.invalid", "", "bucket", "", "AKIA", "secret", false), "abcd-ef01-2345-6789");
+        try
+        {
+            await Eventually.True(() => reads == 1, "S3 follow-up settings read started");
+            Assert.True(h.Controller.State.Saving);
+            await h.Controller.SaveAsync();
+            await h.Controller.ReloadSettingsAsync(preserveDraft: true);
+            Assert.False(await h.Controller.ReloadS3SettingsAsync());
+            Assert.Equal(1, puts);
+            Assert.Equal(1, reads);
+        }
+        finally
+        {
+            var snapshot = AdminMonitorKit.Json(reloadFails ? "{}" : Effective.Replace("\"backup.destination\":\"default\"", "\"backup.destination\":\"s3\""),
+                reloadFails ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK);
+            snapshot.Headers.ETag = new("\"two\"");
+            reload.TrySetResult(snapshot);
+            await saving;
+        }
+        Assert.Null(await saving);
+        Assert.False(h.Controller.State.Saving);
+        Assert.Equal("s3", h.Controller.State.PersistedValues[Present.DestinationKey]);
+        Assert.DoesNotContain(Present.DestinationKey, h.Controller.State.DirtyKeys);
+        Assert.Equal("14", h.Controller.State.Values[Present.KeepKey]);
+        Assert.Contains(Present.KeepKey, h.Controller.State.DirtyKeys);
+        await h.Controller.SaveAsync();
+        Assert.Equal(2, puts);
+        Assert.Null(h.Controller.State.SettingsError);
+        Assert.Equal("14", h.Controller.State.PersistedValues[Present.KeepKey]);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+    }
+
     [Fact]
     public async Task S3ConflictRequiresExplicitReloadAndKeepsTheDraftForReview()
     {

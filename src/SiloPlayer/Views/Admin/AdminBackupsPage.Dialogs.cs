@@ -429,6 +429,9 @@ public sealed partial class AdminBackupsPage
                         });
                     };
                     root.Children.Add(area);
+                    var cancelChoose = Action(T("common.cancel"), "BackupsUploadCancel");
+                    cancelChoose.Click += async (_, _) => { await session.DiscardAsync(); _ = controller.RefreshUploadsAsync(); closeDialog(); };
+                    footer.Add(cancelChoose);
                     break;
                 case AdminBackupUploadStep.Uploading:
                     var sent = phase.Upload?.ReceivedBytes ?? 0;

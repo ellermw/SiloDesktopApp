@@ -326,6 +326,28 @@ internal static class AdminBackupsNativeFixture
             await Until(() => Field(page, "_dialog") == null, "key dialog closed");
             Check(server.Requests.Contains("POST /api/v2/admin/backups/s3/acknowledge-key"), "the key is acknowledged once confirmed");
 
+            // Cancelling the OS picker must leave a pointer-accessible way out of the chooser.
+            var pickerReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Func<Task<(string Name, Stream Stream)?>> cancelPicker = () =>
+            {
+                pickerReturned.TrySetResult();
+                return Task.FromResult<(string, Stream)?>(null);
+            };
+            uploadPicker.SetValue(null, cancelPicker);
+            var createsBeforeCancel = server.Requests.Count(request => request == "POST /api/v2/admin/backups/uploads");
+            Invoke(Find<Button>(page, "BackupsUpload")!);
+            await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "upload chooser dialog");
+            var chooserDialog = (ContentDialog)Field(page, "_dialog")!;
+            await Until(() => Find<Button>(chooserDialog, "BackupsUploadChoose") is { IsLoaded: true, IsEnabled: true }, "upload chooser ready");
+            Invoke(Find<Button>(chooserDialog, "BackupsUploadChoose")!);
+            await Until(() => pickerReturned.Task.IsCompleted, "cancelled picker returned");
+            await Until(() => Find<Button>(chooserDialog, "BackupsUploadCancel") is { IsLoaded: true, IsEnabled: true }, "chooser Cancel available after picker cancellation");
+            Invoke(Find<Button>(chooserDialog, "BackupsUploadCancel")!);
+            await Until(() => Field(page, "_dialog") == null && Field(page, "_upload") == null, "chooser dismissed and upload session retired");
+            Check(server.Requests.Count(request => request == "POST /api/v2/admin/backups/uploads") == createsBeforeCancel,
+                "Upload can be dismissed by its Cancel button after cancelling the picker without creating an upload");
+            uploadPicker.SetValue(null, pickUpload);
+
             // Upload navigation must wait for dialog cleanup so a dirty draft can ask to discard.
             controller.Set("backup.time", "05:02");
             await Until(() => controller.State.DirtyKeys.Contains("backup.time"), "dirty settings before upload");
