@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -10,6 +11,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Messaging;
 
 namespace SiloPlayer.Views;
 
@@ -149,8 +151,8 @@ public sealed partial class ItemDetailPage
 
     /// <summary>
     /// Follows the refresh job (bounded, see <see cref="MaintenanceJobFollower"/>), then
-    /// drops the item's cached detail and reloads only the visit that started it.
-    /// Runs on the UI thread; the wait itself does not hold it.
+    /// drops the item's cached detail, tells the surfaces that show the item, and reloads
+    /// only the visit that started it. Runs on the UI thread; the wait itself does not hold it.
     /// </summary>
     private async Task FollowMetadataRefreshAsync(MediaItemDetail item, string mode, Services.MetadataRefreshStart start,
         DetailMetadataWatch? watch)
@@ -163,6 +165,13 @@ public sealed partial class ItemDetailPage
         // Identity change, cancellation or a thrown read: nothing more. Every other outcome, including an
         // unknown completion, goes to the follow decision, which reloads without inferring a replacement.
         if (result == null) return;
+
+        // As the card menu does, and whether or not this visit is still open: Recommendations rows
+        // and a section held for Back reread only on this message.
+        var context = App.Services.GetRequiredService<MediaMaintenanceApi>().CaptureContext();
+        foreach (var change in MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId))
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId, item.SeriesId, context: context));
 
         // Only the visit that started the refresh follows or reloads (#4187).
         var decision = MetadataRefreshFollow.Decide(result, item.ContentId, mode, watch);

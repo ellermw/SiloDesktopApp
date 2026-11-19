@@ -1,5 +1,7 @@
 using System.Net;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.MediaMaintenance;
+using SiloPlayer.Core.Services;
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Messaging;
 using SiloPlayer.ViewModels;
@@ -85,6 +87,44 @@ public sealed class RecommendationsTests
             Assert.Equal("Fresh", section.Items[1].Title); Assert.Equal("/fresh.jpg", section.Items[1].PosterUrl);
             Assert.DoesNotContain(row.Items, item => item.ContentId == "old");
             Assert.DoesNotContain(section.Items, item => item.ContentId == "old");
+            Assert.True(section.Holds(args));
+        }
+        finally { recommendations.Suspend(); section.CancelLoad(); WeakReferenceMessenger.Default.UnregisterAll(recommendations); WeakReferenceMessenger.Default.UnregisterAll(section); }
+    }
+
+    [Theory]
+    [InlineData(MaintenanceJobWaitOutcome.Succeeded)]
+    [InlineData(MaintenanceJobWaitOutcome.TimedOut)]
+    public async Task DetailPageRefreshInvalidatesRecommendationsAndAHeldSectionForBack(MaintenanceJobWaitOutcome outcome)
+    {
+        using var wire = new MetadataWire();
+        var client = new SiloApiClient(new HttpClient(wire)); client.SetBaseUrl("https://recommendations-metadata.invalid");
+        var api = new RecommendationsApi(client);
+        var recommendations = new RecommendationsViewModel(new CatalogApi(client), api);
+        var section = new RecommendationSectionViewModel(api);
+        var args = new RecommendationSectionNavigationArgs("genre", "drama", "Drama");
+        try
+        {
+            await recommendations.LoadCommand.ExecuteAsync(null);
+            await section.LoadAsync(args);
+            var row = Assert.Single(recommendations.Rows);
+            // The detail page covers both surfaces while its refresh runs.
+            recommendations.Suspend(); section.CancelLoad();
+            var reads = wire.Reads;
+            wire.Fresh = true;
+            // What the detail page's follow publishes once its job ends or its wait runs out.
+            foreach (var change in MetadataRefreshFollow.ChangedItems(new(outcome), "old", "quick", "movie", null))
+                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                    MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId, context: client.CaptureContext()));
+            Assert.Equal(reads, wire.Reads);
+            Assert.False(section.Holds(args));
+            Assert.True(section.Retains(args));
+            // Back inside the five-minute cache window still rereads.
+            recommendations.BeginVisit();
+            await recommendations.LoadCommand.ExecuteAsync(null);
+            await section.LoadAsync(args);
+            await Until(() => row.Items[0].ContentId == "replacement" && section.Items[0].ContentId == "replacement");
+            Assert.True(wire.Reads > reads);
             Assert.True(section.Holds(args));
         }
         finally { recommendations.Suspend(); section.CancelLoad(); WeakReferenceMessenger.Default.UnregisterAll(recommendations); WeakReferenceMessenger.Default.UnregisterAll(section); }

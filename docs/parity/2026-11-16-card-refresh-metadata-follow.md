@@ -42,7 +42,10 @@ without an `onReplaced` callback, so it never navigates.
   was complete or found new files, and after an unknown completion only for a
   complete refresh. The card never follows a replacement ID (#4187).
 - **Surface refresh:** `MediaSurfaceChanged(ItemMetadataRefreshed)` now goes
-  out when the follow ends, not when the refresh was queued.
+  out when the follow ends, not when the refresh was queued. The detail page
+  sends it too, for the same touched IDs and whether or not its visit is still
+  open, so Recommendations rows and a section held for Back reread after a
+  refresh started from either place.
 - **UI thread:** the wait never holds it. The follower's ten-minute limit
   bounds the follow, and it accepts a cancellation token.
 

@@ -997,6 +997,21 @@ public sealed class DetailMetadataRefreshTests
     }
 
     [Fact]
+    public void DetailPageRefreshPublishesTheSurfaceChangeBeforeItsVisitGate()
+    {
+        var detail = Read("src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs");
+        var follow = detail[detail.IndexOf("private async Task FollowMetadataRefreshAsync", StringComparison.Ordinal)..];
+        // Recommendations and a held section reread only on this message, so the detail page sends it
+        // for every touched item as the card menu does, even when its own visit has already ended.
+        var plan = follow.IndexOf("MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId)", StringComparison.Ordinal);
+        var publication = follow.IndexOf("MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId", StringComparison.Ordinal);
+        Assert.InRange(follow.IndexOf("if (result == null) return;", StringComparison.Ordinal), 1, plan);
+        Assert.InRange(plan, 1, publication);
+        Assert.InRange(publication, 1, follow.IndexOf("MetadataRefreshFollow.Decide(", StringComparison.Ordinal));
+        Assert.Contains("WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(", follow[plan..publication]);
+    }
+
+    [Fact]
     public void EbookMetadataRepaintRetainsFileScopedProgressAndReconcilesFreshInventory()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
