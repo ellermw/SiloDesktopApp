@@ -87,6 +87,9 @@ public sealed partial class ItemDetailPage : Page
     private string? _readerTargetContentId;
     private string? _requestSeasonsContentId;
     private int? _readerTargetFileId;
+    private MediaItemDetail? _ebookProgressOwner;
+    private int? _ebookProgressFileId;
+    private double _ebookProgressFraction;
     private FrameworkElement? _mangaResumeRow;
     private readonly List<(Expander Control, Func<string> Label)> _mangaVolumes = [];
     private Expander? _stickyVolume;
@@ -1262,6 +1265,9 @@ public sealed partial class ItemDetailPage : Page
         _selectedVersion = null;
         _selectedVersionWasExplicit = false;
         _selectedVersionOwner = null;
+        _ebookProgressOwner = null;
+        _ebookProgressFileId = null;
+        _ebookProgressFraction = 0;
         _mediaActionCapabilitiesId = null;
         _offerSeekPreviews = _offerMarkerDetection = _honorMarkerSettings = false;
         _playableContentId = null;
@@ -2168,13 +2174,11 @@ public sealed partial class ItemDetailPage : Page
             StarRatingContainer.Visibility = Visibility.Collapsed;
             MoreButton.Visibility = Visibility.Collapsed;
             _readerTargetContentId = item.ContentId;
-            _selectedVersion = ChooseReadableBookVersion(item.Versions, item.UserData?.LastFileId);
-            _readerTargetFileId = _selectedVersion?.FileId;
+            RestoreEbookResumeState(item);
             SplitPlayButton.Visibility = _selectedVersion != null ? Visibility.Visible : Visibility.Collapsed;
             BookDownloadButton.Visibility = item.Versions.Count > 0 && CanCurrentUserDownload()
                 ? Visibility.Visible : Visibility.Collapsed;
             PlayButtonIcon.Glyph = "\uE736";
-            SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.read", fallback: "Read"));
             var authors = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
             TaglineText.Visibility = Visibility.Collapsed;
             BookAuthorLine.Visibility = Visibility.Collapsed;
@@ -2200,20 +2204,36 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
+    private void RestoreEbookResumeState(MediaItemDetail item)
+    {
+        var retained = ReferenceEquals(_ebookProgressOwner, item);
+        _selectedVersion = ChooseReadableBookVersion(item.Versions,
+            retained ? _ebookProgressFileId : item.UserData?.LastFileId);
+        _readerTargetFileId = _selectedVersion?.FileId;
+        // Progress belongs to its saved file, never to a replacement fallback.
+        _playProgressFraction = retained && _readerTargetFileId == _ebookProgressFileId
+            ? _ebookProgressFraction : 0;
+        var fraction = _playProgressFraction;
+        SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = fraction > 0
+            ? AppStrings.Get("web.detail.books.continueReading") + "  " + fraction.ToString("P0", AppStrings.FormatCulture)
+            : AppStrings.Get("web.detail.books.read", fallback: "Read"));
+        UpdatePlayProgressWidth();
+    }
+
     private async Task LoadEbookProgressAsync(MediaItemDetail item)
     {
+        var navigation = _navigationCts;
+        var api = App.Services.GetRequiredService<EbooksApi>();
+        var identity = api.CaptureIdentityContext();
         try
         {
-            var progress = await App.Services.GetRequiredService<EbooksApi>().GetProgressAsync(item.ContentId);
-            if (ViewModel.Item?.ContentId != item.ContentId) return;
-            if (progress.Progress > 0)
-            {
-                _readerTargetFileId = progress.FileId;
-                _selectedVersion = item.Versions.FirstOrDefault(v => v.FileId == progress.FileId) ?? _selectedVersion;
-                SiloPlayer.Controls.MediaItemCardActions.BindText(PlayButtonText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.books.continueReading") + "  " + Math.Clamp(progress.Progress, 0, 1).ToString("P0", SiloPlayer.Core.Localization.AppStrings.FormatCulture));
-                _playProgressFraction = Math.Clamp(progress.Progress, 0, 1);
-                UpdatePlayProgressWidth();
-            }
+            var progress = await api.GetProgressAsync(item.ContentId);
+            if (!ReferenceEquals(ViewModel.Item, item) || !ReferenceEquals(navigation, _navigationCts)
+                || navigation is not { IsCancellationRequested: false } || !api.IsCurrentIdentityContext(identity)) return;
+            _ebookProgressOwner = item;
+            _ebookProgressFileId = progress.FileId;
+            _ebookProgressFraction = Math.Clamp(progress.Progress, 0, 1);
+            RestoreEbookResumeState(item);
         }
         catch { }
     }

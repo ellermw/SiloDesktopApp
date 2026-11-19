@@ -29,6 +29,7 @@ public sealed partial class ItemDetailPage
     private readonly List<(UIElement Element, Panel Parent, int Index)> _audiobookBorrowed = [];
     private IReadOnlyList<AudiobookDetailPresentation.ChapterRow> _audiobookChapterRows = [];
     private bool _audiobookChaptersExpanded;
+    private MediaItemDetail? _audiobookChapterOwner;
     private int _audiobookRenderedChapter = -2;
     private bool _audiobookChapterStartsShown = true;
     private TextBlock? _audiobookLeftInChapter;
@@ -199,7 +200,9 @@ public sealed partial class ItemDetailPage
         App.Services.GetRequiredService<PlayerService>().SetAudiobookPresentation(item);
         _audiobookHasFiles = item.Versions.Count > 0;
         _audiobookChapterRows = AudiobookDetailPresentation.BuildChapterRows(item.Versions);
-        _audiobookChaptersExpanded = false;
+        // Retained metadata updates rebuild rows without losing expansion intent.
+        if (!ReferenceEquals(_audiobookChapterOwner, item)) _audiobookChaptersExpanded = false;
+        _audiobookChapterOwner = item;
         _audiobookRenderedChapter = -2;
         _audiobookResumeSeconds = Math.Max(0, item.UserData?.PositionSeconds ?? 0);
         _audiobookDurationTotal = item.Audiobook?.TotalDurationSeconds is > 0 ? item.Audiobook.TotalDurationSeconds

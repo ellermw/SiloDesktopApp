@@ -17,6 +17,15 @@ public readonly record struct MetadataRefreshFollowDecision(
     bool Structural = false,
     string? ReplacementContentId = null);
 
+public enum MetadataRefreshToastKind { None, Info, Success, Warning, Error }
+
+/// <summary>One toast for a refresh: a localized string key and its arguments. <see cref="MetadataRefreshToastKind.None"/> shows nothing.</summary>
+public readonly record struct MetadataRefreshToast(
+    MetadataRefreshToastKind Kind, string? Key = null, IReadOnlyDictionary<string, object?>? Arguments = null);
+
+/// <summary>An item whose open detail pages reread after a finished refresh. Structural: files or versions may have changed.</summary>
+public readonly record struct MetadataRefreshChange(string ContentId, bool Structural);
+
 /// <summary>
 /// What a finished Refresh Metadata job does (official #4355, #4187): the
 /// caches drop every ID the refresh touched whatever page is open, and only
@@ -44,6 +53,64 @@ public static class MetadataRefreshFollow
             return new(MetadataRefreshFollowAction.FollowReplacement, ReplacementContentId: replacement);
         // A complete refresh rescans files; new files add versions to the leaf.
         return new(MetadataRefreshFollowAction.Reload, Structural: mode == "complete" || item?.NewFiles > 0);
+    }
+
+    /// <summary>The toast shown once the server accepted the refresh (official <c>onMutate</c> loading toast).</summary>
+    public static MetadataRefreshToast RunningToast(string mode) => new(MetadataRefreshToastKind.Info,
+        mode == "complete" ? "web.item.toast.refreshRunningComplete" : "web.item.toast.refreshRunningQuick");
+
+    /// <summary>
+    /// The toast a finished wait shows (official <c>onSuccess</c> and <c>onError</c>). A wait that
+    /// ran out, or went stale because the account changed, shows nothing: the job may still be running.
+    /// </summary>
+    /// <summary>The server reported the job failed or canceled (not a failed read of the job).</summary>
+    public static bool IsDefiniteFailure(MaintenanceJobWaitResult result)
+        => result.Outcome == MaintenanceJobWaitOutcome.Canceled
+           || result.Outcome == MaintenanceJobWaitOutcome.Failed && result.Error == null;
+
+    public static MetadataRefreshToast FinishToast(MaintenanceJobWaitResult result, string mode)
+    {
+        // Only a job the server reports failed or canceled is a failure. A failed job read or a wait
+        // that ran out leaves completion unknown: say nothing (the starting page still reloads).
+        if (IsDefiniteFailure(result))
+            return new(MetadataRefreshToastKind.Error, "web.item.toast.refreshFailed");
+        if (result.Outcome != MaintenanceJobWaitOutcome.Succeeded)
+            return new(MetadataRefreshToastKind.None);
+        var item = result.Job?.ItemResult;
+        var newFiles = item?.NewFiles ?? 0;
+        if (item?.ArtworkCacheIncomplete == true)
+            return new(MetadataRefreshToastKind.Warning, "web.item.toast.refreshArtworkWarning");
+        if (mode == "complete")
+            return new(MetadataRefreshToastKind.Success, "web.item.toast.completeRefreshFinished");
+        if (newFiles > 0)
+            return new(MetadataRefreshToastKind.Success, "web.item.toast.refreshedNewFiles",
+                new Dictionary<string, object?> { ["count"] = newFiles, ["new_files"] = newFiles });
+        return new(MetadataRefreshToastKind.Success, "web.item.toast.refreshed");
+    }
+
+    /// <summary>
+    /// The items whose open detail pages reread after a refresh from a card, which has no page of
+    /// its own to reload. Every ID the refresh touched is named; the original item and explicit
+    /// refresh/replacement destinations may have gained files, but an ancestor is metadata-only.
+    /// </summary>
+    public static IReadOnlyList<MetadataRefreshChange> ChangedItems(
+        MaintenanceJobWaitResult result, string contentId, string mode, string? type, string? seriesId)
+    {
+        if (result.Outcome == MaintenanceJobWaitOutcome.Stale || IsDefiniteFailure(result)) return [];
+        // As Decide: an unknown completion (a wait that ran out, a failed job read) rereads the item
+        // itself without trusting any replacement or new-file count from the job.
+        if (result.Outcome != MaintenanceJobWaitOutcome.Succeeded)
+            return InvalidatedIds(new MaintenanceJobWaitResult(result.Outcome), contentId, type, seriesId)
+                .Select(id => new MetadataRefreshChange(id, mode == "complete" && string.Equals(id, contentId, StringComparison.Ordinal)))
+                .ToArray();
+        var item = result.Job?.ItemResult;
+        var structural = mode == "complete" || item?.NewFiles > 0;
+        return InvalidatedIds(result, contentId, type, seriesId)
+            .Select(id => new MetadataRefreshChange(id, structural && (
+                string.Equals(id, contentId, StringComparison.Ordinal)
+                || string.Equals(id, item?.RefreshContentId, StringComparison.Ordinal)
+                || string.Equals(id, item?.DetailContentId, StringComparison.Ordinal))))
+            .ToArray();
     }
 
     /// <summary>The detail IDs whose cached reads predate the refresh. Empty for a wait that went stale.</summary>
