@@ -53,8 +53,9 @@ internal static class AdminBackupsNativeFixture
         };
         internal bool Encrypted, KeyConfirmed = true, Unauthenticated, JobTerminal;
         internal int Version = 1, Parts, JobReadStatus;
-        internal bool PauseUpload;
+        internal bool PauseUpload, PauseComplete, Checking;
         internal readonly TaskCompletionSource UploadPartStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource CompleteStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string? LastPut, LastIfMatch, LastRestoreBody;
         private int _received;
 
@@ -104,7 +105,16 @@ internal static class AdminBackupsNativeFixture
                         return Json(Job("canceling", false), HttpStatusCode.Accepted);
                 }
                 if (path.EndsWith("/complete", StringComparison.Ordinal))
+                {
+                    if (PauseComplete)
+                    {
+                        // Like the official server, the check outlives the request that started it.
+                        Checking = true;
+                        CompleteStarted.TrySetResult();
+                        await Task.Delay(Timeout.Infinite, cancellationToken);
+                    }
                     return Json(Upload("complete", 3, ",\"digest\":\"" + Digest + "\",\"source\":{\"server_id\":\"s-2\",\"server_name\":\"Den\",\"silo_version\":\"1.0.0\",\"created_at\":\"2026-11-15T04:00:00.000Z\",\"format_version\":1}"));
+                }
             }
             if (request.Method == HttpMethod.Delete) return new HttpResponseMessage(HttpStatusCode.NoContent);
             if (path.EndsWith("/restore-set", StringComparison.Ordinal))
@@ -119,7 +129,7 @@ internal static class AdminBackupsNativeFixture
             {
                 "/api/v2/admin/backups/capabilities" => Json("""{"state":"available","allowed":true,"destinations":["default","s3"],"encryption":true,"upload":true,"max_upload_bytes":2147483648,"selective_restore":true,"download":true,"revision":"r1"}"""),
                 "/api/v2/admin/backups" => Json(List()),
-                "/api/v2/admin/backups/uploads" => Json("{\"items\":[]}"),
+                "/api/v2/admin/backups/uploads" => Json(Checking ? "{\"items\":[" + Upload("checking", 3) + "]}" : "{\"items\":[]}"),
                 "/api/v2/admin/tasks/backup" => Json("""{"key":"backup","next_run_at":"2099-11-17T04:00:00.000Z"}"""),
                 "/api/v2/admin/jobs" => Json("{\"items\":[]}"),
                 "/api/v2/admin/jobs/job-1" => JobReadStatus == 0 ? Json(Job(JobTerminal ? "completed" : "running", JobTerminal)) : Json("{}", (HttpStatusCode)JobReadStatus),
@@ -422,6 +432,28 @@ internal static class AdminBackupsNativeFixture
             lastPage = cleanupPage;
             await Until(() => cleanupPage.Controller?.State.List != null
                 && Find<Button>(cleanupPage, "BackupsUpload") is { IsLoaded: true, IsEnabled: true }, "cleanup upload button ready");
+            // Closing while the server checks needs a pointer-accessible button and keeps the upload being checked.
+            server.PauseComplete = true;
+            var deletesBeforeChecking = server.Requests.Count(request => request == "DELETE /api/v2/admin/backups/uploads/" + UploadId);
+            Invoke(Find<Button>(cleanupPage, "BackupsUpload")!);
+            await Until(() => Field(cleanupPage, "_dialog") is ContentDialog { IsLoaded: true }, "checking upload dialog");
+            var checkingDialog = (ContentDialog)Field(cleanupPage, "_dialog")!;
+            await Until(() => Find<Button>(checkingDialog, "BackupsUploadChoose") is { IsLoaded: true, IsEnabled: true }, "checking upload choice");
+            Invoke(Find<Button>(checkingDialog, "BackupsUploadChoose")!);
+            await server.CompleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Until(() => Find<Button>(checkingDialog, "BackupsUploadClose") is { IsLoaded: true, IsEnabled: true }, "Close available while the upload is checked");
+            Invoke(Find<Button>(checkingDialog, "BackupsUploadClose")!);
+            await Until(() => Field(cleanupPage, "_dialog") == null && Field(cleanupPage, "_upload") == null, "checking dialog dismissed and upload session retired");
+            await Until(() => Find<FrameworkElement>(cleanupPage, "UploadRow-" + UploadId) is { IsLoaded: true }, "upload being checked listed");
+            await Task.Delay(200);
+            Check(server.Requests.Count(request => request == "DELETE /api/v2/admin/backups/uploads/" + UploadId) == deletesBeforeChecking
+                && Find<FrameworkElement>(cleanupPage, "UploadRow-" + UploadId) != null,
+                "Upload can be dismissed by its Close button while it is checked, and the upload being checked stays listed");
+            server.PauseComplete = false; server.Checking = false;
+            await cleanupPage.Controller!.RefreshUploadsAsync();
+            await Until(() => Find<FrameworkElement>(cleanupPage, "UploadRow-" + UploadId) == null
+                && Find<Button>(cleanupPage, "BackupsUpload") is { IsLoaded: true, IsEnabled: true }, "upload button ready after the checked upload");
+
             server.PauseUpload = true;
             var deletes = server.Requests.Count(request => request == "DELETE /api/v2/admin/backups/uploads/" + UploadId);
             Invoke(Find<Button>(cleanupPage, "BackupsUpload")!);

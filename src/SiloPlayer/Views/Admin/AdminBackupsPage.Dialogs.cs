@@ -456,10 +456,17 @@ public sealed partial class AdminBackupsPage
                     var checking = Text(T("web.admin.backups.upload.checking"));
                     AutomationProperties.SetLiveSetting(checking, AutomationLiveSetting.Polite); AutomationProperties.SetAutomationId(checking, "BackupsUploadChecking");
                     root.Children.Add(checking);
+                    // Closing only stops waiting: the server finishes the check and the list shows the upload.
+                    var closeChecking = Action(T("web.admin.backups.upload.close"), "BackupsUploadClose");
+                    closeChecking.Click += (_, _) => closeDialog();
+                    footer.Add(closeChecking);
                     break;
                 case AdminBackupUploadStep.Opened:
                     var opened = Text(Present.OpenedSentence(phase.Upload!)); AutomationProperties.SetAutomationId(opened, "BackupsUploadOpened");
                     root.Children.Add(opened);
+                    var closeOpened = Action(T("web.admin.backups.upload.close"), "BackupsUploadClose");
+                    closeOpened.Click += (_, _) => closeDialog();
+                    footer.Add(closeOpened);
                     var next = Action(T("web.admin.backups.upload.chooseWhat"), "BackupsUploadChooseWhat", primary: true);
                     next.Click += (_, _) => { restoreUploadId = phase.Upload!.Id!; closeDialog(); };
                     footer.Add(next);
