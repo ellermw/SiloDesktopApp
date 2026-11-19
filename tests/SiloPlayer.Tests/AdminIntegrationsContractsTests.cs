@@ -41,6 +41,18 @@ public sealed class AdminIntegrationsContractsTests
     }
 
     [Fact]
+    public async Task CheckResponseKeepsModelsThatMerelyContainAPlaceholderKey()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"success":true,"models":[{"id":"chat-small","kind":"chat"}]}"""));
+        var result = await new AdminIntegrationsApi(kit.Client).CheckProviderAsync(lease,
+            new("custom", "Synthetic", "https://example.invalid/v1", "chat", ["chat"]));
+        Assert.Equal(new AdminAiModel("chat-small", "chat"), Assert.Single(result.Models));
+    }
+
+    [Fact]
     public async Task ProviderDeletionAcceptsTheBodylessAcknowledgementAndSendsOnce()
     {
         using var kit = AdminMonitorKit.Create();

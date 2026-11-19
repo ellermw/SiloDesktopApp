@@ -68,6 +68,23 @@ public sealed class AdminIntegrationsWorkflowTests
         Assert.Single(kit.Http.Requests);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlaceholderKeyEqualToOrdinaryProviderFieldsIsNotAnEcho(bool update)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"id":"ollama","type":"ollama","name":"ollama local","base_url":"https://ollama.example.invalid/v1","has_api_key":true,"capabilities":["chat"],"used_by":[]}"""));
+        var api = new AdminIntegrationsApi(kit.Client);
+        var draft = new AdminAiProviderDraft("ollama", "ollama local", "https://ollama.example.invalid/v1", "ollama", ["chat"]);
+        var provider = update ? await api.UpdateProviderAsync(lease, "ollama", draft) : await api.CreateProviderAsync(lease, draft);
+        Assert.Equal("ollama", provider.Type);
+        Assert.True(provider.HasApiKey);
+        Assert.Single(kit.Http.Requests);
+    }
+
     [Fact]
     public void AcceptedWebOperationSurvivesStaleReadsUntilMatchingReceiptAndEnvironmentOwnedToggleIsBlocked()
     {

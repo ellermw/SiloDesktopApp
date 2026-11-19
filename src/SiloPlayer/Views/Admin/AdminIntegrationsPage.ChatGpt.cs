@@ -21,7 +21,7 @@ public sealed partial class AdminIntegrationsPage
     {
         if (_capabilities?.ChatGptSignIn != true)
         {
-            if (Value("ai.auth_mode") == "chatgpt") _domain.Children.Add(AdminSettingsUi.Alert("ChatGPT sign-in is not available on this server. Choose an API provider or retry capabilities."));
+            if (Value("ai.auth_mode") == "chatgpt") _domainParts.Add(AdminSettingsUi.Alert("ChatGPT sign-in is not available on this server. Choose an API provider or retry capabilities."));
             return;
         }
         var panel = new StackPanel { Spacing = 10 };
@@ -62,7 +62,7 @@ public sealed partial class AdminIntegrationsPage
         }
         if (_connection?.Active is { UsageLimited: true }) panel.Children.Add(AdminSettingsUi.Alert("ChatGPT usage is paused. Test the text model to recheck usage, or choose another provider."));
         if (_connection?.Active is { PlanIneligible: true }) panel.Children.Add(AdminSettingsUi.Alert("This account's plan is not eligible. Choose another connected account."));
-        _domain.Children.Add(Group("ChatGPT plan", "Sign-in runs in your own browser. Paste the final callback URL yourself; the player never reads browser cookies or account credentials.", panel));
+        _domainParts.Add(Group("ChatGPT plan", "Sign-in runs in your own browser. Paste the final callback URL yourself; the player never reads browser cookies or account credentials.", panel));
     }
     private static string AccountState(AdminChatGptAccount account) => account.PlanIneligible ? "Plan ineligible" : account.NeedsLogin ? "Sign-in required" : account.UsageLimited ? "Usage paused" : account.Connected ? "Connected" : "Disconnected";
 
@@ -127,9 +127,10 @@ public sealed partial class AdminIntegrationsPage
         }
         finally { box.Password = ""; callback = ""; if (_completeLogin != null) _completeLogin.IsEnabled = !_callbackSubmitted && Ready; }
     }
-    private void ObserveLogin(AdminChatGptStatus status)
+    /// <summary>Settles the pending sign-in against a status read; returns the failure to show, which the caller keeps past its own error reset.</summary>
+    private string? ObserveLogin(AdminChatGptStatus status)
     {
-        var login = _login; if (login == null) return;
+        var login = _login; if (login == null) return null;
         if (status.AttemptId == login.AttemptId && status.LoginResult == "connected")
         {
             AdminSettingsUi.UpdateLiveText(_domainStatus, status.FirstConnection ? "ChatGPT connected. The server's initial text model settings have been enabled; reload and review them." : "ChatGPT account connected.");
@@ -137,8 +138,10 @@ public sealed partial class AdminIntegrationsPage
         }
         else if ((status.AttemptId == login.AttemptId && status.LoginResult is "failed" or "expired") || DateTimeOffset.UtcNow >= login.ExpiresAt)
         {
-            _domainError = "ChatGPT sign-in failed or expired. Start a new sign-in attempt."; _loginDialog?.Hide(); ClearLogin();
+            _loginDialog?.Hide(); ClearLogin();
+            return "ChatGPT sign-in failed or expired. Start a new sign-in attempt.";
         }
+        return null;
     }
     private void ClearLogin()
     {

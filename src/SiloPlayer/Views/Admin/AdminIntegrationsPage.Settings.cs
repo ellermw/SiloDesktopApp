@@ -151,7 +151,8 @@ public sealed partial class AdminIntegrationsPage
         var combo = AdminSettingsUi.Select("Suggested " + label, "AdminIntegration-" + key + "-Models", []); combo.Width = 160; combo.PlaceholderText = "Choose model"; _modelPickers[key] = combo;
         input.TextChanged += (_, _) =>
         {
-            if (_syncing || _controller == null) return;
+            // TextChanged also arrives later for programmatic updates, including a displayed fallback; ignore that echo.
+            if (_syncing || _controller == null || !ReferenceEquals(_fields.GetValueOrDefault(key), input) || input.Text == Value(key)) return;
             _controller.Set(key, input.Text);
             if (key == "ai.chat_model") { _modelDebounce.Stop(); _modelDebounce.Start(); }
         };
@@ -203,7 +204,8 @@ public sealed partial class AdminIntegrationsPage
     private FrameworkElement Text(string key, string label, string description, bool number = false)
     {
         var control = AdminSettingsUi.Input(label, "AdminIntegration-" + key, number: number); _fields[key] = control;
-        control.TextChanged += (_, _) => { if (!_syncing) _controller?.Set(key, control.Text); };
+        // TextChanged also arrives later for programmatic updates, including a displayed fallback; ignore that echo.
+        control.TextChanged += (_, _) => { if (!_syncing && ReferenceEquals(_fields.GetValueOrDefault(key), control) && control.Text != Value(key)) _controller?.Set(key, control.Text); };
         control.LostFocus += (_, _) => { _ = CommitFieldAsync(key); };
         return Field(label, description, control);
     }
@@ -225,7 +227,7 @@ public sealed partial class AdminIntegrationsPage
         AutomationProperties.SetAutomationId(control, "AdminIntegration-" + key); AutomationProperties.SetName(control, label);
         control.Toggled += (_, _) =>
         {
-            if (_syncing) return;
+            if (_syncing || !ReferenceEquals(_fields.GetValueOrDefault(key), control)) return;
             _controller?.Set(key, control.IsOn ? "true" : "false");
             if (key == "jellyfin_compat.enabled" && !control.IsOn) _controller?.Set("jellyfin_compat.web_enabled", "false");
             _ = CommitFieldAsync(key);

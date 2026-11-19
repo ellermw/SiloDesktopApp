@@ -32,7 +32,8 @@ public sealed partial class AdminIntegrationsPage
                 if (result.Success) _models[provider.Id] = result.Models;
                 SetDomainStatus(lease, result.Success ? result.Models.Count == 0 ? "The provider did not list models. Enter a model name manually." : string.Join(", ", result.Models.Select(model => model.Id)) : result.Message);
             }));
-            AddAction(actions, "Edit", "AdminAiProviderEdit-" + provider.Id, Ready, () => { BeginProviderEdit(provider); return Task.CompletedTask; });
+            // An unchanged row keeps its buttons across refreshes, so edit the provider as last read.
+            AddAction(actions, "Edit", "AdminAiProviderEdit-" + provider.Id, Ready, () => { BeginProviderEdit(_providers.FirstOrDefault(current => current.Id == provider.Id) ?? provider); return Task.CompletedTask; });
             AddAction(actions, "Delete", "AdminAiProviderDelete-" + provider.Id, Ready && provider.UsedBy.Count == 0,
                 () => RunCommandAsync(async lease => { await _api.DeleteProviderAsync(lease, provider.Id); _models.Remove(provider.Id); await _controller!.ReloadAsync(true); },
                     () => _providers.Any(current => current.Id == provider.Id && current.UsedBy.Count == 0), "Delete provider", "Delete " + provider.Name + "? Its saved API key will be discarded."));
@@ -40,7 +41,7 @@ public sealed partial class AdminIntegrationsPage
                 (provider.UsedBy.Count == 0 ? " · Not in use" : " · Used by " + string.Join(", ", provider.UsedBy)), actions));
         }
         AddAction(panel, "Add provider", "AdminAiProviderAdd", Ready && _providerTypes.Count > 0, () => { BeginProviderAdd(null); return Task.CompletedTask; });
-        _domain.Children.Add(panel);
+        _domainParts.Add(panel);
         if (_route == AdminRoute.AiSettings) BuildChatGptAccounts();
     }
     private void BeginProviderAdd(string? target)

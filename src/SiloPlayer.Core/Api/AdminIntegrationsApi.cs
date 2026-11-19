@@ -51,6 +51,8 @@ public sealed partial class AdminIntegrationsApi(SiloApiClient client)
     private const int MaxBytes = 1024 * 1024;
     private static readonly TimeSpan ReadDeadline = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan CommandDeadline = TimeSpan.FromSeconds(30);
+    // Placeholder keys for local providers ("ollama", "local") legitimately occur inside ordinary fields; only a key long enough to be a credential can be recognised as an echo.
+    private const int MinEchoKeyLength = 16;
 
     public async Task<AdminAiProviders> GetProvidersAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
     {
@@ -165,7 +167,7 @@ public sealed partial class AdminIntegrationsApi(SiloApiClient client)
         var capabilities = Strings(wire.Capabilities, 3, 32);
         var usedBy = Strings(wire.UsedBy, 3, 32);
         if (!SiloPlayer.Core.Services.Admin.AdminIntegrationPolicy.IsProviderEndpoint(baseUrl) ||
-            !string.IsNullOrEmpty(submittedKey) && new[] { id, type, wire.Name, baseUrl }.Concat(capabilities).Concat(usedBy).Any(value => value.Contains(submittedKey, StringComparison.Ordinal)))
+            new[] { id, type, wire.Name, baseUrl }.Concat(capabilities).Concat(usedBy).Any(value => EchoesKey(value, submittedKey)))
             throw new InvalidDataException("Invalid AI provider.");
         return new(id, type, Safe(wire.Name, 80), baseUrl, wire.HasApiKey.Value, capabilities, usedBy);
     }
@@ -181,13 +183,14 @@ public sealed partial class AdminIntegrationsApi(SiloApiClient client)
         var message = wire.Message ?? "";
         if (!string.IsNullOrEmpty(submittedKey)) message = message.Replace(submittedKey, "<redacted>", StringComparison.Ordinal);
         return new(wire.Success.Value, LocalLog.RedactDiagnosticText(Bound(message, 500) ?? ""), wire.Models.Where(model =>
-            string.IsNullOrEmpty(submittedKey) || (model?.Id?.Contains(submittedKey, StringComparison.Ordinal) != true &&
-                model?.Kind?.Contains(submittedKey, StringComparison.Ordinal) != true)).Take(256).Select(model =>
+            !EchoesKey(model?.Id, submittedKey) && !EchoesKey(model?.Kind, submittedKey)).Take(256).Select(model =>
         {
             if (model?.Id is not { Length: > 0 and <= 256 } id) throw new InvalidDataException("Invalid AI model.");
             return new AdminAiModel(id, Bound(model.Kind, 32) ?? "");
         }).ToArray());
     }
+    private static bool EchoesKey(string? value, string? submittedKey) =>
+        submittedKey is { Length: >= MinEchoKeyLength } && value?.Contains(submittedKey, StringComparison.Ordinal) == true;
     private static AdminRecommendationJob Job(JobWire job)
     {
         if (job.Running == null || job.Count is < 0 || job.Total is < 0) throw new InvalidDataException("Invalid recommendation job.");

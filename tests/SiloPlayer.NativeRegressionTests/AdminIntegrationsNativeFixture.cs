@@ -208,7 +208,10 @@ internal static class AdminIntegrationsNativeFixture
             Check(handler.Writes.Contains("DELETE /api/v2/admin/ai/chatgpt/accounts/account-1"), "account disconnect uses account-specific body-bearing DELETE");
             Invoke(Find<Button>(page, "AdminChatGptReconnect-account-1"));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "reconnect manual flow");
-            var reconnectDialog = (ContentDialog)Field(page, "_dialog")!; var reconnectClosed = Closed(reconnectDialog); reconnectDialog.Hide(); await reconnectClosed; await Idle(page);
+            var reconnectDialog = (ContentDialog)Field(page, "_dialog")!; var reconnectClosed = Closed(reconnectDialog);
+            handler.LoginResult = "failed"; await Refresh(page); await reconnectClosed; await Idle(page);
+            ReviewCheck(Field(page, "_domainError") is string loginError && loginError.Contains("sign-in failed", StringComparison.Ordinal) && Descendants(page).OfType<TextBlock>().Any(text => text.Text == loginError), "failed sign-in closes the dialog and keeps its explanation visible");
+            handler.LoginResult = "idle";
             handler.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var first = Refresh(page); var second = Refresh(page);
             await Until(() => handler.InFlight == 1, "held provider response");
@@ -230,6 +233,9 @@ internal static class AdminIntegrationsNativeFixture
             await Unload(outer, page); page = null;
 
             page = await Open(outer, "/admin/settings/ai"); await Idle(page);
+            var retiredController = Field(page, "_controller"); authority.Retire();
+            await Until(() => Field(page, "_controller") is AdminIntegrationSettingsController reopened && !ReferenceEquals(reopened, retiredController) && Enabled(page, "AdminAiProviderAdd"), "authority change reloads the shown page under the new authority");
+            await Idle(page);
             handler.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var demotedRead = Refresh(page); await Until(() => handler.InFlight == 1, "private response held before demotion");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
@@ -242,6 +248,9 @@ internal static class AdminIntegrationsNativeFixture
             page = await Open(outer, "/admin/recommendations");
             await Until(() => Enabled(page, "AdminRecommendationRun-Embeddings"), "recommendations ready");
             await CaptureBoth(window, outer, "integrations-recommendations");
+            Find<Button>(page, "AdminRecommendationRun-Embeddings").Tag = "held";
+            await (Task)page.GetType().GetMethod("ReadDomainAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [true])!;
+            ReviewCheck(Find<Button>(page, "AdminRecommendationRun-Embeddings") is { IsEnabled: true, Tag: "held" }, "an unchanged background poll keeps the live job controls");
             Invoke(Find<Button>(page, "AdminRecommendationRun-Embeddings")); await Idle(page);
             Check(handler.Writes.Count(entry => entry.EndsWith("/trigger/embeddings", StringComparison.Ordinal)) == 1, "real recommendation command");
             handler.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -15,6 +15,7 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private readonly AdminIntegrationsApi _api;
+    private readonly AdminMonitorAuthority _authority;
     private AdminIntegrationSettingsController? _controller;
     private AdminLeaveGuard? _leave;
     private AdminRouteRequest? _location;
@@ -36,7 +37,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     private AdminChatGptStatus? _connection;
     private IReadOnlyList<AdminChatGptModel> _accountModels = [];
     private readonly Dictionary<string, IReadOnlyList<AdminAiModel>> _models = new(StringComparer.Ordinal);
-    private bool _active, _syncing, _busy, _domainReading, _domainLoaded, _refreshAgain, _commandUnknown;
+    private bool _active, _retired, _syncing, _busy, _domainReading, _quietRead, _domainLoaded, _refreshAgain, _commandUnknown;
     private string? _domainError;
     private string? _accountModelsError;
     private ContentDialog? _dialog;
@@ -49,8 +50,9 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     {
         InitializeComponent(); NavigationCacheMode = NavigationCacheMode.Disabled;
         _api = App.Services.GetRequiredService<AdminIntegrationsApi>();
+        _authority = App.Services.GetRequiredService<AdminMonitorAuthority>();
         _poll = DispatcherQueue.CreateTimer(); _poll.Interval = TimeSpan.FromSeconds(5); _poll.IsRepeating = false;
-        _poll.Tick += async (_, _) => await RefreshDomainAsync();
+        _poll.Tick += async (_, _) => await ReadDomainAsync(quiet: true);
         _modelDebounce = DispatcherQueue.CreateTimer(); _modelDebounce.Interval = TimeSpan.FromMilliseconds(300); _modelDebounce.IsRepeating = false;
         _modelDebounce.Tick += (_, _) => RequestModelRefresh();
         AutomationProperties.SetAutomationId(this, "AdminIntegrationsPage");
@@ -73,7 +75,8 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     private void Open()
     {
         if (_active || _location == null) return;
-        _active = true;
+        _active = true; _retired = false;
+        _authority.AvailabilityChanged -= OnAuthorityChanged; _authority.AvailabilityChanged += OnAuthorityChanged;
         var keys = _route switch { AdminRoute.AiSettings => AdminIntegrationsSettings.AiKeys, AdminRoute.Recommendations => AdminIntegrationsSettings.RecommendationKeys, _ => AdminIntegrationsSettings.CompatibilityKeys };
         _controller = ActivatorUtilities.CreateInstance<AdminIntegrationSettingsController>(App.Services, keys);
         _leave = new(() => _controller?.State.Owner, () => _controller?.State.DirtyKeys.Count > 0 || _providerDirty, () => { _controller?.Discard(); ClearProviderEditor(); });
@@ -86,26 +89,32 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         await controller.OpenAsync();
         if (Current(controller)) await RefreshDomainAsync();
     }
+    // A page retired by an authority change reopens once admin authority is available again.
+    private void OnAuthorityChanged() => DispatcherQueue.TryEnqueue(() => { if (_retired && !_active && IsLoaded && _authority.IsAvailable) Open(); });
     private bool Current(AdminIntegrationSettingsController controller) => _active && ReferenceEquals(controller, _controller) && controller.State.Owner?.IsCurrent == true;
-    private bool Ready => _active && _domainLoaded && !_busy && !_domainReading && !_commandUnknown && _controller?.State is { Loaded: true, Loading: false, Saving: false, Conflict: false, OutcomeUnknown: false, Owner.IsCurrent: true };
+    /// <summary>A foreground domain read holds the controls. The background poll does not: disabling and re-enabling them every five seconds would move keyboard focus.</summary>
+    private bool DomainHeld => _domainReading && !_quietRead;
+    private bool Ready => _active && _domainLoaded && !_busy && !DomainHeld && !_commandUnknown && _controller?.State is { Loaded: true, Loading: false, Saving: false, Conflict: false, OutcomeUnknown: false, Owner.IsCurrent: true };
     private void Build()
     {
-        _fields.Clear(); ContentRoot.Children.Clear(); _alerts.Children.Clear(); _domain.Children.Clear(); _providerEditorHost.Children.Clear();
+        _fields.Clear(); ContentRoot.Children.Clear(); _alerts.Children.Clear(); _domain.Children.Clear(); _domainShape = ""; _providerEditorHost.Children.Clear();
         ContentRoot.Children.Add(AdminSettingsUi.Title(_route switch { AdminRoute.AiSettings => "AI", AdminRoute.Recommendations => "Recommendations", _ => "Compatibility proxies" }));
         ContentRoot.Children.Add(_alerts); ContentRoot.Children.Add(_domain); ContentRoot.Children.Add(_providerEditorHost); ContentRoot.Children.Add(_domainStatus);
         ContentRoot.Children.Add(BuildSettings());
     }
 
-    private Task RefreshDomainAsync()
+    private Task RefreshDomainAsync() => ReadDomainAsync(quiet: false);
+    private Task ReadDomainAsync(bool quiet)
     {
         if (!_active || _controller is not { } controller || !Current(controller)) return Task.CompletedTask;
         if (_domainReading) return _refreshTask;
-        _domainReading = true; _poll.Stop();
-        if (_domainLoaded) { Render(controller.State); BuildDomain(); }
+        _domainReading = true; _quietRead = quiet; _poll.Stop();
+        if (_domainLoaded && !quiet) { Render(controller.State); BuildDomain(); }
         return _refreshTask = RefreshDomainCoreAsync(controller);
     }
     private async Task RefreshDomainCoreAsync(AdminIntegrationSettingsController controller)
     {
+        string? loginFailure = null;
         try
         {
             using var lease = controller.CaptureAction();
@@ -137,7 +146,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
                             catch { if (Current(controller)) { _accountModels = []; _accountModelsError = "Could not load this account's models. Retry, test the text connection, or choose another account."; } }
                         }
                         else _accountModels = [];
-                        ObserveLogin(connection);
+                        loginFailure = ObserveLogin(connection);
                     }
                     else { _connection = null; _accountModels = []; }
                 }
@@ -181,13 +190,13 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
                     _domainError = "The accepted local operation is not visible on this server. Reload and review before trying another command.";
                 }
             }
-            if (Current(controller)) { _domainLoaded = true; if (!_commandUnknown) _domainError = null; }
+            if (Current(controller)) { _domainLoaded = true; if (!_commandUnknown) _domainError = loginFailure; }
         }
         catch (OperationCanceledException) when (!Current(controller)) { }
         catch (Exception) { if (Current(controller)) { _domainLoaded = false; _domainError = "Could not refresh this page. Try again."; } }
         finally
         {
-            _domainReading = false;
+            _domainReading = false; _quietRead = false;
             if (Current(controller))
             {
                 BuildDomain(); Render(controller.State); SchedulePoll();
@@ -246,7 +255,8 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
                 if (Current(controller))
                 {
                     _busy = false;
-                    if (!_commandUnknown) await RefreshDomainAsync();
+                    // A read that began before the command settled may predate its effect; read once more after it.
+                    if (!_commandUnknown) { if (_domainReading) _refreshAgain = true; await RefreshDomainAsync(); }
                     if (failure != null) _domainError = failure;
                     if (_fieldCommits.Count > 0 && !_commandUnknown && !controller.State.Saving) _fieldCommitTask = CommitFieldsCoreAsync();
                     BuildDomain(); Render(controller.State); SchedulePoll();
@@ -279,7 +289,13 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     {
         var state = _controller?.State;
         if (!_active || state == null) return;
-        if (state.Owner == null || !state.Owner.IsCurrent) { Close(); return; }
+        if (state.Owner == null || !state.Owner.IsCurrent)
+        {
+            // The authority changed: clear the retired owner's data, then reload under the new authority while still admin.
+            Close(retired: true);
+            if (IsLoaded && _authority.IsAvailable) Open();
+            return;
+        }
         Render(state);
         if (_route != AdminRoute.AiSettings) BuildDomain();
     });
@@ -292,9 +308,9 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         else if (_commandUnknown) _alerts.Children.Add(AdminSettingsUi.Alert("The earlier command outcome is still unknown. Reload and review before trying again."));
         if (state.RestartRequired || _jellyfinWeb?.RestartRequired == true) _alerts.Children.Add(AdminSettingsUi.Alert("A server restart is required for some saved settings."));
         var recovery = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        AddAction(recovery, "Retry", "AdminIntegrationsRetry", !_busy && !_domainReading && !state.Loading && !state.Saving, async () => { if (!state.Loaded) await ReloadAsync(false); else await RefreshDomainAsync(); });
-        AddAction(recovery, "Reload, keep changes", "AdminIntegrationsReloadKeep", !_busy && !_domainReading && !state.Loading && !state.Saving, () => ReloadAsync(true));
-        AddAction(recovery, "Reload, discard changes", "AdminIntegrationsReloadDiscard", !_busy && !_domainReading && !state.Loading && !state.Saving, () => ReloadAsync(false));
+        AddAction(recovery, "Retry", "AdminIntegrationsRetry", !_busy && !DomainHeld && !state.Loading && !state.Saving, async () => { if (!state.Loaded) await ReloadAsync(false); else await RefreshDomainAsync(); });
+        AddAction(recovery, "Reload, keep changes", "AdminIntegrationsReloadKeep", !_busy && !DomainHeld && !state.Loading && !state.Saving, () => ReloadAsync(true));
+        AddAction(recovery, "Reload, discard changes", "AdminIntegrationsReloadDiscard", !_busy && !DomainHeld && !state.Loading && !state.Saving, () => ReloadAsync(false));
         _alerts.Children.Add(recovery);
         _syncing = true;
         UpdateChoices();
@@ -315,7 +331,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             {
                 control.IsEnabled = state.Loaded && !state.Loading && !state.Saving && !_busy && !_commandUnknown && !state.Conflict && !state.OutcomeUnknown && !state.ManagedByEnvironment.Contains(key);
                 if (control is ToggleSwitch feature && !feature.IsOn && !FeatureReady(key)) control.IsEnabled = false;
-                if (key.EndsWith("provider_id", StringComparison.Ordinal)) control.IsEnabled &= _domainLoaded && !_domainReading;
+                if (key.EndsWith("provider_id", StringComparison.Ordinal)) control.IsEnabled &= _domainLoaded && !DomainHeld;
             }
         }
         _syncing = false;
@@ -335,7 +351,9 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     }
     private async Task ReloadAsync(bool preserve)
     {
-        var controller = _controller; if (controller == null || _busy || _domainReading) return;
+        var controller = _controller; if (controller == null || _busy || DomainHeld) return;
+        // A background poll leaves this action enabled; let it settle instead of dropping the request.
+        if (_domainReading) { await _refreshTask; if (!ReferenceEquals(controller, _controller) || _busy || _domainReading) return; }
         _loginDialog?.Hide(); ClearLogin();
         if (preserve) { if (_providerKey != null) _providerKey.Password = ""; }
         else ClearProviderEditor();
@@ -378,17 +396,19 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             case ToggleSwitch toggle: toggle.IsOn = false; break;
         }
     }
-    private void Close()
+    private void Close(bool retired = false)
     {
+        // Only an authority retirement keeps listening for a reopen; navigation, unload and suspension are final.
+        if (!retired) { _retired = false; _authority.AvailabilityChanged -= OnAuthorityChanged; }
         if (!_active) return;
-        _active = false; _poll.Stop(); _modelDebounce.Stop(); _refreshAgain = false;
+        _active = false; _retired = retired; _poll.Stop(); _modelDebounce.Stop(); _refreshAgain = false;
         _dialog?.Hide(); ClearLogin(); ClearProviderEditor();
         _syncing = true; ClearPrivateTree(ContentRoot); _syncing = false;
         var controller = _controller; _controller = null; _leave = null;
         if (controller != null) { controller.Changed -= QueueRender; controller.Dispose(); }
         _providers = []; _providerTypes = []; _models.Clear(); _accountModels = []; _capabilities = null; _connection = null;
         _recommendations = null; _jellyfinWeb = null; _acceptedWebOperation = null; _webReceiptDeadline = null; _domainLoaded = false; _domainError = null; _accountModelsError = null; _commandUnknown = false; _busy = false;
-        _fields.Clear(); _fieldCommits.Clear(); _alerts.Children.Clear(); _domain.Children.Clear(); _providerEditorHost.Children.Clear();
+        _fields.Clear(); _fieldCommits.Clear(); _alerts.Children.Clear(); _domain.Children.Clear(); _domainShape = ""; _providerEditorHost.Children.Clear();
         _domainStatus.Text = ""; ContentRoot.Children.Clear(); _save = null; _discard = null;
         _modelChecks.Clear();
         _modelPickers.Clear();

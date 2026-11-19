@@ -13,13 +13,67 @@ namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminIntegrationsPage
 {
+    private readonly List<UIElement> _domainParts = [];
+    private string _domainShape = "";
+
     private void BuildDomain()
     {
         if (!_active) return;
-        _domain.Children.Clear();
+        _domainParts.Clear();
         if (_route == AdminRoute.AiSettings) BuildProviders();
         else if (_route == AdminRoute.Recommendations) { BuildRecommendationJobs(); BuildProviders(); }
         else BuildJellyfinWeb();
+        var parts = _domainParts.ToArray(); _domainParts.Clear();
+        var fresh = parts.SelectMany(part => DomainNodes(part)).ToArray();
+        var shape = DomainShape(fresh);
+        // Polls and settings edits come here constantly: keep the live controls, with their focus and expanded state, unless what they show changed.
+        if (shape == _domainShape && _domain.Children.Count == parts.Length) return;
+        var live = _domain.Children.SelectMany(part => DomainNodes(part)).ToArray();
+        var expanded = live.OfType<Expander>().Where(open => open.IsExpanded).Select(open => open.Header?.ToString()).ToHashSet();
+        var focused = XamlRoot == null ? null : Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+        var focusState = focused is Control { FocusState: not FocusState.Unfocused } origin ? origin.FocusState : FocusState.Programmatic;
+        while (focused != null && !(focused is Control && Array.IndexOf(live, focused) >= 0)) focused = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(focused);
+        var focusId = focused == null ? "" : AutomationProperties.GetAutomationId(focused);
+        _domain.Children.Clear(); foreach (var part in parts) _domain.Children.Add(part);
+        _domainShape = shape;
+        foreach (var expander in fresh.OfType<Expander>()) if (expanded.Contains(expander.Header?.ToString())) expander.IsExpanded = true;
+        if (focusId != "" && fresh.OfType<Control>().FirstOrDefault(control => AutomationProperties.GetAutomationId(control) == focusId) is { IsEnabled: true } target)
+        {
+            RoutedEventHandler? loaded = null;
+            loaded = (_, _) => { target.Loaded -= loaded; target.Focus(focusState); };
+            target.Loaded += loaded;
+        }
+    }
+    /// <summary>A built domain tree in document order. It is walked by ownership because a fresh tree is not loaded yet.</summary>
+    private static IEnumerable<object> DomainNodes(object? node)
+    {
+        if (node == null) yield break;
+        yield return node;
+        if (node is Panel panel) { foreach (var child in panel.Children) foreach (var inner in DomainNodes(child)) yield return inner; }
+        else if (node is Border border) { foreach (var inner in DomainNodes(border.Child)) yield return inner; }
+        else if (node is ItemsControl list) { foreach (var item in list.Items) foreach (var inner in DomainNodes(item)) yield return inner; }
+        else if (node is ContentControl content)
+        {
+            if (content is Expander expander) foreach (var inner in DomainNodes(expander.Header)) yield return inner;
+            foreach (var inner in DomainNodes(content.Content)) yield return inner;
+        }
+    }
+    /// <summary>Everything the domain panel shows: structure, identity, text, enablement, selection and progress.</summary>
+    private static string DomainShape(IEnumerable<object> nodes)
+    {
+        var shape = new System.Text.StringBuilder();
+        foreach (var node in nodes)
+        {
+            shape.Append(node.GetType().Name).Append('\u001f');
+            if (node is string label) shape.Append(label);
+            if (node is FrameworkElement element) shape.Append(AutomationProperties.GetAutomationId(element)).Append('\u001f').Append(element.Tag?.ToString());
+            if (node is Control control) shape.Append(control.IsEnabled ? "\u001f1" : "\u001f0");
+            if (node is TextBlock text) shape.Append('\u001f').Append(text.Text);
+            else if (node is ProgressBar progress) shape.Append('\u001f').Append(progress.IsIndeterminate ? "?" : progress.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            else if (node is ComboBox choice) shape.Append('\u001f').Append((choice.SelectedItem as ComboBoxItem)?.Tag?.ToString());
+            shape.Append('\u001e');
+        }
+        return shape.ToString();
     }
     private void BuildRecommendationJobs()
     {
@@ -69,7 +123,7 @@ public sealed partial class AdminIntegrationsPage
                 await _controller!.ReloadAsync(true);
                 SetDomainStatus(lease, $"Deleted {deleted.Embeddings:N0} embeddings, cleared {deleted.TasteProfiles:N0} taste profiles, deleted {deleted.TasteClusters:N0} taste clusters and {deleted.CachedRows:N0} profile cache rows. Global rows are kept.");
             }, () => AdminIntegrationPolicy.CanReset(_recommendations), "Reset embeddings", "Delete item embeddings and taste clusters, clear taste profile vectors, and remove per-profile cached recommendations? Global rows are kept. Rebuild embeddings afterward."));
-        _domain.Children.Add(panel);
+        _domainParts.Add(panel);
     }
     private bool CanTrigger(RecommendationJobKind kind)
     {
@@ -139,9 +193,10 @@ public sealed partial class AdminIntegrationsPage
             var details = new StackPanel { Spacing = 6 };
             details.Children.Add(AdminSettingsUi.Text("Install root: " + status.InstallRoot + " · Active directory: " + status.ActiveDirectory, 13, true));
             foreach (var (name, value) in status.Details.Where(detail => detail.Value != "")) details.Children.Add(AdminSettingsUi.Text(name + ": " + value, 13, true));
-            panel.Children.Add(new Expander { Header = "Details", Content = details, HorizontalAlignment = HorizontalAlignment.Stretch });
+            var expander = new Expander { Header = "Details", Content = details, HorizontalAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetAutomationId(expander, "AdminJellyfinWebDetails"); panel.Children.Add(expander);
         }
-        _domain.Children.Add(panel);
+        _domainParts.Add(panel);
     }
     private void AcceptWebOperation(MonitorAuthorityLease lease, AdminJellyfinWebStatus receipt)
     {
