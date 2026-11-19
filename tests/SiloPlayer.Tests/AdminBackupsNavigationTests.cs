@@ -36,13 +36,16 @@ public sealed class AdminBackupsNavigationTests
     }
 
     [Fact]
-    public void MaintenanceAndPluginsStayUnsupported()
+    public void PluginsStayUnsupportedAndMaintenanceKeepsItsOwnRoute()
     {
-        foreach (var href in new[] { "/admin/maintenance", "/admin/plugins/arr" })
+        foreach (var href in new[] { "/admin/plugins", "/admin/plugins/arr" })
         {
             Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
             Assert.Equal(AdminRouteResolutionKind.Unsupported, resolution.Kind);
         }
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/maintenance", out var maintenance));
+        Assert.Equal(AdminRouteResolutionKind.Route, maintenance.Kind);
+        Assert.Equal(AdminRoute.Maintenance, maintenance.Request!.Route);
     }
 
     [Theory]
