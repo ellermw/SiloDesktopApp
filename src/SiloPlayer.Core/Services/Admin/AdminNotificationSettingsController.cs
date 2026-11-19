@@ -250,7 +250,9 @@ public sealed class AdminNotificationSettingsController : IDisposable
             catch (OperationCanceledException) when (!owner.IsCurrent) { }
             catch (Exception error)
             {
-                Update(owner, () => { _form?.EndSave(intent); _state = _state with { Saving = false, SavingDiscord = false,
+                // A clear that was not acknowledged must not stay staged for a later Discord Save.
+                Update(owner, () => { _form?.EndSave(intent); if (clear && _form != null) foreach (var key in DiscordKeys) _form.Reset(key);
+                    _state = _state with { Saving = false, SavingDiscord = false,
                     Conflict = error is AdminSettingsConflictException, OutcomeUnknown = error is AdminSettingsOutcomeUnknownException,
                     Error = error is AdminSettingsConflictException or AdminSettingsOutcomeUnknownException ? error.Message : "Could not save notification settings.", Failure = AdminFailures.Classify(error, owner) }; });
             }
@@ -279,7 +281,8 @@ public sealed class AdminNotificationSettingsController : IDisposable
         await _api.ClearRelayAsync(owner).ConfigureAwait(false);
         Update(owner, () => _state = _state with { RelayRegistration = null });
     }, refreshSettings: true, relay: true, kind: "relay-clear");
-    public Task SaveChannelAsync(string? id, Dictionary<string, object> input)
+    /// <summary>False when the command was refused and nothing was sent.</summary>
+    public Task<bool> SaveChannelAsync(string? id, Dictionary<string, object> input)
     {
         var captured = new Dictionary<string, object>(input, StringComparer.Ordinal);
         return Operate(async owner =>
@@ -302,18 +305,18 @@ public sealed class AdminNotificationSettingsController : IDisposable
         var secret = await _api.RotateChannelAsync(owner, id).ConfigureAwait(false); Update(owner, () => _signingSecret = secret);
     }, id: id, genericOnly: true, refreshChannels: true, kind: "channel-rotate");
     public Task DeleteChannelAsync(string id) => Operate(owner => _api.DeleteChannelAsync(owner, id), id: id, refreshChannels: true, kind: "channel-delete");
-    private async Task Operate(Func<MonitorAuthorityLease, Task> operation, string? id = null, bool requireDiscord = false, bool genericOnly = false, bool refreshChannels = false, bool refreshSettings = false, bool relay = false, string? kind = null)
+    private async Task<bool> Operate(Func<MonitorAuthorityLease, Task> operation, string? id = null, bool requireDiscord = false, bool genericOnly = false, bool refreshChannels = false, bool refreshSettings = false, bool relay = false, string? kind = null)
     {
         MonitorAuthorityLease owner;
-        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
+        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
         using (owner)
         {
             lock (_gate)
             {
-                if (!CanOperate(owner) || requireDiscord && (!_state.DiscordReady || _state.DirtyKeys.Any(DiscordKeys.Contains))) return;
-                if (refreshChannels && !_state.ChannelsLoaded) return;
-                if (id != null && (!_state.ChannelsLoaded || !_state.Channels.Any(c => c.Id == id && (!genericOnly || c.Type == "generic")))) return;
-                if (relay && (_state.SensitiveStatusError || ReadOnlyKeys.Where(k => k.StartsWith("notifications.push_relay_", StringComparison.Ordinal)).Any(_state.ManagedByEnv.Contains))) return;
+                if (!CanOperate(owner) || requireDiscord && (!_state.DiscordReady || _state.DirtyKeys.Any(DiscordKeys.Contains))) return false;
+                if (refreshChannels && !_state.ChannelsLoaded) return false;
+                if (id != null && (!_state.ChannelsLoaded || !_state.Channels.Any(c => c.Id == id && (!genericOnly || c.Type == "generic")))) return false;
+                if (relay && (_state.SensitiveStatusError || ReadOnlyKeys.Where(k => k.StartsWith("notifications.push_relay_", StringComparison.Ordinal)).Any(_state.ManagedByEnv.Contains))) return false;
                 _signingSecret = null;
                 _state = _state with { OperationPending = true, ActiveOperation = kind, ActiveTarget = id, Error = null, Failure = null, TestResult = null, TestTarget = null,
                     DiscordTestResult = kind == "discord-test" ? null : _state.DiscordTestResult,
@@ -334,6 +337,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
                 Update(owner, () => _state = _state with { OperationPending = false, ActiveOperation = null, ActiveTarget = null, OperationUnknown = error is AdminNotificationOperationUnknownException,
                     Error = error is AdminNotificationOperationUnknownException ? error.Message : error is ArgumentException ? "Check the notification setup fields." : "Notification operation failed. Reload to review the server state.", Failure = AdminFailures.Classify(error, owner) });
             }
+            return true;
         }
     }
     public string? TakeSigningSecret()

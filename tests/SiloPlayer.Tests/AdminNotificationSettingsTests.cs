@@ -330,6 +330,34 @@ public sealed class AdminNotificationSettingsTests
         Assert.Equal(["notifications.ui_enabled"], h.Controller.State.DirtyKeys); Assert.False(h.Controller.State.DiscordReady);
     }
 
+    [Theory]
+    [InlineData(412)]
+    [InlineData(503)]
+    public async Task FailedDiscordClearIsNotCarriedIntoALaterDiscordSave(int status)
+    {
+        using var h = new Harness(); await h.Controller.OpenAsync();
+        h.Write = _ => Task.FromResult(Reply("""{"type":"precondition_failed","title":"Failed","status":412}""", (HttpStatusCode)status));
+        await h.Controller.ClearDiscordAsync();
+        Assert.NotNull(h.Controller.State.Error); Assert.Empty(h.Controller.State.DirtyKeys);
+        Assert.Equal("app", h.Controller.State.Values["discord.client_id"]); Assert.True(h.Controller.State.DiscordReady);
+        await h.Controller.ReloadAsync(true);
+        h.Controller.Set("discord.bot_token", "synthetic-new"); h.Write = null; await h.Controller.SaveDiscordAsync();
+        using var body = JsonDocument.Parse(h.Kit.Http.Bodies.Last());
+        Assert.Equal(["discord.bot_token"], body.RootElement.GetProperty("values").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(2, h.Writes.Length);
+    }
+
+    [Fact]
+    public async Task ChannelSaveReportsARefusalSoNothingUnsentCanLookSaved()
+    {
+        using var h = new Harness { Channels = $$$"""{"items":[{{{Channel}}}],"page":{"has_more":false}}""" }; await h.Controller.OpenAsync();
+        h.Write = _ => Task.FromResult(Reply(Channel));
+        Assert.False(await h.Controller.SaveChannelAsync("retired", new() { ["name"] = "Changed" }));
+        Assert.Empty(h.Writes); Assert.Null(h.Controller.State.Error);
+        Assert.True(await h.Controller.SaveChannelAsync("c1", new() { ["name"] = "Changed" }));
+        Assert.Single(h.Writes);
+    }
+
     [Fact]
     public async Task MissingSettingsValidatorDoesNotRenderAnEditableGuessedSnapshot()
     {
@@ -368,7 +396,9 @@ public sealed class AdminNotificationSettingsTests
     {
         Assert.Equal("1 destination", AdminNotificationText.T("web.admin.settings.notifications.serverChannelsCard.destinations", ("count", 1), ("count_text", 1)));
         Assert.Equal("2 destinations", AdminNotificationText.T("web.admin.settings.notifications.serverChannelsCard.destinations", ("count", 2), ("count_text", 2)));
-        Assert.Equal("Test failed (HTTP 5039ms)", AdminNotificationText.T("web.admin.settings.notifications.serverChannels.testResult", ("outcome", "failed"), ("status", "503"), ("duration_ms", 9)));
+        Assert.Equal("Test failed (HTTP 503, 9ms)", AdminNotificationText.T("web.admin.settings.notifications.serverChannels.testResult", ("outcome", "failed"), ("status", "503"), ("duration_ms", 9)));
+        Assert.Equal("Test succeeded (HTTP 200, 123ms) — Delivered", AdminNotificationText.T("web.admin.settings.notifications.serverChannels.testResultWithMessage", ("outcome", "ok"), ("status", "200"), ("duration_ms", 123), ("message", "Delivered")));
+        Assert.Equal("Test failed (9ms)", AdminNotificationText.T("web.admin.settings.notifications.serverChannels.testResult", ("outcome", "failed"), ("status", "none"), ("duration_ms", 9)));
         Assert.Equal("Success (7ms)", AdminNotificationText.T("web.admin.settings.notifications.discord.testResult", ("outcome", "ok"), ("duration_ms", 7)));
     }
 

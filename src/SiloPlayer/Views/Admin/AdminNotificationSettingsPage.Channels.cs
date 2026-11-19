@@ -141,9 +141,11 @@ public sealed partial class AdminNotificationSettingsPage
                 var input = toggles.ToDictionary(p => p.Key, p => (object)p.Value.IsOn); input["name"] = name.Text.Trim();
                 if (!string.IsNullOrWhiteSpace(url.Text)) input["url"] = url.Text.Trim();
                 editor.IsEnabled = false; dialog.IsPrimaryButtonEnabled = false;
-                await _controller.SaveChannelAsync(channel?.Id, input);
+                var sent = await _controller.SaveChannelAsync(channel?.Id, input);
                 if (!owner.IsCurrent) { dialog.Hide(); return; }
-                if (_controller.State.Error == null) { args.Cancel = false; }
+                // A refused command sent nothing; the editor stays open with its values.
+                if (!sent) { error.Text = "Nothing was sent. Wait for the page to finish or reload it, then try again."; editor.IsEnabled = true; Validate(); }
+                else if (_controller.State.Error == null) { args.Cancel = false; }
                 else { error.Text = _controller.State.Error; editor.IsEnabled = true; Validate(); }
             }
             finally { deferral.Complete(); }

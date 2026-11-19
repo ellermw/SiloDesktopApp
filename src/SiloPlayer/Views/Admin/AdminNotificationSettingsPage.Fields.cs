@@ -109,7 +109,8 @@ public sealed partial class AdminNotificationSettingsPage
         }
         else
         {
-            var input = U.Input(label, "Notifications_" + key, number: kind == "number"); input.IsSpellCheckEnabled = false; input.IsTextPredictionEnabled = false;
+            // An emptied box shows the default that an empty value means.
+            var input = U.Input(label, "Notifications_" + key, C.Display(key, ""), kind == "number"); input.IsSpellCheckEnabled = false; input.IsTextPredictionEnabled = false;
             input.TextChanging += (_, _) => Set(key, input.Text); control = input;
         }
         AutomationProperties.SetAutomationId(control, "Notifications_" + key);

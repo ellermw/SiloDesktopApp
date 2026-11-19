@@ -129,6 +129,9 @@ The independent review found four P2 issues, all addressed in the final source:
   dialog can consume its one-time secret; elapsed time never authorizes it.
 - Page/root/window visibility retirement cancels the owner, clears private UI
   and dialogs, and reactivates under fresh authority when visible again.
+  Nonsecret unsaved typing is held by the page across that hide/restore and
+  restaged only when the authority epoch and account are unchanged; secrets,
+  dialogs, results and in-flight commands are still dropped.
 
 The contained `review-red-r4` unit run observed four behavioral assertion
 failures before the fixes. `review-native-red-host-r3` observed the mounted,

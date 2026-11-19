@@ -164,8 +164,9 @@ public static class AdminNotificationText
         ["web.admin.settings.notifications.serverChannels.saving"] = "Saving…",
         ["web.admin.settings.notifications.serverChannels.test"] = "Test",
         ["web.admin.settings.notifications.serverChannels.testFailed"] = "Test request failed",
-        ["web.admin.settings.notifications.serverChannels.testResult"] = "{outcome, select, ok {{status, select, none {Test succeeded ({duration_ms}ms)} other {Test succeeded (HTTP {status}{duration_ms}ms)}}} other {{status, select, none {Test failed ({duration_ms}ms)} other {Test failed (HTTP {status}{duration_ms}ms)}}}}",
-        ["web.admin.settings.notifications.serverChannels.testResultWithMessage"] = "{outcome, select, ok {{status, select, none {Test succeeded ({duration_ms}ms) — {message}} other {Test succeeded (HTTP {status}{duration_ms}ms) — {message}}}} other {{status, select, none {Test failed ({duration_ms}ms) — {message}} other {Test failed (HTTP {status}{duration_ms}ms) — {message}}}}}",
+        // The status and duration are separate values; a literal separator keeps them readable.
+        ["web.admin.settings.notifications.serverChannels.testResult"] = "{outcome, select, ok {{status, select, none {Test succeeded ({duration_ms}ms)} other {Test succeeded (HTTP {status}, {duration_ms}ms)}}} other {{status, select, none {Test failed ({duration_ms}ms)} other {Test failed (HTTP {status}, {duration_ms}ms)}}}}",
+        ["web.admin.settings.notifications.serverChannels.testResultWithMessage"] = "{outcome, select, ok {{status, select, none {Test succeeded ({duration_ms}ms) — {message}} other {Test succeeded (HTTP {status}, {duration_ms}ms) — {message}}}} other {{status, select, none {Test failed ({duration_ms}ms) — {message}} other {Test failed (HTTP {status}, {duration_ms}ms) — {message}}}}}",
         ["web.admin.settings.notifications.serverChannels.url"] = "URL",
         ["web.admin.settings.notifications.serverChannels.urlRequired"] = "A webhook URL is required",
         ["web.admin.settings.notifications.serverChannelsCard.batchWindow"] = "Batch window",

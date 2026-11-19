@@ -18,6 +18,7 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private sealed class Position { internal double Offset; }
+    private sealed record HiddenDraft(long Epoch, string AccountId, Dictionary<string, string> Values, string? RelayUrl);
     private static readonly ConditionalWeakTable<AdminRouteRequest, Position> Positions = new();
     private readonly Grid _root = new();
     private readonly ScrollViewer _scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -48,6 +49,7 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     private Window? _visibilityWindow;
     private long? _visibilityToken;
     private bool _windowVisible = true;
+    private HiddenDraft? _hiddenDraft;
     private System.Action? _clearDialogPrivate;
     private AdminRouteRequest? _location;
     private double? _restoreOffset;
@@ -111,6 +113,8 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         if (_visibilityWindow != null) _visibilityWindow.VisibilityChanged -= OnHostWindowVisibilityChanged;
         if (_visibilityToken is { } token) UnregisterPropertyChangedCallback(VisibilityProperty, token);
         _visibilityRoot = null; _visibilityWindow = null; _visibilityToken = null; _windowVisible = true;
+        // Only a hide/restore of the observed host carries typing over; every departure drops it.
+        _hiddenDraft = null;
     }
     private void OnHostRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => ApplyHostVisibility();
     private void OnHostWindowVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args)
@@ -119,7 +123,14 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     }
     private void ApplyHostVisibility()
     {
-        if (HostVisible) Activate(); else Close();
+        if (HostVisible) { Activate(); return; }
+        // Hiding retires the owner and all private UI. Nonsecret typing is held for the same unchanged authority only.
+        if (_active && _controller?.State is { Loaded: true, Owner: { IsCurrent: true } owner } state)
+        {
+            var values = state.DirtyKeys.Where(k => !C.Secrets.Contains(k)).ToDictionary(k => k, k => state.Values.GetValueOrDefault(k, ""), StringComparer.Ordinal);
+            if (values.Count > 0 || state.RelayUrlDirty) _hiddenDraft = new(owner.Epoch, owner.AccountId, values, state.RelayUrlDirty ? state.RelayUrl : null);
+        }
+        Close();
     }
     private void Activate()
     {
@@ -146,6 +157,17 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     {
         var current = state.Owner?.IsCurrent == true;
         if (!current) RetirePrivateUi();
+        if (current && state.Loaded && !state.Loading && _hiddenDraft is { } draft)
+        {
+            _hiddenDraft = null;
+            if (state.Owner!.Epoch == draft.Epoch && state.Owner.AccountId == draft.AccountId)
+            {
+                // Restage before drawing; this snapshot is stale once the held typing returns.
+                foreach (var (name, staged) in draft.Values) _controller?.Set(name, staged);
+                if (draft.RelayUrl != null) _controller?.SetRelayUrl(draft.RelayUrl);
+                QueueRender(); return;
+            }
+        }
         _loading.Visibility = state.Loading && !state.Loaded ? Visibility.Visible : Visibility.Collapsed;
         _title.Visibility = _loading.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
         _fields.Visibility = current && state.Loaded && !state.AccessBlocked ? Visibility.Visible : Visibility.Collapsed;
@@ -166,7 +188,12 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
                     if (!current || password.Password == _secretSynced.GetValueOrDefault(key, "")) { password.Password = value; _secretSynced[key] = value; }
                     password.PlaceholderText = state.Configured.Contains(key) ? "••••••••••••" : T("web.settings.secretField.notConfigured");
                 }
-                else if (control is TextBox text) { var display = C.Display(key, value); if (text.Text != display) text.Text = display; }
+                else if (control is TextBox text)
+                {
+                    // A staged value shows verbatim, and a display default never replaces a box emptied for typing.
+                    var display = state.DirtyKeys.Contains(key) ? value : C.Display(key, value);
+                    if (text.Text != display && (value.Length > 0 || text.Text.Length > 0 || text.FocusState == FocusState.Unfocused)) text.Text = display;
+                }
                 else if (control is ComboBox combo) combo.SelectedItem = combo.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == C.Display(key, value));
                 else if (control is ToggleSwitch toggle) toggle.IsOn = C.Display(key, value) == "true";
                 control.IsEnabled = editable && !state.ManagedByEnv.Contains(key) && (!C.DiscordKeys.Contains(key) || !state.SensitiveStatusError && !state.Saving && !state.OperationPending);
