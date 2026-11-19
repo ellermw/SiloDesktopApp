@@ -187,19 +187,23 @@ internal static class AdminNotificationSettingsNativeFixture
             window.AppWindow.Hide();
             try
             {
-                await Until(() => !hiddenOwner.IsCurrent, "hidden host retires the owner of a pending write");
+                await Until(() => HideDeferred(page), "hidden host defers retirement for a pending write");
+                Check(page.IsLoaded && !page.XamlRoot.IsHostVisible && hiddenOwner.IsCurrent && ReferenceEquals(page.Controller, controller) && controller.State.OperationPending, "hidden host keeps the owner of a pending write");
                 server.Gate.TrySetResult(); await hiddenWrite;
+                await Task.Delay(100);
+                Check(hiddenOwner.IsCurrent && !controller.State.OperationPending && controller.HasSigningSecret && Dialog(page) == null, "secret minted while hidden waits for the visible host");
             }
             finally
             {
                 server.Gate?.TrySetResult(); server.Gate = null;
                 window.AppWindow.Show(); window.Activate();
             }
-            await Until(() => page.Controller?.State is { Loaded: true, ChannelsLoaded: true, OperationUnknown: true, Error: not null }, "retired write reaches the fresh owner as an unknown outcome");
-            controller = page.Controller!;
-            await Until(() => ChannelEdit(page, false), "carried unknown outcome blocks channel commands");
-            await controller.ReloadAsync(true);
-            await Until(() => controller.State is { OperationUnknown: false, Error: null } && ChannelEdit(page, true), "explicit reload reconciles the carried outcome");
+            await Until(() => Dialog(page) is { IsLoaded: true, Title: "Save your signing secret" }, "visible host shows the secret minted while hidden");
+            var keptDialog = Dialog(page)!; var keptSecret = Desc(keptDialog).OfType<TextBox>().Single();
+            Check(hiddenOwner.IsCurrent && ReferenceEquals(page.Controller, controller) && keptSecret.Text == "synthetic-one-time", "kept owner delivers the write's one-time signing secret");
+            Check(controller.State is { OperationUnknown: false, OutcomeUnknown: false, Error: null }, "answered write is not carried as an unknown outcome");
+            keptDialog.Hide(); await Until(() => Dialog(page) == null && keptSecret.Text.Length == 0, "kept secret cleared on close");
+            await Until(() => ChannelEdit(page, true), "answered write leaves channel commands available");
             Invoke(Find<Button>(page, "NotificationsChannelEdit_c1")); await Until(() => Dialog(page) is { IsLoaded: true }, "editor before retirement");
             var privateUrl = Find<TextBox>(Dialog(page)!, "NotificationsChannelUrl"); privateUrl.Text = "https://example.test/synthetic-retirement";
             server.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously); var pending = controller.TestChannelAsync("c1");
@@ -221,6 +225,7 @@ internal static class AdminNotificationSettingsNativeFixture
     }
     private static bool ChannelEdit(DependencyObject page, bool enabled) => Desc(page).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == "NotificationsChannelEdit_c1" && b.IsEnabled == enabled);
     private static ContentDialog? Dialog(AdminNotificationSettingsPage page) => (ContentDialog?)typeof(AdminNotificationSettingsPage).GetField("_dialog", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page);
+    private static bool HideDeferred(AdminNotificationSettingsPage page) => (bool)typeof(AdminNotificationSettingsPage).GetField("_hideDeferred", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
     private static void Check(bool ok, string label) { Program.Log((ok ? "PASS: " : "FAIL: ") + label); if (!ok) throw new InvalidOperationException(label); }
     private static async Task Until(Func<bool> condition, string label) { for (var i = 0; i < 240 && !condition(); i++) await Task.Delay(25); if (!condition()) throw new InvalidOperationException("Timed out: " + label); }
     private static IEnumerable<DependencyObject> Desc(DependencyObject root) { yield return root; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var c in Desc(VisualTreeHelper.GetChild(root, i))) yield return c; }

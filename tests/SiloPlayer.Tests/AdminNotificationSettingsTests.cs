@@ -486,4 +486,18 @@ public sealed class AdminNotificationSettingsTests
         await h.Controller.ReloadAsync(true);
         Assert.False(h.Controller.State.OutcomeUnknown); Assert.Equal("false", h.Controller.State.Values["notifications.ui_enabled"]);
     }
+
+    [Fact]
+    public async Task MintedSigningSecretIsReportedWithoutBeingConsumedUntilTakenOrRetired()
+    {
+        using var h = new Harness { Channels = $$$"""{"items":[{{{Channel}}}],"page":{"has_more":false}}""" }; await h.Controller.OpenAsync();
+        Assert.False(h.Controller.HasSigningSecret);
+        h.Write = _ => Task.FromResult(Reply("""{"signing_secret":"synthetic-once"}"""));
+        await h.Controller.RotateChannelAsync("c1");
+        Assert.True(h.Controller.HasSigningSecret); Assert.True(h.Controller.HasSigningSecret);
+        Assert.Equal("synthetic-once", h.Controller.TakeSigningSecret()); Assert.False(h.Controller.HasSigningSecret);
+        await h.Controller.RotateChannelAsync("c1"); Assert.True(h.Controller.HasSigningSecret);
+        h.Controller.Suspend();
+        Assert.False(h.Controller.HasSigningSecret); Assert.Null(h.Controller.TakeSigningSecret());
+    }
 }

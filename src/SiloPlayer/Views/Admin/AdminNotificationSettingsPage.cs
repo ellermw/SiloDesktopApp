@@ -18,7 +18,7 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private sealed class Position { internal double Offset; }
-    private sealed record HiddenDraft(long Epoch, string AccountId, Dictionary<string, string> Values, string? RelayUrl, string? Write, bool Credentials);
+    private sealed record HiddenDraft(long Epoch, string AccountId, Dictionary<string, string> Values, string? RelayUrl, bool Credentials);
     private static readonly ConditionalWeakTable<AdminRouteRequest, Position> Positions = new();
     private readonly Grid _root = new();
     private readonly ScrollViewer _scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -53,10 +53,12 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     private System.Action? _clearDialogPrivate;
     private AdminRouteRequest? _location;
     private double? _restoreOffset;
-    private bool _active, _sync, _opening;
+    private bool _active, _sync, _opening, _hideDeferred;
     public C? Controller => _controller;
     public FrameworkElement ScrollContent => _scrollContent;
-    public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true;
+    public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true || HeldTyping != null;
+    // Typing held across a host hide stays this authority's unsaved work until it is restaged; another authority never inherits it.
+    private HiddenDraft? HeldTyping => _hiddenDraft is { } draft && (draft.Values.Count > 0 || draft.RelayUrl != null) && _authority.IsAvailable && _authority.Epoch == draft.Epoch ? draft : null;
 
     public AdminNotificationSettingsPage()
     {
@@ -123,14 +125,22 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     }
     private void ApplyHostVisibility()
     {
-        if (HostVisible) { Activate(); return; }
+        if (HostVisible)
+        {
+            // A page kept through a hide now shows what its owner received meanwhile.
+            if (_hideDeferred) { _hideDeferred = false; QueueRender(); }
+            Activate(); return;
+        }
         // Hiding retires the owner and all private UI. Nonsecret typing is held for the same unchanged authority only.
         if (_active && _controller?.State is { Loaded: true, Owner: { IsCurrent: true } owner } state)
         {
+            // A write the server may already have, and a signing secret only this owner can show, are never
+            // retired by a hide: the page stays owned until its host is visible again.
+            if (_hideDeferred || C.InterruptedWrite(state) != null || _secretShown || _controller.HasSigningSecret) { _hideDeferred = true; return; }
             var values = state.DirtyKeys.Where(k => !C.Secrets.Contains(k)).ToDictionary(k => k, k => state.Values.GetValueOrDefault(k, ""), StringComparer.Ordinal);
-            // A retired write may still reach the server and typed credentials are dropped; both are reported on return.
-            var write = C.InterruptedWrite(state); var credentials = state.DirtyKeys.Any(C.Secrets.Contains) || UnflushedSecrets();
-            if (values.Count > 0 || state.RelayUrlDirty || write != null || credentials) _hiddenDraft = new(owner.Epoch, owner.AccountId, values, state.RelayUrlDirty ? state.RelayUrl : null, write, credentials);
+            // Typed credentials are dropped; that is reported on return.
+            var credentials = state.DirtyKeys.Any(C.Secrets.Contains) || UnflushedSecrets();
+            if (values.Count > 0 || state.RelayUrlDirty || credentials) _hiddenDraft = new(owner.Epoch, owner.AccountId, values, state.RelayUrlDirty ? state.RelayUrl : null, credentials);
         }
         Close();
     }
@@ -148,7 +158,13 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         try { await _controller.OpenAsync(); }
         finally { _opening = false; if (_active && _authority.IsAvailable && _controller?.State.Owner == null) DispatcherQueue.TryEnqueue(() => { if (_active) _ = OpenAsync(); }); }
     }
-    private void AuthorityChanged() => DispatcherQueue.TryEnqueue(() => { if (!_active) return; if (_controller?.State.Owner == null) { RetirePrivateUi(); _ = OpenAsync(); } });
+    private void AuthorityChanged() => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!_active || _controller?.State.Owner != null) return;
+        // A page kept through a hide has nothing left to deliver once its authority is gone; it reopens when visible.
+        if (!HostVisible) { Close(); return; }
+        RetirePrivateUi(); _ = OpenAsync();
+    });
     private void QueueRender()
     {
         var controller = _controller; if (controller == null) return; var state = controller.State;
@@ -167,7 +183,7 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
                 // Restage before drawing; this snapshot is stale once the held typing returns.
                 foreach (var (name, staged) in draft.Values) _controller?.Set(name, staged);
                 if (draft.RelayUrl != null) _controller?.SetRelayUrl(draft.RelayUrl);
-                _controller?.RestoreInterrupted(draft.Write, draft.Credentials);
+                _controller?.RestoreInterrupted(null, draft.Credentials);
                 QueueRender(); return;
             }
         }
@@ -231,15 +247,29 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         _saveBar.Discard.IsEnabled = !state.Saving && !state.OperationPending;
         _spacer.Visibility = _saveBar.Visibility;
         if (state.Loaded && _restoreOffset is { } offset) { _restoreOffset = null; DispatcherQueue.TryEnqueue(() => { if (_active) { _root.UpdateLayout(); _scroll.ChangeView(null, offset, null, true); } }); }
-        if (_dialog == null && !state.OperationPending && _controller?.TakeSigningSecret() is { } secret) _ = ShowSecretAsync(secret);
+        // A secret minted while the host is hidden stays with the controller until its dialog can be seen.
+        if (HostVisible && _dialog == null && !state.OperationPending && _controller?.TakeSigningSecret() is { } secret) _ = ShowSecretAsync(secret);
     }
     private static bool IsProcessing(string key) => key is "notifications.release_events_enabled" or "notifications.fanout_enabled" || key.StartsWith("notifications.fanout.", StringComparison.Ordinal) || key.StartsWith("notifications.retention.", StringComparison.Ordinal);
     private void Set(string key, string value) { if (!_sync) _controller?.Set(key, value); }
     private void OnSaved(IReadOnlyCollection<string> keys) => DispatcherQueue.TryEnqueue(() => { if (_active && _controller?.State.Owner?.IsCurrent == true && App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell) shell.RefreshSettingsStatus(); });
     public Task<bool> CanLeaveAsync()
     {
-        if (_dialog != null || _controller?.State is { Saving: true } or { OperationPending: true }) return Task.FromResult(false);
+        if (_dialog != null || _controller?.State is { Saving: true } or { OperationPending: true } || _controller?.HasSigningSecret == true) return Task.FromResult(false);
+        if (HeldTyping is { } held) return CanDropHeldAsync(held);
         return _leave?.CanLeaveAsync(owner => U.ConfirmDiscardAsync(this, owner, () => _dialog, dialog => _dialog = dialog)) ?? Task.FromResult(true);
+    }
+    private async Task<bool> CanDropHeldAsync(HiddenDraft held)
+    {
+        // The hide retired the page owner, so the confirmation runs under a lease of the same unchanged authority.
+        MonitorAuthorityLease owner;
+        try { owner = _authority.Capture(); } catch (OperationCanceledException) { return true; }
+        using (owner)
+        {
+            if (owner.Epoch != held.Epoch || owner.AccountId != held.AccountId) return true;
+            return await new AdminLeaveGuard(() => owner, () => ReferenceEquals(_hiddenDraft, held), () => _hiddenDraft = null)
+                .CanLeaveAsync(lease => U.ConfirmDiscardAsync(this, lease, () => _dialog, dialog => _dialog = dialog));
+        }
     }
     public void SuspendAdminPage() { StopObservingHost(); Close(); }
     private void RetirePrivateUi()
@@ -263,7 +293,7 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     }
     private void Close()
     {
-        if (!_active) return; _active = false;
+        if (!_active) return; _active = false; _hideDeferred = false;
         if (_location != null) Positions.GetValue(_location, static _ => new()).Offset = _scroll.VerticalOffset;
         _authority.AvailabilityChanged -= AuthorityChanged;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Saved -= OnSaved; _controller.Dispose(); _controller = null; }

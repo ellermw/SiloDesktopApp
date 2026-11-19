@@ -18,7 +18,7 @@ public sealed partial class AdminNotificationSettingsPage
     private readonly List<Button> _channelButtons = [];
     private readonly List<ToggleSwitch> _channelToggles = [];
     private readonly Dictionary<ToggleSwitch, bool> _channelToggleValues = new();
-    private bool _syncChannels;
+    private bool _syncChannels, _secretShown;
     private readonly Dictionary<string, TextBlock> _channelResults = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProgressRing> _channelBusy = new(StringComparer.Ordinal);
     private IReadOnlyList<AdminNotificationChannel>? _renderedChannels;
@@ -216,7 +216,8 @@ public sealed partial class AdminNotificationSettingsPage
         var dialog = NewDialog(T("web.common.signingSecret.title"), content); dialog.CloseButtonText = T("web.common.signingSecret.saved");
         System.Action clear = () => text.Text = ""; _clearDialogPrivate = clear;
         using var retired = owner.Token.Register(() => DispatcherQueue.TryEnqueue(() => text.Text = ""));
+        _secretShown = true;
         try { await ShowDialogAsync(dialog, owner); }
-        finally { clear(); secret = ""; if (ReferenceEquals(_clearDialogPrivate, clear)) _clearDialogPrivate = null; }
+        finally { _secretShown = false; clear(); secret = ""; if (ReferenceEquals(_clearDialogPrivate, clear)) _clearDialogPrivate = null; }
     }
 }

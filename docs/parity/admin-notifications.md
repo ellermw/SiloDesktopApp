@@ -130,15 +130,23 @@ The independent review found four P2 issues, all addressed in the final source:
 - Page/root/window visibility retirement cancels the owner, clears private UI
   and dialogs, and reactivates under fresh authority when visible again.
   Nonsecret unsaved typing is held by the page across that hide/restore and
-  restaged only when the authority epoch and account are unchanged; secrets,
-  dialogs, results and in-flight commands are still dropped. A settings save or
-  server-changing command retired that way may still have reached the server,
-  so under the same epoch and account the fresh owner starts with it as an
-  unknown outcome: commands stay blocked until an explicit successful Reload,
-  and the notice says that a signing secret minted by a create or rotation was
-  not shown and must be rotated. Dropped credential typing is reported on
-  return without blocking. A dropped delivery test changes no server
-  configuration and is not carried.
+  restaged only when the authority epoch and account are unchanged; typed
+  credentials, dialogs, results and delivery tests are still dropped. While
+  that typing is held it still counts as unsaved work: leaving the page or
+  closing the window asks for the discard confirmation under the same
+  unchanged authority. Dropped credential typing is reported on return
+  without blocking. A dropped delivery test changes no server configuration
+  and is not carried. A hide never retires a settings save or
+  server-changing command that is already in flight, nor a one-time signing
+  secret that is waiting or on display: there is no retirement for that hide.
+  That page keeps its owner until the host is visible again, so the
+  server's answer arrives, a create or rotation shows its signing secret on
+  return, and the normal leave guard keeps applying. A secret minted while
+  hidden stays with the controller until its dialog can be seen, and leaving
+  is refused until then. An authority change still retires the kept page at
+  once. This deferral and the held-typing leave guard were added after the
+  runs recorded below; their unit case and native assertions are not covered
+  by those receipts.
 
 The contained `review-red-r4` unit run observed four behavioral assertion
 failures before the fixes. `review-native-red-host-r3` observed the mounted,

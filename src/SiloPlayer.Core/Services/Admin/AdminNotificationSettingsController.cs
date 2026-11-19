@@ -340,6 +340,8 @@ public sealed class AdminNotificationSettingsController : IDisposable
             return true;
         }
     }
+    /// <summary>Whether a minted signing secret still waits for the current owner to take and show it.</summary>
+    public bool HasSigningSecret { get { lock (_gate) return _signingSecret != null && _state.Owner?.IsCurrent == true; } }
     public string? TakeSigningSecret()
     {
         lock (_gate) { var result = _state.Owner?.IsCurrent == true ? _signingSecret : null; _signingSecret = null; return result; }
