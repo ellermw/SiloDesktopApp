@@ -28,7 +28,7 @@ internal static class AdminIntegrationsNativeFixture
         internal readonly Dictionary<string, string> Values = AdminIntegrationsSettings.AllKeys.ToDictionary(key => key, _ => "");
         internal readonly List<string> Writes = [];
         internal TaskCompletionSource? ReadGate;
-        internal bool Conflict, FailRead, FailProviderAction, EnvironmentOwnedWeb, StaleWebRead, FailedWebInstallation;
+        internal bool Conflict, FailRead, FailProviderAction, EnvironmentOwnedWeb, StaleWebRead, LostWebOperation, FailedWebInstallation;
         internal bool ChatConnected = true, LoginPending, WebOperationRunning, CreatedProvider, UsagePaused;
         internal string ActiveAccount = "account-1", LoginResult = "idle";
         internal int InFlight, MaximumInFlight, Reads, Version = 1;
@@ -122,7 +122,7 @@ internal static class AdminIntegrationsNativeFixture
         }
         private object WebStatus()
         {
-            var stale = StaleWebRead; StaleWebRead = false;
+            var stale = StaleWebRead || LostWebOperation; StaleWebRead = false;
             return new { enabled = true, web_enabled = false, web_state = WebOperationRunning && !stale ? "installing" : FailedWebInstallation ? "failed" : "installed", installed_version = FailedWebInstallation ? null : "10.11.0", install_root = "/synthetic", install_path = "/synthetic/current", installer_ready = true, prerequisites = Array.Empty<object>(), operation = new { id = stale ? "older-operation" : "operation-1", state = WebOperationRunning && !stale ? "running" : "succeeded", kind = "install", progress_percent = WebOperationRunning && !stale ? 40 : 100 }, last_error = FailedWebInstallation ? "Synthetic invalid provenance" : "" };
         }
         private object ChatStatus() => new { active_client_id = ActiveAccount, accounts = new[] { new { client_id = "account-1", email = "first@example.invalid", connected = ChatConnected, needs_login = !ChatConnected, usage_limited = false }, new { client_id = "account-2", email = "second@example.invalid", connected = !UsagePaused, needs_login = false, usage_limited = UsagePaused } }, login_pending = LoginPending, login_result = LoginResult, attempt_id = "attempt-1" };
@@ -313,6 +313,22 @@ internal static class AdminIntegrationsNativeFixture
             }
             handler.EnvironmentOwnedWeb = true; Invoke(Find<Button>(page, "AdminIntegrationsReloadDiscard")); await Idle(page);
             Check(!Enabled(page, "AdminJellyfinWebToggle"), "environment-owned web toggle is not actionable");
+            ReviewCheck(Enabled(page, "AdminJellyfinWebInstall"), "a settled page can start the install whose operation the server then never shows");
+            if (Enabled(page, "AdminJellyfinWebInstall"))
+            {
+                handler.LostWebOperation = true; Invoke(Find<Button>(page, "AdminJellyfinWebInstall")); await Idle(page);
+                var lostWrites = handler.Writes.Count;
+                ReviewCheck(Field(page, "_acceptedWebOperation") is AdminJellyfinWebStatus { OperationId: "operation-1" } && !Enabled(page, "AdminJellyfinWebReview"), "an accepted operation still inside its wait cannot be given up");
+                page.GetType().GetField("_webReceiptDeadline", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, DateTimeOffset.UtcNow.AddSeconds(-1));
+                Invoke(Find<Button>(page, "AdminIntegrationsReloadKeep")); await Idle(page);
+                ReviewCheck(Field(page, "_commandUnknown") is true && !Enabled(page, "AdminJellyfinWebInstall") && Enabled(page, "AdminJellyfinWebReview"), "an accepted operation the server never shows stays gated after Reload and offers an explicit review");
+                if (Enabled(page, "AdminJellyfinWebReview"))
+                {
+                    Invoke(Find<Button>(page, "AdminJellyfinWebReview")); await Idle(page);
+                    ReviewCheck(Field(page, "_acceptedWebOperation") == null && Field(page, "_commandUnknown") is false && Enabled(page, "AdminJellyfinWebInstall"), "the explicit review adopts the server status and lifts the gate");
+                    ReviewCheck(handler.Writes.Count == lostWrites, "the explicit review never replays an accepted write");
+                }
+            }
             Check(ReviewFailures.Count == 0, "all Integrations review regressions: " + string.Join("; ", ReviewFailures));
         }
         finally

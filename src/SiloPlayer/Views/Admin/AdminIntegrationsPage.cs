@@ -187,8 +187,10 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
                 else if (_webReceiptDeadline is { } deadline && DateTimeOffset.UtcNow >= deadline)
                 {
                     _commandUnknown = true;
-                    _domainError = "The accepted local operation is not visible on this server. Reload and review before trying another command.";
+                    _domainError = "The accepted local operation is not visible on this server. Reload and review before trying another command, or use the server status if it still does not appear.";
                 }
+                // An operation the server showed and then stopped reporting gets the same wait as one it never showed.
+                else if (_acceptedWebOperation != null && _webReceiptDeadline == null) _webReceiptDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
             }
             if (Current(controller)) { _domainLoaded = true; if (!_commandUnknown) _domainError = loginFailure; }
         }
@@ -349,7 +351,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             button.IsEnabled = Ready && (kind == "ai_chat" ? TextReady || Value("ai.auth_mode") == "chatgpt" && _connection?.Active is { UsageLimited: true, Authenticated: true } && Value("ai.chat_model") != "" : kind == "ai_transcription" ? FeatureReady("subtitle_ai.transcribe_enabled") : AdminIntegrationPolicy.ProviderReady(_providers, Value("recommendations.embedding_provider_id"), "embeddings", Value("recommendations.embedding_model")));
         UpdateProviderEditorEnabled();
     }
-    private async Task ReloadAsync(bool preserve)
+    private async Task ReloadAsync(bool preserve, bool adoptServerStatus = false)
     {
         var controller = _controller; if (controller == null || _busy || DomainHeld) return;
         // A background poll leaves this action enabled; let it settle instead of dropping the request.
@@ -360,6 +362,8 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         _models.Clear();
         await controller.ReloadAsync(preserve);
         if (!Current(controller)) return;
+        // A plain reload keeps the accepted operation; only the explicit review gives it up, and only once its wait has passed.
+        if (adoptServerStatus && WebReceiptOverdue) { _acceptedWebOperation = null; _webReceiptDeadline = null; }
         await RefreshDomainAsync();
         if (Current(controller) && controller.State.Error == null && _domainLoaded && _acceptedWebOperation == null) { _commandUnknown = false; _domainError = null; Render(controller.State); BuildDomain(); }
     }

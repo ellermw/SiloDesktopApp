@@ -188,6 +188,9 @@ public sealed partial class AdminIntegrationsPage
             }, CanRemoveWeb,
                 "Remove Jellyfin Web", "Remove managed Jellyfin Web files from the saved install folder? The compatibility API remains available."));
         panel.Children.Add(actions);
+        // Reload keeps an accepted operation the server does not show, so the admin needs an explicit way to continue from what the server reports.
+        if (WebReceiptOverdue) AddAction(panel, "Use server status", "AdminJellyfinWebReview", !_busy && !DomainHeld && _controller?.State is { Loading: false, Saving: false },
+            async () => { await ReloadAsync(true, adoptServerStatus: true); SchedulePoll(); });
         if (status != null)
         {
             var details = new StackPanel { Spacing = 6 };
@@ -204,6 +207,7 @@ public sealed partial class AdminIntegrationsPage
         _jellyfinWeb = receipt; _acceptedWebOperation = receipt.OperationRunning ? receipt : null;
         _webReceiptDeadline = receipt.OperationRunning ? DateTimeOffset.UtcNow.AddSeconds(30) : null;
     }
+    private bool WebReceiptOverdue => _commandUnknown && _acceptedWebOperation != null && _webReceiptDeadline is { } deadline && DateTimeOffset.UtcNow >= deadline;
     private bool CanRemoveWeb() => _jellyfinWeb is { OperationRunning: false, WebState: "installed" or "update_available" or "failed" } && _controller != null &&
         !_controller.State.DirtyKeys.Any(key => key is "jellyfin_compat.web_version" or "jellyfin_compat.web_install_dir");
 }
