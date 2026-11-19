@@ -356,6 +356,7 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminMarkerHistoryPage.xbf',
     'Views/Admin/AdminActivityPage.xbf',
     'Views/Admin/AdminSubtitlesPage.xbf',
+    'Views/Admin/AdminLibrariesPage.xbf',
     'Views/Admin/AdminLogsPage.xbf',
     'Views/Admin/AdminDiagnosticsPage.xbf',
     'Views/Admin/AdminLoggingSettingsPage.xbf',
@@ -363,7 +364,12 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminEmailSettingsPage.xbf',
     'Views/Admin/AdminSecuritySettingsPage.xbf',
     'Views/Admin/AdminNetworkAccessSettingsPage.xbf',
+    'Views/Admin/AdminSearchSettingsPage.xbf',
     'Views/Admin/AdminDownloadSettingsPage.xbf',
+    'Views/Admin/AdminMaintenancePage.xbf',
+    'Views/Admin/AdminStorageSettingsPage.xbf',
+    'Views/Admin/AdminScheduledTasksPage.xbf',
+    'Views/Admin/Users/AdminUsersPage.xbf',
     'Views/Admin/AdminBackupsPage.xbf',
     'Controls/ServerActivityButton.xbf'
 )

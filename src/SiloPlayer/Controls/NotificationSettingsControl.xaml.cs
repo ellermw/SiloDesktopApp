@@ -24,6 +24,8 @@ public sealed partial class NotificationSettingsControl : UserControl
     public NotificationSettingsControl()
     {
         InitializeComponent();
+        // Official #4287: Enter confirming an IME candidate must not submit the email address.
+        ImeCompositionGuard.Attach(EmailAddressInput);
         DataContext = ViewModel;
         Loaded += NotificationSettingsControl_Loaded;
         AppLocalization.Register(this, RefreshModeLabels);
@@ -146,6 +148,7 @@ public sealed partial class NotificationSettingsControl : UserControl
 
     private async void EmailAddressInput_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (ImeCompositionGuard.Attach(EmailAddressInput).ShouldIgnore(e)) return;
         if (e.Key != Windows.System.VirtualKey.Enter) return;
         e.Handled = true;
         await SubmitEmailAddressAsync();

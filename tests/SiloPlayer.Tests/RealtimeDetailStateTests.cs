@@ -1541,6 +1541,57 @@ public sealed class RealtimeDetailStateTests
         Assert.False(episode.UserData.Played);
     }
 
+    [Theory]
+    [InlineData("series", false)]
+    [InlineData("season", false)]
+    [InlineData("series", true)]
+    [InlineData("season", true)]
+    public async Task ServerMetadataReloadReconcilesContainerRowsAndCounts(string type, bool emptyRows)
+    {
+        using var scope = new Scope(type);
+        var vm = scope.Vm;
+        var mounted = vm.Item!;
+        vm.SelectedSeasonNumber = 1;
+        vm.EpisodesSeasonContentId = "season";
+        if (emptyRows) { vm.Seasons.Clear(); vm.Episodes.Clear(); }
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
+        {
+            ContentId = mounted.ContentId, Type = type, Title = "Refreshed",
+            EpisodeCount = 2, SeasonCount = 2
+        });
+        scope.OverrideResponse = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            var body = path.EndsWith("/episodes")
+                ? """{"items":[{"content_id":"sibling","season_number":1,"title":"Updated episode"},{"content_id":"new-episode","season_number":1,"title":"New episode"}]}"""
+                : path.EndsWith("/seasons")
+                    ? """{"items":[{"content_id":"season","season_number":1,"episode_count":2,"title":"Updated season"},{"content_id":"new-season","season_number":2,"episode_count":0}]}"""
+                    : null;
+            return body == null ? null : new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+        };
+
+        Assert.True(await vm.RefreshServerMetadataAsync(mounted.ContentId).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Same(mounted, vm.Item);
+        Assert.Equal("Refreshed", mounted.Title);
+        Assert.Equal(2, mounted.EpisodeCount);
+        Assert.Equal(2, mounted.SeasonCount);
+        Assert.Equal(new[] { "sibling", "new-episode" }, vm.Episodes.Select(episode => episode.ContentId));
+        Assert.Equal("Updated episode", vm.Episodes[0].Title);
+        if (type == "series")
+        {
+            Assert.Equal(new[] { "season", "new-season" }, vm.Seasons.Select(season => season.ContentId));
+            Assert.Equal("Updated season", vm.Seasons[0].Title);
+            Assert.Equal(2, vm.Seasons[0].EpisodeCount);
+        }
+        Assert.Equal(1, vm.SelectedSeasonNumber);
+        Assert.Equal("season", vm.EpisodesSeasonContentId);
+        Assert.False(vm.IsLoading);
+    }
+
     private sealed class Scope : HttpMessageHandler
     {
         private readonly HttpClient _http;

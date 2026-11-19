@@ -425,8 +425,8 @@ public static class AdminRouteCatalog
     /// <summary>Admin pages that exist in the WebUI but are outside this native scope (route pattern segments; "*" is a parameter).</summary>
     private static readonly string[][] UnsupportedPatterns =
     [
-        ["maintenance"], ["plugins"], ["plugins", "*"],
-        ["policy"], ["recommendations"], ["api-keys"], ["tasks"], ["tasks", "*"],
+        ["plugins"], ["plugins", "*"],
+        ["policy"], ["recommendations"], ["api-keys"],
     ];
 
     /// <summary>

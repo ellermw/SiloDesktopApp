@@ -18,6 +18,8 @@ public class ThemeColors
     public string MutedForeground { get; set; } = "";
     public string Border { get; set; } = "";
     public string Input { get; set; } = "";
+    /// <summary>Form-field edge: the WebUI's <c>--input</c> border token (official #4308).</summary>
+    public string InputBorder { get; set; } = "";
     public string Sidebar { get; set; } = "";
     public string Surface { get; set; } = "";
     public string SurfaceHover { get; set; } = "";
@@ -83,6 +85,10 @@ public class ThemeService
             MutedForeground = "#A4A4AE",
             Border = "#28282E",
             Input = "#1C1C20",
+            // Official #4308 --input-base: a text field, select or unchecked switch
+            // has no other edge, so it holds 3:1 (WCAG 1.4.11) against the page,
+            // popover, card and field surfaces. Border stays the hairline.
+            InputBorder = "#6A6A74",
             Sidebar = "#0F0F12",
             Surface = "#1C1C20",
             SurfaceHover = "#232328",
@@ -147,6 +153,7 @@ public class ThemeService
         UpdateBrush(res, "SurfaceRaisedBrush", colors.SurfaceRaised);
         UpdateBrush(res, "BorderBrush", colors.Border);
         UpdateBrush(res, "InputBrush", colors.Input);
+        UpdateBrush(res, "InputBorderBrush", colors.InputBorder);
         UpdateBrush(res, "SecondaryBackgroundBrush", colors.Secondary);
         UpdateBrush(res, "AccentBackgroundBrush", colors.Accent);
         UpdateBrush(res, "SidebarAccentBrush", colors.SidebarAccent);
@@ -178,6 +185,7 @@ public class ThemeService
         UpdateColor(res, "SurfaceRaisedColor", colors.SurfaceRaised);
         UpdateColor(res, "BorderColor", colors.Border);
         UpdateColor(res, "InputColor", colors.Input);
+        UpdateColor(res, "InputBorderColor", colors.InputBorder);
         UpdateColor(res, "SecondaryBackgroundColor", colors.Secondary);
         UpdateColor(res, "AccentBackgroundColor", colors.Accent);
         UpdateColor(res, "PrimaryTextColor", colors.Foreground);
@@ -258,14 +266,126 @@ public class ThemeService
             UpdateBrush(res, "SecondaryTextBrush", "#D1D5DB");
             UpdateBrush(res, "TertiaryTextBrush", "#B6C0CE");
             UpdateBrush(res, "BorderBrush", "#8091A7");
+            // WebUI high contrast: --input mixes 16% --contrast-boost (#FFF) into #6A6A74.
+            UpdateBrush(res, "InputBorderBrush", "#82828A");
             UpdateBrush(res, "RingBrush", "#FFFFFF");
             UpdateColor(res, "RingColor", "#FFFFFF");
             UpdateColor(res, "PrimaryTextColor", "#FFFFFF");
             UpdateColor(res, "SecondaryTextColor", "#D1D5DB");
             UpdateColor(res, "TertiaryTextColor", "#B6C0CE");
             UpdateColor(res, "BorderColor", "#8091A7");
+            UpdateColor(res, "InputBorderColor", "#82828A");
         }
         RefreshDerivedControlResources(res);
+        ApplySystemContrast(res);
+    }
+
+    // ===== Windows contrast themes (the WebUI's forced-colors, official #4297/#4308) =====
+    //
+    // A Windows contrast theme replaces the app palette with the system one, as forced
+    // colors does in the browser: surfaces take Window, text and edges WindowText, and
+    // the primary accent, focus ring, checked switch and slider fill take Highlight with
+    // HighlightText on top. Selected items (sidebar page, combo item, list selection)
+    // use the Highlight/HighlightText pair, and the unchecked switch keeps a Window
+    // track so its WindowText thumb stays visible. Every key written here is one
+    // ApplyTheme writes from the theme, so leaving the contrast theme restores the
+    // palette exactly. Created on the first ApplyTheme, which runs on the UI thread.
+    private Windows.UI.ViewManagement.AccessibilitySettings? _systemContrast;
+    private Windows.UI.ViewManagement.UISettings? _systemColors;
+    private bool _systemContrastApplied;
+    private bool _systemContrastWatched;
+
+    private static readonly string[] SystemWindowTokens =
+    [
+        "AppBackground", "SidebarBackground", "CardBackground", "Surface", "SurfaceHover", "SurfaceRaised",
+        "Popover", "Input", "SecondaryBackground", "Muted", "AccentBackground", "SidebarAccent",
+    ];
+    private static readonly string[] SystemWindowTextTokens =
+    [
+        "PrimaryText", "SecondaryText", "TertiaryText", "SecondaryForeground", "CardForeground",
+        "PopoverForeground", "ThemeAccentForeground", "SidebarForeground", "SidebarAccentForeground",
+        "Border", "InputBorder", "SidebarBorder",
+    ];
+    private static readonly string[] SystemHighlightTokens = ["Accent", "Ring", "SidebarPrimary", "SidebarRing"];
+    private static readonly string[] SystemHighlightTextTokens = ["AccentForeground", "SidebarPrimaryForeground"];
+
+    /// <summary>Whether a Windows contrast theme is on now.</summary>
+    public bool IsSystemHighContrast
+    {
+        get { try { return _systemContrast?.HighContrast == true; } catch { return false; } }
+    }
+
+    private void ApplySystemContrast(ResourceDictionary res)
+    {
+        EnsureSystemContrastWatch();
+        _systemContrastApplied = false;
+        var system = _systemColors;
+        if (system is null || !IsSystemHighContrast) return;
+
+        Color window, windowText, highlight, highlightText, grayText;
+        try
+        {
+            window = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Window);
+            windowText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.WindowText);
+            highlight = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Highlight);
+            highlightText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.HighlightText);
+            grayText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.GrayText);
+        }
+        catch
+        {
+            return;
+        }
+
+        _systemContrastApplied = true;
+        foreach (var token in SystemWindowTokens) SetToken(res, token, window);
+        foreach (var token in SystemWindowTextTokens) SetToken(res, token, windowText);
+        foreach (var token in SystemHighlightTokens) SetToken(res, token, highlight);
+        foreach (var token in SystemHighlightTextTokens) SetToken(res, token, highlightText);
+        RefreshDerivedControlResources(res);
+
+        // Selection, switch and slider state, which a single palette swap leaves ambiguous.
+        SetBrushColor(res, "NavigationViewItemBackgroundSelected", highlight);
+        SetBrushColor(res, "NavigationViewItemForegroundSelected", highlightText);
+        SetBrushColor(res, "ComboBoxItemBackgroundSelected", highlight);
+        SetBrushColor(res, "ComboBoxItemForegroundSelected", highlightText);
+        SetBrushColor(res, "SystemControlHighlightListAccentLowBrush", highlight);
+        SetBrushColor(res, "SystemControlHighlightListAccentMediumBrush", highlight);
+        SetBrushColor(res, "ToggleSwitchFillOff", window);
+        SetBrushColor(res, "ToggleSwitchFillOffPointerOver", window);
+        SetBrushColor(res, "SliderTrackFill", grayText);
+        // Page backdrops read the background tokens; refresh them with the system ones.
+        Helpers.PageBackdrop.RefreshAll();
+    }
+
+    private void EnsureSystemContrastWatch()
+    {
+        if (_systemContrastWatched) return;
+        _systemContrastWatched = true;
+        try
+        {
+            _systemContrast = new Windows.UI.ViewManagement.AccessibilitySettings();
+            _systemColors = new Windows.UI.ViewManagement.UISettings();
+            var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            // ColorValuesChanged also covers switching between two contrast themes. It
+            // arrives off the UI thread; reapply only when a contrast theme is or was on.
+            if (dispatcher is not null)
+                _systemColors.ColorValuesChanged += (_, _) => dispatcher.TryEnqueue(() =>
+                {
+                    if (_systemContrastApplied || IsSystemHighContrast) ApplyTheme(CurrentTheme);
+                });
+        }
+        catch
+        {
+            // Without the system settings the app keeps its own palette.
+            _systemContrast = null;
+            _systemColors = null;
+        }
+    }
+
+    private static void SetToken(ResourceDictionary res, string token, Color color)
+    {
+        SetBrushColor(res, token + "Brush", color);
+        SetColor(res, token + "Color", color);
     }
 
     private void ApplyOverrideResources(IReadOnlyDictionary<string, string> overrides)
@@ -320,10 +440,13 @@ public class ThemeService
     };
 
     private static void UpdateBrush(ResourceDictionary res, string key, string hex)
+        => SetBrushColor(res, key, ColorFromHex(hex));
+
+    private static void SetBrushColor(ResourceDictionary res, string key, Color color)
     {
         if (TryFindBrush(res, key, out var brush))
         {
-            brush!.Color = ColorFromHex(hex);
+            brush!.Color = color;
         }
     }
 
@@ -354,9 +477,14 @@ public class ThemeService
             "TextControlPlaceholderForegroundFocused");
         CopyBrushColor(resources, "BorderBrush",
             "ButtonBorderBrush", "ButtonBorderBrushPointerOver", "ButtonBorderBrushPressed",
-            "TextControlBorderBrush", "ComboBoxBorderBrush", "ComboBoxDropDownBorderBrush",
+            "ComboBoxDropDownBorderBrush",
             "ContentDialogBorderBrush", "MenuFlyoutPresenterBorderBrush",
             "ToggleSwitchStrokeOff", "ToggleSwitchStrokeOffPointerOver");
+        // Official #4308: a field's only edge, and the unchecked switch track
+        // (bg-input), use the 3:1 input border instead of the hairline.
+        CopyBrushColor(resources, "InputBorderBrush",
+            "TextControlBorderBrush", "ComboBoxBorderBrush",
+            "ToggleSwitchFillOff", "ToggleSwitchFillOffPointerOver");
         CopyBrushColor(resources, "AccentBrush",
             "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused",
             "ComboBoxBorderBrushPointerOver",
@@ -379,7 +507,6 @@ public class ThemeService
         CopyBrushColor(resources, "AppBackgroundBrush", "NavigationViewContentBackground", "ContentDialogBackground",
             "SliderOuterThumbBackground", "SliderThumbBackground", "SliderThumbBackgroundPointerOver", "SliderThumbBackgroundPressed");
         CopyBrushColor(resources, "SurfaceHoverBrush", "NavigationViewItemBackgroundPointerOver");
-        CopyBrushColor(resources, "BorderBrush", "ToggleSwitchFillOff", "ToggleSwitchFillOffPointerOver");
     }
 
     private static void CopyBrushColor(ResourceDictionary resources, string sourceKey, params string[] targetKeys)
@@ -413,8 +540,10 @@ public class ThemeService
     }
 
     private static void UpdateColor(ResourceDictionary res, string key, string hex)
+        => SetColor(res, key, ColorFromHex(hex));
+
+    private static void SetColor(ResourceDictionary res, string key, Color color)
     {
-        var color = ColorFromHex(hex);
         if (res.ContainsKey(key))
         {
             res[key] = color;

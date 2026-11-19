@@ -5236,6 +5236,7 @@ public partial class PlayerService : IDisposable
 
         _videoWindow = new MpvVideoWindow();
         _videoWindow.Create(parentHwnd);
+        App.Services.GetRequiredService<ToastService>().SetPlaybackSurface(_videoWindow);
         if (_playbackCts is { } preparationOwner)
             _videoWindow.SuppressVisibility(preparationOwner);
         WireVideoWindowEvents();
