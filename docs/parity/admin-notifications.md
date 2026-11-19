@@ -131,7 +131,14 @@ The independent review found four P2 issues, all addressed in the final source:
   and dialogs, and reactivates under fresh authority when visible again.
   Nonsecret unsaved typing is held by the page across that hide/restore and
   restaged only when the authority epoch and account are unchanged; secrets,
-  dialogs, results and in-flight commands are still dropped.
+  dialogs, results and in-flight commands are still dropped. A settings save or
+  server-changing command retired that way may still have reached the server,
+  so under the same epoch and account the fresh owner starts with it as an
+  unknown outcome: commands stay blocked until an explicit successful Reload,
+  and the notice says that a signing secret minted by a create or rotation was
+  not shown and must be rotated. Dropped credential typing is reported on
+  return without blocking. A dropped delivery test changes no server
+  configuration and is not carried.
 
 The contained `review-red-r4` unit run observed four behavioral assertion
 failures before the fixes. `review-native-red-host-r3` observed the mounted,

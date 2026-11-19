@@ -449,4 +449,41 @@ public sealed class AdminNotificationSettingsTests
         await h.Controller.ClearRelayAsync(); Assert.True(h.Controller.State.OperationUnknown);
         await h.Controller.ClearRelayAsync(); Assert.Equal(2, h.Writes.Length);
     }
+
+    [Fact]
+    public async Task WriteRetiredBeforeItsAnswerBlocksTheFreshOwnerUntilExplicitReload()
+    {
+        using var h = new Harness { Channels = $$$"""{"items":[{{{Channel}}}],"page":{"has_more":false}}""" }; await h.Controller.OpenAsync();
+        var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Write = _ => pending.Task;
+        var op = h.Controller.RotateChannelAsync("c1");
+        var write = AdminNotificationSettingsController.InterruptedWrite(h.Controller.State);
+        h.Controller.Dispose(); pending.SetResult(Reply("""{"signing_secret":"synthetic-lost"}""")); await op;
+        Assert.Equal("channel-rotate", write);
+        using var fresh = new AdminNotificationSettingsController(new AdminServerSettingsApi(h.Kit.Client), h.Store, new AdminNotificationSettingsApi(h.Kit.Client), h.Authority);
+        await fresh.OpenAsync(); fresh.RestoreInterrupted(write, false);
+        Assert.True(fresh.State.OperationUnknown); Assert.Contains("signing secret", fresh.State.Error ?? "");
+        Assert.Null(fresh.TakeSigningSecret());
+        await fresh.RotateChannelAsync("c1"); Assert.Single(h.Writes);
+        await fresh.ReloadAsync(true);
+        Assert.False(fresh.State.OperationUnknown); Assert.Null(fresh.State.Error);
+    }
+
+    [Fact]
+    public async Task OnlyServerChangingWritesAreCarriedAndClearedCredentialsAreReportedWithoutBlocking()
+    {
+        Assert.Null(AdminNotificationSettingsController.InterruptedWrite(new() { OperationPending = true, ActiveOperation = "channel-test" }));
+        Assert.Null(AdminNotificationSettingsController.InterruptedWrite(new() { OperationPending = true, ActiveOperation = "discord-test" }));
+        Assert.Null(AdminNotificationSettingsController.InterruptedWrite(new()));
+        Assert.Equal("relay-register", AdminNotificationSettingsController.InterruptedWrite(new() { OperationPending = true, ActiveOperation = "relay-register" }));
+        Assert.Equal("save", AdminNotificationSettingsController.InterruptedWrite(new() { Saving = true }));
+        using var h = new Harness(); await h.Controller.OpenAsync();
+        h.Controller.RestoreInterrupted(null, true);
+        Assert.NotNull(h.Controller.State.Error); Assert.False(h.Controller.State.OperationUnknown); Assert.False(h.Controller.State.OutcomeUnknown);
+        h.Controller.RestoreInterrupted("save", false);
+        Assert.True(h.Controller.State.OutcomeUnknown); Assert.False(h.Controller.State.OperationUnknown);
+        h.Controller.Set("notifications.ui_enabled", "false"); await h.Controller.SaveAsync(); Assert.Empty(h.Writes);
+        await h.Controller.ReloadAsync(true);
+        Assert.False(h.Controller.State.OutcomeUnknown); Assert.Equal("false", h.Controller.State.Values["notifications.ui_enabled"]);
+    }
 }

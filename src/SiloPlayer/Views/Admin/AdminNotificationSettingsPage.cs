@@ -18,7 +18,7 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private sealed class Position { internal double Offset; }
-    private sealed record HiddenDraft(long Epoch, string AccountId, Dictionary<string, string> Values, string? RelayUrl);
+    private sealed record HiddenDraft(long Epoch, string AccountId, Dictionary<string, string> Values, string? RelayUrl, string? Write, bool Credentials);
     private static readonly ConditionalWeakTable<AdminRouteRequest, Position> Positions = new();
     private readonly Grid _root = new();
     private readonly ScrollViewer _scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -128,7 +128,9 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         if (_active && _controller?.State is { Loaded: true, Owner: { IsCurrent: true } owner } state)
         {
             var values = state.DirtyKeys.Where(k => !C.Secrets.Contains(k)).ToDictionary(k => k, k => state.Values.GetValueOrDefault(k, ""), StringComparer.Ordinal);
-            if (values.Count > 0 || state.RelayUrlDirty) _hiddenDraft = new(owner.Epoch, owner.AccountId, values, state.RelayUrlDirty ? state.RelayUrl : null);
+            // A retired write may still reach the server and typed credentials are dropped; both are reported on return.
+            var write = C.InterruptedWrite(state); var credentials = state.DirtyKeys.Any(C.Secrets.Contains) || UnflushedSecrets();
+            if (values.Count > 0 || state.RelayUrlDirty || write != null || credentials) _hiddenDraft = new(owner.Epoch, owner.AccountId, values, state.RelayUrlDirty ? state.RelayUrl : null, write, credentials);
         }
         Close();
     }
@@ -165,6 +167,7 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
                 // Restage before drawing; this snapshot is stale once the held typing returns.
                 foreach (var (name, staged) in draft.Values) _controller?.Set(name, staged);
                 if (draft.RelayUrl != null) _controller?.SetRelayUrl(draft.RelayUrl);
+                _controller?.RestoreInterrupted(draft.Write, draft.Credentials);
                 QueueRender(); return;
             }
         }

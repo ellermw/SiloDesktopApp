@@ -179,6 +179,27 @@ internal static class AdminNotificationSettingsNativeFixture
             await Until(() => page.Controller?.State is { Loaded: true, ChannelsLoaded: true, Owner.IsCurrent: true }, "visible host reopens with fresh authority");
             controller = page.Controller!;
             Check(!ReferenceEquals(hiddenOwner, controller.State.Owner), "visibility recovery does not reuse retired authority");
+            await Until(() => controller.State is { Error: not null, OperationUnknown: false, OutcomeUnknown: false } && ChannelEdit(page, true), "restore reports the cleared credential typing and a dropped delivery test blocks nothing");
+            hiddenOwner = controller.State.Owner!;
+            server.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var hiddenWrite = controller.RotateChannelAsync("c1");
+            await Until(() => controller.State.OperationPending, "held write before host hiding");
+            window.AppWindow.Hide();
+            try
+            {
+                await Until(() => !hiddenOwner.IsCurrent, "hidden host retires the owner of a pending write");
+                server.Gate.TrySetResult(); await hiddenWrite;
+            }
+            finally
+            {
+                server.Gate?.TrySetResult(); server.Gate = null;
+                window.AppWindow.Show(); window.Activate();
+            }
+            await Until(() => page.Controller?.State is { Loaded: true, ChannelsLoaded: true, OperationUnknown: true, Error: not null }, "retired write reaches the fresh owner as an unknown outcome");
+            controller = page.Controller!;
+            await Until(() => ChannelEdit(page, false), "carried unknown outcome blocks channel commands");
+            await controller.ReloadAsync(true);
+            await Until(() => controller.State is { OperationUnknown: false, Error: null } && ChannelEdit(page, true), "explicit reload reconciles the carried outcome");
             Invoke(Find<Button>(page, "NotificationsChannelEdit_c1")); await Until(() => Dialog(page) is { IsLoaded: true }, "editor before retirement");
             var privateUrl = Find<TextBox>(Dialog(page)!, "NotificationsChannelUrl"); privateUrl.Text = "https://example.test/synthetic-retirement";
             server.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously); var pending = controller.TestChannelAsync("c1");
@@ -198,6 +219,7 @@ internal static class AdminNotificationSettingsNativeFixture
             window.Content = previousContent; field.SetValue(null, previous);
         }
     }
+    private static bool ChannelEdit(DependencyObject page, bool enabled) => Desc(page).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == "NotificationsChannelEdit_c1" && b.IsEnabled == enabled);
     private static ContentDialog? Dialog(AdminNotificationSettingsPage page) => (ContentDialog?)typeof(AdminNotificationSettingsPage).GetField("_dialog", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page);
     private static void Check(bool ok, string label) { Program.Log((ok ? "PASS: " : "FAIL: ") + label); if (!ok) throw new InvalidOperationException(label); }
     private static async Task Until(Func<bool> condition, string label) { for (var i = 0; i < 240 && !condition(); i++) await Task.Delay(25); if (!condition()) throw new InvalidOperationException("Timed out: " + label); }

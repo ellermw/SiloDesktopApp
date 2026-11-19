@@ -344,6 +344,24 @@ public sealed class AdminNotificationSettingsController : IDisposable
     {
         lock (_gate) { var result = _state.Owner?.IsCurrent == true ? _signingSecret : null; _signingSecret = null; return result; }
     }
+    /// <summary>The write whose answer a retirement would drop, or null. A delivery test changes no
+    /// server configuration, so its dropped result is not carried.</summary>
+    public static string? InterruptedWrite(AdminNotificationSettingsState state) =>
+        state.Saving ? "save" : state.OperationPending && state.ActiveOperation is not ("discord-test" or "channel-test") ? state.ActiveOperation ?? "operation" : null;
+    /// <summary>Carries what a host hide retired into the fresh owner. A write that may have reached the
+    /// server blocks commands like any unknown outcome until an explicit successful Reload.</summary>
+    public void RestoreInterrupted(string? write, bool credentials)
+    {
+        var owner = _lifetime.Owner; if (owner == null || write == null && !credentials) return;
+        var error = write == null ? "" : "The window was hidden before the server answered, so the outcome is unknown. Reload and review before taking another action.";
+        if (write is "channel-save" or "channel-rotate") error += " If a destination was created or its secret was rotated, the signing secret was not shown. Rotate the secret to get a new one.";
+        if (credentials) error += (error.Length > 0 ? " " : "") + "Credentials that were typed but not saved were cleared when the window was hidden. Enter them again.";
+        Update(owner, () =>
+        {
+            if (!_state.Loaded || _state.Loading) return;
+            _state = _state with { OutcomeUnknown = _state.OutcomeUnknown || write == "save", OperationUnknown = _state.OperationUnknown || write is not (null or "save"), Error = error };
+        });
+    }
     private void NotifySaved(IReadOnlyCollection<string> keys)
     {
         if (Saved is not { } handlers) return;
