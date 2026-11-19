@@ -1126,6 +1126,8 @@ public partial class SiloApiClient
         {
             using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false), cancellationToken: ct).ConfigureAwait(false);
             var root = body.RootElement;
+            // Error bodies are best-effort: a non-object must not hide the HTTP status.
+            if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Expected a problem object.");
             string? Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             code = Text("error") ?? Text("code");
             detail = Text("detail") ?? Text("message") ?? Text("title");

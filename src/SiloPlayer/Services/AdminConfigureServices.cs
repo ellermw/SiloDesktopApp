@@ -38,6 +38,10 @@ internal static class AdminConfigureServices
             deferBackground: () => sp.GetService<PlayerService>()?.IsLoading == true));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.SearchSettings, typeof(AdminSearchSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
+        // Maintenance is a tool page (catalog seed export/import and read-only job history) with its own domain API.
+        services.AddSingleton<AdminMaintenanceApi>();
+        services.AddTransient<AdminMaintenanceController>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.Maintenance, typeof(AdminMaintenancePage)));
         // Storage reuses the shared settings snapshot; status, transitions and jobs use their own domain API. The page owns its controller and polling.
         services.AddSingleton<AdminStorageApi>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.StorageSettings, typeof(AdminStorageSettingsPage)));
