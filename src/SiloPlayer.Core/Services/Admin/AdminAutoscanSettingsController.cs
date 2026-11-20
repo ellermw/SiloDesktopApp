@@ -1,9 +1,16 @@
 using System.Globalization;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using T = SiloPlayer.Core.Services.Admin.AdminAutoscanSettingsText;
 
 namespace SiloPlayer.Core.Services.Admin;
 
+/// <summary>
+/// Autoscan › Settings state (Silo-Server/silo-server 66b836f82 AutoscanSettings.tsx and ConnectionsPanel.tsx).
+/// Every read and write belongs to one authority lease; retirement clears every draft and secret. Writes are
+/// sent once. A definite refusal (4xx) keeps the draft, including a typed key, so the corrected retry still sends
+/// it; a timeout, transport loss, 5xx or malformed acknowledgement blocks further writes until Reload re-reads.
+/// </summary>
 public sealed class AdminAutoscanSettingsController : IDisposable
 {
     private readonly AdminAutoscanSettingsApi _api;
@@ -54,10 +61,10 @@ public sealed class AdminAutoscanSettingsController : IDisposable
         try
         {
             var saved = await _api.GetSettingsAsync(owner).ConfigureAwait(false);
-            Update(owner, state => state with { Saved = saved, Interval = Number(saved.DefaultPollIntervalSeconds), Debounce = Number(saved.DebounceSeconds) });
+            Update(owner, state => state with { Saved = saved, Interval = Number(saved.DefaultPollIntervalSeconds), Debounce = Number(saved.DebounceSeconds), SettingsError = null });
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
-        catch { Update(owner, state => state with { Error = "Autoscan settings could not be loaded. Reload before editing." }); }
+        catch { Update(owner, state => state with { SettingsError = T.T("loadError") }); }
     }
     private async Task LoadConnectionsAsync(MonitorAuthorityLease owner)
     {
@@ -67,17 +74,17 @@ public sealed class AdminAutoscanSettingsController : IDisposable
             Update(owner, state => state with { Connections = rows, ConnectionsLoaded = true, ConnectionsError = null });
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
-        catch { Update(owner, state => state with { Connections = [], ConnectionsLoaded = false, ConnectionsError = "Connections could not be loaded. Reload before editing." }); }
+        catch { Update(owner, state => state with { Connections = [], ConnectionsLoaded = false, ConnectionsError = T.T("connectionsLoadError") }); }
     }
     private async Task LoadServersAsync(MonitorAuthorityLease owner)
     {
         try
         {
             var rows = await _api.GetRequestServersAsync(owner).ConfigureAwait(false);
-            Update(owner, state => state with { Servers = rows, ServersLoaded = true });
+            Update(owner, state => state with { Servers = rows, ServersLoaded = true, ServersError = null });
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
-        catch { Update(owner, state => state with { Servers = [], ServersLoaded = false, ServersError = "Request servers could not be loaded. Reload to retry." }); }
+        catch { Update(owner, state => state with { Servers = [], ServersLoaded = false, ServersError = T.T("serversLoadError") }); }
     }
 
     public void EditDefaults(string interval, string debounce) => Edit(state => state.Saved == null ? state : state with
@@ -94,7 +101,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
             if (!_state.CanWrite || !_state.Dirty || _state.Saved == null) return;
             if (!int.TryParse(_state.Interval, NumberStyles.None, CultureInfo.InvariantCulture, out var interval) || interval <= 0
                 || !int.TryParse(_state.Debounce, NumberStyles.None, CultureInfo.InvariantCulture, out var debounce) || debounce < 0)
-            { _state = _state with { Error = "Default check interval must be 1–2147483647 seconds; Debounce must be 0–2147483647 seconds." }; action = null; captured = _state; }
+            { _state = _state with { Error = T.T("invalidDefaults") }; action = null; captured = _state; }
             else { captured = _state; action = Capture(); if (action == null) return; _state = _state with { Busy = true, Error = null, Notice = null }; }
         }
         Changed?.Invoke(); if (action == null) return;
@@ -103,15 +110,18 @@ public sealed class AdminAutoscanSettingsController : IDisposable
             var submitted = false;
             try
             {
+                // The server has no revision precondition for this write. Read the newest enabled switch (Sources owns it)
+                // and refuse to overwrite polling defaults somebody else changed since this page loaded them.
                 var latest = await _api.GetSettingsAsync(action).ConfigureAwait(false);
                 if (latest.DefaultPollIntervalSeconds != captured.Saved!.DefaultPollIntervalSeconds || latest.DebounceSeconds != captured.Saved.DebounceSeconds)
-                { Conflict(action, "Polling defaults changed on the server. Reload and review before saving again."); return; }
+                { Conflict(action, T.T("defaultsChanged")); return; }
                 action.ThrowIfRetired(); submitted = true;
                 var result = await _api.SaveSettingsAsync(action, new(latest.Enabled, int.Parse(captured.Interval, CultureInfo.InvariantCulture), int.Parse(captured.Debounce, CultureInfo.InvariantCulture))).ConfigureAwait(false);
-                Update(action, state => state with { Saved = result.Settings, Interval = Number(result.Settings.DefaultPollIntervalSeconds), Debounce = Number(result.Settings.DebounceSeconds), RescheduleState = result.RescheduleState, Notice = "Autoscan settings saved" });
+                Update(action, state => state with { Saved = result.Settings, Interval = Number(result.Settings.DefaultPollIntervalSeconds), Debounce = Number(result.Settings.DebounceSeconds),
+                    RescheduleState = result.RescheduleState, Notice = T.T("saved"), Error = null, SettingsError = null });
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
-            catch (Exception error) { Failed(action, error, submitted, "Settings persistence could not be confirmed. Reload settings before submitting again."); }
+            catch (Exception error) { Failed(action, error, submitted, T.T("settingsUnconfirmed")); }
             finally { Update(action, state => state with { Busy = false }); }
         }
     }
@@ -122,9 +132,10 @@ public sealed class AdminAutoscanSettingsController : IDisposable
         var saved = id == null ? null : state.Connections.FirstOrDefault(row => row.Id == id);
         if (id != null && saved == null) return state;
         var first = state.Servers.FirstOrDefault();
+        // Official: reuse is the default for a new connection when a Requests Sonarr/Radarr server exists; an edit starts from the raw saved values.
         return state with { Editor = saved == null ? new() { Reuse = first != null, IntegrationId = first?.Id ?? "" }
             : new() { Id = saved.Id, Name = saved.Name, Kind = saved.Kind, BaseUrl = saved.BaseUrl ?? "", HasApiKey = saved.HasApiKey,
-                Reuse = saved.RequestIntegrationId != null, IntegrationId = saved.RequestIntegrationId ?? "" }, TestResult = null, TestError = null, Error = null };
+                Reuse = saved.RequestIntegrationId != null, IntegrationId = saved.RequestIntegrationId ?? "" }, TestResult = null, TestError = null, Error = null, Notice = null };
     });
 
     public void EditConnection(AdminAutoscanConnectionEditor editor)
@@ -133,11 +144,13 @@ public sealed class AdminAutoscanSettingsController : IDisposable
         {
             if (_state.Owner?.IsCurrent != true || _state.Busy || _state.NeedsReview || _state.Editor is not { } current
                 || editor.Id != current.Id || editor.HasApiKey != current.HasApiKey || current.Id != null && editor.Reuse != current.Reuse) return;
-            if (editor.Name.Length > 512 || editor.BaseUrl.Length > 4096 || editor.ApiKey.Length > 8192) return;
+            if (editor.Name.Length > AdminAutoscanLimits.Name || editor.BaseUrl.Length > AdminAutoscanLimits.BaseUrl || editor.ApiKey.Length > AdminAutoscanLimits.ApiKey
+                || editor.Kind.Length > AdminAutoscanLimits.Kind || editor.IntegrationId.Length > AdminAutoscanLimits.Id) return;
             if (editor.Reuse != current.Reuse) editor = editor with { ApiKey = "" };
             if (editor == current) return;
             _testLease?.Dispose(); _testLease = null;
-            _state = _state with { Editor = editor, Testing = false, TestResult = null, TestError = null };
+            // An edit after a refusal starts a new attempt: the stale refusal text goes, the typed values stay.
+            _state = _state with { Editor = editor, Testing = false, TestResult = null, TestError = null, Error = null };
         }
         Changed?.Invoke();
     }
@@ -152,7 +165,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
         Changed?.Invoke();
     }
     public void RequestDelete(string id) => Edit(state => !state.ConnectionsLoaded || state.Editor != null ? state : state with
-        { DeleteTarget = state.Connections.FirstOrDefault(row => row.Id == id), Error = null });
+        { DeleteTarget = state.Connections.FirstOrDefault(row => row.Id == id), Error = null, Notice = null });
 
     public async Task SaveConnectionAsync()
     {
@@ -177,14 +190,13 @@ public sealed class AdminAutoscanSettingsController : IDisposable
                 if (editor.Id != null && !await CheckTargetAsync(action, editor.Id).ConfigureAwait(false)) return;
                 action.ThrowIfRetired(); submitted = true;
                 var saved = await _api.SaveConnectionAsync(action, editor.Id, body).ConfigureAwait(false);
-                Update(action, state => state with { Editor = null, TestResult = null, TestError = null,
-                    Connections = Array.AsReadOnly(state.Connections.Where(row => row.Id != saved.Id).Append(saved).ToArray()), Notice = editor.Id == null ? "Autoscan connection created" : "Autoscan connection updated" });
+                Update(action, state => state with { Editor = null, TestResult = null, TestError = null, Error = null,
+                    Connections = Sorted(state.Connections.Where(row => row.Id != saved.Id).Append(saved)), Notice = T.T(editor.Id == null ? "created" : "updated") });
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
-            catch (Exception error) { Failed(action, error, submitted, editor.Id == null
-                ? "Connection creation could not be confirmed. Refresh connections before submitting again."
-                : "Connection update could not be confirmed. Refresh connections before submitting again."); }
-            finally { body.Clear(); Update(action, state => state with { Busy = false, Editor = state.Editor is { } current ? current with { ApiKey = "" } : null }); }
+            catch (Exception error) { Failed(action, error, submitted, T.T(editor.Id == null ? "createUnconfirmed" : "updateUnconfirmed")); }
+            // A refusal keeps the draft and its typed key for the corrected retry; success closed the editor and an unknown outcome cleared the key.
+            finally { body.Clear(); Update(action, state => state with { Busy = false }); }
         }
     }
 
@@ -205,10 +217,10 @@ public sealed class AdminAutoscanSettingsController : IDisposable
                 if (!await CheckTargetAsync(action, target.Id).ConfigureAwait(false)) return;
                 action.ThrowIfRetired(); submitted = true;
                 await _api.DeleteConnectionAsync(action, target.Id).ConfigureAwait(false);
-                Update(action, state => state with { DeleteTarget = null, Connections = Array.AsReadOnly(state.Connections.Where(row => row.Id != target.Id).ToArray()), Notice = "Autoscan connection deleted" });
+                Update(action, state => state with { DeleteTarget = null, Error = null, Connections = Array.AsReadOnly(state.Connections.Where(row => row.Id != target.Id).ToArray()), Notice = T.T("deleted") });
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
-            catch (Exception error) { Failed(action, error, submitted, "Connection deletion could not be confirmed. Refresh connections and check source bindings before submitting again."); }
+            catch (Exception error) { Failed(action, error, submitted, T.T("deleteUnconfirmed")); }
             finally { Update(action, state => state with { Busy = false }); }
         }
     }
@@ -220,7 +232,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
         var rows = await _api.GetConnectionsAsync(action).ConfigureAwait(false);
         var actual = rows.FirstOrDefault(row => row.Id == id);
         if (expected == null || actual != expected)
-        { Conflict(action, "Connection changed or was removed on the server. Reload and review before submitting again."); return false; }
+        { Conflict(action, T.T("targetChanged")); return false; }
         return true;
     }
 
@@ -245,7 +257,12 @@ public sealed class AdminAutoscanSettingsController : IDisposable
                 Update(action, state => ReferenceEquals(state.Editor, editor) ? state with { TestResult = result } : state);
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
-            catch { Update(action, state => ReferenceEquals(state.Editor, editor) ? state with { TestError = "Connection test failed. The result could not be confirmed; test again explicitly." } : state); }
+            catch (Exception error)
+            {
+                // Advisory only: a refusal shows the server's reason, anything else the official "Connection test failed".
+                var text = error is AdminAutoscanRefusedException refused ? refused.Message : T.T("testRequestFailed");
+                Update(action, state => ReferenceEquals(state.Editor, editor) ? state with { TestError = text } : state);
+            }
             finally
             {
                 body.Clear();
@@ -256,13 +273,24 @@ public sealed class AdminAutoscanSettingsController : IDisposable
     }
 
     private MonitorAuthorityLease? Capture() { try { return _lifetime.CaptureAction(); } catch (OperationCanceledException) { return null; } }
+    /// <summary>The write was not sent: its target changed. Blocks writes until Reload; any typed key is cleared.</summary>
     private void Conflict(MonitorAuthorityLease owner, string message) => Update(owner, state => state with { NeedsReview = true, Error = message, Editor = state.Editor is { } editor ? editor with { ApiKey = "" } : null });
-    private void Failed(MonitorAuthorityLease owner, Exception error, bool submitted, string unknown) => Update(owner, state => state with
+    private void Failed(MonitorAuthorityLease owner, Exception error, bool submitted, string unknown)
     {
-        NeedsReview = true, OutcomeUnknown = submitted && error is not ApiException,
-        Error = submitted ? error is ApiException rejected ? rejected.StatusCode is 409 or 422 ? "Connection is in use or was rejected. Review the connection fields and referencing sources, then reload and review." : "Autoscan operation was rejected. Reload and review before submitting again." : unknown
-            : "Could not reload current server data. No write was sent. Reload before trying again."
-    });
+        if (submitted && error is AdminAutoscanRefusedException refused)
+        {
+            // A definite refusal: the server applied nothing. Show its reason; the draft, typed key and the writes stay available.
+            Update(owner, state => state with { Error = refused.Message });
+            return;
+        }
+        Update(owner, state => state with
+        {
+            NeedsReview = true, OutcomeUnknown = submitted, Error = submitted ? unknown : T.T("notSent"),
+            Editor = state.Editor is { } editor ? editor with { ApiKey = "" } : null,
+        });
+    }
+    private static IReadOnlyList<AdminAutoscanSavedConnection> Sorted(IEnumerable<AdminAutoscanSavedConnection> rows) =>
+        Array.AsReadOnly(rows.OrderBy(row => row.Name, StringComparer.Ordinal).ThenBy(row => row.Id, StringComparer.Ordinal).ToArray());
     private void Edit(Func<AdminAutoscanSettingsState, AdminAutoscanSettingsState> change)
     {
         lock (_gate) { if (!_state.CanWrite) return; _state = change(_state); }
@@ -281,4 +309,3 @@ public sealed class AdminAutoscanSettingsController : IDisposable
     }
     public void Dispose() { _lifetime.Retired -= Clear; _lifetime.Dispose(); Clear(); Changed = null; }
 }
-

@@ -5,6 +5,10 @@ namespace SiloPlayer.Core.Api;
 
 public partial class SiloApiClient
 {
+    /// <summary>
+    /// DELETE of one Autoscan connection (official internal/apiv2/admin_autoscan_connection_delete.go at
+    /// Silo-Server/silo-server 66b836f82): one attempt, no token-refresh replay, and only 204 No Content acknowledges it.
+    /// </summary>
     internal async Task AdminAutoscanDeleteAsync(MonitorAuthorityLease owner, string requestPath, CancellationToken cancellationToken)
     {
         owner.ThrowIfRetired();
@@ -22,4 +26,3 @@ public partial class SiloApiClient
         if (response.StatusCode != HttpStatusCode.NoContent) throw new InvalidDataException("Connection deletion was not acknowledged.");
     }
 }
-
