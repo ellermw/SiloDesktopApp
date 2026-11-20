@@ -408,4 +408,63 @@ public sealed class AdminCollectionsReviewTests
         await api.ArtworkAsync(owner, "c", "poster");
         Assert.Equal("DELETE /api/v2/admin/collections/c/image?type=poster", Assert.Single(kit.Http.Requests));
     }
+
+    // ── Fourth review (November 20) ────────────────────────────────────────
+
+    private static string ManualCollection(string title, int items) =>
+        $"{{\"id\":\"c\",\"title\":\"{title}\",\"description\":\"\",\"library_ids\":[\"1\"],\"collection_type\":\"manual\",\"visibility\":\"visible\",\"item_count\":{items}}}";
+
+    // 1 - This page's own title change moves the collection's revision with its counters. The next details Save carries the moved revision and keeps the draft.
+    [Fact]
+    public async Task OwnTitleChangeAdoptsTheMovedRevisionSoTheNextSaveIsNotAConflict()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminCollectionsApi(kit.Client);
+        using var controller = new AdminCollectionsController(api, new(kit.Client), authority); controller.Open();
+        var revision = 1; var items = 3; var title = "Base"; var sent = new List<string>();
+        kit.Http.Respond = (r, _) =>
+        {
+            // Like the server, an item write moves item_count and with it the collection's revision.
+            if (r.Method == HttpMethod.Put) { revision++; items++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)); }
+            if (r.Method == HttpMethod.Patch)
+            {
+                sent.Add(r.Headers.GetValues("If-Match").Single());
+                if (sent[^1] != $"\"r{revision}\"") return Task.FromResult(AdminMonitorKit.Json("{\"type\":\"conflict\",\"status\":412}", HttpStatusCode.PreconditionFailed));
+                revision++; title = "Renamed";
+            }
+            return Task.FromResult(Tagged(ManualCollection(title, items), $"\"r{revision}\""));
+        };
+        await controller.EditAsync("c"); var draft = controller.Draft!; draft["title"] = "Renamed";
+        await controller.CommandAsync(lease => api.MembershipAsync(lease, "c", "m1", true, 3));
+        await controller.AdoptOwnChangeAsync();
+        Assert.Same(draft, controller.Draft); Assert.Equal("\"r2\"", controller.Editor!.ETag);
+        Assert.Equal("title", Assert.Single(controller.ChangedDraftFields()));
+        Assert.Equal("c", await controller.SaveAsync());
+        Assert.Equal("\"r2\"", Assert.Single(sent)); Assert.False(controller.Dirty);
+    }
+
+    // Details that changed elsewhere are never hidden by this page's own title change: the old revision stays and Save stops for review.
+    [Fact]
+    public async Task OwnTitleChangeKeepsTheOldRevisionWhenDetailsChangedElsewhere()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminCollectionsApi(kit.Client);
+        using var controller = new AdminCollectionsController(api, new(kit.Client), authority); controller.Open();
+        var revision = 1; var title = "Base";
+        kit.Http.Respond = (r, _) =>
+        {
+            if (r.Method == HttpMethod.Put) { revision++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)); }
+            if (r.Method == HttpMethod.Patch && r.Headers.GetValues("If-Match").Single() != $"\"r{revision}\"")
+                return Task.FromResult(AdminMonitorKit.Json("{\"type\":\"conflict\",\"status\":412}", HttpStatusCode.PreconditionFailed));
+            return Task.FromResult(Tagged(ManualCollection(title, 3), $"\"r{revision}\""));
+        };
+        await controller.EditAsync("c"); controller.Draft!["description"] = "Mine";
+        // Another administrator renames it, then this page adds a title.
+        title = "Renamed elsewhere"; revision++;
+        await controller.CommandAsync(lease => api.MembershipAsync(lease, "c", "m1", true, 3));
+        await controller.AdoptOwnChangeAsync();
+        Assert.Equal("\"r1\"", controller.Editor!.ETag); Assert.Equal("Mine", controller.Draft!["description"]!.ToString());
+        var conflict = await Assert.ThrowsAsync<ApiException>(() => controller.SaveAsync());
+        Assert.Equal(412, conflict.StatusCode); Assert.False(controller.OutcomeUnknown);
+    }
 }

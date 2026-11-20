@@ -123,6 +123,16 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         catch (Exception error) { if (Current(owner)) Notice(AdminCollectionsController.Message(error)); }
         finally { IsHitTestVisible = true; }
     }
+    /// <summary>A title change in the editor of a saved collection. The same gated run adopts the collection's moved revision, so the next Save is not a conflict with this page's own change.</summary>
+    private Task RunTitlesAsync(Func<MonitorAuthorityLease, Task> change) => RunAsync(async lease =>
+    {
+        try { await change(lease); }
+        finally
+        {
+            // A change that failed part-way may still have moved the revision. If this read fails the old revision stays, and Save asks for review.
+            try { await Controller.AdoptOwnChangeAsync(); } catch (Exception) { }
+        }
+    }, false);
     private void ReplaceQuery()
     {
         _route = _route.WithQuery("view", _arrange ? "arrange" : "list").WithQuery("libraryId", _library)

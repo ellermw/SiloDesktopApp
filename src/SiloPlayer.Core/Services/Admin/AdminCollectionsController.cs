@@ -203,6 +203,25 @@ public sealed class AdminCollectionsController : IDisposable
         foreach (var key in keepLocal.Where(EditableFields.Contains)) if (Draft?.TryGetPropertyValue(key, out var value) == true) next[key] = value?.DeepClone();
         Editor = latest; Draft = next; _savedDraft = baseline; OutcomeUnknown = false;
     }
+    /// <summary>
+    /// After this page's own title change (add, remove, move): the collection's revision moves with its counters, so the fresh validator is adopted and the draft is kept.
+    /// Details that changed elsewhere keep the old validator: Save then stops for review instead of overwriting them. No write is sent.
+    /// </summary>
+    public async Task AdoptOwnChangeAsync()
+    {
+        var owner = Owner ?? throw new MonitorAuthorityRetiredException(); var editor = Editor;
+        var id = AdminCollectionsApi.CanonicalId(editor?.Value["id"]); if (id == null) return;
+        var latest = await _api.GetAsync(owner, id, owner.Token).ConfigureAwait(false);
+        var details = new JsonObject(); foreach (var key in EditableFields) if (latest.Value.TryGetPropertyValue(key, out var value)) details[key] = value?.DeepClone();
+        if (details["library_ids"] is not JsonArray { Count: > 0 } && latest.Value["library_id"] is { } library) details["library_ids"] = new JsonArray(library.DeepClone());
+        lock (_stateGate)
+        {
+            owner.ThrowIfRetired();
+            // An editor read or reviewed meanwhile is newer than this answer.
+            if (!ReferenceEquals(editor, Editor) || _savedDraft == null || !JsonNode.DeepEquals(details, JsonNode.Parse(_savedDraft))) return;
+            Editor = latest;
+        }
+    }
     public async Task<T> CommandAsync<T>(Func<MonitorAuthorityLease, Task<T>> command)
     {
         if (Busy) throw new InvalidOperationException("A collection change is already in progress.");

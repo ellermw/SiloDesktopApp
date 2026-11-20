@@ -43,7 +43,7 @@ public sealed partial class AdminCollectionsPage
                 row.Children.Add(Text(item["title"]?.ToString() ?? itemId));
                 row.Children.Add(ActionButton("Remove", "CollectionMemberRemove_" + itemId, async () =>
                 {
-                    await RunAsync(async lease => { await _api.MembershipAsync(lease, id, itemId, false); }, false);
+                    await RunTitlesAsync(async lease => { await _api.MembershipAsync(lease, id, itemId, false); });
                     _memberCursor = null; _memberHistory.Clear(); await LoadMembersAsync();
                 }));
                 if (order != null && order.Value["has_more"]?.GetValue<bool>() != true)
@@ -55,7 +55,7 @@ public sealed partial class AdminCollectionsPage
                         row.Children.Add(ActionButton(direction < 0 ? "Move up" : "Move down", "CollectionMemberMove_" + itemId + "_" + direction, async () =>
                         {
                             var moved = ids.ToList(); moved.RemoveAt(index); moved.Insert(nextIndex, itemId);
-                            await RunAsync(async lease => { await _api.ReorderItemsAsync(lease, id, order, moved); }, false); await LoadMembersAsync();
+                            await RunTitlesAsync(async lease => { await _api.ReorderItemsAsync(lease, id, order, moved); }); await LoadMembersAsync();
                         }, index >= 0 && nextIndex >= 0 && nextIndex < ids.Count));
                     }
                 }
@@ -122,14 +122,14 @@ public sealed partial class AdminCollectionsPage
         }
         else
         {
-            await RunAsync(async lease =>
+            await RunTitlesAsync(async lease =>
             {
                 // Individual natural-membership changes, never replace the full set. Stop on the first uncertain result.
                 var canonical = await _api.GetAsync(lease, collectionId);
                 // After the last title, not at the item count: a removed title leaves a gap and the count would tie with the last position.
                 var position = AdminCollectionsApi.NextMemberPosition(await _api.ItemsAsync(lease, collectionId), canonical.Value["item_count"]?.GetValue<int>() ?? 0);
                 foreach (var (id, _) in selected) await _api.MembershipAsync(lease, collectionId, id, true, position++);
-            }, false);
+            });
         }
         await LoadMembersAsync();
     }
