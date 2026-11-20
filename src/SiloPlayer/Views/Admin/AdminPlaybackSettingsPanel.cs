@@ -50,6 +50,8 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
     internal bool IsDialogOpen => _dialog != null;
     internal event Func<string, Task>? RunTask;
     internal event Func<Task>? RefreshSupport;
+    /// <summary>The admin's explicit Refresh. Unlike <see cref="RefreshSupport"/> it may release an unconfirmed task run.</summary>
+    internal event Func<Task>? ReviewSupport;
     private static string T(string key, object? args = null) => AdminPlaybackAdministrationText.T(key, args);
     private static string P(string suffix) => T("web.admin.settings.playback." + suffix);
 
@@ -64,7 +66,7 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
         SaveBar.Save.Click += async (_, _) => await Save(); SaveBar.Discard.Click += (_, _) => _controller.Discard();
         _controller.Changed += QueueRender;
         if (routing) BuildRouting(); else BuildPlayback(); Render();
-        if (!routing) { Children.Insert(0, _supportReload); _supportReload.Click += async (_, _) => { if (RefreshSupport != null) { _supportReload.IsEnabled = false; await RefreshSupport(); if (!_disposed) _supportReload.IsEnabled = true; } }; }
+        if (!routing) { Children.Insert(0, _supportReload); _supportReload.Click += async (_, _) => { if (ReviewSupport != null) { _supportReload.IsEnabled = false; await ReviewSupport(); if (!_disposed) _supportReload.IsEnabled = true; } }; }
         SizeChanged += (_, _) => { _fields.Width = Math.Min(1120, ActualWidth); SaveBar.SetAvailableWidth(_host.ActualWidth); };
     }
     private void BuildPlayback()
@@ -233,5 +235,5 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
         "playback.chapter_thumbnail_hdr_policy" => P(value == "best_effort" ? "previews.hdrBestEffort" : "previews.hdrDisabled"),
         _ => P(value == "local" ? "execution.thisServer" : value == "prefer_transcode_nodes" ? "execution.nodesWhenAvailable" : "execution.nodesOnly"),
     };
-    public void Dispose() { if (_disposed) return; _disposed = true; _controller.Changed -= QueueRender; _dialog?.Hide(); _dialog = null; _support = null; _nodeWindow = null; foreach (var box in _editors.Values.OfType<TextBox>()) box.Text = ""; _devices.Children.Clear(); _tasks.Children.Clear(); RunTask = null; RefreshSupport = null; }
+    public void Dispose() { if (_disposed) return; _disposed = true; _controller.Changed -= QueueRender; _dialog?.Hide(); _dialog = null; _support = null; _nodeWindow = null; foreach (var box in _editors.Values.OfType<TextBox>()) box.Text = ""; _devices.Children.Clear(); _tasks.Children.Clear(); RunTask = null; RefreshSupport = null; ReviewSupport = null; }
 }

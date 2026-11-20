@@ -33,6 +33,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
     private AdminPlaybackNodeWindow? _rendered;
     private ContentDialog? _dialog;
     private AdminLeaveGuard? _leave;
+    private Task? _pollReload;
     private string? _group;
     private bool _active, _focused = true, _visible = true;
     public FrameworkElement ScrollContent => _body;
@@ -54,7 +55,10 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         _reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(); };
         _poll.Tick += async (_, _) =>
         {
-            if (_active && _focused && _visible && _dialog == null && App.Services.GetService<PlayerService>()?.IsLoading != true && _controller is { State.ReviewRequired: false } controller) await controller.ReloadAsync();
+            if (_pollReload != null || !_active || !_focused || !_visible || _dialog != null || App.Services.GetService<PlayerService>()?.IsLoading == true || _controller is not { State.ReviewRequired: false } controller) return;
+            // Kept while in flight: Render leaves the cards usable during this background refresh and a card action waits for it in Settled.
+            var reload = _pollReload = controller.ReloadAsync();
+            try { await reload; } finally { if (ReferenceEquals(_pollReload, reload)) _pollReload = null; }
         };
         Loaded += async (_, _) => { Fit(); await Activate(); }; Unloaded += (_, _) => SuspendAdminPage();
     }
@@ -88,9 +92,38 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         _routingPanel?.SetNodeWindow(state.Loaded ? state.Window : null);
         if (!ReferenceEquals(state.Window, _rendered))
         {
+            // Every refresh replaces the cards, so keyboard and Narrator focus is handed to the same control of the same node instead of dropping out of the list.
+            var held = FocusedListControl(); var id = held == null ? "" : AutomationProperties.GetAutomationId(held); var focus = held?.FocusState ?? FocusState.Unfocused;
             _rendered = state.Window; RenderGroups(state.Window.Items); RenderCards(state.Window.Items);
+            if (id.Length > 0) Refocus(id, focus);
         }
-        foreach (var control in Descendants(_cards).OfType<Control>()) control.IsEnabled = state.Loaded && !state.Busy && !state.Loading && !state.ReviewRequired && control.Tag is not false;
+        // Only a foreground load disables the cards. Disabling them for the 30 s background refresh would take focus away from the control in use.
+        var loading = state.Loading && _pollReload == null;
+        foreach (var control in Descendants(_cards).OfType<Control>()) control.IsEnabled = state.Loaded && !state.Busy && !loading && !state.ReviewRequired && control.Tag is not false;
+    }
+    private Control? FocusedListControl()
+    {
+        if (XamlRoot == null || Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) is not Control { FocusState: not FocusState.Unfocused } focused) return null;
+        var owned = false;
+        for (DependencyObject? parent = focused; parent != null && !owned; parent = VisualTreeHelper.GetParent(parent)) owned = ReferenceEquals(parent, _cards) || ReferenceEquals(parent, _groups);
+        if (!owned) return null;
+        // A control the admin scrolled away from is not chased: taking focus back there would scroll the page on every refresh.
+        var bounds = focused.TransformToVisual(_scroll).TransformBounds(new(0, 0, focused.ActualWidth, focused.ActualHeight));
+        return bounds.Bottom > 0 && bounds.Top < _scroll.ActualHeight ? focused : null;
+    }
+    private void Refocus(string id, FocusState focus)
+    {
+        var target = Descendants(_groups).Concat(Descendants(_cards)).OfType<Control>().FirstOrDefault(control => AutomationProperties.GetAutomationId(control) == id);
+        if (target == null) return;
+        if (target.IsLoaded) { target.Focus(focus); return; }
+        // A replacement control cannot take focus before it has loaded.
+        RoutedEventHandler? loaded = null; loaded = (_, _) => { target.Loaded -= loaded; if (_active) target.Focus(focus); }; target.Loaded += loaded;
+    }
+    // The background refresh leaves the cards usable, so an action started during one waits for it and then uses the refreshed row. A row that is gone or whose configuration changed meanwhile is left for the admin to review on its new card.
+    private async Task<AdminPlaybackNode?> Settled(AdminPlaybackNode node)
+    {
+        if (_pollReload is { } poll) await poll;
+        return _active ? _controller?.State.Window.Items.FirstOrDefault(row => row.Id == node.Id && row.ConfigETag == node.ConfigETag) : null;
     }
     private void RenderGroups(IReadOnlyList<AdminPlaybackNode> nodes)
     {
@@ -108,6 +141,8 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
     private void RenderCards(IReadOnlyList<AdminPlaybackNode> nodes)
     {
         _cards.Children.Clear();
+        // One pass per window instead of comparing every pair of nodes for every card: a physical GPU key reported by more than one node is shared.
+        var sharedGpus = nodes.SelectMany(node => (node.PhysicalGpuKeys ?? []).Where(key => !string.IsNullOrEmpty(key)).Distinct()).GroupBy(key => key).Where(keys => keys.Count() > 1).Select(keys => keys.Key).ToHashSet(StringComparer.Ordinal);
         foreach (var type in new[] { "proxy", "transcode" })
         {
             var section = new StackPanel { Spacing = 12 }; var heading = new Grid();
@@ -115,7 +150,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
             var matching = nodes.Where(node => node.Type == type && (_group == null || (node.Group ?? "") == _group)).ToArray();
             heading.Children.Add(U.Text(T(type == "proxy" ? "web.admin.nodes.section.proxyTitle" : "web.admin.nodes.section.transcodeTitle") + " · " + matching.Length, 20));
             var add = U.Action(T(type == "proxy" ? "web.admin.nodes.section.addProxy" : "web.admin.nodes.section.addTranscode"), "NodesAdd_" + type, primary: true); add.HorizontalAlignment = HorizontalAlignment.Right;
-            add.Click += async (_, _) => await EditNode(type, null); Grid.SetColumn(add, 1); heading.Children.Add(add); section.Children.Add(heading);
+            add.Click += async (_, _) => { if (_pollReload is { } poll) await poll; if (_active) await EditNode(type, null); }; Grid.SetColumn(add, 1); heading.Children.Add(add); section.Children.Add(heading);
             section.Children.Add(U.Text(T(type == "proxy" ? "web.admin.nodes.section.proxyInfo" : "web.admin.nodes.section.transcodeInfo"), 13, true));
             if (matching.Length == 0)
             {
@@ -123,12 +158,12 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
                 section.Children.Add(U.Text(T("web.admin.nodes.section." + empty + (_group == null ? "" : "InGroup")), 14, true));
                 if (_group != null) { var clear = U.Action(T("web.admin.nodes.section.showAllGroups"), "NodesClearGroup_" + type); clear.Click += (_, _) => { _group = null; _rendered = null; Render(); }; section.Children.Add(clear); }
             }
-            foreach (var node in matching) section.Children.Add(Card(node, nodes));
+            foreach (var node in matching) section.Children.Add(Card(node, sharedGpus));
             _cards.Children.Add(section);
         }
         if (_controller!.State.Window.HasMore) _cards.Children.Add(U.Alert("Showing the first 1600 nodes. This bounded view does not include the remaining nodes; routing availability may be incomplete."));
     }
-    private FrameworkElement Card(AdminPlaybackNode node, IReadOnlyList<AdminPlaybackNode> all)
+    private FrameworkElement Card(AdminPlaybackNode node, HashSet<string> sharedGpus)
     {
         var content = new StackPanel { Spacing = 10 };
         var state = !node.Enabled ? "disabled" : !node.Healthy ? "unhealthy" : node.Type == "transcode" && node.DrainState == "drained" ? "drained" : node.Type == "transcode" && (node.DrainRequested == true || node.DrainState == "draining") ? "draining" : "healthy";
@@ -147,7 +182,8 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         enabled.Toggled += async (_, _) =>
         {
             if (restoring || enabled.IsOn == node.Enabled) return;
-            var controller = _controller; var saved = controller != null && await controller.UpdateAsync(node, new Dictionary<string, object?> { ["enabled"] = enabled.IsOn });
+            var requested = enabled.IsOn; var current = await Settled(node);
+            var controller = _controller; var saved = current != null && controller != null && enabled.IsOn == requested && await controller.UpdateAsync(node, new Dictionary<string, object?> { ["enabled"] = requested });
             if (saved || enabled.IsOn == node.Enabled) return;
             restoring = true; try { enabled.IsOn = node.Enabled; } finally { restoring = false; }
         }; actions.Children.Add(enabled);
@@ -155,8 +191,8 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         if (node.Type == "transcode") AddAction("reprobe", "NodeReprobe_", "web.admin.nodes.unit.reprobe");
         if (node.Type == "transcode" && (node.Enabled || node.DrainRequested == true) && _controller!.State.Capabilities is { Available: true, Drain: true })
             AddAction(node.DrainRequested == true ? "resume" : "drain", "NodeDrain_", node.DrainRequested == true ? "web.admin.nodes.unit.resume" : "web.admin.nodes.unit.drain");
-        var edit = IconAction(T("web.admin.nodes.unit.edit", new { name = node.Name }), "NodeEdit_" + node.Id, "pencil"); edit.Tag = AdminValidators.IsStrong(node.ConfigETag); edit.Click += async (_, _) => await EditNode(node.Type, node); actions.Children.Add(edit);
-        var delete = IconAction(T("web.admin.nodes.unit.delete", new { name = node.Name }), "NodeDelete_" + node.Id, "trash-2"); delete.Tag = AdminValidators.IsStrong(node.ConfigETag); delete.Click += async (_, _) => await DeleteNode(node); actions.Children.Add(delete);
+        var edit = IconAction(T("web.admin.nodes.unit.edit", new { name = node.Name }), "NodeEdit_" + node.Id, "pencil"); edit.Tag = AdminValidators.IsStrong(node.ConfigETag); edit.Click += async (_, _) => { if (await Settled(node) is { } current) await EditNode(current.Type, current); }; actions.Children.Add(edit);
+        var delete = IconAction(T("web.admin.nodes.unit.delete", new { name = node.Name }), "NodeDelete_" + node.Id, "trash-2"); delete.Tag = AdminValidators.IsStrong(node.ConfigETag); delete.Click += async (_, _) => { if (await Settled(node) is { } current) await DeleteNode(current); }; actions.Children.Add(delete);
         var details = new StackPanel { Spacing = 6 };
         foreach (var child in content.Children.ToArray()) { content.Children.Remove(child); details.Children.Add(child); }
         var header = new Grid { ColumnSpacing = 16, RowSpacing = 10 };
@@ -170,12 +206,12 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
             var keyRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 }; keyRow.Children.Add(U.Text(T(node.KeyIssued == true ? "web.admin.nodes.key.issued" : "web.admin.nodes.key.missing"), 12, true));
             if (_controller!.State.Capabilities is { Available: true, NodeKeys: true })
             {
-                var key = U.Action(T(node.KeyIssued == true ? "web.admin.nodes.key.rotate" : "web.admin.nodes.key.issue"), "NodeKey_" + node.Id); key.Click += async (_, _) => await ShowKey(node); keyRow.Children.Add(key);
+                var key = U.Action(T(node.KeyIssued == true ? "web.admin.nodes.key.rotate" : "web.admin.nodes.key.issue"), "NodeKey_" + node.Id); key.Click += async (_, _) => { if (await Settled(node) is { } current) await ShowKey(current); }; keyRow.Children.Add(key);
             }
             details.Children.Add(keyRow);
         }
         var metrics = new LogsWrapPanel { Spacing = 30 };
-        if (node.Type == "transcode") metrics.Children.Add(Acceleration(node, all));
+        if (node.Type == "transcode") metrics.Children.Add(Acceleration(node, sharedGpus));
         metrics.Children.Add(Load(node)); metrics.Children.Add(Capacity(node)); content.Children.Add(metrics);
         if (node.NetworkAccess is { Count: > 0 } providers)
         {
@@ -187,7 +223,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         return new Border { Child = content, Padding = new(20), CornerRadius = new(16), Background = U.Brush("SurfaceBrush"), BorderThickness = new(3, 0, 0, 0), BorderBrush = new SolidColorBrush(color), Opacity = node.Enabled ? 1 : .65 };
         void AddAction(string command, string id, string key)
         {
-            var button = IconAction(T(key, new { name = node.Name }), id + node.Id, command switch { "check" => "refresh-cw", "reprobe" => "scan-search", "resume" => "circle-play", _ => "circle-pause" }); button.Click += async (_, _) => { if (_controller != null) await _controller.CommandAsync(node, command); }; actions.Children.Add(button);
+            var button = IconAction(T(key, new { name = node.Name }), id + node.Id, command switch { "check" => "refresh-cw", "reprobe" => "scan-search", "resume" => "circle-play", _ => "circle-pause" }); button.Click += async (_, _) => { if (await Settled(node) is { } current && _controller is { } controller) await controller.CommandAsync(current, command); }; actions.Children.Add(button);
         }
     }
     private static Button IconAction(string label, string id, string icon)
@@ -219,7 +255,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         if (node.LastStats?.Build?.Display is { } build) panel.Children.Add(U.Text(build, 12, true)); return panel;
         void Metric(string label, double? value, string unit) { panel.Children.Add(U.Text(label + " · " + Value(value) + unit, 12, true)); panel.Children.Add(new ProgressBar { Minimum = 0, Maximum = 100, Height = 4, Value = value.HasValue && double.IsFinite(value.Value) ? Math.Clamp(value.Value, 0, 100) : 0 }); }
     }
-    private static FrameworkElement Acceleration(AdminPlaybackNode node, IReadOnlyList<AdminPlaybackNode> all)
+    private static FrameworkElement Acceleration(AdminPlaybackNode node, HashSet<string> sharedGpus)
     {
         var panel = new StackPanel { Spacing = 7, MinWidth = 220 }; panel.Children.Add(U.Text(T("web.admin.nodes.unit.acceleration"), 12, true));
         panel.Children.Add(U.Text(node.Capabilities?.Resolved ?? T("web.admin.nodes.gpu.awaitingLabel"), 14));
@@ -231,7 +267,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         {
             var stale = U.Text(T("web.admin.nodes.unit.stale"), 12, true); ToolTipService.SetToolTip(stale, T("web.admin.nodes.staleInventory." + staleReason, new { refreshed = node.CapabilitiesRefreshedAt ?? "—", @checked = node.LastHealthCheck ?? "—" })); panel.Children.Add(stale);
         }
-        if (all.Any(other => other.Id != node.Id && other.PhysicalGpuKeys.Intersect(node.PhysicalGpuKeys).Any())) panel.Children.Add(U.Text(T("web.admin.nodes.sharedGpu.label"), 12, true));
+        if ((node.PhysicalGpuKeys ?? []).Any(sharedGpus.Contains)) panel.Children.Add(U.Text(T("web.admin.nodes.sharedGpu.label"), 12, true));
         foreach (var path in (node.Capabilities?.RenderDevices ?? []).Take(16)) panel.Children.Add(U.Text(path, 12, true));
         foreach (var probe in (node.Capabilities?.DetectedBackends ?? []).Where(probe => !probe.Verified).Take(8)) panel.Children.Add(U.Text(probe.Backend + " · " + (probe.Skipped ? "Not accessible" : "Probe not verified"), 12, true));
         foreach (var gpu in (node.Healthy && !SampleStale(node) ? node.LastStats?.Gpu ?? [] : Array.Empty<DashboardGpuStats>()).Take(16))
@@ -261,7 +297,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
     }
     public void SuspendAdminPage()
     {
-        if (!_active) return; _active = false; _poll.Stop(); _dialog?.Hide(); _dialog = null;
+        if (!_active) return; _active = false; _poll.Stop(); _pollReload = null; _dialog?.Hide(); _dialog = null;
         _authority.AvailabilityChanged -= AuthorityChanged;
         if (App.MainWindowInstance is { } window) { window.Activated -= Activated; window.VisibilityChanged -= VisibilityChanged; }
         _controller?.Dispose(); _controller = null; _routingPanel?.Dispose(); if (_routingPanel != null) { _root.Children.Remove(_routingPanel.SaveBar); _body.Children.Remove(_routingPanel); } _routingPanel = null;

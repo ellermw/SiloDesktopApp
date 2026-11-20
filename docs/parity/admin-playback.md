@@ -134,6 +134,18 @@ while `ReviewRequired` is false and the loaded node and its switch stay usable (
 created proxy's editor to close was added before the delete step, because the first run of this fixture lost a race
 between the editor closing and the delete click.
 
+## Third review (November 20), five findings fixed
+
+Not built or run when written; the pipeline run is the evidence. `AdminPlaybackThirdReviewTests` is new.
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| T1 | The 30-second node poll disabled every card control and replaced the cards, so keyboard and Narrator focus left the list each cycle | The poll no longer disables the cards; only a foreground load, a write or a required review does. An action started during a poll waits for it and then targets the refreshed row with the same `config_etag`. The cards are still replaced on each refresh (relative times and stale markers depend on the clock), and focus returns to the control with the same automation id if it was in view. The shared-GPU set is computed once per window |
+| T2 | The one-time node key and its startup settings entered clipboard history and the cloud clipboard | Both copies use `Clipboard.SetContentWithOptions` with `IsAllowedInHistory = false` and `IsRoamable = false`. The clipboard itself is not cleared on close, because the key is pasted after the dialog closes |
+| T3 | An unconfirmed marker run was released by any support refresh, including a failed one or the one a `playback.hw_accel` change triggers | `AdminPlaybackSupport.TasksRead` says whether the task list was read. Only the Refresh button raises the review, and only an applied read with `TasksRead` clears the lock |
+| T4 | `physical_gpu_keys: null` threw in card rendering | `ListNodesAsync` normalises null to an empty list and the card guards the read |
+| T5 | A stored empty `hw_accel_override` left the editor without a choice and refused every edit | The editor treats an empty or blank stored override as inherit. An unknown stored value is still refused with the usual message, not silently replaced |
+
 ## Tests
 
 Observed on this source (`playback-fix-final-r1`, commit `cd39c93df`, lane `D:/SiloPlayer-build/admin-completion-lane-a`, one

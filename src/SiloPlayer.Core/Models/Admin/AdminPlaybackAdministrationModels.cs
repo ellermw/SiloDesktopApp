@@ -113,4 +113,8 @@ public sealed class AdminPlaybackTaskExecution
     public Dictionary<string, System.Text.Json.JsonElement>? ResultData { get; set; }
 }
 public sealed record AdminPlaybackSupport(bool Trickplay, bool DetectionKindSettings, AdminPlaybackHardware? Hardware,
-    AdminPlaybackNodeWindow? Nodes, long? PreviewsToRemake, IReadOnlyList<AdminPlaybackTask> Tasks);
+    AdminPlaybackNodeWindow? Nodes, long? PreviewsToRemake, IReadOnlyList<AdminPlaybackTask> Tasks)
+{
+    /// <summary>False when the task list could not be read: an empty <see cref="Tasks"/> is then unknown, not a reviewed state.</summary>
+    public bool TasksRead { get; init; }
+}

@@ -32,7 +32,8 @@ public sealed class AdminPlaybackNodeEditor
         _url = ValidUrl(target?.Url ?? "") ? target!.Url : ""; _publicUrl = ValidUrl(target?.PublicUrl ?? "") ? target!.PublicUrl! : "";
         MaxJobs = target?.MaxJobs?.ToString(CultureInfo.InvariantCulture) ?? "";
         MaxBandwidthMbps = target?.MaxBandwidthKbps is > 0 ? (target.MaxBandwidthKbps.Value / 1000m).ToString(CultureInfo.InvariantCulture) : "";
-        HwAccelOverride = target?.HwAccelOverride ?? "inherit"; HwDeviceOverride = target?.HwDeviceOverride ?? "";
+        // A stored empty override means inherit, as on the card; left as "" it matches no choice and every edit of the node would be refused.
+        HwAccelOverride = string.IsNullOrWhiteSpace(target?.HwAccelOverride) ? "inherit" : target!.HwAccelOverride!; HwDeviceOverride = target?.HwDeviceOverride ?? "";
         SourceAccess = target?.SourceAccess ?? "local";
     }
     public IReadOnlyDictionary<string, object?> Capture(bool sourceAccessSupported)

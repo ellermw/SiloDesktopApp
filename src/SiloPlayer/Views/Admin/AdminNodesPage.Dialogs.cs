@@ -192,7 +192,13 @@ public sealed partial class AdminNodesPage
         void Copy(string? value)
         {
             if (!owner.IsCurrent || string.IsNullOrEmpty(value)) return;
-            try { var data = new DataPackage(); data.SetText(value); Clipboard.SetContent(data); error.Text = T("web.admin.nodes.key.copied"); }
+            // The key authenticates a transcode node: a copy stays out of clipboard history and cloud sync, which would outlive this dialog and reach other devices.
+            try
+            {
+                var data = new DataPackage(); data.SetText(value);
+                var copied = Clipboard.SetContentWithOptions(data, new ClipboardContentOptions { IsAllowedInHistory = false, IsRoamable = false });
+                error.Text = T(copied ? "web.admin.nodes.key.copied" : "web.admin.nodes.key.copyFailed");
+            }
             catch { error.Text = T("web.admin.nodes.key.copyFailed"); }
         }
     }

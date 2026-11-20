@@ -36,6 +36,7 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
                 if (node == null || string.IsNullOrEmpty(node.Id) || !ids.Add(node.Id) || node.Type is not ("proxy" or "transcode")) throw new InvalidDataException("Invalid node identity.");
                 if (node.Capabilities != null && !ValidHardware(node.Capabilities) || node.NetworkAccess?.Any(pair => pair.Value == null) == true
                     || node.LastStats?.Gpu?.Any(gpu => gpu == null) == true || node.LastStats?.System?.Disks?.Any(disk => disk == null) == true) throw new InvalidDataException("Invalid node observations.");
+                node.PhysicalGpuKeys ??= []; // A JSON null (a Go nil slice) replaces the empty default; a node without a GPU report shares nothing.
                 items.Add(node);
             }
             cursor = response.Page?.NextCursor;
@@ -123,12 +124,13 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
             if (previews?.Items is { Length: <= 2000 } rows && rows.All(row => row != null && row.Ready >= 0 && row.Running >= 0 && row.Pending >= 0))
                 try { count = rows.Aggregate(0L, (total, row) => checked(total + row.Ready + row.Running + row.Pending)); } catch (OverflowException) { }
         }
-        var taskRows = (await tasks.ConfigureAwait(false))?.Items ?? [];
-        if (taskRows.Length > 1000) taskRows = [];
+        // An unread or oversized task list is reported as such, so the page cannot take the empty list for a reviewed one.
+        var taskRows = (await tasks.ConfigureAwait(false))?.Items; var tasksRead = taskRows is { Length: <= 1000 };
+        if (taskRows == null || !tasksRead) taskRows = [];
         var detection = await hardware.ConfigureAwait(false);
         if (detection != null && (string.IsNullOrWhiteSpace(detection.Resolved) || !ValidHardware(detection))) detection = null;
         return new(lib?.Trickplay == true, marker is { Allowed: true, State: "available", DetectionKindSettings: true }, detection, nodes, count,
-            Array.AsReadOnly(taskRows.Where(task => task != null && MarkerTasks.Contains(task.Key)).DistinctBy(task => task.Key).ToArray()));
+            Array.AsReadOnly(taskRows.Where(task => task != null && MarkerTasks.Contains(task.Key)).DistinctBy(task => task.Key).ToArray())) { TasksRead = tasksRead };
     }
     public static IReadOnlyList<string> MarkerTasks { get; } = Array.AsReadOnly(new[] { "sync_markers", "detect_intro_markers", "contribute_markers" });
     public async Task<IReadOnlyList<AdminPlaybackTask>> ListMarkerTasksAsync(MonitorAuthorityLease owner, CancellationToken ct)

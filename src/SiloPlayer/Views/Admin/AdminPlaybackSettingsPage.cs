@@ -45,7 +45,7 @@ public sealed partial class AdminPlaybackSettingsPage : Page, IAdminGutterScroll
     {
         if (_active) return; _active = true;
         _controller = new(App.Services.GetRequiredService<AdminServerSettingsApi>(), App.Services.GetRequiredService<AdminServerSettingsStore>(), _authority, false);
-        _panel = new(_controller, false, this); _body.Children.Add(_panel); _root.Children.Add(_panel.SaveBar); _panel.RunTask += RunTask; _panel.RefreshSupport += ReviewSupport;
+        _panel = new(_controller, false, this); _body.Children.Add(_panel); _root.Children.Add(_panel.SaveBar); _panel.RunTask += RunTask; _panel.RefreshSupport += RefreshSupport; _panel.ReviewSupport += ReviewSupport;
         var controller = _controller;
         _leave = new(() => controller.State.Owner, () => controller.State.DirtyKeys.Count > 0, controller.Discard);
         _authority.AvailabilityChanged += AuthorityChanged;
@@ -58,21 +58,24 @@ public sealed partial class AdminPlaybackSettingsPage : Page, IAdminGutterScroll
         var controller = _controller; if (!_active || controller == null || !_authority.IsAvailable) return;
         await controller.OpenAsync(); await RefreshSupport();
     }
-    private async Task RefreshSupport()
+    /// <summary>True only when this read was applied and the marker task list in it was really read.</summary>
+    private async Task<bool> RefreshSupport()
     {
         var controller = _controller; var owner = controller?.State.Owner; var sequence = ++_supportSequence;
-        if (owner?.IsCurrent != true) return;
+        if (owner?.IsCurrent != true) return false;
         _supportCancellation?.Cancel(); _supportCancellation?.Dispose();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(owner.Token); _supportCancellation = cancellation;
         try
         {
             var support = await App.Services.GetRequiredService<AdminPlaybackAdministrationApi>().SupportAsync(owner, cancellation.Token, AdminPlaybackSettingsRules.Get(controller!.State.Values, "playback.hw_accel") != "none");
-            if (_active && owner.IsCurrent && ReferenceEquals(controller, _controller) && ReferenceEquals(owner, controller!.State.Owner) && sequence == _supportSequence) _panel?.SetSupport(support);
+            if (_active && owner.IsCurrent && ReferenceEquals(controller, _controller) && ReferenceEquals(owner, controller!.State.Owner) && sequence == _supportSequence) { _panel?.SetSupport(support); return support.TasksRead; }
         }
         catch (OperationCanceledException) { }
         finally { if (ReferenceEquals(_supportCancellation, cancellation)) _supportCancellation = null; }
+        return false;
     }
-    private async Task ReviewSupport() { await RefreshSupport(); if (_active) _panel?.ReviewTaskOutcomes(); }
+    // Only the admin's own Refresh, and only one that read the task list, is the review that releases an unconfirmed run. A failed, superseded or setting-triggered read leaves it locked.
+    private async Task ReviewSupport() { if (await RefreshSupport() && _active) _panel?.ReviewTaskOutcomes(); }
     private void WindowActivated(object sender, WindowActivatedEventArgs args) => _focused = args.WindowActivationState != WindowActivationState.Deactivated;
     private void WindowVisible(object sender, WindowVisibilityChangedEventArgs args) => _visible = args.Visible;
     private async Task RefreshTasks()
@@ -114,7 +117,7 @@ public sealed partial class AdminPlaybackSettingsPage : Page, IAdminGutterScroll
     {
         if (!_active) return; _active = false; _supportSequence++; _supportCancellation?.Cancel(); _supportCancellation?.Dispose(); _supportCancellation = null; _authority.AvailabilityChanged -= AuthorityChanged; _leaveDialog?.Hide(); _leaveDialog = null;
         _taskPoll.Stop(); if (App.MainWindowInstance is { } window) { window.Activated -= WindowActivated; window.VisibilityChanged -= WindowVisible; }
-        if (_panel != null) { _panel.RunTask -= RunTask; _panel.RefreshSupport -= ReviewSupport; _panel.Dispose(); _root.Children.Remove(_panel.SaveBar); _body.Children.Remove(_panel); _panel = null; }
+        if (_panel != null) { _panel.RunTask -= RunTask; _panel.RefreshSupport -= RefreshSupport; _panel.ReviewSupport -= ReviewSupport; _panel.Dispose(); _root.Children.Remove(_panel.SaveBar); _body.Children.Remove(_panel); _panel = null; }
         _controller?.Dispose(); _controller = null;
     }
     protected override void OnNavigatedFrom(NavigationEventArgs args) { SuspendAdminPage(); base.OnNavigatedFrom(args); }
