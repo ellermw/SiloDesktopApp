@@ -2,7 +2,7 @@ using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-/// <summary>Exact English catalog subset from official 217ff25; existing translations remain preferred.</summary>
+/// <summary>Exact English catalog subset from official 66b836f82; existing translations remain preferred.</summary>
 public static class AdminAppearanceOverlayText
 {
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -136,6 +136,8 @@ public static class AdminAppearanceOverlayText
         ["web.settings.overlays.library.needsStorage"] = "Image uploads need asset storage. Configure storage to upload badge images. Images already in the library stay listed below and can be deleted.",
         ["web.settings.overlays.library.pickAnother"] = "Pick another image",
         ["web.settings.overlays.library.tooLarge"] = "Pick an image of 4 MB or less.",
+        ["web.admin.settings.hooks.overlayImages.removeFailed"] = "Failed to remove image",
+        ["web.admin.settings.hooks.overlayImages.uploadFailed"] = "Failed to upload image",
         ["web.settings.overlays.library.upload"] = "Upload",
         ["web.settings.overlays.look.border"] = "Border",
         ["web.settings.overlays.look.border.none"] = "None",

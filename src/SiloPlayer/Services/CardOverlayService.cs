@@ -681,7 +681,7 @@ public partial class CardOverlayService
             var source = root;
             if (root.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)
                 source = items;
-            var version = root.TryGetProperty("version", out var versionElement) && versionElement.ValueKind == JsonValueKind.Number && versionElement.TryGetInt32(out var parsedVersion)
+            var version = root.TryGetProperty("version", out var versionElement) && versionElement.TryGetInt32(out var parsedVersion)
                 ? parsedVersion
                 : 1;
 

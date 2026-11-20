@@ -54,6 +54,10 @@ public static class AdminAppearanceText
         ["web.admin.settings.appearance.titlePages.group"] = "Title pages",
         ["web.admin.settings.appearance.titlePages.titleArt.description"] = "Default for people who have not chosen their own. Anyone can still change it for themselves.",
         ["settingsManifest.ui.title_art.label"] = "Show title art",
+        ["web.admin.settings.hooks.branding.removeFailed"] = "Failed to remove image",
+        ["web.admin.settings.hooks.branding.uploadFailed"] = "Failed to upload image",
+        ["web.settings.overlays.library.tooLarge"] = "Pick an image of 4 MB or less.",
+        ["web.common.format.size.mb"] = "{size} MB",
     };
 
     public static string T(string key, params (string Name, object? Value)[] values)

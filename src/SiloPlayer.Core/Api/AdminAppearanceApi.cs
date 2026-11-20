@@ -76,5 +76,21 @@ public sealed partial class AdminAppearanceApi(SiloApiClient client)
         catch { throw new AdminAppearanceOutcomeUnknownException(); }
     }
 
-    private static ApiException SafeFailure(ApiException error) => new(AdminServerSettingsApi.SafeCode(error.ErrorCode), "The server refused the image change.", error.StatusCode);
+    // A refusal keeps only the server's own short problem text and field errors, bounded,
+    // so the page can say why (official toast of err.message); nothing else crosses.
+    private static ApiException SafeFailure(ApiException error) => new(AdminServerSettingsApi.SafeCode(error.ErrorCode), "The server refused the image change.", error.StatusCode)
+    {
+        ProblemType = AdminServerSettingsApi.SafeCode(error.ProblemType) is var code && code != "unknown" ? code : null,
+        ProblemTitle = Bound(error.ProblemTitle),
+        ProblemDetail = Bound(error.ProblemDetail),
+        FieldErrors = error.FieldErrors.Take(4).Select(field => new ApiFieldError(Bound(field.Location), field.Code, Bound(field.Detail))).ToArray(),
+    };
+
+    private static string? Bound(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Length <= 240 ? text : text[..240];
+
+    /// <summary>What a refused image write says: the server's field error or problem text, else the official fallback.</summary>
+    public static string RefusalText(ApiException error, bool upload) =>
+        error.FieldErrors.Select(field => field.Detail).FirstOrDefault(detail => !string.IsNullOrWhiteSpace(detail))
+        ?? error.ProblemDetail ?? error.ProblemTitle
+        ?? AdminAppearanceText.T(upload ? "web.admin.settings.hooks.branding.uploadFailed" : "web.admin.settings.hooks.branding.removeFailed");
 }

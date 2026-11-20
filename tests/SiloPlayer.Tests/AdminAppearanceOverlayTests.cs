@@ -16,18 +16,29 @@ public sealed class AdminAppearanceOverlayTests
         url = url ?? "/api/v2/overlay-images/" + Reference,
     });
 
+    // serializeOverlayPrefs(buildDefaultPrefs()) at official 66b836f82, written out from
+    // web/src/lib/overlays/registry/{tech,ratings,metadata,ribbons}.ts in registry order.
+    private const string OfficialBuiltIn = """{"version":2,"preset":"classic","order":[],"items":{"resolution":{"enabled":true,"position":"top-left"},"hdr":{"enabled":true,"position":"top-left"},"resolution_hdr":{"enabled":false,"position":"top-left"},"resolution_hdr_audio":{"enabled":false,"position":"top-left"},"audio":{"enabled":true,"position":"top-left"},"audio_channels":{"enabled":false,"position":"top-left"},"video_codec":{"enabled":false,"position":"top-left"},"container":{"enabled":false,"position":"bottom-left"},"aspect_ratio":{"enabled":false,"position":"bottom-right"},"release_type":{"enabled":true,"position":"bottom-left"},"edition":{"enabled":false,"position":"bottom-left"},"multi_audio":{"enabled":false,"position":"bottom-right"},"multi_sub":{"enabled":false,"position":"bottom-right"},"rating_imdb":{"enabled":false,"position":"left-edge"},"rating_tmdb":{"enabled":false,"position":"left-edge"},"rating_rt":{"enabled":false,"position":"left-edge"},"rating_rt_audience":{"enabled":false,"position":"left-edge"},"content_rating":{"enabled":false,"position":"bottom-right"},"advisory_age":{"enabled":false,"position":"bottom-right"},"year":{"enabled":false,"position":"bottom-left"},"runtime":{"enabled":false,"position":"bottom-left"},"original_language":{"enabled":false,"position":"bottom-left"},"studio":{"enabled":false,"position":"bottom-right"},"network":{"enabled":false,"position":"bottom-right"},"show_status":{"enabled":false,"position":"right-edge"},"request_status":{"enabled":true,"position":"top-left"},"availability":{"enabled":false,"position":"top-left"}}}""";
+
     [Fact]
-    public void BuiltInsComeFromTheOfficialRegistryIncludingEdgeAndAdvisoryDefaults()
+    public void BuiltInsAreExactlyTheOfficialSerializedRegistryDefaults()
     {
+        Assert.Equal(OfficialBuiltIn, CardOverlayService.BuiltInEditorDefaults);
         var defaults = CardOverlayService.ParseEditorDocument(CardOverlayService.BuiltInEditorDefaults);
         Assert.Equal(OverlayRegistry.All.Select(d => d.Id), defaults.Items.Keys);
-        Assert.Equal(OverlayPosition.LeftEdge, defaults.Items["rating_imdb"].Position);
-        Assert.Equal(OverlayPosition.RightEdge, defaults.Items["show_status"].Position);
-        Assert.Equal(OverlayPosition.BottomRight, defaults.Items["advisory_age"].Position);
-        Assert.Equal("classic", defaults.Preset);
-        Assert.Empty(defaults.Order);
-        Assert.Equal(CardOverlayService.BuiltInEditorDefaults, CardOverlayService.SerializeEditorDocument(defaults, 29));
+        Assert.Equal(CardOverlayService.BuiltInEditorDefaults, CardOverlayService.SerializeEditorDocument(defaults));
     }
+
+    [Theory]
+    [InlineData("", true)]
+    [InlineData(OfficialBuiltIn, true)]
+    // The official parser drops what it does not understand, so the built-in document with an extra field is still built in.
+    [InlineData("""{"version":2,"preset":"classic","order":[],"items":{},"future":1}""", true)]
+    [InlineData("""{"version":2,"preset":"plate","order":[],"items":{}}""", false)]
+    [InlineData("""{"version":2,"preset":"classic","order":[],"items":{"year":{"enabled":true}}}""", false)]
+    [InlineData("""{"version":2,"preset":"classic","order":[],"items":{},"style":{"size":1.5}}""", false)]
+    public void RestoreIsOfferedOnlyWhenTheStoredDefaultsDifferFromTheBuiltIns(string stored, bool builtIn)
+        => Assert.Equal(builtIn, CardOverlayService.IsBuiltInEditorDocument(stored));
 
     [Fact]
     public void ItemEditsPreserveUnknownFieldsOpaqueValuesAndUnchangedPositions()
@@ -39,7 +50,7 @@ public sealed class AdminAppearanceOverlayTests
         """;
         var draft = CardOverlayService.ParseEditorDocument(original);
         draft.Items["year"] = draft.Items["year"] with { Enabled = true };
-        using var document = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft, 29));
+        using var document = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft));
         var root = document.RootElement;
         Assert.Equal(7, root.GetProperty("version").GetInt32());
         Assert.Equal("future", root.GetProperty("preset").GetString());
@@ -51,65 +62,55 @@ public sealed class AdminAppearanceOverlayTests
         Assert.Equal(42, year.GetProperty("future").GetInt32());
         Assert.Equal("top-right", root.GetProperty("items").GetProperty("resolution").GetProperty("position").GetString());
         Assert.True(root.GetProperty("style").GetProperty("future").GetBoolean());
+        // Every registry item the stored document lacked is written whole, as the official serializer does.
+        Assert.Equal("left-edge", root.GetProperty("items").GetProperty("rating_imdb").GetProperty("position").GetString());
     }
 
     [Fact]
     public void RemovingLastValueImageAndResettingLookReallyRemoveTheStoredOverrides()
     {
-        var original = $$"""{"version":2,"preset":"plate","items":{"resolution":{"image":"{{Reference}}","valueImages":{"2160p":"{{Reference}}"}}},"style":{"size":1.5,"future":true}}""";
+        var original = $$$$"""{"version":2,"preset":"plate","items":{"resolution":{"image":"{{{{Reference}}}}","valueImages":{"2160p":"{{{{Reference}}}}"}}},"style":{"size":1.5,"future":true}}""";
         var draft = CardOverlayService.ParseEditorDocument(original);
-        draft.Items["resolution"] = draft.Items["resolution"] with { Image = null, ValueImages = new Dictionary<string, string>() };
+        draft.Items["resolution"] = draft.Items["resolution"] with { Image = null, ValueImages = null };
         draft = draft with { Style = null };
-        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft, 29));
+        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft));
         Assert.False(doc.RootElement.TryGetProperty("style", out _));
         var resolution = doc.RootElement.GetProperty("items").GetProperty("resolution");
         Assert.False(resolution.TryGetProperty("image", out _));
         Assert.False(resolution.TryGetProperty("valueImages", out _));
+        Assert.Equal("plate", doc.RootElement.GetProperty("preset").GetString());
     }
 
     [Fact]
-    public void OldManifestPreservesStoredNewerFieldsWithoutInventingUnsupportedOnes()
+    public void TheAdminDefaultIsWrittenWholeWhateverTheManifestRevision()
     {
-        var draft = CardOverlayService.ParseEditorDocument("""{"version":2,"preset":"band","items":{"year":{"enabled":false},"availability":{"enabled":true}},"style":{"size":1.5}}""");
-        draft.Items["year"] = draft.Items["year"] with { Enabled = true };
-        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft, 24));
-        Assert.Equal("band", doc.RootElement.GetProperty("preset").GetString());
-        Assert.Equal(1.5, doc.RootElement.GetProperty("style").GetProperty("size").GetDouble());
-        Assert.True(doc.RootElement.GetProperty("items").GetProperty("availability").GetProperty("enabled").GetBoolean());
-        Assert.False(doc.RootElement.GetProperty("items").TryGetProperty("resolution_hdr_audio", out _));
-    }
-
-    [Fact]
-    public void FreshDefaultsForOldManifestContainOnlySupportedPositionsIdsAndFields()
-    {
-        using var doc = JsonDocument.Parse(CardOverlayService.BuiltInEditorDefaultsForRevision(24));
+        // defaults.card_overlays is stored as any JSON (internal/config NormalizeAdminSetting), and the
+        // official page writes serializeOverlayPrefs(next) with edge positions, presets and style intact.
+        var draft = CardOverlayService.ParseEditorDocument("");
+        draft = draft with { Preset = "band", Style = new() { Size = 1.5 } };
+        draft.Items["year"] = draft.Items["year"] with { Enabled = true, Position = OverlayPosition.LeftEdge };
+        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft));
         var root = doc.RootElement;
-        Assert.False(root.TryGetProperty("style", out _));
-        var items = root.GetProperty("items");
-        Assert.False(items.TryGetProperty("availability", out _));
-        Assert.False(items.TryGetProperty("resolution_hdr_audio", out _));
-        Assert.All(items.EnumerateObject(), pair => Assert.Contains(pair.Value.GetProperty("position").GetString(), new[] { "top-left", "top-right", "bottom-left", "bottom-right" }));
-        Assert.Equal("top-left", items.GetProperty("rating_imdb").GetProperty("position").GetString());
+        Assert.Equal("band", root.GetProperty("preset").GetString());
+        Assert.Equal(1.5, root.GetProperty("style").GetProperty("size").GetDouble());
+        Assert.Equal("left-edge", root.GetProperty("items").GetProperty("year").GetProperty("position").GetString());
+        Assert.True(root.GetProperty("items").GetProperty("availability").TryGetProperty("enabled", out _));
+        Assert.True(root.GetProperty("items").GetProperty("resolution_hdr_audio").TryGetProperty("enabled", out _));
     }
 
-    [Theory]
-    [InlineData("returning series", "Returning")]
-    [InlineData("planned", "Upcoming")]
-    [InlineData("canceled", "Cancelled")]
-    public void ValueImageKeysUseTheOfficialCanonicalShowStatus(string value, string key)
-        => Assert.Equal(key, OverlayRegistry.ValueKey("show_status", new() { ShowStatus = value }));
-
     [Fact]
-    public void RatingAndManifestGatesMatchThePinnedRegistry()
+    public void OnlyRatingSourcesGateWhichOverlaysTheAdminPageOffers()
     {
         var none = new HashSet<string>();
-        Assert.True(CardOverlayService.EditorOffersOverlay("rating_imdb", 29, none));
-        Assert.True(CardOverlayService.EditorOffersOverlay("rating_tmdb", 29, none));
-        Assert.False(CardOverlayService.EditorOffersOverlay("rating_rt", 29, none));
-        Assert.True(CardOverlayService.EditorOffersOverlay("rating_rt", 29, new HashSet<string> { "rt_critic" }));
-        Assert.False(CardOverlayService.EditorOffersOverlay("resolution_hdr_audio", 25, none));
-        Assert.False(CardOverlayService.EditorOffersOverlay("availability", 28, none));
-        Assert.True(CardOverlayService.EditorOffersOverlay("availability", 29, none));
+        Assert.True(CardOverlayService.EditorOffersOverlay("rating_imdb", none));
+        Assert.True(CardOverlayService.EditorOffersOverlay("rating_tmdb", none));
+        Assert.False(CardOverlayService.EditorOffersOverlay("rating_rt", none));
+        Assert.False(CardOverlayService.EditorOffersOverlay("rating_rt_audience", new HashSet<string> { "rt_critic" }));
+        Assert.True(CardOverlayService.EditorOffersOverlay("rating_rt", new HashSet<string> { "rt_critic" }));
+        Assert.True(CardOverlayService.EditorOffersOverlay("rating_rt_audience", new HashSet<string> { "rt_audience" }));
+        // isOverlayOffered ignores the manifest: availability and the combined badge are always offered.
+        Assert.True(CardOverlayService.EditorOffersOverlay("availability", none));
+        Assert.True(CardOverlayService.EditorOffersOverlay("resolution_hdr_audio", none));
     }
 
     [Fact]
@@ -117,12 +118,26 @@ public sealed class AdminAppearanceOverlayTests
     {
         var draft = CardOverlayService.ParseEditorDocument("""{"year":{"enabled":false,"position":"future-edge","future":7},"future_badge":{"enabled":true,"position":"future-edge"}}""");
         draft.Items["year"] = draft.Items["year"] with { Enabled = true };
-        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft, 29));
+        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft));
         var items = doc.RootElement.GetProperty("items");
         Assert.True(items.GetProperty("year").GetProperty("enabled").GetBoolean());
         Assert.Equal("future-edge", items.GetProperty("year").GetProperty("position").GetString());
         Assert.Equal(7, items.GetProperty("year").GetProperty("future").GetInt32());
         Assert.True(items.GetProperty("future_badge").GetProperty("enabled").GetBoolean());
+        Assert.Equal(2, doc.RootElement.GetProperty("version").GetInt32());
+    }
+
+    [Fact]
+    public void PassthroughOverlaysTheEditorDoesNotRenderSurviveAnEdit()
+    {
+        // Official PASSTHROUGH_IDS: legal in the contract, no registry entry, kept on a round trip.
+        var draft = CardOverlayService.ParseEditorDocument("""{"version":2,"preset":"classic","order":["imdb_top_250"],"items":{"imdb_top_250":{"enabled":true,"position":"right-edge"},"rt_certified_fresh":{"enabled":false,"position":"left-edge"}}}""");
+        draft.Items["year"] = draft.Items["year"] with { Enabled = true };
+        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft));
+        var items = doc.RootElement.GetProperty("items");
+        Assert.True(items.GetProperty("imdb_top_250").GetProperty("enabled").GetBoolean());
+        Assert.Equal("left-edge", items.GetProperty("rt_certified_fresh").GetProperty("position").GetString());
+        Assert.Equal("imdb_top_250", doc.RootElement.GetProperty("order")[0].GetString());
     }
 
     [Fact]
@@ -130,11 +145,20 @@ public sealed class AdminAppearanceOverlayTests
     {
         var draft = CardOverlayService.ParseEditorDocument("""{"version":2,"preset":"classic","items":{},"style":{"size":1.5,"uppercase":"future","future":{"a":1}}}""");
         draft = draft with { Style = draft.Style! with { Size = null } };
-        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft, 29));
+        using var doc = JsonDocument.Parse(CardOverlayService.SerializeEditorDocument(draft));
         var style = doc.RootElement.GetProperty("style");
         Assert.False(style.TryGetProperty("size", out _));
         Assert.Equal("future", style.GetProperty("uppercase").GetString());
         Assert.Equal(1, style.GetProperty("future").GetProperty("a").GetInt32());
+    }
+
+    [Fact]
+    public void TheShowSampleFindsAnImageTheOfficialEditorKeyedByTheCanonicalStatus()
+    {
+        // The official editor keys show status images "Returning" while the API sends "returning".
+        var config = new OverlayItemConfig(true, OverlayPosition.RightEdge) { ValueImages = new Dictionary<string, string> { ["Returning"] = Reference } };
+        Assert.Equal(Reference, OverlayRegistry.ResolveValueImage(config, "show_status", OverlayRegistry.ValueKey("show_status", new() { ShowStatus = "returning" })));
+        Assert.Null(OverlayRegistry.ResolveValueImage(config, "network", "Returning".ToLowerInvariant()));
     }
 
     [Fact]

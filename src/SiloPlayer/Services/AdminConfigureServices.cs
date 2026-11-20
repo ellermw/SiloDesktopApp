@@ -43,7 +43,9 @@ internal static class AdminConfigureServices
         services.AddSingleton(new AdminPageRegistration(AdminRoute.SearchSettings, typeof(AdminSearchSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
         services.AddSingleton<AdminAppearanceApi>();
-        services.AddTransient<AdminAppearanceSettingsController>();
+        // Appearance also reads the settings capabilities, the ratings capability and the admin's own poster size for its overlay preview.
+        services.AddTransient(sp => new AdminAppearanceSettingsController(sp.GetRequiredService<AdminAppearanceApi>(), sp.GetRequiredService<AdminServerSettingsApi>(),
+            sp.GetRequiredService<AdminMonitorAuthority>(), sp.GetService<SettingsApi>(), sp.GetService<CatalogApi>()));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.AppearanceSettings, typeof(AdminAppearanceSettingsPage)));
         services.AddSingleton<AdminLibrarySettingsApi>();
         services.AddTransient<AdminLibrarySettingsController>();

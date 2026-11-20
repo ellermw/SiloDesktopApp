@@ -1,244 +1,158 @@
-using System.Net;
-using System.Reflection;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Automation.Peers;
-using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
-using SiloPlayer.Core.Services;
-using SiloPlayer.Helpers;
-using SiloPlayer.Services;
 using SiloPlayer.Views.Admin;
+using F = AdminAppearanceFixture;
 
 /// <summary>
-/// Integrated acceptance fixture: requires the coordinator's production Appearance
-/// registration/page. Activates that page through the real shell and Frame, then
-/// exercises the real retained editor. Authored source only; no run is claimed.
+/// The Appearance card-overlay editor and badge-image library through the real page and
+/// shell (official AppearanceSettings.tsx at 66b836f82): style presets and look, every
+/// offered category with its switch and position, the live movie/show/requested preview,
+/// per-value images, the library upload and delete, the badges-off state and an older
+/// manifest. Every edit is staged in the page batch; nothing writes a viewer profile.
 /// </summary>
 internal static class AdminAppearanceOverlayNativeFixture
 {
     internal static async Task RunAsync(Window window)
     {
-        using var server = new Server();
-        using var http = new HttpClient(server);
-        var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
-        using var auth = new AuthService(client, new AuthApi(client));
-        auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
-        auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic", Role = "admin" });
-        auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
-        using var authority = new AdminMonitorAuthority(client, auth);
-        var settings = new SettingsApi(client);
-        var overlays = new CardOverlayService(settings);
-        var navigation = new NavigationService();
-        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority)
-            .AddSingleton(settings).AddSingleton(overlays).AddSingleton(new CatalogApi(client))
-            .AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation).AddSingleton(new ToastService())
-            .AddSingleton(new SettingsService(Program.ResultDirectory));
-        typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Services.AdminConfigureServices")!
-            .GetMethod("Add", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(null, [collection]);
-        await using var services = collection.BuildServiceProvider();
-        var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
-        var previousServices = servicesField.GetValue(null);
-        var previousContent = window.Content;
-        var previousName = DocumentTitle.AppName;
-        Frame? outer = null;
-        FrameworkElement? page = null;
-        try
-        {
-            servicesField.SetValue(null, services);
-            new ThemeService(new SettingsService(Program.ResultDirectory), settings).ApplyTheme("midnight-cinema");
-            await overlays.EnsureLoadedAsync();
-            window.AppWindow.ResizeClient(new(1440, 1000));
-            outer = new Frame(); window.Content = outer; navigation.Frame = outer;
-            AdminShellPage.TryOpenHref("/admin/settings/appearance");
-            await Until(() => outer.Content is AdminShellPage, "Appearance shell activation");
-            var shell = (AdminShellPage)outer.Content;
-            var inner = (Frame)shell.GetType().GetField("_frame", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(shell)!;
-            await Until(() => inner.Content?.GetType().Name == "AdminAppearanceSettingsPage", "production Appearance registration");
-            page = (FrameworkElement)inner.Content;
-            await Until(() => Descendants(page).Any(element => Id(element) == "AdminAppearanceOverlayEditor" && element.IsLoaded), "overlay editor mounted");
-            var editor = Descendants(page).Single(element => Id(element) == "AdminAppearanceOverlayEditor");
-            var type = editor.GetType();
-            var bind = type.GetMethod("Bind")!;
-            var capabilities = type.GetMethod("SetCapabilities")!;
-            var builtIns = (string)type.GetProperty("BuiltInDefaults", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
-            var images = new[] { new OverlayLibraryImage { Ref = server.Reference, Name = "Synthetic image", Width = 1, Height = 1 } };
-            capabilities.Invoke(editor, [true, new HashSet<string> { "rt_critic", "rt_audience" }]);
-            var changes = new List<string>();
-            type.GetEvent("Changed")!.AddEventHandler(editor, (Action<string>)(json => changes.Add(json)));
-            bind.Invoke(editor, [builtIns, true, true, 29, images]);
-            await Task.Delay(60);
-            Check(changes.Count == 0 && server.Writes == 0, "binding does not stage or write a viewer profile");
-            Check(!Descendants(editor).OfType<TextBlock>().Any(text => text.Text.StartsWith("web.", StringComparison.Ordinal)), "official editor labels resolve");
+        await using var host = new AdminAppearanceFixtureHost(window);
+        var server = host.Server;
+        server.Images.Add((AdminAppearanceFixtureServer.ImageRef(0), "Synthetic logo"));
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 1000));
+        var page = await host.OpenAsync();
+        var controller = page.Controller!;
+        await F.Until(() => F.Has(page, "AdminAppearanceOverlayEditor") && F.Find<FrameworkElement>(page, "AdminAppearanceOverlayEditor").IsLoaded, "overlay editor mounted");
+        await F.Until(() => controller.State.SupportsStyles && F.Shown(page, "AppearanceOverlayLibrary"), "revision 29 shows the badge-image library");
+        var editor = F.Find<FrameworkElement>(page, "AdminAppearanceOverlayEditor");
+        await Task.Delay(150);
+        F.Check(controller.State.DirtyKeys.Count == 0 && server.Writes.Count == 0, "binding the editor stages and sends nothing");
+        string Document() => controller.State.Values["defaults.card_overlays"];
+        JsonElement Root() => JsonDocument.Parse(Document()).RootElement;
+        JsonElement Item(string id) => Root().GetProperty("items").GetProperty(id);
 
-            // These interactions flow into the parent controller through Changed.
-            var year = Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-year");
-            year.IsOn = true;
-            await Until(() => changes.Count > 0, "native toggle stages defaults");
-            Check(Items(changes.Last()).GetProperty("year").GetProperty("enabled").GetBoolean(), "actual year toggle reaches the serialized document");
-            Invoke(Find<Button>(editor, "AppearanceOverlayPreset-plate"));
-            await Until(() => Root(changes.Last()).GetProperty("preset").GetString() == "plate", "plate preset stages");
-            Find<Slider>(editor, "AppearanceOverlaySize").Value = 1.5;
-            await Until(() => Root(changes.Last()).TryGetProperty("style", out var style) && style.GetProperty("size").GetDouble() == 1.5, "size stages");
-            Check(server.Writes == 0, "preset, look and toggle edits remain staged");
+        // Rating sources: the capability shows rt_critic but not rt_audience.
+        F.Check(F.Shown(editor, "AppearanceOverlayToggle-rating_rt") && !F.Shown(editor, "AppearanceOverlayToggle-rating_rt_audience"),
+            "rating badges are offered only for the sources the server shows");
+        F.Check(F.Shown(editor, "AppearanceOverlayToggle-availability") && F.Shown(editor, "AppearanceOverlayToggle-resolution_hdr_audio"), "every other registry overlay is offered");
+        F.Check(new[] { "MEDIA INFO", "RATINGS & CERTIFICATIONS", "CONTENT METADATA", "STATUS & AWARDS" }.All(F.Texts(editor).Contains), "the four official categories render");
 
-            var variant = Find<ComboBox>(editor, "AppearancePreviewVariant");
-            variant.SelectedIndex = 1;
-            var status = Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-show_status"); status.IsOn = true;
-            var network = Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-network"); network.IsOn = true;
-            await Task.Delay(80);
-            var preview = Find<FrameworkElement>(editor, "AppearanceOverlayPreview");
-            Check(Descendants(preview).OfType<TextBlock>().Any(text => text.Text == "HBO"), "live show preview uses the native badge renderer and show-only sample");
+        // A switch, then a position from the five official choices.
+        var year = F.Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-year");
+        var position = F.Find<ComboBox>(editor, "AppearanceOverlayPosition-year");
+        F.Check(!position.IsEnabled, "a disabled badge's position is disabled");
+        year.IsOn = true;
+        await F.Until(() => controller.State.DirtyKeys.Contains("defaults.card_overlays") && Item("year").GetProperty("enabled").GetBoolean(), "switch stages the badge");
+        await F.Until(() => position.IsEnabled, "position enabled with the badge");
+        F.Check(position.Items.Cast<ComboBoxItem>().Select(item => item.Content?.ToString()).SequenceEqual(["Top Left", "Left Edge", "Right Edge", "Bottom Left", "Bottom Right"]),
+            "the five official positions are offered");
+        position.SelectedIndex = 1;
+        await F.Until(() => Item("year").GetProperty("position").GetString() == "left-edge", "position stages");
 
-            var imageButton = Find<Button>(editor, "AppearanceOverlayImages-resolution");
-            var flyout = (Flyout)imageButton.Flyout;
-            flyout.ShowAt(imageButton);
-            await Until(() => flyout.Content is ScrollViewer { IsLoaded: true }, "image flyout opened");
-            var content = (FrameworkElement)flyout.Content;
-            var key = Find<AutoSuggestBox>(content, "AppearanceOverlayValueKey-resolution");
-            key.Text = "2160p";
-            var localImage = Descendants(content).OfType<ComboBox>().Last();
-            localImage.SelectedItem = localImage.Items.Cast<ComboBoxItem>().Single(item => item.Tag as string == server.Reference);
-            key.Focus(FocusState.Keyboard);
-            var focus = FocusManager.GetFocusedElement(editor.XamlRoot);
-            var before = changes.Count;
-            var staged = changes.Last();
-            bind.Invoke(editor, [staged, true, true, 29, images]);
-            await Task.Delay(60);
-            Check(changes.Count == before && ReferenceEquals(key, Find<AutoSuggestBox>(content, "AppearanceOverlayValueKey-resolution")) && key.Text == "2160p",
-                "rebinding keeps open image controls and pending key without staging");
-            Check(ReferenceEquals(focus, FocusManager.GetFocusedElement(editor.XamlRoot)), "rebinding retains native keyboard focus");
-            Check((variant.SelectedItem as ComboBoxItem)?.Tag as string == "show", "rebinding keeps local show preview selection");
-            Invoke(Find<Button>(content, "AppearanceOverlayAddValue-resolution"));
-            await Until(() => Items(changes.Last()).GetProperty("resolution").TryGetProperty("valueImages", out var map) && map.TryGetProperty("2160p", out _), "value image added");
-            Check(Items(changes.Last()).GetProperty("resolution").GetProperty("valueImages").GetProperty("2160p").GetString() == server.Reference,
-                "exact raw API key assigns a whole-badge image");
-            flyout.Hide();
-            await Until(() => !content.IsLoaded, "image flyout closed");
-            variant.SelectedIndex = 0;
-            await Until(() => Descendants(preview).OfType<Border>().Any(badge => badge.Tag as string == "resolution" && badge.Child is Image), "whole-value image decoded in live native preview");
-            Check(true, "live preview renders the selected image through the existing authenticated renderer");
-            before = changes.Count;
-            bind.Invoke(editor, [changes.Last(), true, true, 29, Array.Empty<OverlayLibraryImage>()]);
-            await Task.Delay(80);
-            Check(!Descendants(preview).OfType<Border>().Any(badge => badge.Tag as string == "resolution" && badge.Child is Image), "deleted library reference falls back to the native text badge");
-            Check(changes.Count == before, "image-library refresh never edits stored assignments");
+        // Style presets and the custom look.
+        await F.Click(editor, "AppearanceOverlayPreset-plate");
+        await F.Until(() => Root().GetProperty("preset").GetString() == "plate", "plate preset stages");
+        F.Find<Slider>(editor, "AppearanceOverlaySize").Value = 1.5;
+        await F.Until(() => Root().TryGetProperty("style", out var style) && style.GetProperty("size").GetDouble() == 1.5, "size stages");
+        await F.Click(editor, "AppearanceOverlayLook-shape-rounded");
+        await F.Until(() => Root().GetProperty("style").GetProperty("shape").GetString() == "rounded", "shape stages");
+        await F.Click(editor, "AppearanceOverlaySwatch-fill-slate");
+        await F.Until(() => Root().GetProperty("style").GetProperty("background").GetString() == "#0F172ACC", "fill swatch stages");
+        await F.Until(() => F.Shown(editor, "AppearanceOverlayResetLook"), "reset look offered once a style exists");
+        await F.Click(editor, "AppearanceOverlayResetLook");
+        await F.Until(() => !Root().TryGetProperty("style", out _), "reset removes the custom style");
+        F.Check(server.Writes.Count == 0, "look and badge edits remain staged");
 
-            before = changes.Count;
-            bind.Invoke(editor, [builtIns, true, true, 24, images]);
-            Check(Find<Button>(editor, "AppearanceOverlayPreset-band").Visibility == Visibility.Collapsed, "old manifests hide advanced presets");
-            Check(Find<Button>(editor, "AppearanceOverlayImages-resolution").Visibility == Visibility.Collapsed, "old manifests hide image editors");
-            Check(Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-availability").IsEnabled == false ||
-                !VisibleThroughParents(Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-availability")), "new overlay categories respect manifest support");
-            Check(changes.Count == before, "capability changes do not emit settings changes");
+        // Live preview with the official samples.
+        var preview = F.Find<FrameworkElement>(editor, "AppearanceOverlayPreview");
+        await F.Until(() => F.Texts(preview).Contains("4K"), "movie sample shows its resolution badge");
+        F.Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-network").IsOn = true;
+        await F.Click(editor, "AppearancePreviewVariant-show");
+        await F.Until(() => F.Texts(preview).Contains("HBO"), "show sample shows a show-only badge");
+        F.Check(!F.Texts(preview).Contains("4K"), "show sample uses its own 1080p data");
+        await F.Click(editor, "AppearancePreviewVariant-requested");
+        await F.Until(() => F.Texts(preview).Any(text => text.StartsWith("Downloading 43", StringComparison.Ordinal)), "requested sample shows the request status");
+        await F.Click(editor, "AppearancePreviewVariant-movie");
+        F.Check(F.Find<ToggleButton>(editor, "AppearancePreviewVariant-movie").IsChecked == true, "the sample choice is local view state");
 
-            bind.Invoke(editor, [builtIns, false, true, 29, images]);
-            Check(!year.IsEnabled, "server overlay toggle makes defaults controls inert");
-            Check(Find<Button>(editor, "AppearanceOverlayUpload").IsEnabled, "image library stays usable when overlays are disabled");
-            capabilities.Invoke(editor, [false, new HashSet<string>()]);
-            Check(Find<Button>(editor, "AppearanceOverlayUpload").Visibility == Visibility.Collapsed, "missing image storage hides upload");
-            Check(Find<Button>(editor, "AppearanceOverlayDelete-" + server.Reference).IsEnabled, "existing images can be removed without upload storage");
-            Check(!VisibleThroughParents(Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-rating_rt")), "ratings capability hides restricted source controls");
-            Check(VisibleThroughParents(Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-rating_imdb")), "IMDb remains offered without a restricted ratings source");
-            bind.Invoke(editor, [builtIns, true, false, 29, images]);
-            before = changes.Count; year.IsOn = !year.IsOn;
-            Check(changes.Count == before && server.Writes == 0, "read-only binding rejects programmatic control edits");
-            type.GetMethod("SetImageLibraryEditable")!.Invoke(editor, [true]);
-            Check(Find<Button>(editor, "AppearanceOverlayDelete-" + server.Reference).IsEnabled && !year.IsEnabled,
-                "managed defaults can remain read-only while admin image operations stay available");
-            bind.Invoke(editor, [builtIns, true, true, 29, images]);
-            client.SetProfile("retired", "synthetic-retired");
-            year.IsOn = !year.IsOn;
-            Check(changes.Count == before && server.ProfileWrites == 0, "retired owner cannot stage or write profile settings");
-            await MediaParityNativeFixture.CaptureAsync(page, "admin-appearance-overlay-editor.png");
-        }
-        finally
-        {
-            try
-            {
-                if (page?.XamlRoot is { } root)
-                    foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(root)) popup.IsOpen = false;
-                if (outer != null) outer.Content = null;
-                window.Content = previousContent;
-                if (page != null) await Until(() => !page.IsLoaded, "Appearance page unloaded before service restoration");
-            }
-            finally
-            {
-                servicesField.SetValue(null, previousServices);
-                DocumentTitle.AppName = previousName;
-            }
-        }
-    }
+        // Per-badge images: the icon image and a per-value image, with the flyout retained across a re-render.
+        var reference = AdminAppearanceFixtureServer.ImageRef(0);
+        var imageButton = F.Find<Button>(editor, "AppearanceOverlayImages-resolution");
+        F.Check(imageButton.Visibility == Visibility.Visible, "badges offer images while the library has one");
+        var flyout = (Flyout)imageButton.Flyout;
+        flyout.ShowAt(imageButton);
+        await F.Until(() => flyout.Content is ScrollViewer { IsLoaded: true }, "image flyout opened");
+        var content = (FrameworkElement)flyout.Content;
+        var icon = F.Find<ComboBox>(content, "AppearanceOverlayIcon-resolution");
+        icon.SelectedItem = icon.Items.Cast<ComboBoxItem>().Single(item => item.Tag as string == reference);
+        await F.Until(() => Item("resolution").TryGetProperty("image", out var image) && image.GetString() == reference, "icon image stages");
+        var key = F.Find<AutoSuggestBox>(content, "AppearanceOverlayValueKey-resolution");
+        key.Text = "2160p";
+        var valueImage = F.Find<ComboBox>(content, "AppearanceOverlayNewValueImage-resolution");
+        valueImage.SelectedItem = valueImage.Items.Cast<ComboBoxItem>().Single(item => item.Tag as string == reference);
+        var staged = Document();
+        // A re-render (any page state change) rebinds the editor without staging or rebuilding the open flyout.
+        F.Find<ToggleSwitch>(page, "AppearanceTitleArt").IsOn = false;
+        await F.Until(() => controller.State.DirtyKeys.Contains("defaults.ui.title_art"), "unrelated edit re-renders the page");
+        await Task.Delay(100);
+        F.Check(Document() == staged && ReferenceEquals(key, F.Find<AutoSuggestBox>(content, "AppearanceOverlayValueKey-resolution")) && key.Text == "2160p",
+            "rebinding keeps the open image controls and the unfinished value without staging");
+        await F.Click(content, "AppearanceOverlayAddValue-resolution");
+        await F.Until(() => Item("resolution").TryGetProperty("valueImages", out var map) && map.TryGetProperty("2160p", out var assigned) && assigned.GetString() == reference, "per-value image stages");
+        flyout.Hide();
+        await F.Until(() => !content.IsLoaded, "image flyout closed");
 
-    private static JsonElement Root(string json) { using var doc = JsonDocument.Parse(json); return doc.RootElement.Clone(); }
-    private static JsonElement Items(string json) => Root(json).GetProperty("items");
-    private static string Id(DependencyObject element) => AutomationProperties.GetAutomationId(element);
-    private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().Single(element => Id(element) == id);
-    private static bool VisibleThroughParents(FrameworkElement element)
-    {
-        for (DependencyObject? current = element; current != null; current = VisualTreeHelper.GetParent(current))
-            if (current is FrameworkElement { Visibility: Visibility.Collapsed }) return false;
-        return true;
-    }
-    private static IEnumerable<FrameworkElement> Descendants(DependencyObject root)
-    {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i); if (child is FrameworkElement element) yield return element;
-            foreach (var descendant in Descendants(child)) yield return descendant;
-        }
-    }
-    private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
-    private static async Task Until(Func<bool> condition, string label)
-    { for (var i = 0; i < 240 && !condition(); i++) await Task.Delay(25); if (!condition()) throw new InvalidOperationException("Timed out: " + label); }
-    private static void Check(bool condition, string label) { if (!condition) throw new InvalidOperationException(label); Program.Log("PASS: " + label); }
+        // The badge-image library: choose, name, upload, refuse an oversized pick, delete.
+        var writes = server.Writes.Count;
+        host.Pick = _ => F.File("huge.png", "image/png", 5L * 1024 * 1024);
+        await F.Click(page, "AppearanceOverlayChoose");
+        await F.Until(() => F.Shown(page, "AppearanceOverlayLibraryError") && F.Find<TextBlock>(page, "AppearanceOverlayLibraryError").Text == "Pick an image of 4 MB or less.", "oversized badge image refused");
+        F.Check(server.Writes.Count == writes, "an oversized badge image is never sent");
+        host.Pick = _ => F.File("4K Dolby Vision.png", "image/png");
+        await F.Click(page, "AppearanceOverlayChoose");
+        await F.Until(() => F.Shown(page, "AppearanceOverlayImageName") && F.Find<TextBox>(page, "AppearanceOverlayImageName").Text == "4K Dolby Vision", "picked file offers its name");
+        F.Check(F.Find<Button>(page, "AppearanceOverlayChoose").Content?.ToString() == "Pick another image", "Choose becomes Pick another image");
+        F.Find<TextBox>(page, "AppearanceOverlayImageName").Text = "  Synthetic 4K  ";
+        await F.Click(page, "AppearanceOverlayUpload");
+        await F.Until(() => server.Images.Count == 2 && controller.State.OverlayConfig?.Images.Count == 2 && controller.State.AssetBusy == null, "badge image uploaded and listed");
+        F.Check(server.LastImageName == "Synthetic 4K" && server.Writes.Count == writes + 1, "one upload with the trimmed name");
+        await F.Until(() => !F.Shown(page, "AppearanceOverlayImageName"), "an acknowledged upload clears the picked file");
+        var uploaded = AdminAppearanceFixtureServer.ImageRef(2);
+        await F.Until(() => F.Shown(page, "AppearanceOverlayDelete-" + uploaded), "uploaded image row");
+        await F.Click(page, "AppearanceOverlayDelete-" + reference);
+        await F.Until(() => F.Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "delete confirmation");
+        var dialog = (ContentDialog)F.Field(page, "_dialog")!;
+        F.Check(dialog.Title?.ToString() == "Delete this image?", "delete uses the official confirmation");
+        F.Invoke(F.DialogButton(dialog, "Delete"));
+        await F.Until(() => server.Images.All(image => image.Ref != reference) && controller.State.OverlayConfig?.Images.Count == 1 && controller.State.AssetBusy == null, "image deleted and library re-read");
+        F.Check(Item("resolution").GetProperty("image").GetString() == reference, "deleting an image leaves stored references for the admin to clear");
+        await F.Until(() => !F.Has(page, "AppearanceOverlayDelete-" + reference), "deleted row removed");
+        F.Check(!server.Writes.Any(write => write.Contains("/settings/values", StringComparison.Ordinal)), "the editor never writes a viewer profile");
 
-    private sealed class Server : HttpMessageHandler
-    {
-        private static readonly byte[] Image = Convert.FromBase64String("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA");
-        internal string Reference => Convert.ToHexString(SHA256.HashData(Image)).ToLowerInvariant() + ".webp";
-        internal int Writes, ProfileWrites;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var path = request.RequestUri!.AbsolutePath;
-            if (request.Method != HttpMethod.Get)
-            {
-                Writes++;
-                if (path.Contains("/settings/values/", StringComparison.Ordinal)) ProfileWrites++;
-            }
-            if (path.StartsWith("/api/v2/overlay-images/", StringComparison.Ordinal))
-            {
-                var image = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Image) };
-                image.Content.Headers.ContentType = new("image/webp"); return Task.FromResult(image);
-            }
-            object body = path switch
-            {
-                "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 29, supports_overlay_images = true, supports_batched_effective = true },
-                "/api/v2/settings/overlay-config" => new { enabled = true, image_uploads_available = true, images = new[] { new { @ref = Reference, name = "Synthetic image", width = 1, height = 1 } } },
-                "/api/v2/theme/branding" => new { storage_available = true },
-                "/api/v2/admin/settings/effective" => new Dictionary<string, string>
-                {
-                    ["branding.accent_color"] = "", ["overlays.enabled"] = "true", ["defaults.card_overlays"] = "", ["defaults.ui.title_art"] = "true",
-                },
-                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>() },
-                "/api/v2/admin/settings/restart-keys" => new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() },
-                "/api/v2/admin/server/status" => new { restart_required = false, restart_mark_count = 0, restart_requested = false },
-                "/api/v2/admin/system/build" => new { display = "synthetic", available = true, build_number = 1 },
-                "/api/v2/capabilities/ratings" => new { state = "available", sources = new[] { new { source = "rt_critic" }, new { source = "rt_audience" } } },
-                _ => new { items = Array.Empty<object>() },
-            };
-            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
-            response.Headers.ETag = new("\"appearance-fixture-v1\"");
-            return Task.FromResult(response);
-        }
+        // Badges off: style, preview and rows are inert; the library stays usable.
+        var enabled = F.Find<ToggleSwitch>(page, "AppearanceOverlaysEnabled");
+        enabled.IsOn = false;
+        await F.Until(() => controller.State.Values["overlays.enabled"] == "false", "badges-off staged");
+        await F.Until(() => !F.Find<ToggleSwitch>(editor, "AppearanceOverlayToggle-resolution").IsEnabled, "rows are inert while badges are off");
+        F.Check(F.Find<Button>(page, "AppearanceOverlayChoose").IsEnabled, "the badge-image library stays usable while badges are off");
+        await F.Click(page, "AppearanceSave");
+        await F.Until(() => controller.State.DirtyKeys.Count == 0 && !controller.State.Saving, "overlay defaults saved in one batch");
+        F.Check(server.LastSavedKeys.OrderBy(name => name).SequenceEqual(["defaults.card_overlays", "defaults.ui.title_art", "overlays.enabled"]), "one save carries the staged appearance keys");
+        using (var saved = JsonDocument.Parse(server.Values["defaults.card_overlays"]))
+            F.Check(saved.RootElement.GetProperty("items").GetProperty("year").GetProperty("position").GetString() == "left-edge"
+                && saved.RootElement.GetProperty("preset").GetString() == "plate", "the saved document carries the staged edits");
+
+        // An older manifest: no style controls, edge-free presets, image editors or library.
+        server.ManifestRevision = 24;
+        await F.Click(page, "AppearanceReload");
+        await F.Until(() => controller.State is { Loading: false, SupportsStyles: false }, "revision 24 re-read");
+        await F.Until(() => !F.Shown(page, "AppearanceOverlayLibrary") && !F.Shown(editor, "AppearanceOverlayPreset-band"), "advanced presets and the library are hidden");
+        F.Check(!F.Shown(editor, "AppearanceOverlaySize") && !F.Shown(editor, "AppearanceOverlayImages-resolution"), "custom look and badge images are hidden");
+        F.Check(F.Shown(editor, "AppearanceOverlayPreset-classic"), "legacy presets remain");
+        await MediaParityNativeFixture.CaptureAsync(host.Outer, "appearance-overlays-1440.png");
+        host.Auth.SetCurrentUser(new UserInfo { Id = "1", Username = "Synthetic admin", Role = "user" });
+        await F.Until(() => controller.State.Owner == null, "authority retirement");
     }
 }

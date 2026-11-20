@@ -13,43 +13,71 @@ public sealed record AdminAppearanceSettingsState
     public bool Loaded { get; init; }
     public bool Saving { get; init; }
     public bool Conflict { get; init; }
+    /// <summary>A settings save whose outcome is unknown; Save stays blocked until a reload.</summary>
     public bool OutcomeUnknown { get; init; }
-    public bool StatusUnavailable { get; init; }
+    /// <summary>An image write whose outcome is unknown, or whose result could not be re-read; image writes stay blocked until a reload.</summary>
+    public bool AssetsUnknown { get; init; }
     public bool S3Configured { get; init; }
+    /// <summary>The branding slot or "overlay-images" an image write is running for.</summary>
     public string? AssetBusy { get; init; }
     public string? Error { get; init; }
+    public AdminFailureKind? Failure { get; init; }
+    /// <summary>The server's own words for a refused image write (problem detail or field error).</summary>
+    public string? AssetError { get; init; }
     public AdminAppearanceBranding? Branding { get; init; }
     public OverlayConfigResponse? OverlayConfig { get; init; }
+    /// <summary>The settings manifest revision, or null while unknown (official useSettingsCapabilities).</summary>
+    public int? ManifestRevision { get; init; }
+    public IReadOnlySet<string> ShownRatingSources { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+    /// <summary>The administrator's own ui.card_presentation poster size, which the preview draws at.</summary>
+    public string PosterSize { get; init; } = "standard";
     public IReadOnlyDictionary<string, string> Values { get; init; } = new Dictionary<string, string>();
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
-    public IReadOnlyCollection<string> ManagedKeys { get; init; } = [];
     public LoggingRestartKeys RestartKeys { get; init; } = new();
+    /// <summary>Revision 25 accepts style, the plate and band presets and badge images (official supportsOverlayStyles).</summary>
+    public bool SupportsStyles => ManifestRevision >= 25;
+    public bool CanSave => Owner?.IsCurrent == true && Loaded && !Loading && !Saving && AssetBusy == null && !Conflict && !OutcomeUnknown;
+    public bool CanWriteImages => Owner?.IsCurrent == true && Loaded && !Loading && !Saving && AssetBusy == null && !AssetsUnknown;
     public override string ToString() => nameof(AdminAppearanceSettingsState);
 }
 
+/// <summary>
+/// Page-owned state of Admin Configure &gt; Appearance (official AppearanceSettings.tsx at
+/// Silo Server 66b836f82). The four appearance keys save as one batch; branding images
+/// and badge images keep their own single-shot writes. Events may arrive on any thread.
+/// </summary>
 public sealed class AdminAppearanceSettingsController : IDisposable
 {
-    public static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(new[]
-    {
-        "branding.accent_color", "overlays.enabled", "defaults.card_overlays", "defaults.ui.title_art",
-    });
+    public const string AccentKey = "branding.accent_color";
+    public const string OverlaysEnabledKey = "overlays.enabled";
+    public const string OverlayDefaultsKey = "defaults.card_overlays";
+    public const string TitleArtDefaultKey = "defaults.ui.title_art";
+    public const string OverlayImagesKind = "overlay-images";
+    public static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(new[] { AccentKey, OverlaysEnabledKey, OverlayDefaultsKey, TitleArtDefaultKey });
+    private const string S3PublicBucketKey = "s3.public_bucket";
     private readonly AdminAppearanceApi _api;
     private readonly AdminServerSettingsApi _settings;
+    private readonly SettingsApi? _contract;
+    private readonly CatalogApi? _catalog;
     private readonly AdminAuthorityLifetime _lifetime;
     private readonly object _gate = new();
     private AdminSettingsForm? _form;
     private AdminAppearanceSettingsState _state = new();
     private bool _disposed;
 
-    public AdminAppearanceSettingsController(AdminAppearanceApi api, AdminServerSettingsApi settings, AdminMonitorAuthority authority)
+    public AdminAppearanceSettingsController(AdminAppearanceApi api, AdminServerSettingsApi settings, AdminMonitorAuthority authority,
+        SettingsApi? contract = null, CatalogApi? catalog = null)
     {
         _api = api;
         _settings = settings;
+        _contract = contract;
+        _catalog = catalog;
         _lifetime = new(authority);
         _lifetime.Retired += Clear;
     }
 
     public event Action? Changed;
+    /// <summary>Raised after an acknowledged settings save or image change so the app can refresh its theme and cards.</summary>
     public event Action? Saved;
     public AdminAppearanceSettingsState State { get { lock (_gate) return _state; } }
     public MonitorAuthorityLease CaptureAction() => _lifetime.CaptureAction();
@@ -69,6 +97,7 @@ public sealed class AdminAppearanceSettingsController : IDisposable
         await LoadAsync(owner, preserveDraft: false).ConfigureAwait(false);
     }
 
+    /// <summary>Re-reads everything, keeping staged edits. Also clears a conflict or an unknown outcome.</summary>
     public async Task ReloadAsync(bool preserveDraft = true)
     {
         MonitorAuthorityLease action;
@@ -78,36 +107,39 @@ public sealed class AdminAppearanceSettingsController : IDisposable
         {
             lock (_gate)
             {
-                if (_state.Saving || _state.Loading || _state.AssetBusy != null) return;
+                if (!_lifetime.IsCurrent(action) || _state.Saving || _state.Loading || _state.AssetBusy != null) return;
+                _state = _state with { Loading = true };
             }
-            Update(action, () => _state = _state with { Loading = true, Error = null });
+            Changed?.Invoke();
             await LoadAsync(action, preserveDraft).ConfigureAwait(false);
         }
     }
 
     private async Task LoadAsync(MonitorAuthorityLease owner, bool preserveDraft)
     {
-        var settings = _settings.GetEffectiveAsync(owner, Keys.Concat(["s3.public_bucket"]), []);
-        var sensitive = _settings.GetSensitiveStatusAsync(owner);
-        var restart = _settings.GetRestartKeysAsync(owner);
-        var branding = _api.GetBrandingAsync(owner);
-        var overlays = _api.GetOverlayConfigAsync(owner);
-        AdminSettingsSnapshot? snapshot = null;
-        AdminSettingsSensitiveStatus? status = null;
-        LoggingRestartKeys restartKeys = new();
-        AdminAppearanceBranding? currentBranding = null;
-        OverlayConfigResponse? currentOverlays = null;
-        var failed = false;
-        try { snapshot = await settings.ConfigureAwait(false); }
-        catch { failed = true; }
-        try { status = await sensitive.ConfigureAwait(false); }
-        catch { }
-        try { restartKeys = await restart.ConfigureAwait(false); }
-        catch { }
-        try { currentBranding = await branding.ConfigureAwait(false); }
-        catch { }
-        try { currentOverlays = await overlays.ConfigureAwait(false); }
-        catch { }
+        // Every read starts at once. Only the settings snapshot is required to edit; the
+        // rest degrade the way the official hooks do, and each failure says so with Reload.
+        var settings = Attempt(() => _settings.GetEffectiveAsync(owner, Keys.Append(S3PublicBucketKey), [], owner.Token));
+        // The official form waits for the sensitive status; no Appearance key is env-managed, so its failure only ends the wait.
+        var sensitive = Attempt(() => _settings.GetSensitiveStatusAsync(owner, owner.Token));
+        var restart = Attempt(() => _settings.GetRestartKeysAsync(owner, owner.Token));
+        var branding = Attempt(() => _api.GetBrandingAsync(owner, owner.Token));
+        var overlays = Attempt(() => _api.GetOverlayConfigAsync(owner, owner.Token));
+        var capabilities = _contract is null ? Task.FromResult<(SettingsContractCapabilities?, Exception?)>((null, null))
+            : Attempt(() => _contract.GetContractCapabilitiesAsync(owner.Context, owner.Token));
+        var ratings = _catalog is null ? Task.FromResult<(IReadOnlySet<string>?, Exception?)>((new HashSet<string>(StringComparer.Ordinal), null))
+            : Attempt(() => _catalog.GetShownRatingSourcesAsync(owner.Token));
+        var presentation = _contract is null ? Task.FromResult<(ContractEffectiveSettingsResponse?, Exception?)>((null, null))
+            : Attempt(() => _contract.GetContractEffectiveSettingsAsync(owner.Context, ["ui.card_presentation"], ct: owner.Token));
+        var (snapshot, settingsError) = await settings.ConfigureAwait(false);
+        await sensitive.ConfigureAwait(false);
+        var (restartKeys, restartError) = await restart.ConfigureAwait(false);
+        var (currentBranding, brandingError) = await branding.ConfigureAwait(false);
+        var (currentOverlays, overlaysError) = await overlays.ConfigureAwait(false);
+        var (currentCapabilities, capabilitiesError) = await capabilities.ConfigureAwait(false);
+        var (shownRatings, ratingsError) = await ratings.ConfigureAwait(false);
+        var (effective, _) = await presentation.ConfigureAwait(false);
+        var partial = restartError != null || brandingError != null || overlaysError != null || capabilitiesError != null || ratingsError != null;
         Update(owner, () =>
         {
             if (snapshot != null)
@@ -118,23 +150,40 @@ public sealed class AdminAppearanceSettingsController : IDisposable
             _state = _state with
             {
                 Loading = false,
-                Loaded = snapshot != null,
-                Conflict = failed && _state.Conflict,
-                OutcomeUnknown = failed && _state.OutcomeUnknown,
-                StatusUnavailable = status == null,
-                S3Configured = snapshot?.Values.GetValueOrDefault("s3.public_bucket", "").Length > 0,
-                ManagedKeys = status?.ManagedByEnv ?? [],
-                Branding = currentBranding,
-                OverlayConfig = currentOverlays,
-                RestartKeys = restartKeys,
-                Error = failed ? "Could not load Appearance settings. Try again."
-                    : currentBranding == null ? "Could not read image storage status. Reload to enable image changes."
-                    : status == null ? "Could not read managed settings status. Reload before editing."
+                Loaded = _form != null,
+                Conflict = snapshot == null && _state.Conflict,
+                OutcomeUnknown = snapshot == null && _state.OutcomeUnknown,
+                AssetsUnknown = (brandingError != null || overlaysError != null) && _state.AssetsUnknown,
+                S3Configured = snapshot != null ? snapshot.Values.GetValueOrDefault(S3PublicBucketKey, "").Length > 0 : _state.S3Configured,
+                Branding = currentBranding ?? (brandingError == null ? _state.Branding : null),
+                OverlayConfig = currentOverlays ?? (overlaysError == null ? _state.OverlayConfig : null),
+                ManifestRevision = currentCapabilities is { ApiVersion: 1 } ? currentCapabilities.Revision : null,
+                ShownRatingSources = shownRatings ?? new HashSet<string>(StringComparer.Ordinal),
+                PosterSize = PosterSize(effective),
+                RestartKeys = restartKeys ?? new(),
+                AssetError = null,
+                Failure = settingsError != null ? AdminFailures.Classify(settingsError, owner) : null,
+                Error = settingsError != null ? "Could not load Appearance settings. Try again."
+                    : partial ? "Some Appearance details could not be loaded. Reload to try again."
                     : null,
             };
         });
     }
 
+    private static async Task<(T? Value, Exception? Error)> Attempt<T>(Func<Task<T>> read) where T : class
+    {
+        try { return (await read().ConfigureAwait(false), null); }
+        catch (Exception error) { return (null, error); }
+    }
+
+    private static string PosterSize(ContractEffectiveSettingsResponse? effective)
+    {
+        var value = effective?.Settings.FirstOrDefault(setting => setting.Key == "ui.card_presentation")?.Value;
+        return value is { ValueKind: JsonValueKind.Object } presentation && presentation.TryGetProperty("poster_size", out var size) &&
+            size.ValueKind == JsonValueKind.String && size.GetString() is "compact" or "standard" or "large" ? size.GetString()! : "standard";
+    }
+
+    /// <summary>Stages one edit. Setting the saved value back clears its dirty mark.</summary>
     public void Set(string key, string value)
     {
         if (!Keys.Contains(key, StringComparer.Ordinal)) throw new ArgumentException("Unknown Appearance setting.", nameof(key));
@@ -142,9 +191,17 @@ public sealed class AdminAppearanceSettingsController : IDisposable
         if (owner == null) return;
         Update(owner, () =>
         {
-            if (_form == null || _state.Loading || _state.StatusUnavailable || _state.ManagedKeys.Contains(key)) return;
+            if (_form == null || _state.Loading || _form.Get(key) == value) return;
             _form.Set(key, value);
         });
+    }
+
+    /// <summary>Shows (or clears) why a picked image was refused before anything was sent.</summary>
+    public void ShowAssetError(string? message)
+    {
+        var owner = _lifetime.Owner;
+        if (owner == null) return;
+        Update(owner, () => _state = _state with { AssetError = message });
     }
 
     public void Discard()
@@ -164,23 +221,22 @@ public sealed class AdminAppearanceSettingsController : IDisposable
             AdminSettingsSaveIntent intent;
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _form == null || _state.Loading || _state.Saving ||
-                    _state.AssetBusy != null || _state.StatusUnavailable || _state.Conflict || _state.OutcomeUnknown) return;
-                intent = _form.CaptureSave(_state.ManagedKeys);
+                if (!_lifetime.IsCurrent(action) || _form == null || !_state.CanSave) return;
+                intent = _form.CaptureSave();
                 if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
                 if (!ValidSettings(intent.Values))
                 {
                     _form.EndSave(intent);
-                    _state = _state with { Error = "Review the invalid Appearance settings before saving." };
+                    _state = _state with { Error = "Review the invalid Appearance settings before saving.", Failure = null };
                 }
-                else _state = _state with { Saving = true, Error = null };
+                else _state = _state with { Saving = true, Error = null, Failure = null };
             }
             Changed?.Invoke();
             if (!State.Saving) return;
             var saved = false;
             try
             {
-                var result = await _settings.PutAsync(action, intent.Values, intent.ETag, Keys, []).ConfigureAwait(false);
+                var result = await _settings.PutAsync(action, intent.Values, intent.ETag, Keys, [], action.Token).ConfigureAwait(false);
                 Update(action, () =>
                 {
                     _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired);
@@ -197,38 +253,49 @@ public sealed class AdminAppearanceSettingsController : IDisposable
             {
                 Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, OutcomeUnknown = true, Error = "The save outcome is unknown. Reload and review before saving again." }; });
             }
-            catch
+            catch (Exception error)
             {
-                Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, Error = "The server refused the Appearance settings change." }; });
+                // A definite refusal: the draft stays for the admin to correct and retry.
+                Update(action, () => { _form?.EndSave(intent); _state = _state with { Saving = false, Error = "Failed to update settings.", Failure = AdminFailures.Classify(error, action) }; });
             }
             if (saved && _lifetime.IsCurrent(action)) NotifySaved();
         }
     }
 
-    public Task UploadAssetAsync(string kind, byte[] bytes, string mediaType)
-        => ChangeAssetAsync(kind, action => _api.UploadAssetAsync(action, kind, bytes, mediaType), overlayUpload: true);
+    public Task<bool> UploadAssetAsync(string kind, byte[] bytes, string mediaType)
+        => ChangeImagesAsync(kind, upload: true, action => _api.UploadAssetAsync(action, kind, bytes, mediaType, action.Token));
 
-    public Task DeleteAssetAsync(string kind)
-        => ChangeAssetAsync(kind, action => _api.DeleteAssetAsync(action, kind));
+    public Task<bool> DeleteAssetAsync(string kind)
+        => ChangeImagesAsync(kind, upload: false, action => _api.DeleteAssetAsync(action, kind, action.Token));
 
-    public Task ChangeOverlayImagesAsync(Func<MonitorAuthorityLease, Task> change, bool forUpload = false)
-        => ChangeAssetAsync("overlay-images", change, forUpload);
+    public Task<bool> UploadOverlayImageAsync(byte[] bytes, string mediaType, string name)
+        => ChangeImagesAsync(OverlayImagesKind, upload: true, action => _api.UploadOverlayImageAsync(action, bytes, mediaType, name, action.Token));
 
-    private async Task ChangeAssetAsync(string kind, Func<MonitorAuthorityLease, Task> change, bool overlayUpload = false)
+    public Task<bool> DeleteOverlayImageAsync(string reference)
+        => ChangeImagesAsync(OverlayImagesKind, upload: false, action => _api.DeleteOverlayImageAsync(action, reference, action.Token));
+
+    /// <summary>
+    /// One image write, sent once and never replayed. Afterwards the images and the settings
+    /// snapshot (whose ETag a branding write changes) are re-read; a draft whose saved value
+    /// changed meanwhile becomes a conflict rather than overwriting the newer value.
+    /// Returns true only when the server acknowledged the write.
+    /// </summary>
+    private async Task<bool> ChangeImagesAsync(string kind, bool upload, Func<MonitorAuthorityLease, Task> change)
     {
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); }
-        catch (OperationCanceledException) { return; }
+        catch (OperationCanceledException) { return false; }
         using (action)
         {
             lock (_gate)
             {
-                var storageAllowed = kind == "overlay-images"
-                    ? !overlayUpload || _state.OverlayConfig?.ImageUploadsAvailable == true
-                    : !overlayUpload || _state.Branding?.StorageAvailable == true;
-                if (!_lifetime.IsCurrent(action) || !_state.Loaded || _state.Loading || _state.Saving || _state.AssetBusy != null ||
-                    _state.OutcomeUnknown || !storageAllowed) return;
-                _state = _state with { AssetBusy = kind, Error = null };
+                var overlay = kind == OverlayImagesKind;
+                // A read that failed leaves no state to act on; uploads also need storage.
+                var available = overlay
+                    ? _state.OverlayConfig is { } config && (!upload || config.ImageUploadsAvailable)
+                    : _state.Branding is { } branding && (!upload || branding.StorageAvailable);
+                if (!_lifetime.IsCurrent(action) || !_state.CanWriteImages || !available) return false;
+                _state = _state with { AssetBusy = kind, AssetError = null };
             }
             Changed?.Invoke();
             var saved = false;
@@ -237,38 +304,52 @@ public sealed class AdminAppearanceSettingsController : IDisposable
             {
                 await change(action).ConfigureAwait(false);
                 acknowledged = true;
-                var branding = await _api.GetBrandingAsync(action).ConfigureAwait(false);
-                var snapshot = await _settings.GetEffectiveAsync(action, Keys, []).ConfigureAwait(false);
-                var overlays = kind == "overlay-images" ? await _api.GetOverlayConfigAsync(action).ConfigureAwait(false) : null;
-                Update(action, () =>
+                saved = _lifetime.IsCurrent(action);
+                if (kind == OverlayImagesKind)
                 {
-                    if (_form != null && _form.DirtyKeys.Any(key => _form.GetPersisted(key) != snapshot.Values.GetValueOrDefault(key, "")))
-                        _state = _state with { Conflict = true, Error = "Settings changed on the server. Reload and review your changes." };
-                    else if (!_state.Conflict)
-                        _form?.Reload(snapshot.Values, snapshot.ETag, preserveDraft: true);
-                    _state = _state with { Branding = branding, OverlayConfig = overlays ?? _state.OverlayConfig };
-                    saved = true;
-                });
+                    var overlays = await _api.GetOverlayConfigAsync(action, action.Token).ConfigureAwait(false);
+                    Update(action, () => _state = _state with { OverlayConfig = overlays });
+                }
+                else
+                {
+                    var branding = await _api.GetBrandingAsync(action, action.Token).ConfigureAwait(false);
+                    var snapshot = await _settings.GetEffectiveAsync(action, Keys.Append(S3PublicBucketKey), [], action.Token).ConfigureAwait(false);
+                    Update(action, () =>
+                    {
+                        if (_form != null && _form.DirtyKeys.Any(key => _form.GetPersisted(key) != snapshot.Values.GetValueOrDefault(key, "")))
+                            _state = _state with { Conflict = true, Error = "Settings changed on the server. Reload and review your changes." };
+                        else if (!_state.Conflict)
+                            _form?.Reload(snapshot.Values, snapshot.ETag, preserveDraft: true);
+                        _state = _state with { Branding = branding };
+                    });
+                }
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
             catch (AdminAppearanceOutcomeUnknownException)
             {
-                Update(action, () => _state = _state with { OutcomeUnknown = true, Error = "The image change outcome is unknown. Reload and review before trying again." });
-                if (kind == "overlay-images")
-                    try
-                    {
-                        var overlays = await _api.GetOverlayConfigAsync(action).ConfigureAwait(false);
-                        Update(action, () => _state = _state with { OverlayConfig = overlays });
-                    }
-                    catch { }
+                Update(action, () => _state = _state with { AssetsUnknown = true, Error = "The image change outcome is unknown. Reload and review before trying again." });
             }
-            catch
+            catch (ApiException error) when (!acknowledged)
             {
-                Update(action, () => _state = _state with { OutcomeUnknown = acknowledged,
-                    Error = "Could not confirm the image change. Reload to check the current image." });
+                // A definite refusal: nothing changed, and the admin may correct and retry.
+                Update(action, () => _state = _state with { AssetError = AdminAppearanceApi.RefusalText(error, upload), Failure = AdminFailures.Classify(error, action) });
+            }
+            catch (ArgumentException) when (!acknowledged)
+            {
+                // Refused locally before anything was sent.
+                Update(action, () => _state = _state with { AssetError = AdminAppearanceText.T(upload ? "web.admin.settings.hooks.branding.uploadFailed" : "web.admin.settings.hooks.branding.removeFailed") });
+            }
+            catch (Exception) when (acknowledged)
+            {
+                Update(action, () => _state = _state with { AssetsUnknown = true, Error = "The image changed, but the page could not refresh. Reload to see the current images." });
+            }
+            catch (Exception)
+            {
+                Update(action, () => _state = _state with { AssetsUnknown = true, Error = "The image change outcome is unknown. Reload and review before trying again." });
             }
             finally { Update(action, () => _state = _state with { AssetBusy = null }); }
             if (saved && _lifetime.IsCurrent(action)) NotifySaved();
+            return acknowledged;
         }
     }
 
@@ -276,10 +357,10 @@ public sealed class AdminAppearanceSettingsController : IDisposable
     {
         foreach (var (key, value) in values)
         {
-            if (key == "branding.accent_color" && value != "" &&
+            if (key == AccentKey && value != "" &&
                 (value.Length != 7 || value[0] != '#' || !value[1..].All(Uri.IsHexDigit))) return false;
-            if (key is "overlays.enabled" or "defaults.ui.title_art" && value is not ("" or "true" or "false")) return false;
-            if (key != "defaults.card_overlays" || value == "") continue;
+            if (key is OverlaysEnabledKey or TitleArtDefaultKey && value is not ("" or "true" or "false")) return false;
+            if (key != OverlayDefaultsKey || value == "") continue;
             if (value.Length > 256 * 1024) return false;
             try
             {
@@ -311,7 +392,7 @@ public sealed class AdminAppearanceSettingsController : IDisposable
     {
         if (Saved is not { } handlers) return;
         foreach (Action handler in handlers.GetInvocationList())
-            try { handler(); } catch { }
+            try { handler(); } catch { /* An observer cannot change an acknowledged write. */ }
     }
 
     public void Suspend() { _lifetime.Retire(); Clear(); }
