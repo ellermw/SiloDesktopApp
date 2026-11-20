@@ -24,6 +24,14 @@ public sealed class AdminCollectionsController : IDisposable
     public JsonObject? Draft { get; private set; }
     private string? _savedDraft;
     private string? _createdId;
+    /// <summary>A create the server confirmed. While its canonical editor cannot be read, Save reloads this identity and never creates again.</summary>
+    public string? CreatedId { get { lock (_stateGate) return _createdId; } }
+    /// <summary>The starter-pack job this page observes. It belongs to the current authority and is dropped with it.</summary>
+    public string? StarterJobId { get; private set; }
+    public int StarterJobReads { get; private set; }
+    public void BeginStarterJob(string id) { lock (_stateGate) { StarterJobId = id; StarterJobReads = 0; } }
+    public int CountStarterJobRead() { lock (_stateGate) return ++StarterJobReads; }
+    public void EndStarterJob() { lock (_stateGate) { StarterJobId = null; StarterJobReads = 0; } }
     public bool OutcomeUnknown { get; private set; }
     public bool Dirty => Owner?.IsCurrent == true && Draft != null && Draft.ToJsonString() != _savedDraft;
     public bool Busy { get; private set; }
@@ -36,7 +44,7 @@ public sealed class AdminCollectionsController : IDisposable
         _api = api; _libraries = libraries; Lifetime = new(authority);
         Lifetime.Retired += OnRetired;
     }
-    private void Clear() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; List = null; Board = null; Libraries = []; Capabilities = null; Editor = null; Draft = null; _savedDraft = null; _createdId = null; OutcomeUnknown = false; Error = null; Loading = false; } }
+    private void Clear() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; List = null; Board = null; Libraries = []; Capabilities = null; Editor = null; Draft = null; _savedDraft = null; _createdId = null; StarterJobId = null; StarterJobReads = 0; OutcomeUnknown = false; Error = null; Loading = false; } }
     private (int Generation, CancellationTokenSource Reads) BeginRead(MonitorAuthorityLease owner)
     {
         lock (_stateGate)
@@ -66,7 +74,9 @@ public sealed class AdminCollectionsController : IDisposable
             {
                 owner.ThrowIfRetired();
                 if (generation != _readGeneration) return;
-                Capabilities = capabilities; Libraries = libraries.Items; Board = board; List = list; OutcomeUnknown = false;
+                Capabilities = capabilities; Libraries = libraries.Items; Board = board; List = list;
+                // Only a re-read of the canonical list answers a lost create; an editor-only load reads none.
+                if (!editorOnly) OutcomeUnknown = false;
             }
         }
         finally { lock (_stateGate) { if (generation == _readGeneration && owner.IsCurrent) Loading = false; if (ReferenceEquals(_reads, reads)) _reads = null; } reads.Dispose(); }
@@ -74,6 +84,8 @@ public sealed class AdminCollectionsController : IDisposable
     private static readonly string[] EditableFields = ["title", "description", "slug", "library_ids", "collection_type", "visibility", "query_definition", "sort_config", "source_config", "source_url", "sync_schedule"];
     public async Task EditAsync(string? id, string kind = "manual", string? library = null, string? importSource = null)
     {
+        // A confirmed create whose canonical read failed is reloaded by identity. A fresh draft here would create it again.
+        lock (_stateGate) { if (id == null && Editor == null && _createdId != null) id = _createdId; }
         var owner = Owner ?? throw new MonitorAuthorityRetiredException(); var (generation, reads) = BeginRead(owner);
         try
         {
@@ -87,7 +99,8 @@ public sealed class AdminCollectionsController : IDisposable
         else
         {
             draft = new() { ["title"] = "", ["description"] = "", ["collection_type"] = kind == "synced" ? "mdblist" : kind, ["visibility"] = "visible", ["library_ids"] = library == null ? new JsonArray() : new JsonArray(library),
-                ["query_definition"] = new JsonObject { ["match"] = "all", ["groups"] = new JsonArray() }, ["sort_config"] = new JsonObject(), ["source_config"] = new JsonObject() };
+                // Smart rules name their own libraries (none: every library). Opened from a library, a new one starts there.
+                ["query_definition"] = new JsonObject { ["library_ids"] = AdminCollectionsApi.RuleLibraryIds(library == null ? new JsonArray() : new JsonArray(library)), ["match"] = "all", ["groups"] = new JsonArray() }, ["sort_config"] = new JsonObject(), ["source_config"] = new JsonObject() };
             if (kind == "synced")
             {
                 var requested = importSource == "tmdb_chart" ? "tmdb" : importSource;
@@ -99,14 +112,59 @@ public sealed class AdminCollectionsController : IDisposable
         lock (_stateGate)
         {
             owner.ThrowIfRetired(); if (generation != _readGeneration) return;
-            Editor = editor; _createdId = editor?.Value["id"]?.GetValue<string>(); OutcomeUnknown = false;
+            Editor = editor; _createdId = editor == null ? null : AdminCollectionsApi.CanonicalId(editor.Value["id"]);
+            // Reading a collection answers its own state. A fresh draft answers nothing about a create whose outcome is unknown.
+            if (editor != null) OutcomeUnknown = false;
             Draft = draft; _savedDraft = draft.ToJsonString();
         }
         }
         finally { lock (_stateGate) { if (ReferenceEquals(_reads, reads)) _reads = null; } reads.Dispose(); }
     }
-    public void CloseEditor() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; Editor = null; Draft = null; _savedDraft = null; } }
+    /// <summary>Reload the open editor: the saved collection, or the confirmed create whose canonical read failed, or a fresh draft.</summary>
+    public Task ReloadEditorAsync(string kind = "manual", string? library = null, string? importSource = null) =>
+        EditAsync(Editor == null ? null : AdminCollectionsApi.CanonicalId(Editor.Value["id"]), kind, library, importSource);
+    public void CloseEditor() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; Editor = null; Draft = null; _savedDraft = null; _createdId = null; } }
+    public JsonObject? StoredDefaultSort
+    {
+        get
+        {
+            if (Draft is null || Draft["sort_config"] is not JsonObject config) return null;
+            return config.TryGetPropertyValue("field", out var node) && node is JsonValue value && value.TryGetValue<string>(out var sortField) && !string.IsNullOrWhiteSpace(sortField) ? config : null;
+        }
+    }
+    /// <summary>A stored default sort wins over the rules Order, so changing Order clears it. Other sort settings stay.</summary>
+    public static JsonObject WithoutDefaultSort(JsonObject? config)
+    {
+        var rest = (JsonObject?)config?.DeepClone() ?? new JsonObject();
+        rest.Remove("field"); rest.Remove("order");
+        return rest;
+    }
+    public void ClearStoredDefaultSort() { if (Draft != null && Draft["sort_config"] is JsonObject config) Draft["sort_config"] = WithoutDefaultSort(config); }
+    /// <summary>The libraries a smart collection draws its titles from. Independent of where it shows; none means every library.</summary>
+    public void SetRuleLibraries(IEnumerable<string> libraries)
+    {
+        if (Draft == null) throw new InvalidOperationException("Open a collection first.");
+        var rules = Draft["query_definition"] as JsonObject ?? new JsonObject();
+        rules["library_ids"] = AdminCollectionsApi.RuleLibraryIds(new JsonArray(libraries.Distinct().Select(id => (JsonNode?)JsonValue.Create(id)).ToArray()));
+        Draft["query_definition"] = rules;
+    }
     public void Discard() { if (_savedDraft != null) Draft = JsonNode.Parse(_savedDraft)!.AsObject(); }
+    /// <summary>At least one rule has a field, an operator and a filled value. With none, a smart collection would match every title.</summary>
+    public static bool HasCompleteRule(QueryDefinition rules) => rules.Groups.Any(group => group.Rules.Any(rule => !string.IsNullOrEmpty(rule.Field) && !string.IsNullOrEmpty(rule.Op) && Filled(rule.Value)));
+    private static bool Filled(object? value) => value switch
+    {
+        null => false,
+        string text => !string.IsNullOrWhiteSpace(text),
+        JsonElement element => element.ValueKind switch
+        {
+            JsonValueKind.String => !string.IsNullOrWhiteSpace(element.GetString()),
+            JsonValueKind.Array => element.GetArrayLength() > 0 && element.EnumerateArray().All(item => Filled(item)),
+            JsonValueKind.Null or JsonValueKind.Undefined => false,
+            _ => true
+        },
+        System.Collections.IEnumerable items => items.Cast<object?>().Any() && items.Cast<object?>().All(Filled),
+        _ => true
+    };
     public static void NormalizeChart(JsonObject config)
     {
         var preset = config["preset"]?.ToString() ?? "trending";
@@ -167,8 +225,9 @@ public sealed class AdminCollectionsController : IDisposable
         {
             var rules = body["query_definition"] as JsonObject ?? throw new ArgumentException("Add at least one rule.");
             var typed = rules.Deserialize<QueryDefinition>(AdminCollectionsApi.Json)!;
-            if (!typed.Groups.Any(g => g.Rules.Any(r => !string.IsNullOrEmpty(r.Field) && r.Value != null))) throw new ArgumentException("Add at least one rule.");
-            rules["library_ids"] = AdminCollectionsApi.RuleLibraryIds(body["library_ids"]);
+            if (!HasCompleteRule(typed)) throw new ArgumentException("Add at least one rule.");
+            // The rules keep their own libraries. Where the collection shows (library_ids) never rewrites them.
+            rules["library_ids"] = AdminCollectionsApi.RuleLibraryIds(rules["library_ids"]);
         }
         else body.Remove("query_definition");
         var imported = Editor == null && body["collection_type"]?.GetValue<string>() is "mdblist" or "tmdb";
@@ -185,8 +244,14 @@ public sealed class AdminCollectionsController : IDisposable
                 if (source[key] != null) request[key] = source[key]!.DeepClone();
             return _api.ImportAsync(lease, provider, request);
         }).ConfigureAwait(false);
-        var id = (imported ? result.Value["collection"]?["id"] : result.Value["id"])?.GetValue<string>() ?? throw new InvalidDataException("The server did not return the saved collection identity.");
-        _createdId = id;
+        var id = AdminCollectionsApi.CanonicalId(imported ? result.Value["collection"]?["id"] : result.Value["id"]);
+        if (id == null)
+        {
+            // The server may have written something. A reply without a usable identity is an unconfirmed outcome, not "nothing was sent".
+            lock (_stateGate) { OutcomeUnknown = true; Error = "The server answered without identifying the saved collection."; }
+            throw new InvalidDataException("The server answered without identifying the saved collection. Reload the collections list and review it before saving again.");
+        }
+        lock (_stateGate) { _createdId = id; }
         if (imported && body["visibility"]?.GetValue<string>() == "hidden")
         {
             await CommandAsync(async lease => await _api.SaveAsync(lease, await _api.GetAsync(lease, id).ConfigureAwait(false), new() { ["visibility"] = "hidden" }).ConfigureAwait(false)).ConfigureAwait(false);

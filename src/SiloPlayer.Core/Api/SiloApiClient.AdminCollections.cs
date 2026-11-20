@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
@@ -29,7 +30,10 @@ public partial class SiloApiClient
         HttpContent? form = null) => AdminLibraryWithinDeadlineAsync(lease, ct, async token =>
     {
         lease.ThrowIfRetired();
-        using var request = CreateContextBoundRequest(lease.Context, method, path, body);
+        // A JsonObject must travel as a JsonElement: the generic body path reflects on public properties and would send the node's own members.
+        object? payload = null;
+        if (body != null) { using var document = JsonDocument.Parse(body.ToJsonString()); payload = document.RootElement.Clone(); }
+        using var request = CreateContextBoundRequest(lease.Context, method, path, payload);
         if (etag != null) request.Headers.TryAddWithoutValidation("If-Match", etag);
         if (form != null) request.Content = form;
         using var response = await SendWithRetryAsync(request, token, allowTokenRefresh: method == HttpMethod.Get).ConfigureAwait(false);

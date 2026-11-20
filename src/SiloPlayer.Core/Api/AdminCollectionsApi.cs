@@ -17,7 +17,8 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         PropertyNameCaseInsensitive = true,
-        NumberHandling = JsonNumberHandling.AllowReadingFromString
+        NumberHandling = JsonNumberHandling.AllowReadingFromString,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
     public static string Id(string id)
     {
@@ -37,6 +38,9 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
         }
         return result;
     }
+    /// <summary>The v2 identity of a collection: a non-empty string without control characters. A number or any other shape is malformed.</summary>
+    public static string? CanonicalId(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var id) && !string.IsNullOrWhiteSpace(id) && id.Length <= 256 && !id.Any(char.IsControl) ? id : null;
     private static void Check(MonitorAuthorityLease lease, AdminCollectionSnapshot snapshot, string path)
     {
         lease.ThrowIfRetired(); snapshot.Owner.ThrowIfRetired();
@@ -75,8 +79,8 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
     public async Task<AdminCollectionSnapshot> SaveAsync(MonitorAuthorityLease lease, AdminCollectionSnapshot? snapshot, JsonObject body)
     {
         var result = await WriteAsync(lease, snapshot == null ? HttpMethod.Post : HttpMethod.Patch, snapshot?.Path ?? Root, body, snapshot).ConfigureAwait(false);
-        var id = result.Value["id"]?.ToString();
-        if (string.IsNullOrWhiteSpace(id) || id.Length > 256 || snapshot != null && snapshot.Value["id"]?.ToString() != id)
+        var id = CanonicalId(result.Value["id"]);
+        if (id == null || snapshot != null && snapshot.Value["id"]?.ToString() != id)
             throw new InvalidDataException("The save answer did not identify the collection. Reload and review the unknown outcome.");
         return result;
     }
@@ -147,8 +151,25 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
         (await ReadAsync(lease, Root + "/" + Id(id) + "/items?limit=" + PageSize + (cursor == null ? "" : "&cursor=" + Uri.EscapeDataString(cursor))).ConfigureAwait(false)).Value;
     public Task<AdminCollectionSnapshot> MembershipAsync(MonitorAuthorityLease lease, string id, string item, bool add, int position = 0) =>
         WriteAsync(lease, add ? HttpMethod.Put : HttpMethod.Delete, Root + "/" + Id(id) + "/items/" + Id(item), add ? new JsonObject { ["position"] = position } : null);
-    public Task<AdminCollectionSnapshot> PreviewAsync(MonitorAuthorityLease lease, JsonObject rules) =>
-        WriteAsync(lease, HttpMethod.Post, Root + "/preview", new() { ["query_definition"] = rules.DeepClone(), ["limit"] = 24 });
+    public const int PreviewLimit = 24;
+    /// <summary>The admin preview answers { items: [{ content_id, title, type, poster_url? }], page?, total }. Anything else is rejected, never shown as an empty match.</summary>
+    public static AdminCollectionPreview ParsePreview(JsonObject body)
+    {
+        if (body["items"] is not JsonArray items || body["total"] is not JsonValue total || !total.TryGetValue<int>(out var count) || count < 0)
+            throw new InvalidDataException("The preview answer was not recognized. Nothing was changed.");
+        var titles = new List<AdminCollectionPreviewItem>();
+        foreach (var node in items.Take(PreviewLimit))
+        {
+            if (node is not JsonObject item || item["title"] is not JsonValue title || !title.TryGetValue<string>(out var text))
+                throw new InvalidDataException("The preview answer was not recognized. Nothing was changed.");
+            titles.Add(new(CanonicalId(item["content_id"]) ?? "", text, item["type"]?.ToString() ?? ""));
+        }
+        return new(titles, count);
+    }
+    /// <summary>A preview is a read-only question the server answers with POST: it never changes a collection.</summary>
+    public async Task<AdminCollectionPreview> PreviewAsync(MonitorAuthorityLease lease, JsonObject rules, CancellationToken ct = default) =>
+        ParsePreview((await client.AdminCollectionSendAsync(lease, HttpMethod.Post, Root + "/preview",
+            new() { ["query_definition"] = rules.DeepClone(), ["limit"] = PreviewLimit }, ct: ct).ConfigureAwait(false)).Value);
     public Task<AdminCollectionSnapshot> SyncAsync(MonitorAuthorityLease lease, string id) => WriteAsync(lease, HttpMethod.Post, Root + "/" + Id(id) + "/sync");
     public async Task<JsonObject> SearchAsync(MonitorAuthorityLease lease, string query, string library, string? cursor = null)
     {
@@ -170,7 +191,7 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
         var body = new JsonObject { ["library_ids"] = JsonSerializer.SerializeToNode(libraries), ["dry_run"] = preview, ["delete_existing"] = replace };
         if (featured != null) body["featured"] = featured.DeepClone();
         var result = await WriteAsync(lease, HttpMethod.Post, Root + "/template-bundles/" + Id(id) + (preview ? "/apply" : "/apply-job"), body).ConfigureAwait(false);
-        if (!preview && string.IsNullOrWhiteSpace(result.Value["id"]?.ToString())) throw new InvalidDataException("The server did not identify the starter-pack job. Reload and review before trying again.");
+        if (!preview && CanonicalId(result.Value["id"]) == null) throw new InvalidDataException("The server did not identify the starter-pack job. Reload and review before trying again.");
         return result;
     }
     public Task<AdminCollectionSnapshot> JobAsync(MonitorAuthorityLease lease, string id) => ReadAsync(lease, "/api/v2/admin/collection-jobs/" + Id(id));
@@ -180,7 +201,7 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
     {
         if (source is not ("mdblist" or "tmdb" or "tmdb_list")) throw new ArgumentException("Unsupported collection source.");
         var result = await WriteAsync(lease, HttpMethod.Post, Root + "/import/" + source.Replace('_', '-'), body).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(result.Value["collection"]?["id"]?.ToString())) throw new InvalidDataException("The server did not identify the imported collection. Reload and review before trying again.");
+        if (CanonicalId(result.Value["collection"]?["id"]) == null) throw new InvalidDataException("The server did not identify the imported collection. Reload and review before trying again.");
         return result;
     }
     public Task<AdminCollectionSnapshot> ArtworkAsync(MonitorAuthorityLease lease, string id, string slot, string? source = null, byte[]? bytes = null, string mediaType = "image/png")

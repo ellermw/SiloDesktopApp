@@ -102,7 +102,7 @@ public sealed partial class AdminCollectionsPage
                     var title = item["title"]?.ToString() ?? id;
                     var pick = new CheckBox { Content = title, IsChecked = selected.ContainsKey(id) };
                     Identify(pick, "CollectionTitlePick_" + id, title);
-                    pick.Click += (_, _) => { if (pick.IsChecked == true && selected.Count < 100) selected[id] = title; else selected.Remove(id); };
+                    Toggled(pick, on => { if (on && selected.Count < 100) selected[id] = title; else selected.Remove(id); return Task.CompletedTask; });
                     results.Children.Add(pick);
                 }
                 if (items.Length == 0) results.Children.Add(Text("No titles match."));

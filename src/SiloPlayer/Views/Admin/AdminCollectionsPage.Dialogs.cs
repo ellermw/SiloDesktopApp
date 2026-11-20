@@ -68,7 +68,7 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task DeleteDialogAsync(string id)
     {
-        if (_jobId != null) { Notice("A starter pack is being added. Wait for it to finish before deleting collections."); return; }
+        if (Controller.StarterJobId != null) { Notice("A starter pack is being added. Wait for it to finish before deleting collections."); return; }
         var owner = Controller.Owner!;
         var plan = await _api.PrepareDeleteAsync(owner, id, Controller.Capabilities?.SectionReferences == true);
         if (!Current(owner)) return;
@@ -159,7 +159,7 @@ public sealed partial class AdminCollectionsPage
             // Show field names rather than dumping source configs, URLs or complete rule documents.
             var pick = new CheckBox { Content = "Keep my change: " + key.Replace('_', ' '), IsChecked = false };
             Identify(pick, "CollectionConflict_" + key, "Keep my change to " + key.Replace('_', ' '));
-            pick.Click += (_, _) => { if (pick.IsChecked == true) keep.Add(key); else keep.Remove(key); }; body.Children.Add(pick);
+            Toggled(pick, on => { if (on) keep.Add(key); else keep.Remove(key); return Task.CompletedTask; }); body.Children.Add(pick);
         }
         var dialog = new ContentDialog { Title = "Review changes", Content = new ScrollViewer { Content = body, MaxHeight = 430 }, PrimaryButtonText = "Review selected changes", CloseButtonText = "Keep editing" };
         Identify(dialog, "CollectionConflictDialog", "Review changes");
@@ -168,7 +168,7 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task BatchAsync(string action, bool wholeView = false)
     {
-        if (action == "delete" && _jobId != null) { Notice("A starter pack is being added. Wait for it to finish before deleting collections."); return; }
+        if (action == "delete" && Controller.StarterJobId != null) { Notice("A starter pack is being added. Wait for it to finish before deleting collections."); return; }
         var owner = Controller.Owner!; var selected = Filtered().Where(c => wholeView || _selected.Contains(c.Id)).Take(101).ToArray();
         if (selected.Length > 100) { Notice("Narrow this view to at most 100 collections before deleting it, or use Select collections in batches."); return; }
         if (selected.Length == 0) return;
@@ -231,7 +231,7 @@ public sealed partial class AdminCollectionsPage
         if (Current(owner) && dialog.Tag is JsonObject chosen)
         {
             // Open a real new editor and seed its draft after the normal libraries/capabilities read.
-            _searchTimer.Stop(); _jobTimer.Stop(); _jobId = null;
+            _searchTimer.Stop(); _jobTimer.Stop(); Controller.EndStarterJob();
             await Controller.EditAsync(null, "synced", _library);
             var draft = Controller.Draft!; var source = chosen["source"]!.ToString();
             draft["title"] = chosen["title"]?.DeepClone(); draft["description"] = chosen["description"]?.DeepClone() ?? JsonValue.Create("");
@@ -245,14 +245,14 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task StarterPacksAsync()
     {
-        if (_jobId != null) { Notice("A starter pack is already being added. Try again when it finishes."); return; }
+        if (Controller.StarterJobId != null) { Notice("A starter pack is already being added. Try again when it finishes."); return; }
         var owner = Controller.Owner!; var catalog = await _api.BundlesAsync(owner); if (!Current(owner)) return;
         var body = Stack(12); var libraries = new HashSet<string>(); if (_library != null) libraries.Add(_library);
         foreach (var library in Controller.Libraries)
         {
             var check = new CheckBox { Content = library.Name, IsChecked = libraries.Contains(library.Id) };
             Identify(check, "CollectionPackLibrary_" + library.Id, library.Name);
-            check.Click += (_, _) => { if (check.IsChecked == true) libraries.Add(library.Id); else libraries.Remove(library.Id); }; body.Children.Add(check);
+            Toggled(check, on => { if (on) libraries.Add(library.Id); else libraries.Remove(library.Id); return Task.CompletedTask; }); body.Children.Add(check);
         }
         var bundles = (catalog["bundles"] as JsonArray)?.OfType<JsonObject>().Take(200).ToArray() ?? [];
         if (bundles.Length == 0) { Notice("No starter packs are available."); return; }
@@ -312,7 +312,7 @@ public sealed partial class AdminCollectionsPage
             {
                 if (Signature() != resultSignature || libraries.Count == 0) { resultHost.Children.Add(Text("Preview these choices before adding the pack.")); return; }
                 var job = await Controller.CommandAsync(lease => _api.ApplyBundleAsync(lease, bundle, libraries.ToArray(), false, replace.IsChecked == true, Featured()));
-                _jobId = job.Value["id"]?.ToString(); _jobReads = 0;
+                Controller.BeginStarterJob(AdminCollectionsApi.CanonicalId(job.Value["id"]) ?? throw new InvalidDataException("The starter pack job was not identified."));
                 accepted = true; args.Cancel = false;
             }
             catch (Exception error) { if (Current(owner)) { resultHost.Children.Add(Text(AdminCollectionsController.Message(error))); dialog.IsPrimaryButtonEnabled = false; } }
@@ -333,31 +333,31 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task PollJobAsync()
     {
-        var owner = Controller.Owner; var id = _jobId; if (id == null || !Current(owner)) return;
+        var owner = Controller.Owner; var id = Controller.StarterJobId; if (id == null || !Current(owner)) return;
         try
         {
-            var response = await _api.JobAsync(owner!, id); if (!Current(owner) || _jobId != id) return;
+            var response = await _api.JobAsync(owner!, id); if (!Current(owner) || Controller.StarterJobId != id) return;
             var terminal = response.Value["terminal"]?.GetValue<bool>() == true;
             Notice("Starter pack: " + response.Value["state"]);
             if (terminal)
             {
-                _jobId = null; await Controller.LoadAsync(_library, _arrange);
+                Controller.EndStarterJob(); await Controller.LoadAsync(_library, _arrange);
                 if (Current(owner)) { RenderList(); var result = Stack(); RenderTemplateResult(result, response.Value["template_result"] as JsonObject ?? new()); _surface.Children.Add(result); }
             }
-            else if (++_jobReads < 120) _jobTimer.Start();
+            else if (Controller.CountStarterJobRead() < 120) _jobTimer.Start();
             else Notice("The starter pack is still running. Refresh to review its collections; it was not queued again.");
         }
         catch (Exception error) { if (Current(owner)) Notice(AdminCollectionsController.Message(error) + " The starter pack was not queued again."); }
     }
     private async Task ResumeJobAsync()
     {
-        var owner = Controller.Owner; if (_jobId != null || !Current(owner)) return;
+        var owner = Controller.Owner; if (Controller.StarterJobId != null || !Current(owner)) return;
         try
         {
             var response = await _api.RecentJobsAsync(owner!); if (!Current(owner)) return;
             var active = (response["items"] as JsonArray)?.OfType<JsonObject>().Take(10).FirstOrDefault(j => j["terminal"]?.GetValue<bool>() == false);
             if (active?["id"] is not { } id) return;
-            _jobId = id.ToString(); _jobReads = 0; Notice("Adding a starter pack"); _jobTimer.Start();
+            Controller.BeginStarterJob(AdminCollectionsApi.CanonicalId(id) ?? throw new InvalidDataException("Job identity was not recognized.")); Notice("Adding a starter pack"); _jobTimer.Start();
         }
         catch (Exception) { /* Optional recent-job discovery must not hide a successfully loaded collection page. */ }
     }

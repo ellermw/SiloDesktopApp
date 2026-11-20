@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Core.Api;
@@ -40,4 +41,32 @@ public sealed partial class AdminCollectionsApi
         catch (Exception) { /* Saved rules survive; new unavailable rating choices stay hidden. */ }
         return new(body["extended_query_rules"]?.GetValue<bool>() == true, shown, body["show_title_rules"]?.GetValue<bool>() == true);
     }
+    /// <summary>Public MDBList lists matching a search. Only asked when the capabilities report mdblist_search; at most 50 results are kept.</summary>
+    public async Task<AdminMdbListSearch> MdbListSearchAsync(MonitorAuthorityLease lease, string query, CancellationToken ct)
+    {
+        var text = query.Trim();
+        if (text.Length == 0 || text.Length > 256) throw new ArgumentException("Enter a search for MDBList.");
+        var body = (await ReadAsync(lease, "/api/v2/collections/import/mdblist/search?q=" + Uri.EscapeDataString(text), ct: ct).ConfigureAwait(false)).Value;
+        return ParseMdbListSearch(body);
+    }
+    /// <summary>The discovery envelope: { configured, items: [{ id, user_id, user_name, name, slug, description, media_type, items, likes, url }], page? }.</summary>
+    public static AdminMdbListSearch ParseMdbListSearch(JsonObject body)
+    {
+        if (body["configured"] is not JsonValue configured || !configured.TryGetValue<bool>(out var isConfigured) || body["items"] is not JsonArray items)
+            throw new InvalidDataException("The MDBList search answer was not recognized.");
+        var lists = new List<AdminMdbListEntry>();
+        foreach (var node in items.Take(50))
+        {
+            if (node is not JsonObject list || AdminCollectionsApi.CanonicalId(list["id"]) is not { } id || list["name"] is not JsonValue name || !name.TryGetValue<string>(out var title))
+                throw new InvalidDataException("The MDBList search answer was not recognized.");
+            lists.Add(new(id, title, list["user_name"]?.ToString() ?? "", list["description"]?.ToString() ?? "", list["media_type"]?.ToString() ?? "",
+                list["items"] is JsonValue count && count.TryGetValue<int>(out var total) ? total : 0,
+                list["likes"] is JsonValue likes && likes.TryGetValue<int>(out var liked) ? liked : 0, list["url"]?.ToString() ?? ""));
+        }
+        return new(isConfigured, lists);
+    }
+    /// <summary>The list a search hit follows: its own JSON feed, as the official picker stores it. Empty when MDBList reported no page.</summary>
+    public static string MdbListFeed(AdminMdbListEntry entry) =>
+        Uri.TryCreate(entry.Url, UriKind.Absolute, out var page) && page.Scheme == Uri.UriSchemeHttps && page.UserInfo.Length == 0 && page.Host.EndsWith("mdblist.com", StringComparison.OrdinalIgnoreCase)
+            ? page.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/json" : "";
 }

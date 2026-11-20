@@ -63,6 +63,10 @@ public sealed class AdminCollectionsCapabilities
 public sealed record AdminCollectionSnapshot(JsonObject Value, string ETag, MonitorAuthorityLease Owner, string Path);
 public sealed record AdminCollectionsBoard(string LibraryId, AdminCollectionsList List,
     AdminCollectionSnapshot GroupOrder, IReadOnlyDictionary<string, AdminCollectionSnapshot> Orders);
+public sealed record AdminCollectionPreviewItem(string ContentId, string Title, string Type);
+public sealed record AdminCollectionPreview(IReadOnlyList<AdminCollectionPreviewItem> Items, int Total);
+public sealed record AdminMdbListEntry(string Id, string Name, string UserName, string Description, string MediaType, int Items, int Likes, string Url);
+public sealed record AdminMdbListSearch(bool Configured, IReadOnlyList<AdminMdbListEntry> Lists);
 public sealed record AdminCollectionDeletePlan(AdminCollectionSnapshot Collection, IReadOnlyList<JsonObject> Rows);
 
 public sealed class AdminCollectionChangedException() : InvalidOperationException("It changed since you opened this. Reload and review before trying again.");

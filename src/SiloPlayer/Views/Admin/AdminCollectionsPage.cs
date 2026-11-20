@@ -32,8 +32,6 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
     private readonly HashSet<string> _selected = [];
     private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly DispatcherTimer _jobTimer = new() { Interval = TimeSpan.FromSeconds(3) };
-    private string? _jobId;
-    private int _jobReads;
 
     public AdminCollectionsPage() : this(App.Services.GetRequiredService<AdminCollectionsApi>(),
         App.Services.GetRequiredService<AdminLibrariesApi>(), App.Services.GetRequiredService<AdminMonitorAuthority>()) { }
@@ -51,6 +49,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         Content = _scroll;
         _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); _page = 0; _selected.Clear(); ReplaceQuery(); RenderRows(); };
         _jobTimer.Tick += async (_, _) => { _jobTimer.Stop(); await PollJobAsync(); };
+        _previewTimer.Tick += async (_, _) => { _previewTimer.Stop(); try { await RefreshPreviewAsync(); } catch (Exception) { } };
         Controller.Retired += Retired;
         Unloaded += (_, _) => { SuspendAdminPage(); Controller.Retired -= Retired; Controller.Dispose(); };
         SizeChanged += (_, args) => _body.Margin = new(args.NewSize.Width < 640 ? 12 : 24, 24, args.NewSize.Width < 640 ? 12 : 24, 32);
@@ -69,13 +68,15 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
     public Task<bool> CanLeaveAsync() => _leave.CanLeaveAsync(async owner => await ConfirmAsync("Discard unsaved changes?", "Your changes have not been saved.", "Discard", owner));
     public void SuspendAdminPage()
     {
-        _active = false; ++_operation; _searchTimer.Stop(); _jobTimer.Stop(); _jobId = null;
+        _active = false; ++_operation; _searchTimer.Stop(); _jobTimer.Stop(); _previewTimer.Stop(); _previewReads?.Cancel(); ++_previewSerial;
         _dialog?.Hide(); Controller.Suspend(); ClearStaged(); _grabbed = null; _shelfWindows.Clear(); ++_memberRead; _selected.Clear(); _surface.Children.Clear(); _rows.Children.Clear(); _notice.Text = "";
     }
     private void Retired() => DispatcherQueue.TryEnqueue(() =>
     {
         if (!_active) return;
-        ++_operation; _searchTimer.Stop(); _jobTimer.Stop(); _dialog?.Hide(); ClearStaged(); _grabbed = null; _selected.Clear(); _surface.Children.Clear(); _rows.Children.Clear();
+        ++_operation; ++_memberRead; _searchTimer.Stop(); _jobTimer.Stop(); _previewTimer.Stop(); _previewReads?.Cancel(); ++_previewSerial; _dialog?.Hide(); ClearStaged(); _grabbed = null; _shelfWindows.Clear(); _selected.Clear(); _surface.Children.Clear(); _rows.Children.Clear();
+        // The starter-pack job belonged to the retired authority: never poll or act on it under the next one.
+        Controller.EndStarterJob();
         Notice("Administrator access changed. Reload to continue.");
         _surface.Children.Add(ActionButton("Reload", "CollectionsAuthorityReload", async () => { Controller.Open(); await InitializeAsync(); }));
     });
@@ -100,7 +101,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         {
             if (Current(owner) && initialization == _initialization)
             {
-                _surface.Children.Clear(); Notice(AdminCollectionsController.Message(error));
+                _surface.Children.Clear(); Notice("Couldn’t load collections. " + AdminCollectionsController.Message(error));
                 if (Controller.Libraries.Count > 0) _surface.Children.Add(Select("CollectionsLibraryRecovery", Controller.Libraries.Select(l => (l.Id, l.Name)), _library ?? "", async value => { _library = value; ReplaceQuery(); await InitializeAsync(); }));
                 _surface.Children.Add(ActionButton("Retry", "CollectionsRetry", InitializeAsync));
             }
@@ -160,7 +161,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
             filters.Children.Add(Select("CollectionsKind", [("all", "All"), ("manual", "Manual"), ("smart", "Smart"), ("synced", "Synced list")], _kind,
                 value => { _kind = value; _page = 0; _selected.Clear(); ReplaceQuery(); RenderRows(); return Task.CompletedTask; }));
             var failed = new CheckBox { Content = "Sync failed", IsChecked = _failed }; Identify(failed, "CollectionsFailed", "Sync failed");
-            failed.Click += (_, _) => { _failed = failed.IsChecked == true; _page = 0; _selected.Clear(); ReplaceQuery(); RenderRows(); }; filters.Children.Add(failed);
+            Toggled(failed, on => { _failed = on; _page = 0; _selected.Clear(); ReplaceQuery(); RenderRows(); return Task.CompletedTask; }); filters.Children.Add(failed);
             filters.Children.Add(ActionButton("Clear filters", "CollectionsClear", () => { _search = ""; _kind = "all"; _failed = false; _page = 0; ReplaceQuery(); RenderList(); return Task.CompletedTask; }));
             _surface.Children.Add(filters);
             _surface.Children.Add(Text("Click a collection to edit it. Order and shelves live in Arrange.", 13, true));
@@ -189,8 +190,13 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         }
         if (all.Count == 0)
         {
-            _rows.Children.Add(Text(Controller.List.Items.Count == 0 ? "No collections yet" : "No collections match.", 20));
-            if (Controller.List.Items.Count == 0) _rows.Children.Add(Text("Make one yourself, or start from ready-made lists.", 14, true));
+            var inLibrary = Controller.Libraries.FirstOrDefault(l => l.Id == _library)?.Name;
+            _rows.Children.Add(Text(Controller.List.Items.Count == 0 ? inLibrary == null ? "No collections yet" : $"No collections in {inLibrary} yet" : "No collections match.", 20));
+            if (Controller.List.Items.Count == 0)
+            {
+                _rows.Children.Add(Text("Make one yourself, or start from ready-made lists.", 14, true));
+                _rows.Children.Add(ActionButton("Add a starter pack", "CollectionsEmptyStarterPack", StarterPacksAsync));
+            }
             return;
         }
         _page = Math.Clamp(_page, 0, (all.Count - 1) / 50);
@@ -209,7 +215,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         if (_selecting)
         {
             var pick = new CheckBox { IsChecked = _selected.Contains(c.Id) }; Identify(pick, "CollectionSelect_" + c.Id, "Select " + c.Title);
-            pick.Click += (_, _) => { if (pick.IsChecked == true && _selected.Count < 100) _selected.Add(c.Id); else _selected.Remove(c.Id); RenderRows(); }; row.Children.Add(pick);
+            Toggled(pick, on => { if (on && _selected.Count < 100) _selected.Add(c.Id); else _selected.Remove(c.Id); RenderRows(); return Task.CompletedTask; }); row.Children.Add(pick);
         }
         row.Children.Add(ActionButton(c.Title, "CollectionEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }));
         row.Children.Add(Text($"{(c.Kind == "synced" ? "Synced list" : c.Kind == "smart" ? "Smart" : "Manual")} · {LibraryNames(c)} · {c.ItemCount} titles", 13, true));

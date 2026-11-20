@@ -57,6 +57,20 @@ public sealed partial class AdminCollectionsPage
         BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border), Background = AdminMonitorUi.Solid(AdminMonitorUi.Surface),
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CheckBox, object> Quiet = new();
+    /// <summary>Checked and Unchecked, not Click: the automation Toggle pattern (Narrator, UI Automation) never raises Click.</summary>
+    private void Toggled(CheckBox box, Func<bool, Task> changed)
+    {
+        async void Handler(object? sender, RoutedEventArgs args)
+        {
+            if (Quiet.TryGetValue(box, out _)) return;
+            var owner = Controller.Owner;
+            try { await changed(box.IsChecked == true); }
+            catch (Exception error) { if (Current(owner)) Notice(SiloPlayer.Core.Services.Admin.AdminCollectionsController.Message(error)); }
+        }
+        box.Checked += Handler; box.Unchecked += Handler;
+    }
+    private static void SetQuietly(CheckBox box, bool value) { Quiet.AddOrUpdate(box, new object()); try { box.IsChecked = value; } finally { Quiet.Remove(box); } }
     private static void Identify(DependencyObject control, string id, string name) { AutomationProperties.SetAutomationId(control, id); AutomationProperties.SetName(control, name); }
     private Button ActionButton(string title, string id, Func<Task> action, bool enabled = true)
     {
