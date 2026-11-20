@@ -1,8 +1,10 @@
 using System.ComponentModel;
+using CommunityToolkit.Mvvm.Messaging;
 using System.Net;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Tests;
@@ -63,6 +65,125 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.Equal("draft-year", model.SelectedYearMin);
             Assert.DoesNotContain(0, totals);
         }
+    }
+
+    [Theory]
+    [InlineData("watched", 500)]
+    [InlineData("watched", 560)]
+    [InlineData("favorite", 500)]
+    [InlineData("favorite", 560)]
+    [InlineData("progress", 500)]
+    [InlineData("progress", 560)]
+    public async Task ContentRefreshRejectsPreMutationViewportAndHeldWindowSnapshots(string mutation, int pausedAt)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await wire.Idle();
+            wire.HoldWindowAt = pausedAt;
+            var requestStart = wire.Requests.Count;
+            var refresh = model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var renderedAfterMutation = new List<bool>();
+            bool IsNewState(SiloPlayer.Core.Models.Home.MediaItem item) => mutation switch
+            {
+                "watched" => item.UserState?.Played == true,
+                "favorite" => item.UserState?.IsFavorite == true,
+                _ => item.PositionSeconds == 80
+            };
+            try
+            {
+                wire.Played = mutation == "watched";
+                wire.Favorite = mutation == "favorite";
+                wire.PositionSeconds = mutation == "progress" ? 80 : 0;
+                model.UpdateCachedItems("item-500", item => mutation switch
+                {
+                    "watched" => MediaItemStateUpdater.SetWatched(item, true),
+                    "favorite" => MediaItemStateUpdater.SetFavorite(item, true),
+                    _ => MediaItemStateUpdater.SetPlaybackProgress(item, 80, 100, false, DateTime.UtcNow)
+                });
+                model.WindowLoaded += () =>
+                {
+                    if (model.GetRenderableWindowItem(500) is { } item) renderedAfterMutation.Add(IsNewState(item));
+                };
+                Assert.True(IsNewState(model.GetRenderableWindowItem(500)!));
+            }
+            finally { wire.ReleaseChunk.TrySetResult(); }
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await refresh);
+            Assert.True(IsNewState(model.GetWindowItem(500)!));
+            Assert.True(IsNewState(model.GetRenderableWindowItem(500)!));
+            Assert.NotEmpty(renderedAfterMutation);
+            Assert.All(renderedAfterMutation, state => Assert.True(state));
+            var reads = wire.Requests.Skip(requestStart).Where(read => read.ContainsKey("skip_total")).ToList();
+            var freshStarts = reads.Where(read => !read.ContainsKey("cursor")).ToList();
+            Assert.Equal(2, freshStarts.Count);
+            Assert.NotEqual(wire.SnapshotOf(freshStarts[0]), wire.SnapshotOf(freshStarts[1]));
+        }
+    }
+
+    [Theory]
+    [InlineData("settle")]
+    [InlineData("navigation")]
+    [InlineData("profile")]
+    public async Task ContentRefreshWaitsForFinalProgressPersistenceUnderItsOwner(string completion)
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await wire.Idle();
+            var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            model.TrackPendingProgressSave(persisted.Task);
+            model.UpdateCachedItems("item-500", item => MediaItemStateUpdater.SetPlaybackProgress(item, 80, 100, false, DateTime.UtcNow));
+            var requests = wire.Requests.Count;
+            var refresh = model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+            Assert.False(refresh.IsCompleted);
+            Assert.Equal(requests, wire.Requests.Count);
+            Assert.Equal(80, model.GetRenderableWindowItem(500)!.PositionSeconds);
+            if (completion == "navigation") model.SuspendCatalogLoads();
+            if (completion == "profile") wire.Client.SetProfile("replacement");
+            wire.PositionSeconds = 80;
+            persisted.SetResult();
+            Assert.Equal(completion == "settle" ? LibraryViewModel.CatalogRefreshResult.Completed : LibraryViewModel.CatalogRefreshResult.Deferred,
+                await refresh);
+            if (completion == "settle") Assert.Equal(80, model.GetWindowItem(500)!.PositionSeconds);
+            else Assert.Equal(requests, wire.Requests.Count);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetainedRefreshUsesAppLifetimeProgressBarrierWithoutALibraryRecipient(bool duringRead)
+    {
+        using var wire = new Catalog();
+        var cache = new ItemDetailPrefetchCache((string _, CancellationToken _) =>
+            Task.FromResult(new SiloPlayer.Core.Models.Catalog.MediaItemDetail()));
+        var messenger = new CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger();
+        SiloPlayer.Services.DetailCacheInvalidation.Attach(cache, messenger);
+        var model = new LibraryViewModel(new CatalogApi(wire.Client), cache)
+        { Library = new Library { Id = 1, Type = "movie" } };
+        await model.LoadCommand.ExecuteAsync(null);
+        await model.LoadWindowAsync(500, 60);
+        await wire.Idle();
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void FinalSave() => messenger.Send(new SiloPlayer.Messaging.PlaybackProgressUpdated(
+            "item-500", 80, 100, false) { Persisted = persisted.Task });
+        if (!duringRead) FinalSave();
+        else wire.HoldWindowAt = 500;
+        var before = wire.Requests.Count;
+        var refresh = model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
+        if (duringRead)
+        {
+            await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            FinalSave(); // No LibraryPage recipient calls TrackPendingProgressSave.
+            wire.ReleaseChunk.SetResult();
+        }
+        else Assert.Equal(before, wire.Requests.Count);
+        Assert.False(refresh.IsCompleted);
+        wire.PositionSeconds = 80;
+        persisted.SetResult();
+        Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await refresh);
+        Assert.Equal(80, model.GetWindowItem(500)!.PositionSeconds);
     }
 
     [Theory]
@@ -1354,6 +1475,9 @@ public sealed class LibraryBackgroundRefreshTests
         internal readonly List<(string Id, string Title)> Titles = Enumerable.Range(0, 1000).Select(index => ("item-" + index, "Item " + index)).ToList();
         internal readonly List<Dictionary<string, string>> Requests = [];
         private readonly Dictionary<string, List<(string Id, string Title)>> _snapshots = [];
+        private readonly Dictionary<string, (bool Played, bool Favorite, double Position)> _viewerSnapshots = [];
+        internal bool Played, Favorite;
+        internal double PositionSeconds;
         private int _inFlight;
         internal int LetterReads, CountReads, FilterReads, LetterPosition = 500;
         internal bool Fail, FailLetters, OmitWindowTotals, ZeroWindowTotal, HoldCount, HoldLetters, HoldFilters, TimeoutWindow, HeldWindowCancelled;
@@ -1430,13 +1554,19 @@ public sealed class LibraryBackgroundRefreshTests
                     {
                         offset = int.Parse(query["seek"]);
                         if (query.TryGetValue("cursor", out var window) && _snapshots.ContainsKey(window)) snapshot = window;
-                        else { snapshot = "snap-" + _snapshots.Count; _snapshots[snapshot] = Titles.ToList(); }
+                        else
+                        {
+                            snapshot = "snap-" + _snapshots.Count;
+                            _snapshots[snapshot] = Titles.ToList();
+                            _viewerSnapshots[snapshot] = (Played, Favorite, PositionSeconds);
+                        }
                     }
                     if (query.ContainsKey("skip_total") && offset == ChangeSnapshotAt && SnapshotChangesRemaining > 0)
                     {
                         SnapshotChangesRemaining--;
                         snapshot = "snap-" + _snapshots.Count;
                         _snapshots[snapshot] = Titles.ToList();
+                        _viewerSnapshots[snapshot] = (Played, Favorite, PositionSeconds);
                     }
                     query["window"] = snapshot;
                     lock (Requests) Requests.Add(query);
@@ -1467,11 +1597,16 @@ public sealed class LibraryBackgroundRefreshTests
                     return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"fixture\",\"message\":\"retry\"}") };
                 }
                 var frozen = _snapshots[snapshot];
+                var state = _viewerSnapshots[snapshot];
                 var page = frozen.Skip(offset).Take(limit).ToList();
                 var more = offset + page.Count < frozen.Count;
                 var body = new Dictionary<string, object?>
                 {
-                    ["items"] = page.Select(title => new { content_id = title.Id, title = title.Title, type = "movie" }),
+                    ["items"] = page.Select(title => new
+                    {
+                        content_id = title.Id, title = title.Title, type = "movie", position_seconds = state.Position,
+                        user_state = new { played = state.Played, is_favorite = state.Favorite }
+                    }),
                     ["window_cursor"] = snapshot,
                     ["page"] = new { has_more = more, next_cursor = more ? $"next|{snapshot}|{offset + page.Count}" : null },
                 };

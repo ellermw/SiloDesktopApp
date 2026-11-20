@@ -4,7 +4,7 @@ public sealed class LoggingDisclosurePreferences(string? directory = null)
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, bool> _session = new(StringComparer.Ordinal);
-    private static readonly HashSet<string> Sections = new(StringComparer.Ordinal) { "logging.serverLog", "logging.retention", "downloads", "playback.transcoding", "playback.preview_images", "nodes.routing" };
+    private static readonly HashSet<string> Sections = new(StringComparer.Ordinal) { "logging.serverLog", "logging.retention", "downloads", "storage.s3.public", "search", "playback.transcoding", "playback.preview_images", "nodes.routing" };
 
     public bool Read(string section)
     {
