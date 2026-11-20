@@ -24,6 +24,8 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
     private readonly Border _panel = new() { CornerRadius = new(12), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel _content = new() { Spacing = 20, Padding = new(24) };
     private readonly StackPanel _sections = new() { Spacing = 20 };
+    // A Panel has no IsEnabled; the host disables every section control while a write or read is in flight.
+    private readonly ContentControl _sectionsHost = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
     private readonly StackPanel _tabs = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
     private readonly StackPanel _footer = new() { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new(24, 12, 24, 16), HorizontalAlignment = HorizontalAlignment.Right };
     private readonly TextBlock _title = U.Text("", 20);
@@ -47,7 +49,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
 
     internal AdminAutoscanSourceEditor(AdminAutoscanSourcesPage page, AdminAutoscanController controller, MonitorAuthorityLease owner, AdminAutoscanSource? source)
     {
-        _page = page; _controller = controller; _owner = owner;
+        _page = page; _controller = controller; _owner = owner; _sectionsHost.Content = _sections;
         // A detached configuration baseline detects a refreshed row before replacing it.
         _baseline = source == null ? null : new AdminAutoscanSource
         {
@@ -64,7 +66,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
         AutomationProperties.SetLiveSetting(_error, AutomationLiveSetting.Assertive); AutomationProperties.SetAutomationId(_error, "AutoscanEditorError"); _error.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive);
         _content.Children.Add(_trail); _content.Children.Add(_tabs);
         if (source == null) BuildPluginChoices();
-        _content.Children.Add(_sections); _content.Children.Add(_error);
+        _content.Children.Add(_sectionsHost); _content.Children.Add(_error);
         var scroll = new ScrollViewer { Content = _content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetRow(scroll, 1); _layout.Children.Add(scroll);
         if (source != null)
@@ -242,7 +244,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
             if (!Current) return;
             _title.Text = T("sourceDialog.connectTitle"); _description.Text = T("sourceDialog.connectDescription");
 _createdProvider = P.Provider(draft.Descriptor, result.Value.SourceConfig); draft.Dispose(); _draft = null; Dirty = false;
-            _content.Children.Clear(); _content.Children.Add(_sections); _content.Children.Add(_error); _sections.Children.Clear(); _sections.Children.Add(WebhookSection());
+            _content.Children.Clear(); _content.Children.Add(_sectionsHost); _content.Children.Add(_error); _sections.Children.Clear(); _sections.Children.Add(WebhookSection());
             if (!hook.Succeeded) _error.Text = hook.Message ?? T("sourceDialog.webhookFailedBody");
         }
         catch (Exception ex) when (ex is not OutOfMemoryException) { if (Current) _error.Text = T("common.sourceWriteUnconfirmed"); _uncertain = true; }
@@ -255,7 +257,7 @@ _createdProvider = P.Provider(draft.Descriptor, result.Value.SourceConfig); draf
         _save.Content = _createdId != null ? "Done" : _saving ? T(_baseline == null ? "sourceDialog.adding" : "sourceDialog.saving") : _baseline != null ? "Save" : _draft?.DeliveryMode == "webhook" ? T("sourceDialog.createAndContinue") : T("sourceDialog.addSource");
         _save.IsEnabled = !Busy && (_createdId != null || !_uncertain && !state.Stale && !state.Loading && !state.Busy && (_plugin != null || _baseline != null));
         _cancel.IsEnabled = !Busy; _cancel.Visibility = _createdId != null ? Visibility.Collapsed : Visibility.Visible;
-        _sections.IsEnabled = !Busy && !state.Busy && !state.Loading;
+        _sectionsHost.IsEnabled = !Busy && !state.Busy && !state.Loading;
         if (_baseline != null && state.Loaded && !state.Stale && !state.Sources.Any(s => s.Id == _baseline.Id)) { _error.Text = "This source was removed. Close the editor to review the source list."; _uncertain = true; _save.IsEnabled = false; }
         SyncWebhook();
     }
