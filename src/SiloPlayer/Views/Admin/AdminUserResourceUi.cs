@@ -80,16 +80,19 @@ internal static class AdminUserResourceUi
     /// <summary>A row of buttons that act like the official segmented controls: one is pressed, the others are not.</summary>
     internal static StackPanel Segmented(string label, IEnumerable<(string Value, string Label)> options, string value, Action<string> changed, string idPrefix)
     {
-        var row = Inline(0); AutomationProperties.SetName(row, label); var buttons = new List<(ToggleButton Button, string Value)>();
+        var row = Inline(0); AutomationProperties.SetName(row, label); var buttons = new List<(ToggleButton Button, string Value)>(); var updating = false;
         foreach (var (optionValue, optionLabel) in options)
         {
             var button = Id(new ToggleButton { Content = optionLabel, IsChecked = optionValue == value, MinHeight = 32, Padding = new(12, 4, 12, 4) }, idPrefix + "_" + optionValue);
             AutomationProperties.SetName(button, optionLabel); buttons.Add((button, optionValue));
-            button.Click += (_, _) =>
+            // Pressed state follows Checked/Unchecked (pointer, keyboard and assistive technology alike); exactly one option stays pressed.
+            button.Checked += (_, _) =>
             {
+                if (updating) return; updating = true;
                 foreach (var (other, otherValue) in buttons) other.IsChecked = otherValue == optionValue;
-                changed(optionValue);
+                updating = false; changed(optionValue);
             };
+            button.Unchecked += (_, _) => { if (updating) return; updating = true; button.IsChecked = true; updating = false; };
             row.Children.Add(button);
         }
         return row;

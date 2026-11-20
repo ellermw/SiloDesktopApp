@@ -197,7 +197,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         if (asButton)
         {
             var button = Id(new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(8, 6, 8, 6), BorderThickness = new(0) }, id);
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label + ", " + count); button.Click += (_, _) => changed(button.IsChecked == true); return button;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label + ", " + count); button.Checked += (_, _) => changed(true); button.Unchecked += (_, _) => changed(false); return button;
         }
         var box = Id(new CheckBox { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinHeight = 32 }, id);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(box, label + ", " + count);

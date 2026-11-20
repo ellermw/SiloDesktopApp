@@ -144,7 +144,8 @@ public sealed partial class AdminDevicesPage
             content.Children.Add(Chip(tab.Overrides.Count.ToString(CultureInfo.CurrentCulture)));
             var button = Id(new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton { Content = content, IsChecked = tab.Id == active.Id, Padding = new(10, 6, 10, 6), MinHeight = 36 }, "DeviceProfileTab_" + tab.Id);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, tab.Name + ", " + tab.Overrides.Count);
-            button.Click += (_, _) => { if (_profile == tab.Id) { button.IsChecked = true; return; } _profile = tab.Id; ReplaceProfileQuery(); RenderTabsAndRows(); };
+            button.Checked += (_, _) => { if (_profile == tab.Id) return; _profile = tab.Id; ReplaceProfileQuery(); RenderTabsAndRows(); };
+            button.Unchecked += (_, _) => { if (_profile == tab.Id) button.IsChecked = true; };
             strip.Children.Add(button);
         }
         _tabsHost.Children.Add(new ScrollViewer { Content = strip, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Auto });
