@@ -27,7 +27,7 @@ public sealed class AdminPolicyApi(SiloApiClient client)
     public async Task<AdminPolicyDocument> CreateAsync(MonitorAuthorityLease owner, string domain, string name)
     {
         Domain(domain); name = name.Trim(); if (name.Length is < 1 or > 500) throw new ArgumentException("Policy name length.");
-        var document = (await client.AdminAccessSendAsync<AdminPolicyDocument>(owner, HttpMethod.Post, Root + "/documents", new { domain, name }, expected: HttpStatusCode.Created).ConfigureAwait(false)).Body;
+        var document = (await client.AdminAccessSendAsync<AdminPolicyDocument>(owner, HttpMethod.Post, Root + "/documents", new Dictionary<string, object?> { ["domain"] = domain, ["name"] = name }, expected: HttpStatusCode.Created).ConfigureAwait(false)).Body;
         Validate(document); return document;
     }
     public async Task<AdminAccessPage<AdminPolicyVersion>> VersionsAsync(MonitorAuthorityLease owner, string id, string? cursor = null)
@@ -51,7 +51,7 @@ public sealed class AdminPolicyApi(SiloApiClient client)
     public async Task<AdminPolicyValidation> ValidateAsync(MonitorAuthorityLease owner, string domain, string source)
     {
         Domain(domain); Source(source);
-        return (await client.AdminAccessSendAsync<AdminPolicyValidation>(owner, HttpMethod.Post, Root + "/validate", new { domain, source }).ConfigureAwait(false)).Body;
+        return (await client.AdminAccessSendAsync<AdminPolicyValidation>(owner, HttpMethod.Post, Root + "/validate", new Dictionary<string, object?> { ["domain"] = domain, ["source"] = source }).ConfigureAwait(false)).Body;
     }
     public async Task<AdminPolicySimulationResult> SimulateAsync(MonitorAuthorityLease owner, string domain, string source, string input)
     {
@@ -63,12 +63,12 @@ public sealed class AdminPolicyApi(SiloApiClient client)
     }
     public async Task<AdminPolicyApplyResult> ActivateAsync(MonitorAuthorityLease owner, AdminPolicySnapshot reviewed, string version)
     {
-        var result = await ApplyAsync(owner, reviewed, HttpMethod.Put, "/active-version", new { version_id = AdminAccessRules.Id(version) }).ConfigureAwait(false);
+        var result = await ApplyAsync(owner, reviewed, HttpMethod.Put, "/active-version", new Dictionary<string, object?> { ["version_id"] = AdminAccessRules.Id(version) }).ConfigureAwait(false);
         if (result.Document.ActiveVersionId != version) throw new AdminAccessException("invalid_response", uncertain: true); return result;
     }
     public async Task<AdminPolicyApplyResult> EnableAsync(MonitorAuthorityLease owner, AdminPolicySnapshot reviewed, bool enabled)
     {
-        var result = await ApplyAsync(owner, reviewed, HttpMethod.Patch, "", new { enabled }).ConfigureAwait(false);
+        var result = await ApplyAsync(owner, reviewed, HttpMethod.Patch, "", new Dictionary<string, object?> { ["enabled"] = enabled }).ConfigureAwait(false);
         if (result.Document.Enabled != enabled) throw new AdminAccessException("invalid_response", uncertain: true); return result;
     }
     private async Task<AdminPolicyApplyResult> ApplyAsync(MonitorAuthorityLease owner, AdminPolicySnapshot reviewed, HttpMethod method, string suffix, object body)

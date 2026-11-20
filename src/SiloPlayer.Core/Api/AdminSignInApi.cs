@@ -36,12 +36,12 @@ public sealed class AdminSignInApi(SiloApiClient client)
         if (account.Id != id) throw new AdminAccessException("invalid_response"); return account;
     }
     public async Task SaveConfigAsync(MonitorAuthorityLease owner, string id, AdminSignInConfigWrite config) =>
-        await client.AdminAccessSendAsync<object>(owner, HttpMethod.Put, Root(id) + "/config", new { key = config.Key, value = config.Value, clear_secrets = config.ClearSecrets }, expected: HttpStatusCode.NoContent).ConfigureAwait(false);
+        await client.AdminAccessSendAsync<object>(owner, HttpMethod.Put, Root(id) + "/config", new Dictionary<string, object?> { ["key"] = config.Key, ["value"] = config.Value, ["clear_secrets"] = config.ClearSecrets }, expected: HttpStatusCode.NoContent).ConfigureAwait(false);
     public async Task SaveBindingAsync(MonitorAuthorityLease owner, string id, AdminSignInBinding binding) =>
-        await client.AdminAccessSendAsync<object>(owner, HttpMethod.Put, Root(id) + "/auth-binding", new { capability_id = binding.CapabilityId, enabled = binding.Enabled, display_order = binding.DisplayOrder, auto_provision = binding.AutoProvision, default_login = binding.DefaultLogin }, expected: HttpStatusCode.NoContent).ConfigureAwait(false);
+        await client.AdminAccessSendAsync<object>(owner, HttpMethod.Put, Root(id) + "/auth-binding", new Dictionary<string, object?> { ["capability_id"] = binding.CapabilityId, ["enabled"] = binding.Enabled, ["display_order"] = binding.DisplayOrder, ["auto_provision"] = binding.AutoProvision, ["default_login"] = binding.DefaultLogin }, expected: HttpStatusCode.NoContent).ConfigureAwait(false);
     public async Task<AdminSignInTestResult> TestAsync(MonitorAuthorityLease owner, string id, string capability, IReadOnlyList<AdminSignInConfigWrite> config)
     {
-        var result = (await client.AdminAccessSendAsync<AdminSignInTestResult>(owner, HttpMethod.Post, Root(id) + "/auth-binding/test", new { capability_id = capability, config }).ConfigureAwait(false)).Body;
+        var result = (await client.AdminAccessSendAsync<AdminSignInTestResult>(owner, HttpMethod.Post, Root(id) + "/auth-binding/test", new Dictionary<string, object?> { ["capability_id"] = capability, ["config"] = config }).ConfigureAwait(false)).Body;
         if (result.Steps == null || result.Steps.Count > 100) throw new AdminAccessException("invalid_response");
         // A provider may echo a staged secret in any result field. Exact submitted values are removed
         // before any result is retained or displayed; common credential/URL patterns are also redacted.

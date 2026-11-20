@@ -48,7 +48,7 @@ public sealed class AdminApiKeysApi(SiloApiClient client)
         if (string.IsNullOrWhiteSpace(label) || label.Length > 4096) throw new ArgumentException("A bounded label is required.");
         AdminAccessRules.Id(userId);
         var result = (await client.AdminAccessSendAsync<AdminApiKeyCreated>(owner, HttpMethod.Post, Root,
-            new { label, user_id = userId, scopes }, expected: HttpStatusCode.Created).ConfigureAwait(false)).Body;
+            new Dictionary<string, object?> { ["label"] = label, ["user_id"] = userId, ["scopes"] = scopes }, expected: HttpStatusCode.Created).ConfigureAwait(false)).Body;
         if (result.UserId != userId || !AdminSubtitleIds.IsId(result.Id) || string.IsNullOrEmpty(result.Key) || result.Key.Length > 4096)
         { result.Key = ""; throw new AdminAccessException("invalid_response", uncertain: true); }
         return result;
@@ -57,7 +57,7 @@ public sealed class AdminApiKeysApi(SiloApiClient client)
     {
         if (tier is not ("standard" or "elevated")) throw new ArgumentException("Unsupported rate tier.");
         AdminValidators.RequireStrong(editor.ETag); Validate(editor.Value);
-        var response = await client.AdminAccessSendAsync<AdminApiKey>(owner, HttpMethod.Put, Root + "/" + editor.Value.Id + "/tier", new { rate_tier = tier }, editor.ETag).ConfigureAwait(false);
+        var response = await client.AdminAccessSendAsync<AdminApiKey>(owner, HttpMethod.Put, Root + "/" + editor.Value.Id + "/tier", new Dictionary<string, object?> { ["rate_tier"] = tier }, editor.ETag).ConfigureAwait(false);
         Validate(response.Body);
         if (response.Body.Id != editor.Value.Id || response.Body.UserId != editor.Value.UserId || response.Body.RateTier != tier || !AdminValidators.IsStrong(response.ETag)) throw new AdminAccessException("invalid_response", uncertain: true);
         return new(response.Body, response.ETag!);
