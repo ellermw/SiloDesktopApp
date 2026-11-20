@@ -1,15 +1,23 @@
-# November 17 — Home Sections source candidate, runtime unobserved
+# November 20 — Manage Libraries > Home sections Beta candidate
 
-The `/admin/sections` candidate in branch `t3/admin-home-sections` is based on
-Beta `248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1`
-unchanged. Official source pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
-It includes the registered native page, its Home/library tabs, full row editor,
-source selectors/preview, guarded row/order/bulk/delete/restore workflows,
-Next Up defaults, source/XBF inventory and authored unit/native fixtures.
-This is uncommitted source for coordinator acceptance; all new tests, builds,
-native interactions and captures remain unrun. No mutex, generated outputs,
-installed-player action, commit, push or PR occurred in this source-only lane.
-See [scope, source references and exact acceptance commands](parity/2026-11-17-admin-home-sections.md).
+Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
+or library page, shown switches, hero banner, drag and keyboard reorder, select mode (turn on/off, delete), Restore defaults, Add to other
+libraries, Add row / Edit row (kind picker, variants, collection, rule, seasonal and per-kind fields, More options, live preview), the Next Up
+defaults card, and the Collections link contract (?page=, ?add=collection:library:<id>, ?edit=<rowId>, ?return=<path>). Branch
+t3/admin-home-sections, merged with origin/beta d90f40965 on 2026-11-20; the version is not changed by this branch. Official contracts, strings
+and logic were read at 217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb; scope, write contract and native adaptations: docs/parity/2026-11-17-admin-home-sections.md.
+
+Observed, under the SiloOct18Build lease, in final run sections-final-r2 on commit b7cacefa257f5472fd51e1a7247ef5d0df6d386e: 113 focused and
+9,869 full unit cases passed with no failures or skips; the app build, self-contained publish and native host build passed; native selectors
+admin-home-sections (118 checks), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed with no failures. Running the
+page exposed and fixed: a ListView that kept stale switch and name values after a refused or applied change (rows are now stable views that resync
+their controls), editor controls reused across editors (now created fresh per editor, which threw on the third open), a Back-to-collection link that
+resolved an unsupported /admin/collections/<id> to the Dashboard, and a NullReference in a fixture gate. No independent review was run.
+
+Not observed: live-server behavior, real device drag, Narrator/IME, all DPI, and complete visual parity (only the list capture at 1440 was inspected).
+Known differences: ComboBox page and variant choices, Move up/down and a row preview dialog in place of hover peeks and handle-arrow drag, the preview refreshes
+on request, the settings API hides server detail on a refused Next Up default ("Settings request failed."), and Back to the collection and the addedRow
+navigation state wait for the Collections page to reach Beta.
 
 # November 20 — Manage Libraries > Library settings Beta candidate
 
