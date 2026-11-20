@@ -1,15 +1,26 @@
-# November 17 — Configure Sign-in & Security source candidate
+# November 20 — Configure Sign-in, API Keys and Policy (Access family)
 
-Uncommitted source on `t3/admin-signin-security`, exact Beta base
-`248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1`
-unchanged. Sign-in, API Keys and Policy have production pages, transports,
-controllers, registrations, XBF entries and authored unit/native regressions.
-Official source pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
-Security #175 is preserved. Source-only slot: no build/test/app/native/browser
-runtime or mutex; RED/GREEN, rendered parity and live interoperability remain
-unobserved. Test-only/production patches and exact coordinator acceptance steps:
-[scoped handoff](parity/admin-sign-in-security-20261117.md). No commit/push/PR,
-generated build outputs, installer or installed-player action.
+`/admin/settings/sign-in`, `/admin/api-keys` and `/admin/policy` are implemented, registered
+(`AddAdminSignInSecurity()`) and reachable through the real Admin navigation. The three pages had been
+listed as unsupported in `AdminRouteCatalog.UnsupportedPatterns`; `api-keys` and `policy` are removed from
+it (the shared navigation test no longer lists `/admin/api-keys` as unsupported). Official source pin:
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Version `1.2.1181-beta.1` unchanged. Branch
+`t3/admin-signin-security`, merged with `origin/beta` (25 commits) before the final run.
+
+Review findings fixed with regression tests: the policy title/toggle/lifecycle labels now follow the adopted
+snapshot (`AdminPolicyPresentation`); the override list and the API key list are re-read from the server's
+canonical first page after a create; a numeric field the server holds as explicit `null` is sent back as `null`
+unless the administrator changed it. Also fixed from the first compile and native run: a missing namespace,
+unusable `StackPanel.IsEnabled`, anonymous request bodies replaced by dictionaries, multi-line text boxes losing
+everything after the first line break (assigned before `AcceptsReturn`), a refused local value permanently blocking
+later writes, the shared date/time preference formatter, clipboard history excluded for the one-time key.
+
+Observed on exact source (lane `D:/SiloPlayer-build/admin-completion-lane-b`, label `signin-final-r2`):
+focused unit run 146 passed, full unit suite 9,755 passed/0 failed, app build, publish, native host and the
+native selectors `admin-signin-security`, `admin-manage-foundation`, `admin-configure-general`, `admin-monitor`
+all passed, with source and payload seals verified. Four captures were viewed. Not observed: live SSO/LDAP
+servers, a real clipboard, other DPIs, screen-reader or IME behaviour, installer execution. Scoped record and
+deviations: [admin-sign-in-security-20261117.md](parity/admin-sign-in-security-20261117.md).
 
 ---
 
