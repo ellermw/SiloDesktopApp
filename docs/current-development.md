@@ -56,6 +56,30 @@ visual parity, an installer or a stable release.
 
 ---
 
+# November 20 — Configure Providers candidate
+
+Configure > Integrations > Providers (`/admin/settings/providers`) is implemented on
+`t3/admin-provider-settings`, merged with fresh `origin/beta`; version stamps are unchanged.
+Official contracts were read at pinned Silo Server `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`
+(`ProvidersSettings.tsx`, `MarkerProviderTiles.tsx`, `WatchProviderTiles.tsx`). The page covers
+watch-provider plugin status, MDBList, subtitle providers (OpenSubtitles, SubDL, SubSource) and
+marker providers, with strong-ETag subtitle editors, single-send writes and no replay of unknown
+outcomes. Four review findings (Disconnect after authority replacement, truncation before
+redaction, unreachable marker reload, edits lost during a pending marker save) are fixed with
+regression tests. Scope, deviations and limits: [Providers](parity/admin-configure-providers.md).
+An independent read-only review of the final diff then confirmed those four fixes and reported one P1 and
+three P2 defects, all fixed with tests: Reload was unreachable after a failed credential-status or section
+read; an erased key or failed Disconnect made Test send an empty key; a non-submitter marker provider with
+stored sharing wrote contribute fields the admin never changed; and Save dropped a key typed while the
+credential status was unavailable.
+Final run `providers-lead-final-r1` on commit `07a7bc3c208ddbc40f14fd377194af746f114311`: 29 focused and
+9,726 full unit tests pass with zero failures or skips; the app build, self-contained publish and native host
+build pass; and the `admin-configure-providers` (89 checks), `admin-manage-foundation`,
+`admin-configure-general` and `admin-monitor` native selectors pass.
+Live-server compatibility, rendered-capture inspection and all-DPI/accessibility remain unverified.
+
+---
+
 # November 20 — Manage Libraries > Library settings Beta candidate
 
 Manage > Libraries > Library settings (/admin/settings/library, official page "Library & Metadata") is implemented in
