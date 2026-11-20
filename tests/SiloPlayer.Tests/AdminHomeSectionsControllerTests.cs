@@ -92,6 +92,31 @@ public sealed class AdminHomeSectionsControllerTests
     }
 
     [Fact]
+    public async Task AnAppliedChangeRaisesSavedAndARefusedOneDoesNot()
+    {
+        var (kit, authority, controller, server) = await OpenAsync(); using var _k = kit; using var _a = authority; using var _c = controller;
+        var saved = 0; controller.Saved += () => saved++;
+        Assert.True(await controller.QuickAsync(controller.State.Snapshot!.Rows[1], shown: true)); Assert.Equal(1, saved);
+        server.Intercept = (request, _) => request.Method == HttpMethod.Patch
+            ? ProblemResponse(HttpStatusCode.UnprocessableEntity, AdminHomeSectionsFake.Problem(422, "Cannot change this row.")) : null;
+        Assert.False(await controller.QuickAsync(controller.State.Snapshot!.Rows[0], shown: false));
+        Assert.Equal(AdminHomeSectionsFailure.Refused, controller.State.Failure); Assert.Equal(1, saved);
+    }
+
+    [Fact]
+    public void ASavedChangeIsSentToTheMountedHomeInsteadOfANewlyResolvedViewModel()
+    {
+        var page = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminHomeSectionsPage.cs"));
+        var home = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "ViewModels", "HomeViewModel.cs"));
+        // HomeViewModel is transient and the Home page is cached: a resolved instance is never the one Home shows.
+        Assert.DoesNotContain("GetService<SiloPlayer.ViewModels.HomeViewModel>", page, StringComparison.Ordinal);
+        Assert.Contains("_controller.Saved += InvalidateHome;", page, StringComparison.Ordinal);
+        Assert.Contains("WeakReferenceMessenger.Default.Send(new SiloPlayer.Messaging.HomePreferenceChanged(home.CaptureContext(), ReloadLayout: true));", page, StringComparison.Ordinal);
+        Assert.Contains("if (message.ReloadLayout) _ = RefreshPreferenceLayoutAsync(message.Context);", home, StringComparison.Ordinal);
+        Assert.Matches(@"RefreshPreferenceLayoutAsync\(ApiRequestContext context\)[^}]*InvalidateCache\(\);\s*if \(_isActive\) await LoadAsync\(\);", home);
+    }
+
+    [Fact]
     public async Task QuickSwitchOnARowThatChangedSinceItWasShownWritesNothing()
     {
         var (kit, authority, controller, server) = await OpenAsync(); using var _k = kit; using var _a = authority; using var _c = controller;

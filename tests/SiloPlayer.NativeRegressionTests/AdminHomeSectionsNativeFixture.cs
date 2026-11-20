@@ -6,6 +6,7 @@ using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -184,12 +185,15 @@ internal static class AdminHomeSectionsNativeFixture
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
         auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Synthetic primary", IsPrimary = true });
         using var authority = new AdminMonitorAuthority(client, auth); var monitor = new AdminMonitorApi(client);
-        using var store = new ServerActivityStore(monitor, authority, new Channel()); var navigation = new NavigationService();
-        var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(monitor).AddSingleton(store)
+        using var store = new ServerActivityStore(monitor, authority, new Channel()); var navigation = new NavigationService(); var homeApi = new HomeApi(client);
+        var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(monitor).AddSingleton(store).AddSingleton(homeApi)
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddAdminHomeSections();
         await using var provider = services.BuildServiceProvider();
         var global = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var oldServices = global.GetValue(null); var oldContent = window.Content; Frame? outer = null; AdminHomeSectionsPage? page = null;
+        // The Home view model a cached Home page would still hold while the admin works here.
+        var home = new SiloPlayer.ViewModels.HomeViewModel(homeApi, auth); var homeReloads = 0; var homeObserver = new object();
+        WeakReferenceMessenger.Default.Register<SiloPlayer.Messaging.HomePreferenceChanged>(homeObserver, (_, message) => { if (message.ReloadLayout) homeReloads++; });
         try
         {
             global.SetValue(null, provider); outer = new Frame(); window.Content = outer; navigation.Frame = outer;
@@ -222,11 +226,16 @@ internal static class AdminHomeSectionsNativeFixture
             Check(Find<Button>(page, "HomeSectionsAdd")!.IsEnabled, "Add row is enabled once the page can change");
             foreach (var width in new[] { 1440, 1024, 800 }) { await Resize(window, width); await Capture(window, "home-sections-list-" + width + ".png"); }
             await Resize(window, 1280);
+            int LayoutReads() => server.Requests.Count(item => item.Path == "/api/v2/home/layout");
+            await home.LoadCommand.ExecuteAsync(null); await home.LoadCommand.ExecuteAsync(null);
+            Check(LayoutReads() == 1 && homeReloads == 0, "the mounted Home keeps its loaded layout while no row changed");
 
             // ── Quick switch: applied, refused, stale and unknown ──
             await Switch(page, "Synthetic disabled", server); await Until(() => server.Requests.Any(item => item.Method == "PATCH" && item.Path.EndsWith("/b")) && page.Controller!.CanWrite);
             var enable = server.Requests.Last(item => item.Method == "PATCH"); Check(enable.Body == "{\"enabled\":true}" && enable.Tag == "\"b-1\"", "turning a row on sends only enabled, over the version just read");
             Check(Texts(page).Contains("3 rows · 3 on"), "the summary follows the saved value");
+            await Until(() => homeReloads > 0, "Home reload message"); await home.LoadCommand.ExecuteAsync(null);
+            Check(LayoutReads() == 2, "a saved change makes the mounted Home read its layout again on return");
             server.RefusePatchDetail = "Cannot change this row right now."; var patches = server.Requests.Count(item => item.Method == "PATCH");
             await Switch(page, "Synthetic first", server); await Until(() => Texts(page).Any(text => text.Contains("Cannot change this row right now.")));
             Check(page.Controller!.CanWrite && !page.Controller.State.ReviewRequired, "a definite refusal keeps the page writable");
@@ -394,6 +403,7 @@ internal static class AdminHomeSectionsNativeFixture
         }
         finally
         {
+            WeakReferenceMessenger.Default.UnregisterAll(home); WeakReferenceMessenger.Default.UnregisterAll(homeObserver);
             page?.SuspendAdminPage();
             if (outer != null) { outer.Navigate(typeof(Page)); await Until(() => page?.IsLoaded != true); }
             if (window.Content is FrameworkElement root && root.XamlRoot != null) await Until(() => VisualTreeHelper.GetOpenPopupsForXamlRoot(root.XamlRoot).Count == 0);

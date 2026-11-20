@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
@@ -379,8 +380,12 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Saved -= InvalidateHome; _controller.Dispose(); _controller = null; }
         _rows.Clear(); _selection.Clear(); _selectMode = false; _settings = null; _defaults.Children.Clear(); _status.Text = ""; ClearPageNames();
     }
+    // Home keeps its page and view model mounted, and a resolved HomeViewModel is a new one. Only the message reaches the mounted Home.
     private void InvalidateHome() => DispatcherQueue.TryEnqueue(() =>
-    { if (_active && _controller?.State.Owner?.IsCurrent == true) App.Services.GetService<SiloPlayer.ViewModels.HomeViewModel>()?.InvalidateCache(); });
+    {
+        if (!_active || _controller?.State.Owner?.IsCurrent != true || App.Services.GetService<HomeApi>() is not { } home) return;
+        WeakReferenceMessenger.Default.Send(new SiloPlayer.Messaging.HomePreferenceChanged(home.CaptureContext(), ReloadLayout: true));
+    });
 
     internal static string T(string key, object? args = null) => AdminHomeSectionsText.T(key, args);
     private static Button Action(string label, string id) => U.Action(label, id);
