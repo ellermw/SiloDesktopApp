@@ -74,6 +74,7 @@ public sealed partial class EditMetadataDialog
             "series" => "web.item.editMetadata.typeSeries",
             "season" => "web.item.editMetadata.typeSeason",
             "episode" => "web.item.editMetadata.typeEpisode",
+            "audiobook" => "web.detail.hero.typeAudiobook",
             _ => null,
         };
         return key == null ? badge : badge.Keyed(key);

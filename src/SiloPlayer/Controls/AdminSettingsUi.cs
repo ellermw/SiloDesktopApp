@@ -329,11 +329,12 @@ internal sealed class AdminSettingsSaveBar : Grid
         _count.MaxWidth = Math.Max(0, Math.Min(240, available - 220));
     }
 
-    internal void State(int dirty, bool saving, bool canSave)
+    /// <param name="saveLabel">Replaces "Save" when the action does something else, e.g. Storage's "Review transition".</param>
+    internal void State(int dirty, bool saving, bool canSave, string? saveLabel = null)
     {
         Visibility = dirty > 0 ? Visibility.Visible : Visibility.Collapsed;
         AdminSettingsUi.UpdateLiveText(_count, AdminText.T("web.shell.saveBar.count", new { count = dirty, shown = dirty }));
-        Save.Content = AdminText.T(saving ? "web.ui.saving" : "common.save");
+        Save.Content = saving ? AdminText.T("web.ui.saving") : saveLabel ?? AdminText.T("common.save");
         AutomationProperties.SetName(Save, Save.Content.ToString());
         Save.IsEnabled = canSave && !saving; Discard.IsEnabled = !saving;
     }
