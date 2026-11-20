@@ -1,3 +1,21 @@
+# November 20 — Manage › Users resource pages (Access groups, Devices, History import)
+
+Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import
+(`/admin/history-import`) are implemented in the registered native shell on branch
+`t3/admin-access-groups-devices-history-import`, rebuilt from an earlier uncompiled draft against official
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` and merged with Beta `d90f40965`. Versions are unchanged.
+
+Fixed from review of the draft: refusals (4xx other than 408) now show the server's safe problem detail and keep the draft, while only a
+timeout, 5xx or lost transport after a write is an unknown outcome; a failed second request of a two-request save is reported as such and is
+not repeated; read failures and later successes are tracked per section; device rows follow the official admin rules (all device-scoped keys
+except the retired `ui.theme`, manifest order, platform tags, per-row anomalies, inherited sources); bitrates use Unlimited / preset / custom
+Mbps; turning "All libraries" off selects every library; the 556-message catalog and the 42 device definitions were verified against the pin
+by script; the app project now embeds both catalogs; a cancel answered 200 without a Location is no longer treated as unknown.
+
+Scope, contracts, deliberate differences and limits: `docs/parity/admin-user-resources-2026-11-17.md`. Unit and native results are in the
+final report of this work. Not verified: live-server interoperability, all-DPI / Narrator / IME behavior, locale digit shaping and complete
+visual parity.
+
 # November 20 — Manage Libraries > Library settings Beta candidate
 
 Manage > Libraries > Library settings (/admin/settings/library, official page "Library & Metadata") is implemented in
@@ -248,25 +266,6 @@ feature commit/non-draft Beta PR hands subsequent review/QA/fixes to the pipelin
 
 ---
 
-
-# November 17 — Admin user resources source-only candidate
-
-Uncommitted Access Groups, Devices (account/device/profile descendants) and
-History Import candidate prepared in `t3/admin-access-groups-devices-history-import`
-at exact Beta `248aafd62ed65b868c0e7356926e4d83204649cd`, version
-`1.2.1181-beta.1` unchanged. Official source pin is
-`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Pending Users PR194 and all other
-submitted PRs remain untouched and pipeline-owned.
-
-Production pages, authority-bound transport/controller, registrations, scoped
-catalog/manifest resources, approved-file/XBF entries, 57 authored focused unit
-cases and a real shell/Frame native fixture with six planned captures are present.
-The initial test-only checkpoint and complete final patch are retained under
-`.codex-tmp/admin-user-resources-20261117`. **No .NET/build/test/app/native/browser
-runtime or mutex acquisition occurred: RED/GREEN, compilation, rendered visual
-parity and interoperability remain unobserved.** Coordinator runtime acceptance
-and independent review are required; no commit, push, PR or delivery occurred.
-See [contracts, self-review and exact acceptance steps](parity/admin-user-resources-2026-11-17.md).
 
 # November 16 - Admin Manage Libraries for separate Beta submission
 
