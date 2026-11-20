@@ -191,7 +191,8 @@ public sealed partial class AdminRequestsPage
         more.Number("year_from", "From year", "AdminDiscoverYearFrom", 1, 9999); more.Number("year_to", "To year", "AdminDiscoverYearTo", 1, 9999);
         more.Number("vote_average_gte", "Minimum TMDB score", "AdminDiscoverScore", 0, 10, integer: false); more.Number("vote_count_gte", "Minimum votes", "AdminDiscoverVotes");
         more.Number("runtime_gte", "Shortest runtime (minutes)", "AdminDiscoverRuntimeFrom"); more.Number("runtime_lte", "Longest runtime (minutes)", "AdminDiscoverRuntimeTo");
-        var ratingSelect = more.Choice("certification_lte", "Highest content rating", "AdminDiscoverRating", new[] { "", "G", "PG", "PG-13", "R", "NC-17", "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA" }.Select(rating => (rating, rating.Length == 0 ? "No rating limit" : rating)));
+        var ratings = new[] { "", "G", "PG", "PG-13", "R", "NC-17", "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA" };
+        var ratingSelect = more.Choice("certification_lte", "Highest content rating", "AdminDiscoverRating", ratings.Select(rating => (rating, rating.Length == 0 ? "No rating limit" : rating)));
         form.Panel.Children.Add(new Expander { Header = "More options", Content = more.Panel, HorizontalAlignment = HorizontalAlignment.Stretch });
         form.Readers.Add(() => more.Read());
         void AdaptMedia()
@@ -213,7 +214,8 @@ public sealed partial class AdminRequestsPage
                 var value = Selected(sortSelect).Replace(series ? "primary_release_date" : "first_air_date", series ? "first_air_date" : "primary_release_date", StringComparison.Ordinal);
                 sortSelect.SelectedItem = sortSelect.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.IsEnabled && Equals(item.Tag, value)) ?? sortSelect.Items[0];
             }
-            foreach (var item in ratingSelect.Items.OfType<ComboBoxItem>()) { var value = item.Tag?.ToString() ?? ""; item.IsEnabled = value.Length == 0 || series == value.StartsWith("TV-", StringComparison.Ordinal); }
+            // A saved rating outside the list cannot be matched to a media type, so it stays selectable instead of being dropped on open.
+            foreach (var item in ratingSelect.Items.OfType<ComboBoxItem>()) { var value = item.Tag?.ToString() ?? ""; item.IsEnabled = value.Length == 0 || !ratings.Contains(value) || series == value.StartsWith("TV-", StringComparison.Ordinal); }
             if (ratingSelect.SelectedItem is ComboBoxItem rating && !rating.IsEnabled) ratingSelect.SelectedIndex = 0;
             providerRevision++; providers.Children.Clear();
         }

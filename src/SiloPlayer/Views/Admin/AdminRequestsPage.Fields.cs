@@ -43,7 +43,10 @@ public sealed partial class AdminRequestsPage
         }
         internal ComboBox Choice(string key, string label, string id, IEnumerable<(string Value, string Label)> options, string? help = null)
         {
-            var select = Select(id, options, J.Text(Data, key)); Panel.Children.Add(Field(label, select, help));
+            var saved = J.Text(Data, key); var offered = options.ToList();
+            // A saved value outside the offered list stays a choice, so opening and saving the editor never drops it unseen.
+            if (saved.Length > 0 && !offered.Any(option => option.Value == saved)) offered.Add((saved, saved));
+            var select = Select(id, offered, saved); Panel.Children.Add(Field(label, select, help));
             select.Tag = key;
             var placeholder = select.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, ""))?.Content?.ToString();
             _choiceUpdates[key] = (choices, clear) =>
