@@ -218,7 +218,7 @@ public sealed class AdminProvidersTests
         Assert.Contains(kit.Http.Requests, request => request.StartsWith(
             "POST /api/v2/admin/settings/check/mdblist", StringComparison.Ordinal));
         Assert.DoesNotContain("synthetic-key", result.Message, StringComparison.Ordinal);
-        Assert.Equal(1003, result.Message.Length);
+        Assert.Equal(501, result.Message.Length);
         await Assert.ThrowsAsync<ArgumentException>(() => api.CheckConnectionAsync(lease, "mdblist",
             new Dictionary<string, string> { ["redis.url"] = "redis://wrong" }, ["redis.url"]));
     }
@@ -278,5 +278,211 @@ public sealed class AdminProvidersTests
         Assert.Null(state.SubtitleTestFor("subsource"));
         Assert.Same(marker, state.MarkerTestFor("plugin:6:introdb"));
         Assert.Null(state.MarkerTestFor("plugin:7:other"));
+    }
+
+    private sealed class Harness : IDisposable
+    {
+        internal readonly AdminMonitorKit Kit = AdminMonitorKit.Create();
+        internal readonly AdminMonitorAuthority Authority;
+        internal readonly AdminProvidersController Controller;
+        internal string MarkerProvidersJson = MarkerJson(priority: 10);
+        internal string MarkerListStatus = "ok";
+        internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
+        internal Harness()
+        {
+            Authority = new AdminMonitorAuthority(Kit.Client, Kit.Auth);
+            var settings = new AdminServerSettingsApi(Kit.Client);
+            var store = new AdminServerSettingsStore(settings, Authority, AdminProvidersController.Keys, AdminProvidersController.Secrets);
+            Controller = new AdminProvidersController(new AdminProvidersApi(Kit.Client), settings, store, Authority);
+            Kit.Http.Respond = (request, _) =>
+            {
+                if (request.Method != HttpMethod.Get) return Write?.Invoke(request) ?? Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.InternalServerError));
+                var path = request.RequestUri!.AbsolutePath;
+                HttpResponseMessage response =
+                    path.EndsWith("/subtitle-providers") ? AdminMonitorKit.Json("""{"providers":[{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false}]}""")
+                    : path.EndsWith("/markers/providers") ? (MarkerListStatus == "ok" ? AdminMonitorKit.Json(MarkerProvidersJson) : AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable))
+                    : path.EndsWith("/plugins/installations") ? AdminMonitorKit.Json("""{"items":[],"page":{"has_more":false}}""")
+                    : path.EndsWith("effective") ? AdminMonitorKit.Json("""{"markers.mode":"both"}""")
+                    : path.EndsWith("sensitive-status") ? AdminMonitorKit.Json("""{"configured":["mdblist.api_key"],"managed_by_env":[]}""")
+                    : AdminMonitorKit.Json("""{"keys":[],"prefixes":[]}""");
+                response.Headers.ETag = new("\"one\"");
+                return Task.FromResult(response);
+            };
+        }
+        internal string[] Writes => Kit.Http.Requests.Where(r => !r.StartsWith("GET")).ToArray();
+        public void Dispose() { Controller.Dispose(); Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    private static string MarkerJson(int priority) =>
+        $$"""{"providers":[{"provider":"plugin:6:introdb","display_name":"IntroDB","source_type":"plugin","plugin_id":"silo.introdb","plugin_installation_id":"6","is_submitter":true,"fetch_enabled":true,"fetch_priority":{{priority}},"fetch_min_confidence":0.4,"contribute_enabled":true,"contribute_auto_local":true,"contribute_min_confidence":0.95,"default_contribute_enabled":false}]}""";
+
+    private static AdminMarkerProvider MarkerProvider(long priority = 10) => new()
+    {
+        Provider = "plugin:6:introdb", IsSubmitter = true, FetchEnabled = true, FetchPriority = priority,
+        FetchMinConfidence = .4, ContributeEnabled = true, ContributeAutoLocal = true, ContributeMinConfidence = .95,
+    };
+
+    [Fact]
+    public async Task DisconnectConfirmedForAReplacedAuthorityNeverWritesTheNewAuthority()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var confirmedOwner = h.Controller.State.Owner;
+        Assert.NotNull(confirmedOwner);
+        Assert.Contains("mdblist.api_key", h.Controller.State.Configured);
+
+        // The server or account is replaced while the confirmation is open, and the page reopens for the new one.
+        h.Authority.Retire();
+        await h.Controller.OpenAsync();
+        Assert.NotSame(confirmedOwner, h.Controller.State.Owner);
+
+        await h.Controller.ClearMdblistAsync(confirmedOwner!);
+
+        Assert.Empty(h.Writes);
+        Assert.Contains("mdblist.api_key", h.Controller.State.Configured);
+    }
+
+    [Fact]
+    public async Task DisconnectConfirmedForTheCurrentAuthoritySendsTheOneClearWrite()
+    {
+        using var h = new Harness();
+        h.Write = request =>
+        {
+            var response = AdminMonitorKit.Json("""{"values":{"mdblist.api_key":""},"restart_required":false}""");
+            response.Headers.ETag = new("\"two\"");
+            return Task.FromResult(response);
+        };
+        await h.Controller.OpenAsync();
+
+        await h.Controller.ClearMdblistAsync(h.Controller.State.Owner!);
+
+        Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);
+        Assert.DoesNotContain("mdblist.api_key", h.Controller.State.Configured);
+    }
+
+    [Fact]
+    public async Task SubtitleEditorFromAReplacedAuthorityIsRefusedBeforeAnyWrite()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminProvidersApi(kit.Client);
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Put) return Task.FromResult(AdminMonitorKit.Json("""{"saved_revision":"5","local_apply":"applied","local_applied_revision":"5"}"""));
+            var response = AdminMonitorKit.Json("""{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false}""");
+            response.Headers.ETag = new("\"subtitle-v4\"");
+            return Task.FromResult(response);
+        };
+        using var first = authority.Capture();
+        var editor = await api.GetSubtitleProviderAsync(first, "subdl");
+        authority.Retire();
+        using var second = authority.Capture();
+
+        await Assert.ThrowsAsync<AdminProviderAuthorityChangedException>(() => api.SaveSubtitleProviderAsync(second, editor,
+            new AdminSubtitleProviderChange { Enabled = false, ClearCredentials = true }));
+
+        Assert.Empty(kit.Http.Requests.Where(request => request.StartsWith("PUT", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task MarkerUnknownOutcomeKeepsReloadReachableAndReloadReconcilesIt()
+    {
+        using var h = new Harness();
+        h.Write = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+        await h.Controller.OpenAsync();
+        Assert.False(h.Controller.State.ReloadRequired);
+
+        Assert.False(await h.Controller.SaveMarkerAsync("plugin:6:introdb", new Dictionary<string, object?> { ["fetch_priority"] = 5L }));
+
+        Assert.True(h.Controller.State.MarkerOutcomeUnknown);
+        Assert.True(h.Controller.State.ReloadRequired);
+        // Nothing is replayed while the outcome is unknown.
+        Assert.False(await h.Controller.SaveMarkerAsync("plugin:6:introdb", new Dictionary<string, object?> { ["fetch_priority"] = 5L }));
+        Assert.Single(h.Writes);
+
+        // The marker list cannot be read: the unknown outcome must stay unresolved and Reload must stay reachable.
+        h.MarkerListStatus = "fail";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.True(h.Controller.State.MarkerOutcomeUnknown && h.Controller.State.ReloadRequired);
+
+        h.MarkerListStatus = "ok"; h.MarkerProvidersJson = MarkerJson(priority: 5);
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.False(h.Controller.State.MarkerOutcomeUnknown);
+        Assert.False(h.Controller.State.ReloadRequired);
+        Assert.Equal(5, Assert.Single(h.Controller.State.MarkerProviders).FetchPriority);
+        Assert.Single(h.Writes);
+    }
+
+    [Fact]
+    public void MarkerEditsTypedWhileASaveIsPendingSurviveTheAcknowledgement()
+    {
+        var draft = new AdminMarkerProviderDraft(MarkerProvider(priority: 10));
+        draft.FetchPriority = "5";
+        var sent = draft.BeginSave();
+        Assert.Equal(5L, sent["fetch_priority"]);
+        Assert.True(draft.SaveInFlight);
+        Assert.Throws<InvalidOperationException>(() => draft.BeginSave());
+
+        draft.FetchPriority = "10";          // back to the old saved value while the request is pending
+        draft.FetchMinimumPercent = "30";    // a new field edited while pending
+        var next = draft.Rebase(MarkerProvider(priority: 5));
+
+        Assert.False(next.SaveInFlight);
+        Assert.Equal("10", next.FetchPriority);
+        Assert.Equal("30", next.FetchMinimumPercent);
+        var patch = next.CapturePatch();
+        Assert.Equal(10L, patch["fetch_priority"]);
+        Assert.Equal(.3, (double)patch["fetch_min_confidence"]!, 8);
+    }
+
+    [Fact]
+    public void MarkerFieldsUneditedAfterTheSendTakeTheServerValueAndAFailedSendKeepsTheDraft()
+    {
+        var draft = new AdminMarkerProviderDraft(MarkerProvider(priority: 10));
+        draft.FetchPriority = "5";
+        draft.BeginSave();
+        var accepted = draft.Rebase(MarkerProvider(priority: 5));
+        Assert.Equal("5", accepted.FetchPriority);
+        Assert.Empty(accepted.CapturePatch());
+        Assert.False(accepted.Dirty);
+
+        var failed = new AdminMarkerProviderDraft(MarkerProvider(priority: 10)) { FetchPriority = "7" };
+        failed.BeginSave();
+        failed.FetchEnabled = false;
+        failed.AbandonSave();
+        Assert.False(failed.SaveInFlight);
+        Assert.Equal("7", failed.FetchPriority);
+        Assert.False(failed.FetchEnabled);
+        Assert.Equal(2, failed.CapturePatch().Count);
+    }
+
+    [Fact]
+    public async Task MarkerAndSubtitleTestTextIsRedactedBeforeItIsTruncated()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminProvidersApi(kit.Client);
+        using var lease = authority.Capture();
+        const string key = "synthetic-subtitle-key-abcdefghij";
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(JsonSerializer.Serialize(new
+        {
+            success = false,
+            error = new string('x', 990) + key + new string('z', 50),
+        })));
+
+        var subtitle = await api.TestSubtitleProviderAsync(lease, "subdl", new AdminSubtitleProviderChange { Enabled = true, ApiKey = key });
+
+        Assert.DoesNotContain("synthetic", subtitle.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("abcdefghij", subtitle.Error, StringComparison.Ordinal);
+        Assert.Contains("<redacted>", subtitle.Error, StringComparison.Ordinal);
+
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(JsonSerializer.Serialize(new
+        {
+            valid = false,
+            error = new string('x', 980) + " token=synthetic-marker-token-abcdefghij " + new string('z', 50),
+        })));
+        var marker = await api.ValidateMarkerProviderAsync(lease, "plugin:6:introdb");
+        Assert.DoesNotContain("synthetic", marker.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("abcdefghij", marker.Error, StringComparison.Ordinal);
     }
 }

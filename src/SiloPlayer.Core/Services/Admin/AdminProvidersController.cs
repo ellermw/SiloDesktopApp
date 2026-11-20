@@ -39,6 +39,8 @@ public sealed record AdminProvidersState
     public AdminSubtitleProviderTestResult? SubtitleTest { get; init; }
     public string? MarkerTestProvider { get; init; }
     public AdminMarkerProviderValidation? MarkerTest { get; init; }
+    /// <summary>True while a conflict or unknown outcome means only a canonical reload can say what the server holds.</summary>
+    public bool ReloadRequired => SettingsConflict || SettingsOutcomeUnknown || SubtitleConflict || SubtitleOutcomeUnknown || MarkerOutcomeUnknown;
     public AdminSubtitleProviderTestResult? SubtitleTestFor(string provider) =>
         string.Equals(SubtitleTestProvider, provider, StringComparison.Ordinal) ? SubtitleTest : null;
     public AdminMarkerProviderValidation? MarkerTestFor(string provider) =>
@@ -149,7 +151,9 @@ public sealed class AdminProvidersController : IDisposable
                 _state = _state with
                 {
                     Loading = false, Loaded = true, SettingsConflict = false, SettingsOutcomeUnknown = false,
-                    SubtitleConflict = false, SubtitleOutcomeUnknown = false, MarkerOutcomeUnknown = false,
+                    // An unknown outcome stays unresolved until its own canonical list has been read again.
+                    SubtitleConflict = subtitlesFailed && _state.SubtitleConflict, SubtitleOutcomeUnknown = subtitlesFailed && _state.SubtitleOutcomeUnknown,
+                    MarkerOutcomeUnknown = markersFailed && _state.MarkerOutcomeUnknown,
                     Error = null, ErrorCode = null, Failure = null, ProviderFeedback = null,
                     SensitiveStatusError = sensitiveFailed,
                     Configured = sensitive?.Configured ?? [], ManagedByEnv = sensitive?.ManagedByEnv ?? [], RestartKeys = restart,
@@ -216,15 +220,17 @@ public sealed class AdminProvidersController : IDisposable
         }
     }
 
-    public Task ClearMdblistAsync() => SaveMdblistAsync(clear: true);
-    public Task SaveMdblistAsync() => SaveMdblistAsync(clear: false);
+    /// <summary>Clears the key only for the authority that showed the confirmation; a replaced authority never inherits it.</summary>
+    public Task ClearMdblistAsync(MonitorAuthorityLease confirmedOwner) => SaveMdblistAsync(clear: true, confirmedOwner);
+    public Task SaveMdblistAsync() => SaveMdblistAsync(clear: false, null);
 
-    private async Task SaveMdblistAsync(bool clear)
+    private async Task SaveMdblistAsync(bool clear, MonitorAuthorityLease? confirmedOwner)
     {
         MonitorAuthorityLease action;
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
         using (action)
         {
+            if (confirmedOwner != null && (!ReferenceEquals(confirmedOwner, _lifetime.Owner) || !confirmedOwner.IsCurrent)) return;
             AdminSettingsSaveIntent intent;
             lock (_gate)
             {
@@ -346,6 +352,7 @@ public sealed class AdminProvidersController : IDisposable
                 return true;
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { return false; }
+            catch (AdminProviderAuthorityChangedException) { Update(action, () => _state = _state with { ProviderFeedback = "The server or account changed. Reopen the provider and try again." }); return false; }
             catch (AdminProviderConflictException) { Update(action, () => _state = _state with { SubtitleConflict = true, ProviderFeedback = "Provider settings changed on the server. Reload and review your draft." }); return false; }
             catch (AdminProviderOutcomeUnknownException) { Update(action, () => _state = _state with { SubtitleOutcomeUnknown = true, ProviderFeedback = "The provider save outcome is unknown. Reload and review before saving again." }); return false; }
             catch (Exception error) { Update(action, () => _state = _state with { ProviderFeedback = "Provider settings were not saved: " + SafeError(error) }); return false; }

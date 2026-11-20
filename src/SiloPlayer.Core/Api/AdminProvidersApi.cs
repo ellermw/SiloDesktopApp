@@ -9,6 +9,8 @@ namespace SiloPlayer.Core.Api;
 public sealed class AdminProviderConflictException() : Exception("Provider settings changed on the server. Reload and review your draft.");
 public sealed class AdminProviderOutcomeUnknownException() : Exception("The provider update outcome is unknown. Reload and review before saving again.");
 public sealed class AdminProviderTestOutcomeUnknownException() : Exception("The provider test outcome is unknown. Do not repeat it automatically.");
+/// <summary>An editor, ETag or confirmation from one server/account session was presented to another.</summary>
+public sealed class AdminProviderAuthorityChangedException() : Exception("The server or account changed. Reopen the provider and try again.");
 public sealed class AdminProviderLimitException(int limit) : Exception("The provider response exceeds the supported size.")
 {
     public int Limit { get; } = limit;
@@ -62,7 +64,7 @@ public sealed partial class AdminProvidersApi(SiloApiClient client)
         ValidateSubtitle(response.Body, null);
         if (!string.Equals(response.Body.ProviderName, provider, StringComparison.Ordinal))
             throw new InvalidDataException("Subtitle provider identity changed in transit.");
-        return new(response.Body, response.ETag!);
+        return new(response.Body, response.ETag!, lease.AccountId, lease.Epoch);
     }
 
     public async Task<AdminSubtitleProviderSaved> SaveSubtitleProviderAsync(MonitorAuthorityLease lease,
@@ -74,6 +76,8 @@ public sealed partial class AdminProvidersApi(SiloApiClient client)
         AdminSettingsForm.RequireStrongETag(editor.ETag);
         ct.ThrowIfCancellationRequested();
         lease.ThrowIfRetired();
+        if (editor.Epoch != lease.Epoch || !string.Equals(editor.AccountId, lease.AccountId, StringComparison.Ordinal))
+            throw new AdminProviderAuthorityChangedException();
         editor.Consume(); // consumption precedes the network call: no caller can replay any outcome.
         using var timeout = Timeout(lease, ct, WriteDeadline);
         try
@@ -102,9 +106,9 @@ public sealed partial class AdminProvidersApi(SiloApiClient client)
         {
             var result = (await client.MonitorLogsSendAsync<AdminSubtitleProviderTestResult>(lease, HttpMethod.Post,
                 SubtitlePath(provider) + "/test", SubtitleBody(change), ct: timeout.Token, maxBytes: MaxResponseBytes).ConfigureAwait(false)).Body;
-            if (!result.Success && result.Error is { Length: > 1000 }) result.Error = result.Error[..1000] + "...";
-            result.Error = result.Error == null ? null : RedactCredentialEchoes(LocalLog.RedactDiagnosticText(result.Error),
-                change.ApiKey, change.Username, change.Password);
+            // Redact before truncating: a credential that straddles the cut must never survive in part.
+            result.Error = result.Error == null ? null : BoundDiagnostic(LocalLog.RedactDiagnosticText(RedactCredentialEchoes(result.Error,
+                change.ApiKey, change.Username, change.Password)));
             return result;
         }
         catch (OperationCanceledException) when (!lease.IsCurrent || ct.IsCancellationRequested) { throw; }
@@ -172,8 +176,7 @@ public sealed partial class AdminProvidersApi(SiloApiClient client)
         {
             var result = (await client.MonitorLogsSendAsync<AdminMarkerProviderValidation>(lease, HttpMethod.Post,
                 MarkerPath(provider) + "/validate", ct: timeout.Token, maxBytes: MaxResponseBytes).ConfigureAwait(false)).Body;
-            if (result.Error is { Length: > 1000 }) result.Error = result.Error[..1000] + "...";
-            result.Error = result.Error == null ? null : LocalLog.RedactDiagnosticText(result.Error);
+            result.Error = result.Error == null ? null : BoundDiagnostic(LocalLog.RedactDiagnosticText(result.Error));
             if (result.Stats is { } stats && (stats.Total < 0 || stats.Accepted < 0 || stats.Pending < 0 || stats.Rejected < 0 ||
                 !double.IsFinite(stats.AcceptanceRate) || stats.AcceptanceRate is < 0 or > 1 || stats.CurrentStreak < 0 || stats.BestStreak < 0))
                 throw new InvalidDataException("Invalid marker provider statistics.");
@@ -286,6 +289,9 @@ public sealed partial class AdminProvidersApi(SiloApiClient client)
                 config.Value == null || config.Value.Count > 128 || config.ConfiguredSecrets == null || config.ConfiguredSecrets.Count > 128))
             throw new InvalidDataException("Invalid plugin configuration inventory.");
     }
+
+    /// <summary>Bounds already-redacted provider text for display.</summary>
+    private static string BoundDiagnostic(string redacted) => redacted.Length > 1000 ? redacted[..1000] + "..." : redacted;
 
     private static string RedactCredentialEchoes(string message, params string?[] values)
     {

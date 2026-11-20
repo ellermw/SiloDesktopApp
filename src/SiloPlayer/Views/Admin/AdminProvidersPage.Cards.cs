@@ -1,8 +1,10 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using U = SiloPlayer.Controls.AdminSettingsUi;
 
@@ -125,7 +127,7 @@ public sealed partial class AdminProvidersPage
             if (_controller == null) return;
             _controller.SetMdblistApiKey(_mdblistDraft);
             await _controller.SaveMdblistAsync();
-            if (!_controller.State.SettingsConflict && !_controller.State.SettingsOutcomeUnknown && !_controller.State.DirtyKeys.Contains("mdblist.api_key")) { _mdblistDraft = ""; _mdblistEdited = false; }
+            if (!_controller.State.SettingsConflict && !_controller.State.SettingsOutcomeUnknown && !_controller.State.DirtyKeys.Contains("mdblist.api_key")) { _mdblistDraft = ""; _mdblistEdited = false; Render(_controller.State); }
         };
         var testButton = U.Action(state.CheckingMdblist ? "Testing…" : "Test connection", "ProvidersMDBListTest", secondary: true);
         testButton.IsEnabled = !state.CheckingMdblist && (configured || draft.Trim().Length > 0);
@@ -141,7 +143,13 @@ public sealed partial class AdminProvidersPage
         if (configured && !managed)
         {
             var clear = U.Action("Disconnect", "ProvidersMDBListDisconnect");
-            clear.Click += async (_, _) => { if (await ConfirmAsync("Clear MDBList credentials?", "MDBList search and browse stop working. Lists already imported by URL are unaffected.", "Clear")) if (_controller != null) { await _controller.ClearMdblistAsync(); if (!_controller.State.SettingsConflict && !_controller.State.SettingsOutcomeUnknown) { _mdblistDraft = ""; _mdblistEdited = false; } } };
+            clear.Click += async (_, _) =>
+            {
+                var owner = await ConfirmForCurrentOwnerAsync("Clear MDBList credentials?", "MDBList search and browse stop working. Lists already imported by URL are unaffected.", "Clear");
+                if (owner == null || _controller == null) return;
+                await _controller.ClearMdblistAsync(owner);
+                if (!_controller.State.SettingsConflict && !_controller.State.SettingsOutcomeUnknown) { _mdblistDraft = ""; _mdblistEdited = false; Render(_controller.State); }
+            };
             actions.Children.Add(clear);
         }
         actions.Children.Add(CloseButton("ProvidersMDBListClose", () => { _expandedTile = null; Render(state); }));
@@ -210,7 +218,10 @@ public sealed partial class AdminProvidersPage
         {
             var clear = U.Action("Disconnect", "ProvidersSubtitleDisconnect_" + SafeId(id));
             clear.IsEnabled = canEdit;
-            clear.Click += async (_, _) => { if (await ConfirmAsync("Clear " + name + " credentials?", "Save " + name + " as disabled and clear its stored credentials. Applying this change on this server is reported separately; other servers may still use older settings.", "Clear and turn off")) await SaveSubtitleAsync(editor, draft, clear: true); };
+            clear.Click += async (_, _) =>
+            {
+                if (await ConfirmForCurrentOwnerAsync("Clear " + name + " credentials?", "Save " + name + " as disabled and clear its stored credentials. Applying this change on this server is reported separately; other servers may still use older settings.", "Clear and turn off") != null) await SaveSubtitleAsync(editor, draft, clear: true);
+            };
             actions.Children.Add(clear);
         }
         actions.Children.Add(CloseButton("ProvidersSubtitleClose_" + SafeId(id), () => { _expandedTile = null; Render(state); }));
@@ -236,11 +247,32 @@ public sealed partial class AdminProvidersPage
     {
         if (_controller == null) return;
         var state = _controller.State;
+        // The editor and draft must still be the ones this tile was showing; a replaced authority clears them.
+        if (!_subtitleEditors.TryGetValue(editor.Provider, out var liveEditor) || !ReferenceEquals(liveEditor, editor) ||
+            !_subtitleDrafts.TryGetValue(editor.Provider, out var liveDraft) || !ReferenceEquals(liveDraft, draft)) return;
         if (draft.SaveAttempted || state.BusyProvider != null || state.SubtitleConflict || state.SubtitleOutcomeUnknown) return;
         var saved = await _controller.SaveSubtitleAsync(editor, draft.CaptureChange(clear));
         if (!saved) return;
         draft.ClearSecrets(); _subtitleDrafts.Remove(editor.Provider); _subtitleEditors.Remove(editor.Provider); _expandedTile = null;
         Render(_controller.State);
+    }
+
+    private async Task SaveMarkerAsync(string provider)
+    {
+        var controller = _controller;
+        if (controller == null || !_markerDrafts.TryGetValue(provider, out var sent) || sent.SaveInFlight || !sent.IsValid) return;
+        var patch = sent.BeginSave();
+        if (patch.Count == 0) { sent.AbandonSave(); return; }
+        var saved = await controller.SaveMarkerAsync(provider, patch);
+        // A retired page or authority already discarded every draft.
+        if (!ReferenceEquals(controller, _controller) || !_markerDrafts.TryGetValue(provider, out var current)) return;
+        var updated = saved ? controller.State.MarkerProviders.FirstOrDefault(item => string.Equals(item.Provider, provider, StringComparison.Ordinal)) : null;
+        if (updated == null) { current.AbandonSave(); Render(controller.State); return; }
+        // Edits typed while the request was pending are kept; only what was actually sent is replaced by the server value.
+        var next = current.Rebase(updated);
+        if (next.IsValid && !next.Dirty) { _markerDrafts.Remove(provider); _markerAdvanced.Remove(provider); _expandedTile = null; }
+        else _markerDrafts[provider] = next;
+        Render(controller.State);
     }
 
     private static AdminSubtitleProviderChange SubtitleChange(AdminSubtitleProviderDraft draft) => draft.Provider == "opensubtitles"
@@ -270,7 +302,7 @@ public sealed partial class AdminProvidersPage
         Border? validation = null;
         void DraftChanged()
         {
-            if (markerSave != null) markerSave.IsEnabled = draft.Dirty && draft.IsValid && state.BusyProvider == null && !state.MarkerOutcomeUnknown;
+            if (markerSave != null) markerSave.IsEnabled = draft.Dirty && draft.IsValid && state.BusyProvider == null && !state.MarkerOutcomeUnknown && !draft.SaveInFlight;
             if (validation != null) validation.Visibility = draft.IsValid ? Visibility.Collapsed : Visibility.Visible;
         }
         if (provider.SourceType == "plugin" && provider.PluginId != null)
@@ -310,8 +342,16 @@ public sealed partial class AdminProvidersPage
         var actions = Actions();
         var save = U.Action(state.BusyProvider == provider.Provider ? "Saving…" : "Save", "ProvidersMarkerSave_" + SafeId(provider.Provider), primary: true);
         markerSave = save; DraftChanged();
-        save.Click += async (_, _) => { if (_controller == null) return; var patch = draft.CapturePatch(); if (await _controller.SaveMarkerAsync(provider.Provider, patch)) { _markerDrafts.Remove(provider.Provider); _markerAdvanced.Remove(provider.Provider); _expandedTile = null; Render(_controller.State); } };
+        save.Click += async (_, _) => await SaveMarkerAsync(provider.Provider);
         actions.Children.Add(save);
+        if (state.MarkerOutcomeUnknown)
+        {
+            // The outcome of the last marker write is unknown: only a canonical reload may say what the server holds.
+            var reload = U.Action("Reload", "ProvidersMarkerReload_" + SafeId(provider.Provider), secondary: true);
+            reload.IsEnabled = state.BusyProvider == null && !state.Loading;
+            reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(preserveDraft: true); };
+            actions.Children.Add(reload);
+        }
         if (provider.IsSubmitter && ready == true)
         {
             var test = U.Action("Test connection", "ProvidersMarkerTest_" + SafeId(provider.Provider), secondary: true); test.IsEnabled = state.BusyProvider == null;
@@ -333,6 +373,18 @@ public sealed partial class AdminProvidersPage
     {
         var input = U.Input(label, id, number: number); input.Text = value; input.IsEnabled = !disabled; input.TextChanging += (_, _) => change(input.Text);
         return new AdminSettingsRow(label, description, input, unit);
+    }
+
+    /// <summary>
+    /// Confirms a destructive action for the authority that is current when the dialog opens. The dialog is modal but a server or
+    /// account change can replace the authority behind it, so a confirmation never carries over to the new authority.
+    /// </summary>
+    private async Task<MonitorAuthorityLease?> ConfirmForCurrentOwnerAsync(string title, string description, string action)
+    {
+        var controller = _controller; var owner = controller?.State.Owner;
+        if (controller == null || owner?.IsCurrent != true) return null;
+        if (!await ConfirmAsync(title, description, action)) return null;
+        return ReferenceEquals(controller, _controller) && ReferenceEquals(owner, controller.State.Owner) && owner.IsCurrent ? owner : null;
     }
 
     private async Task<bool> ConfirmAsync(string title, string description, string action)

@@ -1,6 +1,6 @@
 # Configure > Providers parity
 
-Source candidate: Desktop Beta `248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1`.
+Source candidate: branch `t3/admin-provider-settings`, merged with fresh `origin/beta` on November 20, 2026; version stamps unchanged.
 
 Official reference: Silo Server/WebUI `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
 
@@ -38,19 +38,31 @@ Reads, response sizes, provider counts, plugin pagination, and deadlines are bou
 - `docs/parity/admin-monitor-surfaces.json`
 - `docs/parity/admin-configure-providers.md`
 
+## Review findings fixed (November 20)
+
+Two independent source reviews reported four defects. Each is fixed and has a regression test.
+
+1. **Disconnect confirmation after the authority was replaced.** The confirmed action re-captured whatever authority was current when the dialog closed. `ConfirmForCurrentOwnerAsync` now records the owner when the dialog opens and refuses a confirmation whose owner, controller or editor is no longer current; `ClearMdblistAsync(confirmedOwner)` re-checks it; the page hides an open confirmation when the authority changes; subtitle editors carry the account and epoch that produced their ETag and `SaveSubtitleProviderAsync` throws `AdminProviderAuthorityChangedException` before consuming the editor or sending anything. Tests: `DisconnectConfirmedForAReplacedAuthorityNeverWritesTheNewAuthority`, `SubtitleEditorFromAReplacedAuthorityIsRefusedBeforeAnyWrite`, and the native "disconnect after authority replacement" scenario.
+2. **Truncation before credential redaction.** Subtitle test errors and marker validation errors were cut to 1,000 characters before typed credentials and diagnostic secrets were replaced, so a secret straddling the cut survived in part. They are now redacted (typed literals first, then diagnostic patterns) and only then bounded. Tests: `SubtitleTestRedactsCredentialsBeforeApplyingTheDisplayLimit`, `MarkerAndSubtitleTestTextIsRedactedBeforeItIsTruncated`. The MDBList connection check reuses the merged Beta implementation, which already redacts first (500 characters); the `mdblist` check kind and its secret key were added to it.
+3. **Marker unknown outcome had no reachable reload.** The Reload button lived in an alert that only appeared when a page-level error was set; an unknown marker write sets only provider feedback. `AdminProvidersState.ReloadRequired` now drives the alert, the tile shows its own Reload while the outcome is unknown, and a reload only clears an unknown outcome when the marker (or subtitle) list was actually read again. Tests: `MarkerUnknownOutcomeKeepsReloadReachableAndReloadReconcilesIt` and the native markers scenario.
+4. **Marker save discarded edits typed while the request was pending.** The page removed the draft after the acknowledgement. `AdminMarkerProviderDraft.BeginSave` now records what was sent; `Rebase` keeps any field that differs from the sent snapshot (including one edited back to the old saved value), the page keeps the tile open when edits remain, and a failed send leaves the draft untouched. Unchanged confidence percentages also keep the saved 0-1 value exact (float drift found by the first focused run). Tests: `MarkerEditsTypedWhileASaveIsPendingSurviveTheAcknowledgement`, `MarkerFieldsUneditedAfterTheSendTakeTheServerValueAndAFailedSendKeepsTheDraft`, `MarkerDraftSendsChangedFieldsOnlyAndConvertsPercentToWireRange`, and the native pending-save scenario.
+
+Also corrected while driving the page: the MDBList secret field is cleared after a successful save or disconnect, and an authority retirement removes private controls from the tree.
+
+## Registration and reachability
+
+`AdminRoute.ProviderSettings` (`/admin/settings/providers`) is an official Configure > Integrations navigation leaf in `AdminRouteCatalog`; `AdminConfigureServices` registers the page, API and controller and adds `markers.mode` and the `mdblist.api_key` secret to the shared settings snapshot. `AdminProvidersRegistrationTests` pins the registration, the approved `AdminProvidersPage.xbf` resource and the surface-policy entries.
+
+## Deviations and limits
+
+- Page text is English constants; the official `web.admin.settings.providers.*` message catalog is not wired into this page.
+- The official primary action reads "Fix" after a failed test; the native tiles keep Connect/Manage. A failed test is shown in the tile.
+- The official watch-provider error row has its own Retry; the native page uses the page-level Reload.
+- Unlike the official page, a subtitle editor is single-use: after a failed, conflicted or unknown save the tile must be reloaded before saving again.
+- No rendered capture was inspected, and live-server compatibility, all-DPI and screen-reader behavior are unverified.
+
 ## Verification status
 
-The focused unit tests and production-shell native fixture were authored in this source-only lane. They were not run, and no build, app, browser, native host, mutex, or generated output was started. Visual parity and live-server compatibility therefore remain unverified until the coordinator runs acceptance.
+Observed on this source in the lane `D:/SiloPlayer-build/admin-completion-lane-a` (single build lease, task `admin-families-nov20`): focused unit run `providers-focused-r2` (26 `AdminProviders*` tests, 0 failures) and native selector `admin-configure-providers` through `providers-host-r3` (loading, load error, empty, section failures, populated at 1280 and 760 px, MDBList save/failed/unknown/test/disconnect, replaced-authority disconnect, subtitle test/failed/unknown/conflict/disconnect/connect, marker failed/pending-edit/unknown/test). The final acceptance run (full unit suite plus the Providers, Manage foundation, General and Monitor selectors) is recorded in its lane receipts under label `providers-final-r1` and in the delivery report.
 
-Suggested acceptance commands, under the repository's serialized runtime procedure:
-
-```powershell
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj --filter FullyQualifiedName~AdminProvidersTests
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj
-dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release --no-incremental
-$verifiedPublishDirectory = 'D:\SiloPlayer-build\admin-configure-providers\publish'
-dotnet publish src/SiloPlayer/SiloPlayer.csproj -c Release -r win-x64 -p:Platform=x64 -p:PublishReadyToRun=false -o $verifiedPublishDirectory
-& tests/SiloPlayer.NativeRegressionTests/run.ps1 -AppDirectory $verifiedPublishDirectory -Only admin-configure-providers
-```
-
-Acceptance must inspect the fixture captures/automation results at wide and compact sizes, exercise a real compatible server separately, and retain the pinned-source distinction if upstream advances.
+Not run: live Silo server, real phone or provider accounts, rendered-capture inspection, narrator/IME/all-DPI checks.

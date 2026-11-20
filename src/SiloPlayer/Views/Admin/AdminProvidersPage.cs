@@ -2,12 +2,14 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Helpers;
 using U = SiloPlayer.Controls.AdminSettingsUi;
 
 namespace SiloPlayer.Views.Admin;
@@ -25,6 +27,7 @@ public sealed partial class AdminProvidersPage : Page, IAdminGutterScrollPage, I
     private readonly StackPanel _loading = new() { Spacing = 16 };
     private readonly StackPanel _alerts = new() { Spacing = 8, Visibility = Visibility.Collapsed };
     private readonly TextBlock _error = U.Text("", 13);
+    private readonly Border _errorAlert;
     private readonly Button _reload = U.Action("Reload", "ProvidersReload");
     private readonly StackPanel _groups = new() { Spacing = 20 };
     private readonly TextBlock _feedback = U.Text("", 13, true);
@@ -64,7 +67,7 @@ public sealed partial class AdminProvidersPage : Page, IAdminGutterScrollPage, I
         AutomationProperties.SetAutomationId(_error, "ProvidersError");
         AutomationProperties.SetLiveSetting(_error, AutomationLiveSetting.Assertive);
         _reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(preserveDraft: true); };
-        _alerts.Children.Add(U.Alert(_error)); _alerts.Children.Add(_reload); _body.Children.Add(_alerts);
+        _errorAlert = U.Alert(_error); _alerts.Children.Add(_errorAlert); _alerts.Children.Add(_reload); _body.Children.Add(_alerts);
         _feedback.Margin = new(0, 0, 0, 4); _feedback.Visibility = Visibility.Collapsed;
         AutomationProperties.SetAutomationId(_feedback, "ProvidersFeedback");
         AutomationProperties.SetLiveSetting(_feedback, AutomationLiveSetting.Polite);
@@ -116,6 +119,8 @@ public sealed partial class AdminProvidersPage : Page, IAdminGutterScrollPage, I
 
     private void OnAuthorityChanged() => DispatcherQueue.TryEnqueue(() =>
     {
+        // A confirmation opened for the previous authority closes with it.
+        _dialog?.Hide();
         ClearPrivateDrafts();
         if (_active && _controller?.State.Owner == null) _ = OpenAsync();
     });
@@ -134,12 +139,16 @@ public sealed partial class AdminProvidersPage : Page, IAdminGutterScrollPage, I
     {
         var current = state.Owner?.IsCurrent == true;
         _loading.Visibility = current && state.Loading ? Visibility.Visible : Visibility.Collapsed;
-        _alerts.Visibility = current && state.Error != null ? Visibility.Visible : Visibility.Collapsed;
+        // A conflict or unknown outcome keeps Reload reachable even when no page-level error text is set.
+        _alerts.Visibility = current && (state.Error != null || state.ReloadRequired) ? Visibility.Visible : Visibility.Collapsed;
+        _errorAlert.Visibility = state.Error != null ? Visibility.Visible : Visibility.Collapsed;
         if (state.Error != null) U.UpdateLiveText(_error, state.Error);
         _reload.IsEnabled = current && !state.Loading && !state.SavingSettings && state.BusyProvider == null;
         _feedback.Visibility = current && !string.IsNullOrWhiteSpace(state.ProviderFeedback) ? Visibility.Visible : Visibility.Collapsed;
         if (_feedback.Visibility == Visibility.Visible) U.UpdateLiveText(_feedback, state.ProviderFeedback!);
         _groups.Visibility = current && state.Loaded && !state.Loading ? Visibility.Visible : Visibility.Collapsed;
+        // A retired authority never leaves private provider controls (typed credentials) behind in the tree.
+        if (!current) { _groups.Children.Clear(); _expandedTile = null; }
         if (_groups.Visibility == Visibility.Visible) RenderGroups(state);
         if (current && state.Loaded && _restoreOffset is { } offset)
         {

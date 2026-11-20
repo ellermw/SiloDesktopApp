@@ -23,8 +23,9 @@ public sealed class AdminSubtitleProvidersResponse
 public sealed class AdminSubtitleProviderEditor
 {
     private int _consumed;
-    internal AdminSubtitleProviderEditor(AdminSubtitleProvider provider, string etag)
+    internal AdminSubtitleProviderEditor(AdminSubtitleProvider provider, string etag, string accountId, long epoch)
     {
+        AccountId = accountId; Epoch = epoch;
         Provider = provider.ProviderName; Enabled = provider.Enabled; HasApiKey = provider.HasApiKey;
         HasCredentials = provider.HasCredentials; UpdatedAt = provider.UpdatedAt; ETag = etag;
     }
@@ -34,6 +35,9 @@ public sealed class AdminSubtitleProviderEditor
     public bool HasCredentials { get; }
     public DateTimeOffset? UpdatedAt { get; }
     internal string ETag { get; }
+    /// <summary>The authority generation (server and account) that produced the strong ETag; a write must never cross it.</summary>
+    internal string AccountId { get; }
+    internal long Epoch { get; }
     internal void Consume()
     {
         if (Interlocked.Exchange(ref _consumed, 1) != 0)
@@ -194,28 +198,68 @@ public sealed partial class AdminMarkerProviderDraft
     public string ContributeMinimumPercent { get; set; }
     public bool IsValid => TryPriority(out _) && TryPercent(FetchMinimumPercent, out _) && TryPercent(ContributeMinimumPercent, out _);
     public bool AdvancedDirty => !TryPriority(out var priority) || priority != _saved.FetchPriority ||
-        !TryPercent(FetchMinimumPercent, out var fetchConfidence) || fetchConfidence != _saved.FetchMinConfidence ||
-        !TryPercent(ContributeMinimumPercent, out var contributeConfidence) || contributeConfidence != _saved.ContributeMinConfidence;
+        !TryConfidence(FetchMinimumPercent, _saved.FetchMinConfidence, out var fetchConfidence) || fetchConfidence != _saved.FetchMinConfidence ||
+        !TryConfidence(ContributeMinimumPercent, _saved.ContributeMinConfidence, out var contributeConfidence) || contributeConfidence != _saved.ContributeMinConfidence;
     public bool Dirty => IsValid ? CapturePatch().Count > 0 : true;
-    /// <summary>Reconciles a canonical reload while retaining only fields the admin actually changed.</summary>
+    /// <summary>The server value this draft is edited against.</summary>
+    public AdminMarkerProvider Saved => _saved;
+    /// <summary>True between <see cref="BeginSave"/> and the acknowledgement or <see cref="AbandonSave"/>.</summary>
+    public bool SaveInFlight => _submitted != null;
+
+    private readonly record struct Fields(bool FetchEnabled, string FetchPriority, string FetchMinimumPercent,
+        bool ContributeEnabled, bool ContributeAutoLocal, string ContributeMinimumPercent);
+    private Fields? _submitted;
+    private Fields Current() => new(FetchEnabled, FetchPriority, FetchMinimumPercent, ContributeEnabled, ContributeAutoLocal, ContributeMinimumPercent);
+
+    /// <summary>
+    /// Captures the changed-field patch for exactly one send and remembers what was submitted, so edits typed
+    /// while that request is pending can be told apart from the values it carried.
+    /// </summary>
+    public IReadOnlyDictionary<string, object?> BeginSave()
+    {
+        if (_submitted != null) throw new InvalidOperationException("A marker provider save is already in flight.");
+        var patch = CapturePatch();
+        _submitted = Current();
+        return patch;
+    }
+
+    /// <summary>A failed or retired send leaves the draft exactly as the admin has it.</summary>
+    public void AbandonSave() => _submitted = null;
+
+    /// <summary>
+    /// Reconciles a canonical value while retaining only fields the admin changed. While a save is in flight a
+    /// field counts as changed when it differs from what was submitted, so an edit typed during the request
+    /// survives the acknowledgement even when it returns to the old saved value.
+    /// </summary>
     public AdminMarkerProviderDraft Rebase(AdminMarkerProvider saved)
     {
         ArgumentNullException.ThrowIfNull(saved);
         if (!string.Equals(saved.Provider, _saved.Provider, StringComparison.Ordinal))
             throw new ArgumentException("The provider identity changed.", nameof(saved));
+        if (ReferenceEquals(saved, _saved)) return this;
         var next = new AdminMarkerProviderDraft(saved);
+        if (_submitted is { } sent)
+        {
+            if (FetchEnabled != sent.FetchEnabled) next.FetchEnabled = FetchEnabled;
+            if (FetchPriority != sent.FetchPriority) next.FetchPriority = FetchPriority;
+            if (FetchMinimumPercent != sent.FetchMinimumPercent) next.FetchMinimumPercent = FetchMinimumPercent;
+            if (ContributeEnabled != sent.ContributeEnabled) next.ContributeEnabled = ContributeEnabled;
+            if (ContributeAutoLocal != sent.ContributeAutoLocal) next.ContributeAutoLocal = ContributeAutoLocal;
+            if (ContributeMinimumPercent != sent.ContributeMinimumPercent) next.ContributeMinimumPercent = ContributeMinimumPercent;
+            return next;
+        }
         if (FetchEnabled != _saved.FetchEnabled) next.FetchEnabled = FetchEnabled;
         if (!TryPriority(out var priority) || priority != _saved.FetchPriority) next.FetchPriority = FetchPriority;
-        if (!TryPercent(FetchMinimumPercent, out var fetchConfidence) || fetchConfidence != _saved.FetchMinConfidence) next.FetchMinimumPercent = FetchMinimumPercent;
+        if (!TryConfidence(FetchMinimumPercent, _saved.FetchMinConfidence, out var fetchConfidence) || fetchConfidence != _saved.FetchMinConfidence) next.FetchMinimumPercent = FetchMinimumPercent;
         if (ContributeEnabled != (_saved.IsSubmitter && _saved.ContributeEnabled)) next.ContributeEnabled = ContributeEnabled;
         if (ContributeAutoLocal != (_saved.IsSubmitter && _saved.ContributeAutoLocal)) next.ContributeAutoLocal = ContributeAutoLocal;
-        if (!TryPercent(ContributeMinimumPercent, out var contributeConfidence) || contributeConfidence != _saved.ContributeMinConfidence) next.ContributeMinimumPercent = ContributeMinimumPercent;
+        if (!TryConfidence(ContributeMinimumPercent, _saved.ContributeMinConfidence, out var contributeConfidence) || contributeConfidence != _saved.ContributeMinConfidence) next.ContributeMinimumPercent = ContributeMinimumPercent;
         return next;
     }
     public IReadOnlyDictionary<string, object?> CapturePatch()
     {
-        if (!TryPriority(out var priority) || !TryPercent(FetchMinimumPercent, out var fetchConfidence) ||
-            !TryPercent(ContributeMinimumPercent, out var contributeConfidence))
+        if (!TryPriority(out var priority) || !TryConfidence(FetchMinimumPercent, _saved.FetchMinConfidence, out var fetchConfidence) ||
+            !TryConfidence(ContributeMinimumPercent, _saved.ContributeMinConfidence, out var contributeConfidence))
             throw new InvalidOperationException("Provider priority and confidence values must be valid.");
         var patch = new Dictionary<string, object?>(StringComparer.Ordinal);
         if (FetchEnabled != _saved.FetchEnabled) patch["fetch_enabled"] = FetchEnabled;
@@ -235,6 +279,13 @@ public sealed partial class AdminMarkerProviderDraft
         var input = FetchPriority.Trim();
         return IntegerPattern().IsMatch(input) &&
             long.TryParse(input, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value);
+    }
+    /// <summary>An unchanged percentage keeps the saved 0-1 value exact; multiplying and dividing can otherwise introduce floating-point drift.</summary>
+    private static bool TryConfidence(string input, double saved, out double value)
+    {
+        if (!TryPercent(input, out value)) return false;
+        if (double.TryParse(Percent(saved), NumberStyles.Float, CultureInfo.InvariantCulture, out var savedPercent) && double.Parse(input.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture) == savedPercent) value = saved;
+        return true;
     }
     private static bool TryPercent(string input, out double value)
     {

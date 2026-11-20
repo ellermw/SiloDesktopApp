@@ -1,3 +1,21 @@
+# November 20 — Configure Providers candidate
+
+Configure > Integrations > Providers (`/admin/settings/providers`) is implemented on
+`t3/admin-provider-settings`, merged with fresh `origin/beta`; version stamps are unchanged.
+Official contracts were read at pinned Silo Server `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`
+(`ProvidersSettings.tsx`, `MarkerProviderTiles.tsx`, `WatchProviderTiles.tsx`). The page covers
+watch-provider plugin status, MDBList, subtitle providers (OpenSubtitles, SubDL, SubSource) and
+marker providers, with strong-ETag subtitle editors, single-send writes and no replay of unknown
+outcomes. Four review findings (Disconnect after authority replacement, truncation before
+redaction, unreachable marker reload, edits lost during a pending marker save) are fixed with
+regression tests. Scope, deviations and limits: [Providers](parity/admin-configure-providers.md).
+Observed before the final run: focused `AdminProviders*` unit tests 26/26 and the
+`admin-configure-providers` native selector. The acceptance run (label `providers-final-r1`,
+lane `D:/SiloPlayer-build/admin-completion-lane-a`) is reported by the delivering worker.
+Live-server compatibility, rendered-capture inspection and all-DPI/accessibility remain unverified.
+
+---
+
 # November 17 — Configure Integrations verified Beta increment
 
 AI, Recommendations and Compatibility are implemented in the registered native shell,
