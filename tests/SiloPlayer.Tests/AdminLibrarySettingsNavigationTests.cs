@@ -1,9 +1,22 @@
+using System.Text.RegularExpressions;
 using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
 
 public sealed class AdminLibrarySettingsNavigationTests
 {
+    /// <summary>Every web.admin key the Library settings sources name is in AdminText; the Libraries page's own scan excludes these files.</summary>
+    [Fact]
+    public void EveryLibrarySettingsKeyUsedBySourceHasEnglishText()
+    {
+        var files = Directory.EnumerateFiles(Path.Combine(TestRepository.Root, "src"), "AdminLibrarySettings*.cs", SearchOption.AllDirectories).ToArray();
+        Assert.True(files.Length >= 4, "the Library settings sources were found");
+        var keys = files.SelectMany(path => Regex.Matches(File.ReadAllText(path), "\"(web\\.admin\\.[A-Za-z0-9_.]+)\"").Select(match => match.Groups[1].Value))
+            .Where(key => !key.EndsWith('.')).Distinct().ToArray();
+        Assert.True(keys.Length >= 40, "the Library settings text keys were found");
+        Assert.Empty(keys.Where(key => !AdminText.Has(key)));
+    }
+
     [Fact]
     public void ProductionRegistrationAndPackagingIncludeTheFinishedPage()
     {
