@@ -268,10 +268,10 @@ public sealed partial class AdminMarkerProviderDraft
         if (FetchEnabled != _saved.FetchEnabled) patch["fetch_enabled"] = FetchEnabled;
         if (priority != _saved.FetchPriority) patch["fetch_priority"] = priority;
         if (fetchConfidence != _saved.FetchMinConfidence) patch["fetch_min_confidence"] = fetchConfidence;
-        var sharing = ContributeEnabled;
-        var automatic = sharing && ContributeAutoLocal;
-        if (sharing != _saved.ContributeEnabled) patch["contribute_enabled"] = sharing;
-        if (automatic != _saved.ContributeAutoLocal) patch["contribute_auto_local"] = automatic;
+        // Raw comparisons: the page's sharing toggle switches automatic sharing off itself, so a stored
+        // automatic value under sharing that is off is not an edit.
+        if (ContributeEnabled != _saved.ContributeEnabled) patch["contribute_enabled"] = ContributeEnabled;
+        if (ContributeAutoLocal != _saved.ContributeAutoLocal) patch["contribute_auto_local"] = ContributeAutoLocal;
         if (_saved.IsSubmitter && contributeConfidence != _saved.ContributeMinConfidence)
             patch["contribute_min_confidence"] = contributeConfidence;
         return new System.Collections.ObjectModel.ReadOnlyDictionary<string, object?>(patch);

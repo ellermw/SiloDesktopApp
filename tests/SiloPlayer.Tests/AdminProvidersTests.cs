@@ -459,6 +459,34 @@ public sealed class AdminProvidersTests
         Assert.Equal(["fetch_enabled"], draft.CapturePatch().Keys);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void MarkerDraftWithSharingOffAndStoredAutomaticSharingOpensCleanAndNeverWritesContributeFields(bool submitter)
+    {
+        // The server can hold contribute_auto_local=true under contribute_enabled=false; that is not an edit.
+        var saved = new AdminMarkerProvider
+        {
+            Provider = "plugin:6:introdb", IsSubmitter = submitter, FetchEnabled = true, FetchPriority = 10,
+            FetchMinConfidence = .4, ContributeEnabled = false, ContributeAutoLocal = true, ContributeMinConfidence = .95,
+        };
+        var draft = new AdminMarkerProviderDraft(saved);
+        Assert.False(draft.Dirty);
+        Assert.Empty(draft.CapturePatch());
+
+        draft.FetchPriority = "5";
+
+        Assert.Equal(["fetch_priority"], draft.CapturePatch().Keys);
+
+        // The page's sharing toggle is what switches automatic sharing off, and only then is it written.
+        draft.ContributeAutoLocal = false;
+
+        var patch = draft.CapturePatch();
+        Assert.Equal(2, patch.Count);
+        Assert.False((bool)patch["contribute_auto_local"]!);
+        Assert.DoesNotContain("contribute_enabled", patch.Keys);
+    }
+
     [Fact]
     public async Task ErasedMdblistKeyIsNotADraftSoTestChecksTheSavedKey()
     {
