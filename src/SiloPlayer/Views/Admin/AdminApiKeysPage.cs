@@ -91,7 +91,7 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
         {
             if (Controller.Busy || Controller.ReviewRequired || secret != null) return;
             var scoped = AdminAccessPageUi.Selected(access) == "scoped";
-            submit.IsEnabled = false; label.IsEnabled = users.IsEnabled = access.IsEnabled = choices.IsEnabled = false;
+            submit.IsEnabled = false; label.IsEnabled = users.IsEnabled = access.IsEnabled = false; foreach (var check in checks.Values) check.IsEnabled = false;
             try
             {
                 secret = await Controller.CreateAsync(label.Text, AdminAccessPageUi.Selected(users), checks.Where(c => c.Value.IsChecked == true).Select(c => c.Key).ToArray(), scoped, confirmed: true);
@@ -111,7 +111,7 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
             }
             finally
             {
-                if (secret == null) { submit.IsEnabled = !Controller.ReviewRequired; label.IsEnabled = users.IsEnabled = access.IsEnabled = choices.IsEnabled = !Controller.ReviewRequired; }
+                if (secret == null) { submit.IsEnabled = !Controller.ReviewRequired; label.IsEnabled = users.IsEnabled = access.IsEnabled = !Controller.ReviewRequired; foreach (var check in checks.Values) check.IsEnabled = !Controller.ReviewRequired; }
             }
         };
         try { await _ui.ShowAsync(dialog); }
