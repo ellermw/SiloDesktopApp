@@ -220,7 +220,7 @@ public sealed partial class AdminPreparedFilesPage
             return panel;
         }
 
-        private static readonly double[] Widths = [32, 280, 300, 150, 280, 220, 150];
+        private static readonly double[] Widths = [32, 260, 260, 130, 240, 190, 150];
 
         private UIElement Table(IReadOnlyList<AdminDownloadPreparation> rows, AdminPreparedFilesSnapshot state, bool busy)
         {
@@ -270,8 +270,8 @@ public sealed partial class AdminPreparedFilesPage
                 var inner = Stack(2);
                 var heading = Strong(title, 13); heading.TextTrimming = TextTrimming.CharacterEllipsis; heading.TextWrapping = TextWrapping.NoWrap;
                 inner.Children.Add(heading);
-                inner.Children.Add(Cell(Prep.Subtitle(job), true));
-                inner.Children.Add(Cell(Prep.FormatSource(job), true));
+                inner.Children.Add(Small(Prep.Subtitle(job)));
+                inner.Children.Add(Small(Prep.FormatSource(job)));
                 link.Content = inner;
                 AutomationProperties.SetAutomationId(link, "PreparedFilesPreparationItem_" + job.Id);
                 AutomationProperties.SetName(link, title);
@@ -283,8 +283,8 @@ public sealed partial class AdminPreparedFilesPage
             {
                 var heading = Strong(title, 13); heading.TextTrimming = TextTrimming.CharacterEllipsis; heading.TextWrapping = TextWrapping.NoWrap;
                 titleBlock.Children.Add(heading);
-                titleBlock.Children.Add(Cell(Prep.Subtitle(job), true));
-                titleBlock.Children.Add(Cell(Prep.FormatSource(job), true));
+                titleBlock.Children.Add(Small(Prep.Subtitle(job)));
+                titleBlock.Children.Add(Small(Prep.FormatSource(job)));
             }
             Grid.SetColumn(titleBlock, 1); grid.Children.Add(titleBlock);
 
@@ -296,6 +296,7 @@ public sealed partial class AdminPreparedFilesPage
 
             var worker = Prep.Worker(job);
             UIElement workerCell = worker == null ? Text(T(PrepKey + ".notAssigned"), 11, true) : WorkerBadge(worker);
+            ((FrameworkElement)workerCell).VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn((FrameworkElement)workerCell, 3); grid.Children.Add(workerCell);
 
             var progress = Progress(job);
@@ -340,6 +341,13 @@ public sealed partial class AdminPreparedFilesPage
             if (_selected.Contains(job.Id)) rule.Background = Tint("AccentBrush", 0.05);
             AutomationProperties.SetAutomationId(rule, "PreparedFilesPreparation_" + job.Id);
             return rule;
+        }
+
+        private static TextBlock Small(string text)
+        {
+            var block = Cell(text, true);
+            block.FontSize = 10; block.LineHeight = 14;
+            return block;
         }
 
         private static Button IconAction(string glyph, string id, string name, string tip, bool enabled, Action click)
