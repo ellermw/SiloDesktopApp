@@ -71,6 +71,13 @@ public sealed record AdminHomeSectionsLinks(AdminHomeSectionsLinkCollection? Add
         return kept is { Count: > 0 } ? kept : null;
     }
 
+    /// <summary>
+    /// A link to a library page can only be checked once the libraries are read; Home and no page are always known
+    /// (217ff25 web/src/hooks/queries/homeRows/useAdminHomeRows.ts pageKnown). Until then no link is followed.
+    /// </summary>
+    public static bool PageKnown(IReadOnlyDictionary<string, string>? query, bool librariesRead) =>
+        librariesRead || query == null || !query.TryGetValue("page", out var page) || page == "home";
+
     /// <summary>Every link parameter's value, to notice a new link. Empty when there is none.</summary>
     public static string Key(IReadOnlyDictionary<string, string>? query) =>
         query == null || !ParameterNames.Any(query.ContainsKey) ? "" : string.Join('\n', ParameterNames.Select(name => query.TryGetValue(name, out var value) ? value : ""));

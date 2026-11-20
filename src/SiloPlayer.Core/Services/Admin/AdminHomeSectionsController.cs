@@ -40,7 +40,9 @@ public sealed record AdminHomeSectionsRowResult(string Id, string Title, AdminHo
 public sealed record AdminHomeSectionsBatchResult(IReadOnlyList<AdminHomeSectionsRowResult> Rows, bool Completed)
 {
     public IReadOnlyList<string> ChangedIds => Rows.Where(row => row.Outcome == AdminHomeSectionsRowOutcome.Applied).Select(row => row.Id).ToArray();
-    public IReadOnlyList<AdminHomeSectionsRowResult> Failures => Rows.Where(row => row.Outcome is AdminHomeSectionsRowOutcome.Changed or AdminHomeSectionsRowOutcome.Failed or AdminHomeSectionsRowOutcome.Unknown or AdminHomeSectionsRowOutcome.NotAttempted).ToArray();
+    public IReadOnlyList<AdminHomeSectionsRowResult> Failures => Rows.Where(row => row.Outcome is AdminHomeSectionsRowOutcome.Changed or AdminHomeSectionsRowOutcome.Failed or AdminHomeSectionsRowOutcome.Unknown).ToArray();
+    /// <summary>Rows nothing was sent for because an unknown outcome stopped the run. They are not failures.</summary>
+    public int NotAttempted => Rows.Count(row => row.Outcome == AdminHomeSectionsRowOutcome.NotAttempted);
 }
 public sealed record AdminHomeSectionsDeletePlan(IReadOnlyList<AdminHomeSectionSession> Sessions, IReadOnlyList<string> AlreadyGone);
 public sealed record AdminHomeSectionsDeleteResult(IReadOnlyList<string> DeletedIds, IReadOnlyList<string> FailedIds, string? FirstError, bool Conflict, bool Unknown)

@@ -123,6 +123,10 @@ public sealed class AdminHomeSectionsControllerTests
         var result = await controller.SetShownManyAsync(["b", "c"], true);
         Assert.Equal(AdminHomeSectionsRowOutcome.Unknown, result!.Rows[0].Outcome); Assert.Equal(AdminHomeSectionsRowOutcome.NotAttempted, result.Rows[1].Outcome);
         Assert.Single(server.Writes); Assert.False(controller.CanWrite); Assert.True(controller.State.OutcomeUnknown);
+        // The row nothing was sent for is counted apart, never reported as a row that could not be saved.
+        Assert.Equal("b", Assert.Single(result.Failures).Id); Assert.Equal(1, result.NotAttempted);
+        Assert.Equal("1 more row was not attempted and is unchanged.", AdminHomeSectionsText.NotAttempted(1));
+        Assert.Equal("3 more rows were not attempted and are unchanged.", AdminHomeSectionsText.NotAttempted(3)); Assert.Equal("", AdminHomeSectionsText.NotAttempted(0));
     }
 
     [Fact]

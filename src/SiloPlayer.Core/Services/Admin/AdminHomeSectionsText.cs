@@ -92,6 +92,10 @@ public static class AdminHomeSectionsText
         return AppStrings.Get(key, map, pinned);
     }
 
+    /// <summary>What a stopped batch says about the rows it never reached. Empty when it reached them all.</summary>
+    public static string NotAttempted(int count) => count <= 0 ? "" : count == 1 ? "1 more row was not attempted and is unchanged."
+        : AdminText.FormatNumber(count) + " more rows were not attempted and are unchanged.";
+
     /// <summary>A count with its locale-formatted text, for messages that read both.</summary>
     public static Dictionary<string, object?> Count(long count, params (string Name, object? Value)[] more)
     {

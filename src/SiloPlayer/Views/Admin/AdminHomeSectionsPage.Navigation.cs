@@ -96,6 +96,8 @@ public sealed partial class AdminHomeSectionsPage
         var key = AdminHomeSectionsLinks.Key(_route.Query);
         if (key == "" || key == _handledLinks) return;
         var controller = _controller; if (controller == null || controller.State.Snapshot == null || controller.State.Capabilities == null) return;
+        // A link to a library page waits for the library list: followed now it would act on Home. Reload reads the list again.
+        if (!AdminHomeSectionsLinks.PageKnown(_route.Query, !_librariesFailed)) return;
         _handledLinks = key;
         var links = AdminHomeSectionsLinks.Read(_route.Query);
         _route = new(AdminRoute.HomeSections, AdminHomeSectionsLinks.WithoutLinks(_route.Query)); AdminShellPage.TryReplace(this, _route);

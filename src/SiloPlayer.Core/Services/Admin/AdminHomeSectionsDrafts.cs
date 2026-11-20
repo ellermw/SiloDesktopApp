@@ -28,6 +28,19 @@ public static class AdminHomeSectionsDraftFactory
         };
     }
 
+    /// <summary>
+    /// The draft after a kind is picked. Add row starts from the kind's own draft; only Edit row's Change keeps the name (unless it
+    /// still followed the old variant), the item limit and the hero choice (217ff25 web/src/components/homeRows/addRow/AddRowDialog.tsx pick()).
+    /// </summary>
+    public static AdminHomeSectionDraft ForPick(AdminHomeRecipe def, AdminHomePreset? preset, AdminHomeSectionDraft? previous, bool editing)
+    {
+        var fresh = ForPreset(def, preset);
+        if (!editing || previous == null) return fresh;
+        if (!previous.TitleFollowsVariant) { fresh.Title = previous.Title; fresh.TitleFollowsVariant = false; } else fresh.TitleFollowsVariant = true;
+        fresh.ItemLimit = previous.ItemLimit; fresh.Featured = previous.Featured && !AdminHomeSectionsKinds.HoldsCollections(fresh.SectionType); fresh.WebOnly = previous.WebOnly && fresh.Featured;
+        return fresh;
+    }
+
     /// <summary>An existing row as the form starts it. Opening a row never changes its config; the item limit is the raw saved one.</summary>
     public static AdminHomeSectionDraft FromRow(AdminHomeSection row, AdminHomeSectionCatalog? catalog)
     {

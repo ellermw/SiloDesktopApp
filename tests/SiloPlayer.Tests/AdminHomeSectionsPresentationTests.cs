@@ -142,6 +142,22 @@ public sealed partial class AdminHomeSectionsPresentationTests
     };
 
     [Fact]
+    public void AddRowStartsEachPickedKindFromItsOwnDraftAndOnlyChangeKeepsTheRowsChoices()
+    {
+        var catalog = Catalog(); AdminHomeRecipe Recipe(string type) => AdminHomeSectionsDraftFactory.FindRecipe(catalog, type)!;
+        var recent = Recipe("recently_added"); var trending = Recipe("trending_on_server");
+        var first = AdminHomeSectionsDraftFactory.ForPreset(recent, recent.Presets[0]);
+        AdminHomeSectionsDraftFactory.WithTitle(first, "Mine"); first.ItemLimit = 50; first.Featured = true; first.WebOnly = true;
+        // Add row: back to All rows and another kind keeps nothing from the first pick.
+        var added = AdminHomeSectionsDraftFactory.ForPick(trending, trending.Presets[0], first, editing: false);
+        Assert.Equal("Trending 24h", added.Title); Assert.True(added.TitleFollowsVariant); Assert.Equal(20, added.ItemLimit); Assert.False(added.Featured); Assert.False(added.WebOnly);
+        // Edit row > Change keeps the name, the limit and the hero choice.
+        var changed = AdminHomeSectionsDraftFactory.ForPick(trending, trending.Presets[0], first, editing: true);
+        Assert.Equal("Mine", changed.Title); Assert.False(changed.TitleFollowsVariant); Assert.Equal(50, changed.ItemLimit); Assert.True(changed.Featured); Assert.True(changed.WebOnly);
+        Assert.Equal("Trending 24h", AdminHomeSectionsDraftFactory.ForPick(trending, trending.Presets[0], null, editing: true).Title);
+    }
+
+    [Fact]
     public void NewRowDraftsFollowTheOfficialStartingPoints()
     {
         var catalog = Catalog(); AdminHomeRecipe Recipe(string type) => AdminHomeSectionsDraftFactory.FindRecipe(catalog, type)!;

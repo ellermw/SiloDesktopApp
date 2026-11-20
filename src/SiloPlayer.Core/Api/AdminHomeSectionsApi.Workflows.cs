@@ -192,7 +192,7 @@ public sealed partial class AdminHomeSectionsApi
     {
         if (query.Length > 200 || libraryIds.Count > 1000) throw new ArgumentException("Refine the value search.");
         var scope = string.IsNullOrEmpty(mediaScope) ? "" : "&type=" + Uri.EscapeDataString(mediaScope);
-        if (caps?.FacetValueSearch == true && libraryIds.Count > 0) scope += "&library_ids=" + Uri.EscapeDataString(string.Join(',', libraryIds));
+        if (caps?.FacetValueSearch == true && libraryIds.Count > 0) scope += string.Concat(libraryIds.Select(id => "&library_ids=" + Uri.EscapeDataString(id)));
         if (kind == "person")
         {
             if (caps?.PeopleMediaScope != true || string.IsNullOrWhiteSpace(query)) return [];

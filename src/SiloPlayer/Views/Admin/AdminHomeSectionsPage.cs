@@ -135,7 +135,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         var controller = _controller; if (controller == null || !await CanLeaveAsync()) return;
         CloseEditor(); _selection.Clear(); _librariesFailed = false;
         await controller.ReloadAsync();
-        if (_active && ReferenceEquals(controller, _controller)) { await LoadPagesAsync(); await LoadDefaultsAsync(); }
+        if (_active && ReferenceEquals(controller, _controller)) { await LoadPagesAsync(); await LoadDefaultsAsync(); await ReadLinksAsync(); }
     }
 
     private void Render()
@@ -319,6 +319,8 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
             ? T("web.admin.homeRows.select.rowChanged", new { title = RowTitleOf(failure) })
             : T("web.admin.homeRows.select.rowFailed", new { title = RowTitleOf(failure), message = failure.Message ?? T("web.admin.homeRows.row.saveFailed") });
         var detail = string.Join(" ", failures.Select(Reason));
+        // Rows a stopped run never reached are named apart: nothing was sent for them.
+        if (result.NotAttempted > 0) detail += " " + AdminHomeSectionsText.NotAttempted(result.NotAttempted);
         if (attempted == 0) Toasts?.Success(T(shown ? "web.admin.homeRows.select.alreadyOn" : "web.admin.homeRows.select.alreadyOff"));
         else if (failures.Count == 0) Toasts?.Success(T(shown ? "web.admin.homeRows.select.turnedOn" : "web.admin.homeRows.select.turnedOff", AdminHomeSectionsText.Count(changed)));
         else if (changed > 0) Toasts?.Warning(T(shown ? "web.admin.homeRows.select.turnedOnPartial" : "web.admin.homeRows.select.turnedOffPartial", AdminHomeSectionsText.Count(attempted, ("done_text", changed))) + " " + detail);

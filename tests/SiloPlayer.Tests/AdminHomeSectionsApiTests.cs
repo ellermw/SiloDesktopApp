@@ -96,6 +96,23 @@ public sealed class AdminHomeSectionsApiTests
     }
 
     [Fact]
+    public async Task ValueSuggestionsSendOneLibraryIdsKeyPerLibrary()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"values":[],"matches":[]}"""));
+        var api = new AdminHomeSectionsApi(kit.Client); var caps = new AdminHomeRuleCapabilities { FacetValueSearch = true };
+        await api.RuleValuesAsync(lease, "audio_language", "language", "", "movie", ["1", "2"], caps);
+        Assert.Equal("GET /api/v2/catalog/filters?source=query&type=movie&library_ids=1&library_ids=2", kit.Http.Requests.Last());
+        await api.RuleValuesAsync(lease, "genre", "facet", "dr", "movie", ["1", "2"], caps);
+        Assert.Equal("GET /api/v2/catalog/filters/search?source=query&facet=genre&q=dr&limit=50&type=movie&library_ids=1&library_ids=2", kit.Http.Requests.Last());
+        // A server without facet value search refuses library_ids, so none is sent.
+        await api.RuleValuesAsync(lease, "genre", "facet", "dr", "movie", ["1", "2"], new AdminHomeRuleCapabilities());
+        Assert.Equal("GET /api/v2/catalog/filters/search?source=query&facet=genre&q=dr&limit=50&type=movie", kit.Http.Requests.Last());
+    }
+
+    [Fact]
     public async Task RetiredAuthorityCannotUsePreviouslyReadSnapshot()
     {
         using var kit = AdminMonitorKit.Create();

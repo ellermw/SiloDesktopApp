@@ -31,6 +31,18 @@ public sealed class AdminHomeSectionsRulesTests
         Assert.True(links.AddInvalid); Assert.Null(links.Add);
     }
 
+    [Theory]
+    [InlineData("page=3&add=collection:library:9", false, false)]
+    [InlineData("page=3&edit=row-1", false, false)]
+    [InlineData("page=3&add=collection:library:9", true, true)]
+    [InlineData("page=home&add=collection:library:9", false, true)]
+    [InlineData("add=collection:library:9", false, true)]
+    public void ALibraryLinkWaitsForTheLibraryList(string query, bool librariesRead, bool known) =>
+        Assert.Equal(known, AdminHomeSectionsLinks.PageKnown(Query(query), librariesRead));
+
+    [Fact]
+    public void WithNoQueryThePageIsKnown() => Assert.True(AdminHomeSectionsLinks.PageKnown(null, false));
+
     [Fact]
     public void NoLinkParametersMeansNoLinks()
     {

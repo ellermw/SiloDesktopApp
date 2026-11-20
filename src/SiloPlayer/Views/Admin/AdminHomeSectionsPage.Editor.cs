@@ -33,6 +33,10 @@ public sealed partial class AdminHomeSectionsPage
     private readonly Dictionary<string, string> _choiceLabels = new(StringComparer.Ordinal);
     private readonly HashSet<string> _extraCopies = new(StringComparer.Ordinal);
     private bool _pickerOnly;
+    /// <summary>More options stays as the admin left it while the form is rebuilt; a new editor starts closed.</summary>
+    private bool _moreExpanded;
+    /// <summary>The control that gets focus when the form is next built: the name on a new form, else the control whose change rebuilt it.</summary>
+    private string? _refocus;
 
     private bool EditorCurrent(long revision) => _active && _editor != null && revision == _dialogRevision && _editorOwner is { IsCurrent: true } && ReferenceEquals(_editorOwner, _controller?.State.Owner);
     private static string KindLabel(string type) => AdminHomeSectionsKinds.Label(type);
@@ -67,7 +71,7 @@ public sealed partial class AdminHomeSectionsPage
         _editorTitle = U.Text("", 24); _editorNotice = U.Text("", 13); _editorFooter = U.Text("", 12, true);
         _editorSave = Action("Save", "HomeSectionSave"); _editorBack = Action("All rows", "HomeSectionBack"); _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
         _editorReads = CancellationTokenSource.CreateLinkedTokenSource(_editorOwner!.Token);
-        _editorDirty = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear();
+        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear();
         foreach (var pair in _collectionNames) if (pair.Value.Title != null) _choiceLabels[pair.Key] = pair.Value.Title;
         _editorOverlay = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(185, 0, 0, 0)), TabFocusNavigation = KeyboardNavigationMode.Cycle };
         _editorOverlay.KeyDown += async (_, args) =>
@@ -251,22 +255,15 @@ public sealed partial class AdminHomeSectionsPage
 
     private void PickRecipe(AdminHomeRecipe recipe, AdminHomePreset? preset)
     {
-        var previous = _draft; var fresh = AdminHomeSectionsDraftFactory.ForPreset(recipe, preset);
-        if (previous != null)
-        {
-            // A new kind starts from its own settings; the name stays unless it was still following the old variant.
-            if (!previous.TitleFollowsVariant) { fresh.Title = previous.Title; fresh.TitleFollowsVariant = false; } else fresh.TitleFollowsVariant = true;
-            fresh.ItemLimit = previous.ItemLimit; fresh.Featured = previous.Featured && !AdminHomeSectionsKinds.HoldsCollections(fresh.SectionType); fresh.WebOnly = previous.WebOnly && fresh.Featured;
-        }
-        _draft = fresh; _editorDirty = true; _pickerOnly = false; RenderForm();
+        _draft = AdminHomeSectionsDraftFactory.ForPick(recipe, preset, _draft, _session != null); _editorDirty = true; _pickerOnly = false; RenderForm();
     }
 
     // ── Step 2: the form ─────────────────────────────────────
 
-    private void RenderForm()
+    private void RenderForm(string? focus = "HomeSectionTitle")
     {
         var draft = _draft; if (draft == null || _editor == null) return;
-        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _fieldErrors.Clear(); _pickerOnly = false;
+        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _fieldErrors.Clear(); _pickerOnly = false; _refocus = focus;
         var editing = _session != null; var onLibraryPage = _scope.Kind == "library";
         _editorTitle.Text = editing ? T("web.home.addRow.editRow") : KindLabel(draft.SectionType);
         _editorNotice.Text = editing ? T("web.home.addRow.editDescription", new { page = PageLabel })
@@ -292,8 +289,12 @@ public sealed partial class AdminHomeSectionsPage
         BuildCopies(draft, editing, onLibraryPage);
         if (!AdminHomeSectionsKinds.HoldsCollections(draft.SectionType)) BuildMore(draft, rules);
         BuildPreview(previewHost, draft);
-        RefreshSave();
+        RefreshSave(); _refocus = null;
     }
+
+    /// <summary>Gives focus to <paramref name="control"/> once it is on screen, when it is the one this build of the form asked for.</summary>
+    private void Refocus(Control control, string id)
+    { if (_refocus != id) return; _refocus = null; control.Loaded += (_, _) => control.Focus(FocusState.Programmatic); }
 
     private void BuildVariant(AdminHomeSectionDraft draft, bool kindLocked)
     {
@@ -301,13 +302,13 @@ public sealed partial class AdminHomeSectionsPage
         if (family == null || kindLocked || AdminHomeSectionsKinds.NotOfferedForNewRows.Contains(draft.SectionType)) return;
         var selected = AdminHomeSectionsRules.VariantOf(draft.SectionType, draft.Config);
         var variants = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetAutomationId(variants, "HomeSectionVariant");
+        AutomationProperties.SetAutomationId(variants, "HomeSectionVariant"); Refocus(variants, "HomeSectionVariant");
         foreach (var option in family.Options) { var item = new ComboBoxItem { Content = T(option.LabelKey), Tag = option.PresetKey }; variants.Items.Add(item); if (option.PresetKey == selected) variants.SelectedItem = item; }
         var hint = U.Text(family.Options.FirstOrDefault(option => option.PresetKey == selected)?.HintKey is { } key ? T(key) : "", 12, true);
         variants.SelectionChanged += (_, _) =>
         {
             if (variants.SelectedItem is not ComboBoxItem { Tag: string key }) return;
-            AdminHomeSectionsDraftFactory.WithVariant(draft, Catalog, key); _editorDirty = true; RenderForm();
+            AdminHomeSectionsDraftFactory.WithVariant(draft, Catalog, key); _editorDirty = true; RenderForm("HomeSectionVariant");
         };
         var box = new StackPanel { Spacing = 6 }; box.Children.Add(variants); box.Children.Add(hint);
         Field(_editorFields, T(family.ControlKey), box);
@@ -318,7 +319,7 @@ public sealed partial class AdminHomeSectionsPage
         var fallback = draft.SectionType == "collection" ? _choiceLabels.GetValueOrDefault(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config)) : null;
         var name = Input(T("web.home.addRow.form.rowName"), "HomeSectionTitle", draft.Title, value => { AdminHomeSectionsDraftFactory.WithTitle(draft, value); Dirty(); }, 500);
         name.PlaceholderText = AdminHomeSectionsDraftFactory.SavedTitle(new AdminHomeSectionDraft { SectionType = draft.SectionType, Config = draft.Config }, Catalog, fallback);
-        name.Loaded += (_, _) => name.Focus(FocusState.Programmatic);
+        Refocus(name, "HomeSectionTitle");
         var box = new StackPanel { Spacing = 6 }; box.Children.Add(name);
         var family = AdminHomeSectionsKinds.Family(draft.SectionType);
         if (draft.SectionType == "collection" && draft.TitleFollowsVariant) box.Children.Add(U.Text(T("web.home.addRow.form.nameFromCollection"), 12, true));
@@ -361,20 +362,23 @@ public sealed partial class AdminHomeSectionsPage
         var limitBox = new StackPanel { Spacing = 6 }; limitBox.Children.Add(limit); limitBox.Children.Add(limitHint);
         Field(more, T("web.home.addRow.more.itemLimit"), limitBox);
         var webOnly = _controller?.State.Capabilities?.WebOnly == true;
-        var hero = Toggle("HomeSectionHero", draft.Featured, value => { draft.Featured = value; if (!value) draft.WebOnly = false; if (value) _extraCopies.Clear(); Dirty(); RenderForm(); });
+        var hero = Toggle("HomeSectionHero", draft.Featured, value => { draft.Featured = value; if (!value) draft.WebOnly = false; if (value) _extraCopies.Clear(); Dirty(); RenderForm("HomeSectionHero"); });
+        Refocus(hero, "HomeSectionHero");
         var heroBox = new StackPanel { Spacing = 6 }; heroBox.Children.Add(hero);
         heroBox.Children.Add(U.Text(T(webOnly ? "web.home.addRow.more.heroHintWeb" : "web.home.addRow.more.heroHint"), 12, true));
         Field(more, T("web.home.addRow.more.heroBanner"), heroBox);
         if (draft.Featured && webOnly)
         {
-            var apps = Toggle("HomeSectionShowInApps", !draft.WebOnly, value => { draft.WebOnly = !value; Dirty(); RenderForm(); });
+            var apps = Toggle("HomeSectionShowInApps", !draft.WebOnly, value => { draft.WebOnly = !value; Dirty(); RenderForm("HomeSectionShowInApps"); });
+            Refocus(apps, "HomeSectionShowInApps");
             var appsBox = new StackPanel { Spacing = 6 }; appsBox.Children.Add(apps);
             appsBox.Children.Add(U.Text(T(draft.WebOnly ? "web.home.addRow.more.webOnlyHint" : "web.home.addRow.more.appsHint"), 12, true));
             Field(more, T("web.home.addRow.more.showInApps"), appsBox);
         }
         var summary = (rules ? AdminHomeSectionsDescription.RuleSortSummary(draft.Config) + " · " : "") + AdminHomeSectionsDescription.TitleCount(draft.ItemLimit)
             + " · " + T(draft.Featured ? (draft.WebOnly && webOnly ? "web.home.addRow.more.heroWebOnly" : "web.home.addRow.more.hero") : "web.home.addRow.more.notHero");
-        var expander = new Expander { Header = T("web.home.addRow.more.title") + " — " + summary, Content = more, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var expander = new Expander { Header = T("web.home.addRow.more.title") + " — " + summary, Content = more, IsExpanded = _moreExpanded, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        expander.Expanding += (_, _) => _moreExpanded = true; expander.Collapsed += (_, _) => _moreExpanded = false;
         AutomationProperties.SetAutomationId(expander, "HomeSectionMoreOptions");
         _editorFields.Children.Add(expander);
     }
@@ -420,7 +424,8 @@ public sealed partial class AdminHomeSectionsPage
         {
             // A preset with a pinned subject and no auto_rotate is pinned, as the server reads it.
             var rotating = draft.Config["auto_rotate"] is JsonValue rotate && rotate.TryGetValue<bool>(out var savedRotate) ? savedRotate : string.IsNullOrEmpty(Value(draft.Config, "subject"));
-            Field(more, T("web.home.addRow.params.autoRotate"), Toggle("HomeSectionAutoRotate", rotating, value => { SetConfig("auto_rotate", JsonValue.Create(value)); RenderForm(); }));
+            var autoRotate = Toggle("HomeSectionAutoRotate", rotating, value => { SetConfig("auto_rotate", JsonValue.Create(value)); RenderForm("HomeSectionAutoRotate"); });
+            Refocus(autoRotate, "HomeSectionAutoRotate"); Field(more, T("web.home.addRow.params.autoRotate"), autoRotate);
             if (rotating) Field(more, T("web.home.addRow.params.howOften"), Select("HomeSection_rotation_cadence",
                 [("daily", T("web.home.addRow.params.everyDay")), ("weekly", T("web.home.addRow.params.everyWeek")), ("monthly", T("web.home.addRow.params.everyMonth"))],
                 Value(draft.Config, "rotation_cadence") is { Length: > 0 } cadence ? cadence : "weekly", value => SetConfig("rotation_cadence", JsonValue.Create(value))));

@@ -12,6 +12,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
@@ -45,7 +46,7 @@ internal static class AdminHomeSectionsNativeFixture
         private readonly Dictionary<string, int> _versions = new();
         private int _order = 1, _created, _settings = 1;
         internal TaskCompletionSource? GateOrder;
-        internal bool FailList, FailNextDelete412, LoseNextPatch, ConflictNextPatch, LoseNextCreate, RefuseNextCreate, RefuseNextSetting, RefuseDefaultsFor2, RefuseNextPatchCount;
+        internal bool FailLibraries, FailList, FailNextDelete412, LoseNextPatch, ConflictNextPatch, LoseNextCreate, RefuseNextCreate, RefuseNextSetting, RefuseDefaultsFor2, RefuseNextPatchCount;
         internal string? RefusePatchDetail;
         internal string NextUpMode = "\"combined\"", NewFirst = "false";
 
@@ -82,7 +83,7 @@ internal static class AdminHomeSectionsNativeFixture
             if (path == "/api/v2/admin/collections") return Json("""{"items":[{"id":"c1","title":"Synthetic collection","collection_type":"manual","visibility":"visible"}]}""");
             if (path == "/api/v2/admin/collections/c1") return Json("""{"id":"c1","title":"Synthetic collection","visibility":"visible"}""");
             if (path.StartsWith("/api/v2/admin/collections/", StringComparison.Ordinal)) return Problem(404, "Not found.");
-            if (path == "/api/v2/libraries") return Json("""{"items":[{"id":"1","name":"Synthetic Movies","type":"movie"},{"id":"2","name":"Synthetic second movies","type":"movie"},{"id":"3","name":"Synthetic Shows","type":"series"}]}""");
+            if (path == "/api/v2/libraries") return FailLibraries ? Problem(503, "Synthetic libraries failure.") : Json("""{"items":[{"id":"1","name":"Synthetic Movies","type":"movie"},{"id":"2","name":"Synthetic second movies","type":"movie"},{"id":"3","name":"Synthetic Shows","type":"series"}]}""");
             if (path == "/api/v2/admin/settings/effective") return Json($$"""{"defaults.ui.next_up_mode":{{JsonSerializer.Serialize(NextUpMode)}},"defaults.ui.next_up_new_releases_first":{{JsonSerializer.Serialize(NewFirst)}}}""", "\"settings-" + _settings + "\"");
             if (path == "/api/v2/admin/settings" && request.Method == HttpMethod.Put)
             {
@@ -283,6 +284,17 @@ internal static class AdminHomeSectionsNativeFixture
             await Click(page, "HomeSectionsAdd"); await Until(() => Find<Button>(page, "HomeSectionKind_recently_added") != null);
             Check(Find<Button>(page, "HomeSectionKind_next_up") == null, "kinds no longer offered for new rows are not in the picker");
             Check(Find<Button>(page, "HomeSectionKind_trending_on_server") != null && Find<Button>(page, "HomeSectionKind_collection") != null, "the picker lists the catalog's kinds");
+            // More options stays open while its switches rebuild the form, and a second pick in Add row starts from that kind's own settings.
+            await Click(page, "HomeSectionKind_recently_added"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null);
+            await SetTitle(page, "Synthetic first pick"); Find<Expander>(page, "HomeSectionMoreOptions")!.IsExpanded = true;
+            await Until(() => Find<ToggleSwitch>(page, "HomeSectionHero") is { IsLoaded: true }, "hero switch"); Find<ToggleSwitch>(page, "HomeSectionHero")!.IsOn = true;
+            await Until(() => Find<ToggleSwitch>(page, "HomeSectionHero") is { IsOn: true, IsLoaded: true } && Find<TextBox>(page, "HomeSectionTitle") is { IsLoaded: true }, "form rebuilt after hero");
+            Check(Find<Expander>(page, "HomeSectionMoreOptions")!.IsExpanded, "More options stays open after the Hero switch rebuilds the form");
+            Check(!ReferenceEquals(FocusManager.GetFocusedElement(page.XamlRoot), Find<TextBox>(page, "HomeSectionTitle")), "the Hero switch does not move focus to the name");
+            await Click(page, "HomeSectionBack"); await Until(() => Find<Button>(page, "HomeSectionKind_trending_on_server") != null);
+            await Click(page, "HomeSectionKind_trending_on_server"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null && Find<ToggleSwitch>(page, "HomeSectionHero") is { IsLoaded: true }, "second pick");
+            Check(Find<TextBox>(page, "HomeSectionTitle")!.Text != "Synthetic first pick" && !Find<ToggleSwitch>(page, "HomeSectionHero")!.IsOn, "a second pick in Add row keeps neither the first pick's name nor its hero choice");
+            await Click(page, "HomeSectionBack"); await Until(() => Find<Button>(page, "HomeSectionKind_recently_added") != null);
             await Click(page, "HomeSectionKind_recently_added"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null);
             await Until(() => Texts(page).Contains("Synthetic preview title") || Tree(page).OfType<TextBlock>().Any(text => TextOf(text).Contains("titles match") || TextOf(text).Contains("title matches")));
             await SetTitle(page, "Synthetic new row"); await Capture(window, "home-sections-add-editor-800.png");
@@ -364,6 +376,15 @@ internal static class AdminHomeSectionsNativeFixture
             Check(AdminShellPage.Open(new(AdminRoute.HomeSections, new Dictionary<string, string> { ["page"] = "home", ["edit"] = "missing-row" })), "a link to a missing row still opens the page");
             await Until(() => inner.Content is AdminHomeSectionsPage next && !ReferenceEquals(next, page) && next.Controller?.CanWrite == true); page = (AdminHomeSectionsPage)inner.Content;
             await Task.Delay(300); Check(Find<FrameworkElement>(page, "HomeSectionEditor") == null, "a link to a missing row opens nothing");
+            // A library link waits for the library list; followed against Home it would add the row to the wrong page.
+            server.FailLibraries = true; var linkPosts = server.Requests.Count(item => item.Method == "POST");
+            Check(AdminShellPage.Open(new(AdminRoute.HomeSections, new Dictionary<string, string> { ["page"] = "1", ["add"] = "collection:library:c1" })), "a library link opens the page while the library list cannot be read");
+            await Until(() => inner.Content is AdminHomeSectionsPage next && !ReferenceEquals(next, page) && Find<Button>(next, "HomeSectionsReload") != null, "libraries failure banner"); page = (AdminHomeSectionsPage)inner.Content;
+            await Task.Delay(300); Check(Find<FrameworkElement>(page, "HomeSectionEditor") == null, "a library link opens nothing while the library list could not be read");
+            server.FailLibraries = false; await Click(page, "HomeSectionsReload"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null, "linked add after reload");
+            Check(page.Controller!.State.Snapshot?.Scope.LibraryId == "1" && Find<TextBox>(page, "HomeSectionTitle")!.Text == "Synthetic collection", "after Reload the link opens Add row on the library page it names");
+            Check(server.Requests.Count(item => item.Method == "POST") == linkPosts, "nothing was written while the link waited");
+            await Click(page, "HomeSectionCancel"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null);
 
             // ── Authority retirement ──
             await Click(page, "HomeSectionsAdd"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") != null);
