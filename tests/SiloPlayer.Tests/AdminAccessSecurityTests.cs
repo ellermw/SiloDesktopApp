@@ -470,6 +470,20 @@ public sealed class AdminAccessSecurityTests
     }
 
     [Fact]
+    public async Task SimulationOfTheDefaultSampleInputPublishesTheDecision()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.RequestUri!.AbsolutePath == "/api/v2/admin/policy/simulate"
+            ? Task.FromResult(Reply("""{"decision":{"allowed":false,"reason":"synthetic"},"eval_time_ns":12,"generation":1}""", null)) : original(request, ct);
+        await Call(h.Controller, "SimulateAsync", "{\r  \"schema_version\": 1,\r  \"request_time\": \"2026-07-02T16:00:00Z\"\r}");
+        Assert.Null(Property(h.Controller, "Message") is string { Length: > 0 } message ? message : null);
+        var simulation = Property(h.Controller, "Simulation");
+        Assert.Equal(1L, Property(simulation, "Generation"));
+        Assert.Equal(12L, Property(simulation, "EvalTimeNs"));
+    }
+
+    [Fact]
     public async Task EditorLabelsAndTitleFollowTheAdoptedSnapshot()
     {
         using var h = new PolicyHarness(); await h.Open();
