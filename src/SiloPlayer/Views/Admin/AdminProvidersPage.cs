@@ -140,7 +140,9 @@ public sealed partial class AdminProvidersPage : Page, IAdminGutterScrollPage, I
         var current = state.Owner?.IsCurrent == true;
         _loading.Visibility = current && state.Loading ? Visibility.Visible : Visibility.Collapsed;
         // A conflict or unknown outcome keeps Reload reachable even when no page-level error text is set.
-        _alerts.Visibility = current && (state.Error != null || state.ReloadRequired) ? Visibility.Visible : Visibility.Collapsed;
+        // A section or the credential status that failed to load can only be recovered by reloading.
+        var partial = state.Loaded && (state.SensitiveStatusError || state.SubtitleProvidersFailed || state.MarkerProvidersFailed || state.PluginProvidersFailed);
+        _alerts.Visibility = current && (state.Error != null || state.ReloadRequired || partial) ? Visibility.Visible : Visibility.Collapsed;
         _errorAlert.Visibility = state.Error != null ? Visibility.Visible : Visibility.Collapsed;
         if (state.Error != null) U.UpdateLiveText(_error, state.Error);
         _reload.IsEnabled = current && !state.Loading && !state.SavingSettings && state.BusyProvider == null;

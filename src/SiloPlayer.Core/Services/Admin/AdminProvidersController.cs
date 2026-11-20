@@ -179,7 +179,9 @@ public sealed class AdminProvidersController : IDisposable
         Update(owner, () =>
         {
             if (_form == null || _state.Loading || _state.SavingSettings || _state.SensitiveStatusError || _state.ManagedByEnv.Contains("mdblist.api_key")) return;
-            _form.Set("mdblist.api_key", value); _revision++;
+            // An erased box is not a draft: Test must then check the saved key, as the official page does.
+            if (value.Trim().Length == 0) _form.Reset("mdblist.api_key"); else _form.Set("mdblist.api_key", value);
+            _revision++;
             _state = _state with { MdblistTest = null, ProviderFeedback = null };
         });
     }
@@ -257,14 +259,17 @@ public sealed class AdminProvidersController : IDisposable
                 if (_lifetime.IsCurrent(action)) { _store.Invalidate(); savedKeys = ["mdblist.api_key"]; }
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
-            catch (AdminSettingsConflictException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { SavingSettings = false, SettingsConflict = true, Error = "Settings changed on the server. Reload and review your MDBList draft." }; }); }
-            catch (AdminSettingsOutcomeUnknownException) { Update(action, () => { _form?.EndSave(intent); _state = _state with { SavingSettings = false, SettingsOutcomeUnknown = true, Error = "The save outcome is unknown. Reload and review your MDBList draft before saving again." }; }); }
-            catch (Exception error) { Update(action, () => { _form?.EndSave(intent); _state = _state with { SavingSettings = false, Error = "Failed to update MDBList settings.", ErrorCode = (error as ApiException)?.ErrorCode, Failure = AdminFailures.Classify(error, action) }; }); }
+            catch (AdminSettingsConflictException) { Update(action, () => { _form?.EndSave(intent); DropFailedClear(clear); _state = _state with { SavingSettings = false, SettingsConflict = true, Error = "Settings changed on the server. Reload and review your MDBList draft." }; }); }
+            catch (AdminSettingsOutcomeUnknownException) { Update(action, () => { _form?.EndSave(intent); DropFailedClear(clear); _state = _state with { SavingSettings = false, SettingsOutcomeUnknown = true, Error = "The save outcome is unknown. Reload and review your MDBList draft before saving again." }; }); }
+            catch (Exception error) { Update(action, () => { _form?.EndSave(intent); DropFailedClear(clear); _state = _state with { SavingSettings = false, Error = "Failed to update MDBList settings.", ErrorCode = (error as ApiException)?.ErrorCode, Failure = AdminFailures.Classify(error, action) }; }); }
             if (savedKeys != null && Saved is { } handlers)
                 foreach (Action<IReadOnlyCollection<string>> handler in handlers.GetInvocationList())
                     try { handler(savedKeys); } catch { }
         }
     }
+
+    /// <summary>A Disconnect that did not complete is not a typed draft; it must not be sent by a later Test or prompt on leaving.</summary>
+    private void DropFailedClear(bool clear) { if (clear && _form?.IsClearStaged("mdblist.api_key") == true) _form.Reset("mdblist.api_key"); }
 
     public async Task TestMdblistAsync()
     {
@@ -277,7 +282,7 @@ public sealed class AdminProvidersController : IDisposable
             {
                 if (_form == null || _state.CheckingMdblist || _state.SavingSettings || _state.SensitiveStatusError) return;
                 var managed = _state.ManagedByEnv.Contains("mdblist.api_key");
-                dirty = !managed && _form.DirtyKeys.Contains("mdblist.api_key") ? ["mdblist.api_key"] : [];
+                dirty = !managed && _form.DirtyKeys.Contains("mdblist.api_key") && _form.Get("mdblist.api_key").Trim().Length > 0 ? ["mdblist.api_key"] : [];
                 values = dirty.Length > 0 ? new(StringComparer.Ordinal) { ["mdblist.api_key"] = _form.Get("mdblist.api_key") } : [];
                 revision = _revision; _state = _state with { CheckingMdblist = true, MdblistTest = null };
             }

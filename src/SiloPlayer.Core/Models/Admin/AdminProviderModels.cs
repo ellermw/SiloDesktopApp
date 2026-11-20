@@ -186,8 +186,9 @@ public sealed partial class AdminMarkerProviderDraft
     public AdminMarkerProviderDraft(AdminMarkerProvider saved)
     {
         _saved = saved; FetchEnabled = saved.FetchEnabled; FetchPriority = saved.FetchPriority.ToString(CultureInfo.InvariantCulture);
-        FetchMinimumPercent = Percent(saved.FetchMinConfidence); ContributeEnabled = saved.IsSubmitter && saved.ContributeEnabled;
-        ContributeAutoLocal = saved.IsSubmitter && saved.ContributeAutoLocal;
+        // Raw saved values: the submitter gate is display-only, so an untouched tile never writes a contribute field.
+        FetchMinimumPercent = Percent(saved.FetchMinConfidence); ContributeEnabled = saved.ContributeEnabled;
+        ContributeAutoLocal = saved.ContributeAutoLocal;
         ContributeMinimumPercent = Percent(saved.ContributeMinConfidence);
     }
     public bool FetchEnabled { get; set; }
@@ -251,8 +252,8 @@ public sealed partial class AdminMarkerProviderDraft
         if (FetchEnabled != _saved.FetchEnabled) next.FetchEnabled = FetchEnabled;
         if (!TryPriority(out var priority) || priority != _saved.FetchPriority) next.FetchPriority = FetchPriority;
         if (!TryConfidence(FetchMinimumPercent, _saved.FetchMinConfidence, out var fetchConfidence) || fetchConfidence != _saved.FetchMinConfidence) next.FetchMinimumPercent = FetchMinimumPercent;
-        if (ContributeEnabled != (_saved.IsSubmitter && _saved.ContributeEnabled)) next.ContributeEnabled = ContributeEnabled;
-        if (ContributeAutoLocal != (_saved.IsSubmitter && _saved.ContributeAutoLocal)) next.ContributeAutoLocal = ContributeAutoLocal;
+        if (ContributeEnabled != _saved.ContributeEnabled) next.ContributeEnabled = ContributeEnabled;
+        if (ContributeAutoLocal != _saved.ContributeAutoLocal) next.ContributeAutoLocal = ContributeAutoLocal;
         if (!TryConfidence(ContributeMinimumPercent, _saved.ContributeMinConfidence, out var contributeConfidence) || contributeConfidence != _saved.ContributeMinConfidence) next.ContributeMinimumPercent = ContributeMinimumPercent;
         return next;
     }
@@ -265,7 +266,7 @@ public sealed partial class AdminMarkerProviderDraft
         if (FetchEnabled != _saved.FetchEnabled) patch["fetch_enabled"] = FetchEnabled;
         if (priority != _saved.FetchPriority) patch["fetch_priority"] = priority;
         if (fetchConfidence != _saved.FetchMinConfidence) patch["fetch_min_confidence"] = fetchConfidence;
-        var sharing = _saved.IsSubmitter && ContributeEnabled;
+        var sharing = ContributeEnabled;
         var automatic = sharing && ContributeAutoLocal;
         if (sharing != _saved.ContributeEnabled) patch["contribute_enabled"] = sharing;
         if (automatic != _saved.ContributeAutoLocal) patch["contribute_auto_local"] = automatic;

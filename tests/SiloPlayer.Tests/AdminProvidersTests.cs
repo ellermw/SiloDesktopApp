@@ -323,6 +323,71 @@ public sealed class AdminProvidersTests
     };
 
     [Fact]
+    public void MarkerDraftForANonSubmitterWithStoredSharingOpensCleanAndNeverWritesContributeFields()
+    {
+        // The official tile compares against the raw saved values; the submitter gate is display-only.
+        var saved = new AdminMarkerProvider
+        {
+            Provider = "plugin:6:introdb", IsSubmitter = false, FetchEnabled = true, FetchPriority = 10,
+            FetchMinConfidence = .4, ContributeEnabled = true, ContributeAutoLocal = true, ContributeMinConfidence = .95,
+        };
+        var draft = new AdminMarkerProviderDraft(saved);
+        Assert.False(draft.Dirty);
+        Assert.Empty(draft.CapturePatch());
+
+        draft.FetchEnabled = false;
+
+        Assert.Equal(["fetch_enabled"], draft.CapturePatch().Keys);
+    }
+
+    [Fact]
+    public async Task ErasedMdblistKeyIsNotADraftSoTestChecksTheSavedKey()
+    {
+        using var h = new Harness();
+        string? body = null;
+        h.Write = async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return AdminMonitorKit.Json("""{"success":true,"message":"ok"}""");
+        };
+        await h.Controller.OpenAsync();
+        h.Controller.SetMdblistApiKey("synthetic-typed-key");
+        Assert.Contains("mdblist.api_key", h.Controller.State.DirtyKeys);
+
+        h.Controller.SetMdblistApiKey("");
+        Assert.DoesNotContain("mdblist.api_key", h.Controller.State.DirtyKeys);
+        await h.Controller.TestMdblistAsync();
+
+        Assert.Equal(["POST /api/v2/admin/settings/check/mdblist"], h.Writes);
+        using var sent = JsonDocument.Parse(body!);
+        Assert.Equal(0, sent.RootElement.GetProperty("dirty_keys").GetArrayLength());
+        Assert.DoesNotContain("mdblist.api_key", body!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AFailedDisconnectLeavesNoStagedClearForALaterTest()
+    {
+        using var h = new Harness();
+        var bodies = new List<string>();
+        h.Write = async request =>
+        {
+            bodies.Add(await request.Content!.ReadAsStringAsync());
+            return request.Method == HttpMethod.Put
+                ? AdminMonitorKit.Json("{}", HttpStatusCode.InternalServerError)
+                : AdminMonitorKit.Json("""{"success":true,"message":"ok"}""");
+        };
+        await h.Controller.OpenAsync();
+
+        await h.Controller.ClearMdblistAsync(h.Controller.State.Owner!);
+
+        Assert.Contains("mdblist.api_key", h.Controller.State.Configured);
+        Assert.DoesNotContain("mdblist.api_key", h.Controller.State.DirtyKeys);
+        await h.Controller.TestMdblistAsync();
+        using var sent = JsonDocument.Parse(bodies[^1]);
+        Assert.Equal(0, sent.RootElement.GetProperty("dirty_keys").GetArrayLength());
+    }
+
+    [Fact]
     public async Task DisconnectConfirmedForAReplacedAuthorityNeverWritesTheNewAuthority()
     {
         using var h = new Harness();

@@ -39,7 +39,7 @@ internal static class AdminProvidersNativeFixture
         private readonly object _gate = new();
         private readonly List<string> _writes = [];
         private readonly List<string> _bodies = [];
-        internal bool FailEffective, FailSubtitles, FailMarkers, FailPlugins, EmptySubtitles, EmptyMarkers, EmptyPlugins, MdblistConfigured = true;
+        internal bool FailEffective, FailSensitiveStatus, FailSubtitles, FailMarkers, FailPlugins, EmptySubtitles, EmptyMarkers, EmptyPlugins, MdblistConfigured = true;
         internal int SettingsPut = 200, SubtitlePut = 200, MarkerPut = 200, MarkerValidateStatus = 200;
         internal bool MdblistCheckOk = true, SubtitleTestOk = true, MarkerValid = true, MarkerFetchEnabled = true;
         internal TaskCompletionSource? LoadGate, MarkerGate;
@@ -71,6 +71,7 @@ internal static class AdminProvidersNativeFixture
                         if (LoadGate != null) await LoadGate.Task;
                         return FailEffective ? Status(503) : Json(new Dictionary<string, string> { ["markers.mode"] = "both" }, "\"providers-native-settings\"");
                     case "/api/v2/admin/settings/sensitive-status":
+                        if (FailSensitiveStatus) return Status(503);
                         return Json(new { configured = MdblistConfigured ? new[] { "mdblist.api_key" } : Array.Empty<string>(), managed_by_env = Array.Empty<string>() });
                     case "/api/v2/admin/settings/restart-keys":
                         return Json(new { keys = new[] { "mdblist.api_key" }, prefixes = Array.Empty<string>() });
@@ -181,6 +182,7 @@ internal static class AdminProvidersNativeFixture
         await Scenario(window, "load error", new Server { FailEffective = true }, LoadErrorAsync, waitLoaded: false);
         await Scenario(window, "empty", new Server { EmptySubtitles = true, EmptyMarkers = true, EmptyPlugins = true, MdblistConfigured = false }, EmptyAsync);
         await Scenario(window, "section failures", new Server { FailSubtitles = true, FailMarkers = true, FailPlugins = true }, SectionFailuresAsync);
+        await Scenario(window, "credential status unavailable", new Server { FailSensitiveStatus = true }, CredentialStatusUnavailableAsync);
         await Scenario(window, "populated", new Server(), PopulatedAsync);
         await Scenario(window, "mdblist", new Server(), MdblistAsync);
         await Scenario(window, "disconnect after authority replacement", new Server(), DisconnectRaceAsync);
@@ -268,7 +270,23 @@ internal static class AdminProvidersNativeFixture
         var page = env.Page;
         Check(HasText(page, "Could not load subtitle providers.") && HasText(page, "Could not load marker providers.") && HasText(page, "Could not load installed plugins."), "section failures: each independent source reports its own failure");
         Check(env.Controller.State.Loaded && Has(page, "ProvidersMDBListOpen"), "section failures: MDBList still renders");
+        Check(Shown(Find<Button>(page, "ProvidersReload")), "section failures: Reload is reachable when a section did not load");
         return Task.CompletedTask;
+    }
+
+    private static async Task CredentialStatusUnavailableAsync(Env env)
+    {
+        var page = env.Page;
+        Check(env.Controller.State.Loaded && env.Controller.State.SensitiveStatusError, "status unavailable: the page still loads");
+        Check(Shown(Find<Button>(page, "ProvidersReload")) && HasText(page, "Status unavailable"), "status unavailable: the tile says so and Reload is reachable");
+        await Click(page, "ProvidersMDBListOpen");
+        await Until(() => Has(page, "ProvidersMDBListSave"), "status unavailable: MDBList tile opens");
+        Check(Has(page, "ProvidersMDBListStatusUnavailable") && !Find<Button>(page, "ProvidersMDBListSave").IsEnabled && !Find<PasswordBox>(page, "ProvidersMDBListApiKey").IsEnabled,
+            "status unavailable: the reason is shown and no key can be typed or saved");
+        env.Server.FailSensitiveStatus = false;
+        await Click(page, "ProvidersReload");
+        await Until(() => !env.Controller.State.SensitiveStatusError && !env.Controller.State.Loading && !Has(page, "ProvidersMDBListStatusUnavailable"), "status unavailable: Reload recovers the credential status");
+        Check(!Shown(Find<Button>(page, "ProvidersReload")), "status unavailable: Reload goes away once everything loaded");
     }
 
     // ---- populated ---------------------------------------------------------------------------------------------------

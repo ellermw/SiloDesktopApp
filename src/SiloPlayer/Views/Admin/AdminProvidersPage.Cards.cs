@@ -84,7 +84,13 @@ public sealed partial class AdminProvidersPage
         var managed = state.ManagedByEnv.Contains("mdblist.api_key");
         var draft = _mdblistDraft;
         var body = new StackPanel { Spacing = 12 };
-        body.Children.Add(TileHeader("MDBList", "Lists", configured ? "Connected" : "Not connected", configured));
+        body.Children.Add(TileHeader("MDBList", "Lists", state.SensitiveStatusError ? "Status unavailable" : configured ? "Connected" : "Not connected", configured));
+        if (state.SensitiveStatusError)
+        {
+            var unavailable = Failure("Could not load the MDBList credential status. Reload to manage this key.");
+            AutomationProperties.SetAutomationId(unavailable, "ProvidersMDBListStatusUnavailable");
+            body.Children.Add(unavailable);
+        }
         if (!expanded)
         {
             var open = U.Action(configured ? "Manage" : "Connect", "ProvidersMDBListOpen", primary: true);
@@ -121,11 +127,13 @@ public sealed partial class AdminProvidersPage
         }
         var actions = Actions();
         var save = U.Action(state.SavingSettings ? "Saving…" : "Save", "ProvidersMDBListSave", primary: true);
-        save.IsEnabled = !managed && !state.SavingSettings && draft.Trim().Length > 0 && !state.SettingsConflict && !state.SettingsOutcomeUnknown;
+        save.IsEnabled = !managed && !state.SensitiveStatusError && !state.SavingSettings && draft.Trim().Length > 0 && !state.SettingsConflict && !state.SettingsOutcomeUnknown;
         save.Click += async (_, _) =>
         {
             if (_controller == null) return;
             _controller.SetMdblistApiKey(_mdblistDraft);
+            // The key was refused (status unavailable, managed or busy): nothing was saved, so keep what was typed.
+            if (!_controller.State.DirtyKeys.Contains("mdblist.api_key")) return;
             await _controller.SaveMdblistAsync();
             if (!_controller.State.SettingsConflict && !_controller.State.SettingsOutcomeUnknown && !_controller.State.DirtyKeys.Contains("mdblist.api_key")) { _mdblistDraft = ""; _mdblistEdited = false; Render(_controller.State); }
         };
@@ -135,7 +143,7 @@ public sealed partial class AdminProvidersPage
         {
             ClearStaleMdblistTest();
             _mdblistDraft = key.Password; _mdblistEdited = true;
-            save.IsEnabled = !managed && !state.SavingSettings && key.Password.Trim().Length > 0 && !state.SettingsConflict && !state.SettingsOutcomeUnknown;
+            save.IsEnabled = !managed && !state.SensitiveStatusError && !state.SavingSettings && key.Password.Trim().Length > 0 && !state.SettingsConflict && !state.SettingsOutcomeUnknown;
             testButton.IsEnabled = !state.CheckingMdblist && (configured || key.Password.Trim().Length > 0);
         };
         testButton.Click += async (_, _) => { if (_controller != null) { if (_mdblistEdited) _controller.SetMdblistApiKey(_mdblistDraft); await _controller.TestMdblistAsync(); } };
@@ -313,9 +321,9 @@ public sealed partial class AdminProvidersPage
         }
         body.Children.Add(ToggleRow("Get markers from this provider", "ProvidersMarkerFetch_" + SafeId(provider.Provider), draft.FetchEnabled, value => { draft.FetchEnabled = value; DraftChanged(); }));
         ToggleSwitch? autoToggle = null;
-        body.Children.Add(ToggleRow("Allow sharing with this provider", "ProvidersMarkerShare_" + SafeId(provider.Provider), draft.ContributeEnabled, value => { draft.ContributeEnabled = provider.IsSubmitter && value; if (!value) draft.ContributeAutoLocal = false; if (autoToggle != null) { autoToggle.IsEnabled = provider.IsSubmitter && value; if (!value) autoToggle.IsOn = false; } DraftChanged(); }, !provider.IsSubmitter,
+        body.Children.Add(ToggleRow("Allow sharing with this provider", "ProvidersMarkerShare_" + SafeId(provider.Provider), provider.IsSubmitter && draft.ContributeEnabled, value => { draft.ContributeEnabled = provider.IsSubmitter && value; if (!value) draft.ContributeAutoLocal = false; if (autoToggle != null) { autoToggle.IsEnabled = provider.IsSubmitter && value; if (!value) autoToggle.IsOn = false; } DraftChanged(); }, !provider.IsSubmitter,
             provider.IsSubmitter ? (provider.DefaultContributeEnabled ? "Sharing is enabled by default for this provider." : "") : "This provider does not accept shared markers."));
-        body.Children.Add(ToggleRow("Automatically share detected intros and credits", "ProvidersMarkerAuto_" + SafeId(provider.Provider), draft.ContributeAutoLocal, value => { draft.ContributeAutoLocal = value; DraftChanged(); },
+        body.Children.Add(ToggleRow("Automatically share detected intros and credits", "ProvidersMarkerAuto_" + SafeId(provider.Provider), provider.IsSubmitter && draft.ContributeAutoLocal, value => { draft.ContributeAutoLocal = value; DraftChanged(); },
             !provider.IsSubmitter || !draft.ContributeEnabled, "Share intros and credits detected on this server that meet the minimum confidence under Advanced.", toggle => autoToggle = toggle));
         var advancedOpen = _markerAdvanced.Contains(provider.Provider) || draft.AdvancedDirty || !draft.IsValid;
         var advancedButton = U.Action("Advanced · 3", "ProvidersMarkerAdvanced_" + SafeId(provider.Provider), secondary: true);
