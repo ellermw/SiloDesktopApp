@@ -135,10 +135,11 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
     private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> ConnectionCheckKeys = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
     {
         ["redis"] = new HashSet<string>(StringComparer.Ordinal) { "redis.url", "redis.db" },
+        ["mdblist"] = new HashSet<string>(StringComparer.Ordinal) { "mdblist.api_key" },
         ["s3_public"] = new HashSet<string>(AdminStorageRules.PublicS3Keys, StringComparer.Ordinal),
         ["s3_private"] = new HashSet<string>(AdminStorageRules.PrivateS3Keys, StringComparer.Ordinal),
     };
-    private static readonly string[] ConnectionCheckSecrets = AdminStorageRules.Secrets.ToArray();
+    private static readonly string[] ConnectionCheckSecrets = AdminStorageRules.Secrets.Append("mdblist.api_key").ToArray();
 
     /// <summary>
     /// Sends one synchronous SMTP test through the server's SAVED settings. The body
