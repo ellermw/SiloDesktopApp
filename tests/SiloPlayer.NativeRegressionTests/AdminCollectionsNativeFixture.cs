@@ -42,11 +42,21 @@ internal static class AdminCollectionsNativeFixture
         for (var i = 0; i < milliseconds / 25 && !condition(); i++) await Task.Delay(25);
         if (!condition()) throw new InvalidOperationException("Timed out: " + label);
     }
+    private static Func<AdminCollectionsPage?>? Diagnose;
     private static async Task Step(string name, Func<Task> body)
     {
         Program.Log("GROUP: " + name);
         try { await body(); }
-        catch (Exception error) { Check(false, name + " threw " + error.GetType().Name + ": " + error.Message); }
+        catch (Exception error)
+        {
+            Check(false, name + " threw " + error.GetType().Name + ": " + error.Message);
+            try
+            {
+                if (Diagnose?.Invoke() is { } page)
+                    Program.Log("DIAGNOSTIC: notice='" + Texts(page).FirstOrDefault() + "' invalidRules=" + Field(page, "_invalidRules") + " busy=" + page.Controller.Busy + " unknown=" + page.Controller.OutcomeUnknown + " error='" + page.Controller.Error + "' dialog=" + (Dialog(page) != null));
+            }
+            catch (Exception) { }
+        }
     }
     private sealed class Realtime : IAdminRealtimeChannel
     {
@@ -94,7 +104,8 @@ internal static class AdminCollectionsNativeFixture
             if (path == "/api/v2/admin/collections/capabilities")
             {
                 if (Hold != null) { var hold = Hold; Hold = null; await hold.Task; }
-                return Reply(JsonNode.Parse($$"""{"state":"available","groups":true,"imports":true,"import_sources":["mdblist","tmdb","tmdb_list"],"artwork":true,"item_reorder":true,"section_references":true,"template_summaries":true,"mdblist_search":{{MdbListSearch.ToString().ToLowerInvariant()}}}""")!.AsObject());
+                var capabilities = JsonNode.Parse("""{"state":"available","groups":true,"imports":true,"import_sources":["mdblist","tmdb","tmdb_list"],"artwork":true,"item_reorder":true,"section_references":true,"template_summaries":true,"mdblist_search":false}""")!.AsObject();
+                capabilities["mdblist_search"] = MdbListSearch; return Reply(capabilities);
             }
             if (path == "/api/v2/admin/collections")
             {
@@ -107,7 +118,8 @@ internal static class AdminCollectionsNativeFixture
             if (path == "/api/v2/admin/collections/import/mdblist")
             {
                 var id = "imp" + ++_created;
-                var item = JsonNode.Parse($$"""{"id":"{{id}}","title":{{JsonValue.Create(body["title"]?.ToString() ?? "")!.ToJsonString()}},"collection_type":"mdblist","library_id":"1","library_ids":["1"],"visibility":"visible","item_count":0,"group_id":null,"sort_order":9,"featured":false,"description":"","query_definition":{},"sort_config":{},"source_config":{"mode":"mdblist_json","url":{{JsonValue.Create(body["url"]?.ToString() ?? "")!.ToJsonString()}}}}""")!.AsObject();
+                var item = JsonNode.Parse("""{"collection_type":"mdblist","library_id":"1","library_ids":["1"],"visibility":"visible","item_count":0,"group_id":null,"sort_order":9,"featured":false,"description":"","query_definition":{},"sort_config":{}}""")!.AsObject();
+                item["id"] = id; item["title"] = body["title"]?.ToString() ?? ""; item["source_config"] = new JsonObject { ["mode"] = "mdblist_json", ["url"] = body["url"]?.ToString() ?? "" };
                 Collections[id] = item; _revision++; return Reply(new() { ["collection"] = item.DeepClone() }, HttpStatusCode.Created);
             }
             if (path == "/api/v2/collections/import/mdblist/search")
@@ -124,13 +136,15 @@ internal static class AdminCollectionsNativeFixture
             if (path == "/api/v2/admin/collection-jobs/job1")
             {
                 JobPolls++;
-                return Reply(JsonNode.Parse($$"""{"id":"job1","state":"{{(JobTerminal ? "succeeded" : "running")}}","terminal":{{JobTerminal.ToString().ToLowerInvariant()}},"template_result":{"created":[{"template_title":"Fixture template","library_name":"Fixture movies","reason":"created"}]}}""")!.AsObject());
+                var job = JsonNode.Parse("""{"id":"job1","template_result":{"created":[{"template_title":"Fixture template","library_name":"Fixture movies","reason":"created"}]}}""")!.AsObject();
+                job["state"] = JobTerminal ? "succeeded" : "running"; job["terminal"] = JobTerminal; return Reply(job);
             }
             if (path == "/api/v2/admin/libraries/1/collection-groups")
             {
                 if (request.Method == HttpMethod.Post)
                 {
-                    var shelf = JsonNode.Parse($$"""{"id":"g{{Groups.Count + 1}}","library_id":"1","name":{{JsonValue.Create(body["name"]?.ToString() ?? "")!.ToJsonString()}},"kind":"regular","default_sort_mode":"{{body["default_sort_mode"]}}","sort_order":{{Groups.Count}}}""")!.AsObject();
+                    var shelf = JsonNode.Parse("""{"library_id":"1","kind":"regular","sort_order":0}""")!.AsObject();
+                    shelf["id"] = "g" + (Groups.Count + 1); shelf["name"] = body["name"]?.ToString() ?? ""; shelf["default_sort_mode"] = body["default_sort_mode"]?.ToString() ?? "manual"; shelf["sort_order"] = Groups.Count;
                     Groups.Add(shelf); GroupOrder.Insert(GroupOrder.Count - 1, shelf["id"]!.ToString()); _revision++; return Reply(shelf, HttpStatusCode.Created);
                 }
                 return Reply(new() { ["items"] = new JsonArray(Groups.Select(g => g.DeepClone()).ToArray()) });
@@ -221,11 +235,12 @@ internal static class AdminCollectionsNativeFixture
             Check(AdminRouteCatalog.IsValid(AdminRouteRequest.CollectionNew()) && AdminRouteCatalog.IsValid(AdminRouteRequest.CollectionEditor("c1")), "collections new and edit descendants are valid routes");
             AdminShellPage shell = null!; Frame inner = null!;
             AdminCollectionsPage Current() => (AdminCollectionsPage)inner.Content;
+            Diagnose = () => inner?.Content as AdminCollectionsPage;
 
             // ── Loading, then populated ─────────────────────────────────────────
             await Step("loading and list", async () =>
             {
-                server.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var hold = server.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 Check(AdminShellPage.Open(new(AdminRoute.Collections)), "Collections opens the real admin shell");
                 await Until(() => outer.Content is AdminShellPage, "shell");
                 shell = (AdminShellPage)outer.Content; inner = (Frame)Field(shell, "_frame")!;
@@ -234,7 +249,7 @@ internal static class AdminCollectionsNativeFixture
                 await Until(() => Texts(page).Contains("Loading collections…"), "loading state");
                 Check(true, "loading state is shown while the server holds its first answer");
                 Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "Collections swaps without entrance transitions");
-                server.Hold!.TrySetResult(); server.Hold = null;
+                hold.TrySetResult();
                 await Until(() => Find<Button>(page, "CollectionEdit_c1") != null, "populated list");
                 Check(!server.Requests.Any(r => r.Contains("/catalog?")), "opening Collections does not walk a media catalog");
                 Check(Texts(page).Contains("Collections") && Texts(page).Any(t => t.StartsWith("Server collections everyone can browse")), "official title and subtitle render");
@@ -334,7 +349,7 @@ internal static class AdminCollectionsNativeFixture
                 await Click(Find<Button>(page, "CollectionsStarterPacks")); await Until(() => Dialog(page) != null, "starter pack dialog");
                 var dialog = Dialog(page)!;
                 Check(!dialog.IsPrimaryButtonEnabled, "Add starter pack waits for a reviewed preview");
-                Toggle(Find<CheckBox>(dialog, "CollectionPackLibrary_1")!);
+                await Until(() => Find<CheckBox>(dialog, "CollectionPackLibrary_1") is { IsLoaded: true }, "pack library loaded"); { var pack = Find<CheckBox>(dialog, "CollectionPackLibrary_1")!; if (pack.IsChecked != true) Toggle(pack); }
                 await Click(Find<Button>(dialog, "CollectionPackPreview")); await Until(() => dialog.IsPrimaryButtonEnabled, "preview enabled the add button");
                 Check(Texts(dialog).Any(t => t.Contains("created: 1")), "dry-run review lists what would be created");
                 server.JobTerminal = false; server.JobPolls = 0;
@@ -373,13 +388,13 @@ internal static class AdminCollectionsNativeFixture
                 Check(server.Sent("PUT", "/api/v2/admin/collection-groups/g1/collections/order").Any(l => l.IfMatch?.StartsWith("\"r") == true && l.Body.Contains("c2")), "Move sends the complete guarded destination order");
                 await Click(Find<Button>(page, "CollectionPin_c1")); await Until(() => server.Collections["c1"]["featured"]!.GetValue<bool>(), "pin applied");
                 await Click(Find<Button>(page, "CollectionsAddShelf")); await Until(() => Dialog(page) != null, "add shelf dialog");
-                var shelf = Dialog(page)!; Find<TextBox>(shelf, "CollectionShelfName")!.Text = "Second shelf";
+                var shelf = Dialog(page)!; await SetText(Find<TextBox>(shelf, "CollectionShelfName")!, "Second shelf");
                 await Until(() => shelf.IsPrimaryButtonEnabled, "shelf name enables Add");
                 await Click(Tree(shelf).OfType<Button>().First(b => b.Content?.ToString() == "Add shelf"));
                 await Until(() => Dialog(page) == null && server.Groups.Count == 2, "shelf created");
                 await CaptureAsync(Current(), "admin-collections-arrange-1440.png");
                 await Click(Find<Button>(page, "CollectionShelfRename_g2")); await Until(() => Dialog(page) != null, "rename shelf dialog");
-                var rename = Dialog(page)!; Find<TextBox>(rename, "CollectionShelfName")!.Text = "Renamed shelf";
+                var rename = Dialog(page)!; await SetText(Find<TextBox>(rename, "CollectionShelfName")!, "Renamed shelf");
                 await Until(() => rename.IsPrimaryButtonEnabled, "rename enabled");
                 await Click(Tree(rename).OfType<Button>().First(b => b.Content?.ToString() == "Save"));
                 await Until(() => Dialog(page) == null && server.Groups[1]["name"]!.ToString() == "Renamed shelf", "shelf renamed with its validator");
@@ -443,8 +458,11 @@ internal static class AdminCollectionsNativeFixture
                 await Click(Find<Button>(page, "CollectionPreview")); await Until(() => Texts(page).Any(t => t.Contains("The preview didn’t load")), "failed preview message");
                 Check(Find<Button>(page, "CollectionEditorSave")!.IsEnabled, "a failed preview leaves Save enabled");
                 server.Intercept = null;
-                Find<TextBox>(page, "CollectionName")!.Text = "Fixture smart renamed";
+                await SetText(Find<TextBox>(page, "CollectionName")!, "Fixture smart renamed");
                 await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => server.Sent("PATCH", "/api/v2/admin/collections/c2").Count() >= 2 || Texts(Current()).FirstOrDefault() == "Collection saved", "smart save sent");
+                await Task.Delay(300);
+                Program.Log("DIAGNOSTIC: smart PATCH body " + server.Sent("PATCH", "/api/v2/admin/collections/c2").LastOrDefault().Body + " title=" + server.Collections["c2"]["title"]);
                 await Until(() => server.Collections["c2"]["title"]!.ToString() == "Fixture smart renamed", "smart save applied");
                 var patch = JsonNode.Parse(server.Sent("PATCH", "/api/v2/admin/collections/c2").Last().Body)!;
                 Check(patch["library_ids"]![0]!.ToString() == "1" && patch["query_definition"]!["library_ids"]![0]!.GetValue<int>() == 1, "save keeps Where it shows and the rule libraries separate");
@@ -456,12 +474,13 @@ internal static class AdminCollectionsNativeFixture
                 // Another administrator changes it behind the editor.
                 server.Collections["c2"]["description"] = "Changed elsewhere"; server.Intercept = null;
                 typeof(Server).GetField("_revision", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(server, 40);
-                Find<TextBox>(page, "CollectionName")!.Text = "My local title";
+                await SetText(Find<TextBox>(page, "CollectionName")!, "My local title");
                 var writes = server.Sent("PATCH", "/api/v2/admin/collections/c2").Count();
                 await Click(Find<Button>(page, "CollectionEditorSave"));
                 await Until(() => Dialog(page) != null, "conflict review dialog");
                 Check(server.Sent("PATCH", "/api/v2/admin/collections/c2").Count() == writes + 1, "the stale save was sent once and rejected");
-                var review = Dialog(page)!; Check(Find<CheckBox>(review, "CollectionConflict_title") != null, "conflict review lists the changed field by name");
+                var review = Dialog(page)!; await Until(() => Find<CheckBox>(review, "CollectionConflict_title") != null, "conflict dialog content");
+                Check(true, "conflict review lists the changed field by name");
                 Toggle(Find<CheckBox>(review, "CollectionConflict_title")!);
                 await Click(Tree(review).OfType<Button>().First(b => b.Content?.ToString() == "Review selected changes"));
                 await Until(() => Dialog(page) == null && Find<TextBox>(page, "CollectionName")!.Text == "My local title", "review keeps the chosen local field");
@@ -475,7 +494,7 @@ internal static class AdminCollectionsNativeFixture
             {
                 Check(AdminShellPage.Open(AdminRouteRequest.CollectionNew().WithQuery("libraryId", "1").WithQuery("type", "manual").WithQuery("view", "list")), "manual create descendant opens");
                 await Until(() => inner.Content is AdminCollectionsPage p && p != page && Find<TextBox>(p, "CollectionName") != null, "manual create editor");
-                page = Current(); Find<TextBox>(page, "CollectionName")!.Text = "Created fixture";
+                page = Current(); await SetText(Find<TextBox>(page, "CollectionName")!, "Created fixture");
                 Check(page.RequiresLeaveConfirmation && shell.RequiresLeaveConfirmation, "editor draft reaches shell departure guard");
                 // Lost reply: unknown outcome, no replay, Save disabled until the list is checked.
                 server.Intercept = (method, target) => method == "POST" && target == "/api/v2/admin/collections" ? throw new HttpRequestException("Synthetic lost reply") : Task.FromResult<HttpResponseMessage?>(null);
@@ -488,7 +507,7 @@ internal static class AdminCollectionsNativeFixture
                 Check(Texts(Current()).Any(t => t.StartsWith("No collection with that name exists")), "the list check reports what exists");
                 // Malformed identity: still an unknown outcome.
                 server.Intercept = (method, target) => Task.FromResult<HttpResponseMessage?>(method == "POST" && target == "/api/v2/admin/collections" ? Server.Plain(new() { ["id"] = 123, ["title"] = "Created fixture" }, HttpStatusCode.Created) : null);
-                Find<TextBox>(page, "CollectionName")!.Text = "Created fixture";
+                await SetText(Find<TextBox>(page, "CollectionName")!, "Created fixture");
                 await Click(Find<Button>(page, "CollectionEditorSave"));
                 await Until(() => !Find<Button>(page, "CollectionEditorSave")!.IsEnabled, "malformed identity is an unknown outcome");
                 Check(server.Requests.Count(r => r == "POST /api/v2/admin/collections") == 2, "malformed identity is not replayed");
@@ -496,7 +515,7 @@ internal static class AdminCollectionsNativeFixture
                 await Click(Find<Button>(page, "CollectionEditorCheckList")); await Until(() => Find<Button>(page, "CollectionEditorSave")?.IsEnabled == true, "re-read re-enables Save again");
                 // Confirmed create whose canonical read then fails: identity survives Reload and nothing is created again.
                 server.Intercept = (method, target) => Task.FromResult<HttpResponseMessage?>(method == "GET" && target.StartsWith("/api/v2/admin/collections/new") ? Server.Plain(new() { ["status"] = 404 }, HttpStatusCode.NotFound) : null);
-                Find<TextBox>(page, "CollectionName")!.Text = "Created fixture";
+                await SetText(Find<TextBox>(page, "CollectionName")!, "Created fixture");
                 await Click(Find<Button>(page, "CollectionEditorSave"));
                 await Until(() => page.Controller.CreatedId != null, "create confirmed");
                 await Until(() => Texts(Current()).Any(t => t.Contains("it will not be created again")), "confirmed-create read-failure message");
@@ -510,7 +529,7 @@ internal static class AdminCollectionsNativeFixture
                 await CaptureAsync(shell, "admin-collections-manual-editor-1440.png");
                 // Titles dialog on the created collection.
                 await Click(Find<Button>(page, "CollectionAddTitles")); await Until(() => Dialog(page) != null, "title picker");
-                var picker = Dialog(page)!; Find<TextBox>(picker, "CollectionTitleSearch")!.Text = "Fixture";
+                var picker = Dialog(page)!; await SetText(Find<TextBox>(picker, "CollectionTitleSearch")!, "Fixture");
                 await Click(Find<Button>(picker, "CollectionTitlesSearchButton")); await Until(() => Find<CheckBox>(picker, "CollectionTitlePick_m1") != null, "title result");
                 Check(server.Requests.Any(r => r.StartsWith("GET /api/v2/catalog?") && r.Contains("limit=30")), "title search is bounded to 30 results");
                 picker.Hide(); await Until(() => Dialog(page) == null, "picker closed");
@@ -524,7 +543,7 @@ internal static class AdminCollectionsNativeFixture
                 await Until(() => inner.Content is AdminCollectionsPage p && p != page && Find<TextBox>(p, "CollectionListUrl") != null, "synced editor");
                 page = Current();
                 var search = Find<TextBox>(page, "CollectionMdbListSearch"); Check(search != null, "capability-enabled editor offers MDBList search");
-                search!.Text = "top";
+                await SetText(search!, "top");
                 await Click(Find<Button>(page, "CollectionMdbListSearchButton"));
                 await Until(() => Find<Button>(page, "CollectionMdbListPick_12") != null, "MDBList results");
                 Check(server.Requests.Any(r => r == "GET /api/v2/collections/import/mdblist/search?q=top"), "search uses the official discovery route");
@@ -575,7 +594,7 @@ internal static class AdminCollectionsNativeFixture
             {
                 server.JobTerminal = false; server.JobPolls = 0;
                 await Click(Find<Button>(page, "CollectionsStarterPacks")); await Until(() => Dialog(page) != null, "starter pack dialog again");
-                var dialog = Dialog(page)!; Toggle(Find<CheckBox>(dialog, "CollectionPackLibrary_1")!);
+                var dialog = Dialog(page)!; await Until(() => Find<CheckBox>(dialog, "CollectionPackLibrary_1") is { IsLoaded: true }, "pack library loaded"); { var pack = Find<CheckBox>(dialog, "CollectionPackLibrary_1")!; if (pack.IsChecked != true) Toggle(pack); }
                 await Click(Find<Button>(dialog, "CollectionPackPreview")); await Until(() => dialog.IsPrimaryButtonEnabled, "preview ready");
                 await Click(Tree(dialog).OfType<Button>().First(b => b.Content?.ToString() == "Add starter pack"));
                 await Until(() => Dialog(page) == null && page.Controller.StarterJobId == "job1", "second job accepted");
@@ -609,11 +628,15 @@ internal static class AdminCollectionsNativeFixture
     }
     private static T? Find<T>(DependencyObject root, string id) where T : DependencyObject => Tree(root).OfType<T>().FirstOrDefault(v => AutomationProperties.GetAutomationId(v) == id);
     private static List<string> Texts(DependencyObject root) => Tree(root).OfType<TextBlock>().Select(t => t.Text).ToList();
+    /// <summary>TextBox.TextChanged is raised after the set returns; wait so page handlers have seen the text before the next command.</summary>
+    private static async Task SetText(TextBox box, string value) { box.Text = value; await Task.Delay(200); }
     private static void Toggle(CheckBox box) => (FrameworkElementAutomationPeer.CreatePeerForElement(box) as IToggleProvider ?? throw new InvalidOperationException("Checkbox has no toggle peer")).Toggle();
     private static async Task Click(Button? button)
     {
-        Check(button is { IsLoaded: true, IsEnabled: true }, "native command is rendered and enabled: " + (button == null ? "missing" : AutomationProperties.GetAutomationId(button)));
-        if (button == null) throw new InvalidOperationException("Missing command.");
+        if (button == null) { Check(false, "native command is rendered and enabled: missing"); throw new InvalidOperationException("Missing command."); }
+        for (var i = 0; i < 80 && !button.IsLoaded; i++) await Task.Delay(25);
+        Check(button is { IsLoaded: true, IsEnabled: true }, "native command is rendered and enabled: " + AutomationProperties.GetAutomationId(button));
+        for (var i = 0; i < 80 && !button.IsLoaded; i++) await Task.Delay(25);
         button.StartBringIntoView();
         (FrameworkElementAutomationPeer.CreatePeerForElement(button) as IInvokeProvider ?? throw new InvalidOperationException("Button has no invoke peer")).Invoke(); await Task.Delay(60);
     }

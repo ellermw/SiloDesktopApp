@@ -82,7 +82,7 @@ public sealed partial class AdminCollectionsPage
                     var tile = Stack(8); tile.Width = 220;
                     tile.Children.Add(Poster(c.PosterUrl, 188, c.Title));
                     tile.Children.Add(ActionButton((_viewerPreview && c.Featured && (group?.DefaultSortMode is null or "manual") ? "📌 " : "") + c.Title, "CollectionBoardEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }));
-                    tile.Children.Add(Text($"{c.ItemCount} titles" + (c.Visibility == "hidden" ? " · Hidden" : ""), 12, true));
+                    tile.Children.Add(Text(Titles(c.ItemCount) + (c.Visibility == "hidden" ? " · Hidden" : ""), 12, true));
                     if (!_viewerPreview)
                     {
                         var move = ActionButton("Move to shelf", "CollectionMove_" + c.Id, () => MoveDialogAsync(c.Id));

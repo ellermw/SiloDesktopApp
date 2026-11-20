@@ -218,7 +218,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
             Toggled(pick, on => { if (on && _selected.Count < 100) _selected.Add(c.Id); else _selected.Remove(c.Id); RenderRows(); return Task.CompletedTask; }); row.Children.Add(pick);
         }
         row.Children.Add(ActionButton(c.Title, "CollectionEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }));
-        row.Children.Add(Text($"{(c.Kind == "synced" ? "Synced list" : c.Kind == "smart" ? "Smart" : "Manual")} · {LibraryNames(c)} · {c.ItemCount} titles", 13, true));
+        row.Children.Add(Text($"{(c.Kind == "synced" ? "Synced list" : c.Kind == "smart" ? "Smart" : "Manual")} · {LibraryNames(c)} · {Titles(c.ItemCount)}", 13, true));
         var visible = new ToggleSwitch { Header = "On tabs", IsOn = c.Visibility != "hidden" }; Identify(visible, "CollectionVisible_" + c.Id, "Show " + c.Title + " on Collections tabs");
         var changingVisibility = false;
         visible.Toggled += async (_, _) =>
@@ -241,6 +241,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         row.Children.Add(ActionButton("Delete…", "CollectionDelete_" + c.Id, () => DeleteDialogAsync(c.Id)));
         return Card(row);
     }
+    private static string Titles(int count) => count == 1 ? "1 title" : $"{count} titles";
     private string LibraryNames(AdminCollectionEntry c) => string.Join(", ", Controller.Libraries.Where(l => c.InLibrary(l.Id)).Select(l => l.Name));
     private Task PatchAsync(string id, JsonObject patch) => RunAsync(async lease => { var observed = await _api.GetAsync(lease, id); await _api.SaveAsync(lease, observed, patch); });
 }

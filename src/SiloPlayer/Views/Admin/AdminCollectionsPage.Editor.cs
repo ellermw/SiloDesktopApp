@@ -14,8 +14,9 @@ public sealed partial class AdminCollectionsPage
 {
     private readonly Dictionary<string, (string? Source, byte[]? Bytes, string MediaType)> _artwork = [];
     private readonly Dictionary<string, string> _pendingTitles = [];
-    private readonly StackPanel _contents = Stack(12);
-    private readonly StackPanel _preview = Stack(10);
+    // Rebuilt on every render: a panel cannot move to a new card while the old card still owns it.
+    private StackPanel _contents = Stack(12);
+    private StackPanel _preview = Stack(10);
     private readonly Stack<string?> _memberHistory = [];
     private string? _memberCursor;
     private QueryRulesEditor? _rules;
@@ -88,7 +89,7 @@ public sealed partial class AdminCollectionsPage
         if (id != null) where.Children.Add(ActionButton("Add as a row", "CollectionAddAsRow", () => AddAsRowAsync(id)));
         _surface.Children.Add(Card(where));
 
-        _contents.Children.Clear(); _preview.Children.Clear();
+        _contents = Stack(12); _preview = Stack(10); _storedSort = Stack(8);
         _contents.Children.Add(Text(manual ? "Titles" : smart ? "Rules" : "List", 20));
         if (manual)
         {
@@ -153,7 +154,7 @@ public sealed partial class AdminCollectionsPage
         finally { IsHitTestVisible = true; }
     }
     private readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
-    private readonly StackPanel _storedSort = Stack(8);
+    private StackPanel _storedSort = Stack(8);
     private CancellationTokenSource? _previewReads;
     private int _previewSerial;
     private void RenderSmart(JsonObject draft)
