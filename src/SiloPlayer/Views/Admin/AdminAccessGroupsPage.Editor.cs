@@ -320,7 +320,7 @@ public sealed partial class AdminAccessGroupsPage
     {
         var canWrite = Session.Owner is { IsCurrent: true } && !Session.Busy && !Session.NeedsReview;
         var limitBlocks = _limitDraft is { HasErrors: true } && LimitChanges > 0;
-        foreach (var button in _writes) button.IsEnabled = canWrite;
+        foreach (var button in _writes.Concat(_memberWrites)) button.IsEnabled = canWrite && (button.Tag is not Func<bool> extra || extra());
         if (_save != null) _save.IsEnabled = canWrite && _editor?.CanWrite == true && Dirty && _invalid.Count == 0 && !limitBlocks && (_limitDraft == null || _limit?.CanWrite == true || LimitChanges == 0);
         if (_discard != null) _discard.IsEnabled = canWrite && Dirty;
         if (_delete != null) _delete.IsEnabled = canWrite && _editor is { CanWrite: true } && !_editor.Value.Flag("is_default");
