@@ -1053,6 +1053,8 @@ public partial class SiloApiClient
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=device_bootstrap_transport_failed");
                 else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
+                else if (request.Options.TryGetValue(AdminAutoscanSensitiveOption, out var sensitiveAutoscan) && sensitiveAutoscan)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=autoscan_transport_failed");
                 else
                     Services.LocalLog.AppendException("api_diagnostics.txt", ex,
                         summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds}", actionId);

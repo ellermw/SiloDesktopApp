@@ -1,3 +1,17 @@
+# November 17 — Autoscan Sources source-only candidate
+
+Uncommitted candidate in `C:/Users/Michael/.t3/worktrees/SiloPlayer/t3-19374284-ebfef51653ca8ba9`,
+branch `t3/admin-autoscan-sources`, base Beta `248aafd62ed65b868c0e7356926e4d83204649cd`,
+version `1.2.1181-beta.1` unchanged. Official reference
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Sources is implemented and registered through
+`AddAdminAutoscanSources()` with complete source/config/connection/webhook/mapping workflows,
+unit sources and a real-shell native fixture. Activity and Settings remain separate queued work.
+No runtime verification, output generation, commit, push or PR occurred; the installed player
+and sibling worktrees remain untouched. Tests are authored, **unrun**. Coordinator acceptance
+must observe compilation, XAML/native behavior and captures before making parity claims.
+Scope, exact contracts, source-only review and acceptance commands:
+[Autoscan Sources candidate](parity/admin-autoscan-sources.md).
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through

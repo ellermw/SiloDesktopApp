@@ -8,13 +8,15 @@ public sealed class ProviderSchemaForm : StackPanel
 {
     private readonly PluginAdminForm _form;
     private readonly Dictionary<string, object?> _values;
+    private readonly Func<Dictionary<string, string>> _validate;
     private readonly Dictionary<FrameworkElement, IEnumerable<PluginAdminFormCondition>?> _visibility = [];
     private readonly TextBlock _errors = new() { TextWrapping = TextWrapping.Wrap };
     public event Action? Changed;
-    public bool IsValid => ProviderConnectionConfig.Validate(_form, _values).Count == 0;
-    public ProviderSchemaForm(PluginAdminForm form, Dictionary<string, object?> values)
+    public bool IsValid => _validate().Count == 0;
+    public ProviderSchemaForm(PluginAdminForm form, Dictionary<string, object?> values) : this(form, values, null) { }
+    public ProviderSchemaForm(PluginAdminForm form, Dictionary<string, object?> values, Func<Dictionary<string, string>>? validate)
     {
-        _form = form; _values = values; Spacing = 12;
+        _form = form; _values = values; _validate = validate ?? (() => ProviderConnectionConfig.Validate(_form, _values)); Spacing = 12;
         var sectionKeys = new HashSet<string>();
         foreach (var section in form.Sections ?? [])
         {
@@ -36,13 +38,20 @@ public sealed class ProviderSchemaForm : StackPanel
         if (!string.IsNullOrEmpty(field.Description)) row.Children.Add(new TextBlock { Text = field.Description, FontSize = 12, TextWrapping = TextWrapping.Wrap });
         var value = ProviderConnectionConfig.Scalar(_values.GetValueOrDefault(field.Key) ?? field.DefaultValue);
         void Set(object? next) { _values[field.Key] = next; Refresh(); Changed?.Invoke(); }
+        void Name(FrameworkElement editor)
+        {
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(editor, field.Label);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(editor, "ProviderField_" + field.Key);
+        }
         switch (field.Control.ToUpperInvariant())
         {
             case "TOGGLE": case "SWITCH": case "CHECKBOX":
                 var toggle = new ToggleSwitch { IsOn = value == "true", OnContent = "", OffContent = "" };
+                Name(toggle);
                 toggle.Toggled += (_, _) => Set(toggle.IsOn); row.Children.Add(toggle); break;
             case "SELECT":
                 var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                Name(combo);
                 foreach (var option in field.Options ?? [])
                 { var item = new ComboBoxItem { Content = option.Label, Tag = option.Value }; combo.Items.Add(item); if (option.Value == value) combo.SelectedItem = item; }
                 if (combo.SelectedItem == null && value.Length > 0) { var retained = new ComboBoxItem { Content = value, Tag = value }; combo.Items.Add(retained); combo.SelectedItem = retained; }
@@ -59,9 +68,9 @@ public sealed class ProviderSchemaForm : StackPanel
                 break;
             default:
                 if (field.Secret || field.Control.Equals("PASSWORD", StringComparison.OrdinalIgnoreCase))
-                { var secret = new PasswordBox { Password = value, PlaceholderText = field.Placeholder ?? "" }; secret.PasswordChanged += (_, _) => Set(secret.Password); row.Children.Add(secret); }
+                { var secret = new PasswordBox { Password = value, PlaceholderText = field.Placeholder ?? "" }; Name(secret); secret.PasswordChanged += (_, _) => Set(secret.Password); row.Children.Add(secret); }
                 else
-                { var text = new TextBox { Text = value, PlaceholderText = field.Placeholder ?? "", AcceptsReturn = field.Multiline || field.Control.Equals("TEXTAREA", StringComparison.OrdinalIgnoreCase), TextWrapping = TextWrapping.Wrap }; text.TextChanged += (_, _) => Set(text.Text); row.Children.Add(text); }
+                { var text = new TextBox { Text = value, PlaceholderText = field.Placeholder ?? "", AcceptsReturn = field.Multiline || field.Control.Equals("TEXTAREA", StringComparison.OrdinalIgnoreCase), TextWrapping = TextWrapping.Wrap }; Name(text); text.TextChanged += (_, _) => Set(text.Text); row.Children.Add(text); }
                 break;
         }
         _visibility[row] = field.ShowWhen;
@@ -70,6 +79,6 @@ public sealed class ProviderSchemaForm : StackPanel
     private void Refresh()
     {
         foreach (var (element, conditions) in _visibility) element.Visibility = ProviderConnectionConfig.Shown(conditions, ProviderConnectionConfig.EffectiveValues(_form, _values)) ? Visibility.Visible : Visibility.Collapsed;
-        _errors.Text = string.Join("\n", ProviderConnectionConfig.Validate(_form, _values).Values);
+        _errors.Text = string.Join("\n", _validate().Values);
     }
 }
