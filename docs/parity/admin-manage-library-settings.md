@@ -2,8 +2,8 @@
 
 ## Scope and source
 
-This increment owns only Manage > Libraries > Settings (`/admin/settings/library`). It is based on Desktop Beta
-`248aafd62ed65b868c0e7356926e4d83204649cd` and official Silo Server/WebUI
+This increment owns only Manage > Libraries > Settings (`/admin/settings/library`). It was written against Desktop Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`, merged with origin/beta on 2026-11-20, and official Silo Server/WebUI
 `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` from `D:/SiloPlayer-work/server-upstream-nov14`.
 
 Official page and supporting contracts:
@@ -44,22 +44,42 @@ all execution choices reachable rather than blocking a valid mode on transient e
 An acknowledged rating-source change invalidates the desktop rating-capability and detail-prefetch caches immediately and
 again after 11 seconds, matching the official WebUI's second refresh after the server's ten-second rating-policy cache.
 
-## Tests authored first
+## Verification (2026-11-20, lane D:/SiloPlayer-build/admin-completion-lane-b)
 
-The retained tests-only checkpoint is `.codex-tmp/admin-library-settings-tests-only-checkpoint.md`. The initial test files
-preceded production; the final checkpoint also retains regression additions made before their corresponding static-review
-corrections. It identifies the exact test-only diff and RED-capable commands. Unit source covers rules, API bounds/sanitization, guarded controller behavior,
-registration, XBF approval and exact catalog labels. The native fixture enters through production registration, shell and
-Frame; exercises conditional controls, rating failure/recovery and cache invalidation, Advanced sections, inline validation, one guarded save, responsive layout,
-dirty departure and authority retirement; and records visual captures when the coordinator runs it.
+Run through the shared acceptance script under the SiloOct18Build lease, on the source after merging origin/beta:
 
-This worker was assigned a source-only slot. No restore, .NET build, unit test, app launch, browser, native fixture, mutex
-acquisition or generated-output change was performed. All authored tests and runtime behavior remain unobserved until the
-coordinator runs the serialized acceptance commands.
+- `library-settings-focused-r2`: 57 focused unit cases (the four AdminLibrarySettings classes plus the source-root proof),
+  0 failures. The earlier rating-source failure was a wrong expectation in the test, not in production: the pinned official
+  `ratingSources.ts` keeps an unrelated `rt_critic` source while enabling `kinopoisk`.
+- `library-settings-native-r5` (app build, publish, native host): selectors `admin-manage-library-settings` (84 passing checks),
+  `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` all passed on one published payload.
+- `library-settings-final-r1` (full unit suite): 8,693 passed and 1,060 failed of 9,753; its focused stage passed. Every failure
+  inspected is repository-root discovery (about 100 existing test classes walk up from `AppContext.BaseDirectory`, which the
+  script places under D:/SiloPlayer-build, outside the checkout) or a fixture read that depends on it; none is in an
+  AdminLibrarySettings test. The full suite has therefore NOT passed under this script, and no single `-Stage final` run
+  passed. This is not attributed to this family and was not changed here.
+
+Defects found by running the page and fixed here: `Render` looked up a row, description and error block for
+`catalog.extra_rating_sources`, which has no single field, raising `KeyNotFoundException` on the UI thread and crashing the
+host when the page first loaded (now only keys that own a row are rendered); `AdminSettingsGroup.SetAction` enumerated
+`UIElementCollection` as `FrameworkElement` and did not compile. `TestRepository.Root` now resolves from the compiled-in
+source path first, so unit tests built outside the checkout find it.
+
+The native fixture drives the registered shell, Frame and page through: loading skeleton, populated, failed first read with
+Retry, rating-source failure and recovery, older server without plugin rating sources (Ratings hidden), empty rating list,
+undeclared saved rating, environment-managed key, node-less and node-present sync placement, both Advanced sections, inline
+validation, Restore defaults, one guarded save with its strong ETag, a definite server rejection (sent once, retry allowed), an
+unknown outcome (not replayed, Save blocked until Reload keeps the draft), a conflict, Discard, dirty departure, and
+authority retirement. The wide, narrow, unknown-outcome and load-error PNG captures were opened and look correct; the
+rejected, conflict, empty-ratings and loading captures were produced but not opened.
+
+All 48 official `libraryMetadata`, playback-execution and advanced-section strings used by the page were compared with
+`web/src/locales/en.json` at the pin and match. Server limits (worker counts 1-1024, image workers 0-256, person lookups
+1-6000, matcher batch 1-100000, sync capacity 1-1024, rating-source pattern) were compared with
+`internal/config/admin_settings.go`.
 
 ## Remaining verification limits
 
-Acceptance still needs a fresh compile, focused and full unit suite, production publish/native-host binding, the
-`admin-manage-library-settings` native fixture, and visual inspection of its captures. Synthetic fixtures do not establish
-live-server behavior, every DPI, Narrator/IME behavior, real metadata-plugin combinations, a physical transcode node, or
-complete visual parity. Version stamps remain pipeline-owned and unchanged.
+Synthetic fixtures do not establish live-server behavior, every DPI, Narrator/IME behavior, real metadata-plugin combinations,
+a physical transcode node, or complete visual parity with the live WebUI. Libraries CRUD, provider and playback settings remain
+outside this increment. Version stamps are unchanged.

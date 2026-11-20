@@ -1,3 +1,23 @@
+# November 20 — Manage Libraries > Library settings Beta candidate
+
+Manage > Libraries > Library settings (/admin/settings/library, official page "Library & Metadata") is implemented in
+the registered native shell: General, Scanning (conditional real-time monitoring, worker counts, Advanced lookups/batch,
+Restore defaults), Maturity limits, capability-gated Ratings and Subtitle sync with Advanced placement/capacity, one guarded
+save, Discard, conflict/unknown-outcome handling and authority retirement. Branch t3/admin-library-settings, merged with
+origin/beta on 2026-11-20; version 1.2.1181-beta.1 is unchanged. Official contracts were read at
+217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb; the page's strings (48) and server limits were compared with that pin.
+
+Observed, under the SiloOct18Build lease, lane D:/SiloPlayer-build/admin-completion-lane-b: focused unit 57 passed / 0 failed
+(library-settings-focused-r2); app build, publish and native host built; native selectors admin-manage-library-settings,
+admin-manage-foundation, admin-configure-general and admin-monitor passed on one payload (library-settings-native-r5).
+Running the page exposed and fixed a KeyNotFoundException in Render that crashed the host on first load.
+
+Not observed: the full unit suite did not pass under the shared acceptance script. library-settings-final-r1 produced
+8,693 passed / 1,060 failed because the script builds outside the checkout and about 100 existing test classes locate the
+repository by walking up from AppContext.BaseDirectory; no AdminLibrarySettings test failed. TestRepository.Root now
+prefers the compiled-in source path. Live-server behavior, all DPI, Narrator/IME, real plugin combinations and complete
+visual parity are unverified. Scope, evidence and limits: docs/parity/admin-manage-library-settings.md.
+
 # November 17 — Configure Integrations verified Beta increment
 
 AI, Recommendations and Compatibility are implemented in the registered native shell,
