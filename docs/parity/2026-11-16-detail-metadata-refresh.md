@@ -139,9 +139,8 @@ Not yet exercised by a native fixture:
 
 ## Limits and follow-ups
 
-- The card menu's Refresh Metadata (`MediaItemMenu.cs`) still posts and shows
-  the old English "...queued" toast without following the job. The audit scoped
-  6d to the detail page.
+- The card menu's Refresh Metadata now follows the job too; see
+  `2026-11-16-card-refresh-metadata-follow.md`.
 - The 6a item-keyed pending-write registry (another worker) is not present here.
   Once it lands, add its "writes pending for this item" check to
   `IsServerMetadataReloadHeld` in `ItemDetailPage.ServerRefresh.cs`. Today an

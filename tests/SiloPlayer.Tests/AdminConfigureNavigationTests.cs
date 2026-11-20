@@ -122,6 +122,17 @@ public sealed class AdminConfigureNavigationTests
     }
 
     [Fact]
+    public void ProductionConfigureRegistrationIncludesTheThreeIntegrationLeaves()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "AdminConfigureServices.cs"));
+        foreach (var route in new[] { "AiSettings", "Recommendations", "CompatibilitySettings" })
+            Assert.Contains("new AdminPageRegistration(AdminRoute." + route + ", typeof(AdminIntegrationsPage))", source);
+        Assert.Contains("AddSingleton<AdminIntegrationsApi>", source);
+        Assert.True(File.Exists(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminIntegrationsPage.xaml")));
+        Assert.Contains("'Views/Admin/AdminIntegrationsPage.xbf'", File.ReadAllText(Path.Combine(TestRepository.Root, "installer", "build.ps1")));
+    }
+
+    [Fact]
     public void NetworkAccessCatalogCarriesEveryOfficialPageMessage()
     {
         foreach (var key in new[]
@@ -203,5 +214,99 @@ public sealed class AdminConfigureNavigationTests
         Assert.Equal("Advanced · 1 setting", AdminText.T("web.settings.advancedSection.accessibleLabel", new Dictionary<string, object?> { ["title"] = "Advanced", ["count"] = 1L, ["count_text"] = "1" }));
         Assert.Equal("Leave blank for a silo-download-artifacts folder beside this server's transcode directory. Transcode nodes use download-artifacts inside their own transcode directory unless a node has its own directory.",
             AdminText.T("web.admin.settings.downloads.artifactDir.description"));
+    }
+
+    [Theory]
+    [InlineData("bucket")]
+    [InlineData("cloudflare")]
+    [InlineData("artwork.storage_backend")]
+    public void StorageIsAServerLeafSearchableOnlyWhenRegistered(string query)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/settings/storage", out var resolution));
+        Assert.Equal(AdminRoute.StorageSettings, resolution.Request!.Route);
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/settings/infrastructure", out var alias));
+        Assert.Equal("/admin/settings/storage", alias.CanonicalHref);
+        var topic = AdminRouteCatalog.Sections.Single(section => section.Id == "configure").Entries.Cast<AdminNavTopic>()
+            .Single(entry => entry.Leaves.Any(leaf => leaf.Route == AdminRoute.StorageSettings));
+        Assert.Equal("server", topic.Id);
+        Assert.Equal("Storage", AdminText.T(topic.Leaves.Single(leaf => leaf.Route == AdminRoute.StorageSettings).SidebarLabelKey));
+        Assert.Empty(AdminRouteCatalog.MissingTextKeys(AdminRoute.StorageSettings));
+        Assert.False(new AdminPageRegistry([]).CanOpen(resolution.Request));
+        var registry = new AdminPageRegistry([new(AdminRoute.StorageSettings, typeof(object))]);
+        Assert.True(registry.CanOpen(resolution.Request));
+        Assert.Contains(AdminNavigation.SearchGroups(query, registry.IsRegistered).SelectMany(group => group.Pages), page => page.Route == AdminRoute.StorageSettings);
+    }
+
+    [Fact]
+    public void ProductionConfigureRegistrationIncludesTheFinishedStoragePage()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "AdminConfigureServices.cs"));
+        Assert.Contains("new AdminPageRegistration(AdminRoute.StorageSettings, typeof(AdminStorageSettingsPage))", source);
+        Assert.Contains("AddSingleton<AdminStorageApi>", source);
+        Assert.Contains("Concat(AdminStorageSettingsController.Keys)", source);
+        Assert.Contains("Concat(AdminStorageSettingsController.Secrets)", source);
+        var installer = File.ReadAllText(Path.Combine(TestRepository.Root, "installer", "build.ps1"));
+        Assert.Contains("'Views/Admin/AdminStorageSettingsPage.xbf'", installer);
+        // The storage domain API stays separate from Monitor and never targets unrelated administration.
+        var api = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer.Core", "Api", "AdminStorageApi.cs"));
+        Assert.DoesNotContain("/api/v1/", api);
+        Assert.DoesNotContain("AdminMonitorApi", api);
+    }
+
+    [Fact]
+    public void ProductionConfigureRegistrationIncludesScheduledTasksUnderServer()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "AdminConfigureServices.cs"));
+        Assert.Contains("new AdminPageRegistration(AdminRoute.ScheduledTasks, typeof(AdminScheduledTasksPage))", source);
+        Assert.Contains("AddSingleton<AdminTasksApi>", source);
+        var installer = File.ReadAllText(Path.Combine(TestRepository.Root, "installer", "build.ps1"));
+        Assert.Contains("'Views/Admin/AdminScheduledTasksPage.xbf'", installer);
+        Assert.Empty(AdminRouteCatalog.MissingTextKeys(AdminRoute.ScheduledTasks));
+        Assert.Equal(("configure", "server"), (AdminRouteCatalog.SectionOf(AdminRoute.ScheduledTasks).Id, AdminRouteCatalog.TopicOf(AdminRoute.ScheduledTasks)!.Id));
+        Assert.Equal("/admin/tasks", AdminRouteCatalog.Leaf(AdminRoute.ScheduledTasks).Href);
+    }
+
+    [Theory]
+    [InlineData("/admin/tasks", null)]
+    [InlineData("/admin/tasks/library-scan", "library-scan")]
+    [InlineData("/admin/tasks/rebuild_catalog_search_index", "rebuild_catalog_search_index")]
+    [InlineData("/admin/tasks/sync_catalog_search_index", "sync_catalog_search_index")]
+    [InlineData("/admin/tasks/plugin%3A7%3Afeed-sync", "plugin:7:feed-sync")]
+    public void TaskLocationsOpenOnlyOnceRegistered(string href, string? key)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
+        var request = resolution.Request!;
+        Assert.Equal(AdminRoute.ScheduledTasks, request.Route);
+        Assert.Equal(key, request.Segment(0));
+        if (key != null) Assert.True(SiloPlayer.Core.Api.AdminTasksApi.IsTaskKey(key));
+        Assert.False(new AdminPageRegistry([]).CanOpen(request));
+        Assert.True(new AdminPageRegistry([new(AdminRoute.ScheduledTasks, typeof(object))]).CanOpen(request));
+        Assert.Equal(href, request.Href);
+        Assert.Equal(key == null ? "web.admin.common.title.tab.tasks" : "web.admin.common.title.tab.task", AdminNavigation.TitleKeys(request).Tab);
+    }
+
+    [Theory]
+    [InlineData("tasks")]
+    [InlineData("scheduler")]
+    public void ScheduledTasksAreSearchableOnlyWhenRegistered(string query)
+    {
+        Assert.DoesNotContain(AdminNavigation.SearchGroups(query, new AdminPageRegistry([]).IsRegistered).SelectMany(group => group.Pages), page => page.Route == AdminRoute.ScheduledTasks);
+        var registry = new AdminPageRegistry([new(AdminRoute.ScheduledTasks, typeof(object))]);
+        Assert.Contains(AdminNavigation.SearchGroups(query, registry.IsRegistered).SelectMany(group => group.Pages), page => page.Route == AdminRoute.ScheduledTasks);
+    }
+
+    [Fact]
+    public void EveryScheduledTasksLabelResolvesToCatalogText()
+    {
+        foreach (var key in new[]
+        {
+            "web.admin.tasks.page.title", "web.admin.tasks.page.subtitle", "web.admin.tasks.page.loading", "web.admin.tasks.onDemand.label",
+            "web.admin.tasks.detail.notFoundTitle", "web.admin.tasks.detail.allTasks", "web.admin.tasks.detail.useRevision", "web.admin.tasks.detail.reviewSchedule",
+            "web.admin.tasks.hooks.tasks.scheduleChanged", "web.admin.errors.scheduleRevisionMissing", "web.admin.common.taskStatus.completedWithErrors",
+            "configure.native.tasks.listFailed", "configure.native.tasks.removeTrigger",
+        })
+            Assert.NotEqual(key, AdminTasksText.Message(key));
+        Assert.All(AdminTasksText.Keys, key => Assert.True(key.StartsWith("web.admin.", StringComparison.Ordinal) || key.StartsWith("configure.native.tasks.", StringComparison.Ordinal), key));
+        Assert.Equal("Use this revision and keep my draft", AdminTasksText.Message("web.admin.tasks.detail.useRevision"));
     }
 }
