@@ -1,3 +1,16 @@
+# November 17 — Admin Plugins source-only candidate
+
+Plugin management source is prepared on Beta `248aafd62ed65b868c0e7356926e4d83204649cd`
+in branch `t3/admin-plugin-management`, with version `1.2.1181-beta.1` unchanged.
+The registered `/admin/plugins` board and detail descendants, management API/controller,
+configuration forms, repository/upload/lifecycle workflows, source/XBF inventory and
+unit/native fixtures are authored against official `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+Providers settings and Plugin Apps shell/host/navigation remain owned by other workers.
+No build, tests, native/browser/app, mutex, generated output or external mutation ran.
+The candidate is uncommitted and runtime/visual acceptance belongs to the coordinator.
+Scope, contracts, bounds, adaptations, authored tests and acceptance commands:
+[Admin Plugins handoff](parity/admin-plugins.md). No new release or installer exists.
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
