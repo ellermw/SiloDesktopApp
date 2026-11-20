@@ -124,22 +124,35 @@ public sealed partial class AdminCollectionsPage
         try
         {
             IsHitTestVisible = false;
+            var existed = Controller.Editor != null;
             var id = await Controller.SaveAsync(posterStaged: _artwork.ContainsKey("poster"));
             if (!Current(owner)) return;
             // Replace /new immediately, even if a later membership or artwork operation fails.
             _route = _route with { Segments = [id, "edit"] }; AdminShellPage.TryReplace(this, _route);
-            var position = 0;
-            foreach (var (item, _) in _pendingTitles.ToArray())
+            try
             {
-                await Controller.CommandAsync(async lease => await _api.MembershipAsync(lease, id, item, true, position++));
-                _pendingTitles.Remove(item);
+                // Titles left staged by a save that stopped part-way go after the ones already added, as Add titles does.
+                var position = existed && _pendingTitles.Count > 0
+                    ? AdminCollectionsApi.NextMemberPosition(await _api.ItemsAsync(owner!, id), Controller.Editor?.Value["item_count"]?.GetValue<int>() ?? 0) : 0;
+                foreach (var (item, _) in _pendingTitles.ToArray())
+                {
+                    await Controller.CommandAsync(async lease => await _api.MembershipAsync(lease, id, item, true, position++));
+                    _pendingTitles.Remove(item);
+                }
+                foreach (var (slot, art) in _artwork.ToArray())
+                {
+                    await Controller.CommandAsync(async lease => await _api.ArtworkAsync(lease, id, slot, art.Source, art.Bytes, art.MediaType));
+                    _artwork.Remove(slot);
+                }
+                await Controller.EditAsync(id);
             }
-            foreach (var (slot, art) in _artwork.ToArray())
+            catch (Exception)
             {
-                await Controller.CommandAsync(async lease => await _api.ArtworkAsync(lease, id, slot, art.Source, art.Bytes, art.MediaType));
-                _artwork.Remove(slot);
+                // The titles and images accepted before the one that failed moved the collection's revision. Adopt it, as RunTitlesAsync does,
+                // so the next Save is not a conflict with this page's own change. If this read fails the old revision stays, and Save asks for review.
+                if (Current(owner)) { try { await Controller.AdoptOwnChangeAsync(); } catch (Exception) { } }
+                throw;
             }
-            await Controller.EditAsync(id);
             if (Current(owner)) { RenderEditor(); Notice(Controller.SaveWarning is { } warning ? "Collection saved. " + warning : "Collection saved"); }
         }
         catch (ApiException error) when (error.StatusCode == 412)

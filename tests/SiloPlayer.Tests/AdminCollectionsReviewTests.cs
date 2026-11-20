@@ -467,4 +467,43 @@ public sealed class AdminCollectionsReviewTests
         var conflict = await Assert.ThrowsAsync<ApiException>(() => controller.SaveAsync());
         Assert.Equal(412, conflict.StatusCode); Assert.False(controller.OutcomeUnknown);
     }
+
+    // ── Fifth review (November 20) ─────────────────────────────────────────
+
+    // 1 - A create whose staged titles stop part-way: the accepted title moved the revision, the rejected one did not. The editor's Save adopts it, so the next Save is not a conflict.
+    [Fact]
+    public async Task PartlyFailedStagedTitlesAdoptTheMovedRevisionSoTheNextSaveIsNotAConflict()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminCollectionsApi(kit.Client);
+        using var controller = new AdminCollectionsController(api, new(kit.Client), authority); controller.Open();
+        var revision = 1; var items = 0; var sent = new List<string>();
+        kit.Http.Respond = (r, _) =>
+        {
+            if (r.Method == HttpMethod.Put)
+            {
+                if (r.RequestUri!.AbsolutePath.EndsWith("/items/m2"))
+                    return Task.FromResult(AdminMonitorKit.Json("{\"type\":\"validation\",\"status\":400,\"detail\":\"That title is not in this collection's libraries.\"}", HttpStatusCode.BadRequest));
+                revision++; items++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            }
+            if (r.Method == HttpMethod.Patch)
+            {
+                sent.Add(r.Headers.GetValues("If-Match").Single());
+                if (sent[^1] != $"\"r{revision}\"") return Task.FromResult(AdminMonitorKit.Json("{\"type\":\"conflict\",\"status\":412}", HttpStatusCode.PreconditionFailed));
+                revision++;
+            }
+            return Task.FromResult(Tagged(ManualCollection("Staged", items), $"\"r{revision}\""));
+        };
+        await controller.EditAsync(null, "manual", "1"); controller.Draft!["title"] = "Staged";
+        Assert.Equal("c", await controller.SaveAsync());
+        // The editor's Save sends the staged titles one by one and stops at the first one rejected.
+        await controller.CommandAsync(lease => api.MembershipAsync(lease, "c", "m1", true, 0));
+        var rejected = await Assert.ThrowsAsync<ApiException>(() => controller.CommandAsync(lease => api.MembershipAsync(lease, "c", "m2", true, 1)));
+        Assert.Equal(400, rejected.StatusCode); Assert.False(controller.OutcomeUnknown); Assert.Equal("\"r1\"", controller.Editor!.ETag);
+        await controller.AdoptOwnChangeAsync();
+        Assert.Equal("\"r2\"", controller.Editor!.ETag); Assert.Empty(controller.ChangedDraftFields());
+        Assert.Equal("c", await controller.SaveAsync());
+        Assert.Equal("\"r2\"", Assert.Single(sent));
+        Assert.Single(kit.Http.Requests.Where(r => r.StartsWith("POST ")));
+    }
 }
