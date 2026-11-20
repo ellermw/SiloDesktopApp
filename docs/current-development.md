@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # November 20 — Autoscan Activity aligned with the official inspector sheet
 
 `/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `f36e3bd4a`; version stamps unchanged) was
@@ -21,7 +20,7 @@ Final run `autoact3-final-r1` (stage final, committed source `24f5cc9df`, lane `
 publish and native host build passed, and the `admin-autoscan-activity` (62 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
 native selectors passed; source and payload seals verified. Not observed: live-server/phone interoperability, all-DPI and screen-reader behaviour, a fixture-driven row click, and visual inspection of the
 new pager-gap and focus states beyond the fixture checks. Nothing was pushed.
-=======
+
 # November 20 — Collections (Manage > Libraries > Collections) built and verified
 
 `t3/admin-collections-page` completes Collections (`/admin/collections`, `/new`, `/:id/edit`): list,
@@ -59,7 +58,6 @@ picker, complete visual parity. The authority-retirement race between a queued s
 continuation is covered by a controller unit test only, not by the real page. The final run's synthetic captures were not
 reviewed again. Home Sections is a separate family and not registered here.
 No push, PR, installer or installed-player action occurred.
->>>>>>> origin/beta
 
 ---
 
