@@ -29,14 +29,14 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
     private JsonArray _groups = [], _users = [], _libraries = [], _devices = [], _values = [], _sources = [], _mappings = [], _runs = [];
     private readonly Dictionary<string, JsonObject> _limits = [];
     private readonly Dictionary<string, int> _etags = new(StringComparer.Ordinal);
-    private int _runPolls;
+    private int _runPolls, _runSeq;
     internal bool EmptyFleet, EmptyGroups, NoToken;
 
     internal AdminUserResourcesFakeServer() => Reset();
 
     internal void Reset()
     {
-        Calls.Clear(); Scripts.Clear(); _etags.Clear(); _runPolls = 0; EmptyFleet = EmptyGroups = NoToken = false; _nextGroup = 4; _revision = 29;
+        Calls.Clear(); Scripts.Clear(); _etags.Clear(); _runPolls = 0; _runSeq = 1; EmptyFleet = EmptyGroups = NoToken = false; _nextGroup = 4; _revision = 29;
         _groups = Arr("""
             [{"id":"2","name":"Family","description":"Synthetic household","library_ids":null,"max_playback_quality":"","download_allowed":true,"download_transcode_allowed":true,"transcode_allowed":true,"audio_transcode_allowed":true,
               "max_streams":0,"max_transcodes":0,"max_remote_stream_bitrate_kbps":0,"max_local_stream_bitrate_kbps":0,"max_profiles":5,"allowed_permissions":null,"requests_allowed":true,"is_default":true,"created_at":"2026-01-01T00:00:00.000Z","updated_at":"2026-01-01T00:00:00.000Z"},
@@ -246,8 +246,8 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
         }
         if (Is("POST", "admin", "history-imports", "mappings", "*", "run"))
         {
-            var run = Obj($$"""{"id":"run2","mapping_id":"{{Id(3)}}","user_id":"7","profile_id":"p7","source_type":"jellyfin","connection_mode":"admin_token","status":"queued","terminal":false,"cancelable":true,"fetched":0,"matched":0,"unmatched":0,"progress_updated":0,"history_created":0,"watchlist_added":0,"favorites_imported":0,"skipped":0,"warnings":[],"unmatched_samples":[],"created_at":"2026-11-20T11:00:00Z"}""");
-            _runs.Insert(0, run); return Json(Clone(run), HttpStatusCode.Accepted, location: "/api/v2/admin/history-imports/runs/run2", retryAfter: 5);
+            var runId = "run" + (++_runSeq); var run = Obj($$"""{"id":"{{runId}}","mapping_id":"{{Id(3)}}","user_id":"7","profile_id":"p7","source_type":"jellyfin","connection_mode":"admin_token","status":"queued","terminal":false,"cancelable":true,"fetched":0,"matched":0,"unmatched":0,"progress_updated":0,"history_created":0,"watchlist_added":0,"favorites_imported":0,"skipped":0,"warnings":[],"unmatched_samples":[],"created_at":"2026-11-20T11:00:00Z"}""");
+            _runs.Insert(0, run); return Json(Clone(run), HttpStatusCode.Accepted, location: "/api/v2/admin/history-imports/runs/" + runId, retryAfter: 5);
         }
         if (Is("POST", "admin", "history-imports", "runs", "*", "cancel"))
         {

@@ -36,6 +36,7 @@ internal static partial class AdminUserResourcesNativeFixture
     private static async Task Until(Func<bool> condition, string label, int milliseconds = 12000)
     {
         for (var elapsed = 0; elapsed < milliseconds && !condition(); elapsed += 25) await Task.Delay(25);
+        if (!condition() && Application.Current is not null && Window.Current is null) LogStatus();
         Check(condition(), label);
     }
     private static IEnumerable<DependencyObject> All(DependencyObject parent)
@@ -44,6 +45,19 @@ internal static partial class AdminUserResourcesNativeFixture
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
             foreach (var child in All(VisualTreeHelper.GetChild(parent, i))) yield return child;
     }
+    private static Frame? _statusFrame;
+    private static void LogStatus()
+    {
+        try
+        {
+            if (_statusFrame == null) return;
+            var status = All(_statusFrame).OfType<TextBlock>().FirstOrDefault(x => AutomationProperties.GetAutomationId(x) == "ResourceStatus");
+            Program.Log("STATUS: " + (status == null ? "(no status line)" : status.Text.Length == 0 ? "(empty)" : status.Text));
+        }
+        catch (Exception error) { Program.Log("STATUS: unavailable " + error.Message); }
+    }
+    private static async Task SetTextAsync(TextBox box, string text) { box.Text = text; await Task.Delay(180); }
+    private static async Task SetPasswordAsync(PasswordBox box, string text) { box.Password = text; await Task.Delay(180); }
     private static T? TryFind<T>(DependencyObject root, string id) where T : DependencyObject => All(root).OfType<T>().FirstOrDefault(x => AutomationProperties.GetAutomationId(x) == id);
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject => TryFind<T>(root, id) ?? throw new InvalidOperationException("Missing control " + id);
     private static bool Has(DependencyObject root, string id) => TryFind<DependencyObject>(root, id) != null;
@@ -114,7 +128,7 @@ internal static partial class AdminUserResourcesNativeFixture
             .AddSingleton(new SettingsService(Program.ResultDirectory)).AddAdminUserResources().BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null); var previousContent = window.Content;
-        var frame = new Frame();
+        var frame = new Frame(); _statusFrame = frame;
         field.SetValue(null, services); window.Content = frame; navigation.Frame = frame;
         var context = new Context { Window = window, Frame = frame, Server = server, Authority = authority };
         try

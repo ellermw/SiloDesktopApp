@@ -155,6 +155,8 @@ internal sealed class AdminUserResourceHost : IDisposable
         Status.Text = message; Status.Visibility = message.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         Status.Foreground = AdminUserResourceUi.Brush(Session.Error != null ? "ErrorBrush" : "SecondaryTextBrush");
         Recovery.Visibility = Session.NeedsReview && Recovery.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Reload is the way back from a failed read or a locked page; with nothing wrong it stays out of the way.
+        Reload.Visibility = Session.Error != null || Session.NeedsReview || Session.Owner is not { IsCurrent: true } ? Visibility.Visible : Visibility.Collapsed;
         Reload.IsEnabled = !Session.Busy; _interactionRoot.IsEnabled = Session.Owner is { IsCurrent: true } && !Session.Busy && !Session.NeedsReview;
         StateChanged?.Invoke();
     }

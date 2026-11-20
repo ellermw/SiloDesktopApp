@@ -41,6 +41,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         _host = new(this, new(App.Services.GetRequiredService<AdminMonitorAuthority>()), LoadAsync, Clear);
         _railPanel = LogsNativeUi.Panel(_rail, 12, 12); _listScroll = new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         _listPanel = LogsNativeUi.Panel(_listScroll, 12, 4); _detailPanel = LogsNativeUi.Panel(_detail, 12, 0);
+        _railPanel.VerticalAlignment = _listPanel.VerticalAlignment = _detailPanel.VerticalAlignment = VerticalAlignment.Top; _listScroll.VerticalAlignment = VerticalAlignment.Top; _list.VerticalAlignment = _detail.VerticalAlignment = VerticalAlignment.Top;
         SizeChanged += (_, _) => LayoutPanes();
     }
     protected override void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); if (e.Parameter is AdminRouteRequest route) _route = route; _profile = _route.Get("profile") ?? ""; }

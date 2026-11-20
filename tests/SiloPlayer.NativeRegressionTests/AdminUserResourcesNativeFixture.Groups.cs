@@ -26,7 +26,7 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(Has(c.Groups, "ResourceReload"), "page-level Reload stays reachable after a failed read");
             Click(Find<Button>(c.Groups, "GroupRetry"));
             await Until(() => Has(c.Groups, "GroupCard_3"), "Retry loads the groups");
-            Check(HasText(c.Groups, T("web.admin.access.groups.card.default")), "the default group is marked");
+            await Until(() => HasText(c.Groups, T("web.admin.access.groups.card.default")), "the default group is marked");
             await Until(() => HasText(c.Groups, "Admin approves"), "a card shows its own request terms");
             await CaptureAsync(c.Groups, "admin-access-groups-list-wide.png");
             c.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(800, 900)); await Task.Delay(150);
@@ -40,20 +40,20 @@ internal static partial class AdminUserResourcesNativeFixture
             await c.OpenAsync(new AdminRouteRequest(AdminRoute.AccessGroups), "Access Groups");
             await Until(() => Has(c.Groups, "GroupNew"), "list ready");
             Click(Find<Button>(c.Groups, "GroupNew")); await Until(() => Dialog(c.Frame) != null, "create dialog opened");
-            var dialog = Dialog(c.Frame)!; Find<TextBox>(dialog, "NewGroupName").Text = "Visitors";
+            var dialog = Dialog(c.Frame)!; await SetTextAsync(Find<TextBox>(dialog, "NewGroupName"), "Visitors");
             s.Fail("POST", GroupsPath, 422, ProblemBody("Name is already used."));
             Click(Primary(dialog)); await Until(() => HasText(dialog, "Name is already used."), "a refused create shows the server's detail in the dialog");
             Check(Dialog(c.Frame) != null && Find<TextBox>(dialog, "NewGroupName").Text == "Visitors", "the dialog and the typed name stay for a correction");
             Check(!c.Groups.Session.NeedsReview && Primary(dialog).IsEnabled, "a refusal never blocks the retry");
             Check(s.Count("POST", GroupsPath) == 1, "the refused create was sent once");
-            Find<TextBox>(dialog, "NewGroupName").Text = "Visitors 2"; Click(Primary(dialog));
+            await SetTextAsync(Find<TextBox>(dialog, "NewGroupName"), "Visitors 2"); Click(Primary(dialog));
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupName") && Find<TextBox>(c.Groups, "GroupName").Text == "Visitors 2", "an accepted create opens the new group's editor");
             Check(s.Count("POST", GroupsPath) == 2, "the retry was a new request");
 
             await c.OpenAsync(new AdminRouteRequest(AdminRoute.AccessGroups), "Access Groups again");
             await Until(() => Has(c.Groups, "GroupNew"), "list ready again");
             Click(Find<Button>(c.Groups, "GroupNew")); await Until(() => Dialog(c.Frame) != null, "create dialog opened again");
-            dialog = Dialog(c.Frame)!; Find<TextBox>(dialog, "NewGroupName").Text = "Lost answer"; s.LoseAnswer("POST", GroupsPath);
+            dialog = Dialog(c.Frame)!; await SetTextAsync(Find<TextBox>(dialog, "NewGroupName"), "Lost answer"); s.LoseAnswer("POST", GroupsPath);
             Click(Primary(dialog)); await Until(() => HasText(dialog, "may have reached the server"), "a lost answer is reported as an unknown outcome");
             Check(c.Groups.Session.NeedsReview && !Primary(dialog).IsEnabled, "an unknown create blocks another attempt");
             Check(s.Count("POST", GroupsPath) == 3, "the lost create was not replayed");
@@ -76,8 +76,8 @@ internal static partial class AdminUserResourcesNativeFixture
             await CaptureAsync(c.Groups, "admin-access-groups-editor-compact.png");
             c.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(150);
 
-            Find<TextBox>(c.Groups, "GroupName").Text = "Guests renamed";
-            Check(Find<Button>(c.Groups, "GroupSave").IsEnabled, "an edit enables Save");
+            await SetTextAsync(Find<TextBox>(c.Groups, "GroupName"), "Guests renamed");
+            await Until(() => Find<Button>(c.Groups, "GroupSave").IsEnabled, "an edit enables Save");
             Click(Find<Button>(c.Groups, "GroupSave"));
             await Until(() => Has(c.Groups, "GroupCard_3"), "a successful save returns to the list");
             var put = s.Last("PUT", GroupsPath + "/3")!; var body = JsonNode.Parse(put.Body)!.AsObject();
@@ -91,7 +91,7 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(AdminRouteRequest.AccessGroup("3"), "Group editor");
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupSave"), "editor rendered");
-            Find<TextBox>(c.Groups, "GroupName").Text = "Mine"; s.Fail("PUT", GroupsPath + "/3", 422, ProblemBody("Name is already used."));
+            await SetTextAsync(Find<TextBox>(c.Groups, "GroupName"), "Mine"); s.Fail("PUT", GroupsPath + "/3", 422, ProblemBody("Name is already used."));
             Click(Find<Button>(c.Groups, "GroupSave")); await Until(() => HasText(c.Groups, "Name is already used."), "a refused save shows the server's detail beside Save");
             Check(Find<TextBox>(c.Groups, "GroupName").Text == "Mine" && !c.Groups.Session.NeedsReview && Find<Button>(c.Groups, "GroupSave").IsEnabled, "a refusal keeps the draft and the retry");
             // another admin changes the group
@@ -107,7 +107,7 @@ internal static partial class AdminUserResourcesNativeFixture
 
             await c.OpenAsync(AdminRouteRequest.AccessGroup("3"), "Group editor again");
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupSave"), "editor rendered again");
-            var before = s.Count("PUT", GroupsPath + "/3"); Find<TextBox>(c.Groups, "GroupName").Text = "Lost write"; s.LoseAnswer("PUT", GroupsPath + "/3");
+            var before = s.Count("PUT", GroupsPath + "/3"); await SetTextAsync(Find<TextBox>(c.Groups, "GroupName"), "Lost write"); s.LoseAnswer("PUT", GroupsPath + "/3");
             Click(Find<Button>(c.Groups, "GroupSave")); await Until(() => c.Groups.Session.NeedsReview, "a lost answer requires a review");
             Check(s.Count("PUT", GroupsPath + "/3") == before + 1 && !Find<Button>(c.Groups, "GroupSave").IsEnabled, "the lost write was sent once and cannot be repeated");
             Click(Find<Button>(c.Groups, "ResourceReload")); await Until(() => !c.Groups.Session.NeedsReview && Has(c.Groups, "GroupName") && Find<TextBox>(c.Groups, "GroupName").Text == "Lost write", "the reload shows what the server holds");
@@ -119,7 +119,7 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(AdminRouteRequest.AccessGroup("3"), "Group editor");
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupApproval"), "editor rendered with its request limit");
-            Find<TextBox>(c.Groups, "GroupName").Text = "Both"; SelectTag(Find<ComboBox>(c.Groups, "GroupApproval"), "auto");
+            await SetTextAsync(Find<TextBox>(c.Groups, "GroupName"), "Both"); SelectTag(Find<ComboBox>(c.Groups, "GroupApproval"), "auto");
             s.Fail("PUT", "/api/v2/admin/request-groups/3/limit", 422, ProblemBody("Limit rejected."));
             Click(Find<Button>(c.Groups, "GroupSave"));
             await Until(() => HasText(c.Groups, "The group was saved, but its request approval and limit were not."), "a failed second request says the first was saved");
@@ -131,9 +131,9 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(AdminRouteRequest.AccessGroup("3"), "Group editor");
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupRemoteBitrate"), "editor rendered");
-            SelectTag(Find<ComboBox>(c.Groups, "GroupRemoteBitrate"), "custom"); Find<TextBox>(c.Groups, "GroupRemoteBitrateCustom").Text = "abc";
+            SelectTag(Find<ComboBox>(c.Groups, "GroupRemoteBitrate"), "custom"); await SetTextAsync(Find<TextBox>(c.Groups, "GroupRemoteBitrateCustom"), "abc");
             Check(!Find<Button>(c.Groups, "GroupSave").IsEnabled, "a bitrate that is not a number blocks Save");
-            Find<TextBox>(c.Groups, "GroupRemoteBitrateCustom").Text = "2.5"; Check(Find<Button>(c.Groups, "GroupSave").IsEnabled, "a valid custom bitrate enables Save");
+            await SetTextAsync(Find<TextBox>(c.Groups, "GroupRemoteBitrateCustom"), "2.5"); Check(Find<Button>(c.Groups, "GroupSave").IsEnabled, "a valid custom bitrate enables Save");
             var all = Find<ToggleSwitch>(c.Groups, "GroupAllLibraries"); all.IsOn = true; all.IsOn = false;
             await Until(() => Has(c.Groups, "GroupLibrary_2"), "turning All libraries off lists every library");
             Check(Find<ToggleSwitch>(c.Groups, "GroupLibrary_1").IsOn && Find<ToggleSwitch>(c.Groups, "GroupLibrary_2").IsOn, "turning it off selects every library, as the official page does");
