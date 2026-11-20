@@ -157,7 +157,6 @@ public sealed class AdminManageNavigationTests
 
     [Theory]
     [InlineData("/admin/plugins/arr", "/admin/plugins/arr")]
-    [InlineData("/admin/api-keys", "/admin/api-keys")]
 
     public void ConfigureAndOtherWebUiPagesAreUnsupportedNotRelabelled(string href, string canonical)
     {

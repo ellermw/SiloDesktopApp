@@ -1016,9 +1016,19 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdminPlaybackAuditNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-playback-administration")
+            {
+                await AdminPlaybackAdministrationNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-libraries")
             {
                 await AdminLibrariesNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-collections")
+            {
+                await AdminCollectionsNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-requests-management")
@@ -1060,6 +1070,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-email")
             {
                 await AdminEmailSettingsNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-signin-security")
+            {
+                await AdminSignInSecurityNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-notifications")
