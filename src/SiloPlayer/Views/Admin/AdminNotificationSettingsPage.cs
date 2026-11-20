@@ -56,7 +56,10 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     private bool _active, _sync, _opening, _hideDeferred;
     public C? Controller => _controller;
     public FrameworkElement ScrollContent => _scrollContent;
-    public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true || HeldTyping != null;
+    public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true || HeldTyping != null || LeaveRefused;
+    // A write the server may already have, a signing secret not yet dismissed and an open dialog keep the page on
+    // every departure path: Back to App and window close must reach CanLeaveAsync as in-admin navigation does.
+    private bool LeaveRefused => _dialog != null || _secretShown || _controller?.State is { Saving: true } or { OperationPending: true } || _controller?.HasSigningSecret == true;
     // Typing held across a host hide stays this authority's unsaved work until it is restaged; another authority never inherits it.
     private HiddenDraft? HeldTyping => _hiddenDraft is { } draft && (draft.Values.Count > 0 || draft.RelayUrl != null) && _authority.IsAvailable && _authority.Epoch == draft.Epoch ? draft : null;
 
@@ -255,7 +258,14 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     private void OnSaved(IReadOnlyCollection<string> keys) => DispatcherQueue.TryEnqueue(() => { if (_active && _controller?.State.Owner?.IsCurrent == true && App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell) shell.RefreshSettingsStatus(); });
     public Task<bool> CanLeaveAsync()
     {
-        if (_dialog != null || _controller?.State is { Saving: true } or { OperationPending: true } || _controller?.HasSigningSecret == true) return Task.FromResult(false);
+        if (LeaveRefused)
+        {
+            // With no dialog in front the refusal would be silent; say what the page is waiting for.
+            if (_dialog == null) App.Services.GetService<SiloPlayer.Services.ToastService>()?.Info((_controller?.State is { Saving: true } or { OperationPending: true })
+                ? "Notifications is still waiting for the server. Stay on this page until it answers."
+                : "A new signing secret is waiting to be shown. Save it before leaving Notifications.");
+            return Task.FromResult(false);
+        }
         if (HeldTyping is { } held) return CanDropHeldAsync(held);
         return _leave?.CanLeaveAsync(owner => U.ConfirmDiscardAsync(this, owner, () => _dialog, dialog => _dialog = dialog)) ?? Task.FromResult(true);
     }

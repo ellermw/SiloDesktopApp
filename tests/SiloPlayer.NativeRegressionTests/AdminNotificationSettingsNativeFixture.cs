@@ -204,6 +204,22 @@ internal static class AdminNotificationSettingsNativeFixture
             Check(controller.State is { OperationUnknown: false, OutcomeUnknown: false, Error: null }, "answered write is not carried as an unknown outcome");
             keptDialog.Hide(); await Until(() => Dialog(page) == null && keptSecret.Text.Length == 0, "kept secret cleared on close");
             await Until(() => ChannelEdit(page, true), "answered write leaves channel commands available");
+            await Until(() => !shell.RequiresLeaveConfirmation, "idle page asks nothing before app departure");
+            server.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var leavingWrite = controller.RotateChannelAsync("c1");
+            try
+            {
+                await Until(() => controller.State.OperationPending, "held write before app departure");
+                Check(shell.RequiresLeaveConfirmation && !await shell.CanLeaveAsync(), "Back to App and window close are refused while a write is pending");
+                Check(ReferenceEquals(page.Controller, controller) && controller.State is { OperationPending: true, Owner.IsCurrent: true }, "refused departure keeps the owner of the pending write");
+            }
+            finally { server.Gate?.TrySetResult(); server.Gate = null; }
+            await leavingWrite;
+            await Until(() => Dialog(page) is { IsLoaded: true, Title: "Save your signing secret" }, "refused departure still delivers the one-time signing secret");
+            var leavingDialog = Dialog(page)!; var leavingSecret = Desc(leavingDialog).OfType<TextBox>().Single();
+            Check(leavingSecret.Text == "synthetic-one-time" && shell.RequiresLeaveConfirmation && !await shell.CanLeaveAsync(), "departure is refused while the signing secret is shown");
+            leavingDialog.Hide(); await Until(() => Dialog(page) == null && leavingSecret.Text.Length == 0, "departure secret cleared on close");
+            await Until(() => !shell.RequiresLeaveConfirmation && ChannelEdit(page, true), "dismissed secret frees departure and channel commands");
             Invoke(Find<Button>(page, "NotificationsChannelEdit_c1")); await Until(() => Dialog(page) is { IsLoaded: true }, "editor before retirement");
             var privateUrl = Find<TextBox>(Dialog(page)!, "NotificationsChannelUrl"); privateUrl.Text = "https://example.test/synthetic-retirement";
             server.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously); var pending = controller.TestChannelAsync("c1");
