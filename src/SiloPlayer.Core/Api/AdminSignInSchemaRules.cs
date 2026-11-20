@@ -83,6 +83,11 @@ public static class AdminSignInSchemaRules
         }
         return JsonValue.Create(text);
     }
+    /// <summary>Whether text being typed still means <paramref name="value"/> (a trailing line break, space or decimal point); null while it is not a value yet (a lone "-").</summary>
+    public static bool? Means(AdminSignInSchema schema, AdminSignInField field, string text, JsonNode? value)
+    {
+        try { return JsonNode.DeepEquals(Convert(schema, field, text), value); } catch (ArgumentException) { return null; }
+    }
     public static AdminSignInConfigWrite Build(AdminSignInProvider provider, AdminSignInSchema schema, JsonObject values, IReadOnlyCollection<string> clears)
     {
         var result = new AdminSignInConfigWrite { Key = schema.Key, ClearSecrets = clears.ToList() }; var form = schema.AdminForm ?? throw new ArgumentException("Unsupported schema.");

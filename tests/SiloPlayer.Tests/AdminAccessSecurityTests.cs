@@ -372,6 +372,23 @@ public sealed class AdminAccessSecurityTests
         Assert.Equal(expected, body.GetProperty("value").GetProperty("timeout").GetRawText());
     }
 
+    [Theory]
+    [InlineData("groups", "admins", "admins\r", true)]
+    [InlineData("groups", "Silo", "Silo ", true)]
+    [InlineData("groups", "admins", "admins\rSilo", false)]
+    [InlineData("timeout", "1", "1.", true)]
+    [InlineData("timeout", "1", "1.5", false)]
+    [InlineData("timeout", "1", "-", null)]
+    public void TextBeingTypedIsRecognisedWhileItStillMeansTheStagedValue(string key, string staged, string typed, bool? expected)
+    {
+        var schema = Model("AdminSignInSchema", """{"key":"ldap","json_schema":"{\"properties\":{\"groups\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"timeout\":{\"type\":\"number\"}}}","admin_form":{"fields":[{"key":"groups","control":"TEXTAREA"},{"key":"timeout","control":"NUMBER"}]}}""");
+        var rules = Required("SiloPlayer.Core.Api.AdminSignInSchemaRules");
+        var field = ((System.Collections.IEnumerable)Property(Property(schema, "AdminForm"), "Fields")).Cast<object>().Single(f => (string)Property(f, "Key") == key);
+        // The staged value is what the same conversion stored for the text typed so far; the page rewrites a box only when its text stops meaning that value.
+        var value = rules.GetMethod("Convert")!.Invoke(null, [schema, field, staged]);
+        Assert.Equal(expected, (bool?)rules.GetMethod("Means")!.Invoke(null, [schema, field, typed, value]));
+    }
+
     private static async Task WaitUntil(Func<bool> predicate)
     {
         for (var i = 0; i < 200 && !predicate(); i++) await Task.Delay(10);

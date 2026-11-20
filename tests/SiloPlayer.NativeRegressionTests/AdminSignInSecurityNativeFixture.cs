@@ -302,6 +302,19 @@ internal static class AdminSignInSecurityNativeFixture
             await Until(() => Buttons(signIn).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
             await Task.Delay(150);
             Check(!Descendants(signIn).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_auth.local_password_login").IsOn, "password sign-in can be staged off when the break-glass admin is on a later account page");
+            // Typing key by key: the box is not rewritten while its text still means the staged value, so a list keeps its line break and space and a number its decimal point.
+            var groups = Input(signIn, "SignIn_3_ldap_allowed_groups"); var seconds = Input(signIn, "SignIn_3_limits_timeout");
+            foreach (var typed in new[] { "fixture-readers\r", "fixture-readers\rSilo ", "fixture-readers\rSilo Admins" })
+            {
+                groups.Text = typed; var held = groups.Text; await Task.Delay(150);
+                Check(groups.Text == held, "typed group list is kept as typed (" + typed.Length + " characters)");
+            }
+            Check(groups.Text.Replace("\r\n", "\n").Replace('\r', '\n') == "fixture-readers\nSilo Admins", "a second group with a space can be typed on its own line");
+            foreach (var typed in new[] { "1", "1.", "1.5" })
+            {
+                seconds.Text = typed; await Task.Delay(150);
+                Check(seconds.Text == typed, "typed decimal is kept as typed: " + typed);
+            }
             server.LaterPageBreakGlass = false;
             Click(signIn, "AccessReload"); var discardLater = await Dialog(signIn); Primary(discardLater);
             // The reload is finished only when the first-page-only account list is shown again.

@@ -80,7 +80,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 entry.Row.Visibility = AdminSignInSchemaRules.Visible(entry.Schema.AdminForm!, entry.Field, values) ? Visibility.Visible : Visibility.Collapsed;
                 entry.Input.IsEnabled = editable;
                 entry.Row.State(!entry.Field.IsSecret && Controller.FieldDirty(entry.Provider, entry.Schema.Key, entry.Field.Key), false);
-                if (entry.Input is TextBox input && AdminAccessPageUi.Lines(input.Text) != text) input.Text = text;
+                // Text being typed stays as typed while it still means the staged value ("admins" + Enter, "Silo ", "1."), or is not a value yet ("-") in the focused box.
+                if (entry.Input is TextBox input && AdminAccessPageUi.Lines(input.Text) != text && !(AdminSignInSchemaRules.Means(entry.Schema, entry.Field, input.Text, value) ?? input.FocusState != FocusState.Unfocused)) input.Text = text;
                 else if (entry.Input is PasswordBox password && password.Password != text) password.Password = text;
                 else if (entry.Input is ToggleSwitch toggle) toggle.IsOn = text == "true";
                 else if (entry.Input is ComboBox select) AdminAccessPageUi.Select(select, text);
@@ -306,7 +307,11 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         {
             clear = U.Action(T("configField.clear"), id + "_clear"); clear.Click += (_, _) => Controller.ToggleClear(provider, schema, field); row.AddStatus(clear);
         }
-        if (input is TextBox text) text.TextChanging += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, text.Text); };
+        if (input is TextBox text)
+        {
+            text.TextChanging += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, text.Text); };
+            text.LostFocus += (_, _) => { if (!_sync && _ui.Active) Render(); }; // text left behind that is not a value goes back to the staged one.
+        }
         else if (input is PasswordBox secret) secret.PasswordChanged += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, secret.Password); };
         else if (input is ToggleSwitch toggle) toggle.Toggled += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, toggle.IsOn ? "true" : "false"); };
         else if (input is ComboBox select) select.SelectionChanged += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, AdminAccessPageUi.Selected(select)); };
