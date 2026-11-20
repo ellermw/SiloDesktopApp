@@ -1295,19 +1295,23 @@ public static class AdminText
     };
 
     /// <summary>Every key this helper owns, for catalog-coverage tests.</summary>
-    public static IReadOnlyCollection<string> Keys { get; } = English.Keys.ToArray();
+    public static IReadOnlyCollection<string> Keys { get; } = English.Keys.Concat(AdminBackupTextCatalog.English.Keys.Where(key => !English.ContainsKey(key))).ToArray();
 
-    public static bool Has(string key) => English.ContainsKey(key);
+    public static bool Has(string key) => English.ContainsKey(key) || AdminBackupTextCatalog.English.ContainsKey(key);
 
     /// <summary>The unformatted English pattern, for callers that split rich-text markup before inserting values.</summary>
-    public static string Pattern(string key) => English.TryGetValue(key, out var text) ? text : key;
+    public static string Pattern(string key) => Lookup(key) ?? key;
 
     /// <summary>Formats <paramref name="key"/> with values read from an anonymous object or dictionary.</summary>
     public static string T(string key, object? values = null)
     {
-        var pattern = English.TryGetValue(key, out var text) ? text : key;
+        var pattern = Lookup(key) ?? key;
         return Format(pattern, ToDictionary(values));
     }
+
+    // Backups keep their own pinned catalog; this table wins for any shared key.
+    private static string? Lookup(string key) =>
+        English.TryGetValue(key, out var text) || AdminBackupTextCatalog.English.TryGetValue(key, out text) ? text : null;
 
     /// <summary>Count values printed in the interface locale's digits, as WebUI's <c>localeCount</c>.</summary>
     public static object Count(long count) => new Dictionary<string, object?>

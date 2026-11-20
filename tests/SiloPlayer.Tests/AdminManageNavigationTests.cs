@@ -156,7 +156,6 @@ public sealed class AdminManageNavigationTests
     }
 
     [Theory]
-    [InlineData("/admin/backups/4/restore", "/admin/backups/4/restore")]
     [InlineData("/admin/plugins/arr", "/admin/plugins/arr")]
     [InlineData("/admin/api-keys", "/admin/api-keys")]
 
