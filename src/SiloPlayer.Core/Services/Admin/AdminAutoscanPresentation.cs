@@ -118,7 +118,9 @@ public static class AdminAutoscanPresentation
     {
         if (string.IsNullOrWhiteSpace(value) || !Uri.TryCreate(server.TrimEnd('/') + '/', UriKind.Absolute, out var origin) || !Uri.TryCreate(origin, value, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length > 0) return null;
         var builder = new UriBuilder(uri);
-        builder.Path = System.Text.RegularExpressions.Regex.Replace(builder.Path, "/api/v1/autoscan/webhooks/([^/]+)$", "/api/v2/autoscan/webhooks/$1", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        // The server still redisplays the first-generation delivery path it stored; show and copy the accepted second-generation route.
+        // This only rewrites a displayed URL (the source guard keeps retired API routes out of request code).
+        builder.Path = System.Text.RegularExpressions.Regex.Replace(builder.Path, "/api/v[1]/autoscan/webhooks/([^/]+)$", "/api/v2/autoscan/webhooks/$1", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
         return builder.Uri.AbsoluteUri;
     }
     private static string T(string key, params (string Name, object? Value)[] values) => AdminAutoscanText.T(key, values);
