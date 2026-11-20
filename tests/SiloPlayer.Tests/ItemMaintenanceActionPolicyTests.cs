@@ -7,6 +7,7 @@ public sealed class ItemMaintenanceActionPolicyTests
     [Theory]
     [InlineData("movie")]
     [InlineData("series")]
+    [InlineData("audiobook")]
     public void CuratorsCanMatchAndRefreshSupportedTitles(string itemType)
     {
         Assert.Equal(
@@ -18,7 +19,7 @@ public sealed class ItemMaintenanceActionPolicyTests
     [InlineData("episode")]
     [InlineData("season")]
     [InlineData("manga")]
-    [InlineData("audiobook")]
+    [InlineData("ebook")]
     public void CuratorsCanRefreshOtherMediaWithoutMatch(string itemType)
     {
         Assert.Equal(

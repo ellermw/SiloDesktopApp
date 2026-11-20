@@ -70,7 +70,7 @@ public sealed partial class NowListeningHero : UserControl
         // Retained hero: labels follow the interface language; no detail re-read.
         AppLocalization.Register(this, () =>
         {
-            EyebrowText.Text = AppStrings.Uppercase(AppStrings.Get("web.audiobooks.hero.eyebrow", fallback: "Now Listening"));
+            EyebrowText.Text = AppStrings.Uppercase(AppStrings.Get("web.audiobooks.hero.ariaLabel", fallback: "Now Listening"));
             ApplyCredits();
             if (_item != null) UpdateLiveState();
         });
