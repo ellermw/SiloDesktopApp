@@ -31,7 +31,7 @@ internal static partial class AdminRequestsManagementNativeFixture
         internal bool Corrections, MissingSeriesFallback, Downloading;
         internal bool StoredPluginSecret, FractionalNumbers, PreviewOverrides, RulesForReorder, LoseReorder, FailConfigurationReads, QueuedProgress, ProgressOnTarget;
         internal bool ConditionalPluginSecret, OverlapPreviews, HoldPreviewOptions, LoseCreate, CreateWithoutIdentity, FailEarlierPreview;
-        internal bool FailQueueReads, RejectLayoutWrites, PagedQueue;
+        internal bool FailQueueReads, RejectLayoutWrites, PagedQueue, RetiredServerType;
         internal readonly TaskCompletionSource<bool> PreviewReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource<bool> ReleasePreviewRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool _previewWaitingOptions;
@@ -117,7 +117,12 @@ internal static partial class AdminRequestsManagementNativeFixture
                     return Json(created.ToJsonString());
                 }
                 if (path == "/api/v2/admin/request-integrations" && request.Method == HttpMethod.Get) return Json("{\"items\":[{\"id\":\"integration-1\"},{\"id\":\"integration-2\"}],\"page\":{\"has_more\":false}}");
-                if (path == "/api/v2/admin/request-integrations/integration-2") return Json(Integration.Replace("integration-1", "integration-2").Replace("Synthetic Radarr", "Synthetic Sonarr").Replace("radarr", "sonarr").Replace("movie", "series"));
+                if (path == "/api/v2/admin/request-integrations/integration-2")
+                {
+                    if (request.Method == HttpMethod.Put) LastWrite = await request.Content!.ReadAsStringAsync(ct);
+                    // A retired type names an installation the plugin list no longer offers.
+                    return Json(Integration.Replace("integration-1", "integration-2").Replace("Synthetic Radarr", "Synthetic Sonarr").Replace("radarr", "sonarr").Replace("movie", "series").Replace("\"installation_id\":\"7\"", "\"installation_id\":\"" + (RetiredServerType ? "9" : "7") + "\""));
+                }
                 if (path == "/api/v2/admin/plugins/installations")
                 {
                     if (!ConditionalPluginSecret) return Json(CorrectionPlugin);

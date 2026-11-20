@@ -528,6 +528,26 @@ internal static partial class AdminRequestsManagementNativeFixture
             await Task.Delay(100);
             Check(Find(frame, "AdminRequestDetails-7") != null && Find(frame, "AdminRequestLoadMore") == null && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, "a successful Load more retry appends the next page and clears the failure notice");
         }, server => server.PagedQueue = true);
+        await Case("retired server type is kept until another is chosen", async (server, shell, frame) =>
+        {
+            Click(Find(frame, "AdminRequestServerEdit-integration-2")!);
+            await Until(() => Dialog(shell) is { IsLoaded: true }); var dialog = Dialog(shell)!;
+            var type = (ComboBox)Find(dialog, "AdminRequestServerType")!;
+            Check(type.SelectedItem is ComboBoxItem { IsEnabled: false } kept && kept.Tag?.ToString() == "9:arr", "a saved type that is no longer offered stays selected instead of the first available type");
+            ((TextBox)Find(dialog, "AdminRequestServerName")!).Text = "Renamed synthetic server";
+            ClickPrimary(dialog);
+            await Settled(() => server.LastWrite != null || Walk(dialog).OfType<TextBlock>().Any(text => text.Text.Contains("Choose another type before saving")));
+            Check(server.LastWrite == null && Walk(dialog).OfType<TextBlock>().Any(text => text.Text.Contains("Choose another type before saving")), "Save is refused while the unavailable type is still selected");
+            Choose(type, "7:arr");
+            await Until(() => Find(dialog, "AdminRequestPlugin-service_kind") != null);
+            Choose((ComboBox)Find(dialog, "AdminRequestPlugin-service_kind")!, "sonarr");
+            ((TextBox)Find(dialog, "AdminRequestPlugin-folder")!).Text = "synthetic";
+            ClickPrimary(dialog);
+            await Until(() => server.LastWrite != null);
+            var saved = JsonNode.Parse(server.LastWrite!)!;
+            Check(saved["installation_id"]?.ToString() == "7" && saved["capability_id"]?.ToString() == "arr", "an explicitly chosen type is the one saved");
+            await ClosedAsync(shell, dialog);
+        }, server => { server.MissingSeriesFallback = true; server.RetiredServerType = true; });
         if (failed > 0) throw new InvalidOperationException(failed + " Requests correction scenarios failed.");
     }
 

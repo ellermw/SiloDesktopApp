@@ -97,7 +97,13 @@ public sealed partial class AdminRequestsPage
         var types = RouterTypes().ToArray(); if (types.Length == 0) { Notice(S("web.admin.settings.requests.servers.noPlugin")); return; }
         var form = new RequestForm(data); form.Text("name", S("web.admin.settings.requests.serverEditor.name"), "AdminRequestServerName", maximum: 200);
         form.Flag("enabled", S("web.admin.settings.requests.serverEditor.enabled"), "AdminRequestServerEnabled");
-        var type = Select("AdminRequestServerType", types.Select(entry => (entry.Installation + ":" + J.Text(entry.Capability, "id"), entry.Label)), J.Text(data, "installation_id") + ":" + J.Text(data, "capability_id"));
+        var savedType = J.Text(data, "installation_id") + ":" + J.Text(data, "capability_id");
+        var typeChoices = types.Select(entry => (Value: entry.Installation + ":" + J.Text(entry.Capability, "id"), entry.Label)).ToList();
+        // A saved server whose plugin type is no longer offered keeps that type selected, so it is never re-pointed at another plugin unasked.
+        var missing = current != null && !typeChoices.Any(choice => choice.Value == savedType);
+        if (missing) typeChoices.Add((savedType, "Unavailable plugin"));
+        var type = Select("AdminRequestServerType", typeChoices, savedType);
+        if (missing) foreach (var item in type.Items.OfType<ComboBoxItem>().Where(item => Equals(item.Tag, savedType))) item.IsEnabled = false;
         if (type.SelectedItem == null) type.SelectedIndex = 0;
         var used = id != null && RouteUses(id).Any(); type.IsEnabled = !used;
         form.Panel.Children.Add(Field(S("web.admin.settings.requests.serverEditor.type"), type, used ? S("web.admin.settings.requests.serverEditor.typeLocked", new { routes = string.Join(", ", RouteUses(id!)) }) : null));
@@ -111,10 +117,15 @@ public sealed partial class AdminRequestsPage
         var fourK = Toggle(S("web.admin.settings.requests.serverEditor.uhdServer"), "AdminRequestServer4K", Is4K(configData));
         form.Panel.Children.Add(fourK); form.Panel.Children.Add(U.Text(S("web.admin.settings.requests.serverEditor.uhdServerDescription"), 12, true)); form.Panel.Children.Add(configHost);
         long connectionRevision = 0; var checking = false;
-        (string Installation, JsonObject Capability, string Label) Entry() => types.First(entry => entry.Installation + ":" + J.Text(entry.Capability, "id") == Selected(type));
+        bool Unavailable() => missing && Selected(type) == savedType;
+        (string Installation, JsonObject Capability, string Label) Entry() => Unavailable()
+            ? throw new ArgumentException(used ? "This server's plugin is unavailable. Change the routes that use this server, then choose another type." : "This server's plugin is unavailable. Choose another type before saving or testing.")
+            : types.First(entry => entry.Installation + ":" + J.Text(entry.Capability, "id") == Selected(type));
         void RebuildConfig()
         {
-            configHost.Children.Clear(); config = PluginForm(Entry().Capability, config.Data, options, false, lockKind: used); configHost.Children.Add(config.Panel);
+            configHost.Children.Clear();
+            if (Unavailable()) { configHost.Children.Add(U.Text("This server's plugin is unavailable, so its settings cannot be shown.", 13, true)); fourK.Visibility = Visibility.Collapsed; return; }
+            config = PluginForm(Entry().Capability, config.Data, options, false, lockKind: used); configHost.Children.Add(config.Panel);
             config.Changed += () => connectionRevision++;
             fourK.Visibility = J.Text(config.Data, "service_kind") is "radarr" or "sonarr" ? Visibility.Visible : Visibility.Collapsed;
         }
