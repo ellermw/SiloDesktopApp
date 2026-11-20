@@ -358,6 +358,7 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminSubtitlesPage.xbf',
     'Views/Admin/AdminLibrariesPage.xbf',
     'Views/Admin/AdminAutoscanSourcesPage.xbf',
+    'Views/Admin/AdminRequestsPage.xbf',
     'Views/Admin/AdminLogsPage.xbf',
     'Views/Admin/AdminDiagnosticsPage.xbf',
     'Views/Admin/AdminLoggingSettingsPage.xbf',
