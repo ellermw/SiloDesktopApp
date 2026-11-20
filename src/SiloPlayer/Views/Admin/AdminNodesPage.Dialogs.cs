@@ -51,7 +51,7 @@ public sealed partial class AdminNodesPage
         if (target != null && type == "transcode")
         {
             Select("hw_accel_override", T("web.admin.nodes.form.hardwareAcceleration"), editor.HwAccelOverride,
-                new[] { ("inherit", T("web.admin.nodes.override.accelInherited")) }.Concat(HardwareOptions()),
+                NodeHardwareOptions(),
                 value =>
                 {
                     var wasCuda = UsesCuda(editor.HwAccelOverride, target, clusterHwAccel); var isCuda = UsesCuda(value, target, clusterHwAccel);
@@ -122,6 +122,12 @@ public sealed partial class AdminNodesPage
         if (acceleration is "inherit" or "" && !string.IsNullOrEmpty(cluster) && cluster != "auto") return cluster == "nvenc";
         return target.Capabilities?.Resolved == "nvenc";
     }
+    /// <summary>Official hwAccelOverrideOptions(): the server's per-node override enum, which has no VideoToolbox (the cluster-wide setting does).</summary>
+    internal static IEnumerable<(string Value, string Label)> NodeHardwareOptions() => AdminPlaybackNodeEditor.HwAccelOverrideValues.Select(value => (value, value switch
+    {
+        "inherit" => T("web.admin.nodes.hwAccel.clusterDefault"), "auto" => T("web.admin.nodes.hwAccel.auto"), "none" => T("web.admin.nodes.hwAccel.software"),
+        _ => HardwareOptions().First(option => option.Value == value).Label,
+    }));
     internal static IEnumerable<(string Value, string Label)> HardwareOptions() => new[]
     {
         ("auto", T("web.admin.settings.playback.hwAccel.auto")), ("qsv", "Intel Quick Sync (QSV)"), ("vaapi", "VA-API"), ("nvenc", "NVIDIA NVENC"), ("videotoolbox", "VideoToolbox (macOS)"), ("none", T("web.admin.settings.playback.hwAccel.software")),

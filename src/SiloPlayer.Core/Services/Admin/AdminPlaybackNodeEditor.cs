@@ -7,8 +7,12 @@ namespace SiloPlayer.Core.Services.Admin;
 public sealed class AdminPlaybackNodeEditor
 {
     public string Name { get; set; } = "";
-    public string Url { get; set; } = "";
-    public string PublicUrl { get; set; } = "";
+    private string _url = "", _publicUrl = "";
+    private bool _urlEdited, _publicUrlEdited;
+    // A stored address this form cannot show (credentials, a query, no scheme) is left out of the form, so an untouched field must leave it alone instead of saving blank over it.
+    private readonly bool _urlWithheld, _publicUrlWithheld;
+    public string Url { get => _url; set { if (value != _url) { _url = value; _urlEdited = true; } } }
+    public string PublicUrl { get => _publicUrl; set { if (value != _publicUrl) { _publicUrl = value; _publicUrlEdited = true; } } }
     public string Group { get; set; } = "";
     public string MaxJobs { get; set; } = "";
     public string MaxBandwidthMbps { get; set; } = "";
@@ -17,11 +21,15 @@ public sealed class AdminPlaybackNodeEditor
     public string SourceAccess { get; set; } = "local";
     public string Type { get; }
     public AdminPlaybackNode? Target { get; }
+    /// <summary>The acceleration choices a node may be pinned to (inherit first): the server's hwAccelOverrideValues, which has no VideoToolbox unlike the cluster-wide playback.hw_accel.</summary>
+    public static IReadOnlyList<string> HwAccelOverrideValues { get; } = Array.AsReadOnly(new[] { "inherit", "auto", "qsv", "vaapi", "nvenc", "none" });
     public AdminPlaybackNodeEditor(string type, AdminPlaybackNode? target, string group = "")
     {
         if (type is not ("proxy" or "transcode")) throw new ArgumentException("Invalid node type.");
         Type = type; Target = target;
-        Name = target?.Name ?? ""; Url = ValidUrl(target?.Url ?? "") ? target!.Url : ""; PublicUrl = ValidUrl(target?.PublicUrl ?? "") ? target!.PublicUrl! : ""; Group = target?.Group ?? group;
+        Name = target?.Name ?? ""; Group = target?.Group ?? group;
+        _urlWithheld = target != null && !ValidUrl(target.Url ?? ""); _publicUrlWithheld = target != null && !string.IsNullOrEmpty(target.PublicUrl) && !ValidUrl(target.PublicUrl);
+        _url = ValidUrl(target?.Url ?? "") ? target!.Url : ""; _publicUrl = ValidUrl(target?.PublicUrl ?? "") ? target!.PublicUrl! : "";
         MaxJobs = target?.MaxJobs?.ToString(CultureInfo.InvariantCulture) ?? "";
         MaxBandwidthMbps = target?.MaxBandwidthKbps is > 0 ? (target.MaxBandwidthKbps.Value / 1000m).ToString(CultureInfo.InvariantCulture) : "";
         HwAccelOverride = target?.HwAccelOverride ?? "inherit"; HwDeviceOverride = target?.HwDeviceOverride ?? "";
@@ -30,15 +38,17 @@ public sealed class AdminPlaybackNodeEditor
     public IReadOnlyDictionary<string, object?> Capture(bool sourceAccessSupported)
     {
         if (string.IsNullOrWhiteSpace(Name) || Name.Length > 1024 || Group.Length > 1024) throw new ArgumentException("Enter a node name and a group of at most 1024 characters.");
-        if (!ValidUrl(Url) || Type == "proxy" && PublicUrl.Length > 0 && !ValidUrl(PublicUrl)) throw new ArgumentException("Enter an HTTP or HTTPS address without credentials, a query or a fragment.");
+        var keepUrl = _urlWithheld && !_urlEdited; var keepPublicUrl = _publicUrlWithheld && !_publicUrlEdited;
+        if (!keepUrl && !ValidUrl(Url) || Type == "proxy" && !keepPublicUrl && PublicUrl.Length > 0 && !ValidUrl(PublicUrl)) throw new ArgumentException("Enter an HTTP or HTTPS address without credentials, a query or a fragment.");
         var jobs = MaxJobs.Trim().Length == 0 ? 0 : int.TryParse(MaxJobs, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n >= 0 ? n : throw new ArgumentException("Enter a whole-number capacity, 0 or more.");
-        var bandwidth = MaxBandwidthMbps.Trim().Length == 0 ? 0m : decimal.TryParse(MaxBandwidthMbps, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var mbps) && mbps >= 0 && mbps * 1000 <= int.MaxValue ? mbps : throw new ArgumentException("Enter an egress limit in Mbps, 0 or more.");
-        var values = new Dictionary<string, object?> { ["name"] = Name, ["url"] = Url.Trim(), ["group"] = Group.Trim(), ["max_jobs"] = jobs, ["max_bandwidth_kbps"] = (int)decimal.Round(bandwidth * 1000, 0, MidpointRounding.AwayFromZero) };
+        var bandwidth = MaxBandwidthMbps.Trim().Length == 0 ? 0m : decimal.TryParse(MaxBandwidthMbps.Trim(), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var mbps) && mbps >= 0 && mbps <= int.MaxValue / 1000m ? mbps : throw new ArgumentException("Enter an egress limit in Mbps, 0 or more.");
+        var values = new Dictionary<string, object?> { ["name"] = Name, ["group"] = Group.Trim(), ["max_jobs"] = jobs, ["max_bandwidth_kbps"] = (int)decimal.Round(bandwidth * 1000, 0, MidpointRounding.AwayFromZero) };
+        if (!keepUrl) values["url"] = Url.Trim();
         if (Target == null) values["type"] = Type;
-        if (Type == "proxy" && (Target != null || PublicUrl.Trim().Length > 0)) values["public_url"] = PublicUrl.Trim().Length == 0 ? null : PublicUrl.Trim();
+        if (Type == "proxy" && !keepPublicUrl && (Target != null || PublicUrl.Trim().Length > 0)) values["public_url"] = PublicUrl.Trim().Length == 0 ? null : PublicUrl.Trim();
         if (Type == "transcode" && Target != null)
         {
-            if (!new[] { "inherit", "auto", "qsv", "vaapi", "nvenc", "videotoolbox", "none" }.Contains(HwAccelOverride)) throw new ArgumentException("Choose a hardware acceleration policy.");
+            if (!HwAccelOverrideValues.Contains(HwAccelOverride)) throw new ArgumentException("Choose a hardware acceleration policy.");
             if (HwDeviceOverride.Length > 8192) throw new ArgumentException("The device list is too long.");
             values["hw_accel_override"] = HwAccelOverride == "inherit" ? null : HwAccelOverride;
             var devices = AdminPlaybackSettingsRules.ParseDevices(HwDeviceOverride);

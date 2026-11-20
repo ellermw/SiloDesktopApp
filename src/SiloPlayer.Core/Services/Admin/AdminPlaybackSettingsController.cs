@@ -33,6 +33,8 @@ public sealed class AdminPlaybackSettingsController : IDisposable
     private AdminSettingsForm? _form;
     private AdminPlaybackSettingsState _state = new();
     private bool _disposed;
+    // Capability-driven row visibility the page learns after the settings load; unknown means hidden, exactly as the rows themselves render.
+    private bool _supportsTrickplay, _detectionKinds;
     public IReadOnlyList<string> Keys { get; }
     public AdminPlaybackSettingsController(AdminServerSettingsApi api, AdminServerSettingsStore store, AdminMonitorAuthority authority, bool routing)
     {
@@ -44,7 +46,7 @@ public sealed class AdminPlaybackSettingsController : IDisposable
     public async Task OpenAsync()
     {
         MonitorAuthorityLease owner; try { _lifetime.Resume(); owner = _lifetime.Open(); } catch (OperationCanceledException) { Clear(); return; }
-        lock (_gate) { _form?.Discard(); _form = null; _state = new() { Owner = owner, Loading = true }; }
+        lock (_gate) { _form?.Discard(); _form = null; _supportsTrickplay = _detectionKinds = false; _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke(); _store.Invalidate(); await Load(owner, false).ConfigureAwait(false);
     }
     public async Task ReloadAsync(bool preserveDraft)
@@ -85,6 +87,12 @@ public sealed class AdminPlaybackSettingsController : IDisposable
             if (key == "markers.online_storage" && value == "on_demand" && !_state.ManagedByEnv.Contains("markers.lazy_playback")) _form.Set("markers.lazy_playback", "true");
         });
     }
+    /// <summary>Tells the draft which capability-gated rows are visible, so a hidden row's invalid draft cannot block Save.</summary>
+    public void SetVisibilityContext(bool supportsTrickplay, bool detectionKinds)
+    {
+        if (_lifetime.Owner is not { } owner) return;
+        Update(owner, () => { _supportsTrickplay = supportsTrickplay; _detectionKinds = detectionKinds; });
+    }
     public void ApplyPreset(string preset) { foreach (var (key, value) in AdminPlaybackSettingsRules.Preset(preset)) Set(key, value); }
     public void Discard() { if (_lifetime.Owner is { } owner) Update(owner, () => { if (!_state.Saving) _form?.Discard(); }); }
     public async Task SaveAsync()
@@ -119,6 +127,12 @@ public sealed class AdminPlaybackSettingsController : IDisposable
             if (_disposed || !_lifetime.IsCurrent(owner)) return; change();
             if (_form != null)
             {
+                // A draft the admin can no longer see (its row hid when a condition changed) and that fails validation returns to its saved value; a valid hidden draft stays, as on the official page.
+                if (!_state.Saving)
+                {
+                    var current = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(key => key, _form.Get));
+                    foreach (var key in AdminPlaybackSettingsRules.HiddenInvalidKeys(current, _form.DirtyKeys, _supportsTrickplay, _detectionKinds)) _form.Reset(key);
+                }
                 var values = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(key => key, _form.Get));
                 var dirty = Array.AsReadOnly(_form.DirtyKeys.ToArray());
                 _state = _state with { Values = values, PersistedValues = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(key => key, _form.GetPersisted)), DirtyKeys = dirty, RestartRequired = _form.RestartRequired, Errors = AdminPlaybackSettingsRules.Validate(values, dirty) };

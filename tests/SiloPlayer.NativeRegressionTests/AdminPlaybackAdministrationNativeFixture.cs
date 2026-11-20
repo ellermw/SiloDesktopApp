@@ -36,7 +36,8 @@ internal static class AdminPlaybackAdministrationNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         internal int Writes, TaskRuns; internal string? IfMatch, LastBody; internal bool Conflict;
-        internal bool RejectNodePut, DropNodePutAck, FailNodesList, EmptyNodes, DropTaskRunAck;
+        internal bool RejectNodePut, DropNodePutAck, FailNodesList, EmptyNodes, DropTaskRunAck, RefuseTaskRun, RunMarksRunning, HeldTasksStarted;
+        internal TaskCompletionSource? HoldTasks;
         internal string? AddedNode;
         internal string Tasks = """{"items":[{"key":"sync_markers","name":"Sync online markers","state":"idle","last_execution":{"task_key":"sync_markers","status":"failed","completed_at":"2026-11-01T10:00:00Z","error_message":"Synthetic provider unreachable"}},{"key":"detect_intro_markers","name":"Detect markers on this server","state":"idle","last_execution":{"task_key":"detect_intro_markers","status":"cancelled","completed_at":"2026-11-01T11:00:00Z"}},{"key":"contribute_markers","name":"Share detected markers","state":"idle","last_execution":{"task_key":"contribute_markers","status":"completed","completed_at":"2026-11-01T12:00:00Z","result_data":{"submitted":1200,"skipped":3,"invalid":0,"failed":2}}}]}""";
         internal readonly Dictionary<string, string> Values = new() { ["playback.hw_accel"] = "auto", ["playback.transcode_enabled"] = "true", ["allow_4k_transcode"] = "true", ["markers.mode"] = "both", ["markers.online_storage"] = "stored", ["playback.preview_image_width"] = "300", ["playback.trickplay_interval_seconds"] = "10" };
@@ -73,7 +74,14 @@ internal static class AdminPlaybackAdministrationNativeFixture
                 if (path.EndsWith("/run"))
                 {
                     TaskRuns++; if (DropTaskRunAck) throw new HttpRequestException("synthetic lost acknowledgement");
-                    var key = path.Split('/')[^2]; return Json(new { key, name = key, state = "running" });
+                    if (RefuseTaskRun) return Json(new { type = "conflict", status = 409 }, HttpStatusCode.Conflict);
+                    var key = path.Split('/')[^2];
+                    if (RunMarksRunning)
+                    {
+                        var tasks = JsonNode.Parse(Tasks)!; foreach (var item in tasks["items"]!.AsArray()) if (item!["key"]!.GetValue<string>() == key) item["state"] = "running";
+                        Tasks = tasks.ToJsonString();
+                    }
+                    return Json(new { key, name = key, state = "running" });
                 }
                 if (path.EndsWith("/nodes"))
                 {
@@ -99,7 +107,13 @@ internal static class AdminPlaybackAdministrationNativeFixture
             else if (path.EndsWith("/nodes") && FailNodesList) return Json(new { type = "internal", status = 500 }, HttpStatusCode.InternalServerError);
             else if (path.EndsWith("/nodes") && EmptyNodes) return JsonText("{\"items\":[]}");
             else if (path.EndsWith("/nodes")) return JsonText("{\"items\":[" + Node + (AddedNode == null ? "" : "," + AddedNode) + "]}");
-            else if (path.EndsWith("/admin/tasks")) return JsonText(Tasks);
+            else if (path.EndsWith("/admin/tasks"))
+            {
+                // A held answer is the state at the moment the request was received: it goes stale if a run lands while it is parked.
+                var snapshot = Tasks; var hold = HoldTasks; HoldTasks = null;
+                if (hold != null) { HeldTasksStarted = true; await hold.Task.WaitAsync(ct); }
+                return JsonText(snapshot);
+            }
             else body = new { items = Array.Empty<object>() };
             return Json(body);
         }
@@ -149,6 +163,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
             Invoke(Find<Button>(inner, "NodeEdit_fixture-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "edit dialog opened");
             var dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(All(dialog).OfType<ComboBox>().Any(c => AutomationProperties.GetAutomationId(c) == "Node_source_access"), "source access capability shows local/core selector");
+            Check(Find<ComboBox>(dialog, "Node_hw_accel_override").Items.OfType<ComboBoxItem>().Select(item => (string)item.Tag).SequenceEqual(new[] { "inherit", "auto", "qsv", "vaapi", "nvenc", "none" }), "node acceleration override offers the server's enum without VideoToolbox");
             await Capture(dialog, "playback-node-editor.png"); Find<TextBox>(dialog, "Node_name").Text = "Synthetic GPU edited"; await Task.Delay(300);
             Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded, "editor saved and closed");
             Check(server.IfMatch == "\"node-1\"", "node editor sends captured configuration validator");
@@ -163,6 +178,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
             Invoke(Find<Button>(nodes, "NodesAdd_proxy")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "proxy creation dialog opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; Find<TextBox>(dialog, "Node_name").Text = "Created proxy"; Find<TextBox>(dialog, "Node_url").Text = "https://proxy.invalid"; await Task.Delay(300);
             Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded && server.AddedNode != null, "proxy create saved");
+            await Until(() => Field(nodes, "_dialog") == null && NodeIdle(nodes) && All(nodes).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == "NodeDelete_created-node" && b.IsEnabled), "created proxy is settled and its editor fully closed before delete");
             Invoke(Find<Button>(nodes, "NodeDelete_created-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "delete confirmation opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; Invoke(DialogButton(dialog, "Delete")); await Until(() => !dialog.IsLoaded && server.AddedNode == null, "guarded delete accepts empty 204");
             Invoke(Find<Button>(nodes, "NodeRoutingPreset_gpu")); await Until(() => Find<Button>(nodes, "NodeRoutingSave").IsEnabled, "routing preset stages own draft");
@@ -180,9 +196,19 @@ internal static class AdminPlaybackAdministrationNativeFixture
             await Until(() => StateFlag(nodes, "ReviewRequired") && !Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsEnabled, "unknown outcome blocks further writes until reload");
             server.DropNodePutAck = false; Invoke(Find<Button>(nodes, "NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes), "explicit reload reconciles the unknown outcome");
             Check(server.Writes == beforeLost + 1, "unknown outcome was never replayed");
+            // A 412 on the enabled switch is a conflict: the switch returns to the saved value, writes stay blocked, nothing is replayed, and a reload recovers.
+            server.Conflict = true; var beforePrecondition = server.Writes; Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsOn = false;
+            await Until(() => server.Writes == beforePrecondition + 1 && NodeIdle(nodes), "disable answered with a 412 conflict sent once");
+            await Until(() => Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsOn, "conflict keeps the saved enabled value showing");
+            await Until(() => StateFlag(nodes, "ReviewRequired") && !Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsEnabled, "conflict blocks further node writes until reload");
+            await Until(() => All(nodes).OfType<TextBlock>().Any(t => t.Text.Contains("changed on the server")) && Shown(Find<Button>(nodes, "NodesReload")), "conflict is reported with a reload action");
+            server.Conflict = false; Invoke(Find<Button>(nodes, "NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes) && Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsEnabled, "reload after the conflict restores node controls");
+            Check(server.Writes == beforePrecondition + 1, "conflict was never replayed");
+            // A failed background refresh keeps the rows on screen, shows the error and keeps polling (official react-query page); it does not lock the controls.
             server.FailNodesList = true; await ((AdminPlaybackNodesController)Field(nodes, "_controller")!).ReloadAsync();
-            await Until(() => StateFlag(nodes, "ReviewRequired") && Shown(Find<Button>(nodes, "NodesReload")), "node list failure shows the error with a reload action");
-            server.FailNodesList = false; server.EmptyNodes = true; Invoke(Find<Button>(nodes, "NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes), "reload after failure");
+            await Until(() => Shown(Find<Button>(nodes, "NodesReload")) && All(nodes).OfType<TextBlock>().Any(t => t.Text.Contains("could not be refreshed")), "node list refresh failure shows the error with a reload action");
+            Check(!StateFlag(nodes, "ReviewRequired") && Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsEnabled && NodeIdle(nodes), "refresh failure keeps the loaded node and its controls usable");
+            server.FailNodesList = false; server.EmptyNodes = true; Invoke(Find<Button>(nodes, "NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes) && !Shown(Find<Button>(nodes, "NodesReload")), "reload after failure");
             await Until(() => All(nodes).OfType<TextBlock>().Any(t => t.Text == "No transcode nodes yet. Add one to move transcoding off this server."), "empty transcode section is shown");
             await Capture(outer, "playback-nodes-empty.png"); server.EmptyNodes = false;
             AdminShellPage.TryOpenHref("/admin/settings/playback"); await Until(() => inner.Content?.GetType().Name == "AdminPlaybackSettingsPage" && All(inner).OfType<ToggleSwitch>().Any(), "Playback Settings enters the registered page");
@@ -200,6 +226,22 @@ internal static class AdminPlaybackAdministrationNativeFixture
             server.DropTaskRunAck = true; beforeRun = server.TaskRuns; await Until(() => Find<Button>(playback, "PlaybackTaskRun_detect_intro_markers").IsEnabled, "second task can run");
             Invoke(Find<Button>(playback, "PlaybackTaskRun_detect_intro_markers")); await Until(() => server.TaskRuns == beforeRun + 1 && !Find<Button>(playback, "PlaybackTaskRun_detect_intro_markers").IsEnabled, "lost acknowledgement leaves the task marked unconfirmed and is not replayed");
             server.DropTaskRunAck = false;
+            // A definite 4xx refusal means nothing started: the row is not locked as unconfirmed and can be retried.
+            server.RefuseTaskRun = true; beforeRun = server.TaskRuns; await Until(() => Find<Button>(playback, "PlaybackTaskRun_contribute_markers").IsEnabled, "third task can run");
+            Invoke(Find<Button>(playback, "PlaybackTaskRun_contribute_markers")); await Until(() => server.TaskRuns == beforeRun + 1, "refused run sent once");
+            await Until(() => Find<Button>(playback, "PlaybackTaskRun_contribute_markers").IsEnabled, "a refused run leaves the task runnable instead of unconfirmed");
+            Check(server.TaskRuns == beforeRun + 1, "refused run was never replayed"); server.RefuseTaskRun = false;
+            // A task poll sent before a run must not flip the running task back to idle when its older answer arrives.
+            typeof(AdminPlaybackSettingsPage).GetField("_focused", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(playback, true); typeof(AdminPlaybackSettingsPage).GetField("_visible", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(playback, true);
+            await Until(() => Find<Button>(playback, "PlaybackTaskRun_sync_markers").IsEnabled, "first task is idle and can run again");
+            server.RunMarksRunning = true; var heldPoll = new TaskCompletionSource(); server.HoldTasks = heldPoll;
+            var poll = (Task)typeof(AdminPlaybackSettingsPage).GetMethod("RefreshTasks", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(playback, null)!;
+            await Until(() => server.HeldTasksStarted, "task poll is in flight and answered idle");
+            var pendingTasks = (IReadOnlyCollection<string>)Field(Field(playback, "_panel")!, "_pendingTasks")!;
+            beforeRun = server.TaskRuns; Invoke(Find<Button>(playback, "PlaybackTaskRun_sync_markers")); await Until(() => server.TaskRuns == beforeRun + 1 && pendingTasks.Count == 0 && !Find<Button>(playback, "PlaybackTaskRun_sync_markers").IsEnabled, "run lands, is reconciled with the server and the row shows running");
+            heldPoll.SetResult(); await poll;
+            await Task.Delay(300); Check(!Find<Button>(playback, "PlaybackTaskRun_sync_markers").IsEnabled, "the older idle poll answer does not flip the running task back to idle");
+            server.RunMarksRunning = false;
             Find<ToggleSwitch>(playback, "Playback_allow_4k_transcode").IsOn = false;
             await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_playback.prefer_lower_version_transcode")), "4K dependent row hides");
             var mode = Find<ComboBox>(playback, "Playback_markers.mode"); mode.SelectedItem = mode.Items.OfType<ComboBoxItem>().Single(i => (string)i.Tag == "off");
@@ -217,6 +259,13 @@ internal static class AdminPlaybackAdministrationNativeFixture
             await Until(() => !Find<Button>(outer, "PlaybackSave").IsEnabled, "conflicted draft cannot be saved again until reviewed"); Check(server.Writes == beforeConflict + 1, "conflict does not automatically replay");
             server.Conflict = false; Invoke(Find<Button>(playback, "PlaybackReload")); await Until(() => !StateFlag(playback, "Conflict") && !StateFlag(playback, "Loading") && Find<Button>(outer, "PlaybackSave").IsEnabled, "explicit reload preserves draft for review");
             Invoke(Find<Button>(outer, "PlaybackSave")); await Until(() => !Shown(Find<Button>(outer, "PlaybackSave")), "reviewed draft saves after reconciliation");
+            // A hidden row's invalid draft must not keep blocking Save: buffer-ahead hides when throttling goes off.
+            var throttle = Find<ToggleSwitch>(playback, "Playback_enable_transcode_throttle"); Check(throttle.IsOn && Shown(Find<FrameworkElement>(playback, "PlaybackRow_transcode_throttle_seconds")), "throttling defaults on and shows buffer ahead");
+            Find<TextBox>(playback, "Playback_transcode_throttle_seconds").Text = "5";
+            await Until(() => Shown(Find<Button>(outer, "PlaybackSave")) && !Find<Button>(outer, "PlaybackSave").IsEnabled, "invalid buffer ahead blocks Save");
+            throttle.IsOn = false;
+            await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_transcode_throttle_seconds")) && Find<Button>(outer, "PlaybackSave").IsEnabled, "hiding the row drops its unseen error so the throttle change can be saved");
+            Check(Find<ComboBox>(playback, "Playback_playback.hw_accel").Items.OfType<ComboBoxItem>().Any(item => (string)item.Tag == "videotoolbox"), "cluster-wide acceleration still offers VideoToolbox");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await Until(() => All(playback).OfType<TextBox>().All(c => c.Text.Length == 0), "authority retirement clears settings inputs");
         }

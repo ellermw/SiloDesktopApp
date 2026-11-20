@@ -60,7 +60,15 @@ public sealed class AdminPlaybackNodesController : IDisposable
                 Update(owner, () => _state = _state with { Loading = false, Loaded = true, Window = window, Capabilities = capabilities, Error = null, ReviewRequired = false });
             }
             catch (OperationCanceledException) when (!owner.IsCurrent) { }
-            catch { Update(owner, () => _state = _state with { Loading = false, ReviewRequired = true, Error = "Nodes could not be loaded. Reload before editing." }); }
+            catch
+            {
+                // Like the official page, a failed background refresh keeps the rows on screen and keeps polling. Controls stay blocked only when nothing was ever loaded or a write's outcome is still unknown.
+                Update(owner, () => _state = _state with
+                {
+                    Loading = false, ReviewRequired = _state.ReviewRequired || !_state.Loaded,
+                    Error = _state.Loaded && !_state.ReviewRequired ? "Nodes could not be refreshed. Showing the last loaded data." : "Nodes could not be loaded. Reload before editing.",
+                });
+            }
         }
     }
     private async Task<AdminPlaybackNodeCapabilities> ReadCapabilities(MonitorAuthorityLease owner)

@@ -167,7 +167,7 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
         button.Click += (_, _) => AdminShellPage.TryOpenHref(href);
     }
     internal void SetNodeWindow(AdminPlaybackNodeWindow? window) { _nodeWindow = window; Render(); }
-    internal void SetSupport(AdminPlaybackSupport support) { _support = support; _nodeWindow = support.Nodes; RenderTasks(); Render(); }
+    internal void SetSupport(AdminPlaybackSupport support) { _support = support; _nodeWindow = support.Nodes; _controller.SetVisibilityContext(support.Trickplay, support.DetectionKindSettings); RenderTasks(); Render(); }
     internal void SetTasks(IReadOnlyList<AdminPlaybackTask> tasks) { if (_support != null) { _support = _support with { Tasks = tasks }; RenderTasks(); } }
     internal void ReviewTaskOutcomes() { _uncertainTasks.Clear(); RenderTasks(); }
     internal void MarkTaskUncertain(string key) { _uncertainTasks.Add(key); RenderTasks(); }

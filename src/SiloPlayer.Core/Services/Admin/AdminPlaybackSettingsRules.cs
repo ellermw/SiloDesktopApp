@@ -96,6 +96,14 @@ public static class AdminPlaybackSettingsRules
             if (int.TryParse(Get(values, "playback.min_resume_threshold"), out var resume) && int.TryParse(Get(values, "playback.watched_threshold"), out var watched) && resume >= watched) errors["playback.min_resume_threshold"] = "Minimum resume progress must be less than the watched threshold.";
         return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(errors);
     }
+    /// <summary>Dirty keys whose row is hidden by a condition and whose draft would fail validation: nobody can see or correct them, so the draft must not keep blocking Save.</summary>
+    public static IReadOnlyList<string> HiddenInvalidKeys(IReadOnlyDictionary<string, string> values, IReadOnlyCollection<string> dirty, bool supportsTrickplay, bool detectionKinds)
+    {
+        var hidden = dirty.Where(key => !Visible(key, values, supportsTrickplay, detectionKinds)).ToArray();
+        if (hidden.Length == 0) return Array.Empty<string>();
+        var errors = Validate(values, dirty);
+        return Array.AsReadOnly(hidden.Where(errors.ContainsKey).ToArray());
+    }
     public static IReadOnlyList<string> ParseDevices(string? value) => Array.AsReadOnly((value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.Ordinal).ToArray());
     public static string ToggleDevice(string value, string path, IReadOnlyList<string> detected)
     {

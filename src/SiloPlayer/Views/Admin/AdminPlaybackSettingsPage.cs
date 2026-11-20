@@ -79,11 +79,12 @@ public sealed partial class AdminPlaybackSettingsPage : Page, IAdminGutterScroll
     {
         var controller = _controller; var owner = controller?.State.Owner;
         if (!_active || !_focused || !_visible || _taskRefreshing || _supportCancellation != null || _panel?.IsDialogOpen == true || owner?.IsCurrent != true || App.Services.GetService<SiloPlayer.Services.PlayerService>()?.IsLoading == true) return;
-        _taskRefreshing = true;
+        _taskRefreshing = true; var sequence = _supportSequence;
         try
         {
             var tasks = await App.Services.GetRequiredService<AdminPlaybackAdministrationApi>().ListMarkerTasksAsync(owner, owner.Token);
-            if (_active && owner.IsCurrent && ReferenceEquals(controller, _controller) && ReferenceEquals(owner, controller!.State.Owner)) _panel?.SetTasks(tasks);
+            // A run or a support read that began after this poll was sent owns the newer state; its answer must not be overwritten by this older one.
+            if (_active && owner.IsCurrent && ReferenceEquals(controller, _controller) && ReferenceEquals(owner, controller!.State.Owner) && sequence == _supportSequence) _panel?.SetTasks(tasks);
         }
         catch { /* Retain last observations; manual Refresh remains available. No mutation is replayed. */ }
         finally { _taskRefreshing = false; }
@@ -91,8 +92,15 @@ public sealed partial class AdminPlaybackSettingsPage : Page, IAdminGutterScroll
     private async Task RunTask(string key)
     {
         var owner = _controller?.State.Owner; if (owner?.IsCurrent != true) return;
+        _supportSequence++; // Any task poll already in flight predates this run and must not apply.
         try { await App.Services.GetRequiredService<AdminPlaybackAdministrationApi>().RunMarkerTaskAsync(owner, key, owner.Token); }
         catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
+        catch (ApiException refusal) when (refusal.StatusCode is >= 400 and < 500 && refusal.StatusCode != 408)
+        {
+            // A definite refusal (for example 409, already running elsewhere) means nothing started: say so, refresh the row from the server and let the admin retry.
+            if (owner.IsCurrent) { App.Services.GetService<SiloPlayer.Services.ToastService>()?.Error("The server refused to run this task. Review its current state and try again."); await RefreshSupport(); }
+            return;
+        }
         catch { if (owner.IsCurrent) { _panel?.MarkTaskUncertain(key); App.Services.GetService<SiloPlayer.Services.ToastService>()?.Error("The task outcome is unconfirmed. Review task history before running it again."); } return; }
         await RefreshSupport();
     }
