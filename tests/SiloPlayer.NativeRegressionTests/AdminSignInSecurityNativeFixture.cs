@@ -192,7 +192,7 @@ internal static class AdminSignInSecurityNativeFixture
         await Until(() => outer.Content is AdminShellPage);
         var shell = (AdminShellPage)outer.Content; var frame = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!;
         await Until(() => frame.Content?.GetType().Name == pageName && ((FrameworkElement)frame.Content).IsLoaded);
-        Check(frame.ContentTransitions == null || frame.ContentTransitions.Count == 0, "no navigation slide"); return (FrameworkElement)frame.Content;
+        Check(frame.ContentTransitions == null || frame.ContentTransitions.Count == 0, "no navigation slide"); Scope = (FrameworkElement)frame.Content; return Scope;
     }
     private static async Task<ContentDialog> Dialog(FrameworkElement page)
     {
@@ -213,7 +213,13 @@ internal static class AdminSignInSecurityNativeFixture
     {
         yield return root; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child;
     }
-    private static async Task Until(Func<bool> predicate) { for (var i = 0; i < 240; i++) { if (predicate()) return; await Task.Delay(25); } throw new TimeoutException("Sign-in & Security fixture readiness"); }
+    private static FrameworkElement? Scope;
+    private static async Task Until(Func<bool> predicate, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
+    {
+        for (var i = 0; i < 240; i++) { if (predicate()) return; await Task.Delay(25); }
+        var texts = Scope == null ? "" : string.Join(" | ", Descendants(Scope).OfType<TextBlock>().Select(t => t.Text).Where(t => t.Length > 0).Take(120));
+        throw new TimeoutException($"Sign-in & Security fixture readiness at line {line}: {texts}");
+    }
     private static void Check(bool value, string name) { Program.Log((value ? "PASS " : "FAIL ") + name); if (!value) throw new InvalidOperationException(name); }
     private static async Task Capture(FrameworkElement root, string name)
     {
