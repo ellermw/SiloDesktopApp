@@ -1,6 +1,6 @@
 # November 20 — Autoscan Activity aligned with the official inspector sheet
 
-`/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `f36e3bd4a`; version stamps unchanged) was
+`/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `44c8927a2`; version stamps unchanged by this branch) was
 completed and rebuilt against official Silo Server `88b825d57e4b2296050fda69eaf619eefbf208d1`. The earlier source targeted `217ff25abc`; upstream
 `e3887af09` (#4631) then replaced the page's inline poll details with a paginated inspector sheet, so the native page now has the poll table with
 Details buttons and badges, the inspector (Paths / Scans created tabs, search, outcome and status chips, pagination, scan-id jump, bounded scrolling error,
@@ -19,7 +19,17 @@ programmatic search reset sent the inspector pager back to page one). One earlie
 Final run `autoact3-final-r1` (stage final, committed source `24f5cc9df`, lane `D:/SiloPlayer-build/admin-completion-lane-b`): 73 focused and 10,023 full unit tests passed with no failures or skips, app build,
 publish and native host build passed, and the `admin-autoscan-activity` (62 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
 native selectors passed; source and payload seals verified. Not observed: live-server/phone interoperability, all-DPI and screen-reader behaviour, a fixture-driven row click, and visual inspection of the
-new pager-gap and focus states beyond the fixture checks. Nothing was pushed.
+new pager-gap and focus states beyond the fixture checks.
+
+Final run on current Beta: `autoact-lead-final-r5` on merge commit `f76e73d14b32279ee38a8cc34789f601166a1cad` (Beta `44c8927a2`, the `1.2.1257-beta.1` stamp on top of the
+merged Collections and Sign-in pages): 73 focused and 10,197 full unit tests passed with no failures or skips; app build, publish and native host build passed; native
+selectors `admin-autoscan-activity` (62 checks), `admin-playback-administration` (99), `admin-requests-management` (37), `admin-manage-library-settings` (84),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified. The merge of Beta `fb8cb17cf`
+(`8ba4b10f5`) was committed with conflict markers in five files by mistake and corrected in the next commit (`1548a3552`, both sides kept); every run named here is on
+source after that correction. Two earlier runs of this branch stopped on native groups of pages already merged into Beta (`admin-collections` in
+`autoact-lead-final-r1`, `admin-signin-security` in `autoact-lead-final-r3`) after this page's own group had passed; on pure Beta `fb8cb17cf` four such groups fail
+(`admin-collections`, `admin-signin-security`, `admin-requests-corrections`, `admin-configure-providers`), independently of this branch, so they were left out of the
+final run and are being repaired separately.
 
 # November 20 — Collections (Manage > Libraries > Collections) built and verified
 
