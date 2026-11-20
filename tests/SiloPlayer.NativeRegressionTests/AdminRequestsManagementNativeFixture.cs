@@ -31,7 +31,7 @@ internal static partial class AdminRequestsManagementNativeFixture
         internal bool Corrections, MissingSeriesFallback, Downloading;
         internal bool StoredPluginSecret, FractionalNumbers, PreviewOverrides, RulesForReorder, LoseReorder, FailConfigurationReads, QueuedProgress, ProgressOnTarget;
         internal bool ConditionalPluginSecret, OverlapPreviews, HoldPreviewOptions, LoseCreate, CreateWithoutIdentity, FailEarlierPreview;
-        internal bool FailQueueReads, RejectLayoutWrites;
+        internal bool FailQueueReads, RejectLayoutWrites, PagedQueue;
         internal readonly TaskCompletionSource<bool> PreviewReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource<bool> ReleasePreviewRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool _previewWaitingOptions;
@@ -51,6 +51,13 @@ internal static partial class AdminRequestsManagementNativeFixture
             {
                 if (path == "/api/v2/admin/requests") QueueReads++;
                 if (path == "/api/v2/admin/requests" && FailQueueReads) return Json("{}", HttpStatusCode.ServiceUnavailable);
+                if (path == "/api/v2/admin/requests" && PagedQueue)
+                {
+                    const string row = "{\"id\":\"7\",\"media_type\":\"movie\",\"tmdb_id\":123,\"title\":\"Synthetic Request\",\"status\":\"pending\",\"outcome\":\"active\",\"targets\":[]}";
+                    return Json(request.RequestUri!.Query.Contains("cursor=synthetic-next", StringComparison.Ordinal)
+                        ? "{\"items\":[" + row.Replace("\"id\":\"7\"", "\"id\":\"8\"") + "],\"page\":{\"has_more\":false}}"
+                        : "{\"items\":[" + row + "],\"page\":{\"has_more\":true,\"next_cursor\":\"synthetic-next\"}}");
+                }
                 if (request.Method == HttpMethod.Post && path == "/api/v2/admin/request-integrations" && LoseCreate)
                 {
                     LoseCreate = false; FailConfigurationReads = true;

@@ -124,7 +124,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
         catch (Exception error) { if (Current(owner) && generation == _generation) { _content.Children.Clear(); Notice(AdminRequestRules.Error(error)); _content.Children.Add(Button("Try again", "AdminRequestsRetry", ReloadAsync)); } if (_pendingWriteReview != null) throw; }
     }
     private bool _readNotice;
-    /// <summary>A read notice reports a failed read, so the next refresh or successful read replaces it. Every other notice stays until a load, review or successful write.</summary>
+    /// <summary>A read notice reports a failed read, so the next button action, refresh or successful read replaces it. Every other notice stays until a load, review or successful write.</summary>
     private void Notice(string message, bool read = false) { _readNotice = read && message.Length > 0; _notice.Text = message; _notice.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible; }
     private void ClearReadNotice() { if (_readNotice) Notice(""); }
     private static string S(string key, object? args = null) => AdminRequestsText.T(key, args);
@@ -135,6 +135,8 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
         button.Click += async (_, _) =>
         {
             if (!Current(owner) || _busy) return;
+            // An earlier failed read's notice ends here, so a retry that succeeds leaves none and one that fails reports its own.
+            ClearReadNotice();
             button.IsEnabled = false;
             try { await action(); }
             catch (OperationCanceledException) { }

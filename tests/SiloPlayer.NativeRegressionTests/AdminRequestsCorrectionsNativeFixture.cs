@@ -511,6 +511,23 @@ internal static partial class AdminRequestsManagementNativeFixture
             await Task.Delay(100);
             Check(Find(frame, "AdminRequestServersRetry") == null && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, "a successful Settings retry loads the servers and clears the failure notice");
         });
+        await Case("failed Load more is cleared by a successful retry", async (server, shell, frame) =>
+        {
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestQueue));
+            await Until(() => Find(frame, "AdminRequestLoadMore") != null);
+            // The account-name read draws the rows once more, so the button is looked up again after it settles.
+            await Task.Delay(200);
+            var reads = server.QueueReads;
+            server.FailQueueReads = true;
+            Click(Find(frame, "AdminRequestLoadMore")!);
+            await Until(() => server.QueueReads > reads && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible } && Find(frame, "AdminRequestLoadMore") is Button { IsEnabled: true });
+            Check(Find(frame, "AdminRequestDetails-7") != null && Find(frame, "AdminRequestQueueRetry") == null, "a failed Load more reports the failure and keeps the loaded rows and the continuation");
+            server.FailQueueReads = false;
+            Click(Find(frame, "AdminRequestLoadMore")!);
+            await Until(() => Find(frame, "AdminRequestDetails-8") != null);
+            await Task.Delay(100);
+            Check(Find(frame, "AdminRequestDetails-7") != null && Find(frame, "AdminRequestLoadMore") == null && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, "a successful Load more retry appends the next page and clears the failure notice");
+        }, server => server.PagedQueue = true);
         if (failed > 0) throw new InvalidOperationException(failed + " Requests correction scenarios failed.");
     }
 
