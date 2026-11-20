@@ -38,6 +38,13 @@ internal static class AdminLibrarySettingsNativeFixture
         Program.Log("STEP: " + label);
     }
 
+    /// <summary>Records a check whose rendering follows the controller state by a queued dispatcher turn, allowing that turn to run.</summary>
+    private static async Task Eventually(Func<bool> condition, string label, int milliseconds = 3000)
+    {
+        for (var index = 0; index < milliseconds / 25 && !condition(); index++) await Task.Delay(25);
+        Check(condition(), label);
+    }
+
     private sealed class Server : HttpMessageHandler
     {
         internal readonly Dictionary<string, string> Values = new()
@@ -188,7 +195,7 @@ internal static class AdminLibrarySettingsNativeFixture
             Check(Select(page, R.SubtitleSyncExecution).SelectedValue?.ToString() == "transcode_nodes_only", "subtitle execution loads its saved node-only mode");
             Check(Descendants(page).OfType<TextBlock>().Any(text => text.Text == "No transcode nodes are connected"),
                 "saved node-only subtitle sync warns when the known node list has none");
-            Check(IsEffectivelyVisible(Input(page, R.SubtitleSyncNodeCapacity)) && Input(page, R.SubtitleSyncNodeCapacity).Text == "2",
+            await Eventually(() => IsEffectivelyVisible(Input(page, R.SubtitleSyncNodeCapacity)) && Input(page, R.SubtitleSyncNodeCapacity).Text == "2",
                 "node capacity stays visible for a node-backed sync mode");
             var executionItems = Select(page, R.SubtitleSyncExecution).Items.OfType<ComboBoxItem>().ToDictionary(item => item.Tag!.ToString()!);
             Check(executionItems["transcode_nodes_only"].IsEnabled && !executionItems["prefer_transcode_nodes"].IsEnabled,
@@ -225,7 +232,7 @@ internal static class AdminLibrarySettingsNativeFixture
 
             Input(page, R.ImageWorkers).Text = "257";
             await Until(() => controller.State.Errors.ContainsKey(R.ImageWorkers), "invalid image worker count");
-            Check(!Button(page, "LibrarySettingsSave").IsEnabled && Descendants(page).OfType<TextBlock>().Any(text => text.Text == "Enter a whole number from 0 to 256."),
+            await Eventually(() => !Button(page, "LibrarySettingsSave").IsEnabled && Descendants(page).OfType<TextBlock>().Any(text => text.Text == "Enter a whole number from 0 to 256." && IsEffectivelyVisible(text)),
                 "invalid numeric text is explained inline and blocks Save");
             Input(page, R.ImageWorkers).Text = "0";
             await Until(() => !controller.State.Errors.ContainsKey(R.ImageWorkers), "image worker repaired");
@@ -328,7 +335,7 @@ internal static class AdminLibrarySettingsNativeFixture
             Input(page, R.SubtitleSyncNodeCapacity).Text = "3";
             Select(page, R.SubtitleSyncExecution).SelectedValue = "local";
             await Until(() => controller.State.DirtyKeys.Contains(R.SubtitleSyncExecution) && controller.State.DirtyKeys.Contains(R.SubtitleSyncNodeCapacity), "local sync with staged capacity");
-            Check(IsEffectivelyVisible(Input(page, R.SubtitleSyncNodeCapacity)) && Input(page, R.SubtitleSyncNodeCapacity).Text == "3",
+            await Eventually(() => IsEffectivelyVisible(Input(page, R.SubtitleSyncNodeCapacity)) && Input(page, R.SubtitleSyncNodeCapacity).Text == "3",
                 "an unsaved capacity stays visible after placement moves off the nodes");
             controller.Discard(); await Until(() => controller.State.DirtyKeys.Count == 0, "capacity draft discarded");
             await Until(() => Select(page, R.SubtitleSyncExecution).SelectedValue?.ToString() == "transcode_nodes_only", "execution restored");
