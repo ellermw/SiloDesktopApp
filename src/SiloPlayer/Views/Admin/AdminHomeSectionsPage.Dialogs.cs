@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
@@ -34,7 +35,7 @@ public sealed partial class AdminHomeSectionsPage
         _dialog = dialog;
         using var cancelled = owner.Token.Register(() => DispatcherQueue.TryEnqueue(() => { if (ReferenceEquals(_dialog, dialog)) dialog.Hide(); }));
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary; }
-        catch (InvalidOperationException) { return false; }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { return false; }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
 

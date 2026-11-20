@@ -4,6 +4,7 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
@@ -167,14 +168,25 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         _pages.IsEnabled = !state.Busy && current && _editor == null;
         // An in-flight drag retains its captured complete snapshot. Any replacement invalidates it.
         if (!ReferenceEquals(_dragSnapshot, state.Snapshot)) _dragSnapshot = null;
-        _rows.Clear();
+        var fresh = new List<RowView>();
+        var existing = _rows.ToDictionary(view => view.Row.Id, StringComparer.Ordinal);
         var banner = rows.FirstOrDefault(row => row.Featured && row.Enabled)?.Id;
         foreach (var row in rows)
-            _rows.Add(new(row, _selectMode, _selection.Contains(row.Id), canWrite, row.Id == banner, DescribeRow(row)));
+            {
+                var view = existing.TryGetValue(row.Id, out var known) ? known : new RowView();
+                view.Update(row, _selectMode, _selection.Contains(row.Id), canWrite, row.Id == banner, DescribeRow(row)); fresh.Add(view);
+            }
+        // Rows keep their views, so bindings refresh in place and every switch and name shows the saved value after any outcome.
+        foreach (var gone in _rows.Where(view => !fresh.Contains(view)).ToArray()) _rows.Remove(gone);
+        for (var i = 0; i < fresh.Count; i++)
+        {
+            if (i < _rows.Count && ReferenceEquals(_rows[i], fresh[i])) continue;
+            if (_rows.Contains(fresh[i])) _rows.Move(_rows.IndexOf(fresh[i]), i); else _rows.Insert(i, fresh[i]);
+        }
         _selection.IntersectWith(rows.Select(row => row.Id)); RenderSelection();
         if (_editor != null)
         {
-            RefreshSave(); _editorFields.IsEnabled = !state.Busy;
+            RefreshSave(); _editorScroll.IsEnabled = !state.Busy;
             _editorBack.IsEnabled = _editorDelete.IsEnabled = canWrite;
             if (state.Error != null && state.Failure != AdminHomeSectionsFailure.None) _editorNotice.Text = state.Error;
         }
@@ -199,7 +211,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
     {
         if (args.Item is not RowView row || args.ItemContainer.ContentTemplateRoot is not FrameworkElement root) return;
         AutomationProperties.SetName(args.ItemContainer, row.Title);
-        if (root.FindName("MetaText") is TextBlock meta) row.FillMeta(meta);
+        row.AttachRoot(root);
     }
 
     private void MoreClick(object sender, RoutedEventArgs args)
@@ -371,14 +383,37 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         item.Click += async (_, _) => { try { await action(); } catch (Exception) { if (_active) _status.Text = T("web.admin.homeRows.page.loadRowsFailed"); } }; menu.Items.Add(item);
     }
 
-    /// <summary>One list row: the data its template binds to. The description is rebuilt as styled runs when the container is realized.</summary>
+    /// <summary>One list row: the data its template binds to. One view per row id; Update raises a full refresh so every binding follows the saved row.</summary>
     [Microsoft.UI.Xaml.Data.Bindable]
-    public sealed record RowView(AdminHomeSection Row, bool SelectMode, bool Selected, bool CanWrite, bool Banner, IReadOnlyList<AdminHomeSectionPart> Parts)
+    public sealed class RowView : System.ComponentModel.INotifyPropertyChanged
     {
+        private FrameworkElement? _root;
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+        public AdminHomeSection Row { get; private set; } = new();
+        public bool SelectMode { get; private set; }
+        public bool Selected { get; private set; }
+        public bool CanWrite { get; private set; }
+        public bool Banner { get; private set; }
+        public IReadOnlyList<AdminHomeSectionPart> Parts { get; private set; } = [];
+
+        public void Update(AdminHomeSection row, bool selectMode, bool selected, bool canWrite, bool banner, IReadOnlyList<AdminHomeSectionPart> parts)
+        {
+            Row = row; SelectMode = selectMode; Selected = selected; CanWrite = canWrite; Banner = banner; Parts = parts;
+            // An empty name refreshes every bound property, even those whose value did not change (a switch the admin flipped goes back to the saved value).
+            PropertyChanged?.Invoke(this, new(string.Empty));
+            Sync();
+        }
+        public void AttachRoot(FrameworkElement root) { _root = root; Sync(); }
+        /// <summary>Puts the saved values back into the realized controls: a binding does not push an unchanged value over what the admin just flipped.</summary>
+        private void Sync()
+        {
+            if (_root == null) return;
+            if (_root.FindName("MetaText") is TextBlock meta) FillMeta(meta);
+            if (_root.FindName("ShownSwitch") is ToggleSwitch toggle && toggle.IsOn != Row.Enabled) toggle.IsOn = Row.Enabled;
+            if (_root.FindName("SelectBox") is CheckBox box && box.IsChecked != Selected) box.IsChecked = Selected;
+        }
         public string Title => RowTitle(Row);
         public bool Shown => Row.Enabled;
-        public string MetaPlain => Row.Enabled ? string.Concat(Parts.Select(part => part.Text)) + TitleCountSuffix : Title + AdminHomeSectionsDescription.CollapsedText();
-        public Visibility TitleVisibility => Row.Enabled ? Visibility.Visible : Visibility.Collapsed;
         public string ShownAccessibleLabel => AdminHomeSectionsDescription.SwitchLabel(Title, Row.Enabled);
         public string MenuLabel => T("web.home.rows.page.rowMenu", new { row = Title });
         public string SelectLabel => T("web.admin.homeRows.select.rowLabel", new { title = Title });
@@ -386,8 +421,9 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         public Visibility HeroVisibility => Row.Featured ? Visibility.Visible : Visibility.Collapsed;
         public Visibility SelectionVisibility => SelectMode ? Visibility.Visible : Visibility.Collapsed;
         public Visibility GripVisibility => SelectMode ? Visibility.Collapsed : Visibility.Visible;
+        public Visibility TitleVisibility => Row.Enabled ? Visibility.Visible : Visibility.Collapsed;
         private string TitleCountSuffix => !AdminHomeSectionsKinds.HoldsCollections(Row.SectionType) && Row.ItemLimit > 0 ? " · " + AdminHomeSectionsDescription.TitleCount(Row.ItemLimit) : "";
-        public void FillMeta(TextBlock meta)
+        private void FillMeta(TextBlock meta)
         {
             meta.Inlines.Clear();
             if (!Row.Enabled)

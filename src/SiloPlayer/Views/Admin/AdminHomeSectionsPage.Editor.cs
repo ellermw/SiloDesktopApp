@@ -18,12 +18,10 @@ public sealed partial class AdminHomeSectionsPage
     private Grid? _editorOverlay;
     private Border? _editor;
     private StackPanel _editorFields = new() { Spacing = 16 };
-    private readonly TextBlock _editorTitle = U.Text("", 24);
-    private readonly TextBlock _editorNotice = U.Text("", 13);
-    private readonly TextBlock _editorFooter = U.Text("", 12, true);
-    private readonly Button _editorSave = Action("Save", "HomeSectionSave");
-    private readonly Button _editorBack = Action("All rows", "HomeSectionBack");
-    private readonly Button _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
+    private ScrollViewer _editorScroll = new();
+    // Created fresh for every editor, so no control is ever added to a second parent.
+    private TextBlock _editorTitle = U.Text("", 24), _editorNotice = U.Text("", 13), _editorFooter = U.Text("", 12, true);
+    private Button _editorSave = Action("Save", "HomeSectionSave"), _editorBack = Action("All rows", "HomeSectionBack"), _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
     private AdminHomeSectionDraft? _draft, _original;
     private AdminHomeSectionSession? _session;
     private MonitorAuthorityLease? _editorOwner;
@@ -66,6 +64,8 @@ public sealed partial class AdminHomeSectionsPage
     private void BeginEditor()
     {
         _dialogRevision++; _editorOwner = _controller!.State.Owner;
+        _editorTitle = U.Text("", 24); _editorNotice = U.Text("", 13); _editorFooter = U.Text("", 12, true);
+        _editorSave = Action("Save", "HomeSectionSave"); _editorBack = Action("All rows", "HomeSectionBack"); _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
         _editorReads = CancellationTokenSource.CreateLinkedTokenSource(_editorOwner!.Token);
         _editorDirty = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear();
         foreach (var pair in _collectionNames) if (pair.Value.Title != null) _choiceLabels[pair.Key] = pair.Value.Title;
@@ -80,18 +80,16 @@ public sealed partial class AdminHomeSectionsPage
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var header = new StackPanel { Spacing = 8 }; header.Children.Add(_editorTitle); header.Children.Add(_editorNotice); layout.Children.Add(header);
         _editorFields = new() { Spacing = 16 };
-        var scroller = new ScrollViewer { Content = _editorFields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var scroller = _editorScroll = new ScrollViewer { Content = _editorFields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetRow(scroller, 1); layout.Children.Add(scroller);
         var footer = new StackPanel { Spacing = 8 };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var cancel = Action(AdminHomeSectionsText.T("common.cancel"), "HomeSectionCancel"); cancel.Click += async (_, _) => { if (await CanLeaveAsync()) CloseEditor(); };
-        _editorSave.Click -= EditorSaveClick; _editorSave.Click += EditorSaveClick;
-        _editorBack.Click -= EditorBackClick; _editorBack.Click += EditorBackClick;
-        _editorDelete.Click -= EditorDeleteClick; _editorDelete.Click += EditorDeleteClick;
+        _editorSave.Click += EditorSaveClick; _editorBack.Click += EditorBackClick; _editorDelete.Click += EditorDeleteClick;
         buttons.Children.Add(_editorBack); buttons.Children.Add(_editorDelete); buttons.Children.Add(cancel); buttons.Children.Add(_editorSave);
         footer.Children.Add(_editorFooter); footer.Children.Add(buttons);
         Grid.SetRow(footer, 2); layout.Children.Add(footer); _editor.Child = layout; _editorOverlay.Children.Add(_editor); _root.Children.Add(_editorOverlay);
-        _body.IsEnabled = false; Fit(); Render();
+        _scroll.IsEnabled = false; Fit(); Render();
     }
 
     private async void EditorBackClick(object sender, RoutedEventArgs args)
@@ -174,12 +172,8 @@ public sealed partial class AdminHomeSectionsPage
         _dialogRevision++; _previewRevision++; _pickerRevision++;
         _editorReads?.Cancel(); _editorReads?.Dispose(); _editorReads = null;
         if (_editorOverlay != null) _root.Children.Remove(_editorOverlay);
-        // These controls are reused in the next editor; detach them from the old visual tree.
-        if (_editorSave.Parent is Panel footer) footer.Children.Clear();
-        if (_editorFooter.Parent is Panel footerHost) footerHost.Children.Clear();
-        if (_editorTitle.Parent is Panel header) header.Children.Clear();
         _editorFields.Children.Clear(); _editor = null; _editorOverlay = null; _draft = null; _original = null; _session = null; _editorOwner = null;
-        _editorDirty = false; _pickerOnly = false; _fieldErrors.Clear(); _body.IsEnabled = true; _choiceLabels.Clear(); _ruleCapabilities = null; _seasonalCatalog = null;
+        _editorDirty = false; _pickerOnly = false; _fieldErrors.Clear(); _scroll.IsEnabled = true; _choiceLabels.Clear(); _ruleCapabilities = null; _seasonalCatalog = null;
         _linkedCollection = false;
         if (_active) { _add.IsEnabled = _controller?.CanWrite == true; _more.IsEnabled = _controller?.CanWrite == true; _pages.IsEnabled = _controller?.State is { Busy: false, Owner.IsCurrent: true }; }
         if (_active && _add.IsLoaded && _add.IsEnabled) _add.Focus(FocusState.Programmatic);

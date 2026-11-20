@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 using U = SiloPlayer.Controls.AdminSettingsUi;
 
 namespace SiloPlayer.Views.Admin;

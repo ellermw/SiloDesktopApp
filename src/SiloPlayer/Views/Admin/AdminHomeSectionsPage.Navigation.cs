@@ -133,7 +133,7 @@ public sealed partial class AdminHomeSectionsPage
         RenderForm();
     }
 
-    private bool CanReturn => _linkedCollection && _returnPath != null && AdminRouteCatalog.TryResolve(_returnPath, out var target) && target.Request != null && AdminShellPage.CanOpen(target.Request);
+    private bool CanReturn => _linkedCollection && _returnPath != null && AdminRouteCatalog.TryResolve(_returnPath, out var target) && !target.IsCatchAll && target.Request is { Route: AdminRoute.Collections } request && AdminShellPage.CanOpen(request);
     private async Task ReturnToCollectionAsync()
     { if (CanReturn && await CanLeaveAsync()) { var path = _returnPath!; CloseEditor(); AdminShellPage.TryOpenHref(path); } }
 
