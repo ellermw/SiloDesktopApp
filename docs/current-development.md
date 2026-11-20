@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # November 17 — Configure Sign-in & Security source candidate
 
 Uncommitted source on `t3/admin-signin-security`, exact Beta base
@@ -11,7 +10,9 @@ runtime or mutex; RED/GREEN, rendered parity and live interoperability remain
 unobserved. Test-only/production patches and exact coordinator acceptance steps:
 [scoped handoff](parity/admin-sign-in-security-20261117.md). No commit/push/PR,
 generated build outputs, installer or installed-player action.
-=======
+
+---
+
 # November 17 — Configure Integrations verified Beta increment
 
 AI, Recommendations and Compatibility are implemented in the registered native shell,
@@ -242,7 +243,6 @@ feature commit/non-draft Beta PR hands subsequent review/QA/fixes to the pipelin
 
 ---
 
->>>>>>> origin/beta
 
 # November 16 - Admin Manage Libraries for separate Beta submission
 
