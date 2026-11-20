@@ -159,7 +159,7 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             await Until(() => Find<ToggleSwitch>(shell, "AutoscanOn_original") is { IsOn: true, IsEnabled: true });
             Check(server.Sources.Single(s => s.Id == "original").Enabled && page.Controller.State.Error?.Contains("could not be confirmed") == true, "a lost enable switch write reports the unknown outcome and the switch follows the saved value");
 
-            server.FailSources = true; await page.Controller!.ReloadAsync(); await Until(() => Find<Button>(shell, "AutoscanRetry")?.Visibility == Visibility.Visible);
+            server.FailSources = true; await page.Controller!.ReloadAsync(); await Until(() => page.Controller.State is { Stale: true, Loading: false }); await Task.Delay(120);
             Check(Find<FrameworkElement>(shell, "AutoscanSource_original") != null && !Need<Button>(shell, "AutoscanEdit_original").IsEnabled, "failed refresh retains stale rows and disables replacement writes");
             server.FailSources = false; await Invoke(Need<Button>(shell, "AutoscanRetry")); await Settled(page);
             window.AppWindow.ResizeClient(new(800, 600)); await Task.Delay(150); await Capture(shell, "autoscan-sources-compact.png");
