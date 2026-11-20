@@ -118,7 +118,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
             T("enabled.confirmText", new { name = reviewed.Value.Name, state = AdminPolicyPresentation.EnabledState(reviewed), target = targetState }), T("enabled.confirm", new { target = targetState }));
         if (confirmed && ReferenceEquals(owner, Controller.Owner)) await Controller.ApplyToggleAsync(reviewed, target, true); else Controller.CancelToggle();
     }
-    private static string FormatDate(string value) => DateTimeOffset.TryParse(value, out var date) ? date.ToLocalTime().ToString("g") : value;
+    private static string FormatDate(string value) => DateTimeOffset.TryParse(value, out var date) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(date) : value;
     private async Task CreateAsync(string domain)
     {
         var name = U.Input(T("overrides.nameLabel", new { domain = Domain(domain) }), "PolicyName", T("overrides.namePlaceholderExample", new { example = T("domain." + domain + ".example") })); name.MaxLength = 500;

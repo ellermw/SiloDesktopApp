@@ -60,7 +60,7 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
             more.Click += async (_, _) => await Controller.MoreAccountsAsync(); _ui.Fields.Children.Add(more);
         }
     }
-    private static string Date(string value) => DateTimeOffset.TryParse(value, out var date) ? date.ToLocalTime().ToString("g") : value;
+    private static string Date(string value) => DateTimeOffset.TryParse(value, out var date) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(date) : value;
     private static Grid Row(string[] values, FrameworkElement? actions)
     {
         var row = new Grid { ColumnSpacing = 12, Padding = new(12), BorderThickness = new(0, 0, 0, 1), BorderBrush = U.Brush("BorderBrush") };
