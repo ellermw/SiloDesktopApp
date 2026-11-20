@@ -22,7 +22,7 @@ public sealed class AdminResourceFollowUpException(string key, Exception inner) 
 public partial class SiloApiClient
 {
     private static readonly HttpRequestOptionsKey<bool> AdminResourceSensitiveOption = new("SiloPlayer.AdminResourceSensitive");
-    /// <summary>Bounded, once-only acting-admin transport; no authentication replay or mutating retry.</summary>
+    /// <summary>Bounded acting-admin transport. A read refused for an expired access token refreshes once and is retried; a write is sent once, with no authentication replay or mutating retry.</summary>
     internal async Task<AdminResourceResponse> AdminResourceSendAsync(MonitorAuthorityLease lease, HttpMethod method, string path,
         object? body = null, string? etag = null, CancellationToken ct = default)
     {
@@ -36,7 +36,7 @@ public partial class SiloApiClient
         var write = method != HttpMethod.Get;
         try
         {
-            using var response = await SendWithRetryAsync(request, deadline.Token, allowTokenRefresh: false).ConfigureAwait(false);
+            using var response = await SendWithRetryAsync(request, deadline.Token, allowTokenRefresh: method == HttpMethod.Get).ConfigureAwait(false);
             lease.ThrowIfRetired();
             var bytes = await MonitorLogsReadBoundedAsync(response.Content, lease, 2 * 1024 * 1024, deadline.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)

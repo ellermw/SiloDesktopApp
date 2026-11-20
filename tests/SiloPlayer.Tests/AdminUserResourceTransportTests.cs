@@ -55,6 +55,32 @@ public sealed class AdminUserResourceTransportTests
     }
 
     [Fact]
+    public async Task AReadRefusedForAnExpiredTokenRefreshesOnceAndIsRetriedButAWriteIsNeverReplayed()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client); var refreshes = 0;
+        kit.Client.SetTokenRefresher(_ => { refreshes++; return Task.FromResult(true); });
+        kit.Http.Respond = (_, _) => Task.FromResult(refreshes == 0 ? Reply("{}", HttpStatusCode.Unauthorized, null) : Reply(Group));
+        var editor = await api.GetGroupAsync(lease, "2");
+        Assert.True(editor.CanWrite); Assert.Equal(1, refreshes);
+        Assert.Equal(["GET /api/v2/admin/access-groups/2", "GET /api/v2/admin/access-groups/2"], kit.Http.Requests);
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("{}", HttpStatusCode.Unauthorized, null));
+        var refusal = await Assert.ThrowsAsync<ApiException>(() => api.DeleteGroupAsync(lease, editor));
+        Assert.Equal(401, refusal.StatusCode); Assert.Equal(1, refreshes); Assert.Equal(3, kit.Http.Requests.Count); // the write is sent once and refreshes nothing
+    }
+
+    [Fact]
+    public async Task AReadStillRefusedAfterTheRefreshIsAnOrdinaryFailureAndIsNotRetriedAgain()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client); var refreshes = 0;
+        kit.Client.SetTokenRefresher(_ => { refreshes++; return Task.FromResult(true); });
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("{}", HttpStatusCode.Unauthorized, null));
+        var refusal = await Assert.ThrowsAsync<ApiException>(() => api.GetGroupAsync(lease, "2"));
+        Assert.Equal(401, refusal.StatusCode); Assert.Equal(1, refreshes); Assert.Equal(2, kit.Http.Requests.Count);
+    }
+
+    [Fact]
     public async Task ACreateAnsweredWithoutAUsableIdIsUnknownNeverNothingSent()
     {
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();

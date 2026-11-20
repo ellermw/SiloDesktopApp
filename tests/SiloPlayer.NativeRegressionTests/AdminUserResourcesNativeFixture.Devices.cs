@@ -76,6 +76,19 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(s.Count("DELETE", ValuesPath) >= deletes + 1, "earlier keys were sent once and none were repeated");
         });
 
+        await ScenarioAsync(c, "devices: a profile reset refused partway shows what the server still holds", async () =>
+        {
+            s.Reset();
+            await c.OpenAsync(AdminRouteRequest.Device("7", "desktop").WithQuery("profile", "p7"), "Device detail (partial reset)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceResetProfile") && Has(c.Devices, "DeviceReset_player.hdr_enabled") && Has(c.Devices, "DeviceReset_player.audio_sync_ms"), "the profile's three overrides are shown");
+            s.Fail("DELETE", ValuesPath + "player.dv_profile7_hdr10_fallback", 429, ProblemBody("Too many requests.", 429));
+            Click(Find<Button>(c.Devices, "DeviceResetProfile")); await Until(() => Dialog(c.Frame) != null, "profile reset confirmation opened"); Click(Primary(Dialog(c.Frame)!));
+            await Until(() => Dialog(c.Frame) == null && s.Count("DELETE", ValuesPath) == 2 && !Has(c.Devices, "DeviceReset_player.hdr_enabled") && Has(c.Devices, "DeviceReset_player.dv_profile7_hdr10_fallback") && Has(c.Devices, "DeviceReset_player.audio_sync_ms"),
+                "the override deleted before the refusal is no longer shown as one, and the others remain");
+            Check(!c.Devices.Session.NeedsReview && s.Count("DELETE", ValuesPath) == 2, "the reset stopped at the refusal, repeated nothing and did not lock the page");
+            await Until(() => HasText(c.Devices, T("web.admin.common.users.resetAllStopped", ("count", 3), ("count_text", 3), ("completed", 1), ("reason", c.Devices.Session.Error ?? ""))), "the notice that the reset stopped stays after the re-read");
+        });
+
         await ScenarioAsync(c, "devices: a fractional setting shows its exact value and opening it writes nothing", async () =>
         {
             s.Reset(); s.Values.Add(AdminUserResourcesFakeServer.Obj("""{"key":"player.playback_speed","scope":"profile_device","profile_id":"p7","device_id":"desktop","value":1.25,"updated_at":"2026-11-01T00:00:00Z"}"""));

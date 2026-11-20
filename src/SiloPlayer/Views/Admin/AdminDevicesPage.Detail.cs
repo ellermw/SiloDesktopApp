@@ -281,44 +281,51 @@ public sealed partial class AdminDevicesPage
     {
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
         if (!await _host.ConfirmAsync(D("resetSetting.title"), D("resetSetting.description"), D("resetSetting.confirm")) || !TargetCurrent(owner, revision, profile)) return;
-        var ok = await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, key));
+        var gone = false;
+        var ok = await Session.WriteAsync(async lease =>
+        {
+            try { await _api.DeleteDeviceSettingAsync(lease, user, profile, device, key); }
+            catch (ApiException error) when (error.StatusCode == 404) { gone = true; throw; }
+        });
         if (!Session.IsCurrent(owner)) return;
-        if (ok) await RefreshAfterWriteAsync(owner); else if (revision == _detailRevision) RenderTabsAndRows();
+        // A 404 says the override is already gone on the server: read again so its row does not stay on screen as one.
+        if (ok || (gone && revision == _detailRevision)) await RefreshAfterWriteAsync(owner); else if (revision == _detailRevision) RenderTabsAndRows();
     }
     private async Task ResetProfileAsync(string profile, string profileName, IReadOnlyList<JsonElement> overrides)
     {
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
         if (!await _host.ConfirmAsync(D("resetProfile.title", ("name", profileName)), D("resetProfile.description"), D("resetProfile.confirm")) || !TargetCurrent(owner, revision, profile)) return;
-        var keys = overrides.Select(x => x.Text("key")).ToArray(); var completed = 0;
+        var keys = overrides.Select(x => x.Text("key")).ToArray(); var completed = 0; var unknown = false;
         var ok = await Session.WriteAsync(async lease =>
         {
             var result = await _api.ResetDeviceProfileAsync(lease, user, profile, device, keys);
             completed = result.Completed;
-            if (result.OutcomeUnknown) throw new AdminResourceOutcomeUnknownException();
+            if (result.OutcomeUnknown) { unknown = true; throw new AdminResourceOutcomeUnknownException(); }
             if (result.FailureStatus is { } status) throw new ApiException("reset_stopped", "The reset stopped.", status);
         });
         if (!Session.IsCurrent(owner)) return;
         if (ok) { await RefreshAfterWriteAsync(owner); return; }
-        if (revision == _detailRevision)
-        {
-            RenderTabsAndRows();
-            _rowsHost.Children.Insert(0, Padded(Text(T("web.admin.common.users.resetAllStopped", ("count", keys.Length), ("count_text", keys.Length), ("completed", completed), ("reason", Session.Error ?? "")), 12), 16, 8));
-        }
+        if (revision != _detailRevision) return;
+        var stopped = T("web.admin.common.users.resetAllStopped", ("count", keys.Length), ("count_text", keys.Length), ("completed", completed), ("reason", Session.Error ?? ""));
+        void ShowStopped() { if (_device.ValueKind == JsonValueKind.Object && Tabs().Count > 0) _rowsHost.Children.Insert(0, Padded(Text(stopped, 12), 16, 8)); }
+        // The overrides deleted before a definite refusal are gone on the server: read again so their rows do not stay on screen, and keep the notice.
+        if (completed > 0 && !unknown) { await RefreshAfterWriteAsync(owner, ShowStopped); return; }
+        RenderTabsAndRows(); ShowStopped();
     }
     /// <summary>After a confirmed write the device, the account's values and the fleet are read again, so every pane shows what the server now holds.</summary>
-    private async Task RefreshAfterWriteAsync(MonitorAuthorityLease? owner)
+    private async Task RefreshAfterWriteAsync(MonitorAuthorityLease? owner, Action? rendered = null)
     {
         var user = _device.Text("user_id"); var device = _device.Text("device_id"); var revision = ++_detailRevision;
         var detail = await Session.ReadAsync("device", lease => _api.GetDeviceAsync(lease, user, device));
         if (!Session.IsCurrent(owner) || revision != _detailRevision) return;
         var values = await Session.ReadAsync("values", lease => _api.GetDeviceValuesAsync(lease, user));
         if (!Session.IsCurrent(owner) || revision != _detailRevision) return;
-        if (detail.ValueKind != JsonValueKind.Object || values == null) { RenderTabsAndRowsIfShown(); return; }
-        _device = detail; _values = values.Items; RenderDetailBody();
+        if (detail.ValueKind != JsonValueKind.Object || values == null) { RenderTabsAndRowsIfShown(); rendered?.Invoke(); return; }
+        _device = detail; _values = values.Items; RenderDetailBody(); rendered?.Invoke();
         var fleet = await Session.ReadAsync("fleet", lease => _api.ListAllDevicesAsync(lease));
         if (!Session.IsCurrent(owner) || fleet == null) return;
         _fleet = fleet; _anomalies = AdminDevicePresentation.Anomalies(fleet, DateTimeOffset.UtcNow); RenderPulse(); RenderFilters(); RenderList();
-        if (_device.ValueKind == JsonValueKind.Object && _device.Text("user_id") == user && _device.Text("device_id") == device) RenderDetailBody();
+        if (_device.ValueKind == JsonValueKind.Object && _device.Text("user_id") == user && _device.Text("device_id") == device) { RenderDetailBody(); if (revision == _detailRevision) rendered?.Invoke(); }
     }
     private void RenderTabsAndRowsIfShown() { if (_device.ValueKind == JsonValueKind.Object && Tabs().Count > 0) RenderTabsAndRows(); }
 

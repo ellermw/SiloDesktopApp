@@ -129,9 +129,10 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
         return new Border { Child = note, Padding = new(16), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Brush("WarningBrush"), MaxWidth = 760, HorizontalAlignment = HorizontalAlignment.Left };
     }
 
+    /// <summary>A request made while another load runs replaces it, never drops: the refresh a write asked for must show that write. The older load is retired by version and starts no further read.</summary>
     private async Task LoadSourceDataAsync()
     {
-        if (_source == null || _loadingSourceData) return;
+        if (_source == null) return;
         _loadingSourceData = true;
         var source = _source; var pageOwner = Session.Owner; var revision = ++_sourceDataVersion; var id = source.Value.Text("id");
         try
@@ -143,6 +144,7 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
                 if (!Session.IsCurrent(pageOwner) || revision != _sourceDataVersion) return;
                 _mappingsReady = mappings != null; _mappingsFailed = mappings == null; if (mappings != null) _mappings = mappings;
                 if (_mappingsReady) await LoadAccountNamesAsync(pageOwner, revision);
+                if (!Session.IsCurrent(pageOwner) || revision != _sourceDataVersion) return;
             }
             var page = await Session.ReadAsync("runs", owner => _api.ListImportRunsAsync(owner, id));
             if (!Session.IsCurrent(pageOwner) || revision != _sourceDataVersion) return;

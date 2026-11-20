@@ -79,6 +79,39 @@ public sealed class AdminUserResourcesTests
         await Assert.ThrowsAsync<InvalidDataException>(() => api.ListGroupsAsync(lease));
     }
 
+    [Theory]
+    [InlineData("{\"items\":[{\"id\":\"1\"},{\"id\":\"2\"}],\"page\":{\"has_more\":false}}")]
+    [InlineData("{\"items\":[{\"id\":\"1\"},{\"id\":\"2\"}],\"page\":null}")]
+    [InlineData("{\"items\":[{\"id\":\"1\"},{\"id\":\"2\"}]}")]
+    public async Task UnpagedLibraryListIsCompleteWithOrWithoutItsPageMember(string body)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client); kit.Http.Respond = (_, _) => Task.FromResult(Reply(body));
+        var libraries = await api.ListLibrariesAsync(lease);
+        Assert.Equal(["1", "2"], libraries.Items.Select(x => x.Text("id"))); Assert.Null(libraries.NextCursor);
+        Assert.Equal("GET /api/v2/libraries", kit.Http.Requests.Single());
+    }
+
+    [Theory]
+    [InlineData("{\"page\":{\"has_more\":false}}")]
+    [InlineData("{\"items\":[{\"id\":\"1\"}],\"page\":{}}")]
+    [InlineData("{\"items\":[{\"id\":\"1\"}],\"page\":[]}")]
+    [InlineData("{\"items\":[{\"id\":\"1\"},{\"id\":\"1\"}]}")]
+    public async Task MalformedLibraryListIsNotPublishedAsComplete(string body)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client); kit.Http.Respond = (_, _) => Task.FromResult(Reply(body));
+        await Assert.ThrowsAsync<InvalidDataException>(() => api.ListLibrariesAsync(lease));
+    }
+
+    [Fact]
+    public async Task LibraryListThatSaysMoreFollowsKeepsItsContinuationAndIsNeverComplete()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client); kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"items":[{"id":"1"}],"page":{"has_more":true,"next_cursor":"next"}}"""));
+        Assert.Equal("next", (await api.ListLibrariesAsync(lease)).NextCursor);
+    }
+
     [Fact]
     public async Task GroupPageIsUserDrivenAndDoesNotWalkTheFleet()
     {

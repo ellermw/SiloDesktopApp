@@ -20,6 +20,8 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
         internal bool ApplyThenDrop { get; init; }
         /// <summary>The request never reached the server.</summary>
         internal bool Drop { get; init; }
+        /// <summary>The answer is taken when the request arrives and kept back until this completes, so it can arrive stale.</summary>
+        internal TaskCompletionSource? Hold { get; init; }
         internal int Times { get; set; } = 1;
     }
 
@@ -92,6 +94,10 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
     internal void Fail(string method, string path, int status, string body = "{}", int times = 1) => Scripts.Add(new() { Method = method, Path = path, Status = status, Body = body, Times = times });
     internal void LoseAnswer(string method, string path) => Scripts.Add(new() { Method = method, Path = path, ApplyThenDrop = true });
     internal void DropRequest(string method, string path, int times = 1) => Scripts.Add(new() { Method = method, Path = path, Drop = true, Times = times });
+    internal TaskCompletionSource HoldAnswer(string method, string path)
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); Scripts.Add(new() { Method = method, Path = path, Hold = gate }); return gate;
+    }
 
     private string Tag(string key) { _etags.TryGetValue(key, out var n); return "\"" + key + "-" + n + "\""; }
     private void Bump(string key) { _etags.TryGetValue(key, out var n); _etags[key] = n + 1; }
@@ -119,6 +125,7 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
             script.Times--;
             if (script.Drop) throw new HttpRequestException("synthetic transport failure");
             if (script.ApplyThenDrop) { Route(call); throw new HttpRequestException("synthetic lost answer"); }
+            if (script.Hold != null) { var held = Route(call); await script.Hold.Task.WaitAsync(cancellationToken).ConfigureAwait(false); return held; }
             return script.Status == 422 || script.Status == 400 ? Json(JsonNode.Parse(script.Body), (HttpStatusCode)script.Status) : Json(JsonNode.Parse(script.Body), (HttpStatusCode)script.Status);
         }
         return Route(call);

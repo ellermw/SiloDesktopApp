@@ -69,8 +69,11 @@ public sealed partial class AdminUserResourcesApi(SiloApiClient client)
     internal async Task<AdminResourcePage> PageAsync(MonitorAuthorityLease owner, string path, string? cursor, Func<JsonElement, string> identity, CancellationToken ct, int limit = PageSize)
     {
         var body = await ReadAsync(owner, limit > 0 ? AdminPaging.WithPage(path, limit, cursor) : path, ct).ConfigureAwait(false);
-        if (body.Member("items") is not { ValueKind: JsonValueKind.Array } items || body.Member("page") is not { ValueKind: JsonValueKind.Object } page ||
-            page.Member("has_more")?.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new InvalidDataException("Invalid resource page.");
+        if (body.Member("items") is not { ValueKind: JsonValueKind.Array } items) throw new InvalidDataException("Invalid resource page.");
+        // One unpaged response may omit `page`, as AdminLibrariesApi.ListAsync accepts for the same route; a `page` that is sent is checked like any other.
+        var page = body.Member("page") ?? default(JsonElement);
+        if ((page.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) ? limit > 0 :
+            page.ValueKind != JsonValueKind.Object || page.Member("has_more")?.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new InvalidDataException("Invalid resource page.");
         var rows = items.EnumerateArray().ToArray();
         if (rows.Length > (limit > 0 ? limit : MaxUnpagedRows)) throw new InvalidDataException("Oversized resource page.");
         var identities = new HashSet<string>(StringComparer.Ordinal);

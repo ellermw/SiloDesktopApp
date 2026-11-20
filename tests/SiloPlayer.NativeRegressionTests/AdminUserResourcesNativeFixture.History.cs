@@ -131,6 +131,28 @@ internal static partial class AdminUserResourcesNativeFixture
             Click(Find<Button>(c.History, "ImportBulk")); await Until(() => HasText(c.History, "Synthetic bulk failure"), "bulk import lists each outcome with its error");
         });
 
+        await ScenarioAsync(c, "history import: a run started while an earlier refresh is still reading is listed and polled", async () =>
+        {
+            s.Reset();
+            var finished = s.Runs.OfType<JsonObject>().First(x => x["id"]!.GetValue<string>() == "run1"); finished["status"] = "completed"; finished["terminal"] = true; finished["cancelable"] = false;
+            s.Mappings.Add(AdminUserResourcesFakeServer.Obj("""{"id":"11","source_id":"3","external_user_id":"ext-2","external_user_name":"Another Viewer","silo_user_id":"8","silo_profile_id":"p1"}"""));
+            await c.OpenAsync(SourceRoute(), "History Import");
+            await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportRun_9") && Has(c.History, "ImportRun_11") && Find<Button>(c.History, "ImportRun_9").IsEnabled && Has(c.History, "ImportExpand_run0"), "page ready with two mappings and no active run");
+            // The first run's refresh reads the run list before the second run exists, and that answer arrives late.
+            var reads = s.Count("GET", ImportPath + "/runs"); var held = s.HoldAnswer("GET", ImportPath + "/runs");
+            try
+            {
+                Click(Find<Button>(c.History, "ImportRun_9"));
+                await Until(() => s.Count("POST", "/mappings/9/run") == 1 && s.Count("GET", ImportPath + "/runs") == reads + 1 && !c.History.Session.Busy && Find<Button>(c.History, "ImportRun_11").IsEnabled, "the first run's refresh is reading the run list");
+                Click(Find<Button>(c.History, "ImportRun_11"));
+                await Until(() => s.Count("POST", "/mappings/11/run") == 1 && !c.History.Session.Busy, "a second run starts while that refresh is still reading");
+                await Task.Delay(300);
+            }
+            finally { held.TrySetResult(); }
+            await Until(() => Has(c.History, "ImportExpand_run2") && Has(c.History, "ImportExpand_run3"), "both runs are listed, though the earlier refresh read the list before the second existed");
+            await Until(() => s.Count("GET", ImportPath + "/runs/run2") > 0 && s.Count("GET", ImportPath + "/runs/run3") > 0, "both runs are polled", 20000);
+        });
+
         await ScenarioAsync(c, "history import: delete source, then the empty state", async () =>
         {
             s.Reset();
