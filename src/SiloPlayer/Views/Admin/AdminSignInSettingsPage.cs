@@ -80,7 +80,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 entry.Row.Visibility = AdminSignInSchemaRules.Visible(entry.Schema.AdminForm!, entry.Field, values) ? Visibility.Visible : Visibility.Collapsed;
                 entry.Input.IsEnabled = editable;
                 entry.Row.State(!entry.Field.IsSecret && Controller.FieldDirty(entry.Provider, entry.Schema.Key, entry.Field.Key), false);
-                if (entry.Input is TextBox input && input.Text != text) input.Text = text;
+                if (entry.Input is TextBox input && AdminAccessPageUi.Lines(input.Text) != text) input.Text = text;
                 else if (entry.Input is PasswordBox password && password.Password != text) password.Password = text;
                 else if (entry.Input is ToggleSwitch toggle) toggle.IsOn = text == "true";
                 else if (entry.Input is ComboBox select) AdminAccessPageUi.Select(select, text);
