@@ -18,9 +18,9 @@ namespace SiloPlayer.Views.Admin;
 /// <summary>
 /// Manage &gt; Downloads &gt; Prepared Files (<c>/admin/downloads</c>): the five official tabs (Storage, Preparation, Prepared files,
 /// Device copies, History) of Silo Server/WebUI <c>pages/AdminDownloads.tsx</c> and <c>pages/admin-downloads/*</c> at 66b836f82.
-/// Each tab is a persistent view whose list regions are rebuilt from controller snapshots while its filter controls are
-/// kept, so a background refresh never moves focus or resets what the administrator typed. Pages swap in place with no
-/// entrance or slide transition.
+/// Each tab is a persistent view whose rows and controls are built once and updated in place from controller snapshots
+/// (see <c>AdminPreparedFilesPage.Stable.cs</c>), so a progress reading, a poll or a selection toggle never replaces a control the
+/// administrator is using, moves focus or resets what was typed. Pages swap in place with no entrance or slide transition.
 /// </summary>
 public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPage, IAdminPageSuspension
 {
@@ -43,6 +43,8 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
     private AdminRouteRequest _request = new(AdminRoute.PreparedFiles);
     private ContentDialog? _dialog;
     private string? _shownTab;
+    private (string Active, int Jobs)? _strip;
+    private (AdminPreparedActionState? Action, bool Blocked)? _noticeKey;
     private bool _opened;
     private bool _renderQueued;
     private bool _disposed;
@@ -187,10 +189,8 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
     {
         if (_disposed) return;
         _views[tab].Reset();
-        await Controller.SetFileQueryAsync(new AdminPreparedFileQuery { Location = location });
-        await Controller.SetDeviceQueryAsync(new AdminDownloadDeviceQuery { Stale = stale });
-        await Controller.SetHistoryQueryAsync(new AdminDownloadHistoryQuery());
-        await Controller.SetActiveTabAsync(tab);
+        // The tabs being left reset their queries without any read; only the tab that opens reads its list.
+        await Controller.ActivateTabAsync(tab, new AdminPreparedFileQuery { Location = location }, new AdminDownloadDeviceQuery { Stale = stale }, new AdminDownloadHistoryQuery());
     }
 
     private async void OpenFilesAt(string location)
@@ -230,20 +230,25 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
     private void Render(AdminPreparedFilesSnapshot state)
     {
         var active = state.ActiveTab;
-        var accent = Brush("AccentBrush");
-        foreach (var (tab, button) in _tabButtons)
-        {
-            var selected = tab == active;
-            button.BorderBrush = selected ? accent : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            _tabLabels[tab].FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
-            AutomationProperties.SetItemStatus(button, selected ? "selected" : "");
-        }
         var activeJobs = state.PreparationsLoaded ? AdminPreparationPresentation.ActiveCount(state.PreparationCounts) : 0;
-        if (_tabBadges.TryGetValue("preparation", out var badge) && badge.Child is TextBlock count)
+        // The tab strip and its badge change only when the shown tab or the active-job count does.
+        if (_strip != (active, activeJobs))
         {
-            count.Text = activeJobs > 99 ? T("web.admin.downloads.controls.countOverflow") : activeJobs.ToString(System.Globalization.CultureInfo.CurrentCulture);
-            count.Foreground = Brush(activeJobs > 0 ? "AccentBrush" : "SecondaryTextBrush");
-            badge.Background = activeJobs > 0 ? Tint("AccentBrush", 0.12) : Tint("MutedBrush", 0.5);
+            _strip = (active, activeJobs);
+            var accent = Brush("AccentBrush");
+            foreach (var (tab, button) in _tabButtons)
+            {
+                var selected = tab == active;
+                button.BorderBrush = selected ? accent : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                _tabLabels[tab].FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
+                AutomationProperties.SetItemStatus(button, selected ? "selected" : "");
+            }
+            if (_tabBadges.TryGetValue("preparation", out var badge) && badge.Child is TextBlock count)
+            {
+                count.Text = activeJobs > 99 ? T("web.admin.downloads.controls.countOverflow") : activeJobs.ToString(System.Globalization.CultureInfo.CurrentCulture);
+                count.Foreground = Brush(activeJobs > 0 ? "AccentBrush" : "SecondaryTextBrush");
+                badge.Background = activeJobs > 0 ? Tint("AccentBrush", 0.12) : Tint("MutedBrush", 0.5);
+            }
         }
         RenderNotices(state);
         if (state.Owner == null)
@@ -260,15 +265,20 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
             _bodyHost.Content = _views[active].Root;
             _shownTab = active;
         }
-        _views[active].Update(state);
+        // Only the tab that is shown draws, and only when what it shows changed; a control the administrator was using keeps focus.
+        KeepFocus(() => _views[active].Apply(state));
     }
 
     private void RenderNotices(AdminPreparedFilesSnapshot state)
     {
+        var key = (state.LastAction, state.DestructiveBlocked);
+        if (_noticeKey == key) return;
+        _noticeKey = key;
         _notices.Children.Clear();
         if (state.LastAction is { } action)
         {
-            var failed = action.Outcome is AdminActionOutcome.Failed or AdminActionOutcome.Unknown;
+            // A partial failure ("Deleted 2, 1 failed") is an error, as the official page's error toast; a part the server refused on purpose is not.
+            var failed = action.IsError;
             var row = Inline(12);
             row.Children.Add(Icon(failed ? "circle-alert" : "circle-check", 16, Brush(failed ? "ErrorBrush" : "SuccessBrush")));
             var message = Text(action.Message, 14, !failed);
@@ -307,11 +317,22 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
 
     private abstract class TabView(AdminPreparedFilesPage page)
     {
+        private object? _inputs;
         protected AdminPreparedFilesPage P { get; } = page;
         public abstract UIElement Root { get; }
+        /// <summary>Draws the tab from the snapshot, updating what changed in place.</summary>
         public abstract void Update(AdminPreparedFilesSnapshot state);
+        /// <summary>What the tab draws from; a snapshot that changes none of it (a poll of something else) draws nothing.</summary>
+        protected abstract object Inputs(AdminPreparedFilesSnapshot state);
+        public void Apply(AdminPreparedFilesSnapshot state)
+        {
+            var inputs = Inputs(state);
+            if (_inputs != null && _inputs.Equals(inputs)) return;
+            _inputs = inputs;
+            Update(state);
+        }
         /// <summary>Back to the defaults a freshly mounted official tab starts with.</summary>
-        public virtual void Reset() { }
+        public virtual void Reset() { _inputs = null; }
     }
 
     private static TextBlock Strong(string text, double size = 14, bool muted = false)
@@ -402,14 +423,6 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
         public UIElement Root => _box;
         public string Applied => _applied;
         public void Reset() { _applied = ""; _box.Text = ""; }
-    }
-
-    private static Button LoadMore(bool loading, Action click)
-    {
-        var button = Button(loading ? T("web.admin.downloads.controls.loadingMore") : T("web.admin.downloads.controls.loadMore"), "PreparedFilesLoadMore");
-        button.IsEnabled = !loading; button.HorizontalAlignment = HorizontalAlignment.Center;
-        button.Click += (_, _) => click();
-        return button;
     }
 
     /// <summary>A centered message, optionally with a reload control the administrator can always reach.</summary>

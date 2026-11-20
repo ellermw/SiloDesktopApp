@@ -1051,6 +1051,12 @@ public partial class SiloApiClient
         {
             if (ex is not OperationCanceledException || !ct.IsCancellationRequested || isDismissal)
             {
+                // Prepared-file administration (titles, device and account names, revoke reasons, and the directory a node's save carries) records only a fixed category.
+                if (path.StartsWith("/api/v2/admin/downloads/", StringComparison.Ordinal) || path == "/api/v2/admin/nodes" || path.StartsWith("/api/v2/admin/nodes/", StringComparison.Ordinal))
+                {
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_downloads_nodes_transport_failed");
+                    throw;
+                }
                 // A bootstrap transport can echo request values in its exception.
                 // Keep the diagnostic boundary, but never record a binding secret.
                 if (request.Options.TryGetValue(DeviceBootstrapOption, out var bootstrap) && bootstrap)

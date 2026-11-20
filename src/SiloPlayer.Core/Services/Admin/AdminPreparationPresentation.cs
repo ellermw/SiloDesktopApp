@@ -335,10 +335,13 @@ public static class AdminPreparationPresentation
     public static DateTimeOffset? NextFailureExpiry(IEnumerable<AdminDownloadPreparation> jobs)
     {
         DateTimeOffset? next = null;
+        var window = TimeSpan.FromHours(24);
         foreach (var job in jobs)
         {
-            if (job.State != "failed" || job.FailedAt is not { } failedAt) continue;
-            var expiry = failedAt + TimeSpan.FromHours(24);
+            // A failure time within a day of the end of time has no expiry that can be computed (adding the day would throw),
+            // and no real failure expires then, so it never arms a timer.
+            if (job.State != "failed" || job.FailedAt is not { } failedAt || failedAt > DateTimeOffset.MaxValue - window) continue;
+            var expiry = failedAt + window;
             if (next == null || expiry < next) next = expiry;
         }
         return next;

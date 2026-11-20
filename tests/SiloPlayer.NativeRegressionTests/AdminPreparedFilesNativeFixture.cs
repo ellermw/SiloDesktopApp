@@ -87,6 +87,45 @@ internal static class AdminPreparedFilesNativeFixture
             Check(Texts(prepared).Contains("Dune") && Texts(prepared).Contains("1080p H264") && Texts(prepared).Contains("10 Mbps"), "title and recipe columns render with the official labels");
             await CaptureAsync(outer, "admin-prepared-files-wide.png");
 
+            // ---- Leaving a filtered tab never waits on, or starts, a read of it -----------------------------------
+            int FileReads() { lock (server.Requests) return server.Requests.Count(r => r.StartsWith("GET /api/v2/admin/downloads/storage/files", StringComparison.Ordinal)); }
+            server.StallFiles = true;
+            var fileReadsBefore = FileReads();
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesTab_history"));
+            await Until(() => prepared.Controller.State.ActiveTab == "history" && Find<FrameworkElement>(shell, "PreparedFilesHistoryRow_event-1") != null, 4000);
+            Check(FileReads() == fileReadsBefore && prepared.Controller.State.FileQuery.Location == null, "leaving a filtered Files tab resets it without a read and without waiting for one");
+            server.StallFiles = false;
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesTab_files"));
+            await Until(() => prepared.Controller.State.Files.Loaded && Find<FrameworkElement>(shell, "PreparedFilesRow_art-cached") != null);
+
+            // ---- A live refresh keeps the rows, the controls and the selection the administrator is using ---------
+            var keepBox = await WaitFind<CheckBox>(shell, "PreparedFilesSelect_art-cached");
+            var keepRow = Find<FrameworkElement>(shell, "PreparedFilesRow_art-cached");
+            await ToggleAsync(keepBox);
+            Check(keepBox!.IsChecked == true, "a check box toggles once");
+            var readsBeforeRefresh = FileReads();
+            realtime.Raise("downloads", "download.changed", "{}");
+            await Until(() => FileReads() > readsBeforeRefresh && !prepared.Controller.State.Files.Loading);
+            Check(ReferenceEquals(Find<CheckBox>(shell, "PreparedFilesSelect_art-cached"), keepBox) && keepBox.IsChecked == true && ReferenceEquals(Find<FrameworkElement>(shell, "PreparedFilesRow_art-cached"), keepRow),
+                "a live refresh keeps the row, its check box and the selection");
+            Check(keepBox.Focus(FocusState.Keyboard), "the check box takes focus");
+            realtime.Raise("downloads", "download.changed", "{}");
+            await Task.Delay(2600);
+            realtime.Raise("downloads", "download.changed", "{}");
+            await Task.Delay(400);
+            Check(ReferenceEquals(FocusManager.GetFocusedElement(window.Content.XamlRoot), keepBox), "a refresh leaves keyboard focus on the check box");
+            await ToggleAsync(keepBox);
+            Check(keepBox.IsChecked != true, "the same check box toggles back");
+
+            // ---- Titles are shown exactly as they are in the confirmation that names them --------------------------
+            var angleBox = await WaitFind<CheckBox>(shell, "PreparedFilesSelect_art-angle");
+            await ToggleAsync(angleBox);
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesDeleteSelected"));
+            await Until(() => DialogButton(window, "PrimaryButton") != null);
+            Check(PopupRunTexts(window).Any(t => t.Contains("Alien <Directors>", StringComparison.Ordinal)), "a title with angle brackets is shown exactly in the delete confirmation");
+            await CloseDialogAsync(window);
+            await ToggleAsync(angleBox);
+
             // ---- Prepared files: selection, delete dialog, refusal, unknown outcome, failed read -------------------
             await ToggleAsync(await WaitFind<CheckBox>(shell, "PreparedFilesSelect_art-cached"));
             await Until(() => Find<Button>(shell, "PreparedFilesDeleteSelected") != null);
@@ -119,6 +158,20 @@ internal static class AdminPreparedFilesNativeFixture
             server.DeleteMode = "ok"; server.FailFiles = false; server.FailStorage = false;
             await InvokeAsync(Find<Button>(shell, "PreparedFilesBlockedReload"));
             await Until(() => !prepared.Controller.State.DestructiveBlocked);
+
+            // Some deleted and some failed is an error notice (the official error toast), not a success.
+            server.DeleteMode = "partial";
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesClearSelection"));
+            await ToggleAsync(await WaitFind<CheckBox>(shell, "PreparedFilesSelect_art-cached"));
+            await ToggleAsync(await WaitFind<CheckBox>(shell, "PreparedFilesSelect_art-angle"));
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesDeleteSelected"));
+            await Until(() => (confirm = DialogButton(window, "PrimaryButton")) != null);
+            await InvokeAsync(confirm);
+            await Until(() => server.Requests.Count(r => r == "POST /api/v2/admin/downloads/storage/files/delete") == 3 && !prepared.Controller.State.ActionPending);
+            await Until(() => NoticeText(shell).Contains("could not be deleted", StringComparison.Ordinal));
+            Check(prepared.Controller.State.LastAction is { Outcome: AdminActionOutcome.Partial, IsError: true } && NoticeIsError(shell), "a partly failed delete is shown with the error icon");
+            server.DeleteMode = "ok";
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesNoticeDismiss"));
 
             server.FailFiles = true;
             await InvokeAsync(Find<Button>(shell, "PreparedFilesTab_history"));
@@ -193,6 +246,26 @@ internal static class AdminPreparedFilesNativeFixture
             await Until(() => DialogButton(window, "PrimaryButton") == null && DialogButton(window, "CloseButton") == null);
             await Task.Delay(400);
 
+            // Dismissing the editor while its save is in flight: an unknown outcome that blocks writes, and the page is never stuck.
+            server.NodeMode = "hang";
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesEditLocation_node:9"));
+            await Until(() => FindDialog<TextBox>(window, "PreparedFilesNodeDirectory") != null);
+            FindDialog<TextBox>(window, "PreparedFilesNodeDirectory")!.Text = "/prepared/dismissed";
+            await Until(() => DialogButton(window, "PrimaryButton") is { IsEnabled: true });
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await Until(() => server.Requests.Count(r => r == "PUT /api/v2/admin/nodes/9") == 5 && prepared.Controller.State.ActionPending);
+            (Field(prepared, "_dialog") as ContentDialog)?.Hide();
+            // The dismissal aborts the request at once; should WinUI hold the dialog open until its pending save answers, the page's own 30 s deadline ends the same way.
+            await Until(() => !prepared.Controller.State.ActionPending && prepared.Controller.State.DestructiveBlocked, 40000);
+            if (DialogButton(window, "CloseButton") != null) await CloseDialogAsync(window);
+            await Until(() => DialogButton(window, "PrimaryButton") == null && DialogButton(window, "CloseButton") == null);
+            Check(prepared.Controller.State.LastAction?.Outcome == AdminActionOutcome.Unknown && Find<FrameworkElement>(shell, "PreparedFilesBlocked") != null, "a save aborted by dismissing the editor is an unknown outcome with a reachable Reload");
+            Check(Find<Button>(shell, "PreparedFilesCleanup_node:9") is { IsEnabled: false }, "writes stay off until the nodes are read again");
+            server.NodeMode = "ok";
+            await InvokeAsync(Find<Button>(shell, "PreparedFilesBlockedReload"));
+            await Until(() => !prepared.Controller.State.DestructiveBlocked);
+            Check(Find<Button>(shell, "PreparedFilesCleanup_node:9") is { IsEnabled: true }, "reloading lifts the block and the page is usable again");
+
             await InvokeAsync(Find<Button>(shell, "PreparedFilesEditLocation_server"));
             await Until(() => PopupTexts(window).Contains("The server's prepared-file directory and the default budget are server settings."));
             await CloseDialogAsync(window);
@@ -221,6 +294,51 @@ internal static class AdminPreparedFilesNativeFixture
             realtime.Raise("download_preparations", "download_preparation.progress", "{\"id\":\"art-running\",\"progress\":{\"encoded_seconds\":75,\"duration_seconds\":100,\"speed\":2,\"updated_at\":\"2026-10-08T09:31:00Z\"}}");
             await Until(() => Texts(prepared).Any(t => t.StartsWith("75%", StringComparison.Ordinal)));
             Check(true, "a progress event patches the running row in place");
+
+            // ---- Progress readings never replace the control being used --------------------------------------------
+            var pauseButton = Find<Button>(shell, "PreparedFilesPause_art-running")!;
+            var cancelButton = Find<Button>(shell, "PreparedFilesCancel_art-running")!;
+            var detailsButton = Find<Button>(shell, "PreparedFilesPreparationDetails_art-running")!;
+            var selectBox = Find<CheckBox>(shell, "PreparedFilesPreparationSelect_art-running")!;
+            var runningRow = Find<FrameworkElement>(shell, "PreparedFilesPreparation_art-running")!;
+            string Progress(int encoded) => "{\"id\":\"art-running\",\"progress\":{\"encoded_seconds\":" + encoded + ",\"duration_seconds\":100,\"speed\":2,\"updated_at\":\"2026-10-08T09:31:00Z\"}}";
+            Check(pauseButton.Focus(FocusState.Keyboard), "the Pause button takes focus");
+            for (var encoded = 76; encoded < 100; encoded++)
+            {
+                realtime.Raise("download_preparations", "download_preparation.progress", Progress(encoded));
+                await Task.Delay(35);
+            }
+            await Until(() => Texts(prepared).Any(t => t.StartsWith("99%", StringComparison.Ordinal)));
+            Check(ReferenceEquals(Find<Button>(shell, "PreparedFilesPause_art-running"), pauseButton) && ReferenceEquals(Find<Button>(shell, "PreparedFilesCancel_art-running"), cancelButton)
+                && ReferenceEquals(Find<Button>(shell, "PreparedFilesPreparationDetails_art-running"), detailsButton) && ReferenceEquals(Find<CheckBox>(shell, "PreparedFilesPreparationSelect_art-running"), selectBox)
+                && ReferenceEquals(Find<FrameworkElement>(shell, "PreparedFilesPreparation_art-running"), runningRow), "24 progress readings replace no control and no row");
+            Check(ReferenceEquals(FocusManager.GetFocusedElement(window.Content.XamlRoot), pauseButton), "keyboard focus stays on the Pause button while progress arrives");
+
+            using (var storm = new CancellationTokenSource())
+            {
+                var readings = Task.Run(async () =>
+                {
+                    for (var n = 0; !storm.IsCancellationRequested; n++)
+                    {
+                        realtime.Raise("download_preparations", "download_preparation.progress", Progress(76 + n % 23));
+                        await Task.Delay(20);
+                    }
+                });
+                await ToggleAsync(selectBox);
+                Check(selectBox.IsChecked == true && prepared.Controller.State.Preparations.Count > 0 && Find<FrameworkElement>(shell, "PreparedFilesPreparationSelection") != null, "a check box toggle lands while progress arrives");
+                await InvokeAsync(Find<Button>(shell, "PreparedFilesCancelSelected"));
+                await Until(() => DialogButton(window, "PrimaryButton") != null);
+                Check(PopupTexts(window).Any(t => t.Contains("Encoding stops and its progress is lost.", StringComparison.Ordinal)), "Cancel selected opens its confirmation while progress arrives");
+                await CloseDialogAsync(window);
+                await InvokeAsync(cancelButton);
+                await Until(() => DialogButton(window, "PrimaryButton") != null);
+                Check(PopupTexts(window).Any(t => t.Contains("Encoding stops and its progress is lost.", StringComparison.Ordinal)), "the row's Cancel opens its confirmation while progress arrives");
+                await CloseDialogAsync(window);
+                await ToggleAsync(selectBox);
+                storm.Cancel();
+                await readings;
+            }
+            Check(selectBox.IsChecked != true && ReferenceEquals(Find<Button>(shell, "PreparedFilesCancel_art-running"), cancelButton), "the same controls are still in use after the readings stop");
 
             await InvokeAsync(Find<Button>(shell, "PreparedFilesPreparationDetails_art-running"));
             await Until(() => Find<FrameworkElement>(shell, "PreparedFilesPreparationDetailsPanel_art-running") != null);
@@ -350,7 +468,7 @@ internal static class AdminPreparedFilesNativeFixture
     }
 
     private const string Storage = """{"locations":[{"key":"server","kind":"server","name":"Server","enabled":true,"online":true,"dir":"/srv/prepared","dir_source":"setting","in_use_files":1,"in_use_bytes":10000000000,"cached_files":1,"cached_bytes":20000000000,"waiting_downloads":1,"stale_waiting_bytes":0,"untracked_files":0,"untracked_bytes":0,"budget_bytes":100000000000,"budget_source":"setting","cleanup_backlog":0,"storage_full":false,"replicas_disagree":false,"usage":{"measured_at":"2026-10-08T09:30:00Z","files":2,"bytes":30000000000,"partial_files":0,"partial_bytes":0,"other_bytes":0,"fs_used_bytes":60000000000,"fs_total_bytes":100000000000,"shares_scratch":false,"ephemeral":false,"stale":false}},{"key":"node:9","kind":"node","node_id":"9","name":"synthetic-node","enabled":true,"online":true,"dir":"","dir_source":"default","in_use_files":0,"in_use_bytes":0,"cached_files":1,"cached_bytes":5000000000,"waiting_downloads":0,"stale_waiting_bytes":2000000000,"untracked_files":2,"untracked_bytes":3000000,"budget_bytes":0,"budget_source":"none","cleanup_backlog":0,"storage_full":false,"replicas_disagree":false,"usage":{"measured_at":"2026-10-08T09:30:00Z","files":3,"bytes":5003000000,"partial_files":0,"partial_bytes":0,"other_bytes":0,"fs_used_bytes":90000000000,"fs_total_bytes":100000000000,"shares_scratch":true,"ephemeral":false,"stale":false}}],"cache_hours":72,"disk_ceiling_percent":85,"default_budget_bytes":100000000000,"stale_device_days":14,"preparing_jobs":1,"freed_last_30_days_bytes":5000000000}""";
-    private const string Files = """{"items":[{"id":"art-cached","state":"cached","format":"transcode","location":"node:9","location_name":"synthetic-node","media_file_id":"42","title":"Dune","media_type":"movie","year":2021,"container":"mp4","video_codec":"h264","audio_codec":"aac","resolution":"1080p","bitrate_kbps":10000,"bytes":20000000,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","expires_at":"2099-10-08T09:30:00Z","waiting":0,"downloading":0,"finished":1,"stale_waiting":0},{"id":"art-use","state":"in_use","format":"remux","location":"server","location_name":"Server","media_file_id":"43","title":"Heat","media_type":"movie","container":"mp4","video_codec":"h264","audio_codec":"aac","bytes":30000000,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","waiting":1,"downloading":0,"finished":0,"stale_waiting":1,"oldest_waiting":{"device_name":"Pixel","username":"maya"}}],"page":{"has_more":false}}""";
+    private const string Files = """{"items":[{"id":"art-cached","state":"cached","format":"transcode","location":"node:9","location_name":"synthetic-node","media_file_id":"42","title":"Dune","media_type":"movie","year":2021,"container":"mp4","video_codec":"h264","audio_codec":"aac","resolution":"1080p","bitrate_kbps":10000,"bytes":20000000,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","expires_at":"2099-10-08T09:30:00Z","waiting":0,"downloading":0,"finished":1,"stale_waiting":0},{"id":"art-use","state":"in_use","format":"remux","location":"server","location_name":"Server","media_file_id":"43","title":"Heat","media_type":"movie","container":"mp4","video_codec":"h264","audio_codec":"aac","bytes":30000000,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","waiting":1,"downloading":0,"finished":0,"stale_waiting":1,"oldest_waiting":{"device_name":"Pixel","username":"maya"}},{"id":"art-angle","state":"cached","format":"remux","location":"server","location_name":"Server","media_file_id":"45","title":"Alien <Directors>","media_type":"movie","container":"mp4","video_codec":"h264","audio_codec":"aac","bytes":40000000,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","expires_at":"2099-10-08T09:30:00Z","waiting":0,"downloading":0,"finished":1,"stale_waiting":0}],"page":{"has_more":false}}""";
     private const string Preparations = """{"counts":{"running":1,"queued":1,"retrying":0,"paused":0,"failed_recent":1},"items":[{"id":"art-running","state":"running","format":"transcode","log_session_id":"prepare-1","media_file_id":"42","content_id":"movie:dune","media_title":"Dune","media_type":"movie","attempts":1,"max_attempts":3,"created_at":"2026-10-08T09:30:00Z","started_at":"2026-10-08T09:30:00Z","progress_unavailable":false,"progress":{"encoded_seconds":25,"duration_seconds":100,"speed":2,"updated_at":"2026-10-08T09:30:30Z"},"source":{"container":"mkv","video_codec":"hevc","resolution":"2160p","hdr":true,"audio_tracks":[{"codec":"truehd","channels":8}],"file_size":2147483648,"duration_seconds":100},"output":{"container":"mp4","video_codec":"h264","resolution":"1080p","bitrate_kbps":10000,"audio_codec":"aac","all_audio_tracks":false},"worker":{"kind":"node","node_id":"9","name":"synthetic-node"},"requesters":[{"user_id":"7","username":"maya","profile_id":"p1","profile_name":"Maya","device_id":"phone","device_name":"Pixel","status":"preparing"}]},{"id":"art-queued","state":"queued","format":"remux","log_session_id":"prepare-2","media_file_id":"43","media_title":"Heat","media_type":"movie","queue_position":1,"attempts":0,"max_attempts":3,"created_at":"2026-10-08T09:30:00Z","progress_unavailable":false,"source":{"container":"mkv","audio_tracks":[],"file_size":1000,"duration_seconds":100},"output":{"container":"mp4","video_codec":"copy","audio_codec":"copy","all_audio_tracks":false},"requesters":[]},{"id":"art-failed","state":"failed","format":"transcode","log_session_id":"prepare-3","media_file_id":"44","media_title":"Alien","media_type":"movie","attempts":3,"max_attempts":3,"error":"synthetic encoder failure","created_at":"2026-10-08T09:30:00Z","failed_at":"__FAILED_AT__","progress_unavailable":false,"source":{"container":"mkv","audio_tracks":[],"file_size":1000,"duration_seconds":100},"output":{"container":"mp4","video_codec":"h264","audio_codec":"aac","all_audio_tracks":false},"requesters":[]}]}""";
     private const string Devices = """{"items":[{"user_id":"7","username":"maya","profile_id":"p1","profile_name":"Maya","device_id":"phone","device_name":"Pixel","platform":"android","last_seen_at":"2026-09-08T09:30:00Z","stale":true,"copies":2,"finished":1,"waiting":1,"failed":0,"revoked":1,"bytes_on_device":20000000,"monitors":1}],"page":{"has_more":false}}""";
     private const string Entries = """{"items":[{"id":"dl-1","profile_id":"p1","device_id":"phone","content_id":"movie:dune","title":"Dune","media_type":"movie","status":"completed","quality":"10mbps","effective_quality":"10mbps","delivery_format":"transcode","target_bitrate_kbps":10000,"file_size":20000000,"created_at":"2026-10-08T09:30:00Z","updated_at":"2026-10-08T09:30:00Z","completed_at":"2026-10-08T09:30:00Z","status_event_at":null,"user_id":"7","username":"maya","device_name":"Pixel","location":"node:9","location_name":"synthetic-node","episode":null,"created_client_ip":null,"last_client_ip":null},{"id":"dl-2","profile_id":"p1","device_id":"phone","content_id":"movie:heat","title":"Heat","media_type":"movie","status":"revoked","quality":"original","effective_quality":"original","delivery_format":"remux","target_bitrate_kbps":0,"file_size":30000000,"created_at":"2026-10-08T09:30:00Z","updated_at":"2026-10-08T09:30:00Z","completed_at":null,"status_event_at":null,"user_id":"7","username":"maya","device_name":"Pixel","episode":null,"created_client_ip":null,"last_client_ip":null}],"page":{"has_more":false}}""";
@@ -365,7 +483,7 @@ internal static class AdminPreparedFilesNativeFixture
         internal string DeleteMode { get; set; } = "ok";
         internal string NodeMode { get; set; } = "ok";
         internal string RevokeMode { get; set; } = "ok";
-        internal bool FailStorage, FailFiles, FailPreparations, FailDevices, FailHistory;
+        internal bool FailStorage, FailFiles, FailPreparations, FailDevices, FailHistory, StallFiles;
 
         private static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK) =>
             new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
@@ -379,6 +497,9 @@ internal static class AdminPreparedFilesNativeFixture
             lock (Requests) { Requests.Add(request.Method + " " + path + request.RequestUri.Query); Bodies.Add(body); }
             if (request.Headers.IfMatch.SingleOrDefault() is { } match) LastIfMatch = match.ToString();
             var write = request.Method != HttpMethod.Get;
+            // A read that never answers, and a save that is still in flight when its editor is dismissed.
+            if (StallFiles && path == "/api/v2/admin/downloads/storage/files") await Task.Delay(Timeout.Infinite, ct);
+            if (NodeMode == "hang" && write && path == "/api/v2/admin/nodes/9") await Task.Delay(Timeout.Infinite, ct);
             HttpResponseMessage response = path switch
             {
                 "/api/v2/admin/downloads/storage" => FailStorage ? Problem(HttpStatusCode.InternalServerError, "internal", "synthetic read failure") : Json(Storage),
@@ -400,6 +521,7 @@ internal static class AdminPreparedFilesNativeFixture
                 {
                     "refuse" => Problem(HttpStatusCode.Forbidden, "forbidden", "Synthetic refusal detail."),
                     "unknown" => throw new IOException("connection closed after dispatch"),
+                    "partial" => PartialDelete(body),
                     _ => Json("""{"results":[{"id":"art-cached","outcome":"deleted","bytes":20000000}]}"""),
                 },
                 "/api/v2/admin/downloads/storage/locations/node%3A9/cleanup" => Json("""{"freed_bytes":0}"""),
@@ -412,6 +534,15 @@ internal static class AdminPreparedFilesNativeFixture
             return response;
         }
 
+        /// <summary>The first requested file is deleted and every other one fails: the official "deleted N, M failed" error toast.</summary>
+        private static HttpResponseMessage PartialDelete(string body)
+        {
+            using var request = JsonDocument.Parse(body);
+            var results = request.RootElement.GetProperty("ids").EnumerateArray().Select((id, index) =>
+                "{\"id\":" + JsonSerializer.Serialize(id.GetString()) + ",\"outcome\":\"" + (index == 0 ? "deleted" : "failed") + "\",\"bytes\":" + (index == 0 ? 20000000 : 0) + "}");
+            return Json("{\"results\":[" + string.Join(',', results) + "]}");
+        }
+
         private static HttpResponseMessage NodeAck()
         {
             var response = Json("""{"id":"9","config_etag":"\"node-v2\"","name":"synthetic-node","type":"transcode","url":"https://node.invalid","enabled":true,"healthy":true,"active_jobs":0,"egress_kbps":0,"created_at":"2026-01-01T00:00:00Z","download_artifact_dir_override":"/prepared/new","env_managed":[]}""");
@@ -421,6 +552,22 @@ internal static class AdminPreparedFilesNativeFixture
     }
 
     private static string NoticeText(DependencyObject root) => Find<TextBlock>(root, "PreparedFilesNoticeText")?.Text ?? "";
+
+    /// <summary>Whether the result notice is drawn with the error icon (the success icon uses the success brush).</summary>
+    private static bool NoticeIsError(DependencyObject root)
+    {
+        var notice = Find<FrameworkElement>(root, "PreparedFilesNotice");
+        var icon = Descendants(notice).OfType<Microsoft.UI.Xaml.Shapes.Path>().FirstOrDefault();
+        return icon?.Stroke is SolidColorBrush stroke && Application.Current.Resources["ErrorBrush"] is SolidColorBrush error && stroke.Color == error.Color;
+    }
+
+    /// <summary>The words of every text block open in a dialog, including the runs of rich text.</summary>
+    private static List<string> PopupRunTexts(Window window)
+    {
+        if (window.Content?.XamlRoot is not { } root) return [];
+        return VisualTreeHelper.GetOpenPopupsForXamlRoot(root).SelectMany(p => Descendants(p.Child)).OfType<TextBlock>()
+            .Select(t => t.Inlines.Count == 0 ? t.Text : string.Concat(t.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Select(r => r.Text))).ToList();
+    }
 
     private static void Resize(Window window, int width, int height)
     {

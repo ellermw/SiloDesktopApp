@@ -30,7 +30,15 @@ public sealed record AdminPreparedValueState<T>
 }
 
 public enum AdminActionOutcome { Applied, NoChange, Partial, Unknown, Failed }
-public sealed record AdminPreparedActionState(string Kind, AdminActionOutcome Outcome, string Message);
+
+/// <summary>
+/// The outcome notice of the last action. <paramref name="Error"/> marks a result the official page reports as an error toast even
+/// though some of the work was done (for example "Deleted 2, 1 failed"); a part the server refused on purpose is not an error.
+/// </summary>
+public sealed record AdminPreparedActionState(string Kind, AdminActionOutcome Outcome, string Message, bool Error = false)
+{
+    public bool IsError => Error || Outcome is AdminActionOutcome.Failed or AdminActionOutcome.Unknown;
+}
 
 /// <summary>The answer of a node location save: stored, refused (correct and retry), stale (reload the node) or unknown.</summary>
 public sealed record AdminNodeSaveResult(AdminActionOutcome Outcome, string Message, AdminVersioned<AdminPreparedFilesNode>? Saved = null, bool Stale = false);
@@ -88,7 +96,9 @@ public sealed class AdminPreparedFilesController : IDisposable
     private readonly IAdminRealtimeChannel? _realtime;
     private readonly IAdminScheduler _scheduler;
     private readonly object _gate = new();
-    private readonly ReadSlot _storageSlot = new(), _preparationsSlot = new(), _filesSlot = new(), _devicesSlot = new(), _historySlot = new(), _entriesSlot = new();
+    private readonly ReadSlot _storageSlot = new(), _preparationsSlot = new(), _filesSlot = new(), _devicesSlot = new(), _historySlot = new();
+    // One read slot per device: reading one device's downloads must never cancel or supersede another device's read.
+    private readonly Dictionary<string, ReadSlot> _entrySlots = new(StringComparer.Ordinal);
     private AdminPreparedFilesSnapshot _state = new();
     private IDisposable? _channelLease;
     private IDisposable? _storageTimer, _maintenanceTimer, _failureTimer;
@@ -143,18 +153,36 @@ public sealed class AdminPreparedFilesController : IDisposable
         await Task.WhenAll(loads).ConfigureAwait(false);
     }
 
-    public async Task SetActiveTabAsync(string tab)
+    /// <summary>
+    /// Shows <paramref name="tab"/> with the given starting queries (the official tabs remount with their own defaults). The queries
+    /// of the tabs being left are reset without any read, so leaving a filtered tab never waits on, or starts, a reload of it; only
+    /// the list of the tab that is shown is read.
+    /// </summary>
+    public Task ActivateTabAsync(string tab, AdminPreparedFileQuery files, AdminDownloadDeviceQuery devices, AdminDownloadHistoryQuery history)
     {
         var active = NormalizeTab(tab);
+        files = files.Normalize(); devices = devices.Normalize(); history = history.Normalize();
         MonitorAuthorityLease? owner;
+        bool reload;
         lock (_gate)
         {
             owner = _state.Owner;
-            if (_disposed || owner == null || !_lifetime.IsCurrent(owner) || _state.ActiveTab == active) return;
-            _state = _state with { ActiveTab = active };
+            if (_disposed || owner == null || !_lifetime.IsCurrent(owner)) return Task.CompletedTask;
+            var next = _state with { ActiveTab = active };
+            var queryChanged = false;
+            if (next.FileQuery != files) { next = next with { FileQuery = files, Files = new() }; queryChanged |= active == "files"; }
+            if (next.DeviceQuery != devices)
+            {
+                next = next with { DeviceQuery = devices, Devices = new(), Entries = new Dictionary<string, AdminPreparedPagedState<AdminDownloadEntry>>() };
+                queryChanged |= active == "devices";
+            }
+            if (next.HistoryQuery != history) { next = next with { HistoryQuery = history, History = new() }; queryChanged |= active == "history"; }
+            reload = _state.ActiveTab != active || queryChanged;
+            if (next == _state) return Task.CompletedTask;
+            _state = next;
         }
         Raise();
-        await LoadActiveAsync(owner, active).ConfigureAwait(false);
+        return reload ? LoadActiveAsync(owner, active) : Task.CompletedTask;
     }
 
     public Task ReloadStorageAsync() => Current(owner => LoadStorageAsync(owner));
@@ -233,8 +261,8 @@ public sealed class AdminPreparedFilesController : IDisposable
     // ---- Actions ----------------------------------------------------------------------------------
 
     /// <summary>Pauses, resumes or cancels exactly the listed jobs (the rows the administrator confirmed or selected).</summary>
-    public Task RunPreparationActionAsync(string action, IReadOnlyList<AdminDownloadPreparation> items) => RunActionAsync("preparation-" + action,
-        destructive: action == "cancel", blockNeeds: ["preparations"], pendingIds: items.Select(x => x.Id).ToArray(),
+    public Task RunPreparationActionAsync(string action, IReadOnlyList<AdminDownloadPreparation> items, MonitorAuthorityLease? lease = null) => RunActionAsync("preparation-" + action,
+        destructive: action == "cancel", blockNeeds: ["preparations"], pendingIds: items.Select(x => x.Id).ToArray(), lease: lease,
         send: async lease =>
         {
             var result = await _api.RunPreparationActionAsync(lease, action, items.Select(x => x.Id).ToArray(), lease.Token).ConfigureAwait(false);
@@ -245,8 +273,8 @@ public sealed class AdminPreparedFilesController : IDisposable
         failure: _ => Text.T($"web.admin.downloads.preparation.actionFailed.{action}"),
         reconcile: () => Task.WhenAll(ReloadPreparationsAsync(), ReloadStorageAsync()));
 
-    public Task DeleteFilesAsync(IReadOnlyList<AdminPreparedFile> files, bool includeInUse) => RunActionAsync("delete-files",
-        destructive: true, blockNeeds: ["files"], pendingIds: null,
+    public Task DeleteFilesAsync(IReadOnlyList<AdminPreparedFile> files, bool includeInUse, MonitorAuthorityLease? lease = null) => RunActionAsync("delete-files",
+        destructive: true, blockNeeds: ["files"], pendingIds: null, lease: lease,
         send: async lease =>
         {
             var results = await _api.DeleteFilesAsync(lease, files.Select(x => x.Id).ToArray(), includeInUse, lease.Token).ConfigureAwait(false);
@@ -263,7 +291,7 @@ public sealed class AdminPreparedFilesController : IDisposable
                             failed = Text.T(P + "deleteFailedPart", Presentation.Count(failed)),
                             deleted = Text.T(P + "deleteDeletedPart", Presentation.Count(deleted.Length)),
                         })
-                        : Text.T(P + "deleteFailed", Presentation.Count(failed)));
+                        : Text.T(P + "deleteFailed", Presentation.Count(failed)), Error: true);
             if (deleted.Length > 0)
             {
                 var message = Text.T(P + "deleted", Presentation.With(Presentation.Count(deleted.Length), ("size", Presentation.FormatBytes(freed))));
@@ -275,8 +303,8 @@ public sealed class AdminPreparedFilesController : IDisposable
         failure: _ => Text.T("web.admin.downloads.preparedFiles.deleteError"),
         reconcile: () => Task.WhenAll(ReloadFilesAsync(), ReloadStorageAsync()));
 
-    public Task CleanupLocationAsync(AdminDownloadStorageLocation location) => RunActionAsync("cleanup",
-        destructive: true, blockNeeds: [], pendingIds: null,
+    public Task CleanupLocationAsync(AdminDownloadStorageLocation location, MonitorAuthorityLease? lease = null) => RunActionAsync("cleanup",
+        destructive: true, blockNeeds: [], pendingIds: null, lease: lease,
         send: async lease =>
         {
             var result = await _api.CleanupLocationAsync(lease, location.Key, lease.Token).ConfigureAwait(false);
@@ -288,8 +316,8 @@ public sealed class AdminPreparedFilesController : IDisposable
         failure: _ => Text.T("web.admin.downloads.storage.cleanUp.failed", new { name = location.Name }),
         reconcile: () => ReloadStorageAsync());
 
-    public Task DeleteUntrackedAsync(AdminDownloadStorageLocation location) => RunActionAsync("delete-untracked",
-        destructive: true, blockNeeds: ["history"], pendingIds: null,
+    public Task DeleteUntrackedAsync(AdminDownloadStorageLocation location, MonitorAuthorityLease? lease = null) => RunActionAsync("delete-untracked",
+        destructive: true, blockNeeds: ["history"], pendingIds: null, lease: lease,
         send: async lease =>
         {
             var result = await _api.DeleteUntrackedAsync(lease, location.Key, lease.Token).ConfigureAwait(false);
@@ -299,7 +327,7 @@ public sealed class AdminPreparedFilesController : IDisposable
             {
                 var failed = Text.T(P + "failed", Presentation.With(Presentation.Count(result.FailedFiles), ("name", location.Name)));
                 return new("delete-untracked", result.Files > 0 ? AdminActionOutcome.Partial : AdminActionOutcome.Failed,
-                    result.Files > 0 ? Text.T(P + "failedAndDeleted", new { failed, deleted }) : failed);
+                    result.Files > 0 ? Text.T(P + "failedAndDeleted", new { failed, deleted }) : failed, Error: true);
             }
             return new("delete-untracked", result.Files > 0 ? AdminActionOutcome.Applied : AdminActionOutcome.NoChange,
                 result.Files > 0 ? deleted : Text.T(P + "noneLeft"));
@@ -311,8 +339,8 @@ public sealed class AdminPreparedFilesController : IDisposable
         definite: error => error is ApiException { StatusCode: 503 },
         reconcile: () => Task.WhenAll(ReloadStorageAsync(), ReloadHistoryAsync()));
 
-    public Task RevokeAsync(AdminDownloadRevokeTarget target, string reason, string deviceName) => RunActionAsync("revoke",
-        destructive: true, blockNeeds: ["devices", "history"], pendingIds: null,
+    public Task RevokeAsync(AdminDownloadRevokeTarget target, string reason, string deviceName, MonitorAuthorityLease? lease = null) => RunActionAsync("revoke",
+        destructive: true, blockNeeds: ["devices", "history"], pendingIds: null, lease: lease,
         send: async lease =>
         {
             var result = await _api.RevokeAsync(lease, target, reason, lease.Token).ConfigureAwait(false);
@@ -367,7 +395,8 @@ public sealed class AdminPreparedFilesController : IDisposable
         try
         {
             var saved = await _api.UpdateNodeLocationAsync(action, node, change, action.Token).ConfigureAwait(false);
-            if (!IsActionCurrent(action)) return new(AdminActionOutcome.Failed, "");
+            // The write is known to have been applied, so it is reported even when the editor was dismissed (its lease ended) before the answer arrived.
+            if (!OwnerCurrent()) return new(AdminActionOutcome.Failed, "");
             var message = Text.T("web.admin.nodes.hooks.nodes.saved");
             lock (_gate) _state = _state with { ActionPending = false, LastAction = new("save-location", AdminActionOutcome.Applied, message) };
             Raise();
@@ -376,7 +405,8 @@ public sealed class AdminPreparedFilesController : IDisposable
         }
         catch (Exception error)
         {
-            if (!IsActionCurrent(action)) return new(AdminActionOutcome.Failed, "");
+            // A retired page authority cleared the state with it; a dismissed editor (its lease ended) after the request was sent is an unknown outcome, never silently dropped.
+            if (!OwnerCurrent()) return new(AdminActionOutcome.Failed, "");
             var kind = AdminFailures.Classify(error, action);
             var stale = kind is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired or AdminFailureKind.Conflict;
             if (IsRefusal(error, kind))
@@ -473,17 +503,19 @@ public sealed class AdminPreparedFilesController : IDisposable
 
     private async Task LoadFilesAsync(MonitorAuthorityLease owner, bool append)
     {
-        AdminPreparedFileQuery query; string? cursor; int pages;
-        lock (_gate) { query = _state.FileQuery; cursor = append ? _state.Files.NextCursor : null; pages = append ? _state.Files.PageCount : 0; }
+        AdminPreparedFileQuery query; string? cursor; int pages, walk;
+        lock (_gate) { query = _state.FileQuery; cursor = append ? _state.Files.NextCursor : null; pages = append ? _state.Files.PageCount : 0; walk = Math.Max(1, _state.Files.PageCount); }
         if (append && (cursor == null || pages >= MaxRetainedPages)) { MarkTruncated("files", pages); return; }
         var (sequence, token, epoch) = Begin(_filesSlot, owner.Token, () => _state = _state with { Files = _state.Files with { Loading = true, Error = null, ErrorKind = null } });
         try
         {
-            var page = await _api.ListFilesAsync(owner, query, cursor, token).ConfigureAwait(false);
+            var first = await _api.ListFilesAsync(owner, query, cursor, token).ConfigureAwait(false);
+            // A re-read (not "Show more") reads every page the administrator had loaded, as the official invalidation refetches them all.
+            var walked = append ? null : await WalkAsync(first, walk, next => _api.ListFilesAsync(owner, query, next, token), x => x.Id).ConfigureAwait(false);
             if (Publish(_filesSlot, sequence, owner, () =>
             {
                 if (_state.FileQuery != query) return;
-                _state = _state with { Files = NextPaged(append ? _state.Files : null, page, pages, x => x.Id) };
+                _state = _state with { Files = walked ?? NextPaged(_state.Files, first, pages, x => x.Id) };
             })) SatisfyBlock("files", epoch);
         }
         catch (Exception error) { PublishFailure(_filesSlot, sequence, owner, error, () => _state = _state with { Files = FailedPaged(_state.Files, Text.T("web.admin.downloads.preparedFiles.loadError"), error, owner) }); }
@@ -491,17 +523,18 @@ public sealed class AdminPreparedFilesController : IDisposable
 
     private async Task LoadDevicesAsync(MonitorAuthorityLease owner, bool append)
     {
-        AdminDownloadDeviceQuery query; string? cursor; int pages;
-        lock (_gate) { query = _state.DeviceQuery; cursor = append ? _state.Devices.NextCursor : null; pages = append ? _state.Devices.PageCount : 0; }
+        AdminDownloadDeviceQuery query; string? cursor; int pages, walk;
+        lock (_gate) { query = _state.DeviceQuery; cursor = append ? _state.Devices.NextCursor : null; pages = append ? _state.Devices.PageCount : 0; walk = Math.Max(1, _state.Devices.PageCount); }
         if (append && (cursor == null || pages >= MaxRetainedPages)) { MarkTruncated("devices", pages); return; }
         var (sequence, token, epoch) = Begin(_devicesSlot, owner.Token, () => _state = _state with { Devices = _state.Devices with { Loading = true, Error = null, ErrorKind = null } });
         try
         {
-            var page = await _api.ListDevicesAsync(owner, query, cursor, token).ConfigureAwait(false);
+            var first = await _api.ListDevicesAsync(owner, query, cursor, token).ConfigureAwait(false);
+            var walked = append ? null : await WalkAsync(first, walk, next => _api.ListDevicesAsync(owner, query, next, token), DeviceKey).ConfigureAwait(false);
             if (Publish(_devicesSlot, sequence, owner, () =>
             {
                 if (_state.DeviceQuery != query) return;
-                _state = _state with { Devices = NextPaged(append ? _state.Devices : null, page, pages, DeviceKey) };
+                _state = _state with { Devices = walked ?? NextPaged(_state.Devices, first, pages, DeviceKey) };
             })) SatisfyBlock("devices", epoch);
         }
         catch (Exception error) { PublishFailure(_devicesSlot, sequence, owner, error, () => _state = _state with { Devices = FailedPaged(_state.Devices, Text.T("web.admin.downloads.deviceCopies.loadError"), error, owner) }); }
@@ -509,17 +542,18 @@ public sealed class AdminPreparedFilesController : IDisposable
 
     private async Task LoadHistoryAsync(MonitorAuthorityLease owner, bool append)
     {
-        AdminDownloadHistoryQuery query; string? cursor; int pages;
-        lock (_gate) { query = _state.HistoryQuery; cursor = append ? _state.History.NextCursor : null; pages = append ? _state.History.PageCount : 0; }
+        AdminDownloadHistoryQuery query; string? cursor; int pages, walk;
+        lock (_gate) { query = _state.HistoryQuery; cursor = append ? _state.History.NextCursor : null; pages = append ? _state.History.PageCount : 0; walk = Math.Max(1, _state.History.PageCount); }
         if (append && (cursor == null || pages >= MaxRetainedPages)) { MarkTruncated("history", pages); return; }
         var (sequence, token, epoch) = Begin(_historySlot, owner.Token, () => _state = _state with { History = _state.History with { Loading = true, Error = null, ErrorKind = null } });
         try
         {
-            var page = await _api.ListHistoryAsync(owner, query, cursor, token).ConfigureAwait(false);
+            var first = await _api.ListHistoryAsync(owner, query, cursor, token).ConfigureAwait(false);
+            var walked = append ? null : await WalkAsync(first, walk, next => _api.ListHistoryAsync(owner, query, next, token), x => x.Id).ConfigureAwait(false);
             if (Publish(_historySlot, sequence, owner, () =>
             {
                 if (_state.HistoryQuery != query) return;
-                _state = _state with { History = NextPaged(append ? _state.History : null, page, pages, x => x.Id) };
+                _state = _state with { History = walked ?? NextPaged(_state.History, first, pages, x => x.Id) };
             })) SatisfyBlock("history", epoch);
         }
         catch (Exception error) { PublishFailure(_historySlot, sequence, owner, error, () => _state = _state with { History = FailedPaged(_state.History, Text.T("web.admin.downloads.history.loadFailed"), error, owner) }); }
@@ -532,21 +566,49 @@ public sealed class AdminPreparedFilesController : IDisposable
         return device == null ? Task.CompletedTask : LoadEntriesAsync(owner, device, append: false);
     });
 
+    private ReadSlot EntrySlot(string key)
+    {
+        lock (_gate)
+        {
+            if (!_entrySlots.TryGetValue(key, out var slot)) _entrySlots[key] = slot = new ReadSlot();
+            return slot;
+        }
+    }
+
     private async Task LoadEntriesAsync(MonitorAuthorityLease owner, AdminDownloadDevice device, bool append)
     {
         var key = DeviceKey(device); AdminPreparedPagedState<AdminDownloadEntry> current;
         lock (_gate) current = _state.Entries.TryGetValue(key, out var value) ? value : new();
         if (append && (current.NextCursor == null || current.PageCount >= MaxRetainedPages)) return;
-        var (sequence, token, _) = Begin(_entriesSlot, owner.Token, () => UpdateEntries(key, current with { Loading = true, Error = null, ErrorKind = null }));
+        var walk = Math.Max(1, current.PageCount);
+        var (sequence, token, _) = Begin(EntrySlot(key), owner.Token, () => UpdateEntries(key, current with { Loading = true, Error = null, ErrorKind = null }));
+        var slot = EntrySlot(key);
         try
         {
-            var page = await _api.ListEntriesAsync(owner, new(device.UserId, device.ProfileId, device.DeviceId), append ? current.NextCursor : null, token).ConfigureAwait(false);
-            Publish(_entriesSlot, sequence, owner, () => UpdateEntries(key, NextPaged(append ? current : null, page, append ? current.PageCount : 0, x => x.Id)));
+            var id = new AdminDownloadEntryQuery(device.UserId, device.ProfileId, device.DeviceId);
+            var first = await _api.ListEntriesAsync(owner, id, append ? current.NextCursor : null, token).ConfigureAwait(false);
+            var walked = append ? null : await WalkAsync(first, walk, next => _api.ListEntriesAsync(owner, id, next, token), x => x.Id).ConfigureAwait(false);
+            Publish(slot, sequence, owner, () => UpdateEntries(key, walked ?? NextPaged(current, first, current.PageCount, x => x.Id)));
         }
         catch (Exception error)
         {
-            PublishFailure(_entriesSlot, sequence, owner, error, () => UpdateEntries(key, FailedPaged(current, Text.T("configure.native.preparedFiles.entriesLoadError"), error, owner)));
+            PublishFailure(slot, sequence, owner, error, () => UpdateEntries(key, FailedPaged(current, Text.T("configure.native.preparedFiles.entriesLoadError"), error, owner)));
         }
+    }
+
+    /// <summary>
+    /// Re-reads up to <paramref name="pages"/> pages from the first (each continues from the cursor the previous answer gave), so a
+    /// live refresh keeps every page the administrator had loaded instead of collapsing the list to its first page.
+    /// </summary>
+    private async Task<AdminPreparedPagedState<T>> WalkAsync<T>(AdminCursorPage<T> first, int pages, Func<string?, Task<AdminCursorPage<T>>> read, Func<T, string> key)
+    {
+        var result = NextPaged<T>(null, first, 0, key);
+        for (var index = 1; index < pages && result.NextCursor != null; index++)
+        {
+            var page = await read(result.NextCursor).ConfigureAwait(false);
+            result = NextPaged(result, page, result.PageCount, key);
+        }
+        return result;
     }
 
     private AdminPreparedPagedState<T> NextPaged<T>(AdminPreparedPagedState<T>? existing, AdminCursorPage<T> page, int previousPages, Func<T, string> key)
@@ -565,15 +627,24 @@ public sealed class AdminPreparedFilesController : IDisposable
 
     // ---- Action plumbing --------------------------------------------------------------------------
 
+    /// <summary>
+    /// Runs one write under <paramref name="lease"/> when the caller supplies one (a confirmation passes the authority it was opened
+    /// under, and the caller owns and disposes it), otherwise under a lease captured now. A lease that is no longer current sends nothing.
+    /// </summary>
     private async Task RunActionAsync(string kind, bool destructive, string[] blockNeeds, string[]? pendingIds,
         Func<MonitorAuthorityLease, Task<AdminPreparedActionState>> send, Func<Exception, string> failure, Func<Task> reconcile,
-        Func<Exception, bool>? definite = null)
+        Func<Exception, bool>? definite = null, MonitorAuthorityLease? lease = null)
     {
         MonitorAuthorityLease action;
-        try { action = CaptureAction(); }
-        catch (OperationCanceledException) { return; }
-        using (action)
+        if (lease != null) action = lease;
+        else
         {
+            try { action = CaptureAction(); }
+            catch (OperationCanceledException) { return; }
+        }
+        try
+        {
+            if (!IsActionCurrent(action)) return;
             lock (_gate)
             {
                 if (_state.ActionPending || destructive && _state.DestructiveBlocked) return;
@@ -583,15 +654,15 @@ public sealed class AdminPreparedFilesController : IDisposable
             try
             {
                 var result = await send(action).ConfigureAwait(false);
-                if (!IsActionCurrent(action)) return;
+                // Only a retired page authority drops the answer (the state was cleared with it); a lease that ended on its own still reports what the server did.
+                if (!OwnerCurrent()) return;
                 lock (_gate) _state = _state with { ActionPending = false, PendingPreparationIds = new HashSet<string>(StringComparer.Ordinal), LastAction = result };
                 Raise();
                 await reconcile().ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!action.IsCurrent) { }
             catch (Exception error)
             {
-                if (!IsActionCurrent(action)) return;
+                if (!OwnerCurrent()) return;
                 var errorKind = AdminFailures.Classify(error, action);
                 var refusal = IsRefusal(error, errorKind) || definite?.Invoke(error) == true;
                 var message = failure(error);
@@ -621,6 +692,13 @@ public sealed class AdminPreparedFilesController : IDisposable
                 try { await reconcile().ConfigureAwait(false); } catch (Exception) { /* Reload stays reachable */ }
             }
         }
+        finally { if (lease == null) action.Dispose(); }
+    }
+
+    /// <summary>Whether the page's own authority (the one that owns every read) is still current.</summary>
+    private bool OwnerCurrent()
+    {
+        lock (_gate) return !_disposed && _state.Owner != null && _lifetime.IsCurrent(_state.Owner);
     }
 
     /// <summary>
@@ -787,6 +865,7 @@ public sealed class AdminPreparedFilesController : IDisposable
         }
         catch (FormatException) { return false; }
         var id = idElement.GetString();
+        var visible = false;
         lock (_gate)
         {
             if (_disposed || _state.Owner == null || !_state.PreparationsLoaded) return true; // nothing showing the list: nothing to refresh
@@ -794,8 +873,10 @@ public sealed class AdminPreparedFilesController : IDisposable
             if (current == null || current.State != "running") return false;
             var items = _state.Preparations.Select(x => x.Id == id ? CloneWithProgress(x, progress) : x).ToArray();
             _state = _state with { Preparations = items };
+            visible = _state.ActiveTab == "preparation";
         }
-        Raise();
+        // A reading for a queue nobody is looking at changes only the retained list: nothing is told to draw.
+        if (visible) Raise();
         return true;
     }
 
@@ -901,11 +982,8 @@ public sealed class AdminPreparedFilesController : IDisposable
                     });
             }
             else { oldMaintenance = _maintenanceTimer; _maintenanceTimer = null; }
-            if (AdminPreparationPresentation.NextFailureExpiry(_state.Preparations) is { } expiry)
+            if (FailureReadDelay(_state.Preparations, _scheduler.UtcNow) is { } delay)
             {
-                var remaining = expiry - _scheduler.UtcNow;
-                // A listed failure can expire at most a day away; a larger distance means this clock disagrees with the server's, so read on the maintenance cadence instead.
-                var delay = remaining > TimeSpan.Zero && remaining <= TimeSpan.FromDays(2) ? remaining + TimeSpan.FromSeconds(1) : PreparationMaintenance;
                 _failureTimer = _scheduler.Schedule(delay, () =>
                 {
                     lock (_gate) { if (_disposed || !ReferenceEquals(_state.Owner, owner)) return; _failureTimer = null; }
@@ -915,6 +993,19 @@ public sealed class AdminPreparedFilesController : IDisposable
         }
         oldFailure?.Dispose();
         oldMaintenance?.Dispose();
+    }
+
+    /// <summary>
+    /// How long until the oldest listed failure leaves the server's 24 hour list and the queue should be read once more; null when no
+    /// failure is listed. A timestamp the clock cannot place (already past, further than two days away, or too close to the end of
+    /// time to add a day to) falls back to the maintenance cadence, so no server time can throw here or schedule a tight loop.
+    /// </summary>
+    internal static TimeSpan? FailureReadDelay(IEnumerable<AdminDownloadPreparation> jobs, DateTimeOffset now)
+    {
+        if (AdminPreparationPresentation.NextFailureExpiry(jobs) is not { } expiry) return null;
+        // A listed failure can expire at most a day away; a larger distance means this clock disagrees with the server's, so read on the maintenance cadence instead.
+        var remaining = expiry - now;
+        return remaining > TimeSpan.Zero && remaining <= TimeSpan.FromDays(2) ? remaining + TimeSpan.FromSeconds(1) : PreparationMaintenance;
     }
 
     // ---- Lifetime ---------------------------------------------------------------------------------
@@ -939,7 +1030,7 @@ public sealed class AdminPreparedFilesController : IDisposable
 
     private void CancelReads()
     {
-        foreach (var slot in new[] { _storageSlot, _preparationsSlot, _filesSlot, _devicesSlot, _historySlot, _entriesSlot })
+        foreach (var slot in new[] { _storageSlot, _preparationsSlot, _filesSlot, _devicesSlot, _historySlot }.Concat(_entrySlots.Values))
         {
             try { slot.Cts?.Cancel(); } catch (ObjectDisposedException) { }
             slot.Cts?.Dispose(); slot.Cts = null; slot.Sequence++;

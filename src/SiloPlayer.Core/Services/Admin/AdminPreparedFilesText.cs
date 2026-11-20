@@ -56,8 +56,25 @@ public static class AdminPreparedFilesText
         ["count_text"] = text ?? count.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 
-    /// <summary>Text with the rich tags of a pattern split out, for the page to draw as bold, code or muted runs.</summary>
-    public static IReadOnlyList<AdminPreparedRichRun> Rich(string key, object? values = null) => ParseRich(T(key, values));
+    /// <summary>
+    /// Text with the rich tags of a pattern split out, for the page to draw as bold, code or muted runs. Only the pattern's own tags
+    /// are tags: a value (a title, node name or directory) is substituted into the parsed runs exactly as it is, so a title such as
+    /// <c>Alien &lt;Directors&gt;</c> is never read as markup.
+    /// </summary>
+    public static IReadOnlyList<AdminPreparedRichRun> Rich(string key, object? values = null)
+    {
+        // Values go through the formatter with their markup characters hidden, then come back inside the runs.
+        var hidden = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (name, value) in ToDictionary(values)) hidden[name] = value is string text ? Hide(text) : value;
+        return ParseRich(T(key, hidden)).Select(run => run with { Text = Reveal(run.Text) }).ToArray();
+    }
+
+    // Private-use markers stand in for "<" (and for themselves) while a value passes through the pattern.
+    private const char Marker = '\uE000';
+    private static string Hide(string value) =>
+        value.IndexOfAny(['<', Marker]) < 0 ? value : value.Replace(Marker.ToString(), Marker + "b").Replace("<", Marker + "a");
+    private static string Reveal(string value) =>
+        value.IndexOf(Marker) < 0 ? value : value.Replace(Marker + "a", "<").Replace(Marker + "b", Marker.ToString());
 
     public static IReadOnlyList<AdminPreparedRichRun> ParseRich(string text)
     {

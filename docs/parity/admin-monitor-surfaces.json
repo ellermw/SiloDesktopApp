@@ -250,6 +250,7 @@
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.Files.cs",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.History.cs",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.Preparation.cs",
+    "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.Stable.cs",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.Storage.cs",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.xaml",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesRegistration.cs",

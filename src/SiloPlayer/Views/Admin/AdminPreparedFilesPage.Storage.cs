@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using static SiloPlayer.Views.Admin.LogsNativeUi;
 using Presentation = SiloPlayer.Core.Services.Admin.AdminPreparedFilesPresentation;
@@ -18,13 +19,17 @@ public sealed partial class AdminPreparedFilesPage
     {
         private readonly StackPanel _root = Stack(20);
         private readonly ContentControl _content = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        private AdminDownloadStorage? _rendered;
         private string? _renderedKind;
+        private string _fingerprint = "";
+        // Buttons whose enabled state follows the page state, so a state change updates them in place instead of redrawing the cards.
+        private readonly List<(Microsoft.UI.Xaml.Controls.Primitives.ButtonBase Button, Func<AdminPreparedFilesSnapshot, bool> Enabled)> _gates = [];
 
         public StorageView(AdminPreparedFilesPage page) : base(page) { _root.Children.Add(_content); }
         public override UIElement Root => _root;
 
-        public override void Reset() { _rendered = null; _renderedKind = null; _content.Content = null; }
+        public override void Reset() { base.Reset(); _renderedKind = null; _fingerprint = ""; _gates.Clear(); _content.Content = null; }
+
+        protected override object Inputs(AdminPreparedFilesSnapshot state) => (state.Storage, state.ActionPending, state.DestructiveBlocked);
 
         public override void Update(AdminPreparedFilesSnapshot state)
         {
@@ -32,17 +37,40 @@ public sealed partial class AdminPreparedFilesPage
             if (storage.Value == null)
             {
                 var kind = storage.Error != null ? "error" : "loading";
-                if (_renderedKind == kind && storage.Error == null) return;
-                _renderedKind = kind; _rendered = null;
+                if (_renderedKind == kind) return;
+                _renderedKind = kind; _fingerprint = ""; _gates.Clear();
                 AutomationProperties.SetAutomationId(_content, "PreparedFilesStorageState");
                 _content.Content = storage.Error != null || storage.Loaded
                     ? Message(storage.Error ?? T("web.admin.downloads.storage.loadError"), "PreparedFilesStorageReload", () => _ = P.Controller.ReloadStorageAsync())
                     : Message(T("web.admin.downloads.storage.loading"));
                 return;
             }
-            // Rebuilt from the latest overview on every change; a retained old overview is kept only while a background read fails.
-            _renderedKind = "ready"; _rendered = storage.Value;
-            _content.Content = Build(state, storage.Value, storage.Error != null);
+            // Redrawn only when the overview itself (or the minute its relative times are read in) changed; a retained old overview is kept only while a background read fails.
+            // A change of page state (an action starting, a poll that found the same numbers) only updates the buttons that follow it.
+            _renderedKind = "ready";
+            var fingerprint = Fingerprint(storage.Value) + "|" + (storage.Error != null) + "|" + DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
+            if (fingerprint != _fingerprint || _content.Content == null)
+            {
+                _fingerprint = fingerprint; _gates.Clear();
+                _content.Content = Build(state, storage.Value, storage.Error != null);
+            }
+            foreach (var (button, enabled) in _gates)
+            {
+                var on = enabled(state);
+                if (button.IsEnabled != on) button.IsEnabled = on;
+            }
+        }
+
+        private static string Fingerprint(AdminDownloadStorage value)
+        {
+            try { return System.Text.Json.JsonSerializer.Serialize(value); }
+            catch (Exception) { return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value).ToString(System.Globalization.CultureInfo.InvariantCulture); }
+        }
+
+        private void Gate(Microsoft.UI.Xaml.Controls.Primitives.ButtonBase button, AdminPreparedFilesSnapshot state, Func<AdminPreparedFilesSnapshot, bool> enabled)
+        {
+            button.IsEnabled = enabled(state);
+            _gates.Add((button, enabled));
         }
 
         private UIElement Build(AdminPreparedFilesSnapshot state, AdminDownloadStorage data, bool stale)
@@ -158,7 +186,7 @@ public sealed partial class AdminPreparedFilesPage
             heading.Children.Add(StatusPill(location));
             header.Children.Add(heading);
             var cleanUp = Button(T("web.admin.downloads.storage.card.cleanUp"), "PreparedFilesCleanup_" + location.Key, "GhostButtonStyle");
-            cleanUp.IsEnabled = !state.ActionPending && !state.DestructiveBlocked && !offline;
+            Gate(cleanUp, state, s => !s.ActionPending && !s.DestructiveBlocked && !offline);
             cleanUp.Click += (_, _) => _ = P.Controller.CleanupLocationAsync(location);
             Grid.SetColumn(cleanUp, 1); header.Children.Add(cleanUp);
             root.Children.Add(header);
@@ -235,7 +263,7 @@ public sealed partial class AdminPreparedFilesPage
                     {
                         var review = new HyperlinkButton { Content = run.Text, Padding = new Thickness(0), FontSize = 12 };
                         AutomationProperties.SetAutomationId(review, "PreparedFilesReviewUntracked_" + location.Key);
-                        review.IsEnabled = !state.ActionPending && !state.DestructiveBlocked;
+                        Gate(review, state, s => !s.ActionPending && !s.DestructiveBlocked);
                         review.Click += (_, _) => P.ReviewUntracked(location);
                         wrap.Children.Add(review);
                     }
@@ -353,14 +381,22 @@ public sealed partial class AdminPreparedFilesPage
     private async void ReviewUntracked(AdminDownloadStorageLocation location)
     {
         if (Controller.State.ActionPending || Controller.State.DestructiveBlocked) return;
-        var content = Stack(12);
-        content.Children.Add(Text(T("web.admin.downloads.storage.untracked.confirmDescription",
-            Presentation.With(Presentation.Count(location.UntrackedFiles), ("size", Presentation.FormatBytes(location.UntrackedBytes))))));
-        content.Children.Add(Text(T("web.shell.confirmDialog.irreversible"), 12, true));
-        var dialog = NewDialog(T("web.admin.downloads.storage.untracked.confirmTitle", new { name = location.Name }), content,
-            T("web.admin.downloads.storage.untracked.confirm"), destructive: true);
-        AutomationProperties.SetAutomationId(dialog, "PreparedFilesUntrackedDialog");
-        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
-        await Controller.DeleteUntrackedAsync(location);
+        MonitorAuthorityLease lease;
+        try { lease = Controller.CaptureAction(); }
+        catch (OperationCanceledException) { return; }
+        using (lease)
+        {
+            var content = Stack(12);
+            content.Children.Add(Text(T("web.admin.downloads.storage.untracked.confirmDescription",
+                Presentation.With(Presentation.Count(location.UntrackedFiles), ("size", Presentation.FormatBytes(location.UntrackedBytes))))));
+            content.Children.Add(Text(T("web.shell.confirmDialog.irreversible"), 12, true));
+            var dialog = NewDialog(T("web.admin.downloads.storage.untracked.confirmTitle", new { name = location.Name }), content,
+                T("web.admin.downloads.storage.untracked.confirm"), destructive: true);
+            AutomationProperties.SetAutomationId(dialog, "PreparedFilesUntrackedDialog");
+            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
+            // The location belongs to the authority the dialog opened under: if that is no longer current nothing is sent.
+            if (!Controller.IsActionCurrent(lease)) return;
+            await Controller.DeleteUntrackedAsync(location, lease);
+        }
     }
 }

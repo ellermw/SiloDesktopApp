@@ -214,4 +214,52 @@ public sealed class AdminPreparedFilesPresentationTests
         Assert.Equal("Web download", AdminPreparationPresentation.RequesterDevice(web));
         Assert.Contains("maya", AdminPreparationPresentation.SearchText(job));
     }
+    [Theory]
+    [InlineData("Alien <Directors>")]
+    [InlineData("<b>Heat</b>")]
+    [InlineData("A < B > C <code>")]
+    [InlineData("marker \uE000 and \uE000a and <")]
+    public void ValuesInRichPatternsAppearExactlyAsGivenAndNeverRestyleTheRest(string title)
+    {
+        var runs = AdminPreparedFilesText.Rich("web.admin.downloads.preparedFiles.dialog.cachedList",
+            AdminPreparedFilesPresentation.With(AdminPreparedFilesPresentation.Count(2), ("names", title + ", Other")));
+
+        Assert.Equal("2 cached", runs[0].Text);
+        Assert.True(runs[0].Has("b"));
+        var rest = string.Concat(runs.Skip(1).Select(x => x.Text));
+        Assert.Equal(" · " + title + ", Other", rest);
+        // The value's own angle brackets are never read as markup: only the pattern's bold tag styles anything.
+        Assert.All(runs.Skip(1), run => Assert.Empty(run.Tags));
+        Assert.Equal("2 cached · " + title + ", Other", AdminPreparedFilesText.Plain("web.admin.downloads.preparedFiles.dialog.cachedList",
+            AdminPreparedFilesPresentation.With(AdminPreparedFilesPresentation.Count(2), ("names", title + ", Other"))));
+    }
+
+    [Fact]
+    public void NodeNamesAndDirectoriesInRichPatternsKeepTheirCharacters()
+    {
+        var plain = AdminPreparedFilesText.Plain("web.admin.downloads.storage.card.pendingDir", new { dir = "/srv/<prep>/b", name = "gpu <1>" });
+        Assert.Contains("/srv/<prep>/b", plain);
+        Assert.Contains("gpu <1>", plain);
+    }
+
+    [Fact]
+    public void NoFailureTimestampCanThrowFromTheTimerCalculationOrScheduleATightLoop()
+    {
+        var now = DateTimeOffset.Parse("2026-11-16T12:00:00Z");
+        AdminDownloadPreparation Failed(DateTimeOffset at) => new() { Id = "f", State = "failed", FailedAt = at };
+
+        // Within a day of the end of time: adding 24 hours would throw, and nothing expires then.
+        Assert.Null(AdminPreparationPresentation.NextFailureExpiry([Failed(DateTimeOffset.MaxValue)]));
+        Assert.Null(AdminPreparationPresentation.NextFailureExpiry([Failed(DateTimeOffset.MaxValue.AddHours(-23))]));
+        Assert.Null(AdminPreparedFilesController.FailureReadDelay([Failed(DateTimeOffset.MaxValue)], now));
+        Assert.NotNull(AdminPreparationPresentation.NextFailureExpiry([Failed(DateTimeOffset.MaxValue.AddHours(-25))]));
+
+        // Far future, far past and exactly now all fall back to the one-minute cadence; never a zero or negative delay.
+        foreach (var at in new[] { DateTimeOffset.MaxValue.AddHours(-25), DateTimeOffset.Parse("2099-01-01T00:00:00Z"), DateTimeOffset.MinValue, DateTimeOffset.Parse("2000-01-01T00:00:00Z"), now.AddHours(-24) })
+            Assert.Equal(AdminPreparedFilesController.PreparationMaintenance, AdminPreparedFilesController.FailureReadDelay([Failed(at)], now));
+
+        // A normal failure waits until it ages out of the server's list, plus a second.
+        Assert.Equal(TimeSpan.FromHours(22) + TimeSpan.FromSeconds(1), AdminPreparedFilesController.FailureReadDelay([Failed(now.AddHours(-2))], now));
+        Assert.Null(AdminPreparedFilesController.FailureReadDelay([new AdminDownloadPreparation { Id = "q", State = "queued" }], now));
+    }
 }

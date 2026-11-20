@@ -232,6 +232,35 @@ public sealed class AdminPreparedFilesApiTests
         await Assert.ThrowsAsync<ArgumentException>(() => api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(true, "relative/path", false, null)));
         Assert.Equal(sent, kit.Http.Requests.Count);
     }
+
+    [Fact]
+    public async Task TransportFailureAfterSendLogsOnlyAFixedCategoryAndNeverEchoesTitlesPathsOrNames()
+    {
+        var directory = Path.Combine(TestRepository.Root, ".codex-tmp", "prepared-files-transport", Guid.NewGuid().ToString("N"));
+        using var operation = LocalLog.BeginOperation("prepared-files-transport-fixture", directory);
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (_, _) => Task.FromException<HttpResponseMessage>(new HttpRequestException("echoed Alien <Directors> /srv/prepared/maya-phone host.internal:8443"));
+        using var lease = authority.Capture();
+        var api = new AdminPreparedFilesApi(kit.Client);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => api.RevokeAsync(lease, AdminDownloadRevokeTarget.ForIds(["d1"]), "Lost phone of maya"));
+        await Assert.ThrowsAnyAsync<Exception>(() => api.ListFilesAsync(lease, new AdminPreparedFileQuery { Search = "Alien" }, null));
+        // The node save carries the directory override in its body, so it records only the same category.
+        await Assert.ThrowsAnyAsync<Exception>(() => api.UpdateNodeLocationAsync(lease, new AdminPreparedFilesNode { Id = "9", ConfigETag = "\"v1\"" }, new AdminNodeLocationChange(true, "/srv/prepared/maya-private", false, null)));
+        await Assert.ThrowsAnyAsync<Exception>(() => api.ListNodesAsync(lease));
+
+        var diagnostics = System.IO.File.ReadAllText(Path.Combine(directory, "api_diagnostics.txt"));
+        Assert.Contains("error=admin_downloads_nodes_transport_failed", diagnostics);
+        Assert.DoesNotContain("maya-private", diagnostics);
+        Assert.DoesNotContain("Alien", diagnostics);
+        Assert.DoesNotContain("/srv/prepared", diagnostics);
+        Assert.DoesNotContain("maya", diagnostics);
+        Assert.DoesNotContain("host.internal", diagnostics);
+        Assert.DoesNotContain("HttpRequestException", diagnostics);
+        Assert.Single(kit.Http.Requests, request => request.StartsWith("POST /api/v2/admin/downloads/revoke", StringComparison.Ordinal));
+    }
+
     private static string ActionResults(string requestBody, string outcome)
     {
         using var request = System.Text.Json.JsonDocument.Parse(requestBody);

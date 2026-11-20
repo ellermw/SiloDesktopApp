@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,171 +19,290 @@ public sealed partial class AdminPreparedFilesPage
 {
     private const string PrepKey = "web.admin.downloads.preparation";
 
-    /// <summary>The Preparation tab (official <c>PreparationTab.tsx</c>): the live queue with state and worker filters, selection and per-job details.</summary>
+    /// <summary>
+    /// The Preparation tab (official <c>PreparationTab.tsx</c>): the live queue with state and worker filters, selection and per-job
+    /// details. Every control (the state chips, the selection strip, each row's check box and buttons, the details buttons) is built
+    /// once and updated in place, so progress readings arriving every second never replace the control being clicked or focused.
+    /// </summary>
     private sealed class PreparationView : TabView
     {
+        private static readonly double[] Widths = [32, 260, 260, 130, 240, 190, 150];
+
         private readonly StackPanel _root = Stack(20);
         private readonly LogsWrapPanel _filterRow = new() { Spacing = 8 };
         private readonly TextBox _filter;
         private readonly Button _clearAll;
-        private readonly StackPanel _top = Stack(20);
-        private readonly StackPanel _bottom = Stack(20);
+        private readonly StatusHost _topStatus = new(), _banner = new(), _bottomStatus = new();
+        private readonly StateStrip _states;
+        private readonly SelectionStrip _selection;
+        private readonly TextBlock _showing = Text("", 12, true), _listing = Text("", 12, true);
+        private readonly Border _tablePanel;
+        private readonly StableTable _table;
+        private readonly Tick _selectAll;
+        private readonly Dictionary<string, PrepRow> _rows = new(StringComparer.Ordinal);
         private readonly HashSet<string> _selected = new(StringComparer.Ordinal);
         private readonly HashSet<string> _details = new(StringComparer.Ordinal);
         private readonly Dictionary<string, FfmpegState> _ffmpeg = new(StringComparer.Ordinal);
-        private string _search_text = "";
+        // The registry never changes while a page is open: it is read once, not once per row.
+        private readonly bool _usersRegistered, _logsRegistered;
+        private string _searchText = "";
         private string? _stateFilter;
         private string? _workerFilter;
+        private IReadOnlyList<AdminDownloadPreparation> _visible = [];
 
         private sealed record FfmpegState(bool Loading, IReadOnlyList<AdminActivityLogRow> Rows, bool Failed);
 
         public PreparationView(AdminPreparedFilesPage page) : base(page)
         {
+            var registry = AdminShellPage.CreateRegistry();
+            _usersRegistered = registry.IsRegistered(AdminRoute.Users);
+            _logsRegistered = registry.IsRegistered(AdminRoute.ServerLog);
             _filter = Input(T(PrepKey + ".filter.placeholder"), "PreparedFilesPreparationSearch", 420);
             _filter.Height = 32; _filter.FontSize = 13; _filter.MaxWidth = 420; _filter.HorizontalAlignment = HorizontalAlignment.Stretch;
             AutomationProperties.SetName(_filter, T(PrepKey + ".filter.label"));
             // The starting text is never a change: only a different value updates the filter.
             _filter.TextChanged += (_, _) =>
             {
-                if (_filter.Text == _search_text) return;
-                _search_text = _filter.Text;
+                if (_filter.Text == _searchText) return;
+                _searchText = _filter.Text;
                 Refresh();
             };
             _clearAll = Button(T(PrepKey + ".filter.clearAll"), "PreparedFilesPreparationClearFilters", "GhostButtonStyle");
             _clearAll.Click += (_, _) => { _stateFilter = null; _workerFilter = null; Refresh(); };
             _filterRow.Children.Add(_filter);
             _filterRow.Children.Add(_clearAll);
-            _root.Children.Add(_top); _root.Children.Add(_filterRow); _root.Children.Add(_bottom);
+
+            _states = new StateStrip(this);
+            _selection = new SelectionStrip(this);
+            _selectAll = new Tick("", "PreparedFilesPreparationSelectAll", on =>
+            {
+                foreach (var row in _visible) if (on) _selected.Add(row.Id); else _selected.Remove(row.Id);
+                Refresh();
+            });
+            var headings = new List<UIElement?> { _selectAll.Box };
+            foreach (var key in new[] { ".column.title", ".column.output", ".column.worker", ".column.progress", ".column.requestedBy" })
+            {
+                var heading = Text(AppStrings.Uppercase(T(PrepKey + key)), 10, true);
+                heading.FontWeight = FontWeights.SemiBold;
+                headings.Add(heading);
+            }
+            _table = new StableTable(headings, Widths);
+            _tablePanel = Panel(_table, 12, 0, true);
+            AutomationProperties.SetAutomationId(_tablePanel, "PreparedFilesPreparationTable");
+            _tablePanel.Visibility = Visibility.Collapsed;
+            foreach (UIElement child in new UIElement[] { _topStatus, _banner, _states.Root, _filterRow, _selection.Root, _showing, _listing, _bottomStatus, _tablePanel })
+                _root.Children.Add(child);
+            _states.Root.Visibility = Visibility.Collapsed; _filterRow.Visibility = Visibility.Collapsed; _selection.Root.Visibility = Visibility.Collapsed;
+            _showing.Visibility = Visibility.Collapsed; _listing.Visibility = Visibility.Collapsed;
         }
 
         public override UIElement Root => _root;
-        private AdminPreparedFilesSnapshot? _last;
 
         public override void Reset()
         {
-            _selected.Clear(); _details.Clear(); _ffmpeg.Clear();
-            _stateFilter = null; _workerFilter = null; _search_text = "";
+            base.Reset();
+            _selected.Clear(); _details.Clear(); _ffmpeg.Clear(); _rows.Clear();
+            _stateFilter = null; _workerFilter = null; _searchText = "";
             if (_filter.Text.Length > 0) _filter.Text = "";
-            _last = null;
+            _table.Body.Children.Clear();
         }
 
-        public override void Update(AdminPreparedFilesSnapshot state) { _last = state; Build(state); }
-        private void Refresh() { if (_last != null) Build(P.Controller.State); }
+        protected override object Inputs(AdminPreparedFilesSnapshot state) =>
+            (state.PreparationsLoaded, state.PreparationsError, state.Preparations, state.PreparationCounts, state.ActionPending, state.DestructiveBlocked, state.PendingPreparationIds);
+
+        public override void Update(AdminPreparedFilesSnapshot state) => Build(state);
+
+        /// <summary>A change made on this tab itself (filter, selection, details) draws from the current state.</summary>
+        private void Refresh() => Build(P.Controller.State);
 
         private void Build(AdminPreparedFilesSnapshot state)
         {
-            _top.Children.Clear(); _bottom.Children.Clear();
             var items = state.Preparations;
             var busy = state.ActionPending;
-            // Collapsing the filter row would drop keyboard focus from the box, so it only collapses where it must.
             if (!state.PreparationsLoaded && state.PreparationsError == null)
             {
-                _filterRow.Visibility = Visibility.Collapsed;
-                _top.Children.Add(Message(T(PrepKey + ".loading")));
+                ShowOnly(_topStatus, "loading", () => Message(T(PrepKey + ".loading")));
                 return;
             }
             if (!state.PreparationsLoaded || (items.Count == 0 && state.PreparationsError != null))
             {
-                _filterRow.Visibility = Visibility.Collapsed;
-                _top.Children.Add(Message(T(PrepKey + ".unavailable"), "PreparedFilesPreparationReload", () => _ = P.Controller.ReloadPreparationsAsync()));
+                ShowOnly(_topStatus, "unavailable", () => Message(T(PrepKey + ".unavailable"), "PreparedFilesPreparationReload", () => _ = P.Controller.ReloadPreparationsAsync()));
                 return;
             }
+            _topStatus.Hide();
             _filterRow.Visibility = Visibility.Visible;
-            if (state.PreparationsError != null) _top.Children.Add(StaleBanner("PreparedFilesPreparationReload", () => _ = P.Controller.ReloadPreparationsAsync()));
+            if (state.PreparationsError != null) _banner.Show("stale", () => StaleBanner("PreparedFilesPreparationReload", () => _ = P.Controller.ReloadPreparationsAsync()));
+            else _banner.Hide();
+
             var counts = state.PreparationCounts;
             var total = Prep.States.Sum(s => Prep.StateCount(counts, s));
             var workers = items.Where(x => x.State == "running").Select(x => (Job: x, Worker: Prep.Worker(x))).Where(x => x.Worker != null)
                 .GroupBy(x => x.Worker!.Key).Select(g => (Worker: g.First().Worker!, Count: g.Count())).OrderByDescending(x => x.Count).ToArray();
-            var q = _search_text.Trim().ToLower(System.Globalization.CultureInfo.CurrentCulture);
+            var q = _searchText.Trim().ToLower(System.Globalization.CultureInfo.CurrentCulture);
             var filtered = items.Where(item => (_stateFilter == null || item.State == _stateFilter)
                 && (_workerFilter == null || Prep.Worker(item)?.Key == _workerFilter)
                 && (q.Length == 0 || Prep.SearchText(item).Contains(q, StringComparison.Ordinal))).ToArray();
+            _visible = filtered;
             var known = items.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
             _selected.RemoveWhere(id => !known.Contains(id));
+            foreach (var id in _rows.Keys.Where(id => !known.Contains(id)).ToArray()) { _rows.Remove(id); _details.Remove(id); _ffmpeg.Remove(id); }
             var selectedItems = filtered.Where(x => _selected.Contains(x.Id)).ToArray();
             var activeFilters = (_stateFilter != null ? 1 : 0) + (_workerFilter != null ? 1 : 0);
 
-            if (total > 0) _top.Children.Add(StateBar(counts, total, workers));
-            _clearAll.Visibility = _search_text.Length > 0 || activeFilters > 0 ? Visibility.Visible : Visibility.Collapsed;
+            _states.Sync(counts, total, workers);
+            _clearAll.Visibility = _searchText.Length > 0 || activeFilters > 0 ? Visibility.Visible : Visibility.Collapsed;
+            _selection.Sync(selectedItems, busy, state.DestructiveBlocked);
 
-            if (selectedItems.Length > 0) _bottom.Children.Add(SelectionBar(selectedItems, busy, state.DestructiveBlocked));
-            if (!string.IsNullOrEmpty(q) || activeFilters > 0)
-                _bottom.Children.Add(Text(T(PrepKey + ".showing", new { total = items.Count, shown = filtered.Length, total_text = items.Count }), 12, true));
-            if (items.Count < total)
-                _bottom.Children.Add(Text(T(PrepKey + ".listingFirst", new
+            var showing = !string.IsNullOrEmpty(q) || activeFilters > 0;
+            _showing.Visibility = showing ? Visibility.Visible : Visibility.Collapsed;
+            if (showing) _showing.Text = T(PrepKey + ".showing", new { total = items.Count, shown = filtered.Length, total_text = items.Count });
+            var truncated = items.Count < total;
+            _listing.Visibility = truncated ? Visibility.Visible : Visibility.Collapsed;
+            if (truncated)
+                _listing.Text = T(PrepKey + ".listingFirst", new
                 {
                     total, shown = items.Count.ToString("N0", AppStrings.FormatCulture), total_text = total.ToString("N0", AppStrings.FormatCulture),
-                }), 12, true));
+                });
 
             if (filtered.Length == 0)
             {
-                _bottom.Children.Add(Message(items.Count > 0 ? T(PrepKey + ".noMatches") : T(PrepKey + ".empty")));
+                var kind = items.Count > 0 ? "noMatches" : "empty";
+                _bottomStatus.Show(kind, () => Message(items.Count > 0 ? T(PrepKey + ".noMatches") : T(PrepKey + ".empty")));
+                SyncChildren(_table.Body, []); // no row stays in the tree while the message shows
+                _tablePanel.Visibility = Visibility.Collapsed;
                 return;
             }
-            _bottom.Children.Add(Table(filtered, state, busy));
+            _bottomStatus.Hide();
+            _tablePanel.Visibility = Visibility.Visible;
+            _selectAll.Sync(filtered.All(x => _selected.Contains(x.Id)), !busy,
+                filtered.All(x => _selected.Contains(x.Id)) ? T(PrepKey + ".table.clearSelection") : T(PrepKey + ".table.selectAll"));
+
+            var wanted = new List<UIElement>(filtered.Length);
+            foreach (var job in filtered)
+            {
+                if (!_rows.TryGetValue(job.Id, out var row)) _rows[job.Id] = row = new PrepRow(this, job.Id);
+                row.Apply(job, state, busy, _selected.Contains(job.Id), _details.Contains(job.Id));
+                wanted.Add(row.Root);
+            }
+            SyncChildren(_table.Body, wanted);
         }
 
-        private UIElement StateBar(AdminDownloadPreparationCounts counts, int total, IReadOnlyList<(AdminPreparationWorker Worker, int Count)> workers)
+        /// <summary>Shows one message and hides everything the loaded queue shows.</summary>
+        private void ShowOnly(StatusHost host, string kind, Func<UIElement> build)
         {
-            var root = Stack(12);
-            root.Children.Add(Text(AppStrings.Uppercase(T(PrepKey + ".stateHeading")), 10, true));
-            var bar = new Grid { Height = 6, ColumnSpacing = 0 };
-            var index = 0;
-            foreach (var state in Prep.States.Where(s => Prep.StateCount(counts, s) > 0))
+            host.Show(kind, build);
+            _banner.Hide(); _bottomStatus.Hide();
+            _filterRow.Visibility = Visibility.Collapsed; _states.Root.Visibility = Visibility.Collapsed; _selection.Root.Visibility = Visibility.Collapsed;
+            _showing.Visibility = Visibility.Collapsed; _listing.Visibility = Visibility.Collapsed; _tablePanel.Visibility = Visibility.Collapsed;
+            SyncChildren(_table.Body, []);
+        }
+
+        // ---- State and worker filters -----------------------------------------------------------------
+
+        /// <summary>The queue state bar, its state chips and the worker chips: built once, updated in place.</summary>
+        private sealed class StateStrip
+        {
+            private readonly PreparationView _view;
+            private readonly Grid _bar = new() { Height = 6, ColumnSpacing = 0 };
+            private readonly Dictionary<string, (Chip Chip, TextBlock Count)> _chips = new(StringComparer.Ordinal);
+            private readonly Border _workerSection;
+            private readonly LogsWrapPanel _workerRow = new() { Spacing = 6 };
+            private readonly Dictionary<string, (Chip Chip, TextBlock Name, TextBlock Count)> _workers = new(StringComparer.Ordinal);
+            private string _barSignature = "";
+
+            public StateStrip(PreparationView view)
             {
-                bar.ColumnDefinitions.Add(new() { Width = new(Prep.StateCount(counts, state), GridUnitType.Star) });
-                var piece = new Border { Background = StateBrush(state) };
-                Grid.SetColumn(piece, index++); bar.Children.Add(piece);
-            }
-            AutomationProperties.SetName(bar, T(PrepKey + ".stateBarLabel"));
-            root.Children.Add(new Border { Child = bar, CornerRadius = new CornerRadius(3) });
-            var chips = new LogsWrapPanel { Spacing = 16 };
-            foreach (var state in Prep.States)
-            {
-                var toggle = new ToggleButton { Padding = new Thickness(4, 2, 4, 2), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0) };
-                var label = Inline(6);
-                label.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = StateBrush(state), VerticalAlignment = VerticalAlignment.Center });
-                label.Children.Add(Text(Prep.StateLabel(state), 12));
-                label.Children.Add(Text(Prep.StateCount(counts, state).ToString("N0", AppStrings.FormatCulture), 12, true));
-                toggle.Content = label;
-                toggle.IsChecked = _stateFilter == state;
-                if (_stateFilter != null && _stateFilter != state) toggle.Opacity = 0.35;
-                AutomationProperties.SetAutomationId(toggle, "PreparedFilesPreparationState_" + state);
-                AutomationProperties.SetName(toggle, Prep.StateLabel(state));
-                var captured = state;
-                toggle.Checked += (_, _) => { _stateFilter = captured; Refresh(); };
-                toggle.Unchecked += (_, _) => { if (_stateFilter == captured) { _stateFilter = null; Refresh(); } };
-                chips.Children.Add(toggle);
-            }
-            root.Children.Add(chips);
-            if (workers.Count > 0)
-            {
-                var section = new Border { BorderBrush = Tint("BorderBrush", 0.6), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 12, 0, 0) };
+                _view = view;
+                var root = Stack(12);
+                root.Children.Add(Text(AppStrings.Uppercase(T(PrepKey + ".stateHeading")), 10, true));
+                AutomationProperties.SetName(_bar, T(PrepKey + ".stateBarLabel"));
+                root.Children.Add(new Border { Child = _bar, CornerRadius = new CornerRadius(3) });
+                var chips = new LogsWrapPanel { Spacing = 16 };
+                foreach (var state in Prep.States)
+                {
+                    var toggle = new ToggleButton { Padding = new Thickness(4, 2, 4, 2), Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0) };
+                    var label = Inline(6);
+                    label.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = StateBrush(state), VerticalAlignment = VerticalAlignment.Center });
+                    label.Children.Add(Text(Prep.StateLabel(state), 12));
+                    var count = Text("", 12, true);
+                    label.Children.Add(count);
+                    toggle.Content = label;
+                    AutomationProperties.SetAutomationId(toggle, "PreparedFilesPreparationState_" + state);
+                    AutomationProperties.SetName(toggle, Prep.StateLabel(state));
+                    var captured = state;
+                    _chips[state] = (new Chip(toggle, on =>
+                    {
+                        if (on) _view._stateFilter = captured; else if (_view._stateFilter == captured) _view._stateFilter = null;
+                        _view.Refresh();
+                    }), count);
+                    chips.Children.Add(toggle);
+                }
+                root.Children.Add(chips);
                 var inner = Stack(8);
                 inner.Children.Add(Text(AppStrings.Uppercase(T(PrepKey + ".byWorker")), 10, true));
-                var row = new LogsWrapPanel { Spacing = 6 };
+                inner.Children.Add(_workerRow);
+                _workerSection = new Border { BorderBrush = Tint("BorderBrush", 0.6), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 12, 0, 0), Child = inner, Visibility = Visibility.Collapsed };
+                root.Children.Add(_workerSection);
+                Root = Panel(root, 16, 16, true);
+            }
+
+            public Border Root { get; }
+
+            public void Sync(AdminDownloadPreparationCounts counts, int total, IReadOnlyList<(AdminPreparationWorker Worker, int Count)> workers)
+            {
+                Root.Visibility = total > 0 ? Visibility.Visible : Visibility.Collapsed;
+                var signature = string.Join(",", Prep.States.Select(s => Prep.StateCount(counts, s)));
+                if (signature != _barSignature)
+                {
+                    _barSignature = signature;
+                    _bar.Children.Clear(); _bar.ColumnDefinitions.Clear();
+                    var index = 0;
+                    foreach (var state in Prep.States.Where(s => Prep.StateCount(counts, s) > 0))
+                    {
+                        _bar.ColumnDefinitions.Add(new() { Width = new(Prep.StateCount(counts, state), GridUnitType.Star) });
+                        var piece = new Border { Background = StateBrush(state) };
+                        Grid.SetColumn(piece, index++); _bar.Children.Add(piece);
+                    }
+                }
+                foreach (var state in Prep.States)
+                {
+                    var (chip, count) = _chips[state];
+                    var text = Prep.StateCount(counts, state).ToString("N0", AppStrings.FormatCulture);
+                    if (count.Text != text) count.Text = text;
+                    chip.Sync(_view._stateFilter == state, _view._stateFilter != null && _view._stateFilter != state ? 0.35 : 1);
+                }
+                _workerSection.Visibility = workers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                var wanted = new List<UIElement>(workers.Count);
                 foreach (var (worker, count) in workers)
                 {
-                    var toggle = new ToggleButton { Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(6) };
-                    var content = Inline(6);
-                    content.Children.Add(Text(worker.Label, 11, true));
-                    content.Children.Add(Text(worker.Name, 11));
-                    content.Children.Add(Text(count.ToString(AppStrings.FormatCulture), 11, true));
-                    toggle.Content = content;
-                    toggle.IsChecked = _workerFilter == worker.Key;
-                    if (_workerFilter != null && _workerFilter != worker.Key) toggle.Opacity = 0.35;
-                    AutomationProperties.SetAutomationId(toggle, "PreparedFilesPreparationWorker_" + worker.Key);
-                    AutomationProperties.SetName(toggle, worker.Label + " " + worker.Name);
-                    var key = worker.Key;
-                    toggle.Checked += (_, _) => { _workerFilter = key; Refresh(); };
-                    toggle.Unchecked += (_, _) => { if (_workerFilter == key) { _workerFilter = null; Refresh(); } };
-                    row.Children.Add(toggle);
+                    if (!_workers.TryGetValue(worker.Key, out var entry))
+                    {
+                        var toggle = new ToggleButton { Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(6) };
+                        var content = Inline(6);
+                        content.Children.Add(Text(worker.Label, 11, true));
+                        var name = Text(worker.Name, 11);
+                        content.Children.Add(name);
+                        var amount = Text("", 11, true);
+                        content.Children.Add(amount);
+                        toggle.Content = content;
+                        AutomationProperties.SetAutomationId(toggle, "PreparedFilesPreparationWorker_" + worker.Key);
+                        AutomationProperties.SetName(toggle, worker.Label + " " + worker.Name);
+                        var key = worker.Key;
+                        entry = (new Chip(toggle, on =>
+                        {
+                            if (on) _view._workerFilter = key; else if (_view._workerFilter == key) _view._workerFilter = null;
+                            _view.Refresh();
+                        }), name, amount);
+                        _workers[worker.Key] = entry;
+                    }
+                    if (entry.Name.Text != worker.Name) entry.Name.Text = worker.Name;
+                    var amountText = count.ToString(AppStrings.FormatCulture);
+                    if (entry.Count.Text != amountText) entry.Count.Text = amountText;
+                    entry.Chip.Sync(_view._workerFilter == worker.Key, _view._workerFilter != null && _view._workerFilter != worker.Key ? 0.35 : 1);
+                    wanted.Add(entry.Chip.Toggle);
                 }
-                inner.Children.Add(row);
-                section.Child = inner;
-                root.Children.Add(section);
+                SyncChildren(_workerRow, wanted);
             }
-            return Panel(root, 16, 16, true);
         }
 
         private static Microsoft.UI.Xaml.Media.Brush StateBrush(string state) => state switch
@@ -194,153 +314,232 @@ public sealed partial class AdminPreparedFilesPage
             _ => Brush("ErrorBrush"),
         };
 
-        private UIElement SelectionBar(IReadOnlyList<AdminDownloadPreparation> selected, bool busy, bool blocked)
+        // ---- Selection strip --------------------------------------------------------------------------
+
+        /// <summary>The bulk-action strip. Its buttons are built once; what they act on is read when they are clicked.</summary>
+        private sealed class SelectionStrip
         {
-            var pausable = selected.Where(Prep.CanPause).ToArray();
-            var resumable = selected.Where(Prep.CanResume).ToArray();
-            var row = new LogsWrapPanel { Spacing = 8 };
-            row.Children.Add(Text(T(PrepKey + ".selection.count", Prep.JobCount(selected.Count)), 12));
-            var pause = Button(pausable.Length > 0 ? T(PrepKey + ".selection.pauseCount", Prep.JobCount(pausable.Length)) : T(PrepKey + ".selection.pause"), "PreparedFilesPauseSelected");
-            pause.IsEnabled = !busy && pausable.Length > 0;
-            pause.Click += (_, _) => _ = P.Controller.RunPreparationActionAsync("pause", pausable);
-            var resume = Button(resumable.Length > 0 ? T(PrepKey + ".selection.resumeCount", Prep.JobCount(resumable.Length)) : T(PrepKey + ".selection.resume"), "PreparedFilesResumeSelected");
-            resume.IsEnabled = !busy && resumable.Length > 0;
-            resume.Click += (_, _) => _ = P.Controller.RunPreparationActionAsync("resume", resumable);
-            var cancel = Button(T(PrepKey + ".selection.cancelCount", Prep.JobCount(selected.Count)), "PreparedFilesCancelSelected", "DestructiveButtonStyle");
-            cancel.IsEnabled = !busy && !blocked;
-            var targets = selected.ToArray();
-            cancel.Click += (_, _) => ConfirmCancel(targets);
-            var clear = Button(T(PrepKey + ".selection.clear"), "PreparedFilesPreparationClearSelection", "GhostButtonStyle");
-            clear.IsEnabled = !busy;
-            clear.Click += (_, _) => { _selected.Clear(); Refresh(); };
-            row.Children.Add(pause); row.Children.Add(resume); row.Children.Add(cancel); row.Children.Add(clear);
-            var panel = Panel(row, 10, 10, true);
-            AutomationProperties.SetAutomationId(panel, "PreparedFilesPreparationSelection");
-            AutomationProperties.SetName(panel, T(PrepKey + ".selection.toolbarLabel"));
-            return panel;
+            private readonly TextBlock _count = Text("", 12);
+            private readonly Button _pause, _resume, _cancel, _clear;
+            private IReadOnlyList<AdminDownloadPreparation> _selected = [], _pausable = [], _resumable = [];
+
+            public SelectionStrip(PreparationView view)
+            {
+                var row = new LogsWrapPanel { Spacing = 8 };
+                row.Children.Add(_count);
+                _pause = Button("", "PreparedFilesPauseSelected");
+                _pause.Click += (_, _) => _ = view.P.Controller.RunPreparationActionAsync("pause", _pausable);
+                _resume = Button("", "PreparedFilesResumeSelected");
+                _resume.Click += (_, _) => _ = view.P.Controller.RunPreparationActionAsync("resume", _resumable);
+                _cancel = Button("", "PreparedFilesCancelSelected", "DestructiveButtonStyle");
+                _cancel.Click += (_, _) => view.ConfirmCancel(_selected.ToArray());
+                _clear = Button(T(PrepKey + ".selection.clear"), "PreparedFilesPreparationClearSelection", "GhostButtonStyle");
+                _clear.Click += (_, _) => { view._selected.Clear(); view.Refresh(); };
+                row.Children.Add(_pause); row.Children.Add(_resume); row.Children.Add(_cancel); row.Children.Add(_clear);
+                Root = Panel(row, 10, 10, true);
+                AutomationProperties.SetAutomationId(Root, "PreparedFilesPreparationSelection");
+                AutomationProperties.SetName(Root, T(PrepKey + ".selection.toolbarLabel"));
+            }
+
+            public Border Root { get; }
+
+            public void Sync(IReadOnlyList<AdminDownloadPreparation> selected, bool busy, bool blocked)
+            {
+                Root.Visibility = selected.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                if (selected.Count == 0) { _selected = _pausable = _resumable = []; return; }
+                _selected = selected;
+                _pausable = selected.Where(Prep.CanPause).ToArray();
+                _resumable = selected.Where(Prep.CanResume).ToArray();
+                SetText(_count, T(PrepKey + ".selection.count", Prep.JobCount(selected.Count)));
+                SetLabel(_pause, _pausable.Count > 0 ? T(PrepKey + ".selection.pauseCount", Prep.JobCount(_pausable.Count)) : T(PrepKey + ".selection.pause"));
+                SetLabel(_resume, _resumable.Count > 0 ? T(PrepKey + ".selection.resumeCount", Prep.JobCount(_resumable.Count)) : T(PrepKey + ".selection.resume"));
+                SetLabel(_cancel, T(PrepKey + ".selection.cancelCount", Prep.JobCount(selected.Count)));
+                _pause.IsEnabled = !busy && _pausable.Count > 0;
+                _resume.IsEnabled = !busy && _resumable.Count > 0;
+                _cancel.IsEnabled = !busy && !blocked;
+                _clear.IsEnabled = !busy;
+            }
+
+            private static void SetText(TextBlock block, string text) { if (block.Text != text) block.Text = text; }
+
+            private static void SetLabel(Button button, string label)
+            {
+                if (button.Content as string == label) return;
+                button.Content = label;
+                AutomationProperties.SetName(button, label);
+            }
         }
 
-        private static readonly double[] Widths = [32, 260, 260, 130, 240, 190, 150];
+        // ---- Rows -------------------------------------------------------------------------------------
 
-        private UIElement Table(IReadOnlyList<AdminDownloadPreparation> rows, AdminPreparedFilesSnapshot state, bool busy)
+        private sealed record TitleCell(string ContentId, string Title, string Subtitle, string Source);
+        private sealed record OutputCell(string Format, string Text);
+        private sealed record RequesterCell(string UserId, string Name, string Profile, string Device, int Rest);
+        private sealed record ProgressCell(string Mode, string Head, string Sub, string Right, double? Percent, string BarName, string Tooltip);
+
+        /// <summary>One queue row. Its check box and action buttons are built once; its cells are rebuilt only when what they show changed.</summary>
+        private sealed class PrepRow
         {
-            var stack = Stack(0);
-            var headings = new Grid { ColumnSpacing = 12, Padding = new Thickness(12, 10, 12, 10), Background = Tint("MutedBrush", 0.3) };
-            foreach (var width in Widths) headings.ColumnDefinitions.Add(new() { Width = new GridLength(width) });
-            var allSelected = rows.Count > 0 && rows.All(x => _selected.Contains(x.Id));
-            var selectAll = Check("", "PreparedFilesPreparationSelectAll", allSelected, !busy, on =>
+            private readonly PreparationView _view;
+            private readonly string _id;
+            private readonly CellRow _cells = new(Widths);
+            private readonly Tick _select;
+            private readonly Button _pause, _resume, _cancel, _detailsButton;
+            private readonly ProgressRing _ring = new() { IsActive = true, Width = 16, Height = 16, Visibility = Visibility.Collapsed };
+            private readonly FontIcon _chevron = new() { FontSize = 10 };
+            private string _namesKey = "";
+            private bool? _open;
+            private DetailsPanel? _panel;
+
+            public PrepRow(PreparationView view, string id)
             {
-                foreach (var row in rows) if (on) _selected.Add(row.Id); else _selected.Remove(row.Id);
-                Refresh();
-            });
-            AutomationProperties.SetName(selectAll, allSelected ? T(PrepKey + ".table.clearSelection") : T(PrepKey + ".table.selectAll"));
-            headings.Children.Add(selectAll);
-            string[] titles = [PrepKey + ".column.title", PrepKey + ".column.output", PrepKey + ".column.worker", PrepKey + ".column.progress", PrepKey + ".column.requestedBy"];
-            for (var i = 0; i < titles.Length; i++)
-            {
-                var heading = Text(AppStrings.Uppercase(T(titles[i])), 10, true); heading.FontWeight = FontWeights.SemiBold;
-                Grid.SetColumn(heading, i + 1); headings.Children.Add(heading);
+                _view = view; _id = id;
+                AutomationProperties.SetAutomationId(Root, "PreparedFilesPreparation_" + id);
+                _select = new Tick("", "PreparedFilesPreparationSelect_" + id, on =>
+                {
+                    if (on) view._selected.Add(id); else view._selected.Remove(id);
+                    view.Refresh();
+                });
+                _cells.Hold(0, _select.Box);
+                _pause = IconAction("", "PreparedFilesPause_" + id, () => _ = view.P.Controller.RunPreparationActionAsync("pause", [Job]));
+                _resume = IconAction("", "PreparedFilesResume_" + id, () => _ = view.P.Controller.RunPreparationActionAsync("resume", [Job]));
+                _cancel = IconAction("", "PreparedFilesCancel_" + id, () => view.ConfirmCancel([Job]));
+                _detailsButton = new Button { Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(6, 2, 6, 2), MinHeight = 28 };
+                var detailContent = Inline(4);
+                detailContent.Children.Add(Text(T(PrepKey + ".row.details"), 11, true));
+                detailContent.Children.Add(_chevron);
+                _detailsButton.Content = detailContent;
+                AutomationProperties.SetAutomationId(_detailsButton, "PreparedFilesPreparationDetails_" + id);
+                _detailsButton.Click += (_, _) =>
+                {
+                    if (!view._details.Add(id)) { view._details.Remove(id); view._ffmpeg.Remove(id); }
+                    view.Refresh();
+                };
+                var actions = Inline(4);
+                actions.HorizontalAlignment = HorizontalAlignment.Right;
+                foreach (UIElement child in new UIElement[] { _ring, _pause, _resume, _cancel, _detailsButton }) actions.Children.Add(child);
+                _cells.Hold(6, actions);
             }
-            stack.Children.Add(headings);
-            foreach (var job in rows) stack.Children.Add(Row(job, state, busy));
-            var scroller = new ScrollViewer { Content = stack, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled,
-                VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
-            var panel = Panel(scroller, 12, 0, true);
-            AutomationProperties.SetAutomationId(panel, "PreparedFilesPreparationTable");
-            return panel;
-        }
 
-        private UIElement Row(AdminDownloadPreparation job, AdminPreparedFilesSnapshot state, bool busy)
-        {
-            var title = Prep.Title(job);
-            var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(12, 10, 12, 10) };
-            foreach (var width in Widths) grid.ColumnDefinitions.Add(new() { Width = new GridLength(width) });
-            var select = Check("", "PreparedFilesPreparationSelect_" + job.Id, _selected.Contains(job.Id), !busy, on =>
-            {
-                if (on) _selected.Add(job.Id); else _selected.Remove(job.Id);
-                Refresh();
-            });
-            AutomationProperties.SetName(select, T(PrepKey + ".row.select", new { title }));
-            grid.Children.Add(select);
+            public AdminDownloadPreparation Job { get; private set; } = null!;
+            public Border Root => _cells.Rule;
 
-            var titleBlock = Stack(2);
-            if (!string.IsNullOrEmpty(job.ContentId))
+            public void Apply(AdminDownloadPreparation job, AdminPreparedFilesSnapshot state, bool busy, bool selected, bool open)
             {
-                var link = new HyperlinkButton { Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Left };
-                var inner = Stack(2);
-                var heading = Strong(title, 13); heading.TextTrimming = TextTrimming.CharacterEllipsis; heading.TextWrapping = TextWrapping.NoWrap;
-                inner.Children.Add(heading);
-                inner.Children.Add(Small(Prep.Subtitle(job)));
-                inner.Children.Add(Small(Prep.FormatSource(job)));
-                link.Content = inner;
-                AutomationProperties.SetAutomationId(link, "PreparedFilesPreparationItem_" + job.Id);
-                AutomationProperties.SetName(link, title);
-                var contentId = job.ContentId;
-                link.Click += (_, _) => P.OpenItem(contentId);
-                titleBlock.Children.Add(link);
+                Job = job;
+                var title = Prep.Title(job);
+                _select.Sync(selected, !busy, T(PrepKey + ".row.select", new { title }));
+                _cells.Set(1, new TitleCell(job.ContentId, title, Prep.Subtitle(job), Prep.FormatSource(job)), () => BuildTitle(job, title));
+                _cells.Set(2, new OutputCell(job.Format, Prep.FormatOutput(job)), () => BuildOutput(job));
+                _cells.Set(3, Prep.Worker(job), () => BuildWorker(Prep.Worker(job)));
+                var progress = DescribeProgress(job);
+                _cells.Set(4, progress, () => BuildProgress(progress));
+                var first = job.Requesters.Count > 0 ? job.Requesters[0] : null;
+                _cells.Set(5, first == null ? null : new RequesterCell(first.UserId, Prep.RequesterName(first), first.ProfileName, Prep.RequesterDevice(first), job.Requesters.Count - 1), () => BuildRequesters(job));
+
+                var pending = state.PendingPreparationIds.Contains(job.Id);
+                var key = title + "\n" + job.State;
+                if (key != _namesKey)
+                {
+                    _namesKey = key;
+                    Describe(_pause, T(PrepKey + ".row.pauseLabel", new { title }), job.State == "running" ? T(PrepKey + ".row.pauseRunningTitle") : T(PrepKey + ".row.pauseWaitingTitle"));
+                    Describe(_resume, T(PrepKey + ".row.resumeLabel", new { title }), T(PrepKey + ".row.resumeTitle"));
+                    var failed = job.State == "failed";
+                    Describe(_cancel, failed ? T(PrepKey + ".row.removeLabel", new { title }) : T(PrepKey + ".row.cancelLabel", new { title }), failed ? T(PrepKey + ".row.removeTitle") : T(PrepKey + ".row.cancelTitle"));
+                    AutomationProperties.SetName(_ring, T(PrepKey + ".row.working"));
+                    AutomationProperties.SetName(_detailsButton, T(PrepKey + ".row.detailsLabel", new { title }));
+                }
+                _ring.Visibility = pending ? Visibility.Visible : Visibility.Collapsed;
+                _pause.Visibility = !pending && Prep.CanPause(job) ? Visibility.Visible : Visibility.Collapsed;
+                _resume.Visibility = !pending && Prep.CanResume(job) ? Visibility.Visible : Visibility.Collapsed;
+                _cancel.Visibility = pending ? Visibility.Collapsed : Visibility.Visible;
+                _pause.IsEnabled = !busy; _resume.IsEnabled = !busy;
+                _cancel.IsEnabled = !busy && !state.DestructiveBlocked;
+                if (_open != open)
+                {
+                    _open = open;
+                    _chevron.Glyph = open ? "" : "";
+                    AutomationProperties.SetItemStatus(_detailsButton, open ? "expanded" : "collapsed");
+                }
+                _cells.Grid.Background = selected ? Tint("AccentBrush", 0.05) : null;
+
+                if (open)
+                {
+                    _panel ??= new DetailsPanel(_view, id: _id);
+                    _panel.Sync(job, _view._ffmpeg.GetValueOrDefault(job.Id));
+                    _cells.Below = _panel.Root;
+                }
+                else if (_panel != null) { _panel = null; _cells.Below = null; }
             }
-            else
+
+            private static void Describe(Button button, string name, string tip)
             {
-                var heading = Strong(title, 13); heading.TextTrimming = TextTrimming.CharacterEllipsis; heading.TextWrapping = TextWrapping.NoWrap;
-                titleBlock.Children.Add(heading);
-                titleBlock.Children.Add(Small(Prep.Subtitle(job)));
-                titleBlock.Children.Add(Small(Prep.FormatSource(job)));
+                AutomationProperties.SetName(button, name);
+                ToolTipService.SetToolTip(button, tip);
             }
-            Grid.SetColumn(titleBlock, 1); grid.Children.Add(titleBlock);
 
-            var output = Inline(8);
-            output.Children.Add(FormatBadge(job.Format));
-            var outputText = Text(Prep.FormatOutput(job), 11); outputText.FontWeight = FontWeights.Medium; outputText.MaxWidth = 220;
-            output.Children.Add(outputText);
-            Grid.SetColumn(output, 2); grid.Children.Add(output);
-
-            var worker = Prep.Worker(job);
-            UIElement workerCell = worker == null ? Text(T(PrepKey + ".notAssigned"), 11, true) : WorkerBadge(worker);
-            ((FrameworkElement)workerCell).VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn((FrameworkElement)workerCell, 3); grid.Children.Add(workerCell);
-
-            var progress = Progress(job);
-            Grid.SetColumn(progress, 4); grid.Children.Add(progress);
-            var requesters = Requesters(job);
-            Grid.SetColumn(requesters, 5); grid.Children.Add(requesters);
-
-            var pending = state.PendingPreparationIds.Contains(job.Id);
-            var actions = Inline(4);
-            actions.HorizontalAlignment = HorizontalAlignment.Right;
-            if (pending) { var ring = new ProgressRing { IsActive = true, Width = 16, Height = 16 }; AutomationProperties.SetName(ring, T(PrepKey + ".row.working")); actions.Children.Add(ring); }
-            else
+            private UIElement BuildTitle(AdminDownloadPreparation job, string title)
             {
-                if (Prep.CanPause(job))
-                    actions.Children.Add(IconAction("", "PreparedFilesPause_" + job.Id, T(PrepKey + ".row.pauseLabel", new { title }),
-                        job.State == "running" ? T(PrepKey + ".row.pauseRunningTitle") : T(PrepKey + ".row.pauseWaitingTitle"), !busy,
-                        () => _ = P.Controller.RunPreparationActionAsync("pause", [job])));
-                if (Prep.CanResume(job))
-                    actions.Children.Add(IconAction("", "PreparedFilesResume_" + job.Id, T(PrepKey + ".row.resumeLabel", new { title }), T(PrepKey + ".row.resumeTitle"), !busy,
-                        () => _ = P.Controller.RunPreparationActionAsync("resume", [job])));
-                var failed = job.State == "failed";
-                actions.Children.Add(IconAction("", "PreparedFilesCancel_" + job.Id, failed ? T(PrepKey + ".row.removeLabel", new { title }) : T(PrepKey + ".row.cancelLabel", new { title }),
-                    failed ? T(PrepKey + ".row.removeTitle") : T(PrepKey + ".row.cancelTitle"), !busy && !state.DestructiveBlocked, () => ConfirmCancel([job])));
+                var block = Stack(2);
+                if (!string.IsNullOrEmpty(job.ContentId))
+                {
+                    var link = new HyperlinkButton { Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Left };
+                    var inner = Stack(2);
+                    var heading = Strong(title, 13); heading.TextTrimming = TextTrimming.CharacterEllipsis; heading.TextWrapping = TextWrapping.NoWrap;
+                    inner.Children.Add(heading);
+                    inner.Children.Add(Small(Prep.Subtitle(job)));
+                    inner.Children.Add(Small(Prep.FormatSource(job)));
+                    link.Content = inner;
+                    AutomationProperties.SetAutomationId(link, "PreparedFilesPreparationItem_" + job.Id);
+                    AutomationProperties.SetName(link, title);
+                    var contentId = job.ContentId;
+                    link.Click += (_, _) => _view.P.OpenItem(contentId);
+                    block.Children.Add(link);
+                }
+                else
+                {
+                    var heading = Strong(title, 13); heading.TextTrimming = TextTrimming.CharacterEllipsis; heading.TextWrapping = TextWrapping.NoWrap;
+                    block.Children.Add(heading);
+                    block.Children.Add(Small(Prep.Subtitle(job)));
+                    block.Children.Add(Small(Prep.FormatSource(job)));
+                }
+                return block;
             }
-            var open = _details.Contains(job.Id);
-            var details = new Button { Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(6, 2, 6, 2), MinHeight = 28 };
-            var detailContent = Inline(4);
-            detailContent.Children.Add(Text(T(PrepKey + ".row.details"), 11, true));
-            detailContent.Children.Add(new FontIcon { Glyph = open ? "" : "", FontSize = 10 });
-            details.Content = detailContent;
-            AutomationProperties.SetAutomationId(details, "PreparedFilesPreparationDetails_" + job.Id);
-            AutomationProperties.SetName(details, T(PrepKey + ".row.detailsLabel", new { title }));
-            AutomationProperties.SetItemStatus(details, open ? "expanded" : "collapsed");
-            details.Click += (_, _) => { if (!_details.Add(job.Id)) { _details.Remove(job.Id); _ffmpeg.Remove(job.Id); } Refresh(); };
-            actions.Children.Add(details);
-            Grid.SetColumn(actions, 6); grid.Children.Add(actions);
 
-            var container = Stack(0);
-            container.Children.Add(grid);
-            if (open) container.Children.Add(Details(job));
-            var rule = new Border { Child = container, BorderBrush = Tint("BorderBrush", 0.3), BorderThickness = new Thickness(0, 0, 0, 1) };
-            if (_selected.Contains(job.Id)) rule.Background = Tint("AccentBrush", 0.05);
-            AutomationProperties.SetAutomationId(rule, "PreparedFilesPreparation_" + job.Id);
-            return rule;
+            private static UIElement BuildOutput(AdminDownloadPreparation job)
+            {
+                var output = Inline(8);
+                output.Children.Add(FormatBadge(job.Format));
+                var outputText = Text(Prep.FormatOutput(job), 11); outputText.FontWeight = FontWeights.Medium; outputText.MaxWidth = 220;
+                output.Children.Add(outputText);
+                return output;
+            }
+
+            private static UIElement BuildWorker(AdminPreparationWorker? worker)
+            {
+                UIElement cell = worker == null ? Text(T(PrepKey + ".notAssigned"), 11, true) : WorkerBadge(worker);
+                ((FrameworkElement)cell).VerticalAlignment = VerticalAlignment.Center;
+                return cell;
+            }
+
+            private UIElement BuildRequesters(AdminDownloadPreparation job)
+            {
+                if (job.Requesters.Count == 0) return Text(T(PrepKey + ".requesters.none"), 11, true);
+                var first = job.Requesters[0];
+                var stack = Stack(2);
+                var line = Inline(6);
+                var link = new HyperlinkButton { Content = Prep.RequesterName(first), Padding = new Thickness(0), FontSize = 12, IsEnabled = _view._usersRegistered && !string.IsNullOrEmpty(first.UserId) };
+                AutomationProperties.SetAutomationId(link, "PreparedFilesPreparationRequester_" + job.Id);
+                if (!link.IsEnabled) ToolTipService.SetToolTip(link, T("configure.native.preparedFiles.linkUnavailable"));
+                var userId = first.UserId;
+                link.Click += (_, _) => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId));
+                line.Children.Add(link);
+                if (!string.IsNullOrEmpty(first.ProfileName)) line.Children.Add(Pill(first.ProfileName, "active"));
+                stack.Children.Add(line);
+                var rest = job.Requesters.Count - 1;
+                stack.Children.Add(Text(rest > 0 ? T(PrepKey + ".requesters.deviceMore", new { count = rest, count_text = rest, device = Prep.RequesterDevice(first) }) : Prep.RequesterDevice(first), 10, true));
+                return stack;
+            }
         }
 
         private static TextBlock Small(string text)
@@ -350,11 +549,10 @@ public sealed partial class AdminPreparedFilesPage
             return block;
         }
 
-        private static Button IconAction(string glyph, string id, string name, string tip, bool enabled, Action click)
+        private static Button IconAction(string glyph, string id, Action click)
         {
-            var button = new Button { Content = new FontIcon { Glyph = glyph, FontSize = 13 }, Style = (Style)Application.Current.Resources["GhostButtonStyle"], Width = 30, Height = 30, MinHeight = 0, Padding = new Thickness(0), IsEnabled = enabled };
-            AutomationProperties.SetAutomationId(button, id); AutomationProperties.SetName(button, name);
-            ToolTipService.SetToolTip(button, tip);
+            var button = new Button { Content = new FontIcon { Glyph = glyph, FontSize = 13 }, Style = (Style)Application.Current.Resources["GhostButtonStyle"], Width = 30, Height = 30, MinHeight = 0, Padding = new Thickness(0) };
+            AutomationProperties.SetAutomationId(button, id);
             button.Click += (_, _) => click();
             return button;
         }
@@ -378,9 +576,11 @@ public sealed partial class AdminPreparedFilesPage
             return new Border { Child = content, BorderBrush = Tint("AccentBrush", 0.25), BorderThickness = new Thickness(1), Background = Tint("AccentBrush", 0.1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2), HorizontalAlignment = HorizontalAlignment.Left };
         }
 
-        private static FrameworkElement Progress(AdminDownloadPreparation job)
+        // ---- Progress cell ----------------------------------------------------------------------------
+
+        /// <summary>What the progress cell shows for a job, as values: the cell is redrawn only when these change.</summary>
+        private static ProgressCell DescribeProgress(AdminDownloadPreparation job)
         {
-            var stack = Stack(2);
             switch (job.State)
             {
                 case "running":
@@ -389,56 +589,81 @@ public sealed partial class AdminPreparedFilesPage
                     if (percent == null)
                     {
                         var elapsed = Prep.SecondsSince(job.StartedAt);
-                        var head = Text(elapsed != null ? T(PrepKey + ".progress.runningElapsed", new { label = Prep.RunningLabel(job), elapsed = Prep.FormatClock(elapsed.Value) }) : Prep.RunningLabel(job), 11);
-                        head.FontWeight = FontWeights.SemiBold; head.Foreground = Brush("AccentBrush");
-                        stack.Children.Add(head);
-                        stack.Children.Add(Text(job.ProgressUnavailable ? T(PrepKey + ".progress.noReports") : T(PrepKey + ".progress.waitingFirstReport"), 10, true));
+                        return new("running-wait", elapsed != null ? T(PrepKey + ".progress.runningElapsed", new { label = Prep.RunningLabel(job), elapsed = Prep.FormatClock(elapsed.Value) }) : Prep.RunningLabel(job),
+                            job.ProgressUnavailable ? T(PrepKey + ".progress.noReports") : T(PrepKey + ".progress.waitingFirstReport"), "", null, "", "");
                     }
-                    else
+                    return new("running", T(PrepKey + ".progress.percent", new { percent = (long)Math.Floor(percent.Value) }), "",
+                        string.Join(" · ", new[] { Prep.FormatSpeed(job.Progress?.Speed), Prep.FormatRemaining(Prep.RemainingSeconds(job)) }.Where(x => !string.IsNullOrEmpty(x))),
+                        percent.Value, T(PrepKey + ".progress.label", new { title = Prep.Title(job) }), "");
+                }
+                case "queued":
+                    return new("queued", "", job.QueuePosition == 1 ? T(PrepKey + ".progress.queuedNext")
+                        : job.QueuePosition is > 0 ? T(PrepKey + ".progress.queuedPosition", new { position = job.QueuePosition.Value.ToString("N0", AppStrings.FormatCulture) })
+                        : T(PrepKey + ".progress.queuedWaiting"), "", null, "", "");
+                case "retrying":
+                    return new("retrying", T(PrepKey + ".progress.waitingToRetry"), string.Join(" · ", new[]
                     {
-                        var line = new Grid { ColumnSpacing = 8 };
-                        line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                        line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-                        var pct = Text(T(PrepKey + ".progress.percent", new { percent = (long)Math.Floor(percent.Value) }), 11); pct.FontWeight = FontWeights.SemiBold;
-                        line.Children.Add(pct);
-                        var detail = Text(string.Join(" · ", new[] { Prep.FormatSpeed(job.Progress?.Speed), Prep.FormatRemaining(Prep.RemainingSeconds(job)) }.Where(x => !string.IsNullOrEmpty(x))), 11, true);
-                        detail.TextWrapping = TextWrapping.NoWrap; detail.TextTrimming = TextTrimming.CharacterEllipsis; detail.HorizontalAlignment = HorizontalAlignment.Right;
-                        Grid.SetColumn(detail, 1); line.Children.Add(detail);
-                        stack.Children.Add(line);
-                        var bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = percent.Value, Height = 6 };
-                        AutomationProperties.SetName(bar, T(PrepKey + ".progress.label", new { title = Prep.Title(job) }));
-                        stack.Children.Add(bar);
-                    }
+                        T(PrepKey + ".progress.attempt", new { attempt = job.Attempts + 1, max = job.MaxAttempts, retry_in = Prep.FormatRetryIn(job.NextRetryAt) }), job.Error,
+                    }.Where(x => !string.IsNullOrEmpty(x))), "", null, "", "");
+                case "paused":
+                    return new("paused", T(PrepKey + ".progress.paused"), string.Join(" · ", new[] { Prep.FormatAgo(job.PausedAt), T(PrepKey + ".progress.wontStart") }.Where(x => !string.IsNullOrEmpty(x))), "", null, "", "");
+                default:
+                    return new("failed", T(PrepKey + ".progress.failed"),
+                        string.Join(" · ", new[] { T(PrepKey + ".progress.afterAttempts", new { count = job.Attempts }), Prep.FormatAgo(job.FailedAt), job.Error }.Where(x => !string.IsNullOrEmpty(x))), "", null, "", job.Error ?? "");
+            }
+        }
+
+        private static UIElement BuildProgress(ProgressCell model)
+        {
+            var stack = Stack(2);
+            switch (model.Mode)
+            {
+                case "running-wait":
+                {
+                    var head = Text(model.Head, 11); head.FontWeight = FontWeights.SemiBold; head.Foreground = Brush("AccentBrush");
+                    stack.Children.Add(head);
+                    stack.Children.Add(Text(model.Sub, 10, true));
+                    break;
+                }
+                case "running":
+                {
+                    var line = new Grid { ColumnSpacing = 8 };
+                    line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                    line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+                    var pct = Text(model.Head, 11); pct.FontWeight = FontWeights.SemiBold;
+                    line.Children.Add(pct);
+                    var detail = Text(model.Right, 11, true);
+                    detail.TextWrapping = TextWrapping.NoWrap; detail.TextTrimming = TextTrimming.CharacterEllipsis; detail.HorizontalAlignment = HorizontalAlignment.Right;
+                    Grid.SetColumn(detail, 1); line.Children.Add(detail);
+                    stack.Children.Add(line);
+                    var bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = model.Percent ?? 0, Height = 6 };
+                    AutomationProperties.SetName(bar, model.BarName);
+                    stack.Children.Add(bar);
                     break;
                 }
                 case "queued":
-                    stack.Children.Add(Text(job.QueuePosition == 1 ? T(PrepKey + ".progress.queuedNext")
-                        : job.QueuePosition is > 0 ? T(PrepKey + ".progress.queuedPosition", new { position = job.QueuePosition.Value.ToString("N0", AppStrings.FormatCulture) })
-                        : T(PrepKey + ".progress.queuedWaiting"), 11, true));
+                    stack.Children.Add(Text(model.Sub, 11, true));
                     break;
                 case "retrying":
                 {
-                    var head = Text(T(PrepKey + ".progress.waitingToRetry"), 11); head.FontWeight = FontWeights.SemiBold; head.Foreground = Brush("WarningBrush");
+                    var head = Text(model.Head, 11); head.FontWeight = FontWeights.SemiBold; head.Foreground = Brush("WarningBrush");
                     stack.Children.Add(head);
-                    stack.Children.Add(Text(string.Join(" · ", new[]
-                    {
-                        T(PrepKey + ".progress.attempt", new { attempt = job.Attempts + 1, max = job.MaxAttempts, retry_in = Prep.FormatRetryIn(job.NextRetryAt) }), job.Error,
-                    }.Where(x => !string.IsNullOrEmpty(x))), 10, true));
+                    stack.Children.Add(Text(model.Sub, 10, true));
                     break;
                 }
                 case "paused":
                 {
-                    var head = Text(T(PrepKey + ".progress.paused"), 11, true); head.FontWeight = FontWeights.SemiBold;
+                    var head = Text(model.Head, 11, true); head.FontWeight = FontWeights.SemiBold;
                     stack.Children.Add(head);
-                    stack.Children.Add(Text(string.Join(" · ", new[] { Prep.FormatAgo(job.PausedAt), T(PrepKey + ".progress.wontStart") }.Where(x => !string.IsNullOrEmpty(x))), 10, true));
+                    stack.Children.Add(Text(model.Sub, 10, true));
                     break;
                 }
                 default:
                 {
-                    var head = Text(T(PrepKey + ".progress.failed"), 11); head.FontWeight = FontWeights.SemiBold; head.Foreground = Brush("ErrorBrush");
+                    var head = Text(model.Head, 11); head.FontWeight = FontWeights.SemiBold; head.Foreground = Brush("ErrorBrush");
                     stack.Children.Add(head);
-                    var detail = Text(string.Join(" · ", new[] { T(PrepKey + ".progress.afterAttempts", new { count = job.Attempts }), Prep.FormatAgo(job.FailedAt), job.Error }.Where(x => !string.IsNullOrEmpty(x))), 10, true);
-                    ToolTipService.SetToolTip(detail, job.Error);
+                    var detail = Text(model.Sub, 10, true);
+                    ToolTipService.SetToolTip(detail, model.Tooltip);
                     stack.Children.Add(detail);
                     break;
                 }
@@ -446,59 +671,86 @@ public sealed partial class AdminPreparedFilesPage
             return stack;
         }
 
-        private FrameworkElement Requesters(AdminDownloadPreparation job)
+        // ---- Details panel and FFmpeg console ---------------------------------------------------------
+
+        /// <summary>
+        /// One open details panel. The two header buttons are built once; the cards and the console are redrawn when the job or the
+        /// console changed, and hold nothing focusable.
+        /// </summary>
+        private sealed class DetailsPanel
         {
-            if (job.Requesters.Count == 0) return Text(T(PrepKey + ".requesters.none"), 11, true);
-            var first = job.Requesters[0];
-            var stack = Stack(2);
-            var line = Inline(6);
-            var name = Prep.RequesterName(first);
-            var registered = AdminShellPage.CreateRegistry().IsRegistered(AdminRoute.Users);
-            var link = new HyperlinkButton { Content = name, Padding = new Thickness(0), FontSize = 12, IsEnabled = registered && !string.IsNullOrEmpty(first.UserId) };
-            AutomationProperties.SetAutomationId(link, "PreparedFilesPreparationRequester_" + job.Id);
-            if (!link.IsEnabled) ToolTipService.SetToolTip(link, T("configure.native.preparedFiles.linkUnavailable"));
-            var userId = first.UserId;
-            link.Click += (_, _) => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId));
-            line.Children.Add(link);
-            if (!string.IsNullOrEmpty(first.ProfileName)) line.Children.Add(Pill(first.ProfileName, "active"));
-            stack.Children.Add(line);
-            var rest = job.Requesters.Count - 1;
-            stack.Children.Add(Text(rest > 0 ? T(PrepKey + ".requesters.deviceMore", new { count = rest, count_text = rest, device = Prep.RequesterDevice(first) }) : Prep.RequesterDevice(first), 10, true));
-            return stack;
+            private readonly PreparationView _view;
+            private readonly Border _panel;
+            private readonly TextBlock _heading = Text("", 11);
+            private readonly Button _ffmpeg, _logs;
+            private readonly ContentControl _cardsHost = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            private readonly ContentControl _consoleHost = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            private AdminDownloadPreparation? _job;
+            private FfmpegState? _console;
+            private bool? _consoleShown;
+            private string _session = "";
+
+            public DetailsPanel(PreparationView view, string id)
+            {
+                _view = view;
+                var root = Stack(12);
+                var header = new Grid { ColumnSpacing = 12 };
+                header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+                header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                var left = Stack(4);
+                var chip = Inline(8);
+                chip.Children.Add(Pill(AppStrings.Uppercase(T(PrepKey + ".details.chip")), "muted"));
+                chip.Children.Add(_heading);
+                left.Children.Add(chip);
+                left.Children.Add(Text(id, 10, true, true));
+                header.Children.Add(left);
+                var buttons = Inline(6);
+                _ffmpeg = Button("FFmpeg", "PreparedFilesPreparationFfmpeg_" + id);
+                _ffmpeg.Click += (_, _) => { if (_job != null) view.ToggleFfmpeg(_job); };
+                buttons.Children.Add(_ffmpeg);
+                _logs = Button(T(PrepKey + ".details.viewLogs"), "PreparedFilesPreparationLogs_" + id);
+                _logs.Click += (_, _) => AdminShellPage.Open(new AdminRouteRequest(AdminRoute.ServerLog,
+                    new Dictionary<string, string> { ["playback_session_id"] = _session, ["component"] = "ffmpeg" }));
+                buttons.Children.Add(_logs);
+                Grid.SetColumn(buttons, 1); header.Children.Add(buttons);
+                root.Children.Add(header);
+                root.Children.Add(_cardsHost);
+                root.Children.Add(_consoleHost);
+                _panel = Panel(root, 0, 16, false);
+                _panel.Background = Tint("MutedBrush", 0.25);
+                AutomationProperties.SetAutomationId(_panel, "PreparedFilesPreparationDetailsPanel_" + id);
+            }
+
+            public UIElement Root => _panel;
+
+            public void Sync(AdminDownloadPreparation job, FfmpegState? console)
+            {
+                var showFfmpeg = console != null;
+                if (_consoleShown != showFfmpeg)
+                {
+                    _consoleShown = showFfmpeg;
+                    _heading.Text = showFfmpeg ? T(PrepKey + ".details.headingWithFfmpeg") : T(PrepKey + ".details.heading");
+                    _ffmpeg.Content = showFfmpeg ? T(PrepKey + ".details.hideFfmpeg") : "FFmpeg";
+                    AutomationProperties.SetItemStatus(_ffmpeg, showFfmpeg ? "pressed" : "");
+                }
+                if (_session != job.LogSessionId)
+                {
+                    _session = job.LogSessionId;
+                    var registered = _view._logsRegistered && !string.IsNullOrEmpty(_session);
+                    _logs.IsEnabled = registered;
+                    ToolTipService.SetToolTip(_logs, registered ? null : T("configure.native.preparedFiles.linkUnavailable"));
+                }
+                if (!ReferenceEquals(_job, job)) { _job = job; _cardsHost.Content = Cards(job); }
+                if (!ReferenceEquals(_console, console))
+                {
+                    _console = console;
+                    _consoleHost.Content = console == null ? null : Console(job, console);
+                }
+            }
         }
 
-        // ---- Details panel and FFmpeg console ------------------------------------------------------
-
-        private UIElement Details(AdminDownloadPreparation job)
+        private static UIElement Cards(AdminDownloadPreparation job)
         {
-            var showFfmpeg = _ffmpeg.ContainsKey(job.Id);
-            var root = Stack(12);
-            var header = new Grid { ColumnSpacing = 12 };
-            header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var left = Stack(4);
-            var chip = Inline(8);
-            chip.Children.Add(Pill(AppStrings.Uppercase(T(PrepKey + ".details.chip")), "muted"));
-            chip.Children.Add(Text(showFfmpeg ? T(PrepKey + ".details.headingWithFfmpeg") : T(PrepKey + ".details.heading"), 11));
-            left.Children.Add(chip);
-            left.Children.Add(Text(job.Id, 10, true, true));
-            header.Children.Add(left);
-            var buttons = Inline(6);
-            var ffmpeg = Button(showFfmpeg ? T(PrepKey + ".details.hideFfmpeg") : "FFmpeg", "PreparedFilesPreparationFfmpeg_" + job.Id);
-            AutomationProperties.SetItemStatus(ffmpeg, showFfmpeg ? "pressed" : "");
-            ffmpeg.Click += (_, _) => ToggleFfmpeg(job);
-            buttons.Children.Add(ffmpeg);
-            var logs = Button(T(PrepKey + ".details.viewLogs"), "PreparedFilesPreparationLogs_" + job.Id);
-            var logsRegistered = AdminShellPage.CreateRegistry().IsRegistered(AdminRoute.ServerLog) && !string.IsNullOrEmpty(job.LogSessionId);
-            logs.IsEnabled = logsRegistered;
-            if (!logsRegistered) ToolTipService.SetToolTip(logs, T("configure.native.preparedFiles.linkUnavailable"));
-            var session = job.LogSessionId;
-            logs.Click += (_, _) => AdminShellPage.Open(new AdminRouteRequest(AdminRoute.ServerLog,
-                new Dictionary<string, string> { ["playback_session_id"] = session, ["component"] = "ffmpeg" }));
-            buttons.Children.Add(logs);
-            Grid.SetColumn(buttons, 1); header.Children.Add(buttons);
-            root.Children.Add(header);
-
             var cards = new LogsMetricGrid(4, 1) { ColumnSpacing = 8, RowSpacing = 8 };
             var source = new[]
             {
@@ -532,12 +784,7 @@ public sealed partial class AdminPreparedFilesPage
                 requested.Add(row);
             }
             cards.Add(Card(T(PrepKey + ".details.requestedBy"), null, requested));
-            root.Children.Add(cards);
-            if (showFfmpeg) root.Children.Add(Console(job));
-            var panel = Panel(root, 0, 16, false);
-            panel.Background = Tint("MutedBrush", 0.25);
-            AutomationProperties.SetAutomationId(panel, "PreparedFilesPreparationDetailsPanel_" + job.Id);
-            return panel;
+            return cards;
         }
 
         private static string Joined(params string?[] parts) => parts.Where(x => !string.IsNullOrEmpty(x)).DefaultIfEmpty("—").Aggregate((a, b) => a == "—" ? b : a + " · " + b);
@@ -608,9 +855,8 @@ public sealed partial class AdminPreparedFilesPage
             Refresh();
         }
 
-        private UIElement Console(AdminDownloadPreparation job)
+        private static UIElement Console(AdminDownloadPreparation job, FfmpegState state)
         {
-            var state = _ffmpeg.GetValueOrDefault(job.Id) ?? new FfmpegState(true, [], false);
             var body = Stack(0);
             if (state.Loading) body.Children.Add(Text(T(PrepKey + ".ffmpeg.loading"), 11, true, true));
             else if (state.Failed || state.Rows.Count == 0) body.Children.Add(Text(state.Failed ? T("configure.native.preparedFiles.backgroundFailed") : T(PrepKey + ".ffmpeg.empty"), 11, true, true));
@@ -635,19 +881,28 @@ public sealed partial class AdminPreparedFilesPage
             return panel;
         }
 
+        /// <summary>The confirmation names exactly <paramref name="targets"/>; what it sends is those jobs, under the authority it opened under.</summary>
         private async void ConfirmCancel(IReadOnlyList<AdminDownloadPreparation> targets)
         {
             if (targets.Count == 0 || P.Controller.State.ActionPending || P.Controller.State.DestructiveBlocked) return;
-            var prompt = Prep.CancelPrompt(targets);
-            var content = Stack(12);
-            content.Children.Add(Text(prompt.Description));
-            var dialog = P.NewDialog(prompt.Title, content, prompt.ConfirmLabel, destructive: true, cancel: T(PrepKey + ".cancelDialog.keep"));
-            AutomationProperties.SetAutomationId(dialog, "PreparedFilesCancelDialog");
-            if (await P.ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
-            // Exactly the jobs the dialog named are sent, whatever the selection became while it was open.
-            var ids = targets.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
-            _selected.ExceptWith(ids);
-            await P.Controller.RunPreparationActionAsync("cancel", targets);
+            MonitorAuthorityLease lease;
+            try { lease = P.Controller.CaptureAction(); }
+            catch (OperationCanceledException) { return; }
+            using (lease)
+            {
+                var prompt = Prep.CancelPrompt(targets);
+                var content = Stack(12);
+                content.Children.Add(Text(prompt.Description));
+                var dialog = P.NewDialog(prompt.Title, content, prompt.ConfirmLabel, destructive: true, cancel: T(PrepKey + ".cancelDialog.keep"));
+                AutomationProperties.SetAutomationId(dialog, "PreparedFilesCancelDialog");
+                if (await P.ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
+                // Exactly the jobs the dialog named are sent, whatever the selection became while it was open, and only while the
+                // authority they were listed under is still current: otherwise nothing is sent and the dialog is already closed.
+                if (!P.Controller.IsActionCurrent(lease)) return;
+                var ids = targets.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
+                _selected.ExceptWith(ids);
+                await P.Controller.RunPreparationActionAsync("cancel", targets, lease);
+            }
         }
     }
 
