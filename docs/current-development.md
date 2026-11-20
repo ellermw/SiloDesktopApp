@@ -1,15 +1,15 @@
-# November 17 - Autoscan Activity source-only candidate
+# November 20 — Autoscan Activity aligned with the official inspector sheet
 
-The isolated t3/admin-autoscan-activity candidate at Beta base
-248aafd62ed65b868c0e7356926e4d83204649cd implements and registers
-/admin/autoscan/activity (Scans/Polls, live status/queue, bounded identity-owned
-reads, details and explicit uncertain-cancellation reconciliation). Version
-1.2.1181-beta.1 is unchanged. Official reference:
-217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb. The page, unit/native fixtures,
-registration and allowlists are authored source only; no build/test/native run
-or captures were observed, and no release/installed-player/pipeline PR changed.
-See [the scoped source handoff](parity/2026-11-17-admin-autoscan-activity.md)
-for exact scope, bounds, native adaptations and serialized acceptance commands.
+`/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `f36e3bd4a`; version stamps unchanged) was
+completed and rebuilt against official Silo Server `88b825d57e4b2296050fda69eaf619eefbf208d1`. The earlier source targeted `217ff25abc`; upstream
+`e3887af09` (#4631) then replaced the page's inline poll details with a paginated inspector sheet, so the native page now has the poll table with
+Details buttons and badges, the inspector (Paths / Scans created tabs, search, outcome and status chips, pagination, scan-id jump, bounded scrolling error,
+focus return, keep-the-latest-snapshot) and `TablePagination`-style numbered paging (cursor walk, 100-page bound). Scope, deviations and limits:
+[Autoscan Activity](parity/admin-autoscan-activity.md).
+Final run `autoact2-final-r1` on the committed source: 59 focused and 9,896 full unit tests passed with no failures or skips, the app build, publish and
+native host build passed, and the `admin-autoscan-activity` (48 checks), `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` native
+selectors passed; captures at 1440/1024/800/560 DIPs and the inspector were inspected. Not observed: live-server/phone interoperability, all-DPI and
+screen-reader behaviour, and a fixture-driven row click (only the Details button path).
 
 # November 20 — Admin Requests submitted for Beta review
 
