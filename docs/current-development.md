@@ -38,6 +38,26 @@ No push, PR, installer or installed-player action occurred.
 
 ---
 
+# November 20 — Manage Libraries > Library settings Beta candidate
+
+Manage > Libraries > Library settings (/admin/settings/library, official page "Library & Metadata") is implemented in
+the registered native shell: General, Scanning (conditional real-time monitoring, worker counts, Advanced lookups/batch,
+Restore defaults), Maturity limits, capability-gated Ratings and Subtitle sync with Advanced placement/capacity, one guarded
+save, Discard, conflict/unknown-outcome handling and authority retirement. Branch t3/admin-library-settings, merged with
+origin/beta f35bb7e59 on 2026-11-20; the version (1.2.1194-beta.1 from Beta) is not changed by this branch. Official contracts were read at
+217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb; the page's strings (48) and server limits were compared with that pin.
+
+Observed, under the SiloOct18Build lease, in final run library-settings-lead-final-r3 on commit
+19a414df496d8a75c7e9daaa4f01ead637c9ac96: 108 focused and 9,755 full unit cases passed with no failures or skips; the app
+build, self-contained publish and native host build passed; native selectors admin-manage-library-settings (84 checks),
+admin-manage-foundation, admin-configure-general and admin-monitor passed on one unchanged 582-file payload. Running the
+page exposed and fixed a KeyNotFoundException in Render that crashed the host on first load. An independent read-only
+review of the final diff reported two P2 defects (a malformed saved rating source could not be toggled off, and one
+environment-managed worker setting disabled Restore defaults for all), both fixed before that run.
+
+Not observed: live-server behavior, all DPI, Narrator/IME, real plugin combinations and complete visual parity. Scope,
+evidence and limits: docs/parity/admin-manage-library-settings.md.
+
 # November 17 — Configure Integrations verified Beta increment
 
 AI, Recommendations and Compatibility are implemented in the registered native shell,

@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email, Notifications, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, and Admin Manage Users account, profile, invitation and invite-code workflows",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), the Library settings page (Manage > Libraries > Library settings), and the Configure catalog with the General, Email, Notifications, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, and Admin Manage Users account, profile, invitation and invite-code workflows",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminCollectionsApi.cs",
     "src/SiloPlayer.Core/Api/AdminCollectionsApi.Delete.cs",
@@ -26,6 +26,7 @@
     "src/SiloPlayer.Core/Api/AdminMonitorApi.cs",
     "src/SiloPlayer.Core/Api/AdminPlaybackHistoryApi.cs",
     "src/SiloPlayer.Core/Api/AdminServerSettingsApi.cs",
+    "src/SiloPlayer.Core/Api/AdminLibrarySettingsApi.cs",
     "src/SiloPlayer.Core/Api/AdminIntegrationsApi.cs",
     "src/SiloPlayer.Core/Api/AdminIntegrationsApi.Workflows.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminIntegrations.cs",
@@ -48,6 +49,8 @@
     "src/SiloPlayer.Core/Services/Admin/AdminActivityPresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminFolderBrowserSession.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminGeneralSettingsController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminLibrarySettingsController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminLibrarySettingsRules.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminIntegrationSettingsController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminIntegrationsSettings.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminIntegrationPolicy.cs",
@@ -173,6 +176,8 @@
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.Editors.cs",
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminLibrarySettingsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminLibrarySettingsPage.xaml",
     "src/SiloPlayer.Core/Api/AdminMaintenanceApi.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminMaintenance.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminMaintenanceModels.cs",
