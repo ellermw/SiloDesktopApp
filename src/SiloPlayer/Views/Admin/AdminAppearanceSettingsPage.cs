@@ -145,6 +145,8 @@ public sealed partial class AdminAppearanceSettingsPage : Page, IAdminGutterScro
         _titles.Add(titleRow);
         _body.Children.Add(_titles);
 
+        // Nothing but the title and the loading line shows before the first snapshot.
+        foreach (var group in new[] { _logos, _colors, _overlayGroup, _badgeImages, _titles }) group.Visibility = Visibility.Collapsed;
         _saveBar.Save.Click += async (_, _) => { if (_controller is { } controller) await controller.SaveAsync(); };
         _saveBar.Discard.Click += (_, _) => _controller?.Discard();
         SizeChanged += (_, _) => { _saveBar.SetAvailableWidth(ActualWidth); QueueRender(); };
@@ -161,6 +163,12 @@ public sealed partial class AdminAppearanceSettingsPage : Page, IAdminGutterScro
             if (hex == "")
             {
                 swatch.Content = A.Icon("rotate-ccw", 14, A.Muted);
+                // The default swatch keeps its muted fill; selection is the ring.
+                var muted = A.Solid(A.Muted, .18);
+                swatch.Background = muted;
+                foreach (var key in new[] { "ToggleButtonBackgroundChecked", "ToggleButtonBackgroundCheckedPointerOver", "ToggleButtonBackgroundCheckedPressed" }) swatch.Resources[key] = muted;
+                foreach (var key in new[] { "ToggleButtonBorderBrushChecked", "ToggleButtonBorderBrushCheckedPointerOver", "ToggleButtonBorderBrushCheckedPressed" }) swatch.Resources[key] = A.Solid(Microsoft.UI.Colors.White);
+                swatch.BorderThickness = new(2);
                 ToolTipService.SetToolTip(swatch, T.T("web.admin.settings.appearance.colors.accent.themeDefault"));
             }
             else
@@ -178,12 +186,15 @@ public sealed partial class AdminAppearanceSettingsPage : Page, IAdminGutterScro
             AutomationProperties.SetName(swatch, hex == "" ? T.T("web.admin.settings.appearance.colors.accent.useDefault")
                 : T.T("web.admin.settings.appearance.colors.accent.usePreset", ("hex", hex)));
             AutomationProperties.SetAutomationId(swatch, "AppearanceAccent" + (hex == "" ? "Default" : hex[1..]));
-            swatch.Click += (_, _) =>
+            // Radio semantics on a toggle: any user toggle picks this swatch, and the render re-selects the stored one.
+            void Pick(object sender, RoutedEventArgs args)
             {
                 if (_syncing) return;
                 Stage(C.AccentKey, hex);
                 QueueRender();
-            };
+            }
+            swatch.Checked += Pick;
+            swatch.Unchecked += Pick;
             _swatches[hex] = swatch;
             choices.Children.Add(swatch);
         }
@@ -191,15 +202,18 @@ public sealed partial class AdminAppearanceSettingsPage : Page, IAdminGutterScro
         var custom = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         custom.Children.Add(U.Text(T.T("web.admin.settings.appearance.colors.accent.custom"), 12));
         _customAccent.Content = custom;
+        AdminAppearanceOverlayEditor.TintWhenChecked(_customAccent);
         AutomationProperties.SetName(_customAccent, T.T("web.admin.settings.appearance.colors.accent.customLabel"));
         AutomationProperties.SetAutomationId(_customAccent, "AppearanceCustomAccent");
         _accentFlyout.Content = _accentPicker;
-        _customAccent.Click += (_, _) =>
+        void OpenCustom(object sender, RoutedEventArgs args)
         {
             if (_syncing) return;
             QueueRender();
             if (_customAccent.IsEnabled) _accentFlyout.ShowAt(_customAccent);
-        };
+        }
+        _customAccent.Checked += OpenCustom;
+        _customAccent.Unchecked += OpenCustom;
         _accentFlyout.Opened += (_, _) => _accentOpen = true;
         _accentFlyout.Closed += (_, _) => _accentOpen = false;
         AutomationProperties.SetName(_accentPicker, T.T("web.admin.settings.appearance.colors.accent.customLabel"));

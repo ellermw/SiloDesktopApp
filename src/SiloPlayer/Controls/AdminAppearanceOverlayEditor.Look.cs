@@ -39,14 +39,13 @@ internal sealed partial class AdminAppearanceOverlayEditor
             stack.Children.Add(new TextBlock { Text = T.T("web.settings.overlays.preset." + id + ".label"), HorizontalAlignment = HorizontalAlignment.Center, FontSize = 12 });
             var button = new ToggleButton { Content = stack, Width = 106, Margin = new(0, 0, 0, 8), Padding = new(8), HorizontalContentAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetAutomationId(button, "AppearanceOverlayPreset-" + id);
+            TintWhenChecked(button);
             AutomationProperties.SetName(button, T.T("web.settings.overlays.preset." + id + ".label"));
             ToolTipService.SetToolTip(button, T.T("web.settings.overlays.preset." + id + ".description"));
-            button.Click += (_, _) =>
+            OnToggle(button, () =>
             {
-                if (_binding) return;
                 if (CanEdit && (SupportsStyles || LegacyPresetIds.Contains(id)) && _prefs.Preset != id) Stage(_prefs with { Preset = id });
-                else button.IsChecked = _prefs.Preset == id;
-            };
+            });
             _presets.Add(id, button); choices.Children.Add(button);
         }
         _look.Children.Add(choices);
@@ -127,12 +126,10 @@ internal sealed partial class AdminAppearanceOverlayEditor
             var text = option == null ? T.T("web.settings.overlays.look.styleDefault") : T.T("web.settings.overlays.look." + field + "." + option);
             var button = new ToggleButton { Content = text, Padding = new(10, 4, 10, 4), FontSize = 13, Margin = new(0, 0, 0, 8) };
             AutomationProperties.SetAutomationId(button, "AppearanceOverlayLook-" + field + "-" + (option ?? "preset"));
-            button.Click += (_, _) =>
+            OnToggle(button, () =>
             {
-                if (_binding) return;
                 if (selected(_prefs.Style ?? new()) != option) SetStyle(style => update(style, option));
-                SynchronizeLook();
-            };
+            });
             buttons.Add((option, button)); row.Children.Add(button);
             _lookControls.Add(button);
         }
@@ -167,12 +164,10 @@ internal sealed partial class AdminAppearanceOverlayEditor
         }
         foreach (var (value, button) in buttons)
         {
-            button.Click += (_, _) =>
+            OnToggle(button, () =>
             {
-                if (_binding) return;
                 if (!string.Equals(selected(_prefs.Style ?? new()), value, StringComparison.OrdinalIgnoreCase)) SetStyle(style => update(style, value));
-                SynchronizeLook();
-            };
+            });
             _lookControls.Add(button);
         }
         block.Children.Add(stack);

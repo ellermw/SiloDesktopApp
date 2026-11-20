@@ -14,6 +14,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.Views.Admin;
 
@@ -256,7 +257,8 @@ internal static class AdminAppearanceFixture
     internal static async Task Until(Func<bool> condition, string label)
     {
         for (var attempt = 0; attempt < 320 && !condition(); attempt++) await Task.Delay(25);
-        if (!condition()) throw new InvalidOperationException("Timed out: " + label);
+        if (!condition()) { Program.Log("FAIL: timed out: " + label); throw new InvalidOperationException("Timed out: " + label); }
+        Program.Log("PASS: " + label);
     }
 
     internal static string Id(DependencyObject element) => AutomationProperties.GetAutomationId(element);
@@ -317,7 +319,7 @@ internal static class AdminAppearanceSettingsNativeFixture
         server.FailEffective = true;
         var page = await host.OpenAsync(waitLoaded: false);
         await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Shown(page, "AppearanceLoading"), "loading text while the first read is open");
-        AdminAppearanceFixture.Check(!AdminAppearanceFixture.Shown(page, "AppearanceTitleArt"), "no setting renders before the snapshot");
+        await AdminAppearanceFixture.Until(() => !AdminAppearanceFixture.Shown(page, "AppearanceTitleArt"), "no setting renders before the snapshot");
         server.EffectiveGate.SetResult();
         server.EffectiveGate = null;
         await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Shown(page, "AppearanceReload"), "failed read shows Reload");
@@ -329,17 +331,17 @@ internal static class AdminAppearanceSettingsNativeFixture
         await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Shown(page, "AppearanceTitleArt"), "Appearance controls rendered");
         await Task.Delay(150);
         AdminAppearanceFixture.Check(controller.State.DirtyKeys.Count == 0 && server.Saves == 0 && server.Writes.Count == 0, "opening the page stages and sends nothing");
-        AdminAppearanceFixture.Check(!AdminAppearanceFixture.Texts(page).Any(text => text.StartsWith("web.", StringComparison.Ordinal) || text.StartsWith("settingsManifest.", StringComparison.Ordinal)), "official text keys resolve");
-        AdminAppearanceFixture.Check(AdminAppearanceFixture.Texts(page).Contains("Logos and icons") && AdminAppearanceFixture.Texts(page).Contains("Card overlays")
+        await AdminAppearanceFixture.Until(() => !AdminAppearanceFixture.Texts(page).Any(text => text.StartsWith("web.", StringComparison.Ordinal) || text.StartsWith("settingsManifest.", StringComparison.Ordinal)), "official text keys resolve");
+        await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Texts(page).Contains("Logos and icons") && AdminAppearanceFixture.Texts(page).Contains("Card overlays")
             && AdminAppearanceFixture.Texts(page).Contains("Badge images") && AdminAppearanceFixture.Texts(page).Contains("Title pages"), "official groups render");
-        AdminAppearanceFixture.Check(!AdminAppearanceFixture.Find<Button>(page, "AppearanceRestoreOverlays").IsEnabled, "Restore defaults is disabled while the stored defaults are built in");
+        await AdminAppearanceFixture.Until(() => !AdminAppearanceFixture.Find<Button>(page, "AppearanceRestoreOverlays").IsEnabled, "Restore defaults is disabled while the stored defaults are built in");
 
         // Every branding slot: upload, replace label, remove; the SVG favicon is accepted and never rendered.
         foreach (var (kind, type) in new[] { ("wordmark", "image/png"), ("mark", "image/jpeg"), ("favicon", "image/svg+xml"), ("login_bg", "image/webp") })
         {
             host.Pick = _ => AdminAppearanceFixture.File("synthetic", type);
-            AdminAppearanceFixture.Check(AdminAppearanceFixture.Find<Button>(page, "AppearanceUpload" + kind).Content?.ToString() == "Upload", kind + ": empty slot offers Upload");
-            AdminAppearanceFixture.Check(AdminAppearanceFixture.Shown(page, "AppearanceCaption" + kind), kind + ": empty slot shows its default caption");
+            await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Find<Button>(page, "AppearanceUpload" + kind).Content?.ToString() == "Upload", kind + ": empty slot offers Upload");
+            await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Shown(page, "AppearanceCaption" + kind), kind + ": empty slot shows its default caption");
             var writes = server.Writes.Count;
             await AdminAppearanceFixture.Click(page, "AppearanceUpload" + kind);
             await AdminAppearanceFixture.Until(() => server.Refs.ContainsKey(kind) && controller.State.AssetBusy == null && controller.State.Branding?.AssetUrl(kind) != null, kind + " upload acknowledged and re-read");
@@ -347,7 +349,7 @@ internal static class AdminAppearanceSettingsNativeFixture
             await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Find<Button>(page, "AppearanceUpload" + kind).Content?.ToString() == "Replace"
                 && AdminAppearanceFixture.Shown(page, "AppearanceRemove" + kind), kind + ": Replace and Remove after upload");
         }
-        AdminAppearanceFixture.Check(AdminAppearanceFixture.Find<Image>(page, "AppearancePreviewfavicon").Source == null, "an SVG favicon is never handed to an image decoder");
+        await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Find<Image>(page, "AppearancePreviewfavicon").Source == null, "an SVG favicon is never handed to an image decoder");
         AdminAppearanceFixture.Check(controller.State.DirtyKeys.Count == 0, "image writes leave the settings draft untouched");
 
         // Refused, oversized and unknown uploads.
@@ -356,7 +358,7 @@ internal static class AdminAppearanceSettingsNativeFixture
         await AdminAppearanceFixture.Click(page, "AppearanceUploadmark");
         await AdminAppearanceFixture.Until(() => controller.State.AssetError != null && controller.State.AssetBusy == null, "refused upload");
         await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Find<TextBlock>(page, "AppearanceError").Text.Contains("Unsupported image type", StringComparison.Ordinal), "refusal shows the server's field error");
-        AdminAppearanceFixture.Check(!controller.State.AssetsUnknown && AdminAppearanceFixture.Find<Button>(page, "AppearanceUploadmark").IsEnabled, "a refusal leaves image writes available for a retry");
+        await AdminAppearanceFixture.Until(() => !controller.State.AssetsUnknown && AdminAppearanceFixture.Find<Button>(page, "AppearanceUploadmark").IsEnabled, "a refusal leaves image writes available for a retry");
         var opened = false;
         var before = server.Writes.Count;
         host.Pick = _ => AdminAppearanceFixture.File("huge", "image/png", 9L * 1024 * 1024, () => opened = true);
@@ -368,8 +370,9 @@ internal static class AdminAppearanceSettingsNativeFixture
         await AdminAppearanceFixture.Click(page, "AppearanceUploadmark");
         await AdminAppearanceFixture.Until(() => controller.State.AssetsUnknown && controller.State.AssetBusy == null, "unknown upload outcome");
         before = server.Writes.Count;
-        AdminAppearanceFixture.Check(!AdminAppearanceFixture.Find<Button>(page, "AppearanceUploadmark").IsEnabled && !AdminAppearanceFixture.Find<Button>(page, "AppearanceRemovemark").IsEnabled,
-            "an unknown outcome blocks every image write");
+        await AdminAppearanceFixture.Until(() => !AdminAppearanceFixture.Find<Button>(page, "AppearanceUploadmark").IsEnabled && !AdminAppearanceFixture.Find<Button>(page, "AppearanceRemovemark").IsEnabled
+            && !AdminAppearanceFixture.Find<Button>(page, "AppearanceUploadwordmark").IsEnabled, "an unknown outcome blocks every image write");
+        await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Shown(page, "AppearanceReload"), "an unknown image outcome offers Reload");
         await AdminAppearanceFixture.Click(page, "AppearanceReload");
         await AdminAppearanceFixture.Until(() => !controller.State.AssetsUnknown && !controller.State.Loading, "reload clears the unknown image outcome");
         AdminAppearanceFixture.Check(server.Writes.Count == before, "the unknown upload is never replayed");
@@ -378,7 +381,7 @@ internal static class AdminAppearanceSettingsNativeFixture
             await AdminAppearanceFixture.Click(page, "AppearanceRemove" + kind);
             await AdminAppearanceFixture.Until(() => !server.Refs.ContainsKey(kind) && controller.State.AssetBusy == null && controller.State.Branding?.AssetUrl(kind) == null, kind + " removed");
         }
-        AdminAppearanceFixture.Check(AdminAppearanceFixture.Find<Button>(page, "AppearanceUploadwordmark").Content?.ToString() == "Upload", "a removed slot offers Upload again");
+        await AdminAppearanceFixture.Until(() => AdminAppearanceFixture.Find<Button>(page, "AppearanceUploadwordmark").Content?.ToString() == "Upload", "a removed slot offers Upload again");
 
         // Accent color: exactly one control selected.
         await AdminAppearanceFixture.Click(page, "AppearanceAccent10b981");
@@ -401,21 +404,21 @@ internal static class AdminAppearanceSettingsNativeFixture
         titleArt.IsOn = true;
         await AdminAppearanceFixture.Click(page, "AppearanceSave");
         await AdminAppearanceFixture.Until(() => server.Saves == 2 && !controller.State.Saving && controller.State.Error != null, "refused save");
-        AdminAppearanceFixture.Check(titleArt.IsOn && controller.State.DirtyKeys.Contains("defaults.ui.title_art") && AdminAppearanceFixture.Find<Button>(page, "AppearanceSave").IsEnabled,
+        await AdminAppearanceFixture.Until(() => titleArt.IsOn && controller.State.DirtyKeys.Contains("defaults.ui.title_art") && AdminAppearanceFixture.Find<Button>(page, "AppearanceSave").IsEnabled,
             "a refused save keeps the typed value and allows a retry");
         server.SaveMode = "conflict";
         await AdminAppearanceFixture.Click(page, "AppearanceSave");
         await AdminAppearanceFixture.Until(() => controller.State.Conflict && !controller.State.Saving, "conflict result");
-        AdminAppearanceFixture.Check(!AdminAppearanceFixture.Find<Button>(page, "AppearanceSave").IsEnabled && AdminAppearanceFixture.Shown(page, "AppearanceReload"), "a conflict blocks Save and offers Reload");
+        await AdminAppearanceFixture.Until(() => !AdminAppearanceFixture.Find<Button>(page, "AppearanceSave").IsEnabled && AdminAppearanceFixture.Shown(page, "AppearanceReload"), "a conflict blocks Save and offers Reload");
         server.SaveMode = "ok";
         await AdminAppearanceFixture.Click(page, "AppearanceReload");
         await AdminAppearanceFixture.Until(() => !controller.State.Loading && !controller.State.Conflict, "reload after conflict");
-        AdminAppearanceFixture.Check(controller.State.DirtyKeys.Contains("defaults.ui.title_art") && titleArt.IsOn, "reload keeps the unacknowledged draft");
+        await AdminAppearanceFixture.Until(() => controller.State.DirtyKeys.Contains("defaults.ui.title_art") && titleArt.IsOn, "reload keeps the unacknowledged draft");
         server.SaveMode = "unknown";
         var saves = server.Saves;
         await AdminAppearanceFixture.Click(page, "AppearanceSave");
         await AdminAppearanceFixture.Until(() => controller.State.OutcomeUnknown && !controller.State.Saving, "unknown save outcome");
-        AdminAppearanceFixture.Check(!AdminAppearanceFixture.Find<Button>(page, "AppearanceSave").IsEnabled && server.Saves == saves + 1, "an unknown save is sent once and blocks another");
+        await AdminAppearanceFixture.Until(() => !AdminAppearanceFixture.Find<Button>(page, "AppearanceSave").IsEnabled && server.Saves == saves + 1, "an unknown save is sent once and blocks another");
         server.SaveMode = "ok";
         await AdminAppearanceFixture.Click(page, "AppearanceReload");
         await AdminAppearanceFixture.Until(() => !controller.State.Loading && !controller.State.OutcomeUnknown, "reload after unknown save");
@@ -456,10 +459,10 @@ internal static class AdminAppearanceSettingsNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 1000));
             await Task.Delay(150);
             await MediaParityNativeFixture.CaptureAsync(host.Outer, $"appearance-loaded-{width}.png");
-            AdminAppearanceFixture.Check(!AdminAppearanceFixture.Texts(page).Any(text => text.StartsWith("web.", StringComparison.Ordinal)), $"{width}: official text keys resolve");
+            await AdminAppearanceFixture.Until(() => !AdminAppearanceFixture.Texts(page).Any(text => text.StartsWith("web.", StringComparison.Ordinal)), $"{width}: official text keys resolve");
         }
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 1000));
-        titleArt.IsOn = false;
+        titleArt.IsOn = !titleArt.IsOn;
         await AdminAppearanceFixture.Until(() => controller.State.DirtyKeys.Count == 1, "draft before retirement");
         host.Auth.SetCurrentUser(new UserInfo { Id = "1", Username = "Synthetic admin", Role = "user" });
         await AdminAppearanceFixture.Until(() => controller.State.Owner == null, "authority retirement");

@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using T = SiloPlayer.Core.Services.Admin.AdminAppearanceOverlayText;
 
@@ -187,14 +188,13 @@ internal sealed partial class AdminAppearanceOverlayEditor : StackPanel
         {
             var button = new ToggleButton { Content = T.T("web.common.overlays.previewVariant." + variant), CornerRadius = new(14), Padding = new(12, 4, 12, 4), FontSize = 12 };
             AutomationProperties.SetAutomationId(button, "AppearancePreviewVariant-" + variant);
+            TintWhenChecked(button);
             // Local view state only, never staged: the sample the preview stands in for.
-            button.Click += (_, _) =>
+            OnToggle(button, () =>
             {
-                if (_binding) return;
                 _variant = variant;
-                foreach (var (other, otherButton) in _variantButtons) otherButton.IsChecked = other == _variant;
                 UpdatePreview();
-            };
+            });
             _variantButtons[variant] = button;
             toggle.Children.Add(button);
         }
@@ -278,6 +278,30 @@ internal sealed partial class AdminAppearanceOverlayEditor : StackPanel
         "show_status" or "request_status" or "availability" => "ribbons",
         _ => "tech",
     };
+
+    /// <summary>A toggle used as one choice of a group: any user toggle runs the choice, then the group re-selects from state.</summary>
+    private void OnToggle(ToggleButton button, Action choose)
+    {
+        void Handler(object sender, RoutedEventArgs args)
+        {
+            if (_binding) return;
+            choose();
+            Synchronize();
+        }
+        button.Checked += Handler;
+        button.Unchecked += Handler;
+    }
+
+    /// <summary>The official selected card: a primary border over a faint primary tint, text unchanged.</summary>
+    internal static void TintWhenChecked(ToggleButton button)
+    {
+        var tint = AdminMonitorUi.Solid(AdminMonitorUi.Primary, .1);
+        var border = AdminMonitorUi.Solid(AdminMonitorUi.Primary);
+        foreach (var key in new[] { "ToggleButtonBackgroundChecked", "ToggleButtonBackgroundCheckedPointerOver", "ToggleButtonBackgroundCheckedPressed" }) button.Resources[key] = tint;
+        foreach (var key in new[] { "ToggleButtonBorderBrushChecked", "ToggleButtonBorderBrushCheckedPointerOver", "ToggleButtonBorderBrushCheckedPressed" }) button.Resources[key] = border;
+        foreach (var key in new[] { "ToggleButtonForegroundChecked", "ToggleButtonForegroundCheckedPointerOver", "ToggleButtonForegroundCheckedPressed" }) button.Resources[key] = AdminSettingsUi.Brush("PrimaryTextBrush");
+        button.BorderThickness = new(1);
+    }
 
     private static TextBlock Heading(string text) => new() { Text = text, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, TextWrapping = TextWrapping.Wrap };
     private static TextBlock Description(string text) => new() { Text = text, FontSize = 13, Opacity = .7, TextWrapping = TextWrapping.Wrap };
