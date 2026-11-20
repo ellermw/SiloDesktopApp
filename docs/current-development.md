@@ -1,3 +1,41 @@
+# November 20 — Admin Configure > Appearance (with card overlay editor) built and verified
+
+`t3/admin-server-appearance` completes Configure > Server > Appearance (`/admin/settings/appearance`): logos and
+icons (four branding slots), accent color, card overlay defaults with the live preview and per-badge images, the
+badge-image library and the title-art default, registered through the real Admin shell. Beta `fb8cb17cf` was merged
+normally at the start; this branch changes no version number. Official contracts: `66b836f82a32de2fb3e5dfae6c285c19eea1096d`
+(the earlier source cited `217ff25`; the page, overlay components and strings are unchanged between the two, and the
+form's new env-managed row state does not apply to any Appearance key).
+
+The combined source had never been compiled. It was reworked to the official model: admin overlay defaults are written
+as the whole canonical document at any manifest revision (the server stores `defaults.card_overlays` as any JSON), all
+registry overlays are offered except RT ratings whose source the server hides, the five official positions, the
+badge-image library as its own group with the inline choose/name/upload flow, Restore defaults staging the official
+built-in document, toggles reacting to Toggled/Checked, failed overlay/branding/capability reads shown with Reload, a
+separate unknown-image-outcome block, server refusal text for image writes, and type/size checks before a picked file is
+read. Shared changes (viewer registry defaults corrected to the official registry, additive `image_uploads_available`
+and show-status image lookup) and the one changed existing assertion are listed in
+[docs/parity/admin-appearance.md](parity/admin-appearance.md).
+
+Acceptance: label appearance-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20),
+stage final on commit 37b87e02f, build lease 2026-11-20T23:48:16Z–23:54:24Z: focused 297/297 and full 10,207/10,207
+unit cases (0 failures, 0 skipped); app build, publish and native host built; native selectors
+admin-configure-appearance (113 PASS lines, 0 FAIL), admin-appearance-overlays (75), overlay-revisions (91),
+overlay-pill (2), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed; source and
+payload seals verified.
+
+Not in the passing list: `advanced-overlays`. In a publish-native run on the same source (appearance-native-r13) it
+logged 369 PASS lines and then the host exited 0xC000027B on an unhandled `No service for type RequestsApi` from
+`WatchlistPage.ExternalRepeater_ElementPrepared` (WatchlistPage gained that dependency in Beta #184; the fixture's own
+service provider has no RequestsApi). Neither file is changed by this branch; the fixture was not modified.
+
+Not observed: a live server, a real OS file picker, decoding of real uploaded branding images, all-DPI/IME/Narrator,
+complete side-by-side visual parity (synthetic captures at 1440/800/480 and of the editor/library were inspected).
+Origin/beta advanced to `536e4e2d7` during the work and was not merged again. No push, PR, installer or installed-player
+action occurred.
+
+---
+
 # November 20 — Collections (Manage > Libraries > Collections) built and verified
 
 `t3/admin-collections-page` completes Collections (`/admin/collections`, `/new`, `/:id/edit`): list,
