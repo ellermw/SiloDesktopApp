@@ -44,26 +44,40 @@ all execution choices reachable rather than blocking a valid mode on transient e
 An acknowledged rating-source change invalidates the desktop rating-capability and detail-prefetch caches immediately and
 again after 11 seconds, matching the official WebUI's second refresh after the server's ten-second rating-policy cache.
 
-## Verification (2026-11-20, lane D:/SiloPlayer-build/admin-completion-lane-b)
+## Verification (2026-11-20)
 
-Run through the shared acceptance script under the SiloOct18Build lease, on the source after merging origin/beta:
+Run through the shared acceptance script under the SiloOct18Build lease, on the source after a normal merge of Beta
+`f35bb7e59d14f8e7f2e53bac982953fa3d5dc7da` (`1.2.1194-beta.1`):
 
-- `library-settings-focused-r2`: 57 focused unit cases (the four AdminLibrarySettings classes plus the source-root proof),
-  0 failures. The earlier rating-source failure was a wrong expectation in the test, not in production: the pinned official
-  `ratingSources.ts` keeps an unrelated `rt_critic` source while enabling `kinopoisk`.
-- `library-settings-native-r5` (app build, publish, native host): selectors `admin-manage-library-settings` (84 passing checks),
-  `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` all passed on one published payload.
-- `library-settings-final-r1` (full unit suite): 8,693 passed and 1,060 failed of 9,753; its focused stage passed. Every failure
-  inspected is repository-root discovery (about 100 existing test classes walk up from `AppContext.BaseDirectory`, which the
-  script places under D:/SiloPlayer-build, outside the checkout) or a fixture read that depends on it; none is in an
-  AdminLibrarySettings test. The full suite has therefore NOT passed under this script, and no single `-Stage final` run
-  passed. This is not attributed to this family and was not changed here.
+- `library-settings-lead-final-r3`, the final source (commit `19a414df496d8a75c7e9daaa4f01ead637c9ac96`): nonincremental unit
+  build; 108 focused cases (the AdminLibrarySettings classes and `AdminLibrariesTests`) and 9,755 full unit cases passed with
+  no failures or skips; nonincremental x64 app build, self-contained publish and native host build; native selectors
+  `admin-manage-library-settings` (84 passing checks), `admin-manage-foundation`, `admin-configure-general` and
+  `admin-monitor` passed. ACQ `2026-11-20T14:55:08.9407468Z`, REL `2026-11-20T15:00:40.1008712Z`. Source seal: 2,484 build
+  inputs, `0794282c6265c1fcd63f436fac83d24f449facf11f49cd820df8311fb07fc329`; payload: 582 files,
+  `072a8c759bf16b2d72a857b4e2667fb76856d23ca1514aa458a2b921988fd739`, unchanged across the run.
+- Earlier runs on the way there: `library-settings-focused-r2` and `library-settings-native-r5` (first passing focused and
+  native runs); `library-settings-final-r1` failed 1,060 full-suite cases only because an early version of the script built
+  outside the checkout, where about 100 existing test classes cannot find the repository (the script was corrected, no test
+  infrastructure is changed here); `library-settings-lead-final-r1` then failed one case,
+  `AdminLibrariesTests.EveryLibrariesKeyUsedBySourceHasEnglishText`, described below; `library-settings-lead-final-r2`
+  passed everything before the two review corrections.
 
-Defects found by running the page and fixed here: `Render` looked up a row, description and error block for
-`catalog.extra_rating_sources`, which has no single field, raising `KeyNotFoundException` on the UI thread and crashing the
-host when the page first loaded (now only keys that own a row are rendered); `AdminSettingsGroup.SetAction` enumerated
-`UIElementCollection` as `FrameworkElement` and did not compile. `TestRepository.Root` now resolves from the compiled-in
-source path first, so unit tests built outside the checkout find it.
+Defects found and fixed:
+
+- By running the page: `Render` looked up a row, description and error block for `catalog.extra_rating_sources`, which has
+  no single field, raising `KeyNotFoundException` on the UI thread and crashing the host on first load (now only keys that
+  own a row are rendered); `AdminSettingsGroup.SetAction` did not compile.
+- By the full suite after the Beta merge: the Libraries page's text-key scan matches every `AdminLibrar*` source, so it
+  picked up these files, whose text lives in `AdminText`. That scan now skips `AdminLibrarySettings*` and
+  `AdminLibrarySettingsNavigationTests` runs the equivalent scan against `AdminText` (51 keys).
+- By an independent read-only review of the final diff (two P2, no other findings): toggling a malformed saved rating
+  source threw on the UI thread, and an invalid list disabled Save with no visible reason. The toggle no longer validates,
+  as in the official page; the list is checked as the server does it, lowercased first; and the Ratings group shows the
+  problem. One environment-managed worker setting disabled Restore defaults for all five; the official button has no such
+  condition and the controller already skips managed keys, so it now stays available. One unit expectation (`RT` is a
+  valid list because the server lowercases it) and one native expectation (Restore defaults stays enabled) changed to
+  match the official source. The new Ratings-group message has unit coverage of its rule only, not a native check.
 
 The native fixture drives the registered shell, Frame and page through: loading skeleton, populated, failed first read with
 Retry, rating-source failure and recovery, older server without plugin rating sources (Ratings hidden), empty rating list,
