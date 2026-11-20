@@ -68,6 +68,10 @@ reloaded; nothing is replayed. A create or bulk create with an unknown outcome s
   A new row is scrolled into view but not highlighted. The `addedRow` navigation state the WebUI hands the Collections
   page has no native equivalent and is not sent (that page is not in Beta).
 - Back to the collection is offered only when the Collections route can open in this build.
+- When the library list cannot be read the page shows Home with a Reload banner (the WebUI shows a page error only when the
+  link names a library page). A link that names a library page is not followed until the list has been read.
+- After an unknown outcome stops a select-mode Turn on / Turn off, the rows that were never sent are counted in one closing
+  sentence; the WebUI does not stop the run, so it has no such rows.
 - Collection and library metadata have no paging parameters at this pin; they are read once, capped at 2,000 entries,
   and a single collection can be looked up by ID.
 - Rich-text tags in official messages render as their plain text.
