@@ -37,7 +37,7 @@ public sealed partial class AdminRequestsPage
             var toggle = Toggle(title, "AdminDiscoverEnabled-" + id, J.Flag(row, "enabled")); var owner = Owner;
             toggle.Toggled += async (_, _) =>
             {
-                if (!Current(owner) || _busy) return;
+                if (!Current(owner)) return;
                 var changed = rows.Select(r => AdminRequestRules.RowBody(r)).ToArray(); changed[at]["enabled"] = toggle.IsOn;
                 await SaveLayoutAsync(layout, changed);
             };
@@ -65,11 +65,12 @@ public sealed partial class AdminRequestsPage
     private static string SafeListUrl(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri.Host + uri.AbsolutePath : value.All(char.IsAsciiDigit) ? value : "Public list";
     private static string KindLabel(string kind) => S("web.admin.requests.discover.kind." + (kind switch { "tmdb_chart" => "tmdbChart", "tmdb_discover" => "tmdbFilter", "tmdb_list" => "tmdbList", _ => kind }) + ".label");
     private async Task MoveDiscoverAsync(AdminRequestDocument layout, JsonObject[] rows, int index, int change)
-    { var to = index + change; if (to < 0 || to >= rows.Length) return; (rows[index], rows[to]) = (rows[to], rows[index]); await SaveLayoutAsync(layout, rows); }
+    { var to = index + change; if (to < 0 || to >= rows.Length) return; var reordered = rows.ToArray(); (reordered[index], reordered[to]) = (reordered[to], reordered[index]); await SaveLayoutAsync(layout, reordered); }
     private async Task SaveLayoutAsync(AdminRequestDocument layout, IEnumerable<JsonObject> rows)
     {
-        var body = new JsonObject { ["rows"] = new JsonArray(rows.Select(row => (JsonNode)AdminRequestRules.RowBody(row)).ToArray()) };
-        await WriteAsync(async lease => { _layout = await _api.SaveDocumentAsync(lease, layout, body); }, ReconcileCurrentAsync);
+        var owner = Owner; var body = new JsonObject { ["rows"] = new JsonArray(rows.Select(row => (JsonNode)AdminRequestRules.RowBody(row)).ToArray()) };
+        // A save that was not made leaves the last canonical layout on screen, never the unsaved switch or order.
+        if (!await WriteAsync(async lease => { _layout = await _api.SaveDocumentAsync(lease, layout, body); }, ReconcileCurrentAsync) && Current(owner)) RenderDiscover();
     }
     private async Task AddDiscoverRowAsync()
     {
@@ -176,7 +177,9 @@ public sealed partial class AdminRequestsPage
         form.Values("company_ids", "Studios", "AdminDiscoverCompanies", [], true);
         var networks = form.Values("network_ids", "Networks", "AdminDiscoverNetworks", [], true);
         var region = form.Text("watch_region", "Region", "AdminDiscoverRegion", maximum: 2); if (region.Text.Length == 0) region.Text = "US";
-        var providers = Stack(); var providerForm = new RequestForm(filter); long providerRevision = 0;
+        var providers = Stack(); var providerForm = new RequestForm(filter); long providerRevision = 0; var providerRegion = region.Text.Trim();
+        // Saved services belong to one media type and region; changing either drops them, so none is saved unseen.
+        void DropProviders() { form.Data.Remove("watch_provider_ids"); providerForm = new RequestForm(filter); }
         form.Panel.Children.Add(Button("Streaming services", "AdminDiscoverProvidersLoad", async () =>
         {
             var owner = Owner; var revision = ++providerRevision; if (owner == null) return; var choices = await _api.WatchProvidersAsync(owner, J.Text(form.Read(), "media_type"), region.Text, _dialogReads?.Token ?? owner.Token); if (!Current(owner) || revision != providerRevision || _dialog == null) return;
@@ -198,7 +201,7 @@ public sealed partial class AdminRequestsPage
             {
                 media = selectedMedia;
                 form.UpdateChoices("genre_ids", Genres(media), true); form.UpdateChoices("exclude_genre_ids", Genres(media), true);
-                form.UpdateChoices("network_ids", [], true); ratingSelect.SelectedIndex = 0;
+                form.UpdateChoices("network_ids", [], true); ratingSelect.SelectedIndex = 0; DropProviders();
             }
             networks.Visibility = series ? Visibility.Visible : Visibility.Collapsed;
             foreach (var item in sortSelect.Items.OfType<ComboBoxItem>())
@@ -214,7 +217,13 @@ public sealed partial class AdminRequestsPage
             if (ratingSelect.SelectedItem is ComboBoxItem rating && !rating.IsEnabled) ratingSelect.SelectedIndex = 0;
             providerRevision++; providers.Children.Clear();
         }
-        mediaSelect.SelectionChanged += (_, _) => AdaptMedia(); region.TextChanged += (_, _) => { providerRevision++; providers.Children.Clear(); }; AdaptMedia();
+        mediaSelect.SelectionChanged += (_, _) => AdaptMedia(); AdaptMedia();
+        region.TextChanged += (_, _) =>
+        {
+            providerRevision++; providers.Children.Clear();
+            if (region.Text.Trim() == providerRegion) return;
+            providerRegion = region.Text.Trim(); DropProviders();
+        };
         form.Readers.Add(() => { if (Selected(mediaSelect) != "series") form.Data.Remove("network_ids"); });
         return form;
     }

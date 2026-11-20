@@ -31,6 +31,7 @@ internal static partial class AdminRequestsManagementNativeFixture
         internal bool Corrections, MissingSeriesFallback, Downloading;
         internal bool StoredPluginSecret, FractionalNumbers, PreviewOverrides, RulesForReorder, LoseReorder, FailConfigurationReads, QueuedProgress, ProgressOnTarget;
         internal bool ConditionalPluginSecret, OverlapPreviews, HoldPreviewOptions, LoseCreate, CreateWithoutIdentity, FailEarlierPreview;
+        internal bool FailQueueReads, RejectLayoutWrites;
         internal readonly TaskCompletionSource<bool> PreviewReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource<bool> ReleasePreviewRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool _previewWaitingOptions;
@@ -49,6 +50,7 @@ internal static partial class AdminRequestsManagementNativeFixture
             if (Corrections)
             {
                 if (path == "/api/v2/admin/requests") QueueReads++;
+                if (path == "/api/v2/admin/requests" && FailQueueReads) return Json("{}", HttpStatusCode.ServiceUnavailable);
                 if (request.Method == HttpMethod.Post && path == "/api/v2/admin/request-integrations" && LoseCreate)
                 {
                     LoseCreate = false; FailConfigurationReads = true;
@@ -127,6 +129,7 @@ internal static partial class AdminRequestsManagementNativeFixture
             {
                 LastValidator = request.Headers.IfMatch.SingleOrDefault()?.ToString(); LastWrite = await request.Content!.ReadAsStringAsync(ct);
                 if (Conflict) return Json("{\"type\":\"https://siloserver.org/problems/precondition_failed\",\"title\":\"Changed\",\"status\":412}", HttpStatusCode.PreconditionFailed);
+                if (RejectLayoutWrites && path.EndsWith("request-discover/layout")) return Json("{\"type\":\"https://siloserver.org/problems/validation_failed\",\"title\":\"Invalid\",\"status\":422}", HttpStatusCode.UnprocessableEntity);
                 var written = JsonNode.Parse(LastWrite)!.AsObject();
                 if (path.EndsWith("request-settings")) _settings = written;
                 if (path.EndsWith("request-routing")) _routing["mode"] = written["mode"]!.DeepClone();
@@ -155,6 +158,7 @@ internal static partial class AdminRequestsManagementNativeFixture
             return Json(json);
         }
         private string Settings() { var copy = (JsonObject)_settings.DeepClone(); if (!Watchlist) copy.Remove("watchlist_requests"); return copy.ToJsonString(); }
+        internal void AddDiscoverRow(string row) => _layout["rows"]!.AsArray().Add(JsonNode.Parse(row));
         private static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK)
         {
             var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };

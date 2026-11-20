@@ -396,6 +396,53 @@ internal static partial class AdminRequestsManagementNativeFixture
             await task;
             Check(!invoked, "retired ownership between event admission and capture aborts without a fault or write");
         });
+        await Case("refused Discover writes keep the saved rows", async (server, shell, frame) =>
+        {
+            const string put = "PUT /api/v2/admin/request-discover/layout";
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestDiscover));
+            await Until(() => Find(frame, "AdminDiscoverDown-trending_movies") is Button { IsEnabled: true });
+            server.RejectLayoutWrites = true;
+            Click(Find(frame, "AdminDiscoverDown-trending_movies")!);
+            await Until(() => server.Calls.Count(call => call == put) == 1 && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible });
+            await Task.Delay(100);
+            ((ToggleSwitch)Find(frame, "AdminDiscoverEnabled-trending_movies")!).IsOn = false;
+            await Until(() => server.Calls.Count(call => call == put) == 2);
+            await Settled(() => Find(frame, "AdminDiscoverEnabled-trending_movies") is ToggleSwitch { IsOn: true });
+            Check(Find(frame, "AdminDiscoverEnabled-trending_movies") is ToggleSwitch { IsOn: true }, "a refused Shown change returns the switch to the saved value");
+            server.RejectLayoutWrites = false; server.LastWrite = null;
+            Click(Find(frame, "AdminDiscoverDelete-trending_movies")!);
+            await Until(() => Dialog(shell) is { IsLoaded: true }); ClickPrimary(Dialog(shell)!);
+            await Until(() => server.LastWrite != null);
+            var rows = JsonNode.Parse(server.LastWrite!)!["rows"]!.AsArray();
+            Check(rows.Count == 1 && rows[0]!["id"]?.ToString() == "popular_movies", "Delete after a refused move removes the confirmed row and keeps the saved order");
+        }, server => server.AddDiscoverRow("{\"id\":\"popular_movies\",\"type\":\"tmdb_chart\",\"title\":\"Popular Movies\",\"enabled\":true,\"limit\":20,\"chart\":{\"preset\":\"popular\",\"media_type\":\"movie\"}}"));
+        await Case("changed region drops unseen streaming services", async (server, shell, frame) =>
+        {
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestDiscover));
+            await Until(() => Find(frame, "AdminDiscoverEdit-synthetic_filter") != null);
+            Click(Find(frame, "AdminDiscoverEdit-synthetic_filter")!);
+            await Until(() => Dialog(shell) is { IsLoaded: true }); var dialog = Dialog(shell)!;
+            ((TextBox)Find(dialog, "AdminDiscoverRegion")!).Text = "GB";
+            await Task.Delay(100);
+            ClickPrimary(dialog);
+            await Settled(() => server.LastWrite != null);
+            Check(server.LastWrite != null, "the edited filter row is saved");
+            await ClosedAsync(shell, dialog);
+            var filter = JsonNode.Parse(server.LastWrite!)!["rows"]!.AsArray().Last()!["discover"]!;
+            Check(filter["watch_region"]?.ToString() == "GB" && filter["watch_provider_ids"] == null, "services chosen for the previous region are not saved with the new one");
+        }, server => server.AddDiscoverRow("{\"id\":\"synthetic_filter\",\"type\":\"tmdb_discover\",\"title\":\"Synthetic filter\",\"enabled\":true,\"limit\":20,\"discover\":{\"media_type\":\"movie\",\"sort_by\":\"popularity.desc\",\"watch_region\":\"US\",\"watch_provider_ids\":[8]}}"));
+        await Case("failed queue read offers a retry instead of an empty queue", async (server, shell, frame) =>
+        {
+            server.FailQueueReads = true;
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestQueue));
+            await Until(() => Find(frame, "AdminRequestQueueRetry") != null);
+            await Task.Delay(200);
+            Check(Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible } && !Walk(frame).OfType<TextBlock>().Any(text => text.Text.Contains("All clear")), "a failed read reports the failure without claiming the queue is clear");
+            server.FailQueueReads = false;
+            Click(Find(frame, "AdminRequestQueueRetry")!);
+            await Until(() => Find(frame, "AdminRequestDetails-7") != null);
+            Check(Find(frame, "AdminRequestQueueRetry") == null && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, "a successful retry replaces the error state and clears its notice");
+        });
         if (failed > 0) throw new InvalidOperationException(failed + " Requests correction scenarios failed.");
     }
 

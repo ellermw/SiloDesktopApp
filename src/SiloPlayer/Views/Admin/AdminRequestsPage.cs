@@ -60,7 +60,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
             var owner = Owner; var review = _pendingWriteReview;
             if (_busy || !Current(owner) || review == null) return;
             _busy = true; _writeReview.IsEnabled = false;
-            try { await ReconcileWriteAsync(owner!, review); }
+            try { Notice(""); await ReconcileWriteAsync(owner!, review); }
             finally { if (Current(owner)) { _busy = false; _writeReview.IsEnabled = true; } }
         };
         _body.Children.Add(_notice); _body.Children.Add(_writeReview); _body.Children.Add(_content);
@@ -91,7 +91,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
         _dialogReads?.Cancel(); _queueCancellation?.Cancel(); StopQueuePolling();
         _dirty = false; _busy = false; SetWriteReview(null); _selected.Clear(); _queueRows.Clear(); _content.Children.Clear();
         _general = null; _generalDraft = null; _layout = null; _routing = null; _routes = null; _servers = []; _plugins = new(); _users = new();
-        _queueRead++; _readingQueue = false; _queueList = null; _bulkBar = null; _bulkProgress = null; _viewButtons.Clear();
+        _queueRead++; _readingQueue = false; _queueError = null; _queueList = null; _bulkBar = null; _bulkProgress = null; _viewButtons.Clear();
     }
     public void SuspendAdminPage() { _lifetime?.Retire(); Clear(); _lifetime?.Dispose(); _lifetime = null; }
     private bool Current(MonitorAuthorityLease? owner) => IsLoaded && owner is { IsCurrent: true } && ReferenceEquals(owner, Owner);
@@ -100,6 +100,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
     {
         var owner = Owner; if (!Current(owner)) return;
         StopQueuePolling();
+        if (_pendingWriteReview == null) Notice("");
         var generation = ++_generation;
         _content.Children.Clear(); _content.Children.Add(U.Text("Loading…", 14, true));
         try
@@ -122,7 +123,10 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
         catch (OperationCanceledException) when (!Current(owner) || generation != _generation) { }
         catch (Exception error) { if (Current(owner) && generation == _generation) { _content.Children.Clear(); Notice(AdminRequestRules.Error(error)); _content.Children.Add(Button("Try again", "AdminRequestsRetry", ReloadAsync)); } if (_pendingWriteReview != null) throw; }
     }
-    private void Notice(string message) { _notice.Text = message; _notice.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible; }
+    private bool _readNotice;
+    /// <summary>A read notice reports a failed refresh, so the next refresh replaces it. Every other notice stays until a load, review or successful write.</summary>
+    private void Notice(string message, bool read = false) { _readNotice = read && message.Length > 0; _notice.Text = message; _notice.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible; }
+    private void ClearReadNotice() { if (_readNotice) Notice(""); }
     private static string S(string key, object? args = null) => AdminRequestsText.T(key, args);
     private static object Count(int count) => new { count, count_text = AdminText.FormatNumber(count) };
     private Button Button(string label, string id, Func<Task> action, bool primary = false)
@@ -248,15 +252,16 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
         }
     }
 
-    private async Task WriteAsync(Func<MonitorAuthorityLease, Task> operation, Func<Task>? reconcile = null)
+    /// <summary>True only when the operation itself completed. Inline controls redraw from the canonical document otherwise.</summary>
+    private async Task<bool> WriteAsync(Func<MonitorAuthorityLease, Task> operation, Func<Task>? reconcile = null)
     {
-        if (_busy || _lifetime == null) return;
-        if (_pendingWriteReview != null) { Notice("Reload and review the previous change before making another change."); return; }
-        var pageOwner = Owner;
+        if (_busy || _lifetime == null) return false;
+        if (_pendingWriteReview != null) { Notice("Reload and review the previous change before making another change."); return false; }
+        var pageOwner = Owner; var written = false;
         try
         {
             using var action = _lifetime.CaptureAction(); _busy = true; SetWriteReview(reconcile ?? ReconcileCurrentAsync);
-            await operation(action); action.ThrowIfRetired(); if (Current(pageOwner)) Notice("");
+            await operation(action); action.ThrowIfRetired(); written = true; if (Current(pageOwner)) Notice("");
         }
         catch (OperationCanceledException) when (!Current(pageOwner)) { }
         catch (Exception error)
@@ -275,6 +280,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
                 if (Current(pageOwner)) { _busy = false; _writeReview.IsEnabled = true; }
             }
         }
+        return written;
     }
     private void SetWriteReview(Func<Task>? review)
     {

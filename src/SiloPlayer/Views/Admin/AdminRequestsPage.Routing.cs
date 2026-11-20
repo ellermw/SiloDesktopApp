@@ -28,8 +28,9 @@ public sealed partial class AdminRequestsPage
         var owner = Owner;
         mode.SelectionChanged += async (_, _) =>
         {
-            if (!Current(owner) || _busy || Selected(mode) == J.Text(routing.Value, "mode")) return;
-            await WriteAsync(async lease => { _routing = await _api.SaveDocumentAsync(lease, routing, new JsonObject { ["mode"] = Selected(mode) }); }, RefreshConfigurationAsync);
+            if (!Current(owner) || Selected(mode) == J.Text(routing.Value, "mode")) return;
+            // A change that was not written is taken back, so the selector never shows a mode the server does not hold.
+            if (!await WriteAsync(async lease => { _routing = await _api.SaveDocumentAsync(lease, routing, new JsonObject { ["mode"] = Selected(mode) }); }, RefreshConfigurationAsync) && Current(owner)) RenderRouting();
         };
         panel.Children.Add(Field(S("web.admin.settings.requests.routingMode.label"), mode));
         if (standard)
@@ -66,8 +67,8 @@ public sealed partial class AdminRequestsPage
                     var toggle = Toggle("Enabled", "AdminRequestRuleEnabled-" + id, J.Flag(row, "enabled"));
                     toggle.Toggled += async (_, _) =>
                     {
-                        if (!Current(owner) || _busy) return;
-                        await WriteAsync(async lease => { var canonical = await _api.GetRouteAsync(lease, id); var body = canonical.Value; body["enabled"] = toggle.IsOn; await _api.SaveDocumentAsync(lease, canonical, body); }, RefreshConfigurationAsync);
+                        if (!Current(owner)) return;
+                        if (!await WriteAsync(async lease => { var canonical = await _api.GetRouteAsync(lease, id); var body = canonical.Value; body["enabled"] = toggle.IsOn; await _api.SaveDocumentAsync(lease, canonical, body); }, RefreshConfigurationAsync) && Current(owner)) RenderRouting();
                     }; card.Children.Add(toggle);
                     var position = Array.IndexOf(rules, document);
                     var up = Button("↑", "AdminRequestRuleUp-" + id, () => MoveRuleAsync(snapshot, _routingMedia, rules, position, -1)); up.IsEnabled = position > 0;

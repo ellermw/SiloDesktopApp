@@ -32,7 +32,7 @@ public sealed partial class AdminRequestsPage
             _queueTimer = null;
             try { if (!_readingQueue && !_busy && _dialog == null) await RefreshQueueAsync(); }
             catch (OperationCanceledException) when (!Current(owner)) { }
-            catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error)); }
+            catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error), true); }
             finally { if (Current(owner) && _queueTimer == null) ScheduleQueuePolling(owner); }
         };
         timer.Start();
@@ -50,6 +50,7 @@ public sealed partial class AdminRequestsPage
     private TextBlock? _bulkProgress;
     private long _queueRead;
     private bool _readingQueue;
+    private string? _queueError;
     private CancellationTokenSource? _queueCancellation;
 
     private async Task BuildQueueAsync(MonitorAuthorityLease owner, long generation)
@@ -82,7 +83,7 @@ public sealed partial class AdminRequestsPage
         _bulkBar = Stack(); _content.Children.Add(_bulkBar);
         _bulkProgress = U.Text("", 13); _content.Children.Add(_bulkProgress);
         _queueList = Stack(); _content.Children.Add(_queueList);
-        _queueCursors.Clear(); _queueRows.Clear(); _selected.Clear(); _cursor = null;
+        _queueCursors.Clear(); _queueRows.Clear(); _selected.Clear(); _cursor = null; _queueError = null;
         await ReadQueueAsync(owner, append: false);
         try { var users = await _api.ListUsersAsync(owner); if (Current(owner) && generation == _generation) { _users = users; RenderQueue(); } } catch (Exception) { }
     }
@@ -90,7 +91,8 @@ public sealed partial class AdminRequestsPage
     private async Task RefreshQueueAsync(bool counts = false)
     {
         var owner = Owner; if (!Current(owner)) return;
-        if (counts) { try { _queueCounts = await _counts.GetAsync(owner!, true); } catch (Exception error) when (Current(owner)) { Notice(AdminRequestRules.Error(error)); } }
+        ClearReadNotice();
+        if (counts) { try { _queueCounts = await _counts.GetAsync(owner!, true); } catch (Exception error) when (Current(owner)) { Notice(AdminRequestRules.Error(error), true); } }
         if (!Current(owner)) return;
         foreach (var (view, button) in _viewButtons)
         {
@@ -115,16 +117,23 @@ public sealed partial class AdminRequestsPage
             var ids = _queueRows.Select(row => J.Text(row, "id")).ToHashSet(StringComparer.Ordinal);
             foreach (var row in J.Items(page).OfType<JsonObject>())
             { if (!ids.Add(J.Text(row, "id"))) throw new InvalidDataException("Repeated request row."); if (_queueRows.Count >= AdminRequestsApi.RetainedQueueLimit) throw new InvalidDataException("Narrow the filters before loading more requests."); _queueRows.Add((JsonObject)row.DeepClone()); }
-            _cursor = next; RenderQueue(); ScheduleQueuePolling(owner);
+            _cursor = next; _queueError = null; RenderQueue(); ScheduleQueuePolling(owner);
         }
-        catch (Exception error) { if (Current(owner) && read == _queueRead) { Notice(AdminRequestRules.Error(error)); RenderQueue(); } if (_pendingWriteReview != null) throw; }
+        catch (Exception error)
+        {
+            if (Current(owner) && read == _queueRead) { var message = AdminRequestRules.Error(error); if (!append) _queueError = message; Notice(message, true); RenderQueue(); }
+            if (_pendingWriteReview != null) throw;
+        }
         finally { if (ReferenceEquals(_queueCancellation, cancellation)) _queueCancellation = null; if (read == _queueRead) _readingQueue = false; }
     }
     private void RenderQueue()
     {
         if (_queueList == null) return;
         _queueList.Children.Clear(); RenderBulk();
-        if (_queueRows.Count == 0)
+        // An empty list says nothing is waiting only after a read succeeded; a failed read offers a retry instead.
+        if (_queueRows.Count == 0 && _queueError != null)
+            _queueList.Children.Add(Card(Stack(U.Text("Requests could not be loaded", 18), U.Text(_queueError, 14, true), Button("Try again", "AdminRequestQueueRetry", () => RefreshQueueAsync(true)))));
+        else if (_queueRows.Count == 0)
         {
             var filtered = _search.Length > 0 || _media.Length > 0 || _user != null;
             _queueList.Children.Add(Card(Stack(U.Text(S(filtered ? "web.admin.requests.queue.noMatches.title" : "web.admin.requests.queue.allClear"), 18),
