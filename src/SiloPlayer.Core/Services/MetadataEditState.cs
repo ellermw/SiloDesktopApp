@@ -20,7 +20,7 @@ public sealed class MetadataEditState
     };
     public MetadataEditState(MediaItemDetail item)
     {
-        FieldLockMap = item.Type switch { "movie" or "series" => LockMap, "season" => SeasonLockMap, "episode" => EpisodeLockMap, _ => new Dictionary<string, int>() };
+        FieldLockMap = item.Type switch { "movie" or "series" or "audiobook" => LockMap, "season" => SeasonLockMap, "episode" => EpisodeLockMap, _ => new Dictionary<string, int>() };
         var serialized = JsonSerializer.SerializeToElement(item, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
         foreach (var key in new[] { "title","sort_title","original_title","overview","tagline","content_rating","year","runtime","genres","studios","networks","countries","release_date","first_air_date","last_air_date","air_time","air_timezone","air_date","rating_imdb","rating_tmdb","rating_rt_critic","rating_rt_audience","imdb_id","tmdb_id","tvdb_id","season_number","episode_number" })
         {

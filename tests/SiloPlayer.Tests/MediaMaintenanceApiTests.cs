@@ -35,6 +35,40 @@ public sealed class MediaMaintenanceApiTests
     }
 
     [Fact]
+    public async Task AudiobookMatchSearchAndApplyUseGenericProviderIdsAndLibraryScope()
+    {
+        var searchHandler = new RecordingHandler("""{"candidates":[{"title":"Book","content_type":"audiobook","provider_ids":{"isbn":"9781234567890"},"sources":["books"]}]}""");
+        var response = await CreateApi(searchHandler).SearchMatchesAsync("audiobook/1", new ItemMatchSearchRequest
+        {
+            Title = "Book", Year = 2001, LibraryId = 7,
+            ProviderIds = new() { ["isbn"] = "9781234567890" },
+        });
+        Assert.Equal(HttpMethod.Post, searchHandler.LastMethod);
+        Assert.Equal("/api/v2/admin/items/audiobook%2F1/match/search", searchHandler.LastUri!.AbsolutePath);
+        using var search = JsonDocument.Parse(searchHandler.LastBody!);
+        Assert.Equal("Book", search.RootElement.GetProperty("title").GetString());
+        Assert.Equal(2001, search.RootElement.GetProperty("year").GetInt32());
+        Assert.Equal("7", search.RootElement.GetProperty("library_id").GetString());
+        Assert.Equal("9781234567890", search.RootElement.GetProperty("provider_ids").GetProperty("isbn").GetString());
+        foreach (var key in new[] { "imdb_id", "tmdb_id", "tvdb_id" })
+            Assert.False(search.RootElement.TryGetProperty(key, out _));
+
+        var candidate = Assert.Single(response.Candidates);
+        Assert.Equal("audiobook", candidate.ContentType);
+        var applyHandler = new RecordingHandler("""{"content_id":"audiobook-isbn-9781234567890","updated":true}""");
+        var applied = await CreateApi(applyHandler).ApplyMatchAsync("audiobook/1", new ItemMatchApplyRequest
+        {
+            ProviderIds = candidate.ProviderIds, LibraryId = 7,
+        });
+        Assert.Equal(HttpMethod.Post, applyHandler.LastMethod);
+        Assert.Equal("/api/v2/admin/items/audiobook%2F1/match/apply", applyHandler.LastUri!.AbsolutePath);
+        using var apply = JsonDocument.Parse(applyHandler.LastBody!);
+        Assert.Equal("7", apply.RootElement.GetProperty("library_id").GetString());
+        Assert.Equal("9781234567890", apply.RootElement.GetProperty("provider_ids").GetProperty("isbn").GetString());
+        Assert.Equal("audiobook-isbn-9781234567890", applied.ContentId);
+    }
+
+    [Fact]
     public async Task ApplyMatchUsesTheCurrentServerContract()
     {
         var handler = new RecordingHandler("{}", HttpStatusCode.NoContent);

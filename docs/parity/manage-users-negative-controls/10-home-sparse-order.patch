@@ -1,0 +1,14 @@
+diff --git a/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs b/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs
+--- a/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs
++++ b/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs
+@@ -40,8 +40,8 @@
+             if (next != index)
+             {
+                 (ordered[index], ordered[next]) = (ordered[next], ordered[index]);
+-                for (var position = 0; position < ordered.Count; position++)
+-                    Override(ordered[position])["position"] = position;
++                Override(ordered[index])["position"] = index;
++                Override(ordered[next])["position"] = next;
+             }
+         }
+         return result;

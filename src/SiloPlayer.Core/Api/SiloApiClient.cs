@@ -1051,6 +1051,8 @@ public partial class SiloApiClient
                 // Keep the diagnostic boundary, but never record a binding secret.
                 if (request.Options.TryGetValue(DeviceBootstrapOption, out var bootstrap) && bootstrap)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=device_bootstrap_transport_failed");
+                else if (path.StartsWith("/api/v2/admin/storage-transitions", StringComparison.Ordinal))
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=storage_transition_transport_failed");
                 else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
                 else
@@ -1124,6 +1126,8 @@ public partial class SiloApiClient
         {
             using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false), cancellationToken: ct).ConfigureAwait(false);
             var root = body.RootElement;
+            // Error bodies are best-effort: a non-object must not hide the HTTP status.
+            if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Expected a problem object.");
             string? Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             code = Text("error") ?? Text("code");
             detail = Text("detail") ?? Text("message") ?? Text("title");
