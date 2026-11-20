@@ -326,7 +326,7 @@ internal static class AdminSignInSecurityNativeFixture
             // ── Policy editor: review/adopt, validate, simulate, save (unknown then success), activate ──
             policy = await Open(outer, "/admin/policy?document=9", "AdminPolicyPage", visited);
             await Until(() => Descendants(policy).OfType<TextBox>().Any(t => Id(t) == "PolicySource"));
-            Check(Input(policy, "PolicySource").Text.Contains("override(base_decision"), "default source seeded for a document with no versions");
+            Check(Input(policy, "PolicySource").Text.Contains("package silo_custom.permission"), "editor seeded from the latest saved version");
             server.RenamedNine = "Renamed on another server"; server.Docs[0] = server.Docs[0] with { Enabled = true };
             Click(policy, "PolicyReview");
             await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyAdopt"));
