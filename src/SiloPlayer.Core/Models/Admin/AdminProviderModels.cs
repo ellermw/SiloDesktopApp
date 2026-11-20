@@ -1,0 +1,334 @@
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+
+namespace SiloPlayer.Core.Models.Admin;
+
+public sealed class AdminSubtitleProvider
+{
+    public string ProviderName { get; set; } = "";
+    public bool Enabled { get; set; }
+    public bool HasApiKey { get; set; }
+    public bool HasCredentials { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
+}
+
+public sealed class AdminSubtitleProvidersResponse
+{
+    public List<AdminSubtitleProvider> Providers { get; set; } = [];
+}
+
+/// <summary>Canonical configuration plus the strong revision that protects exactly one write.</summary>
+public sealed class AdminSubtitleProviderEditor
+{
+    private int _consumed;
+    internal AdminSubtitleProviderEditor(AdminSubtitleProvider provider, string etag)
+    {
+        Provider = provider.ProviderName; Enabled = provider.Enabled; HasApiKey = provider.HasApiKey;
+        HasCredentials = provider.HasCredentials; UpdatedAt = provider.UpdatedAt; ETag = etag;
+    }
+    public string Provider { get; }
+    public bool Enabled { get; }
+    public bool HasApiKey { get; }
+    public bool HasCredentials { get; }
+    public DateTimeOffset? UpdatedAt { get; }
+    internal string ETag { get; }
+    internal void Consume()
+    {
+        if (Interlocked.Exchange(ref _consumed, 1) != 0)
+            throw new InvalidOperationException("Reload saved provider configuration before saving again.");
+    }
+    public override string ToString() => nameof(AdminSubtitleProviderEditor);
+}
+
+public sealed class AdminSubtitleProviderChange
+{
+    public bool Enabled { get; set; }
+    public string? ApiKey { get; set; }
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public bool? ClearCredentials { get; set; }
+    public override string ToString() => nameof(AdminSubtitleProviderChange);
+}
+
+public enum AdminSubtitleLocalApply { Applied, NotConfigured, Unsupported, Failed }
+
+public sealed class AdminSubtitleProviderSaved
+{
+    public string SavedRevision { get; set; } = "";
+    [JsonPropertyName("local_apply")]
+    public string LocalApplyWire { get; set; } = "";
+    [JsonIgnore]
+    public AdminSubtitleLocalApply LocalApply => LocalApplyWire switch
+    {
+        "applied" => AdminSubtitleLocalApply.Applied,
+        "not_configured" => AdminSubtitleLocalApply.NotConfigured,
+        "unsupported" => AdminSubtitleLocalApply.Unsupported,
+        "failed" => AdminSubtitleLocalApply.Failed,
+        _ => throw new InvalidDataException("Invalid subtitle provider save acknowledgement."),
+    };
+    public string? LocalAppliedRevision { get; set; }
+    public override string ToString() => nameof(AdminSubtitleProviderSaved);
+}
+
+public sealed class AdminSubtitleProviderTestResult
+{
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+    public override string ToString() => nameof(AdminSubtitleProviderTestResult);
+}
+
+/// <summary>Write-only subtitle credential draft. No secret is included in diagnostics.</summary>
+public sealed class AdminSubtitleProviderDraft
+{
+    private bool _initiallyConfigured;
+    private bool _enabledExplicit;
+    public AdminSubtitleProviderDraft(string provider, bool enabled, bool hasApiKey, bool hasCredentials)
+    {
+        Provider = provider; Enabled = enabled; HasApiKey = hasApiKey; HasCredentials = hasCredentials;
+        _initiallyConfigured = provider == "opensubtitles" ? hasCredentials : hasApiKey;
+    }
+    public string Provider { get; }
+    public bool Enabled { get; private set; }
+    public bool HasApiKey { get; private set; }
+    public bool HasCredentials { get; private set; }
+    public string ApiKey { get; private set; } = "";
+    public string Username { get; private set; } = "";
+    public string Password { get; private set; } = "";
+    public bool SaveAttempted { get; private set; }
+    public bool Dirty => _enabledExplicit || ApiKey.Length > 0 || Username.Length > 0 || Password.Length > 0;
+    public void SetEnabled(bool value) { Enabled = value; _enabledExplicit = true; }
+    public void SetApiKey(string value) { ApiKey = value; AutoEnable(value.Trim().Length > 0); }
+    public void SetUsername(string value) { Username = value; AutoEnable(value.Trim().Length > 0 && Password.Length > 0); }
+    public void SetPassword(string value) { Password = value; AutoEnable(Username.Trim().Length > 0 && value.Length > 0); }
+    private void AutoEnable(bool credentialTyped) { if (!_initiallyConfigured && !_enabledExplicit && credentialTyped) Enabled = true; }
+    public AdminSubtitleProviderChange CaptureChange(bool clear = false)
+    {
+        if (SaveAttempted) throw new InvalidOperationException("Reload saved provider configuration before saving again.");
+        SaveAttempted = true;
+        if (clear) return new() { Enabled = false, ClearCredentials = true };
+        return Provider == "opensubtitles"
+            ? new() { Enabled = Enabled, Username = Username, Password = Password }
+            : new() { Enabled = Enabled, ApiKey = ApiKey };
+    }
+    /// <summary>A successful canonical reload permits one new attempt without clearing the retained draft.</summary>
+    public void RearmAfterReload(AdminSubtitleProviderEditor editor)
+    {
+        ArgumentNullException.ThrowIfNull(editor);
+        if (!string.Equals(editor.Provider, Provider, StringComparison.Ordinal))
+            throw new ArgumentException("The editor belongs to another provider.", nameof(editor));
+        HasApiKey = editor.HasApiKey;
+        HasCredentials = editor.HasCredentials;
+        _initiallyConfigured = Provider == "opensubtitles" ? HasCredentials : HasApiKey;
+        if (!_enabledExplicit)
+        {
+            var credentialTyped = Provider == "opensubtitles"
+                ? Username.Trim().Length > 0 && Password.Length > 0
+                : ApiKey.Trim().Length > 0;
+            Enabled = !_initiallyConfigured && credentialTyped ? true : editor.Enabled;
+        }
+        SaveAttempted = false;
+    }
+    public void ClearSecrets() { ApiKey = Username = Password = ""; }
+    public override string ToString() => nameof(AdminSubtitleProviderDraft);
+}
+
+public sealed class AdminMarkerProvidersResponse
+{
+    public List<AdminMarkerProvider> Providers { get; set; } = [];
+}
+
+public sealed class AdminMarkerProvider
+{
+    public string Provider { get; set; } = "";
+    public string? DisplayName { get; set; }
+    public string? SourceType { get; set; }
+    public string? PluginId { get; set; }
+    public string? PluginInstallationId { get; set; }
+    public string? CapabilityId { get; set; }
+    public bool IsSubmitter { get; set; }
+    public bool FetchEnabled { get; set; }
+    public long FetchPriority { get; set; }
+    public double FetchMinConfidence { get; set; }
+    public bool ContributeEnabled { get; set; }
+    public bool ContributeAutoLocal { get; set; }
+    public double ContributeMinConfidence { get; set; }
+    public bool DefaultContributeEnabled { get; set; }
+}
+
+public sealed class AdminMarkerProviderValidation
+{
+    public bool Valid { get; set; }
+    public AdminMarkerUserStats? Stats { get; set; }
+    public string? Error { get; set; }
+}
+
+public sealed class AdminMarkerUserStats
+{
+    public long Total { get; set; }
+    public long Accepted { get; set; }
+    public long Pending { get; set; }
+    public long Rejected { get; set; }
+    public double AcceptanceRate { get; set; }
+    public long CurrentStreak { get; set; }
+    public long BestStreak { get; set; }
+}
+
+/// <summary>Changed-fields-only marker draft; confidence is edited as 0-100 and sent as 0-1.</summary>
+public sealed partial class AdminMarkerProviderDraft
+{
+    private readonly AdminMarkerProvider _saved;
+    public AdminMarkerProviderDraft(AdminMarkerProvider saved)
+    {
+        _saved = saved; FetchEnabled = saved.FetchEnabled; FetchPriority = saved.FetchPriority.ToString(CultureInfo.InvariantCulture);
+        FetchMinimumPercent = Percent(saved.FetchMinConfidence); ContributeEnabled = saved.IsSubmitter && saved.ContributeEnabled;
+        ContributeAutoLocal = saved.IsSubmitter && saved.ContributeAutoLocal;
+        ContributeMinimumPercent = Percent(saved.ContributeMinConfidence);
+    }
+    public bool FetchEnabled { get; set; }
+    public string FetchPriority { get; set; }
+    public string FetchMinimumPercent { get; set; }
+    public bool ContributeEnabled { get; set; }
+    public bool ContributeAutoLocal { get; set; }
+    public string ContributeMinimumPercent { get; set; }
+    public bool IsValid => TryPriority(out _) && TryPercent(FetchMinimumPercent, out _) && TryPercent(ContributeMinimumPercent, out _);
+    public bool AdvancedDirty => !TryPriority(out var priority) || priority != _saved.FetchPriority ||
+        !TryPercent(FetchMinimumPercent, out var fetchConfidence) || fetchConfidence != _saved.FetchMinConfidence ||
+        !TryPercent(ContributeMinimumPercent, out var contributeConfidence) || contributeConfidence != _saved.ContributeMinConfidence;
+    public bool Dirty => IsValid ? CapturePatch().Count > 0 : true;
+    /// <summary>Reconciles a canonical reload while retaining only fields the admin actually changed.</summary>
+    public AdminMarkerProviderDraft Rebase(AdminMarkerProvider saved)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        if (!string.Equals(saved.Provider, _saved.Provider, StringComparison.Ordinal))
+            throw new ArgumentException("The provider identity changed.", nameof(saved));
+        var next = new AdminMarkerProviderDraft(saved);
+        if (FetchEnabled != _saved.FetchEnabled) next.FetchEnabled = FetchEnabled;
+        if (!TryPriority(out var priority) || priority != _saved.FetchPriority) next.FetchPriority = FetchPriority;
+        if (!TryPercent(FetchMinimumPercent, out var fetchConfidence) || fetchConfidence != _saved.FetchMinConfidence) next.FetchMinimumPercent = FetchMinimumPercent;
+        if (ContributeEnabled != (_saved.IsSubmitter && _saved.ContributeEnabled)) next.ContributeEnabled = ContributeEnabled;
+        if (ContributeAutoLocal != (_saved.IsSubmitter && _saved.ContributeAutoLocal)) next.ContributeAutoLocal = ContributeAutoLocal;
+        if (!TryPercent(ContributeMinimumPercent, out var contributeConfidence) || contributeConfidence != _saved.ContributeMinConfidence) next.ContributeMinimumPercent = ContributeMinimumPercent;
+        return next;
+    }
+    public IReadOnlyDictionary<string, object?> CapturePatch()
+    {
+        if (!TryPriority(out var priority) || !TryPercent(FetchMinimumPercent, out var fetchConfidence) ||
+            !TryPercent(ContributeMinimumPercent, out var contributeConfidence))
+            throw new InvalidOperationException("Provider priority and confidence values must be valid.");
+        var patch = new Dictionary<string, object?>(StringComparer.Ordinal);
+        if (FetchEnabled != _saved.FetchEnabled) patch["fetch_enabled"] = FetchEnabled;
+        if (priority != _saved.FetchPriority) patch["fetch_priority"] = priority;
+        if (fetchConfidence != _saved.FetchMinConfidence) patch["fetch_min_confidence"] = fetchConfidence;
+        var sharing = _saved.IsSubmitter && ContributeEnabled;
+        var automatic = sharing && ContributeAutoLocal;
+        if (sharing != _saved.ContributeEnabled) patch["contribute_enabled"] = sharing;
+        if (automatic != _saved.ContributeAutoLocal) patch["contribute_auto_local"] = automatic;
+        if (_saved.IsSubmitter && contributeConfidence != _saved.ContributeMinConfidence)
+            patch["contribute_min_confidence"] = contributeConfidence;
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, object?>(patch);
+    }
+    private bool TryPriority(out long value)
+    {
+        value = 0;
+        var input = FetchPriority.Trim();
+        return IntegerPattern().IsMatch(input) &&
+            long.TryParse(input, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value);
+    }
+    private static bool TryPercent(string input, out double value)
+    {
+        var parsed = double.TryParse(input.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var percent);
+        value = percent / 100d;
+        return parsed && double.IsFinite(percent) && percent is >= 0 and <= 100;
+    }
+    private static string Percent(double value) => (value * 100d).ToString("G17", CultureInfo.InvariantCulture);
+    [GeneratedRegex("^[+-]?[0-9]+$", RegexOptions.CultureInvariant)] private static partial Regex IntegerPattern();
+}
+
+public sealed class AdminPluginInstallationsPage
+{
+    public List<AdminPluginInstallation> Items { get; set; } = [];
+    public AdminProviderPageInfo? Page { get; set; }
+}
+public sealed class AdminProviderPageInfo { public bool HasMore { get; set; } public string? NextCursor { get; set; } }
+public sealed class AdminPluginInstallation
+{
+    [JsonConverter(typeof(SiloPlayer.Core.Json.StringOrNumberJsonConverter))]
+    public string Id { get; set; } = "";
+    public string PluginId { get; set; } = "";
+    public bool Enabled { get; set; }
+    public List<AdminPluginCapability> Capabilities { get; set; } = [];
+    public List<AdminPluginConfigSchema> GlobalConfigSchema { get; set; } = [];
+    public List<AdminPluginConfigValue> GlobalConfigs { get; set; } = [];
+}
+public sealed class AdminPluginCapability
+{
+    public string Id { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Description { get; set; } = "";
+    public List<AdminPluginConfigSchema> ConfigSchema { get; set; } = [];
+}
+public sealed class AdminPluginConfigSchema
+{
+    public string Key { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string JsonSchema { get; set; } = "";
+    public bool Required { get; set; }
+}
+public sealed class AdminPluginConfigValue
+{
+    public string Key { get; set; } = "";
+    public Dictionary<string, JsonElement> Value { get; set; } = [];
+    public List<string> ConfiguredSecrets { get; set; } = [];
+}
+
+public enum AdminPluginProviderKind { Watch, Metadata, Marker }
+public sealed record AdminPluginProviderTile(string InstallationId, string PluginId, string CapabilityId,
+    string DisplayName, AdminPluginProviderKind Kind, bool Enabled, bool ConfigurationReady);
+
+public static class AdminProviderPresentation
+{
+    public static IReadOnlyList<AdminPluginProviderTile> PluginTiles(IEnumerable<AdminPluginInstallation> installations)
+    {
+        var tiles = new List<AdminPluginProviderTile>();
+        foreach (var installation in installations)
+        foreach (var capability in installation.Capabilities)
+        {
+            var family = capability.Type.Split('.', 2)[0];
+            var kind = family switch
+            {
+                "watch_sync_provider" => AdminPluginProviderKind.Watch,
+                "metadata_provider" => AdminPluginProviderKind.Metadata,
+                "marker_provider" => AdminPluginProviderKind.Marker,
+                _ => (AdminPluginProviderKind?)null,
+            };
+            if (kind is { } providerKind)
+                tiles.Add(new(installation.Id, installation.PluginId, capability.Id,
+                    string.IsNullOrWhiteSpace(capability.DisplayName) ? installation.PluginId : capability.DisplayName,
+                    providerKind, installation.Enabled, ConfigurationReady(installation)));
+        }
+        return Array.AsReadOnly(tiles.OrderBy(tile => tile.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToArray());
+    }
+
+    public static bool ConfigurationReady(AdminPluginInstallation installation)
+    {
+        if (installation.GlobalConfigSchema.Count == 0) return true;
+        bool Filled(string key)
+        {
+            var value = installation.GlobalConfigs.FirstOrDefault(item => item.Key == key);
+            if (value == null) return false;
+            if (value.ConfiguredSecrets.Count > 0) return true;
+            return value.Value.Values.Any(item => item.ValueKind switch
+            {
+                JsonValueKind.Null or JsonValueKind.Undefined => false,
+                JsonValueKind.String => !string.IsNullOrWhiteSpace(item.GetString()),
+                _ => true,
+            });
+        }
+        if (!installation.GlobalConfigSchema.Any(schema => Filled(schema.Key))) return false;
+        return installation.GlobalConfigSchema.Where(schema => schema.Required).All(schema => Filled(schema.Key));
+    }
+}

@@ -93,34 +93,40 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
     public async Task<AdminSettingsConnectionResult> CheckConnectionAsync(MonitorAuthorityLease lease, string kind,
         IReadOnlyDictionary<string, string> values, IReadOnlyCollection<string> dirtyKeys, CancellationToken ct = default)
     {
-        if (kind != "redis") throw new ArgumentException("Unsupported connection check.", nameof(kind));
-        if (values.Keys.Any(key => key is not ("redis.url" or "redis.db")) || dirtyKeys.Any(key => key is not ("redis.url" or "redis.db")))
-            throw new ArgumentException("Invalid Redis connection check values.", nameof(values));
+        var allowed = kind switch
+        {
+            "redis" => new HashSet<string>(["redis.url", "redis.db"], StringComparer.Ordinal),
+            "mdblist" => new HashSet<string>(["mdblist.api_key"], StringComparer.Ordinal),
+            _ => throw new ArgumentException("Unsupported connection check.", nameof(kind)),
+        };
+        if (values.Keys.Any(key => !allowed.Contains(key)) || dirtyKeys.Any(key => !allowed.Contains(key)))
+            throw new ArgumentException("Invalid connection check values.", nameof(values));
         using var timeout = Timeout(lease, ct, TimeSpan.FromSeconds(20));
         ApiResponse<ConnectionResponse> response;
         try
         {
             response = await client.MonitorLogsSendAsync<ConnectionResponse>(lease, HttpMethod.Post,
-                "/api/v2/admin/settings/check/redis", new Dictionary<string, object?> { ["values"] = values, ["dirty_keys"] = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
+                "/api/v2/admin/settings/check/" + kind, new Dictionary<string, object?> { ["values"] = values, ["dirty_keys"] = dirtyKeys }, ct: timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { throw; }
         catch (ApiException error) { throw Sanitize(error); }
         catch (Exception) { throw new InvalidDataException("Connection check failed."); }
         if (response.Body.Success == null || response.Body.Message == null) throw new InvalidDataException("Invalid connection result.");
         var message = LocalLog.RedactDiagnosticText(response.Body.Message);
-        if (values.TryGetValue("redis.url", out var secret) && !string.IsNullOrEmpty(secret))
+        var secrets = values.Values.Where(value => !string.IsNullOrEmpty(value)).ToList();
+        if (values.TryGetValue("redis.url", out var redisUrl) && !string.IsNullOrEmpty(redisUrl))
         {
-            var secrets = new List<string> { secret };
-            if (Uri.TryCreate(secret, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo))
+            if (Uri.TryCreate(redisUrl, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo))
             {
                 // Servers may echo credentials separately, either escaped or decoded.
                 secrets.Add(uri.UserInfo);
                 secrets.AddRange(uri.UserInfo.Split(':', 2));
                 secrets.AddRange(secrets.ToArray().Select(Uri.UnescapeDataString));
             }
-            foreach (var component in secrets.Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
-                message = message.Replace(component, "<redacted>", StringComparison.Ordinal);
         }
+        foreach (var component in secrets.Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).OrderByDescending(value => value.Length))
+            message = message.Replace(component, "<redacted>", StringComparison.Ordinal);
+        if (message.Length > 1000) message = message[..1000] + "...";
         return new(response.Body.Success.Value, message);
     }
 
