@@ -102,7 +102,8 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
     {
         if (!Current || !IsLoaded) return;
         _opener ??= FocusManager.GetFocusedElement(XamlRoot) as Control;
-        FocusManager.TryMoveFocus(FocusNavigationDirection.Next, new FindNextElementOptions { SearchRoot = _layout });
+        // The first enabled, visible control in reading order (no tree-search focus API: it faults on a root that is mid-layout).
+        Descendants<Control>(_layout).FirstOrDefault(c => c.IsTabStop && c.IsEnabled && c.Visibility == Visibility.Visible && c.IsLoaded && c is not ScrollViewer)?.Focus(FocusState.Programmatic);
     });
     private void BuildPluginChoices()
     {
