@@ -304,7 +304,8 @@ internal static class AdminSignInSecurityNativeFixture
             Check(!Descendants(signIn).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_auth.local_password_login").IsOn, "password sign-in can be staged off when the break-glass admin is on a later account page");
             server.LaterPageBreakGlass = false;
             Click(signIn, "AccessReload"); var discardLater = await Dialog(signIn); Primary(discardLater);
-            await Until(() => !discardLater.IsLoaded && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
+            // The reload is finished only when the first-page-only account list is shown again.
+            await Until(() => !discardLater.IsLoaded && HasTextContaining(signIn, "Break-glass admin: synthetic-admin") && !HasTextContaining(signIn, "synthetic-break-glass") && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
 
             // ── Sign-in: failed and unknown-outcome saves block further writes until reload ──
             signIn = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
