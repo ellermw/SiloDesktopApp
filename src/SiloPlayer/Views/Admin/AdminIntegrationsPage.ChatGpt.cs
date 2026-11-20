@@ -70,13 +70,23 @@ public sealed partial class AdminIntegrationsPage
     private async Task BeginLoginAsync(string? accountId)
     {
         if (_dialog != null) return;
+        AdminChatGptLogin? started = null;
         await RunCommandAsync(async lease =>
         {
             var login = await _api.StartChatGptLoginAsync(lease, accountId);
-            if (_active && lease.IsCurrent) { ClearLogin(); _login = login; _callbackSubmitted = false; }
+            if (_active && lease.IsCurrent) { ClearLogin(); _login = started = login; _callbackSubmitted = false; }
         }, () => _capabilities?.ChatGptSignIn == true && (accountId == null || _connection?.Accounts.Any(account => account.ClientId == accountId && !account.PlanIneligible) == true));
-        if (_login == null || !Ready || _controller == null) return;
-        using var owner = _controller.CaptureAction();
+        // Only the attempt this call started is its to show; a read that settled it, a later command or a close has already cleared or replaced it.
+        if (started == null || !ReferenceEquals(_login, started)) return;
+        // The server now holds this attempt, so its dialog opens even while a read holds the controls: Ready would drop it for the read that follows the command.
+        // Where the page cannot host the dialog, give the attempt up and say so; left pending it would keep the poll running until it expired.
+        if (_controller is not { } controller || !Current(controller) || _busy || _commandUnknown || _dialog != null)
+        {
+            ClearLogin(); SchedulePoll();
+            if (_active) AdminSettingsUi.UpdateLiveText(_domainStatus, "ChatGPT sign-in could not be opened. Start it again.");
+            return;
+        }
+        using var owner = controller.CaptureAction();
         var panel = new StackPanel { Spacing = 12, MaxWidth = 560 };
         panel.Children.Add(AdminSettingsUi.Text("Open ChatGPT in your browser, choose the account to connect, then paste the final callback URL. Do not paste your password or API key.", 14, true));
         var open = AdminSettingsUi.Action("Open sign-in in my browser", "AdminChatGptOpenBrowser");
@@ -93,10 +103,11 @@ public sealed partial class AdminIntegrationsPage
             catch { if (owner.IsCurrent && _callbackError != null) _callbackError.Text = "The browser could not be opened."; }
         }
         panel.Children.Add(open);
-        panel.Children.Add(AdminSettingsUi.Text("Expected callback: " + _login.CallbackUri + " (query hidden)", 13, true));
+        panel.Children.Add(AdminSettingsUi.Text("Expected callback: " + started.CallbackUri + " (query hidden)", 13, true));
         _callbackBox = AdminSettingsUi.Secret("Final callback URL", "AdminChatGptCallback"); _callbackBox.Width = 480;
         _callbackError = AdminSettingsUi.Text("", 13, true); panel.Children.Add(_callbackBox); panel.Children.Add(_callbackError);
-        _completeLogin = AdminSettingsUi.Action("Complete sign-in", "AdminChatGptComplete", primary: true);
+        // The dialog may open during a held read; Render enables this once the page is Ready.
+        _completeLogin = AdminSettingsUi.Action("Complete sign-in", "AdminChatGptComplete", primary: true); _completeLogin.IsEnabled = Ready;
         _completeLogin.Click += (_, _) => _callbackTask = InvokeInteractionAsync(CompleteLoginAsync); panel.Children.Add(_completeLogin);
         var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Sign in with ChatGPT", Content = panel, CloseButtonText = "Cancel" };
         _loginDialog = dialog;

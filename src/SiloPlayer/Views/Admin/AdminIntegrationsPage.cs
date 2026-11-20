@@ -410,12 +410,24 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             await Task.WhenAll(tasks);
         }
     }
-    public Task<bool> CanLeaveAsync() => _leave?.CanLeaveAsync(async owner =>
+    public async Task<bool> CanLeaveAsync()
     {
-        if (_dialog != null || !owner.IsCurrent) return null;
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Discard changes?", Content = "Your unsaved settings and provider edits will be discarded.", PrimaryButtonText = "Discard", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
-        return await ShowDialogAsync(dialog, owner) == ContentDialogResult.Primary;
-    }) ?? Task.FromResult(true);
+        // A save already sent can be neither discarded nor safely cancelled by leaving, and Recommendations sends one as focus moves to whatever navigates away.
+        // Let it land, then ask only about what is still unsaved.
+        while (_active && (!_fieldCommitTask.IsCompleted || !_saveTask.IsCompleted))
+        {
+            try { await Task.WhenAll(_fieldCommitTask, _saveTask); } catch { }
+        }
+        if (_leave is not { } leave) return true;
+        // A save running inside a command has no task of its own to wait for; keep the page until it settles.
+        if (_controller?.State is { Saving: true, Owner.IsCurrent: true }) return false;
+        return await leave.CanLeaveAsync(async owner =>
+        {
+            if (_dialog != null || !owner.IsCurrent) return null;
+            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Discard changes?", Content = "Your unsaved settings and provider edits will be discarded.", PrimaryButtonText = "Discard", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+            return await ShowDialogAsync(dialog, owner) == ContentDialogResult.Primary;
+        });
+    }
     public void SuspendAdminPage() => Close();
     private static void ClearPrivateTree(DependencyObject root)
     {
