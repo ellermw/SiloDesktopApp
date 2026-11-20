@@ -52,7 +52,7 @@ public sealed class AdminUserResourceController : IDisposable
         catch (Exception error)
         {
             var notify = false;
-            lock (_gate) { if (Current()) { _error = AdminUserResourceText.Failure(error); _errorChannel = channel; notify = true; } }
+            lock (_gate) { if (Current()) { _error = AdminUserResourceText.Failure(error); _errorChannel = channel; LastException = error; notify = true; } }
             if (notify) Changed?.Invoke();
             return default;
         }
@@ -94,7 +94,9 @@ public sealed class AdminUserResourceController : IDisposable
         if (Busy) throw new InvalidOperationException("Wait for the current action before reloading.");
         Open(); Changed?.Invoke();
     }
-    public void Report(Exception error) { lock (_gate) { _error = AdminUserResourceText.Failure(error); _errorChannel = null; } Changed?.Invoke(); }
+    /// <summary>The most recent exception behind the failure line, for diagnostics only; it is never displayed or logged with its text.</summary>
+    public Exception? LastException { get; private set; }
+    public void Report(Exception error) { lock (_gate) { _error = AdminUserResourceText.Failure(error); _errorChannel = null; LastException = error; } Changed?.Invoke(); }
     private void CancelReads() { foreach (var read in _reads.Values) read.Dispose(); _reads.Clear(); }
     private void OnRetired()
     {
