@@ -115,6 +115,8 @@ public sealed partial class AdminHomeSectionsPage
 
     private async Task OpenLinkedAddAsync(AdminHomeSectionsController controller, AdminHomeSectionsLinks links)
     {
+        // An editor or dialog the admin opened while the page loaded stays; the link never replaces it.
+        if (_editor != null || _dialog != null) return;
         if (!controller.CanWrite) { Toasts?.Error(T("web.home.rows.links.pageLocked")); return; }
         if (controller.State.Catalog == null) { Toasts?.Error(T(controller.State.CatalogFailed ? "web.home.rows.links.noKinds" : "web.home.rows.links.cantAdd")); return; }
         var recipe = controller.State.Catalog.Categories.SelectMany(group => group.Recipes).FirstOrDefault(entry => entry.Type == "collection");
@@ -122,7 +124,7 @@ public sealed partial class AdminHomeSectionsPage
         try
         {
             choice = await _api.CollectionByIdAsync(owner, links.Add!.Id, owner.Token);
-            if (!_active || !owner.IsCurrent || !ReferenceEquals(owner, _controller?.State.Owner) || !controller.CanWrite) return;
+            if (!_active || !owner.IsCurrent || !ReferenceEquals(owner, _controller?.State.Owner) || !controller.CanWrite || _editor != null || _dialog != null) return;
         }
         catch (ApiException ex) when (ex.StatusCode is 404 or 400) { if (_active) Toasts?.Error(T("web.home.rows.links.cantAdd")); return; }
         catch (InvalidDataException) { if (_active) Toasts?.Error(T("web.home.rows.links.cantAdd")); return; }

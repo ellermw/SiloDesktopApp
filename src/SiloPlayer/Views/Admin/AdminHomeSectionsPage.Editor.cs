@@ -67,6 +67,8 @@ public sealed partial class AdminHomeSectionsPage
 
     private void BeginEditor()
     {
+        // One overlay at a time: an editor still open is taken off the page, so none is left covering it.
+        if (_editorOverlay != null) { _root.Children.Remove(_editorOverlay); _editorReads?.Cancel(); _editorReads?.Dispose(); _editorReads = null; }
         _dialogRevision++; _editorOwner = _controller!.State.Owner;
         _editorTitle = U.Text("", 24); _editorNotice = U.Text("", 13); _editorFooter = U.Text("", 12, true);
         _editorSave = Action("Save", "HomeSectionSave"); _editorBack = Action("All rows", "HomeSectionBack"); _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
