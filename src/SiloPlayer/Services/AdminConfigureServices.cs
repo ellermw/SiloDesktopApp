@@ -11,7 +11,8 @@ internal static class AdminConfigureServices
 {
     /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
     internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).Concat(AdminSecuritySettingsController.Keys)
-        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).ToArray());
+        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys)
+        .Concat(AdminPlaybackSettingsRules.Keys).Concat(AdminPlaybackSettingsRules.RoutingKeys).ToArray());
     internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).Concat(AdminSecuritySettingsController.Secrets)
         .Concat(AdminDownloadSettingsController.Secrets).ToArray());
 
@@ -32,5 +33,8 @@ internal static class AdminConfigureServices
         services.AddSingleton(new AdminPageRegistration(AdminRoute.NetworkAccessSettings, typeof(AdminNetworkAccessSettingsPage)));
         services.AddTransient<AdminDownloadSettingsController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
+        services.AddSingleton<AdminPlaybackAdministrationApi>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.Nodes, typeof(AdminNodesPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.PlaybackSettings, typeof(AdminPlaybackSettingsPage)));
     }
 }
