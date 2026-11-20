@@ -30,7 +30,7 @@ public sealed partial class AdminRequestsPage
         {
             if (!ReferenceEquals(_queueTimer, timer) || !Current(owner)) return;
             _queueTimer = null;
-            try { if (!_readingQueue && !_busy && _dialog == null) await RefreshQueueAsync(); }
+            try { if (!_readingQueue && !_busy && _dialog == null) await RefreshQueueAsync(poll: true); }
             catch (OperationCanceledException) when (!Current(owner)) { }
             catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error), true); }
             finally { if (Current(owner) && _queueTimer == null) ScheduleQueuePolling(owner); }
@@ -88,7 +88,7 @@ public sealed partial class AdminRequestsPage
         try { var users = await _api.ListUsersAsync(owner); if (Current(owner) && generation == _generation) { _users = users; RenderQueue(); } } catch (Exception) { }
     }
     private static string ViewLabel(string view) => S("web.admin.requests.queue.view." + (view switch { "needs_approval" => "needsApproval", "in_progress" => "inProgress", _ => view }));
-    private async Task RefreshQueueAsync(bool counts = false)
+    private async Task RefreshQueueAsync(bool counts = false, bool poll = false)
     {
         var owner = Owner; if (!Current(owner)) return;
         ClearReadNotice();
@@ -99,10 +99,11 @@ public sealed partial class AdminRequestsPage
             button.Content = ViewLabel(view) + "  " + AdminText.FormatNumber(J.Number(_queueCounts, view));
             button.Background = view == _view ? U.Accent : U.Brush("SurfaceBrush");
         }
-        _selected.Clear(); _queueCursors.Clear(); _queueRows.Clear(); _cursor = null;
-        await ReadQueueAsync(owner!, false);
+        // A poll keeps the rows on screen until its read succeeds, so one failed poll neither blanks the list nor ends polling.
+        if (!poll) { _selected.Clear(); _queueCursors.Clear(); _queueRows.Clear(); _cursor = null; }
+        await ReadQueueAsync(owner!, false, poll);
     }
-    private async Task ReadQueueAsync(MonitorAuthorityLease owner, bool append)
+    private async Task ReadQueueAsync(MonitorAuthorityLease owner, bool append, bool poll = false)
     {
         if (append && _readingQueue) return;
         _queueCancellation?.Cancel();
@@ -113,15 +114,17 @@ public sealed partial class AdminRequestsPage
             var page = await _api.ListQueueAsync(owner, _view, _search, _media, _user, append ? _cursor : null, cancellation.Token);
             if (!Current(owner) || read != _queueRead) { if (_pendingWriteReview != null) throw new OperationCanceledException(); return; }
             var next = AdminRequestsApi.NextCursor(page);
-            if (next != null && !_queueCursors.Add(next)) throw new InvalidDataException("Repeated request continuation.");
-            var ids = _queueRows.Select(row => J.Text(row, "id")).ToHashSet(StringComparer.Ordinal);
+            if (!poll && next != null && !_queueCursors.Add(next)) throw new InvalidDataException("Repeated request continuation.");
+            var rows = poll ? new List<JsonObject>() : _queueRows;
+            var ids = rows.Select(row => J.Text(row, "id")).ToHashSet(StringComparer.Ordinal);
             foreach (var row in J.Items(page).OfType<JsonObject>())
-            { if (!ids.Add(J.Text(row, "id"))) throw new InvalidDataException("Repeated request row."); if (_queueRows.Count >= AdminRequestsApi.RetainedQueueLimit) throw new InvalidDataException("Narrow the filters before loading more requests."); _queueRows.Add((JsonObject)row.DeepClone()); }
+            { if (!ids.Add(J.Text(row, "id"))) throw new InvalidDataException("Repeated request row."); if (rows.Count >= AdminRequestsApi.RetainedQueueLimit) throw new InvalidDataException("Narrow the filters before loading more requests."); rows.Add((JsonObject)row.DeepClone()); }
+            if (poll) { _queueCursors.Clear(); if (next != null) _queueCursors.Add(next); _queueRows.Clear(); _queueRows.AddRange(rows); }
             _cursor = next; _queueError = null; RenderQueue(); ScheduleQueuePolling(owner);
         }
         catch (Exception error)
         {
-            if (Current(owner) && read == _queueRead) { var message = AdminRequestRules.Error(error); if (!append) _queueError = message; Notice(message, true); RenderQueue(); }
+            if (Current(owner) && read == _queueRead) { var message = AdminRequestRules.Error(error); if (!append && !poll) _queueError = message; Notice(message, true); if (!poll) RenderQueue(); }
             if (_pendingWriteReview != null) throw;
         }
         finally { if (ReferenceEquals(_queueCancellation, cancellation)) _queueCancellation = null; if (read == _queueRead) _readingQueue = false; }

@@ -385,6 +385,34 @@ internal static partial class AdminRequestsManagementNativeFixture
                 reads = server.QueueReads; await Task.Delay(300);
                 Check(server.QueueReads == reads, "queued-progress polling retires on Frame departure");
             }, server => { server.QueuedProgress = true; server.ProgressOnTarget = progressOnTarget; });
+        await Case("failed download poll keeps the rows and keeps polling", async (server, shell, frame) =>
+        {
+            server.Downloading = true;
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestQueue));
+            await Until(() => Find(frame, "AdminRequestView-in_progress") != null);
+            Click(Find(frame, "AdminRequestView-in_progress")!);
+            bool Armed() => Field<Microsoft.UI.Dispatching.DispatcherQueueTimer>(CurrentPage(shell), "_queueTimer") is { IsRunning: true };
+            bool Rows() => Walk(frame).OfType<TextBlock>().Any(text => text.Text == "Synthetic Download") && Find(frame, "AdminRequestQueueRetry") == null;
+            // The cases above cover the real cadence; this one brings each armed poll forward and still waits out a full interval if that has no effect.
+            async Task<bool> Poll()
+            {
+                var timer = Field<Microsoft.UI.Dispatching.DispatcherQueueTimer>(CurrentPage(shell), "_queueTimer")!; var reads = server.QueueReads;
+                timer.Stop(); timer.Interval = TimeSpan.FromMilliseconds(50); timer.Start();
+                await Settled(() => server.QueueReads > reads, 1400);
+                return server.QueueReads > reads;
+            }
+            // Armed means the In progress read itself settled, so the failure below can only reach a poll.
+            await Until(() => Armed() && Rows());
+            server.FailQueueReads = true;
+            Check(await Poll(), "an armed download poll reads the queue");
+            await Settled(() => Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible } && Armed(), 240);
+            Check(Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible } && Rows(), "a failed poll reports the failure and keeps the last good rows instead of the retry card");
+            Check(Armed(), "a failed poll leaves the next poll armed");
+            server.FailQueueReads = false;
+            Check(await Poll(), "polling continues after a failed poll");
+            await Settled(() => Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed } && Armed(), 240);
+            Check(Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed } && Rows() && Armed(), "the next successful poll clears the failure notice, keeps the rows and stays armed");
+        });
         await Case("retired action capture is a silent abort", async (server, shell, frame) =>
         {
             var page = CurrentPage(shell);
