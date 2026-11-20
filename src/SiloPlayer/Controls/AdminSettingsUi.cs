@@ -519,7 +519,7 @@ internal sealed class AdminSettingsGroup : Grid
     /// <summary>Adds or replaces the compact action at the right of the group heading (official FieldGroup actions).</summary>
     internal void SetAction(FrameworkElement? action)
     {
-        foreach (var existing in _titleRow.Children.Where(child => Grid.GetColumn(child) == 2).ToArray())
+        foreach (var existing in _titleRow.Children.OfType<FrameworkElement>().Where(child => Grid.GetColumn(child) == 2).ToArray())
             _titleRow.Children.Remove(existing);
         if (action == null) return;
         Grid.SetColumn(action, 2);
