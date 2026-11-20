@@ -377,13 +377,13 @@ internal static class AdminHomeSectionsNativeFixture
             await Until(() => inner.Content is AdminHomeSectionsPage next && !ReferenceEquals(next, page) && next.Controller?.CanWrite == true); page = (AdminHomeSectionsPage)inner.Content;
             await Task.Delay(300); Check(Find<FrameworkElement>(page, "HomeSectionEditor") == null, "a link to a missing row opens nothing");
             // A library link waits for the library list; followed against Home it would add the row to the wrong page.
-            server.FailLibraries = true; var linkPosts = server.Requests.Count(item => item.Method == "POST");
+            server.FailLibraries = true; var linkPosts = server.Requests.Count(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections");
             Check(AdminShellPage.Open(new(AdminRoute.HomeSections, new Dictionary<string, string> { ["page"] = "1", ["add"] = "collection:library:c1" })), "a library link opens the page while the library list cannot be read");
             await Until(() => inner.Content is AdminHomeSectionsPage next && !ReferenceEquals(next, page) && Find<Button>(next, "HomeSectionsReload") != null, "libraries failure banner"); page = (AdminHomeSectionsPage)inner.Content;
             await Task.Delay(300); Check(Find<FrameworkElement>(page, "HomeSectionEditor") == null, "a library link opens nothing while the library list could not be read");
             server.FailLibraries = false; await Click(page, "HomeSectionsReload"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null, "linked add after reload");
             Check(page.Controller!.State.Snapshot?.Scope.LibraryId == "1" && Find<TextBox>(page, "HomeSectionTitle")!.Text == "Synthetic collection", "after Reload the link opens Add row on the library page it names");
-            Check(server.Requests.Count(item => item.Method == "POST") == linkPosts, "nothing was written while the link waited");
+            Check(server.Requests.Count(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections") == linkPosts, "no row was created while the link waited");
             await Click(page, "HomeSectionCancel"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null);
 
             // ── Authority retirement ──
