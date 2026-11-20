@@ -35,6 +35,22 @@ public sealed class AdminAccessSecurityTests
     }
 
     [Theory]
+    [InlineData("/admin/api-keys", SiloPlayer.Core.Services.Admin.AdminRoute.ApiKeys)]
+    [InlineData("/admin/policy", SiloPlayer.Core.Services.Admin.AdminRoute.Policy)]
+    [InlineData("/admin/policy?tab=decisions", SiloPlayer.Core.Services.Admin.AdminRoute.Policy)]
+    [InlineData("/admin/settings/sign-in", SiloPlayer.Core.Services.Admin.AdminRoute.SignInSettings)]
+    public void AccessPagesAreReachableThroughTheRouteCatalog(string href, SiloPlayer.Core.Services.Admin.AdminRoute route)
+    {
+        Assert.True(SiloPlayer.Core.Services.Admin.AdminRouteCatalog.TryResolve(href, out var resolution));
+        Assert.Equal(SiloPlayer.Core.Services.Admin.AdminRouteResolutionKind.Route, resolution.Kind);
+        Assert.Equal(route, resolution.Request!.Route);
+        Assert.False(resolution.IsCatchAll);
+        var registry = new SiloPlayer.Core.Services.Admin.AdminPageRegistry([new(route, typeof(object))]);
+        Assert.True(registry.CanOpen(resolution.Request));
+        Assert.Empty(SiloPlayer.Core.Services.Admin.AdminRouteCatalog.MissingTextKeys(route));
+    }
+
+    [Theory]
     [InlineData("AdminApiKeysApi")]
     [InlineData("AdminSignInApi")]
     [InlineData("AdminPolicyApi")]

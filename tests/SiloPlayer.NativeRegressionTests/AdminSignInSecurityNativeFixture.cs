@@ -177,10 +177,10 @@ internal static class AdminSignInSecurityNativeFixture
         }
         finally
         {
-            foreach (var dialog in VisualTreeHelper.GetOpenPopupsForXamlRoot(outer.XamlRoot).SelectMany(p => Descendants(p.Child)).OfType<ContentDialog>()) dialog.Hide();
+            if (outer.XamlRoot != null) foreach (var dialog in VisualTreeHelper.GetOpenPopupsForXamlRoot(outer.XamlRoot).SelectMany(p => Descendants(p.Child)).OfType<ContentDialog>()) dialog.Hide();
             outer.BackStack.Clear(); outer.ForwardStack.Clear(); outer.Content = null;
             await Until(() => visited.All(page => !page.IsLoaded));
-            await Until(() => !VisualTreeHelper.GetOpenPopupsForXamlRoot(outer.XamlRoot).SelectMany(p => Descendants(p.Child)).OfType<ContentDialog>().Any());
+            if (outer.XamlRoot != null) await Until(() => !VisualTreeHelper.GetOpenPopupsForXamlRoot(outer.XamlRoot).SelectMany(p => Descendants(p.Child)).OfType<ContentDialog>().Any());
             window.Content = priorContent; globals.SetValue(null, priorServices);
         }
     }
