@@ -1,3 +1,43 @@
+# November 20 — Collections (Manage > Libraries > Collections) built and verified
+
+`t3/admin-collections-page` completes Collections (`/admin/collections`, `/new`, `/:id/edit`): list,
+Arrange board and shelves, new-collection picker, templates, starter packs, and manual/smart/synced
+editors, registered through the real Admin shell. Beta was merged into the branch (normal merges, last at
+`db49c4c93`, stable `1.2.1194` merged into beta); this branch changes no version number. Official contracts: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+
+Seven review findings were fixed with regression tests, and running the code exposed more (JsonObject
+request bodies serialized as node members, an editor re-render exception, Click-only checkbox handlers).
+A second independent review of the final diff (November 20) found eight more defects; all eight were confirmed
+against the code and the official source and fixed, each with a unit and/or native test: starter-job poll failure
+and cap left the job id behind, job id stored for a retired authority, new member position colliding after a removal,
+validation reasons hidden, a failed hide after import dropped, pasted list links not cleaned, template poster not
+sent, and the unknown-outcome list check reading only the filtered library. Details, deviations and limits:
+[docs/parity/admin-collections.md](parity/admin-collections.md).
+
+Final acceptance after merging Beta `db49c4c93`: label collections-lead-final-r1 on merge commit 23e4d5bcb, build
+lease 2026-11-20T16:17:21Z–16:23:40Z: focused 57/57 and full 9,754/9,754 unit cases (0 failures, 0 skipped); app build,
+publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL), admin-manage-foundation,
+admin-configure-general and admin-monitor passed; source seal (2,489 build inputs) and 582-file payload unchanged across
+the run. That merge brought only version stamps, README and release notes.
+
+Acceptance before that merge (after the second review): label collections-fix-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a,
+task admin-families-nov20), stage final on commit 016ea09ac, build lease 2026-11-20T16:09:43Z–16:15:58Z. Focused unit
+run 57/57 (filter FullyQualifiedName~AdminCollections) and full unit suite 9,754/9,754 passed (0 failures, 0 skipped);
+app build, publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL),
+admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) all passed; source and payload
+seals verified. The earlier acceptance run (collections-final-r1, lane B, 31 focused, 9,728 full, 149 admin-collections
+checks) predates these fixes. Before the final run, the page-level native checks for the starter-job poll failure,
+member position and list check were shown to fail with those fixes temporarily reverted
+(collections-fix-negative-r1; source restored from Git afterwards).
+
+Not observed: live-server compatibility, all-DPI/IME/Narrator, physical drag-and-drop, artwork file
+picker, complete visual parity. The authority-retirement race between a queued starter-pack answer and the dialog
+continuation is covered by a controller unit test only, not by the real page. The final run's synthetic captures were not
+reviewed again. Home Sections is a separate family and not registered here.
+No push, PR, installer or installed-player action occurred.
+
+---
+
 # November 20 - Admin Manage Playback: Nodes and Playback Settings
 
 Branch `t3/admin-playback-nodes-settings`, merged with Beta `d90f40965` (stable `1.2.1194` plus the merged Library settings
