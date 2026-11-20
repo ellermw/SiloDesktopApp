@@ -93,7 +93,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
         foreach (var domain in Controller.Capability!.DecisionTypes)
         {
             var card = new StackPanel { Spacing = 12 }; card.Children.Add(U.Text(Domain(domain), 18)); card.Children.Add(U.Text(T("domain." + domain + ".governs"), 13, true));
-            var create = U.Action(T("overrides.new"), "PolicyNew_" + domain); create.IsEnabled = !Controller.Busy && !Controller.ReviewRequired; create.Click += async (_, _) => await CreateAsync(domain); card.Children.Add(create);
+            var create = U.Action(T("overrides.new"), "PolicyNew_" + domain); create.IsEnabled = !Controller.Busy && !Controller.WritesBlocked && Controller.DocumentsLoaded; create.Click += async (_, _) => await CreateAsync(domain); card.Children.Add(create);
             var rows = Controller.Documents.Where(d => d.Domain == domain).ToArray();
             if (rows.Length == 0) card.Children.Add(U.Text(T("overrides.emptyExample", new { example = T("domain." + domain + ".example") }), 13, true));
             foreach (var document in rows)
@@ -101,7 +101,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
                 var open = U.Action(document.Name, "PolicyDocument_" + document.Id); open.IsEnabled = !Controller.Busy;
                 open.Click += async (_, _) => { if (!RequiresLeaveConfirmation || await CanLeaveAsync()) await Controller.SelectAsync(document.Id); };
                 var rowToggle = U.Action(T(document.Enabled ? "enabled.disable" : "enabled.enable"), "PolicyRowEnabled_" + document.Id);
-                rowToggle.IsEnabled = !Controller.Busy && !Controller.ReviewRequired; rowToggle.Click += async (_, _) => await ToggleRowAsync(document.Id);
+                rowToggle.IsEnabled = !Controller.Busy && !Controller.WritesBlocked; rowToggle.Click += async (_, _) => await ToggleRowAsync(document.Id);
                 card.Children.Add(AdminAccessPageUi.Stack(open, U.Text(Status(document) + " · " + T("overrides.updated", new { date = FormatDate(document.UpdatedAt) }), 12, true), rowToggle));
             }
             _view.Children.Add(new Border { Child = card, Padding = new(20), CornerRadius = new(16), Background = U.Brush("SecondaryBrush") });
@@ -182,7 +182,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
         try { if (_source != null) { _source.IsEnabled = editable; if (AdminAccessPageUi.Lines(_source.Text) != Controller.Draft) _source.Text = Controller.Draft; } if (_comment != null) { _comment.IsEnabled = editable; if (AdminAccessPageUi.Lines(_comment.Text) != Controller.Comment) _comment.Text = Controller.Comment; } }
         finally { _sync = false; }
         foreach (var command in _commands.Values) command.IsEnabled = editable;
-        if (_commands.TryGetValue("PolicySave", out var save)) save.IsEnabled = editable && Controller.Validated && !Controller.ReviewRequired;
+        if (_commands.TryGetValue("PolicySave", out var save)) save.IsEnabled = editable && Controller.Validated && !Controller.WritesBlocked;
         // Labels and titles are re-derived from the current snapshot on every render so an adopted revision never leaves the previous one on screen.
         if (Controller.Snapshot is { } current)
         {
@@ -191,8 +191,8 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
             if (_rail != null) { var reached = AdminPolicyPresentation.LifecycleProgress(current, Controller.SavedVersion, Controller.Draft, Controller.Validated); _rail.Text = AdminPolicyPresentation.LifecycleRail(reached, reached >= 4 ? Controller.SavedVersion?.VersionNumber : null); }
             if (_commands.TryGetValue("PolicyEnabled", out var label)) { var text = AdminPolicyPresentation.ToggleLabel(current); label.Content = text; AutomationProperties.SetName(label, text); }
         }
-        if (_commands.TryGetValue("PolicyEnabled", out var enable)) enable.IsEnabled = editable && !Controller.ReviewRequired;
-        if (_commands.TryGetValue("PolicyDelete", out var delete)) delete.IsEnabled = editable && !Controller.ReviewRequired && Controller.Snapshot?.Value is { ActiveVersionId: null };
+        if (_commands.TryGetValue("PolicyEnabled", out var enable)) enable.IsEnabled = editable && !Controller.WritesBlocked;
+        if (_commands.TryGetValue("PolicyDelete", out var delete)) delete.IsEnabled = editable && !Controller.WritesBlocked && Controller.Snapshot?.Value is { ActiveVersionId: null };
         _validation.Text = Controller.Validation == null ? "" : (Controller.Validated ? T("editor.validationPassed") : T("editor.validationStale")) + "\n" + string.Join("\n", Controller.Validation.Errors.Select(e => $"{e.Row}:{e.Col} " + LocalLog.RedactDiagnosticText(e.Message)));
         _simulation.Text = Controller.Simulation is { } simulation ? Pretty(simulation.Decision) + $"\nGeneration {simulation.Generation} · {simulation.EvalTimeNs / 1000.0:0.0} µs" : "";
         _review.Children.Clear();
@@ -203,7 +203,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
             _review.Children.Add(Command(T("review.adopt"), "PolicyAdopt", () => { Controller.AdoptReview(); return Task.CompletedTask; }, editable));
         }
         if (Controller.SavedVersion is { CompiledOk: true } saved && saved.Source == Controller.Draft)
-            _review.Children.Add(Command(T("editor.activate", new { version = saved.VersionNumber }), "PolicyActivate", () => ActivateAsync(saved), editable && !Controller.ReviewRequired));
+            _review.Children.Add(Command(T("editor.activate", new { version = saved.VersionNumber }), "PolicyActivate", () => ActivateAsync(saved), editable && !Controller.WritesBlocked));
         if (!ReferenceEquals(_shownVersions, Controller.Versions)) RenderVersions();
         foreach (var button in _versions.Children.OfType<Button>()) button.IsEnabled = editable;
     }
@@ -218,7 +218,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
             {
                 await Controller.ViewVersionAsync(version.Id); var selected = Controller.SelectedVersion; if (selected?.Id != version.Id) return;
                 var code = AdminAccessPageUi.Multiline(T("history.selectedSource"), "PolicyVersionSource", selected.Source ?? "", 300); code.IsReadOnly = true;
-                var dialog = new ContentDialog { Title = $"v{selected.VersionNumber}", Content = AdminAccessPageUi.Stack(U.Text(selected.SourceSha256, 12, true), code, U.Text(LocalLog.RedactDiagnosticText(selected.CompileError ?? ""), 12)), CloseButtonText = "Close", PrimaryButtonText = selected.CompiledOk && !Controller.ReviewRequired ? T("history.activate") : "", DefaultButton = ContentDialogButton.Close };
+                var dialog = new ContentDialog { Title = $"v{selected.VersionNumber}", Content = AdminAccessPageUi.Stack(U.Text(selected.SourceSha256, 12, true), code, U.Text(LocalLog.RedactDiagnosticText(selected.CompileError ?? ""), 12)), CloseButtonText = "Close", PrimaryButtonText = selected.CompiledOk && !Controller.WritesBlocked ? T("history.activate") : "", DefaultButton = ContentDialogButton.Close };
                 if (await _ui.ShowAsync(dialog) == ContentDialogResult.Primary) await ActivateAsync(selected);
             };
             _versions.Children.Add(button);

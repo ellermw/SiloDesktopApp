@@ -212,6 +212,7 @@ public sealed class AdminAccessSecurityTests
         internal readonly List<string> Writes = [];
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
         internal bool OtherIsOwner, FailList;
+        internal int AccountPages = 1;
         internal string ExtraKey = "";
         internal ControllerHarness()
         {
@@ -231,7 +232,7 @@ public sealed class AdminAccessSecurityTests
                     "/api/v2/admin/api-keys" when FailList => throw new HttpRequestException("synthetic list failure"),
                     "/api/v2/admin/api-keys" => Reply("{\"items\":[" + Key + ExtraKey + "],\"page\":{\"has_more\":false}}"),
                     "/api/v2/admin/api-keys/7" => Reply(Key),
-                    "/api/v2/admin/users" => Reply("{\"items\":[" + Account("1", false) + "," + Account("2", OtherIsOwner) + "],\"page\":{\"has_more\":false}}"),
+                    "/api/v2/admin/users" => Reply(UsersPage(request)),
                     "/api/v2/admin/users/1" => Reply(Account("1", false)),
                     "/api/v2/admin/users/2" => Reply(Account("2", OtherIsOwner)),
                     _ => Reply("{}"),
@@ -239,6 +240,14 @@ public sealed class AdminAccessSecurityTests
             };
         }
         private static string Account(string id, bool owner) => JsonSerializer.Serialize(new { id, username = "fixture", role = id == "1" || owner ? "admin" : "user", enabled = true, is_owner = owner });
+        /// <summary>Synthetic account pages of 50: page p holds ids (p-1)*50+1 .. p*50, the cursor of page p+1 is "p{p+1}".</summary>
+        private string UsersPage(HttpRequestMessage request)
+        {
+            var query = request.RequestUri!.Query; var page = query.Contains("cursor=p") ? int.Parse(query[(query.IndexOf("cursor=p", StringComparison.Ordinal) + 8)..].Split('&')[0]) : 1;
+            var items = Enumerable.Range((page - 1) * 50 + 1, 50).Select(n => Account(n.ToString(), n == 2 && OtherIsOwner));
+            if (AccountPages == 1) items = [Account("1", false), Account("2", OtherIsOwner)];
+            return "{\"items\":[" + string.Join(",", items) + "],\"page\":{\"has_more\":" + (page < AccountPages ? "true,\"next_cursor\":\"p" + (page + 1) + "\"" : "false") + "}}";
+        }
         internal Task Open() => Call(Controller, "OpenAsync");
         internal Task<object?> Create(string user = "1", bool scoped = false, string[]? scopes = null, bool confirmed = true) =>
             Call(Controller, "CreateAsync", "Fixture", user, scopes ?? Array.Empty<string>(), scoped, confirmed);
@@ -541,7 +550,8 @@ public sealed class AdminAccessSecurityTests
         internal readonly AdminMonitorAuthority Authority;
         private readonly SiloPlayer.Core.Services.Admin.AdminServerSettingsStore _store;
         internal readonly object Controller;
-        internal bool HasBreakGlass = true, ProviderOn = true, FailConfig, ConfiguredSecret = true;
+        internal bool HasBreakGlass = true, ProviderOn = true, FailConfig, ConfiguredSecret = true, ServerRefusesBreakGlass;
+        internal int AccountPages = 1; internal string BreakGlassId = "1";
         internal readonly List<string> Writes = [];
         internal object Provider => ((System.Collections.IEnumerable)Property(Controller, "Providers")).Cast<object>().Single();
         internal object Schema => ((System.Collections.IEnumerable)Property(Provider, "GlobalConfigSchema")).Cast<object>().Single();
@@ -561,6 +571,7 @@ public sealed class AdminAccessSecurityTests
                     if (path.EndsWith("/test")) return Reply("""{"ok":true,"steps":[{"id":"connection","label":"Connection","ok":true,"message":"synthetic-secret must never appear"}]}""");
                     if (path == "/api/v2/admin/settings")
                     {
+                        if (ServerRefusesBreakGlass) return Reply("""{"type":"https://siloserver.org/docs/api/v2/problems/break_glass_required","status":409,"title":"Break-glass account required"}""", code: HttpStatusCode.Conflict);
                         using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                         return Reply("{\"values\":" + body.RootElement.GetProperty("values").GetRawText() + ",\"restart_required\":false}", "\"settings-2\"");
                     }
@@ -572,14 +583,23 @@ public sealed class AdminAccessSecurityTests
                     "/api/v2/admin/settings/sensitive-status" => Reply("""{"configured":[],"managed_by_env":[]}"""),
                     "/api/v2/admin/settings/restart-keys" => Reply("""{"keys":[],"prefixes":[]}"""),
                     "/api/v2/auth/external-sign-in/capabilities" => Reply("""{"available":true,"break_glass":true,"connection_test":true,"live_provider_changes":true}"""),
-                    "/api/v2/admin/users" => Reply("{\"items\":[" + Account() + "],\"page\":{\"has_more\":false}}"),
-                    "/api/v2/admin/users/1" => Reply(Account()),
+                    "/api/v2/admin/users" => Reply(UsersPage(request)),
+                    "/api/v2/admin/users/1" => Reply(AccountFor("1")),
+                    _ when path.StartsWith("/api/v2/admin/users/", StringComparison.Ordinal) => Reply(AccountFor(path[(path.LastIndexOf('/') + 1)..])),
                     "/api/v2/admin/plugins/installations" => Reply(Inventory()),
                     _ => Reply("{}"),
                 };
             };
         }
         private string Account() => JsonSerializer.Serialize(new { id = "1", username = "fixture", role = "admin", enabled = true, is_owner = true, break_glass = HasBreakGlass, password_login = true });
+        /// <summary>One account, or with several pages a synthetic admin owner (id 1, no break-glass) plus ordinary users; only BreakGlassId holds break-glass.</summary>
+        private string AccountFor(string id) => AccountPages == 1 && id == "1" ? Account() : JsonSerializer.Serialize(new { id, username = "fixture" + id, role = id == "1" || id == BreakGlassId ? "admin" : "user", enabled = true, is_owner = id == "1", break_glass = id == BreakGlassId, password_login = true });
+        private string UsersPage(HttpRequestMessage request)
+        {
+            var query = request.RequestUri!.Query; var page = query.Contains("cursor=p") ? int.Parse(query[(query.IndexOf("cursor=p", StringComparison.Ordinal) + 8)..].Split('&')[0]) : 1;
+            if (AccountPages == 1) return "{\"items\":[" + Account() + "],\"page\":{\"has_more\":false}}";
+            return "{\"items\":[" + string.Join(",", Enumerable.Range((page - 1) * 50 + 1, 50).Select(n => AccountFor(n.ToString()))) + "],\"page\":{\"has_more\":" + (page < AccountPages ? "true,\"next_cursor\":\"p" + (page + 1) + "\"" : "false") + "}}";
+        }
         private string Inventory() => JsonSerializer.Serialize(new { items = new[] { new
         {
             id = "3", plugin_id = "fixture-oidc", enabled = true,
@@ -687,5 +707,238 @@ public sealed class AdminAccessSecurityTests
         var result = await Call(api, "EnableAsync", owner, reviewed, false);
         Assert.Contains(expected, (string)Property(result!, "ApplicationMessage"));
         Assert.Equal(2, kit.Http.Requests.Count);
+    }
+
+    // ---- Review findings D1-D7 (November 20 review of the Access family) ----
+
+    private static bool Flag(object controller, string name) => (bool)Property(controller, name);
+    private static string MessageOf(object controller) => Property(controller, "Message") as string ?? "";
+    private static void Invoke(object target, string name, params object?[] args) => target.GetType().GetMethod(name)!.Invoke(target, args);
+    private static bool CanManageKey(object controller, string id) => (bool)controller.GetType().GetMethod("CanManage")!.Invoke(controller, [id])!;
+    private static int Count(object controller, string name) => ((System.Collections.IEnumerable)Property(controller, name)).Cast<object>().Count();
+    private const string PolicyDocuments = "/api/v2/admin/policy/documents";
+    private static HttpResponseMessage Problem(string type, HttpStatusCode code) =>
+        Reply($$"""{"type":"https://siloserver.org/docs/api/v2/problems/{{type}}","status":{{(int)code}},"title":"Refused"}""", code: code);
+
+    [Fact]
+    public async Task UnknownKeyCreateKeepsCreateAndRowWritesBlockedWhileARowEditorIsOpenedChangedAndCancelled()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        h.Write = _ => throw new HttpRequestException("synthetic credential transport failure");
+        Assert.Null(await h.Create());
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "EditAsync", "7");
+        var editor = Property(h.Controller, "Editor");
+        // Reading one key clears only that editor's own review state, never the stale-list block.
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        h.Write = null;
+        await Call(h.Controller, "ChangeAsync", editor, "elevated", true);
+        Invoke(h.Controller, "CloseEditor");
+        Assert.Null(await h.Create());
+        Assert.Single(h.Writes); // neither the row write nor a second create reached the server
+        await h.Open();
+        Assert.False(Flag(h.Controller, "ListReviewRequired"));
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create()); Assert.Equal(2, h.Writes.Count);
+    }
+
+    [Fact]
+    public async Task KeyCreateWhoseListRefreshFailedStaysBlockedAfterARowEditorIsOpenedAndCancelled()
+    {
+        using var h = new ControllerHarness(); await h.Open(); h.FailList = true;
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create());
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "EditAsync", "7"); Invoke(h.Controller, "CloseEditor");
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        Assert.Null(await h.Create()); Assert.Single(h.Writes);
+        h.FailList = false; await h.Open();
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create()); Assert.Equal(2, h.Writes.Count);
+    }
+
+    [Theory]
+    [InlineData(true, "API key revoked.")]
+    [InlineData(false, "Rate limit updated.")]
+    public async Task PersistedKeyChangeIsStillReportedWhenTheFollowUpListReadFails(bool revoke, string expected)
+    {
+        using var h = new ControllerHarness(); await h.Open(); await Call(h.Controller, "EditAsync", "7");
+        var editor = Property(h.Controller, "Editor");
+        h.Write = request => Task.FromResult(request.Method == HttpMethod.Delete ? new HttpResponseMessage(HttpStatusCode.NoContent) : Reply(Key.Replace("standard", "elevated")));
+        h.FailList = true;
+        await Call(h.Controller, "ChangeAsync", editor, revoke ? null : "elevated", true);
+        Assert.Single(h.Writes);
+        Assert.StartsWith(expected, MessageOf(h.Controller)); Assert.DoesNotContain("could not be completed", MessageOf(h.Controller));
+        Assert.Null(Property2(h.Controller, "Editor")); // the dialog may close: the change is done
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        Assert.Null(await h.Create()); Assert.Single(h.Writes); // but the stale list blocks further writes until the page reload
+    }
+    private static object? Property2(object value, string name) => value.GetType().GetProperty(name)!.GetValue(value);
+
+    [Fact]
+    public async Task KeyOwnersOnLaterAccountPagesAreReadAndManageableWithoutLoadMore()
+    {
+        using var h = new ControllerHarness { AccountPages = 2, ExtraKey = "," + Key.Replace("\"id\":\"7\"", "\"id\":\"8\"").Replace("\"user_id\":\"1\"", "\"user_id\":\"75\"") };
+        await h.Open();
+        Assert.Equal(100, Count(h.Controller, "Accounts")); Assert.Null(Property2(h.Controller, "AccountCursor"));
+        Assert.True(CanManageKey(h.Controller, "75"));
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r.StartsWith("GET /api/v2/admin/users?", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task KeyOwnerBeyondTheAccountCapIsOfferedUnlessKnownUnmanageableAndEveryWriteStillRereadsTheOwner()
+    {
+        using var h = new ControllerHarness { AccountPages = 25, OtherIsOwner = true }; await h.Open();
+        Assert.Equal(1000, Count(h.Controller, "Accounts")); Assert.NotNull(Property2(h.Controller, "AccountCursor"));
+        Assert.Equal(20, h.Kit.Http.Requests.Count(r => r.StartsWith("GET /api/v2/admin/users?", StringComparison.Ordinal)));
+        Assert.True(CanManageKey(h.Controller, "1100"));  // not in the read list: offered, as the official page does
+        Assert.False(CanManageKey(h.Controller, "2"));    // known to be the server Owner: not offered
+        var before = h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/users/1");
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create("1"));
+        Assert.True(h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/users/1") > before); // the write re-read the owner before sending
+    }
+
+    [Fact]
+    public async Task UnknownPolicyCreateStaysBlockedAfterOpeningAnOverrideAndReturningToTheList()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        await Call(h.Controller, "SelectAsync", (object?)null);
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == PolicyDocuments
+            ? throw new HttpRequestException("synthetic transport failure") : original(request, ct);
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "SelectAsync", "9");                         // open any override
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "SelectAsync", (object?)null);               // back to "All overrides"
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.Single(h.Kit.Http.Requests.Where(r => r == "POST " + PolicyDocuments));
+        await Call(h.Controller, "ReviewToggleAsync", "9");
+        await Call(h.Controller, "ApplyToggleAsync", Property(h.Controller, "Toggle"), true, true);
+        Assert.DoesNotContain(h.Kit.Http.Requests, r => r.StartsWith("PATCH ", StringComparison.Ordinal)); // no row write either
+        await Call(h.Controller, "OpenAsync", "documents", (string?)null);   // the page-level reload re-reads the list
+        Assert.False(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r == "POST " + PolicyDocuments));
+    }
+
+    [Fact]
+    public async Task PolicyCreateWhoseListRefreshFailedIsReportedAsCreatedAndStaysBlockedAfterOpeningAnOverride()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        await Call(h.Controller, "SelectAsync", (object?)null);
+        var original = h.Kit.Http.Respond!; var created = false;
+        h.Kit.Http.Respond = (request, ct) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path == PolicyDocuments) { created = true; return Task.FromResult(Reply(Document.Replace("\"id\":\"9\"", "\"id\":\"10\""), code: HttpStatusCode.Created)); }
+            if (created && request.Method == HttpMethod.Get && path == PolicyDocuments) throw new HttpRequestException("synthetic list failure");
+            return original(request, ct);
+        };
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        Assert.StartsWith("Override created.", MessageOf(h.Controller)); Assert.DoesNotContain("could not be completed", MessageOf(h.Controller));
+        await Call(h.Controller, "SelectAsync", "9"); await Call(h.Controller, "SelectAsync", (object?)null);
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.Single(h.Kit.Http.Requests.Where(r => r == "POST " + PolicyDocuments));
+    }
+
+    [Fact]
+    public async Task PolicyListShowsTheServerStateAfterAnEditorSideEnableAndTheRowTogglesWorkAgain()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var enabled = Document.Replace("\"enabled\":false", "\"enabled\":true"); var changed = false;
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Patch)
+            {
+                changed = true;
+                return Task.FromResult(Reply(JsonSerializer.Serialize(new { persisted = true, document = JsonDocument.Parse(enabled).RootElement, persisted_generation = 2, application = new { local_applied = true, loaded_generation = 2, publication_failed = false } })));
+            }
+            if (changed && request.Method == HttpMethod.Get && path == PolicyDocuments) return Task.FromResult(Reply("{\"items\":[" + enabled + "],\"page\":{\"has_more\":false}}"));
+            return original(request, ct);
+        };
+        await Call(h.Controller, "SetEnabledAsync", Property(h.Controller, "Snapshot"), true, true);
+        Assert.True(Flag(h.Controller, "ReviewRequired")); // the editor's revision needs review
+        await Call(h.Controller, "SelectAsync", (object?)null);
+        var row = ((System.Collections.IEnumerable)Property(h.Controller, "Documents")).Cast<object>().Single();
+        Assert.True((bool)Property(row, "Enabled"));       // the list shows what the server now says
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.False(Flag(h.Controller, "ListReviewRequired")); Assert.False(Flag(h.Controller, "WritesBlocked"));
+    }
+
+    [Fact]
+    public async Task DefiniteEnableConflictShowsItsReasonAndIsRetryableWithoutAReload()
+    {
+        using var h = new PolicyHarness(); await h.Open(); await Call(h.Controller, "SelectAsync", (object?)null);
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.Method == HttpMethod.Patch ? Task.FromResult(Problem("conflict", HttpStatusCode.Conflict)) : original(request, ct);
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await Call(h.Controller, "ReviewToggleAsync", "9");
+            await Call(h.Controller, "ApplyToggleAsync", Property(h.Controller, "Toggle"), true, true);
+            Assert.Equal("Another override is already enabled for this domain. Disable it first.", MessageOf(h.Controller));
+            Assert.False(Flag(h.Controller, "WritesBlocked"));
+            Assert.Equal(attempt, h.Kit.Http.Requests.Count(r => r.StartsWith("PATCH ", StringComparison.Ordinal)));
+        }
+    }
+
+    [Fact]
+    public async Task ProviderTurnedOffBeforeSavingReportsTheProviderRequirementNotTheOppositeReason()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.SetLocal(false); h.ProviderOn = false;
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Empty(h.Writes);
+        Assert.Contains("Turn on a sign-in provider first", MessageOf(h.Controller));
+        Assert.DoesNotContain("Another sign-in provider", MessageOf(h.Controller));
+    }
+
+    [Theory]
+    [InlineData("""{"value":123}""", "Capability name")]
+    [InlineData("""{"value":{"nested":true}}""", "Capability name")]
+    [InlineData("""{"value":["a"]}""", "Capability name")]
+    [InlineData("""{"value":null}""", "Capability name")]
+    [InlineData("""{"value":"   "}""", "Capability name")]
+    [InlineData("null", "Capability name")]
+    [InlineData("""{"value":" Saved name "}""", "Saved name")]
+    public void ProviderNameReadsOnlyANonBlankStringDisplayNameAndNullSchemaObjectsStayEmpty(string saved, string expected)
+    {
+        var provider = Model("AdminSignInProvider", $$"""{"id":"3","plugin_id":"fixture-plugin","capabilities":[{"id":"oidc","type":"auth_provider.v1","display_name":"Capability name","metadata":null}],"global_configs":[{"key":"display_name","value":{{saved}}}]}""");
+        Assert.Equal(expected, (string)Property(provider, "Name"));
+        Assert.Empty(((System.Collections.IEnumerable)Property(Property(provider, "Auth"), "Metadata")).Cast<object>());
+    }
+
+    [Fact]
+    public async Task BreakGlassAdminOnALaterAccountPageIsFoundSoPasswordsCanBeTurnedOff()
+    {
+        using var h = new SignInHarness { AccountPages = 2, BreakGlassId = "75" }; await h.Open();
+        Assert.True(Flag(h.Controller, "AccountsKnown")); Assert.Equal(100, Count(h.Controller, "Accounts"));
+        h.SetLocal(false);
+        Assert.Equal("false", h.Controller.GetType().GetMethod("Value")!.Invoke(h.Controller, [SignInHarness.Local]));
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);
+    }
+
+    [Fact]
+    public async Task CompleteAccountListWithoutABreakGlassAdminStillBlocksTurningPasswordsOff()
+    {
+        using var h = new SignInHarness { AccountPages = 2, BreakGlassId = "999" }; await h.Open();
+        Assert.True(Flag(h.Controller, "AccountsKnown"));
+        h.SetLocal(false);
+        Assert.Equal("true", h.Controller.GetType().GetMethod("Value")!.Invoke(h.Controller, [SignInHarness.Local]));
+        Assert.Contains("break-glass", MessageOf(h.Controller));
+        Assert.Empty(h.Writes);
+    }
+
+    [Fact]
+    public async Task AccountListBeyondTheCapLeavesTheBreakGlassDecisionToTheServerAndShowsItsRefusal()
+    {
+        // Official page: users that are not fully known do not gate the toggle; the server's transactional check (409 break_glass_required) decides.
+        using var h = new SignInHarness { AccountPages = 25, BreakGlassId = "1100", ServerRefusesBreakGlass = true }; await h.Open();
+        Assert.False(Flag(h.Controller, "AccountsKnown")); Assert.Equal(1000, Count(h.Controller, "Accounts"));
+        h.SetLocal(false);
+        Assert.Equal("false", h.Controller.GetType().GetMethod("Value")!.Invoke(h.Controller, [SignInHarness.Local]));
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);                  // the one write was sent once and refused by the server
+        Assert.Contains("break-glass administrator", MessageOf(h.Controller));  // with the break-glass explanation, not a generic failure
     }
 }

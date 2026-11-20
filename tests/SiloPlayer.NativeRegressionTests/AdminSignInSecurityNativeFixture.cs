@@ -42,7 +42,7 @@ internal static class AdminSignInSecurityNativeFixture
         internal bool KeysAvailable = true, KeysEmpty, Revoked, CreatedKeyVisibleToServer;
         internal string Tier = "standard";
         // Sign-in
-        internal bool Local = true, Signup;
+        internal bool Local = true, Signup, LaterPageBreakGlass;
         internal int PageSize = 25;
         // Policy
         internal bool PolicyOn = true;
@@ -105,8 +105,12 @@ internal static class AdminSignInSecurityNativeFixture
                 "/api/v2/admin/api-keys" => new { items = Revoked || KeysEmpty && !CreatedKeyVisibleToServer ? Array.Empty<object>() : CreatedKeyVisibleToServer ? [Key("7", "Fixture integration"), Key("8", "Created from fixture")] : new[] { Key("7", "Fixture integration") }, page = new { has_more = false } },
                 "/api/v2/admin/api-keys/7" => Key("7", "Fixture integration"),
                 "/api/v2/admin/rate-limits/config" => new { tiers = new { standard = new { requests_per_second = 20, requests_per_minute = 1200 }, elevated = new { requests_per_second = 100, requests_per_minute = 6000 } } },
+                // With LaterPageBreakGlass the only break-glass admin is on the second account page.
+                "/api/v2/admin/users" when LaterPageBreakGlass && !request.RequestUri.Query.Contains("cursor=") => new { items = new[] { OwnerWithoutBreakGlass() }, page = new { has_more = true, next_cursor = "page-2" } },
+                "/api/v2/admin/users" when LaterPageBreakGlass => new { items = new[] { LaterBreakGlassAdmin() }, page = new { has_more = false } },
                 "/api/v2/admin/users" => new { items = new[] { Account() }, page = new { has_more = false } },
-                "/api/v2/admin/users/1" => Account(),
+                "/api/v2/admin/users/1" => LaterPageBreakGlass ? OwnerWithoutBreakGlass() : Account(),
+                "/api/v2/admin/users/2" => LaterBreakGlassAdmin(),
                 "/api/v2/auth/external-sign-in/capabilities" => new { available = true, break_glass = true, connection_test = true, live_provider_changes = true },
                 "/api/v2/admin/plugins/installations" => new { items = new[] { Provider() } },
                 "/api/v2/admin/plugins/installations/3/auth-binding/test" => new { ok = true, steps = new[] { new { id = "groups", label = "Allowed groups", ok = true, message = "Synthetic directory group verified" } } },
@@ -132,6 +136,8 @@ internal static class AdminSignInSecurityNativeFixture
             response.Headers.ETag = new(Etag); return response;
         }
         private object Key(string id, string label) => new { id, user_id = "1", label, username = "synthetic-admin", key_prefix = "fixture", rate_tier = id == "7" ? Tier : "standard", scopes = new[] { "catalog:read" }, created_at = "2026-11-17T00:00:00Z" };
+        private static object OwnerWithoutBreakGlass() => new { id = "1", username = "synthetic-admin", role = "admin", enabled = true, is_owner = true, break_glass = false, password_login = true };
+        private static object LaterBreakGlassAdmin() => new { id = "2", username = "synthetic-break-glass", role = "admin", enabled = true, is_owner = false, break_glass = true, password_login = true };
         private static object Account() => new { id = "1", username = "synthetic-admin", role = "admin", enabled = true, is_owner = true, break_glass = true, password_login = true };
         private object Document(string id)
         {
@@ -267,6 +273,18 @@ internal static class AdminSignInSecurityNativeFixture
             server.Reset.Clear(); server.KeysEmpty = false;
             Click(keys, "AccessReload"); await Until(() => HasText(keys, "Fixture integration"));
             Check(Buttons(keys).Single(b => Id(b) == "ApiKeysCreate").IsEnabled, "reload re-enables creation");
+            // After an unknown create the row actions are off too (opening/cancelling an editor would otherwise lift the block) until the page reload.
+            server.Writes.Clear();
+            Click(keys, "ApiKeysCreate"); var unknownRows = await Dialog(keys);
+            server.Reset.Add("POST /api/v2/admin/api-keys");
+            Input(unknownRows, "ApiKeyLabel").Text = "Uncertain key with rows"; Click(unknownRows, "ApiKeyCreateSubmit");
+            await Until(() => HasTextContaining(unknownRows, "The outcome is unknown"));
+            unknownRows.Hide(); await Until(() => !unknownRows.IsLoaded);
+            server.Reset.Clear();
+            Check(Buttons(keys).Any(b => Id(b) == "ApiKeyTier_7") && Buttons(keys).Where(b => Id(b) is "ApiKeyTier_7" or "ApiKeyRevoke_7").All(b => !b.IsEnabled), "row actions stay off after an unknown create");
+            Check(!Buttons(keys).Single(b => Id(b) == "ApiKeysCreate").IsEnabled, "create stays off after an unknown create");
+            Click(keys, "AccessReload"); await Until(() => Buttons(keys).Any(b => Id(b) == "ApiKeyTier_7" && b.IsEnabled));
+            Check(Buttons(keys).Single(b => Id(b) == "ApiKeysCreate").IsEnabled && server.Count("POST /api/v2/admin/api-keys") == 1, "the page reload re-enables rows and creation without a resend");
             server.Status["GET /api/v2/admin/api-keys"] = 500;
             Click(keys, "AccessReload"); await Until(() => HasTextContaining(keys, "could not be completed"));
             server.Status.Remove("GET /api/v2/admin/api-keys");
@@ -274,6 +292,19 @@ internal static class AdminSignInSecurityNativeFixture
             server.KeysAvailable = false;
             Click(keys, "AccessReload"); await Until(() => HasText(keys, "API key management is unavailable."));
             server.KeysAvailable = true;
+
+            // ── Sign-in: a break-glass admin on a later account page still allows turning password sign-in off ──
+            server.LaterPageBreakGlass = true;
+            signIn = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
+            await Until(() => Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
+            Check(HasTextContaining(signIn, "synthetic-break-glass"), "break-glass administrator from a later account page is listed");
+            Toggle(signIn, "SignIn_auth.local_password_login", false);
+            await Until(() => Buttons(signIn).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
+            await Task.Delay(150);
+            Check(!Descendants(signIn).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_auth.local_password_login").IsOn, "password sign-in can be staged off when the break-glass admin is on a later account page");
+            server.LaterPageBreakGlass = false;
+            Click(signIn, "AccessReload"); var discardLater = await Dialog(signIn); Primary(discardLater);
+            await Until(() => !discardLater.IsLoaded && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
 
             // ── Sign-in: failed and unknown-outcome saves block further writes until reload ──
             signIn = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
@@ -322,6 +353,31 @@ internal static class AdminSignInSecurityNativeFixture
             await Until(() => !delete.IsLoaded);
             Check(server.Count("DELETE /api/v2/admin/policy/documents/10") == 1 && server.Guards["DELETE /api/v2/admin/policy/documents/10"] == Etag, "delete sent once with the reviewed validator");
             await Until(() => !Buttons(policy).Any(b => Id(b) == "PolicyDocument_10") && Buttons(policy).Any(b => Id(b) == "PolicyDocument_9"));
+
+            // An enable done inside the editor shows in "All overrides" at once, and the row toggles are usable again.
+            await ClickWhenReady(policy, "PolicyDocument_9"); await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyEnabled" && b.IsEnabled));
+            Click(policy, "PolicyEnabled"); var editorEnable = await Dialog(policy); Primary(editorEnable);
+            await Until(() => !editorEnable.IsLoaded && server.Count("PATCH /api/v2/admin/policy/documents/9") == 1);
+            Click(policy, "PolicyAllOverrides");
+            await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyRowEnabled_9" && b.IsEnabled && b.Content?.ToString() == "Disable override"));
+            Check(Buttons(policy).Single(b => Id(b) == "PolicyNew_permission").IsEnabled, "list shows the server state after an editor-side enable and writes are available again");
+            await ClickWhenReady(policy, "PolicyRowEnabled_9"); var undoEnable = await Dialog(policy); Primary(undoEnable);
+            await Until(() => !undoEnable.IsLoaded && server.Count("PATCH /api/v2/admin/policy/documents/9") == 2);
+            await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyRowEnabled_9" && b.Content?.ToString() == "Enable override"));
+
+            // An unknown create keeps New override and the row toggles off, even after opening an override and coming back; only the page reload lifts it.
+            server.Reset.Add("POST /api/v2/admin/policy/documents");
+            Click(policy, "PolicyNew_permission"); var unknownNew = await Dialog(policy);
+            Input(unknownNew, "PolicyName").Text = "Unknown outcome"; Primary(unknownNew);
+            await Until(() => HasTextContaining(unknownNew, "The outcome is unknown"));
+            unknownNew.Hide(); await Until(() => !unknownNew.IsLoaded);
+            server.Reset.Clear();
+            Check(server.Count("POST /api/v2/admin/policy/documents") == 2, "unknown-outcome override create is sent once");
+            await ClickWhenReady(policy, "PolicyDocument_9"); await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyAllOverrides"));
+            Click(policy, "PolicyAllOverrides"); await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyNew_permission"));
+            Check(!Buttons(policy).Single(b => Id(b) == "PolicyNew_permission").IsEnabled && !Buttons(policy).Single(b => Id(b) == "PolicyRowEnabled_9").IsEnabled, "opening an override and returning does not lift the block after an unknown create");
+            Click(policy, "AccessReload"); await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyNew_permission" && b.IsEnabled));
+            Check(Buttons(policy).Single(b => Id(b) == "PolicyRowEnabled_9").IsEnabled && server.Count("POST /api/v2/admin/policy/documents") == 2, "the page reload lifts the block without a resend");
 
             // ── Policy editor: review/adopt, validate, simulate, save (unknown then success), activate ──
             policy = await Open(outer, "/admin/policy?document=9", "AdminPolicyPage", visited);

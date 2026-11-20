@@ -52,7 +52,8 @@ internal sealed class AdminAccessPageUi
         _page.DispatcherQueue.TryEnqueue(() =>
         {
             if (!_active) return;
-            Feedback.Text = _controller.Busy ? "Loading…" : _controller.Message ?? "";
+            // A list the page could not confirm stays explained after the first message is replaced: writes stay off until Reload.
+            Feedback.Text = _controller.Busy ? "Loading…" : _controller.Message ?? (_controller.ListReviewRequired ? "The list may be out of date, so changes are off. Reload to read it again." : "");
             Feedback.Visibility = Feedback.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
             Reload.IsEnabled = !_controller.Busy;
             if (!_controller.Current) { Dialog?.Hide(); ClearPrivateControls(Fields); Fields.Children.Clear(); }

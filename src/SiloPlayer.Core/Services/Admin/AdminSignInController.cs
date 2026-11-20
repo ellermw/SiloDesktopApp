@@ -19,7 +19,9 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public LoggingRestartKeys RestartKeys { get; private set; } = new();
     public bool Loaded { get; private set; }
     public bool ProvidersKnown { get; private set; }
-    public bool AccountsKnown { get; private set; }
+    private bool _accountsRead;
+    /// <summary>The whole account list was read (every page, within the hard cap). Like the official page, a list that is not fully known does not gate the break-glass check here: the server refuses with 409 break_glass_required.</summary>
+    public bool AccountsKnown => _accountsRead && AccountCursor == null;
     public string PublicUrl { get; private set; } = "";
     public string? ProviderError { get; private set; }
     public IReadOnlyDictionary<string, AdminSignInTestResult> TestResults { get; private set; } = new Dictionary<string, AdminSignInTestResult>();
@@ -43,7 +45,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     protected override void Reset()
     {
         foreach (var draft in _drafts.Values) draft.Value.Clear(); _drafts.Clear(); _auto.Clear(); _form?.Discard(); _form = null;
-        Providers = []; Accounts = []; AccountCursor = null; Capabilities = null; Managed = []; PublicUrl = ""; Loaded = ProvidersKnown = AccountsKnown = false;
+        Providers = []; Accounts = []; AccountCursor = null; Capabilities = null; Managed = []; PublicUrl = ""; Loaded = ProvidersKnown = _accountsRead = false;
         ProviderError = null; TestResults = new Dictionary<string, AdminSignInTestResult>(); RestartKeys = new();
     }
     public Task OpenAsync() => OpenPageAsync(async owner =>
@@ -65,22 +67,27 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
         catch { Publish(owner, () => ProviderError = "External sign-in could not be loaded. Reload before changing provider-dependent settings."); }
-        var accounts = await api.AccountsAsync(owner).ConfigureAwait(false);
-        Publish(owner, () => { Accounts = accounts.Items; AccountsKnown = true; AccountCursor = accounts.Page!.NextCursor; });
+        // Walk every account page (hard cap): the break-glass admin may be on any page.
+        var (accounts, cursor) = await ReadAccountPagesAsync(c => api.AccountsAsync(owner, c), [], null, first: true).ConfigureAwait(false);
+        Publish(owner, () => { Accounts = accounts; _accountsRead = true; AccountCursor = cursor; });
     });
     public Task MoreAccountsAsync() => RunAsync(async owner =>
     {
-        if (AccountCursor == null || Accounts.Count >= 1000) return;
-        var page = await api.AccountsAsync(owner, AccountCursor).ConfigureAwait(false);
-        Publish(owner, () => { Accounts = Accounts.Concat(page.Items).DistinctBy(a => a.Id).Take(1000).ToArray(); AccountCursor = page.Page!.NextCursor; });
+        var start = AccountCursor; if (start == null || Accounts.Count >= AccountCap) return;
+        var (accounts, cursor) = await ReadAccountPagesAsync(c => api.AccountsAsync(owner, c), Accounts, start, first: false).ConfigureAwait(false);
+        Publish(owner, () => { Accounts = accounts; AccountCursor = cursor; });
     });
     public void Set(string key, bool value)
     {
         lock (Gate)
         {
             if (!Current || Busy || ReviewRequired || !Loaded || Managed.Contains(key) || !Keys.Contains(key)) return;
-            if (key == Local && !value && (!AccountsKnown || !ProvidersKnown || !Accounts.Any(BreakGlass) || !Providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)))
-            { Message = !Accounts.Any(BreakGlass) ? AdminText.T("web.admin.settings.signIn.page.noBreakGlassError") : AdminText.T("web.admin.settings.signIn.page.noProviderError"); }
+            // As on the official page, "no break-glass admin" needs the whole account list; when it is not fully known the server decides
+            // (409 break_glass_required on save). A provider list that failed to load still blocks turning passwords off here.
+            var noBreakGlass = AccountsKnown && !Accounts.Any(BreakGlass);
+            var noProvider = !ProvidersKnown || !Providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true);
+            if (key == Local && !value && (noBreakGlass || noProvider))
+            { Message = noBreakGlass ? AdminText.T("web.admin.settings.signIn.page.noBreakGlassError") : ProvidersKnown ? AdminText.T("web.admin.settings.signIn.page.noProviderError") : ProviderError ?? AdminText.T("web.admin.settings.signIn.page.noProviderError"); }
             else { _form!.Set(key, value ? "true" : "false"); Message = null; }
         }
         Notify();
@@ -155,11 +162,17 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         {
             if (_form.DirtyKeys.Contains(Local) && _form.Get(Local) == "false")
             {
-                var candidate = Accounts.FirstOrDefault(BreakGlass) ?? throw new AdminAccessException("break_glass_required", 409);
-                var account = await api.AccountAsync(owner, candidate.Id).ConfigureAwait(false);
+                // With the whole list known and no break-glass admin, or a candidate that no longer qualifies, refuse before writing. With a list that is
+                // not fully known (longer than the cap, or unread) the server's own transactional check decides, as it does for the official page.
+                var candidate = Accounts.FirstOrDefault(BreakGlass);
+                if (candidate == null && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
+                if (candidate != null)
+                {
+                    var account = await api.AccountAsync(owner, candidate.Id).ConfigureAwait(false);
+                    if (!BreakGlass(account) && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
+                }
                 var providers = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
-                if (!BreakGlass(account)) throw new AdminAccessException("break_glass_required", 409);
-                if (!providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)) throw new AdminAccessException("provider_already_enabled", 409);
+                if (!providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)) throw new AdminAccessException("provider_required", 409);
             }
             var intent = _form.CaptureSave(Managed);
             try
@@ -170,6 +183,8 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
                     Publish(owner, () => _form?.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired)); store.Invalidate();
                 }
             }
+            // The server's transactional check is authoritative (409 break_glass_required, the only 409 a settings write documents): say so, as the official page does.
+            catch (ApiException refused) when (refused.StatusCode == 409 && intent.Values.ContainsKey(Local)) { throw new AdminAccessException("break_glass_required", 409); }
             finally { Publish(owner, () => _form?.EndSave(intent)); }
         }
         var refreshed = await api.GetInstallationsAsync(owner).ConfigureAwait(false);

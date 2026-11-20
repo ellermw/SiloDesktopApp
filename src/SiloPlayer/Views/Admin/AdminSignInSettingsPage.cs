@@ -70,7 +70,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
             foreach (var (key, control) in _settings)
             {
                 control.IsOn = key == AdminSignInController.Local ? Controller.Value(key) != "false" : Controller.Value(key) == "true";
-                control.IsEnabled = editable && !Controller.Managed.Contains(key) && (key != AdminSignInController.Local || Controller.AccountsKnown && Controller.ProvidersKnown);
+                control.IsEnabled = editable && !Controller.Managed.Contains(key) && (key != AdminSignInController.Local || Controller.ProvidersKnown);
                 _settingRows[key].State(Controller.Dirty(key), Controller.RestartKeys.Has(key));
             }
             foreach (var entry in _providerFields)
@@ -127,7 +127,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
             var passwords = new AdminSettingsGroup(T("page.passwordsGroup")); _groups["passwords"] = passwords; _ui.Fields.Children.Add(passwords);
             AddSetting(passwords, AdminSignInController.Local, "allowPassword");
             var admins = Controller.Accounts.Where(a => a.Role == "admin" && a.Enabled && a.BreakGlass && a.PasswordLogin).ToArray();
-            passwords.Add(U.Text(admins.Length > 0 ? T("page.breakGlassAdmins", new { count = admins.Length, names = string.Join(", ", admins.Select(a => a.Username)) }) : T("page.noBreakGlassStatus"), 12, true));
+            // Like the official page, the status only speaks once the whole account list is known; a longer list leaves the server to decide.
+            if (Controller.AccountsKnown) passwords.Add(U.Text(admins.Length > 0 ? T("page.breakGlassAdmins", new { count = admins.Length, names = string.Join(", ", admins.Select(a => a.Username)) }) : T("page.noBreakGlassStatus"), 12, true));
             var users = U.Action(T("page.manageInviteCodes"), "SignInInviteCodes"); users.Click += (_, _) => AdminShellPage.TryOpenHref("/admin/users?tab=invite-codes"); passwords.Add(users);
             AddSetting(passwords, "signup.enabled", "publicSignups"); AddSetting(passwords, "password_reset.self_service_enabled", "passwordReset");
             passwords.Add(new Expander { Header = T("page.lockedOutTitle"), Content = U.Text(T("page.lockedOutNote", new { login_path = "/login?local=1", command = "silo auth local-login enable" }), 12, true), HorizontalAlignment = HorizontalAlignment.Stretch });

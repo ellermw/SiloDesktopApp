@@ -10,6 +10,8 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
     public string Tab { get; private set; } = "documents";
     public IReadOnlyList<AdminPolicyDocument> Documents { get; private set; } = [];
     public string? DocumentCursor { get; private set; }
+    /// <summary>The first page of overrides was read for this page lifetime; nothing is created before it was.</summary>
+    public bool DocumentsLoaded { get; private set; }
     public AdminPolicySnapshot? Snapshot { get; private set; }
     public AdminPolicySnapshot? Review { get; private set; }
     /// <summary>Canonical snapshot read for one list-row enable/disable confirmation; never reused for another document.</summary>
@@ -37,7 +39,7 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
     public int EditorRevision { get; private set; }
     protected override void Reset()
     {
-        Capability = null; Tab = "documents"; Documents = []; DocumentCursor = null; Snapshot = Review = Toggle = null; Versions = []; VersionCursor = null;
+        Capability = null; Tab = "documents"; Documents = []; DocumentCursor = null; DocumentsLoaded = false; Snapshot = Review = Toggle = null; Versions = []; VersionCursor = null;
         SelectedVersion = SavedVersion = null; Draft = _seed = Comment = ""; _validated = null; Validation = null; Simulation = null; Vendor = []; Decisions = []; Decision = null;
         Filters = new(); DecisionCursor = NextDecisionCursor = null; _previous.Clear(); EditorRevision++;
     }
@@ -63,7 +65,7 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
         }
         else
         {
-            var page = await api.DocumentsAsync(owner).ConfigureAwait(false); Publish(owner, () => { Documents = page.Items; DocumentCursor = page.Page!.NextCursor; Tab = tab; });
+            var page = await api.DocumentsAsync(owner).ConfigureAwait(false); Publish(owner, () => { Documents = page.Items; DocumentCursor = page.Page!.NextCursor; DocumentsLoaded = true; Tab = tab; });
         }
     }
     private async Task EnsureCapabilityAsync(MonitorAuthorityLease owner)
@@ -80,9 +82,19 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
     public Task SelectAsync(string? id) => RunAsync(async owner =>
     {
         if (!Available) return;
-        if (id != null) await LoadEditorAsync(owner, id).ConfigureAwait(false);
-        else Publish(owner, () => { Snapshot = Review = null; Draft = _seed = Comment = ""; _validated = null; Validation = null; SavedVersion = SelectedVersion = null; EditorRevision++; });
+        if (id != null) { await LoadEditorAsync(owner, id).ConfigureAwait(false); return; }
+        // Leaving the editor: its reviewed revision no longer matters, but the list block (ListReviewRequired) is left to the page-level reload.
+        Publish(owner, () => { Snapshot = Review = null; ReviewRequired = false; Draft = _seed = Comment = ""; _validated = null; Validation = null; SavedVersion = SelectedVersion = null; EditorRevision++; });
+        // Activate, enable/disable and version saves in the editor change what the list shows: show the server's current rows, not the ones read before it opened.
+        await RefreshDocumentsAsync(owner, "The overrides list could not be refreshed. Reload before making another change.").ConfigureAwait(false);
     });
+    /// <summary>Re-reads the canonical first page after the editor or a write. A failed read never turns an already persisted change into a reported failure; it keeps the given message and blocks writes until the page-level reload.</summary>
+    private async Task<bool> RefreshDocumentsAsync(MonitorAuthorityLease owner, string staleMessage, bool alsoReview = false)
+    {
+        try { await LoadTabAsync(owner, "documents").ConfigureAwait(false); return true; }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
+        catch { Publish(owner, () => { Message = staleMessage; ListReviewRequired = true; if (alsoReview) ReviewRequired = true; }); return false; }
+    }
     private async Task LoadEditorAsync(MonitorAuthorityLease owner, string id)
     {
         var snapshot = await api.GetAsync(owner, id).ConfigureAwait(false);
@@ -99,13 +111,16 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
     }
     public Task CreateAsync(string domain, string name, bool confirmed) => RunAsync(async owner =>
     {
-        if (!confirmed || Capability?.DecisionTypes.Contains(domain) != true) return;
+        if (!confirmed || !DocumentsLoaded || Capability?.DecisionTypes.Contains(domain) != true) return;
         await EnsureCapabilityAsync(owner).ConfigureAwait(false);
         var document = await api.CreateAsync(owner, domain, name).ConfigureAwait(false);
-        // The server owns the canonical override list: re-read its first page after the create instead of splicing the row in locally.
-        await LoadTabAsync(owner, "documents").ConfigureAwait(false);
-        await LoadEditorAsync(owner, document.Id).ConfigureAwait(false);
-    }, write: true);
+        // From here the override exists. The server owns the canonical list: re-read its first page instead of splicing the row in locally. If that read fails,
+        // the create is still reported as done and nothing can be created or written until the page-level reload has read the list again.
+        if (!await RefreshDocumentsAsync(owner, "Override created. The overrides list could not be refreshed: reload before making another change.", alsoReview: true).ConfigureAwait(false)) return;
+        try { await LoadEditorAsync(owner, document.Id).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
+        catch { Publish(owner, () => Message = "Override created, but it could not be opened. Open it from the list."); }
+    }, write: true, listWrite: true);
     public void SetDraft(string source)
     {
         lock (Gate) { if (!Available || Busy || source.Length > 262144) return; Draft = source; Simulation = null; } Notify();
@@ -183,7 +198,7 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
         var result = await api.EnableAsync(owner, reviewed, enabled).ConfigureAwait(false);
         Publish(owner, () => { Toggle = null; Message = result.ApplicationMessage; });
         // The persisted change is not replayed; the canonical list is re-read so every row reflects the server.
-        var message = result.ApplicationMessage; await LoadTabAsync(owner, "documents").ConfigureAwait(false); Publish(owner, () => Message = message);
+        await RefreshDocumentsAsync(owner, result.ApplicationMessage + " The overrides list could not be refreshed: reload before making another change.").ConfigureAwait(false);
     }, write: true);
     public Task SetEnabledAsync(AdminPolicySnapshot reviewed, bool enabled, bool confirmed) => RunAsync(async owner =>
     {
@@ -196,7 +211,8 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
     {
         if (!confirmed || !Available || !ReferenceEquals(Snapshot, reviewed) || reviewed.Value.ActiveVersionId != null) return;
         await EnsureCapabilityAsync(owner).ConfigureAwait(false); await api.DeleteAsync(owner, reviewed).ConfigureAwait(false);
-        Publish(owner, () => { Snapshot = null; Draft = _seed = Comment = ""; EditorRevision++; }); await LoadTabAsync(owner, "documents").ConfigureAwait(false);
+        Publish(owner, () => { Snapshot = null; Draft = _seed = Comment = ""; EditorRevision++; });
+        await RefreshDocumentsAsync(owner, "Override deleted. The overrides list could not be refreshed: reload before making another change.").ConfigureAwait(false);
     }, write: true);
     public Task SimulateAsync(string input) => RunAsync(async owner =>
     {

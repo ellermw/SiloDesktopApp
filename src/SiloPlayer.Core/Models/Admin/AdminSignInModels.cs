@@ -23,7 +23,10 @@ public sealed class AdminSignInProvider
     [JsonIgnore] public AdminSignInCapability? Auth => Capabilities.FirstOrDefault(c => c.Type == "auth_provider.v1");
     [JsonIgnore] public AdminSignInBinding? Binding => AuthBindings.FirstOrDefault(b => b.CapabilityId == Auth?.Id);
     [JsonIgnore] public bool Network => Auth?.SignInMode == "network";
-    [JsonIgnore] public string Name => GlobalConfigs.FirstOrDefault(c => c.Key == "display_name")?.Value["value"]?.GetValue<string>() ?? Auth?.DisplayName ?? PluginId;
+    /// <summary>The label people know the provider by: the saved display_name when it is a non-blank string (any other saved shape is ignored, as on the official page), else the capability's name, else the plugin id.</summary>
+    [JsonIgnore] public string Name => SavedDisplayName() ?? (string.IsNullOrWhiteSpace(Auth?.DisplayName) ? PluginId : Auth!.DisplayName);
+    private string? SavedDisplayName() =>
+        GlobalConfigs.FirstOrDefault(c => c.Key == "display_name")?.Value["value"] is JsonValue saved && saved.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text) ? text.Trim() : null;
     public override string ToString() => nameof(AdminSignInProvider);
 }
 public sealed class AdminSignInCapability
@@ -34,7 +37,9 @@ public sealed class AdminSignInCapability
     public string SignInMode { get; set; } = "";
     public string? CallbackUrl { get; set; }
     public string? PostLogoutRedirectUrl { get; set; }
-    public JsonObject Metadata { get; set; } = new();
+    private JsonObject _metadata = new();
+    /// <summary>A server that sends null still yields an empty object: every metadata read is null-safe.</summary>
+    public JsonObject Metadata { get => _metadata; set => _metadata = value ?? new(); }
 }
 public sealed class AdminSignInBinding
 {
@@ -111,7 +116,9 @@ public sealed class AdminSignInSection
 public sealed class AdminSignInConfig
 {
     public string Key { get; set; } = "";
-    public JsonObject Value { get; set; } = new();
+    private JsonObject _value = new();
+    /// <summary>A server that sends null still yields an empty object: every saved-value read is null-safe.</summary>
+    public JsonObject Value { get => _value; set => _value = value ?? new(); }
     public List<string> ConfiguredSecrets { get; set; } = [];
     public override string ToString() => nameof(AdminSignInConfig);
 }

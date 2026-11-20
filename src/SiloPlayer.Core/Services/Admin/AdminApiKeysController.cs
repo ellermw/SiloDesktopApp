@@ -15,7 +15,8 @@ public sealed class AdminApiKeysController(AdminApiKeysApi api, AdminMonitorAuth
     public bool AccountsLoaded { get; private set; }
     public IReadOnlyDictionary<string, string> RateHints { get; private set; } = new Dictionary<string, string>();
     public bool ViewerIsOwner => Accounts.Any(a => a.Id == Owner?.AccountId && a.IsOwner);
-    public bool CanManage(string id) => Current && AccountsLoaded && Accounts.FirstOrDefault(a => a.Id == id)?.CanManage(Owner!.AccountId, ViewerIsOwner) == true;
+    /// <summary>Like the official page: nobody is offered actions until the accounts are read, and an owner not in the read list is offered unless known to be unmanageable (the server and a fresh read still decide every write).</summary>
+    public bool CanManage(string id) => Current && AccountsLoaded && (Accounts.FirstOrDefault(a => a.Id == id) is not { } account || account.CanManage(Owner!.AccountId, ViewerIsOwner));
     protected override void Reset() { Capabilities = null; Rows = []; Accounts = []; NextCursor = AccountCursor = null; Editor = null; Loaded = AccountsLoaded = false; RateHints = new Dictionary<string, string>(); }
     public Task OpenAsync() => OpenPageAsync(async owner =>
     {
@@ -23,10 +24,11 @@ public sealed class AdminApiKeysController(AdminApiKeysApi api, AdminMonitorAuth
         if (!caps.Available) return;
         var rows = await api.ListAsync(owner).ConfigureAwait(false);
         Publish(owner, () => { Rows = rows.Items; NextCursor = rows.Page!.NextCursor; Loaded = true; });
-        var accounts = await api.AccountsAsync(owner).ConfigureAwait(false);
-        // Read the viewer explicitly: it need not be in the first account page.
+        // Read the viewer explicitly: it need not be in the first account page. Then walk the remaining pages (hard cap) so
+        // ownership and manageability do not depend on which page an account happens to be on.
         var viewer = await api.GetAccountAsync(owner, owner.AccountId).ConfigureAwait(false);
-        Publish(owner, () => { Accounts = new[] { viewer }.Concat(accounts.Items).DistinctBy(a => a.Id).ToArray(); AccountCursor = accounts.Page!.NextCursor; AccountsLoaded = true; });
+        var (accounts, cursor) = await ReadAccountPagesAsync(c => api.AccountsAsync(owner, c), [viewer], null, first: true).ConfigureAwait(false);
+        Publish(owner, () => { Accounts = accounts; AccountCursor = cursor; AccountsLoaded = true; });
     });
     public Task MoreAsync() => RunAsync(async owner =>
     {
@@ -37,9 +39,9 @@ public sealed class AdminApiKeysController(AdminApiKeysApi api, AdminMonitorAuth
     });
     public Task MoreAccountsAsync() => RunAsync(async owner =>
     {
-        if (AccountCursor == null || Accounts.Count >= 1000) return;
-        var page = await api.AccountsAsync(owner, AccountCursor).ConfigureAwait(false);
-        Publish(owner, () => { Accounts = Accounts.Concat(page.Items).DistinctBy(a => a.Id).Take(1000).ToArray(); AccountCursor = page.Page!.NextCursor; });
+        var start = AccountCursor; if (start == null || Accounts.Count >= AccountCap) return;
+        var (accounts, cursor) = await ReadAccountPagesAsync(c => api.AccountsAsync(owner, c), Accounts, start, first: false).ConfigureAwait(false);
+        Publish(owner, () => { Accounts = accounts; AccountCursor = cursor; });
     });
     public Task EditAsync(string id) => RunAsync(async owner =>
     {
@@ -64,16 +66,21 @@ public sealed class AdminApiKeysController(AdminApiKeysApi api, AdminMonitorAuth
             Publish(owner, () => { secret = created.TakeSecret(); Message = "API key created. Save it now; it will not be shown again."; });
             created.Key = "";
             // Reconcile with the server's canonical first page. The secret is already held by the caller, so a
-            // failed refresh never discards it; it only blocks further writes until the list is re-read.
-            try
-            {
-                var page = await api.ListAsync(owner).ConfigureAwait(false);
-                Publish(owner, () => { Rows = page.Items; NextCursor = page.Page!.NextCursor; });
-            }
-            catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
-            catch { Publish(owner, () => { Message = "API key created. Save it now; it will not be shown again. The key list could not be refreshed: reload keys."; ReviewRequired = true; }); }
-        }, write: true).ConfigureAwait(false);
+            // failed refresh never discards it; it only blocks further writes until the page-level reload re-reads the list.
+            await RefreshListAsync(owner, "API key created. Save it now; it will not be shown again. The key list could not be refreshed: reload keys.", alsoReview: true).ConfigureAwait(false);
+        }, write: true, listWrite: true).ConfigureAwait(false);
         return Current ? secret : null;
+    }
+    /// <summary>Re-reads the canonical first page after a write that already succeeded. A failed read keeps the success message, never reports the write as failed and marks the list stale until the page-level reload.</summary>
+    private async Task RefreshListAsync(MonitorAuthorityLease owner, string staleMessage, bool alsoReview)
+    {
+        try
+        {
+            var page = await api.ListAsync(owner).ConfigureAwait(false);
+            Publish(owner, () => { Rows = page.Items; NextCursor = page.Page!.NextCursor; });
+        }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
+        catch { Publish(owner, () => { Message = staleMessage; ListReviewRequired = true; if (alsoReview) ReviewRequired = true; }); }
     }
     public Task ChangeAsync(AdminApiKeyEditor reviewed, string? tier, bool confirmed) => RunAsync(async owner =>
     {
@@ -85,8 +92,9 @@ public sealed class AdminApiKeysController(AdminApiKeysApi api, AdminMonitorAuth
             if (!Capabilities.RateTiers.Contains(tier)) throw new ArgumentException("Unsupported tier.");
             await api.UpdateTierAsync(owner, reviewed, tier).ConfigureAwait(false);
         }
-        Publish(owner, () => { Editor = null; Message = tier == null ? "API key revoked." : "Rate limit updated."; });
-        var page = await api.ListAsync(owner).ConfigureAwait(false);
-        Publish(owner, () => { Rows = page.Items; NextCursor = page.Page!.NextCursor; });
+        var done = tier == null ? "API key revoked." : "Rate limit updated.";
+        Publish(owner, () => { Editor = null; Message = done; });
+        // The change is already persisted: a failed re-read must not turn it into a reported failure.
+        await RefreshListAsync(owner, done + " The key list could not be refreshed: reload keys.", alsoReview: false).ConfigureAwait(false);
     }, write: true);
 }

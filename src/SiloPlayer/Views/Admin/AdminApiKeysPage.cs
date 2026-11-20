@@ -29,7 +29,7 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
     private void Close() { _ui.Close(); Controller.Dispose(); }
     private void Render()
     {
-        _create.IsEnabled = Controller.Current && !Controller.Busy && !Controller.ReviewRequired && Controller.Capabilities is { Available: true } && Controller.AccountsLoaded;
+        _create.IsEnabled = Controller.Current && !Controller.Busy && !Controller.WritesBlocked && Controller.Capabilities is { Available: true } && Controller.AccountsLoaded;
         _ui.Fields.Children.Clear(); if (!Controller.Current) return;
         if (Controller.Capabilities is { Available: false }) { _ui.Fields.Children.Add(U.Text(T("unavailable"))); return; }
         if (!Controller.Loaded) return;
@@ -42,7 +42,7 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
             if (Controller.CanManage(key.UserId) && Controller.Capabilities?.GuardedConfiguration == true)
             {
                 var edit = U.Action("Edit rate limit", "ApiKeyTier_" + key.Id); var revoke = U.Action("Revoke", "ApiKeyRevoke_" + key.Id);
-                edit.IsEnabled = revoke.IsEnabled = !Controller.Busy; actions.Children.Add(edit); actions.Children.Add(revoke);
+                edit.IsEnabled = revoke.IsEnabled = !Controller.Busy && !Controller.ListReviewRequired; actions.Children.Add(edit); actions.Children.Add(revoke);
                 edit.Click += async (_, _) => await EditAsync(key.Id, false); revoke.Click += async (_, _) => await EditAsync(key.Id, true);
             }
             table.Children.Add(Row([key.Label, key.Username, key.KeyPrefix.Length == 0 ? "Unavailable" : key.KeyPrefix + "…", key.Scopes.Count == 0 ? "Full access" : string.Join(", ", key.Scopes), key.RateTier == "elevated" ? "Elevated" : "Standard", Date(key.CreatedAt), key.LastUsedAt == null ? "Never" : Date(key.LastUsedAt)], actions));
@@ -96,7 +96,7 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
         string? secret = null; TextBlock? secretText = null;
         submit.Click += async (_, _) =>
         {
-            if (Controller.Busy || Controller.ReviewRequired || secret != null) return;
+            if (Controller.Busy || Controller.WritesBlocked || secret != null) return;
             var scoped = AdminAccessPageUi.Selected(access) == "scoped";
             submit.IsEnabled = false; label.IsEnabled = users.IsEnabled = access.IsEnabled = false; foreach (var check in checks.Values) check.IsEnabled = false;
             try
@@ -118,11 +118,11 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
             }
             finally
             {
-                if (secret == null) { submit.IsEnabled = !Controller.ReviewRequired; label.IsEnabled = users.IsEnabled = access.IsEnabled = !Controller.ReviewRequired; foreach (var check in checks.Values) check.IsEnabled = !Controller.ReviewRequired; }
+                if (secret == null) { submit.IsEnabled = !Controller.WritesBlocked; label.IsEnabled = users.IsEnabled = access.IsEnabled = !Controller.WritesBlocked; foreach (var check in checks.Values) check.IsEnabled = !Controller.WritesBlocked; }
             }
         };
         try { await _ui.ShowAsync(dialog); }
-        finally { dialogOpen = false; secret = null; if (secretText != null) secretText.Text = ""; label.Text = ""; if (Controller.Current && !Controller.ReviewRequired) await Controller.OpenAsync(); }
+        finally { dialogOpen = false; secret = null; if (secretText != null) secretText.Text = ""; label.Text = ""; if (Controller.Current && !Controller.WritesBlocked) await Controller.OpenAsync(); }
     }
     private async Task EditAsync(string id, bool revoke)
     {

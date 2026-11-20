@@ -68,7 +68,10 @@ public sealed class AdminPolicyApi(SiloApiClient client)
     }
     public async Task<AdminPolicyApplyResult> EnableAsync(MonitorAuthorityLease owner, AdminPolicySnapshot reviewed, bool enabled)
     {
-        var result = await ApplyAsync(owner, reviewed, HttpMethod.Patch, "", new Dictionary<string, object?> { ["enabled"] = enabled }).ConfigureAwait(false);
+        AdminPolicyApplyResult result;
+        try { result = await ApplyAsync(owner, reviewed, HttpMethod.Patch, "", new Dictionary<string, object?> { ["enabled"] = enabled }).ConfigureAwait(false); }
+        // The server answers 409 conflict when another override already owns the domain; say so, as the official page shows the reason.
+        catch (AdminAccessException conflict) when (enabled && conflict.Code == "conflict" && !conflict.Uncertain) { throw new AdminAccessException("policy_domain_enabled", conflict.Status); }
         if (result.Document.Enabled != enabled) throw new AdminAccessException("invalid_response", uncertain: true); return result;
     }
     private async Task<AdminPolicyApplyResult> ApplyAsync(MonitorAuthorityLease owner, AdminPolicySnapshot reviewed, HttpMethod method, string suffix, object body)

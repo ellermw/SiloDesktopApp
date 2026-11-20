@@ -67,12 +67,17 @@ public sealed class AdminAccessException(string code, int status = 0, bool uncer
     public string Code { get; } = code;
     public int Status { get; } = status;
     public bool Uncertain { get; } = uncertain;
+    /// <summary>A definite answer that changed nothing and leaves the screen valid (for example 409 conflict): the admin may correct the cause and try again without a reload.</summary>
+    public bool Refusal => !Uncertain && Code is "conflict" or "policy_domain_enabled";
     private static string MessageFor(string code, int status, bool uncertain) => uncertain
         ? "The outcome is unknown. Reload and review the server state before making another change. This request was not resent."
         : code switch
         {
             "break_glass_required" => "Keep an enabled break-glass administrator with password sign-in before turning off Silo passwords.",
             "provider_already_enabled" => "Another sign-in provider is already on. Turn it off before enabling this one.",
+            "provider_required" => AdminText.T("web.admin.settings.signIn.page.noProviderError"),
+            "policy_domain_enabled" => "Another override is already enabled for this domain. Disable it first.",
+            "conflict" => "The server refused this change because of the current state of the resource. Review it, then try again.",
             _ when status is 412 or 428 => "This resource changed or its revision is unavailable. Reload and review before saving again.",
             _ when status == 401 => "Sign in again, then reload this page.",
             _ when status == 403 => "Your current account and profile cannot make this change. Reload after access is restored.",
