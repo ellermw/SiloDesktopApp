@@ -1,0 +1,12 @@
+diff --git a/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs b/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs
+--- a/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs
++++ b/src/SiloPlayer.Core/Services/Admin/Users/AdminUserHomeSections.cs
+@@ -28,7 +28,7 @@
+             var existing = result.OfType<JsonObject>().FirstOrDefault(row => row.Text("section_id") == source.Text("id") ||
+                 row.Flag("is_user_added") && row.Text("id") == source.Text("id"));
+             if (existing != null) return existing;
+-            var created = new JsonObject { ["id"] = Guid.NewGuid().ToString(), ["section_id"] = source.Text("id"), ["hidden"] = source.Flag("hidden"), ["removed"] = false, ["is_user_added"] = false };
++            var created = new JsonObject { ["id"] = Guid.NewGuid().ToString(), ["section_id"] = source.Text("id"), ["hidden"] = false, ["removed"] = false, ["is_user_added"] = false };
+             result.Add(created);
+             return created;
+         }

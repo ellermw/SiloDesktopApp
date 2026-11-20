@@ -56,7 +56,10 @@ public static class AuthorizationPolicy
            || (user?.Permissions?.Contains(permission, StringComparer.OrdinalIgnoreCase) ?? false);
 
     public static bool CanCurateMetadata(AuthService auth)
-        => HasPermission(auth, MetadataCuration);
+        => CanCurateMetadata(auth.CurrentUser, auth.SelectedProfile, !string.IsNullOrWhiteSpace(auth.SelectedProfileId));
+
+    public static bool CanCurateMetadata(UserInfo? user, Profile? profile, bool hasSelectedProfile)
+        => (!hasSelectedProfile || profile != null) && HasPermission(user, profile, hasSelectedProfile, MetadataCuration);
     public static bool CanEditMarkers(AuthService auth)
         => HasPermission(auth, MarkerEdit);
 }

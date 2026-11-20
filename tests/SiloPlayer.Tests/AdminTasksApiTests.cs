@@ -1,0 +1,298 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
+
+namespace SiloPlayer.Tests;
+
+/// <summary>Wire contract of Configure › Scheduled Tasks (official internal/apiv2/admin_tasks.go fixtures). Synthetic data only.</summary>
+public sealed class AdminTasksApiTests
+{
+    internal const string TaskJson = """
+        {"key":"fixture","name":"Fixture task","description":"","category":"system","state":"idle","progress":0,"manual_only":false,
+         "triggers":[{"type":"interval","interval_ms":1000}],"execution_scope":"process"}
+        """;
+    internal const string TasksJson = "{\"items\":[" + TaskJson + "]}";
+    internal const string HistoryJson = """
+        {"items":[
+          {"task_key":"fixture","started_at":"2026-01-02T03:04:05.678Z","completed_at":"2026-01-02T03:04:05.678Z","status":"failed","duration_ms":0,
+           "error_message":"Task failed. Inspect administrator diagnostics for details.","id":"3"},
+          {"task_key":"fixture","started_at":"2026-01-02T03:04:05.678Z","completed_at":"2026-01-02T03:04:05.678Z","status":"failed","duration_ms":0,
+           "error_message":"Task failed. Inspect administrator diagnostics for details.","id":"2"}],
+         "page":{"next_cursor":"cursor-2","has_more":true}}
+        """;
+    internal const string MetricsJson = """{"total":0,"due":0,"leased":0,"reason_counts":[],"attempt_buckets":[],"due_samples":[],"recent_errors":[]}""";
+    internal const string ScheduleJson = """{"task_key":"fixture","triggers":[{"type":"interval","interval_ms":1000}]}""";
+
+    private sealed class Fixture : IDisposable
+    {
+        public readonly AdminMonitorKit Kit = AdminMonitorKit.Create();
+        public readonly AdminMonitorAuthority Authority;
+        public readonly AdminTasksApi Api;
+        public readonly List<HttpRequestMessage> Sent = [];
+        public Func<HttpRequestMessage, HttpResponseMessage> Respond = _ => AdminMonitorKit.Json(TaskJson);
+
+        public Fixture()
+        {
+            Authority = new AdminMonitorAuthority(Kit.Client, Kit.Auth);
+            Api = new AdminTasksApi(Kit.Client);
+            Kit.Http.Respond = (request, _) =>
+            {
+                lock (Sent) Sent.Add(request);
+                return Task.FromResult(Respond(request));
+            };
+        }
+
+        public MonitorAuthorityLease Lease() => Authority.Capture();
+        public void Dispose() { Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    private static HttpResponseMessage Tagged(string json, string etag, HttpStatusCode status = HttpStatusCode.OK)
+    {
+        var response = AdminMonitorKit.Json(json, status);
+        response.Headers.ETag = EntityTagHeaderValue.Parse(etag);
+        return response;
+    }
+
+    private static HttpResponseMessage Problem(HttpStatusCode status, string type, string detail = "internal detail with /srv/secret/path") =>
+        new(status)
+        {
+            Content = new StringContent($$"""{"type":"https://siloserver.org/docs/api/v2/problems/{{type}}","title":"Problem","status":{{(int)status}},"detail":"{{detail}}"}""",
+                System.Text.Encoding.UTF8, "application/problem+json"),
+        };
+
+    [Fact]
+    public async Task ListParsesTheOfficialFixtureWithoutHiddenTasks()
+    {
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(TasksJson) };
+        using var lease = fixture.Lease();
+        var tasks = await fixture.Api.ListAsync(lease);
+        var task = Assert.Single(tasks);
+        Assert.Equal(("fixture", "Fixture task", "system", "idle", false), (task.Key, task.Name, task.Category, task.State, task.ManualOnly));
+        Assert.Equal(1000, Assert.Single(task.Triggers).IntervalMs);
+        Assert.Equal("GET /api/v2/admin/tasks", Assert.Single(fixture.Kit.Http.Requests));
+    }
+
+    [Theory]
+    [InlineData("plugin:7:sync-feed", "/api/v2/admin/tasks/plugin%3A7%3Async-feed")]
+    [InlineData("rebuild_catalog_search_index", "/api/v2/admin/tasks/rebuild_catalog_search_index")]
+    public async Task DetailEscapesTheKeyAsOnePathSegment(string key, string path)
+    {
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(TaskJson.Replace("\"fixture\"", JsonSerializer.Serialize(key))) };
+        using var lease = fixture.Lease();
+        var task = await fixture.Api.GetAsync(lease, key);
+        Assert.Equal(key, task.Key);
+        Assert.Equal(path, Assert.Single(fixture.Sent).RequestUri!.AbsolutePath);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("..")]
+    [InlineData(".hidden")]
+    [InlineData("a/b")]
+    [InlineData("a?b")]
+    [InlineData("a b")]
+    [InlineData("a%2Fb")]
+    public async Task UnsafeKeysAreRejectedBeforeAnyRequest(string key)
+    {
+        using var fixture = new Fixture();
+        using var lease = fixture.Lease();
+        Assert.False(AdminTasksApi.IsTaskKey(key));
+        await Assert.ThrowsAsync<ArgumentException>(() => fixture.Api.GetAsync(lease, key));
+        await Assert.ThrowsAsync<ArgumentException>(() => fixture.Api.RunAsync(lease, key));
+        await Assert.ThrowsAsync<ArgumentException>(() => fixture.Api.UpdateScheduleAsync(lease, key, [], "\"r1\""));
+        Assert.Empty(fixture.Sent);
+    }
+
+    [Fact]
+    public async Task DuplicateOrMalformedTasksAreRejected()
+    {
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json("{\"items\":[" + TaskJson + "," + TaskJson + "]}") };
+        using var lease = fixture.Lease();
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.ListAsync(lease));
+        fixture.Respond = _ => AdminMonitorKit.Json("{\"items\":[{\"key\":\"x/y\",\"name\":\"n\",\"category\":\"system\",\"state\":\"idle\",\"progress\":0,\"triggers\":[]}]}");
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.ListAsync(lease));
+        fixture.Respond = _ => AdminMonitorKit.Json("{}");
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.ListAsync(lease));
+    }
+
+    [Fact]
+    public async Task DetailNotFoundIsAClassifiedProblemWithoutServerText()
+    {
+        using var fixture = new Fixture { Respond = _ => Problem(HttpStatusCode.NotFound, "not_found") };
+        using var lease = fixture.Lease();
+        var error = await Assert.ThrowsAsync<ApiException>(() => fixture.Api.GetAsync(lease, "gone"));
+        Assert.Equal(AdminFailureKind.NotFound, AdminFailures.Classify(error, lease));
+        Assert.DoesNotContain("/srv/secret", error.Message + error.ProblemDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAndCancelPostOnceWithoutAuthenticationReplay()
+    {
+        using var fixture = new Fixture { Respond = _ => new HttpResponseMessage(HttpStatusCode.Unauthorized) };
+        using var lease = fixture.Lease();
+        await Assert.ThrowsAsync<ApiException>(() => fixture.Api.RunAsync(lease, "fixture"));
+        await Assert.ThrowsAsync<ApiException>(() => fixture.Api.CancelAsync(lease, "fixture"));
+        Assert.Equal(["POST /api/v2/admin/tasks/fixture/run", "POST /api/v2/admin/tasks/fixture/cancel"], fixture.Kit.Http.Requests);
+    }
+
+    [Fact]
+    public async Task RunReturnsTheValidatedAcknowledgement()
+    {
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(TaskJson.Replace("\"idle\"", "\"running\"")) };
+        using var lease = fixture.Lease();
+        var task = await fixture.Api.RunAsync(lease, "fixture");
+        Assert.Equal(AdminTaskStates.Running, task.State);
+    }
+
+    [Fact]
+    public async Task ConflictIsARejectionButServerFailuresAndForeignAcknowledgementsAreUnknown()
+    {
+        using var fixture = new Fixture { Respond = _ => Problem(HttpStatusCode.Conflict, "conflict") };
+        using var lease = fixture.Lease();
+        var conflict = await Assert.ThrowsAsync<ApiException>(() => fixture.Api.RunAsync(lease, "fixture"));
+        Assert.Equal(AdminFailureKind.Conflict, AdminFailures.Classify(conflict, lease));
+        fixture.Respond = _ => Problem(HttpStatusCode.BadGateway, "dependency_unavailable");
+        await Assert.ThrowsAsync<AdminTaskOutcomeUnknownException>(() => fixture.Api.RunAsync(lease, "fixture"));
+        fixture.Respond = _ => throw new HttpRequestException("synthetic transport failure");
+        await Assert.ThrowsAsync<AdminTaskOutcomeUnknownException>(() => fixture.Api.CancelAsync(lease, "fixture"));
+        fixture.Respond = _ => AdminMonitorKit.Json(TaskJson.Replace("\"fixture\"", "\"other\""));
+        await Assert.ThrowsAsync<AdminTaskOutcomeUnknownException>(() => fixture.Api.RunAsync(lease, "fixture"));
+        fixture.Respond = _ => AdminMonitorKit.Json("{\"key\":");
+        await Assert.ThrowsAsync<AdminTaskOutcomeUnknownException>(() => fixture.Api.CancelAsync(lease, "fixture"));
+    }
+
+    [Fact]
+    public async Task ScheduleReadCapturesOnlyAStrongValidator()
+    {
+        using var fixture = new Fixture { Respond = _ => Tagged(ScheduleJson, "\"revision-1\"") };
+        using var lease = fixture.Lease();
+        var schedule = await fixture.Api.GetScheduleAsync(lease, "fixture");
+        Assert.Equal("\"revision-1\"", schedule.ETag);
+        Assert.Equal(1000, Assert.Single(schedule.Triggers).IntervalMs);
+        Assert.DoesNotContain("revision-1", schedule.ToString(), StringComparison.Ordinal);
+        fixture.Respond = _ => Tagged(ScheduleJson, "W/\"revision-1\"");
+        await Assert.ThrowsAsync<AdminTaskScheduleRevisionException>(() => fixture.Api.GetScheduleAsync(lease, "fixture"));
+        fixture.Respond = _ => AdminMonitorKit.Json(ScheduleJson);
+        await Assert.ThrowsAsync<AdminTaskScheduleRevisionException>(() => fixture.Api.GetScheduleAsync(lease, "fixture"));
+        fixture.Respond = _ => Tagged(ScheduleJson.Replace("\"fixture\"", "\"other\""), "\"revision-1\"");
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.GetScheduleAsync(lease, "fixture"));
+    }
+
+    [Fact]
+    public async Task ScheduleWriteSendsIfMatchAndOmitsAbsentFields()
+    {
+        using var fixture = new Fixture { Respond = _ => Tagged("{\"task_key\":\"fixture\",\"triggers\":[]}", "\"revision-2\"") };
+        using var lease = fixture.Lease();
+        var saved = await fixture.Api.UpdateScheduleAsync(lease, "fixture",
+            [new AdminTaskTrigger("interval", 3000, null, null, null), new AdminTaskTrigger("weekly", null, "05:30", 0, 60000)], "\"revision-1\"");
+        Assert.Equal("\"revision-2\"", saved.ETag);
+        var request = Assert.Single(fixture.Sent);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("\"revision-1\"", Assert.Single(request.Headers.IfMatch).ToString());
+        Assert.Equal("""{"triggers":[{"type":"interval","interval_ms":3000},{"type":"weekly","time_of_day":"05:30","day_of_week":0,"max_runtime_ms":60000}]}""",
+            fixture.Kit.Http.Bodies.Single());
+    }
+
+    [Fact]
+    public async Task EmptyScheduleIsSentAsAnEmptyArray()
+    {
+        using var fixture = new Fixture { Respond = _ => Tagged("{\"task_key\":\"fixture\",\"triggers\":[]}", "\"revision-2\"") };
+        using var lease = fixture.Lease();
+        await fixture.Api.UpdateScheduleAsync(lease, "fixture", [], "\"revision-1\"");
+        Assert.Equal("""{"triggers":[]}""", fixture.Kit.Http.Bodies.Single());
+    }
+
+    [Fact]
+    public async Task ScheduleWriteNeverReplaysAndClassifiesEveryUncertainty()
+    {
+        using var fixture = new Fixture { Respond = _ => Problem(HttpStatusCode.PreconditionFailed, "precondition_failed") };
+        using var lease = fixture.Lease();
+        IReadOnlyList<AdminTaskTrigger> triggers = [new("startup", null, null, null, null)];
+        await Assert.ThrowsAsync<AdminTaskScheduleConflictException>(() => fixture.Api.UpdateScheduleAsync(lease, "fixture", triggers, "\"revision-1\""));
+        fixture.Respond = _ => Problem(HttpStatusCode.ServiceUnavailable, "dependency_unavailable");
+        await Assert.ThrowsAsync<AdminTaskOutcomeUnknownException>(() => fixture.Api.UpdateScheduleAsync(lease, "fixture", triggers, "\"revision-1\""));
+        fixture.Respond = _ => AdminMonitorKit.Json("{\"task_key\":\"fixture\",\"triggers\":[]}");
+        await Assert.ThrowsAsync<AdminTaskOutcomeUnknownException>(() => fixture.Api.UpdateScheduleAsync(lease, "fixture", triggers, "\"revision-1\""));
+        fixture.Respond = _ => new HttpResponseMessage(HttpStatusCode.Unauthorized);
+        await Assert.ThrowsAsync<ApiException>(() => fixture.Api.UpdateScheduleAsync(lease, "fixture", triggers, "\"revision-1\""));
+        Assert.Equal(4, fixture.Kit.Http.Requests.Count);
+        await Assert.ThrowsAnyAsync<Exception>(() => fixture.Api.UpdateScheduleAsync(lease, "fixture", triggers, "W/\"weak\""));
+        Assert.Equal(4, fixture.Kit.Http.Requests.Count);
+    }
+
+    [Fact]
+    public async Task HistoryReadsCursorPagesAndValidatesTheChain()
+    {
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(HistoryJson) };
+        using var lease = fixture.Lease();
+        var page = await fixture.Api.GetHistoryAsync(lease, "fixture", null);
+        Assert.Equal(["3", "2"], page.Items.Select(item => item.Id));
+        Assert.True(page.HasMore);
+        Assert.Equal("cursor-2", page.NextCursor);
+        Assert.Equal("Task failed. Inspect administrator diagnostics for details.", page.Items[0].ErrorMessage);
+        Assert.DoesNotContain("cursor-2", page.ToString(), StringComparison.Ordinal);
+        await fixture.Api.GetHistoryAsync(lease, "fixture", "cursor-1");
+        Assert.Equal(["/api/v2/admin/tasks/fixture/history?limit=20", "/api/v2/admin/tasks/fixture/history?limit=20&cursor=cursor-1"],
+            fixture.Sent.Select(request => request.RequestUri!.PathAndQuery));
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.GetHistoryAsync(lease, "fixture", "cursor-2"));
+        fixture.Respond = _ => AdminMonitorKit.Json(HistoryJson.Replace("\"id\":\"2\"", "\"id\":\"3\""));
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.GetHistoryAsync(lease, "fixture", null));
+        fixture.Respond = _ => AdminMonitorKit.Json(HistoryJson.Replace("\"next_cursor\":\"cursor-2\",", ""));
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.GetHistoryAsync(lease, "fixture", null));
+        fixture.Respond = _ => AdminMonitorKit.Json(HistoryJson.Replace("\"task_key\":\"fixture\"", "\"task_key\":\"other\""));
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.GetHistoryAsync(lease, "fixture", null));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => fixture.Api.GetHistoryAsync(lease, "fixture", null, 201));
+    }
+
+    [Fact]
+    public async Task HistoryKeepsTypedResultsAndStepsOnly()
+    {
+        const string json = """
+            {"items":[{"task_key":"contribute_markers","started_at":"2026-01-02T03:04:05Z","completed_at":"2026-01-02T03:05:05Z","status":"completed","duration_ms":60000,
+              "id":"9","result_data":{"submitted":4,"skipped":1,"invalid":0,"failed":2,"retry_after_seconds":30},
+              "steps":[{"key":"activity","name":"Activity log","status":"failed"}]}],"page":{"has_more":false}}
+            """;
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(json) };
+        using var lease = fixture.Lease();
+        var item = Assert.Single((await fixture.Api.GetHistoryAsync(lease, "contribute_markers", null)).Items);
+        Assert.Equal(new AdminTaskMarkerResult(4, 1, 0, 2, 30), item.Result);
+        Assert.Equal("Activity log", Assert.Single(item.Steps).Name);
+    }
+
+    [Fact]
+    public async Task MetricsAreReadOnlyForRefreshMetadataAndCarryNoRawErrors()
+    {
+        const string json = """
+            {"total":12,"due":3,"leased":1,"oldest_due_at":"2026-11-14T10:00:00Z","reason_counts":[{"reason":"refresh_failure","count":2}],
+             "attempt_buckets":[{"label":"1-2","count":5}],"due_samples":[{"target_type":"item","content_id":"42","title":"Synthetic","type":"movie",
+             "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":2,"last_error":""}],
+             "recent_errors":[{"target_type":"item","content_id":"43","title":"","type":"","reason_mask":8,"next_refresh_at":"2026-11-14T11:00:00Z",
+             "attempt_count":1,"last_error":"Refresh failed. Inspect administrator diagnostics for details."}]}
+            """;
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(json) };
+        using var lease = fixture.Lease();
+        var metrics = await fixture.Api.GetMetricsAsync(lease, "refresh_metadata");
+        Assert.Equal((12, 3, 1), (metrics.Total, metrics.Due, metrics.Leased));
+        Assert.Equal("refresh_failure", Assert.Single(metrics.ReasonCounts).Reason);
+        Assert.Equal("42", Assert.Single(metrics.DueSamples).ContentId);
+        Assert.Equal("Refresh failed. Inspect administrator diagnostics for details.", Assert.Single(metrics.RecentErrors).LastError);
+        await Assert.ThrowsAsync<ArgumentException>(() => fixture.Api.GetMetricsAsync(lease, "scan_libraries"));
+        Assert.Single(fixture.Sent);
+        fixture.Respond = _ => AdminMonitorKit.Json(MetricsJson);
+        Assert.Empty((await fixture.Api.GetMetricsAsync(lease, "refresh_metadata")).DueSamples);
+    }
+
+    [Fact]
+    public async Task RetiredLeaseSendsNothing()
+    {
+        using var fixture = new Fixture();
+        var lease = fixture.Lease();
+        lease.Dispose();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Api.ListAsync(lease));
+        Assert.Empty(fixture.Sent);
+    }
+}

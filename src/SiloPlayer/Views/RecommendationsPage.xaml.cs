@@ -24,6 +24,19 @@ public sealed partial class RecommendationsPage : Page
         NavigationCacheMode = NavigationCacheMode.Required;
     }
 
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        ViewModel.BeginVisit();
+        if (IsLoaded) _ = ViewModel.LoadCommand.ExecuteAsync(null);
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        ViewModel.Suspend();
+        base.OnNavigatedFrom(e);
+    }
+
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         if (!_eventsAttached)
