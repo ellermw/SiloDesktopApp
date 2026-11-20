@@ -38,6 +38,30 @@ No push, PR, installer or installed-player action occurred.
 
 ---
 
+# November 20 - Admin Manage Playback: Nodes and Playback Settings
+
+Branch `t3/admin-playback-nodes-settings`, merged with Beta `d90f40965` (stable `1.2.1194` plus the merged Library settings
+page; version unchanged here). Final run after that merge: playback-lead-final-r1 on merge commit 00fa14b66, build lease
+2026-11-20T16:45:54Z to 16:51:32Z: 341 focused and 9,854 full unit cases passed with no failures or skips; app build,
+publish and native host built; native selectors admin-playback-administration (94 PASS lines, 0 FAIL),
+admin-manage-library-settings, admin-manage-foundation, admin-configure-general and admin-monitor passed; source seal
+(2,503 build inputs) and 582-file payload unchanged across the run. The run named further below predates that merge. Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback`
+are registered and reachable through the real Admin navigation. Two earlier review findings (enabled switch restore,
+marker-task status badges) and seven findings of a second independent review were fixed: the egress limit can no longer
+overflow into an unhandled exception, the node acceleration override list matches the server's enum (no VideoToolbox), an
+untouched editor no longer blanks a stored address it cannot show, an older marker-task poll cannot overwrite a newer run,
+a hidden row's invalid draft no longer blocks Save, a definite 4xx refusal to run a marker task is no longer reported as
+"unconfirmed", and a failed background node refresh keeps the rows and polling. Observed: one `-Stage final` run
+(`playback-fix-final-r1`, lane `D:/SiloPlayer-build/admin-completion-lane-a`) on commit `cd39c93df`: focused unit tests
+282/0 failed, full unit suite 9,795/0 failed, native selectors `admin-playback-administration` (94 PASS, 0 FAIL),
+`admin-manage-foundation`, `admin-configure-general` and `admin-monitor` passed. One native assertion was changed (node
+list refresh failure no longer demands a review lock; official react-query page keeps data and keeps polling). Not
+observed: a live server, real phone/GPU/transcode node, network enrollment, all-DPI or assistive-technology runs, and
+side-by-side visual parity beyond the fixture captures. No push, pull request or release was made.
+See [scope, official contracts, findings and limits](parity/admin-playback.md).
+
+---
+
 # November 20 — Admin Requests submitted for Beta review
 
 The family below was committed, current Beta `f35bb7e59d14f8e7f2e53bac982953fa3d5dc7da`
