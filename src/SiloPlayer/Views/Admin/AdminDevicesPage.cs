@@ -26,9 +26,9 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
     private int _visibleDevices = 100;
     private readonly HashSet<string> _platforms = [], _ranges = [], _recency = [];
     private readonly Dictionary<string, bool> _groupOpen = new(StringComparer.Ordinal);
-    private readonly StackPanel _rail = Stack(14), _list = Stack(0), _detail = Stack(0);
-    private readonly Border _railPanel, _listPanel, _detailPanel;
-    private readonly ScrollViewer _listScroll;
+    private StackPanel _rail = Stack(14), _list = Stack(0), _detail = Stack(0);
+    private Border _railPanel = null!, _listPanel = null!, _detailPanel = null!;
+    private ScrollViewer _listScroll = null!;
     private StackPanel? _pulse;
     private TextBox? _searchBox;
     private Grid? _panes;
@@ -39,13 +39,19 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         InitializeComponent(); NavigationCacheMode = NavigationCacheMode.Disabled; Id(this, "AdminDevicesPage");
         _api = App.Services.GetRequiredService<AdminUserResourcesApi>();
         _host = new(this, new(App.Services.GetRequiredService<AdminMonitorAuthority>()), LoadAsync, Clear);
-        _railPanel = LogsNativeUi.Panel(_rail, 12, 12); _listScroll = new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        _listPanel = LogsNativeUi.Panel(_listScroll, 12, 4); _detailPanel = LogsNativeUi.Panel(_detail, 12, 0);
-        _railPanel.VerticalAlignment = _listPanel.VerticalAlignment = _detailPanel.VerticalAlignment = VerticalAlignment.Top; _listScroll.VerticalAlignment = VerticalAlignment.Top; _list.VerticalAlignment = _detail.VerticalAlignment = VerticalAlignment.Top;
+        BuildPanes();
         SizeChanged += (_, _) => LayoutPanes();
     }
     protected override void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); if (e.Parameter is AdminRouteRequest route) _route = route; _profile = _route.Get("profile") ?? ""; }
     public void SuspendAdminPage() => _host.Suspend();
+    /// <summary>Fresh panes for every render: an element taken out of an old tree can still belong to it, so none is reused.</summary>
+    private void BuildPanes()
+    {
+        _rail = Stack(14); _list = Stack(0); _detail = Stack(0);
+        _listScroll = new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        _railPanel = LogsNativeUi.Panel(_rail, 12, 12); _listPanel = LogsNativeUi.Panel(_listScroll, 12, 4); _detailPanel = LogsNativeUi.Panel(_detail, 12, 0);
+        _railPanel.VerticalAlignment = _listPanel.VerticalAlignment = _detailPanel.VerticalAlignment = VerticalAlignment.Top; _listScroll.VerticalAlignment = VerticalAlignment.Top; _list.VerticalAlignment = _detail.VerticalAlignment = VerticalAlignment.Top;
+    }
     private static string D(string key, params (string Name, object? Value)[] args) => T("web.admin.devices." + key, args);
 
     private void Clear()
@@ -89,8 +95,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         var elements = new List<UIElement> { LogsNativeUi.Header(D("title"), D("subtitle", ("shortcut", "Ctrl+K")), search) };
         _pulse = Inline(16); _pulse.HorizontalAlignment = HorizontalAlignment.Left; elements.Add(_pulse);
         var scope = Stack(0); scope.HorizontalAlignment = HorizontalAlignment.Left; scope.Tag = "scope"; elements.Add(scope);
-        DetachFromParent(_railPanel); DetachFromParent(_listPanel); DetachFromParent(_detailPanel);
-        _panes = new Grid { ColumnSpacing = 16, RowSpacing = 16 }; _panes.Children.Add(_railPanel); _panes.Children.Add(_listPanel); _panes.Children.Add(_detailPanel);
+        BuildPanes(); _panes = new Grid { ColumnSpacing = 16, RowSpacing = 16 }; _panes.Children.Add(_railPanel); _panes.Children.Add(_listPanel); _panes.Children.Add(_detailPanel);
         elements.Add(_panes); SetContent([.. elements]);
         _scopeHost = scope; RenderPulse(); RenderFilters(); RenderList(); LayoutPanes();
     }

@@ -22,7 +22,8 @@ public sealed partial class AdminAccessGroupsPage
     private (bool DownloadsOff, bool ConversionOff) _downloadSwitches;
     private JsonElement _requestDefaults;
     private bool _limitFailed;
-    private readonly StackPanel _libraryBox = Stack(8), _downloadsBox = Stack(10), _requestsBox = Stack(12), _permissionsBox = Stack(10), _members = Stack(10);
+    // Rebuilt for every render: an element taken out of an old tree can still belong to it, so none is reused.
+    private StackPanel _libraryBox = Stack(8), _downloadsBox = Stack(10), _requestsBox = Stack(12), _permissionsBox = Stack(10), _members = Stack(10);
     private TextBlock? _saveMessage;
     private Button? _save, _discard, _delete;
 
@@ -75,7 +76,7 @@ public sealed partial class AdminAccessGroupsPage
     private void RenderEditor()
     {
         if (_editor == null || _draft == null) return;
-        foreach (var reusable in new FrameworkElement[] { _libraryBox, _downloadsBox, _requestsBox, _permissionsBox, _members }) Detach(reusable);
+        _libraryBox = Stack(8); _downloadsBox = Stack(10); _requestsBox = Stack(12); _permissionsBox = Stack(10); _members = Stack(10); _memberRows = null;
         var group = _editor.Value; var isDefault = group.Flag("is_default"); _writes.Clear();
         var elements = new List<UIElement> { Button(G("allGroups"), "GroupBack", () => AdminShellPage.Open(new(AdminRoute.AccessGroups))) };
 

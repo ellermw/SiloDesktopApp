@@ -19,7 +19,7 @@ public sealed partial class AdminDevicesPage
     private bool _showAll = true;
     private long _detailRevision;
     private SubtitleAppearanceDialog? _subtitleDialog;
-    private readonly StackPanel _tabsHost = Stack(0), _rowsHost = Stack(0);
+    private StackPanel _tabsHost = Stack(0), _rowsHost = Stack(0);
     private const string UnknownProfile = "unknown-profile";
 
     private static FrameworkElement Padded(UIElement child, double horizontal = 20, double vertical = 16) => new Border { Child = child, Padding = new(horizontal, vertical, horizontal, vertical) };
@@ -101,7 +101,7 @@ public sealed partial class AdminDevicesPage
         {
             var none = Stack(4); none.Margin = new(20); none.Children.Add(Text(D("detail.noProfilesTitle"), 14)); none.Children.Add(Text(D("detail.noProfilesBody"), 12, true)); _detail.Children.Add(none); return;
         }
-        _tabsHost.Children.Clear(); _rowsHost.Children.Clear(); DetachFromParent(_tabsHost); DetachFromParent(_rowsHost);
+        _tabsHost = Stack(0); _rowsHost = Stack(0);
         _detail.Children.Add(_tabsHost); _detail.Children.Add(_rowsHost); RenderTabsAndRows();
     }
     private static FrameworkElement Divider() => new Border { Height = 1, Background = Brush("BorderBrush"), Opacity = 0.6 };

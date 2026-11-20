@@ -22,7 +22,7 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
     private readonly List<JsonElement> _runs = [];
     private AdminResourceDocument? _source;
     private JsonElement _capabilities;
-    private readonly StackPanel _mappingPanel = Stack(12), _runPanel = Stack(8);
+    private StackPanel _mappingPanel = Stack(12), _runPanel = Stack(8);
     private readonly HashSet<string> _runCursors = [];
     private string? _nextRun;
     private string _runFilter = "all";
@@ -115,7 +115,7 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
             if (_source.Value.Text("source_type") == "plex") elements.Add(PlexLimits());
             if (_source.Value.Flag("needs_reconfiguration")) { var warn = Text(H("page.needsReconfiguration")); warn.Foreground = Brush("WarningBrush"); elements.Add(warn); }
         }
-        DetachFromParent(_mappingPanel); DetachFromParent(_runPanel);
+        _mappingPanel = Stack(12); _runPanel = Stack(8);
         elements.Add(_mappingPanel); elements.Add(_runPanel); SetContent([.. elements]); RenderMappings(); RenderRuns(); UpdateActions();
     }
     private static void DetachFromParent(FrameworkElement element) { if (element.Parent is Panel panel) panel.Children.Remove(element); }

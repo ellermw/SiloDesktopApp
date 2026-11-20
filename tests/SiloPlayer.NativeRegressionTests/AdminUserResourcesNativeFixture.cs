@@ -57,7 +57,7 @@ internal static partial class AdminUserResourcesNativeFixture
             var status = All(_statusFrame).OfType<TextBlock>().FirstOrDefault(x => AutomationProperties.GetAutomationId(x) == "ResourceStatus");
             Program.Log("STATUS: " + (status == null ? "(no status line)" : status.Text.Length == 0 ? "(empty)" : status.Text));
             foreach (var page in All(_statusFrame).OfType<Page>())
-                if (page.GetType().GetProperty("Session")?.GetValue(page) is AdminUserResourceController session && session.LastException is { } last) Program.Log("CAUSE: " + last.GetType().Name + " " + last.Message + " @ " + (last.StackTrace ?? "").Split('\n').FirstOrDefault()?.Trim());
+                if (page.GetType().GetProperty("Session")?.GetValue(page) is AdminUserResourceController session && session.LastException is { } last) Program.Log("CAUSE: " + last.GetType().Name + " " + last.Message + " @ " + string.Join(" | ", (last.StackTrace ?? "").Split('\n').Take(7).Select(x => x.Trim())));
         }
         catch (Exception error) { Program.Log("STATUS: unavailable " + error.Message); }
     }
