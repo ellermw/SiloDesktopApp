@@ -250,8 +250,10 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         _saveBar.Discard.IsEnabled = !state.Saving && !state.OperationPending;
         _spacer.Visibility = _saveBar.Visibility;
         if (state.Loaded && _restoreOffset is { } offset) { _restoreOffset = null; DispatcherQueue.TryEnqueue(() => { if (_active) { _root.UpdateLayout(); _scroll.ChangeView(null, offset, null, true); } }); }
-        // A secret minted while the host is hidden stays with the controller until its dialog can be seen.
-        if (HostVisible && _dialog == null && !state.OperationPending && _controller?.TakeSigningSecret() is { } secret) _ = ShowSecretAsync(secret);
+        // A minted secret stays with the controller until its dialog has opened; a hidden host or another dialog only delays it.
+        // Each snapshot is offered once, so a dialog that cannot open is not retried in a loop.
+        if (_controller?.HasSigningSecret != true) _secretTried = null;
+        else if (HostVisible && _dialog == null && !state.OperationPending && !ReferenceEquals(state, _secretTried)) { _secretTried = state; _ = ShowSecretAsync(); }
     }
     private static bool IsProcessing(string key) => key is "notifications.release_events_enabled" or "notifications.fanout_enabled" || key.StartsWith("notifications.fanout.", StringComparison.Ordinal) || key.StartsWith("notifications.retention.", StringComparison.Ordinal);
     private void Set(string key, string value) { if (!_sync) _controller?.Set(key, value); }
@@ -264,6 +266,8 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
             if (_dialog == null) App.Services.GetService<SiloPlayer.Services.ToastService>()?.Info((_controller?.State is { Saving: true } or { OperationPending: true })
                 ? "Notifications is still waiting for the server. Stay on this page until it answers."
                 : "A new signing secret is waiting to be shown. Save it before leaving Notifications.");
+            // A secret whose dialog could not open is offered again on each attempt to leave.
+            if (_dialog == null) { _secretTried = null; QueueRender(); }
             return Task.FromResult(false);
         }
         if (HeldTyping is { } held) return CanDropHeldAsync(held);
@@ -307,7 +311,7 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         if (_location != null) Positions.GetValue(_location, static _ => new()).Offset = _scroll.VerticalOffset;
         _authority.AvailabilityChanged -= AuthorityChanged;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Saved -= OnSaved; _controller.Dispose(); _controller = null; }
-        RetirePrivateUi(); _leave = null; _channelList.Children.Clear(); _renderedChannels = null;
+        RetirePrivateUi(); _leave = null; _secretTried = null; _channelList.Children.Clear(); _renderedChannels = null;
         _fields.Visibility = _saveBar.Visibility = _spacer.Visibility = Visibility.Collapsed;
     }
 }

@@ -220,6 +220,21 @@ internal static class AdminNotificationSettingsNativeFixture
             Check(leavingSecret.Text == "synthetic-one-time" && shell.RequiresLeaveConfirmation && !await shell.CanLeaveAsync(), "departure is refused while the signing secret is shown");
             leavingDialog.Hide(); await Until(() => Dialog(page) == null && leavingSecret.Text.Length == 0, "departure secret cleared on close");
             await Until(() => !shell.RequiresLeaveConfirmation && ChannelEdit(page, true), "dismissed secret frees departure and channel commands");
+            var otherDialog = new ContentDialog { XamlRoot = page.XamlRoot, Title = "Synthetic other dialog", CloseButtonText = "Close" };
+            _ = otherDialog.ShowAsync();
+            try
+            {
+                await Until(() => otherDialog.IsLoaded, "another dialog open before a secret arrives");
+                await controller.RotateChannelAsync("c1");
+                await Task.Delay(100);
+                Check(!controller.State.OperationPending && controller.HasSigningSecret && Dialog(page) == null && shell.RequiresLeaveConfirmation, "secret answered behind another dialog stays with the controller");
+            }
+            finally { otherDialog.Hide(); }
+            await Until(() => Dialog(page) is { IsLoaded: true, Title: "Save your signing secret" }, "waiting secret is shown once the other dialog has unloaded");
+            var waitedDialog = Dialog(page)!; var waitedSecret = Desc(waitedDialog).OfType<TextBox>().Single();
+            Check(waitedSecret.Text == "synthetic-one-time" && !controller.HasSigningSecret, "the secret is taken only by the dialog that opened");
+            waitedDialog.Hide(); await Until(() => Dialog(page) == null && waitedSecret.Text.Length == 0, "waited secret cleared on close");
+            await Until(() => !shell.RequiresLeaveConfirmation && ChannelEdit(page, true), "waited secret frees departure and channel commands");
             Invoke(Find<Button>(page, "NotificationsChannelEdit_c1")); await Until(() => Dialog(page) is { IsLoaded: true }, "editor before retirement");
             var privateUrl = Find<TextBox>(Dialog(page)!, "NotificationsChannelUrl"); privateUrl.Text = "https://example.test/synthetic-retirement";
             server.Gate = new(TaskCreationOptions.RunContinuationsAsynchronously); var pending = controller.TestChannelAsync("c1");

@@ -19,6 +19,7 @@ public sealed partial class AdminNotificationSettingsPage
     private readonly List<ToggleSwitch> _channelToggles = [];
     private readonly Dictionary<ToggleSwitch, bool> _channelToggleValues = new();
     private bool _syncChannels, _secretShown;
+    private AdminNotificationSettingsState? _secretTried;
     private readonly Dictionary<string, TextBlock> _channelResults = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProgressRing> _channelBusy = new(StringComparer.Ordinal);
     private IReadOnlyList<AdminNotificationChannel>? _renderedChannels;
@@ -160,12 +161,12 @@ public sealed partial class AdminNotificationSettingsPage
         Title = title, Content = new ScrollViewer { Content = content, MaxHeight = 520, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled },
         XamlRoot = XamlRoot, PrimaryButtonText = primary ?? "", CloseButtonText = T("common.cancel"), DefaultButton = ContentDialogButton.Close,
     };
-    private async Task ShowDialogAsync(ContentDialog dialog, MonitorAuthorityLease owner)
+    private async Task ShowDialogAsync(ContentDialog dialog, MonitorAuthorityLease owner, System.Action? opened = null)
     {
         if (_dialog != null || !owner.IsCurrent) return;
         var unloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var loaded = false;
-        void OnLoaded(object sender, RoutedEventArgs args) => loaded = true;
+        void OnLoaded(object sender, RoutedEventArgs args) { if (loaded) return; loaded = true; opened?.Invoke(); }
         void OnUnloaded(object sender, RoutedEventArgs args) => unloaded.TrySetResult();
         dialog.Loaded += OnLoaded; dialog.Unloaded += OnUnloaded;
         _dialog = dialog;
@@ -200,11 +201,26 @@ public sealed partial class AdminNotificationSettingsPage
         };
         await ShowDialogAsync(dialog, owner);
     }
-    private async Task ShowSecretAsync(string secret)
+    // Only one ContentDialog can be open on a root. Behind another one, such as the shell's restart confirmation,
+    // the secret waits with the controller and is offered again once that dialog has unloaded.
+    private bool SecretWaitsBehindDialog()
     {
-        var owner = _controller?.State.Owner; if (_dialog != null || owner?.IsCurrent != true) return;
+        if (XamlRoot is not { } root) return false;
+        foreach (var popup in Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+        {
+            if (popup.Child is not ContentDialog other) continue;
+            RoutedEventHandler? unloaded = null;
+            unloaded = (_, _) => { other.Unloaded -= unloaded; _secretTried = null; QueueRender(); };
+            other.Unloaded += unloaded;
+            return true;
+        }
+        return false;
+    }
+    private async Task ShowSecretAsync()
+    {
+        var owner = _controller?.State.Owner; if (_dialog != null || owner?.IsCurrent != true || SecretWaitsBehindDialog()) return;
         var content = new StackPanel { Spacing = 12 }; content.Children.Add(U.Text(T("web.common.signingSecret.description"), 13, true));
-        var text = new TextBox { Text = secret, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxWidth = 440 };
+        var text = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MaxWidth = 440 };
         AutomationProperties.SetName(text, T("web.common.signingSecret.title")); content.Children.Add(text);
         var copy = U.Action(T("web.common.signingSecret.copy"), "NotificationsCopySigningSecret"); content.Children.Add(copy);
         copy.Click += (_, _) =>
@@ -217,7 +233,8 @@ public sealed partial class AdminNotificationSettingsPage
         System.Action clear = () => text.Text = ""; _clearDialogPrivate = clear;
         using var retired = owner.Token.Register(() => DispatcherQueue.TryEnqueue(() => text.Text = ""));
         _secretShown = true;
-        try { await ShowDialogAsync(dialog, owner); }
-        finally { _secretShown = false; clear(); secret = ""; if (ReferenceEquals(_clearDialogPrivate, clear)) _clearDialogPrivate = null; }
+        // The one-time value is taken only by a dialog that has actually opened; one that never loads leaves it with the controller.
+        try { await ShowDialogAsync(dialog, owner, () => { text.Text = _controller?.TakeSigningSecret() ?? ""; if (text.Text.Length == 0) DispatcherQueue.TryEnqueue(() => dialog.Hide()); }); }
+        finally { _secretShown = false; clear(); if (ReferenceEquals(_clearDialogPrivate, clear)) _clearDialogPrivate = null; }
     }
 }

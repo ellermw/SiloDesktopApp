@@ -143,10 +143,14 @@ The independent review found four P2 issues, all addressed in the final source:
   server's answer arrives, a create or rotation shows its signing secret on
   return, and the normal leave guard keeps applying. A secret minted while
   hidden stays with the controller until its dialog can be seen, and leaving
-  is refused until then. An authority change still retires the kept page at
-  once. This deferral and the held-typing leave guard were added after the
-  runs recorded below; their unit case and native assertions are not covered
-  by those receipts.
+  is refused until then. The controller gives the value up only to a
+  signing-secret dialog that has actually loaded: behind another dialog on
+  the same root, such as the shell's restart confirmation, it waits and is
+  offered again once that dialog has unloaded or on the next attempt to
+  leave. An authority change still retires the kept page at once. This
+  deferral, the held-typing leave guard and the wait behind another dialog
+  were added after the runs recorded below; their unit case and native
+  assertions are not covered by those receipts.
 
 The contained `review-red-r4` unit run observed four behavioral assertion
 failures before the fixes. `review-native-red-host-r3` observed the mounted,
