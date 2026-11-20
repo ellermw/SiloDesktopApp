@@ -10,6 +10,7 @@ public sealed partial class AdminUserResourcesApi(SiloApiClient client)
 {
     public const int PageSize = 100;
     public const int MaxConfigurationRows = 2000;
+    private const int MaxUnpagedRows = 2000;
     private const string Groups = "/api/v2/admin/access-groups";
     private const string Users = "/api/v2/admin/users";
 
@@ -57,7 +58,7 @@ public sealed partial class AdminUserResourcesApi(SiloApiClient client)
             throw new InvalidOperationException("The account policy changed. Review the move again.");
         await SendAsync(owner, HttpMethod.Put, path, new { access_group_id = NumericId(groupId) }, fresh.ETag, ct).ConfigureAwait(false);
     }
-    public Task<AdminResourcePage> ListLibrariesAsync(MonitorAuthorityLease owner, CancellationToken ct = default) => PageAsync(owner, "/api/v2/libraries", null, Id, ct, 1000);
+    public Task<AdminResourcePage> ListLibrariesAsync(MonitorAuthorityLease owner, CancellationToken ct = default) => PageAsync(owner, "/api/v2/libraries", null, Id, ct, 0);
     public Task<JsonElement> RequestDefaultsAsync(MonitorAuthorityLease owner, CancellationToken ct = default) => ReadAsync(owner, "/api/v2/admin/request-settings", ct);
     public async Task<(bool DownloadsOff, bool ConversionOff)> DownloadSwitchesAsync(MonitorAuthorityLease owner)
     {
@@ -67,11 +68,11 @@ public sealed partial class AdminUserResourcesApi(SiloApiClient client)
 
     internal async Task<AdminResourcePage> PageAsync(MonitorAuthorityLease owner, string path, string? cursor, Func<JsonElement, string> identity, CancellationToken ct, int limit = PageSize)
     {
-        var body = await ReadAsync(owner, AdminPaging.WithPage(path, limit, cursor), ct).ConfigureAwait(false);
+        var body = await ReadAsync(owner, limit > 0 ? AdminPaging.WithPage(path, limit, cursor) : path, ct).ConfigureAwait(false);
         if (body.Member("items") is not { ValueKind: JsonValueKind.Array } items || body.Member("page") is not { ValueKind: JsonValueKind.Object } page ||
             page.Member("has_more")?.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new InvalidDataException("Invalid resource page.");
         var rows = items.EnumerateArray().ToArray();
-        if (rows.Length > limit) throw new InvalidDataException("Oversized resource page.");
+        if (rows.Length > (limit > 0 ? limit : MaxUnpagedRows)) throw new InvalidDataException("Oversized resource page.");
         var identities = new HashSet<string>(StringComparer.Ordinal);
         foreach (var row in rows)
         {
@@ -85,13 +86,13 @@ public sealed partial class AdminUserResourcesApi(SiloApiClient client)
         return new(Array.AsReadOnly(rows), page.Flag("has_more") ? next : null, body.Number("revision", -1) is var revision && revision > 0 ? revision : null);
     }
     /// <summary>Small configuration set only. A cap/repeated continuation fails closed; never returns a subset for whole-set actions.</summary>
-    public async Task<IReadOnlyList<JsonElement>> ConfigurationAsync(MonitorAuthorityLease owner, Func<string?, Task<AdminResourcePage>> fetch)
+    public async Task<IReadOnlyList<JsonElement>> ConfigurationAsync(MonitorAuthorityLease owner, Func<string?, Task<AdminResourcePage>> fetch, int maxPages = 20, int maxRows = MaxConfigurationRows, string? tooManyMessage = null)
     {
         var result = new List<JsonElement>(); var cursors = new HashSet<string>(StringComparer.Ordinal); var identities = new HashSet<string>(StringComparer.Ordinal); string? cursor = null;
-        for (var count = 0; count < 20; count++)
+        for (var count = 0; count < maxPages; count++)
         {
             owner.ThrowIfRetired(); var page = await fetch(cursor).ConfigureAwait(false); owner.ThrowIfRetired();
-            if (result.Count + page.Items.Count > MaxConfigurationRows) throw new InvalidDataException("Configuration exceeds the desktop safety bound.");
+            if (result.Count + page.Items.Count > maxRows) throw tooManyMessage != null ? new AdminResourceTooManyException(tooManyMessage) : new InvalidDataException("Configuration exceeds the desktop safety bound.");
             foreach (var row in page.Items)
             {
                 var id = row.Text("id");
@@ -103,7 +104,7 @@ public sealed partial class AdminUserResourcesApi(SiloApiClient client)
             if (!cursors.Add(page.NextCursor)) throw new InvalidDataException("Repeated configuration continuation.");
             cursor = page.NextCursor;
         }
-        throw new InvalidDataException("Configuration exceeds the desktop page bound.");
+        throw tooManyMessage != null ? new AdminResourceTooManyException(tooManyMessage) : new InvalidDataException("Configuration exceeds the desktop page bound.");
     }
     private async Task<AdminResourceDocument> DocumentAsync(MonitorAuthorityLease owner, string path, string expected, CancellationToken ct, string key = "id")
     {

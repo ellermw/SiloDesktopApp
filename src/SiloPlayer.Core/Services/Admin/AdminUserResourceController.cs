@@ -12,7 +12,7 @@ public sealed class AdminUserResourceController : IDisposable
     private long _generation;
     private int _writing;
     private bool _disposed, _needsReview;
-    private string? _error;
+    private string? _error, _errorChannel;
     public AdminUserResourceController(AdminMonitorAuthority authority) { _lifetime = new(authority); _lifetime.Retired += OnRetired; }
     public MonitorAuthorityLease? Owner => _lifetime.Owner;
     public bool Busy => Volatile.Read(ref _writing) != 0;
@@ -25,7 +25,7 @@ public sealed class AdminUserResourceController : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            _generation++; CancelReads(); _lifetime.Resume(); _lifetime.Open(); _needsReview = false; _error = null;
+            _generation++; CancelReads(); _lifetime.Resume(); _lifetime.Open(); _needsReview = false; _error = _errorChannel = null;
         }
     }
     public bool IsCurrent(MonitorAuthorityLease? owner) { lock (_gate) return !_disposed && ReferenceEquals(Owner, owner) && owner is { IsCurrent: true }; }
@@ -40,11 +40,19 @@ public sealed class AdminUserResourceController : IDisposable
             action = _lifetime.CaptureAction(); _reads[channel] = action;
         }
         bool Current() { lock (_gate) return IsCurrent(owner) && generation == _generation && _reads.GetValueOrDefault(channel) == action && action.IsCurrent; }
-        try { var result = await read(action); return Current() ? result : default; }
+        try
+        {
+            var result = await read(action);
+            if (!Current()) return default;
+            var cleared = false;
+            lock (_gate) { if (Current() && _errorChannel == channel) { _error = null; _errorChannel = null; cleared = true; } }
+            if (cleared) Changed?.Invoke();
+            return result;
+        }
         catch (Exception error)
         {
             var notify = false;
-            lock (_gate) { if (Current()) { _error = AdminUserResourceText.Failure(error); notify = true; } }
+            lock (_gate) { if (Current()) { _error = AdminUserResourceText.Failure(error); _errorChannel = channel; notify = true; } }
             if (notify) Changed?.Invoke();
             return default;
         }
@@ -61,7 +69,7 @@ public sealed class AdminUserResourceController : IDisposable
         {
             owner = Owner; generation = _generation;
             if (!IsCurrent(owner) || _needsReview || Interlocked.CompareExchange(ref _writing, 1, 0) != 0) return false;
-            _error = null;
+            _error = _errorChannel = null;
         }
         Changed?.Invoke();
         try
@@ -74,8 +82,8 @@ public sealed class AdminUserResourceController : IDisposable
             lock (_gate)
                 if (IsCurrent(owner) && generation == _generation)
                 {
-                    _needsReview = error is AdminResourceOutcomeUnknownException || error is ApiException { StatusCode: 412 or 428 };
-                    _error = AdminUserResourceText.Failure(error);
+                    _needsReview = AdminUserResourceText.RequiresReload(error);
+                    _error = AdminUserResourceText.Failure(error); _errorChannel = null;
                 }
             return false;
         }
@@ -86,14 +94,14 @@ public sealed class AdminUserResourceController : IDisposable
         if (Busy) throw new InvalidOperationException("Wait for the current action before reloading.");
         Open(); Changed?.Invoke();
     }
-    public void Report(Exception error) { lock (_gate) _error = AdminUserResourceText.Failure(error); Changed?.Invoke(); }
+    public void Report(Exception error) { lock (_gate) { _error = AdminUserResourceText.Failure(error); _errorChannel = null; } Changed?.Invoke(); }
     private void CancelReads() { foreach (var read in _reads.Values) read.Dispose(); _reads.Clear(); }
     private void OnRetired()
     {
-        lock (_gate) { _generation++; CancelReads(); _error = null; _needsReview = false; }
+        lock (_gate) { _generation++; CancelReads(); _error = _errorChannel = null; _needsReview = false; }
         Retired?.Invoke(); Changed?.Invoke();
     }
-    public void Suspend() { lock (_gate) { _generation++; CancelReads(); _lifetime.Retire(); _error = null; _needsReview = false; } }
+    public void Suspend() { lock (_gate) { _generation++; CancelReads(); _lifetime.Retire(); _error = _errorChannel = null; _needsReview = false; } }
     public void Dispose()
     {
         lock (_gate) { if (_disposed) return; _disposed = true; }

@@ -1,343 +1,310 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
-using SiloPlayer.Controls;
 using static SiloPlayer.Views.Admin.AdminUserResourceUi;
 
 namespace SiloPlayer.Views.Admin;
 
-/// <summary>Official fleet filters and per-account/device/profile descendants; canonical settings only.</summary>
+/// <summary>Official AdminDevices: fleet pulse, filter rail, grouped device list and the per-device detail with profile tabs. Canonical settings only.</summary>
 public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
 {
     private readonly AdminUserResourcesApi _api;
     private readonly AdminUserResourceHost _host;
     private AdminRouteRequest _route = new(AdminRoute.Devices);
-    private IReadOnlyList<JsonElement> _fleet = [], _values = [];
-    private IReadOnlySet<string> _anomalies = new HashSet<string>();
-    private JsonElement _device;
-    private string _search = "", _saved = "", _groupBy = "user", _profile = "";
-    private bool _overridesOnly, _showAll = true;
-    private int _revision;
-    private long _detailRevision;
+    private IReadOnlyList<JsonElement> _fleet = [];
+    private IReadOnlyDictionary<string, AdminDeviceAnomaly> _anomalies = new Dictionary<string, AdminDeviceAnomaly>();
+    private string _search = "", _saved = "", _groupBy = "user";
+    private bool _overridesOnly;
     private int _visibleDevices = 100;
     private readonly HashSet<string> _platforms = [], _ranges = [], _recency = [];
-    private readonly StackPanel _rail = Stack(8), _list = Stack(8), _detail = Stack(16);
+    private readonly Dictionary<string, bool> _groupOpen = new(StringComparer.Ordinal);
+    private readonly StackPanel _rail = Stack(14), _list = Stack(0), _detail = Stack(0);
+    private readonly Border _railPanel, _listPanel, _detailPanel;
+    private readonly ScrollViewer _listScroll;
+    private StackPanel? _pulse;
+    private TextBox? _searchBox;
     private Grid? _panes;
-    private SubtitleAppearanceDialog? _subtitleDialog;
     public AdminUserResourceController Session => _host.Session;
+
     public AdminDevicesPage()
     {
         InitializeComponent(); NavigationCacheMode = NavigationCacheMode.Disabled; Id(this, "AdminDevicesPage");
         _api = App.Services.GetRequiredService<AdminUserResourcesApi>();
         _host = new(this, new(App.Services.GetRequiredService<AdminMonitorAuthority>()), LoadAsync, Clear);
+        _railPanel = LogsNativeUi.Panel(_rail, 12, 12); _listScroll = new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        _listPanel = LogsNativeUi.Panel(_listScroll, 12, 4); _detailPanel = LogsNativeUi.Panel(_detail, 12, 0);
         SizeChanged += (_, _) => LayoutPanes();
     }
     protected override void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); if (e.Parameter is AdminRouteRequest route) _route = route; _profile = _route.Get("profile") ?? ""; }
     public void SuspendAdminPage() => _host.Suspend();
-    private void Clear() { _detailRevision++; _subtitleDialog?.Hide(); _subtitleDialog = null; _fleet = _values = []; _anomalies = new HashSet<string>(); _device = default; _search = ""; _list.Children.Clear(); _detail.Children.Clear(); _rail.Children.Clear(); }
     private static string D(string key, params (string Name, object? Value)[] args) => T("web.admin.devices." + key, args);
+
+    private void Clear()
+    {
+        _detailRevision++; _subtitleDialog?.Hide(); _subtitleDialog = null; _fleet = []; _values = []; _anomalies = new Dictionary<string, AdminDeviceAnomaly>(); _device = default;
+        _search = _saved = ""; _platforms.Clear(); _ranges.Clear(); _recency.Clear(); _groupOpen.Clear(); _overridesOnly = false; _visibleDevices = 100;
+        _list.Children.Clear(); _detail.Children.Clear(); _rail.Children.Clear(); _panes = null; _pulse = null;
+    }
+
+    private void SetContent(params UIElement[] elements) { _host.Content.Children.Clear(); foreach (var element in elements) _host.Content.Children.Add(element); }
+    private void ShowFailure(string text) { SetContent(Text(text), Button(T("common.retry"), "DeviceRetry", () => _ = _host.ReloadAsync())); _host.RaiseChanged(); }
+
     private async Task LoadAsync()
     {
         var pageOwner = Session.Owner;
-        _host.Content.Children.Clear(); _host.Content.Children.Add(Text("Loading devices…"));
+        SetContent(Text("Loading devices…"));
         var capabilities = await Session.ReadAsync("capabilities", owner => _api.DeviceCapabilitiesAsync(owner));
         if (!Session.IsCurrent(pageOwner)) return;
-        if (!capabilities.Flag("available")) { _host.Content.Children.Clear(); _host.Content.Children.Add(Text("Device administration is unavailable on this server.")); return; }
-        var fleet = await Session.ReadAsync("fleet", owner => _api.ConfigurationAsync(owner, cursor => _api.ListDevicesAsync(owner, cursor)));
-        if (fleet == null || !Session.IsCurrent(pageOwner)) return;
+        if (capabilities.ValueKind != JsonValueKind.Object) { ShowFailure("Device administration could not be read."); return; }
+        if (!capabilities.Flag("available")) { SetContent(LogsNativeUi.Header(D("title"), D("subtitle", ("shortcut", "Ctrl+K"))), Text("Device administration is unavailable on this server.")); return; }
+        var fleet = await Session.ReadAsync("fleet", owner => _api.ListAllDevicesAsync(owner));
+        if (!Session.IsCurrent(pageOwner)) return;
+        if (fleet == null) { ShowFailure("Devices could not be loaded."); return; }
         _fleet = fleet; _anomalies = AdminDevicePresentation.Anomalies(fleet, DateTimeOffset.UtcNow); RenderFleet();
-        if (_route.Segments.Count == 2) await LoadDetailAsync();
+        if (_route.Segments.Count == 2) await LoadDetailAsync(); else ShowEmptyDetail();
     }
+
+    private void ShowEmptyDetail()
+    {
+        _detail.Children.Clear(); var empty = Stack(6); empty.HorizontalAlignment = HorizontalAlignment.Center; empty.Margin = new(24, 64, 24, 64);
+        var title = Text(D("detail.emptyTitle"), 16); title.HorizontalAlignment = HorizontalAlignment.Center; var body = Text(D("detail.emptyBody"), 12, true); body.TextAlignment = TextAlignment.Center; body.MaxWidth = 320;
+        empty.Children.Add(title); empty.Children.Add(body); _detail.Children.Add(empty);
+    }
+
+    // ---------- scaffold ----------
     private void RenderFleet()
     {
-        _host.Content.Children.Clear();
-        var search = Input(D("search.placeholder"), "DeviceSearch", _search);
-        search.TextChanged += (_, _) => { _search = search.Text; RenderList(); };
-        _host.Content.Children.Add(LogsNativeUi.Header(D("title"), D("subtitle", ("shortcut", "Ctrl+K")), search));
-        var pulse = Text($"{_fleet.Select(x => x.Text("user_id")).Distinct().Count()} users · {_fleet.Count} devices · {_fleet.Sum(x => x.Number("profile_count"))} profiles · {_fleet.Sum(x => x.Number("override_count"))} overrides · {_anomalies.Count} anomalies", 12, true);
-        _host.Content.Children.Add(pulse);
-        _host.Content.Children.Add(Select(D("groupBy.label"), [("user", D("groupBy.user")), ("platform", D("groupBy.platform")), ("activity", D("groupBy.activity"))], _groupBy, value => { _groupBy = value; RenderList(); }));
-        _host.Content.Children.Add(Toggle(D("scope.withOverrides"), _overridesOnly, value => { _overridesOnly = value; _showAll = !value; RenderFilters(); RenderList(); if (_device.ValueKind == JsonValueKind.Object) RenderDetail(); }));
-        if (_rail.Parent is Panel rp) rp.Children.Remove(_rail); if (_list.Parent is Panel lp) lp.Children.Remove(_list); if (_detail.Parent is Panel dp) dp.Children.Remove(_detail);
-        _panes = new Grid { ColumnSpacing = 16, RowSpacing = 16 }; _panes.Children.Add(_rail); _panes.Children.Add(_list); _panes.Children.Add(_detail);
-        _host.Content.Children.Add(_panes); RenderFilters(); RenderList(); LayoutPanes();
-        if (_route.Segments.Count == 0) { _detail.Children.Clear(); _detail.Children.Add(Panel(Section(D("detail.emptyTitle"), Text(D("detail.emptyBody"), 12, true)))); }
+        var search = Input(D("search.placeholder"), "DeviceSearch", _search); search.PlaceholderText = D("search.placeholder"); search.Header = null; search.MinWidth = 280;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(search, D("search.placeholder"));
+        _searchBox = search; search.TextChanged += (_, _) => { _search = search.Text; _visibleDevices = 100; RenderList(); RenderFilters(); };
+        var elements = new List<UIElement> { LogsNativeUi.Header(D("title"), D("subtitle", ("shortcut", "Ctrl+K")), search) };
+        _pulse = Inline(16); _pulse.HorizontalAlignment = HorizontalAlignment.Left; elements.Add(_pulse);
+        var scope = Stack(0); scope.HorizontalAlignment = HorizontalAlignment.Left; scope.Tag = "scope"; elements.Add(scope);
+        DetachFromParent(_railPanel); DetachFromParent(_listPanel); DetachFromParent(_detailPanel);
+        _panes = new Grid { ColumnSpacing = 16, RowSpacing = 16 }; _panes.Children.Add(_railPanel); _panes.Children.Add(_listPanel); _panes.Children.Add(_detailPanel);
+        elements.Add(_panes); SetContent([.. elements]);
+        _scopeHost = scope; RenderPulse(); RenderFilters(); RenderList(); LayoutPanes();
     }
+    private StackPanel? _scopeHost;
+    private static void DetachFromParent(FrameworkElement element) { if (element.Parent is Panel panel) panel.Children.Remove(element); }
+
     private void LayoutPanes()
     {
         if (_panes == null) return; _panes.ColumnDefinitions.Clear(); _panes.RowDefinitions.Clear();
-        var wide = ActualWidth >= 1050;
+        var wide = ActualWidth >= 1050; _listScroll.MaxHeight = wide ? 640 : double.PositiveInfinity; _railPanel.VerticalAlignment = VerticalAlignment.Top; _railPanel.Visibility = Visibility.Visible;
         if (wide)
         {
-            _panes.ColumnDefinitions.Add(new() { Width = new(200) }); _panes.ColumnDefinitions.Add(new() { Width = new(300) }); _panes.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-            Grid.SetRow(_rail, 0); Grid.SetRow(_list, 0); Grid.SetRow(_detail, 0); Grid.SetColumn(_rail, 0); Grid.SetColumn(_list, 1); Grid.SetColumn(_detail, 2);
+            _panes.ColumnDefinitions.Add(new() { Width = new(ActualWidth >= 1440 ? 220 : 200) }); _panes.ColumnDefinitions.Add(new() { Width = new(ActualWidth >= 1440 ? 360 : 320) }); _panes.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 320 });
+            Grid.SetRow(_railPanel, 0); Grid.SetRow(_listPanel, 0); Grid.SetRow(_detailPanel, 0); Grid.SetColumn(_railPanel, 0); Grid.SetColumn(_listPanel, 1); Grid.SetColumn(_detailPanel, 2);
         }
         else
         {
-            for (var i = 0; i < 3; i++) _panes.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            Grid.SetColumn(_rail, 0); Grid.SetColumn(_list, 0); Grid.SetColumn(_detail, 0); Grid.SetRow(_rail, 0); Grid.SetRow(_list, 1); Grid.SetRow(_detail, 2);
+            _panes.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); for (var i = 0; i < 3; i++) _panes.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            Grid.SetColumn(_railPanel, 0); Grid.SetColumn(_listPanel, 0); Grid.SetColumn(_detailPanel, 0); Grid.SetRow(_railPanel, 0); Grid.SetRow(_listPanel, 1); Grid.SetRow(_detailPanel, 2);
         }
     }
+
+    private IEnumerable<JsonElement> Scoped => _overridesOnly ? _fleet.Where(x => x.Number("override_count") > 0) : _fleet;
+    private bool HasAnyFilter => _saved.Length > 0 || _overridesOnly || _platforms.Count > 0 || _ranges.Count > 0 || _recency.Count > 0 || _search.Length > 0;
+    private void ClearFilters()
+    {
+        _saved = ""; _platforms.Clear(); _ranges.Clear(); _recency.Clear(); _overridesOnly = false; _search = ""; _visibleDevices = 100; _groupOpen.Clear();
+        if (_searchBox != null) _searchBox.Text = "";
+        RenderPulse(); RenderFilters(); RenderList();
+    }
+
+    // ---------- fleet pulse + scope ----------
+    private void RenderPulse()
+    {
+        if (_pulse == null) return; _pulse.Children.Clear();
+        if (_fleet.Count > 0)
+        {
+            var users = _fleet.Select(x => x.Text("user_id")).Distinct().Count(); var profiles = _fleet.Sum(AdminDevicePresentation.ProfileCount); var overrides = _fleet.Sum(x => x.Number("override_count"));
+            void Stat(string key, int value, bool destructive = false)
+            {
+                var row = Inline(6); var number = Text(value.ToString(CultureInfo.CurrentCulture), 14); if (destructive) number.Foreground = Brush("ErrorBrush");
+                row.Children.Add(number); row.Children.Add(Text(D("stats." + key, ("count", value)), 11, true)); _pulse.Children.Add(row);
+            }
+            Stat("users", users); Stat("devices", _fleet.Count); Stat("profiles", profiles); Stat("overrides", overrides); if (_anomalies.Count > 0) Stat("anomalies", _anomalies.Count, true);
+            var density = Inline(6); density.Children.Add(Text(D("stats.density"), 10, true)); density.Children.Add(Histogram()); _pulse.Children.Add(density);
+            _pulse.Children.Add(Text(D("groupBy.label"), 10, true));
+            _pulse.Children.Add(Segmented(D("groupBy.label"), [("user", D("groupBy.user")), ("platform", D("groupBy.platform")), ("activity", D("groupBy.activity"))], _groupBy, value => { _groupBy = value; _groupOpen.Clear(); RenderList(); }, "DeviceGroupBy"));
+        }
+        if (_scopeHost != null)
+        {
+            _scopeHost.Children.Clear();
+            if (_fleet.Count > 0)
+                _scopeHost.Children.Add(Segmented(D("scope.allDevices"), [("all", D("scope.allDevices") + "  " + _fleet.Count), ("overrides", D("scope.withOverrides") + "  " + _fleet.Count(x => x.Number("override_count") > 0))],
+                    _overridesOnly ? "overrides" : "all", value => { _overridesOnly = value == "overrides"; _visibleDevices = 100; RenderFilters(); RenderList(); if (_device.ValueKind == JsonValueKind.Object) RenderDetailBody(); }, "DeviceScope"));
+        }
+    }
+    private FrameworkElement Histogram()
+    {
+        var counts = _fleet.Select(x => x.Number("override_count")).OrderByDescending(x => x).ToArray(); var max = Math.Max(counts.FirstOrDefault(), 1); const int slots = 28;
+        var values = new int[slots];
+        if (counts.Length <= slots) for (var i = 0; i < counts.Length; i++) values[i] = counts[i];
+        else { var step = counts.Length / (double)slots; for (var i = 0; i < slots; i++) values[i] = counts[(int)Math.Floor(i * step)]; }
+        var bars = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Height = 24, VerticalAlignment = VerticalAlignment.Center };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAccessibilityView(bars, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+        foreach (var value in values)
+        {
+            var height = Math.Max(value / (double)max * 24, value > 0 ? 4 : 2);
+            bars.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Width = 3, Height = height, VerticalAlignment = VerticalAlignment.Bottom, RadiusX = 1, RadiusY = 1,
+                Fill = Brush(value == 0 ? "BorderBrush" : value >= max * 0.6 ? "PrimaryTextBrush" : "SecondaryTextBrush") });
+        }
+        return bars;
+    }
+
+    // ---------- filter rail ----------
     private void RenderFilters()
     {
-        _rail.Children.Clear();
-        _rail.Children.Add(Select(D("filters.savedViews"), [("", D("scope.allDevices")), ("anomalies", D("filters.anomalies")), ("recent", D("filters.recent")), ("hdr", D("filters.hdr")), ("subtitle", D("filters.heavyCustomizers")), ("dormant", D("filters.dormant"))], _saved, value => { _saved = value; RenderList(); }));
-        AddFacet("Platform", _platforms, [("tv", "TV"), ("mobile", "Mobile"), ("tablet", "Tablet"), ("desktop", "Desktop"), ("unknown", "Unknown")], x => AdminDevicePresentation.Platform(x.Text("device_platform")));
-        AddFacet("Overrides", _ranges, [("none", "None"), ("1-2", "1–2"), ("3-5", "3–5"), ("6+", "6+")], AdminDevicePresentation.OverrideRange);
-        AddFacet("Last updated", _recency, [("<24h", D("filters.recency24h")), ("<7d", D("filters.recency7d")), ("<30d", D("filters.recency30d")), (">30d", D("filters.recencyOlder"))], x => AdminDevicePresentation.Recency(x, DateTimeOffset.UtcNow));
-        _rail.Children.Add(Button(D("list.clearAll"), "DeviceClearFilters", () => { _search = _saved = ""; _platforms.Clear(); _ranges.Clear(); _recency.Clear(); _overridesOnly = false; RenderFleet(); }));
-    }
-    private void AddFacet(string title, HashSet<string> values, (string Value, string Label)[] options, Func<JsonElement, string> bucket)
-    {
-        _rail.Children.Add(Text(title, 12, true));
-        foreach (var option in options)
+        _rail.Children.Clear(); var now = DateTimeOffset.UtcNow; var scoped = Scoped.ToArray(); var anomalyKeys = _anomalies.Keys.ToHashSet(StringComparer.Ordinal);
+        var head = new Grid(); head.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        head.Children.Add(Text(D("filters.savedViews"), 11, true));
+        if (HasAnyFilter) { var clear = Link(D("filters.clear"), "DeviceFiltersClear", ClearFilters); Grid.SetColumn(clear, 1); head.Children.Add(clear); }
+        _rail.Children.Add(head);
+        var views = new (string Value, string Label, Func<JsonElement, bool> Match)[]
         {
-            var count = _fleet.Count(x => (!_overridesOnly || x.Number("override_count") > 0) && bucket(x) == option.Value);
-            _rail.Children.Add(Toggle(option.Label + " · " + count, values.Contains(option.Value), value => { if (value) values.Add(option.Value); else values.Remove(option.Value); RenderList(); }));
-        }
+            ("anomalies", D("filters.anomalies"), x => AdminDevicePresentation.SavedView(x, "anomalies", anomalyKeys, now)), ("recent", D("filters.recent"), x => AdminDevicePresentation.SavedView(x, "recent", anomalyKeys, now)),
+            ("hdr", D("filters.hdr"), x => AdminDevicePresentation.SavedView(x, "hdr", anomalyKeys, now)), ("subtitle", D("filters.heavyCustomizers"), x => AdminDevicePresentation.SavedView(x, "subtitle", anomalyKeys, now)),
+            ("dormant", D("filters.dormant"), x => AdminDevicePresentation.SavedView(x, "dormant", anomalyKeys, now)),
+        };
+        foreach (var (value, label, match) in views) _rail.Children.Add(FacetRow(label, scoped.Count(match), _saved == value, true, on => { _saved = on ? value : ""; _visibleDevices = 100; RenderFilters(); RenderList(); }, "DeviceView_" + value));
+        var available = AdminDevicePresentation.PlatformOrder.Where(kind => scoped.Any(x => AdminDevicePresentation.Platform(x.Text("device_platform")) == kind)).ToArray();
+        if (available.Length > 1) AddFacetGroup(D("filters.platform"), _platforms, available.Select(kind => (kind, AdminDevicePresentation.PlatformKindLabel(kind))).ToArray(), x => AdminDevicePresentation.Platform(x.Text("device_platform")), scoped, "Platform");
+        AddFacetGroup(D("filters.overrideCount"), _ranges, [("none", D("filters.overrideNone")), ("1-2", "1-2"), ("3-5", "3-5"), ("6+", "6+")], AdminDevicePresentation.OverrideRange, scoped, "Overrides");
+        AddFacetGroup(D("filters.lastSeen"), _recency, [("<24h", D("filters.recency24h")), ("<7d", D("filters.recency7d")), ("<30d", D("filters.recency30d")), (">30d", D("filters.recencyOlder"))], x => AdminDevicePresentation.Recency(x, now), scoped, "LastSeen");
     }
+    private void AddFacetGroup(string title, HashSet<string> chosen, (string Value, string Label)[] options, Func<JsonElement, string> bucket, JsonElement[] scoped, string id)
+    {
+        _rail.Children.Add(Text(title, 11, true));
+        foreach (var (value, label) in options)
+            _rail.Children.Add(FacetRow(label, scoped.Count(x => bucket(x) == value), chosen.Contains(value), false, on => { if (on) chosen.Add(value); else chosen.Remove(value); _visibleDevices = 100; RenderFilters(); RenderList(); }, "Facet_" + id + "_" + value));
+    }
+    /// <summary>A saved view (a pressed button) or a facet (a checkbox) with its count, in the official rail's row shape.</summary>
+    private static FrameworkElement FacetRow(string label, int count, bool active, bool asButton, Action<bool> changed, string id)
+    {
+        var content = new Grid(); content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var name = Text(label, 13); var total = Text(count.ToString(CultureInfo.CurrentCulture), 11, true); Grid.SetColumn(total, 1); content.Children.Add(name); content.Children.Add(total);
+        if (asButton)
+        {
+            var button = Id(new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(8, 6, 8, 6), BorderThickness = new(0) }, id);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label + ", " + count); button.Click += (_, _) => changed(button.IsChecked == true); return button;
+        }
+        var box = Id(new CheckBox { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinHeight = 32 }, id);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(box, label + ", " + count);
+        box.Checked += (_, _) => changed(true); box.Unchecked += (_, _) => changed(false); return box;
+    }
+
+    // ---------- list ----------
+    private IReadOnlyList<JsonElement> Filtered()
+    {
+        var now = DateTimeOffset.UtcNow; var anomalyKeys = _anomalies.Keys.ToHashSet(StringComparer.Ordinal); var query = _search.Trim();
+        return Scoped.Where(row => (_saved.Length == 0 || AdminDevicePresentation.SavedView(row, _saved, anomalyKeys, now)) &&
+            (_platforms.Count == 0 || _platforms.Contains(AdminDevicePresentation.Platform(row.Text("device_platform")))) && (_ranges.Count == 0 || _ranges.Contains(AdminDevicePresentation.OverrideRange(row))) &&
+            (_recency.Count == 0 || _recency.Contains(AdminDevicePresentation.Recency(row, now))) && (query.Length == 0 ||
+            string.Join(" ", row.Text("device_name"), row.Text("device_id"), row.Text("username"), row.Text("email"), row.Text("device_platform"), string.Join(" ", row.Rows("profiles").Select(x => x.Text("profile_name") + " " + x.Text("profile_id"))))
+                .Contains(query, StringComparison.CurrentCultureIgnoreCase))).ToArray();
+    }
+    private sealed record DeviceGroup(string Key, string Label, string? UserId, IReadOnlyList<JsonElement> Devices);
+    private IReadOnlyList<DeviceGroup> Groups(IReadOnlyList<JsonElement> rows)
+    {
+        var now = DateTimeOffset.UtcNow;
+        IEnumerable<IGrouping<string, JsonElement>> grouped = _groupBy switch
+        {
+            "platform" => rows.GroupBy(row => "p:" + AdminDevicePresentation.Platform(row.Text("device_platform"))), "activity" => rows.GroupBy(row => "a:" + AdminDevicePresentation.Recency(row, now)),
+            _ => rows.GroupBy(row => "u:" + row.Text("user_id")),
+        };
+        var result = grouped.Select(group =>
+        {
+            var first = group.First(); var key = group.Key; string label; string? user = null;
+            if (_groupBy == "platform") label = AdminDevicePresentation.PlatformKindLabel(key[2..]);
+            else if (_groupBy == "activity") label = D(key[2..] switch { "<24h" => "group.last24h", "<7d" => "group.thisWeek", "<30d" => "group.thisMonth", _ => "group.older" });
+            else { user = first.Text("user_id"); label = first.Text("username") is { Length: > 0 } name ? name : first.Text("email") is { Length: > 0 } email ? email : D("group.userFallback", ("id", user)); }
+            return new DeviceGroup(key, label, user, group.ToArray());
+        });
+        return _groupBy == "user" ? result.OrderBy(x => x.Label, StringComparer.CurrentCultureIgnoreCase).ToArray()
+            : result.OrderBy(x => _groupBy == "platform" ? AdminDevicePresentation.PlatformOrder.ToList().IndexOf(x.Key[2..]) : Array.IndexOf(new[] { "<24h", "<7d", "<30d", ">30d" }, x.Key[2..])).ToArray();
+    }
+    private string? ActiveUser => _route.Segment(0); private string? ActiveDevice => _route.Segment(1);
+
     private void RenderList()
     {
-        _list.Children.Clear(); var now = DateTimeOffset.UtcNow;
-        var rows = _fleet.Where(row => (!_overridesOnly || row.Number("override_count") > 0) && (_saved == "anomalies" ? _anomalies.Contains(AdminDevicePresentation.DeviceKey(row)) : AdminDevicePresentation.SavedView(row, _saved, _fleet, now)) &&
-            (_platforms.Count == 0 || _platforms.Contains(AdminDevicePresentation.Platform(row.Text("device_platform")))) && (_ranges.Count == 0 || _ranges.Contains(AdminDevicePresentation.OverrideRange(row))) &&
-            (_recency.Count == 0 || _recency.Contains(AdminDevicePresentation.Recency(row, now))) &&
-            string.Join(" ", row.Text("device_name"), row.Text("device_id"), row.Text("username"), row.Text("email"), row.Text("device_platform"), string.Join(" ", row.Rows("profiles").Select(x => x.Text("profile_name") + " " + x.Text("profile_id")))).Contains(_search.Trim(), StringComparison.CurrentCultureIgnoreCase)).ToArray();
-        _list.Children.Add(Text(D("list.countOfTotal", ("count", rows.Length), ("count_text", rows.Length), ("total", _fleet.Count)), 12, true));
-        if (rows.Length == 0) { _list.Children.Add(Text(D(_fleet.Count == 0 ? "empty.noDevicesTitle" : "empty.noMatchTitle"))); _list.Children.Add(Text(D(_fleet.Count == 0 ? "empty.noDevicesBody" : "empty.noMatchBody"), 12, true)); return; }
-        foreach (var group in rows.Take(_visibleDevices).GroupBy(row => _groupBy == "platform" ? AdminDevicePresentation.Platform(row.Text("device_platform")) : _groupBy == "activity" ? AdminDevicePresentation.Recency(row, now) : row.Text("username")))
+        _list.Children.Clear(); var rows = Filtered();
+        var head = new Grid { Margin = new(12, 8, 12, 8) }; head.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        head.Children.Add(Text(rows.Count != _fleet.Count ? D("list.countOfTotal", ("count", rows.Count), ("count_text", rows.Count), ("total", _fleet.Count)) : D("list.count", ("count", rows.Count), ("count_text", rows.Count)), 11, true));
+        if (HasAnyFilter) { var clear = Link(D("list.clearAll"), "DeviceListClear", ClearFilters); Grid.SetColumn(clear, 1); head.Children.Add(clear); }
+        _list.Children.Add(head);
+        if (rows.Count == 0)
         {
-            _list.Children.Add(Text(group.Key, 14));
-            foreach (var row in group)
+            var empty = Stack(8); empty.Margin = new(16, 40, 16, 40); empty.HorizontalAlignment = HorizontalAlignment.Center;
+            var title = Text(D(_fleet.Count > 0 ? "empty.noMatchTitle" : "empty.noDevicesTitle"), 14); title.HorizontalAlignment = HorizontalAlignment.Center;
+            var body = Text(D(_fleet.Count > 0 ? "empty.noMatchBody" : "empty.noDevicesBody"), 12, true); body.TextAlignment = TextAlignment.Center; body.MaxWidth = 260;
+            empty.Children.Add(title); empty.Children.Add(body); if (_fleet.Count > 0) empty.Children.Add(Button(D("empty.clearFilters"), "DeviceEmptyClear", ClearFilters));
+            _list.Children.Add(empty); return;
+        }
+        var groups = Groups(rows); var forceOpen = HasAnyFilter || groups.Count == 1; var budget = _visibleDevices;
+        foreach (var group in groups)
+        {
+            var containsActive = group.Devices.Any(x => x.Text("user_id") == ActiveUser && x.Text("device_id") == ActiveDevice);
+            var open = _groupOpen.TryGetValue(group.Key, out var chosen) ? chosen : forceOpen || containsActive;
+            var anomalyCount = group.Devices.Count(x => _anomalies.ContainsKey(AdminDevicePresentation.DeviceKey(x)));
+            var header = new Grid { Margin = new(8, 6, 8, 2) }; header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            var toggle = Id(new Button { Content = (open ? "▾  " : "▸  ") + group.Label, HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Padding = new(6, 4, 6, 4) }, "DeviceGroup_" + group.Key);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, group.Label); toggle.Click += (_, _) => { _groupOpen[group.Key] = !open; RenderList(); };
+            var meta = Inline(8);
+            if (group.UserId != null && AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(group.UserId)))
             {
-                var user = row.Text("user_id"); var device = row.Text("device_id");
-                var label = row.Text("device_name", D("unnamedDevice")) + " · " + row.Text("device_platform") + "\n" + row.Number("override_count") + " overrides · " + row.Number("profile_count") + " profiles";
-                var button = Button(label, "Device_" + user + "_" + device, () => AdminShellPage.Open(AdminRouteRequest.Device(user, device)));
-                button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Left; _list.Children.Add(button);
+                var userId = group.UserId; var open_user = Link("↗", "DeviceGroupUser_" + userId, () => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId)));
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(open_user, D("group.open", ("name", group.Label))); meta.Children.Add(open_user);
+            }
+            if (anomalyCount > 0) meta.Children.Add(Chip("⚠ " + anomalyCount, "ErrorBrush"));
+            meta.Children.Add(Text(D("group.meta", ("devices", group.Devices.Count), ("profiles", group.Devices.Sum(AdminDevicePresentation.ProfileCount)), ("overrides", group.Devices.Sum(x => x.Number("override_count")))), 11, true));
+            Grid.SetColumn(meta, 1); header.Children.Add(toggle); header.Children.Add(meta); _list.Children.Add(header);
+            if (!open) continue;
+            foreach (var device in group.Devices)
+            {
+                if (budget-- <= 0) break;
+                _list.Children.Add(DeviceRow(device));
             }
         }
-        if (rows.Length > _visibleDevices) _list.Children.Add(Button("Show more devices", "DeviceMoreRows", () => { _visibleDevices += 100; RenderList(); }));
+        if (budget < 0) _list.Children.Add(Button("Show more devices", "DeviceMoreRows", () => { _visibleDevices += 100; RenderList(); }));
     }
-    private async Task LoadDetailAsync()
+
+    private static string PlatformGlyph(string kind) => kind switch { "tv" => "", "mobile" => "", "tablet" => "", "desktop" => "", _ => "" };
+    private FrameworkElement DeviceRow(JsonElement device)
     {
-        var pageOwner = Session.Owner;
-        var user = _route.Segment(0)!; var device = _route.Segment(1)!;
-        _detail.Children.Clear(); _detail.Children.Add(Text("Loading device…"));
-        var result = await Session.ReadAsync("device", owner => _api.GetDeviceAsync(owner, user, device));
-        if (!Session.IsCurrent(pageOwner)) return;
-        if (result.ValueKind != JsonValueKind.Object) { _detail.Children.Clear(); _detail.Children.Add(Text(D("detail.notFoundTitle"))); return; }
-        _device = result;
-        var values = await Session.ReadAsync("values", owner => _api.GetDeviceValuesAsync(owner, user));
-        if (!Session.IsCurrent(pageOwner)) return;
-        if (values == null) { _detail.Children.Clear(); _detail.Children.Add(Text(D("detail.loadErrorTitle"))); _detail.Children.Add(Text(D("detail.loadErrorBody"))); return; }
-        _values = values.Items; _revision = values.Revision; RenderDetail();
+        var user = device.Text("user_id"); var id = device.Text("device_id"); var active = user == ActiveUser && id == ActiveDevice; var kind = AdminDevicePresentation.Platform(device.Text("device_platform"));
+        var grid = new Grid { ColumnSpacing = 10 }; grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var tile = new Border { Width = 36, Height = 36, CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Child = new FontIcon { Glyph = PlatformGlyph(kind), FontSize = 16 } };
+        var name = Inline(6); name.Children.Add(Text(device.Text("device_name") is { Length: > 0 } deviceName ? deviceName : D("unnamedDevice"), 13));
+        if (_anomalies.ContainsKey(AdminDevicePresentation.DeviceKey(device))) { var dot = new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = Brush("ErrorBrush") }; ToolTipService.SetToolTip(dot, D("row.anomalyTitle")); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dot, D("row.anomalyAriaLabel")); name.Children.Add(dot); }
+        var text = Stack(0); text.Children.Add(name); text.Children.Add(Text(AdminDevicePresentation.PlatformLabel(device.Text("device_platform")) + " · " + RelativeUpdated(device.Text("last_updated")), 11, true));
+        var count = device.Number("override_count"); var gauge = Inline(6); var filled = count == 0 ? 0 : Math.Min(count, 5);
+        var bars = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        for (var i = 0; i < 5; i++) bars.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Width = 3, Height = 12, Fill = Brush(i < filled ? "PrimaryTextBrush" : "BorderBrush") });
+        gauge.Children.Add(bars); gauge.Children.Add(Text(count.ToString(CultureInfo.CurrentCulture), 11, !active)); Grid.SetColumn(text, 1); Grid.SetColumn(gauge, 2);
+        grid.Children.Add(tile); grid.Children.Add(text); grid.Children.Add(gauge);
+        var button = Id(new Button { Content = grid, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new(8, 6, 8, 6), BorderThickness = new(0),
+            Background = active ? Brush("SurfaceHoverBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), CornerRadius = new(6), Margin = new(6, 0, 6, 0) }, "Device_" + user + "_" + id);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, (device.Text("device_name") is { Length: > 0 } label ? label : D("unnamedDevice")) + ", " + AdminDevicePresentation.PlatformLabel(device.Text("device_platform")) + ", " + count);
+        button.Click += (_, _) => OpenDevice(user, id); return button;
     }
-    private IReadOnlyList<JsonElement> Overrides => _values.Where(x => x.Text("scope") == "profile_device" && x.Text("device_id") == _device.Text("device_id")).ToArray();
-    private void RenderDetail()
+    private void OpenDevice(string user, string device)
     {
-        _detailRevision++;
-        _detail.Children.Clear(); if (_device.ValueKind != JsonValueKind.Object) return;
-        _detail.Children.Add(Text(_device.Text("device_name", D("unnamedDevice")), 20));
-        _detail.Children.Add(Text(_device.Text("device_id") + " · " + _device.Text("device_platform") + " · " + _device.Text("username"), 12, true));
-        var accountLink = Button(D("detail.openUser"), "DeviceOpenUser", () => AdminShellPage.Open(AdminRouteRequest.UserDetail(_device.Text("user_id"))));
-        accountLink.IsEnabled = AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(_device.Text("user_id"))); _detail.Children.Add(accountLink);
-        RenderConnections();
-        var profiles = _device.Rows("profiles").Select(x => (Id: x.Text("profile_id", "unknown-profile"), Name: x.Text("profile_name", x.Text("profile_id"))))
-            .Concat(Overrides.Select(x => (Id: x.Text("profile_id", "unknown-profile"), Name: x.Text("profile_name", x.Text("profile_id")))))
-            .DistinctBy(x => x.Id).ToArray();
-        _detail.Children.Add(Text($"{Overrides.Count} overrides · {profiles.Length} profiles", 12, true));
-        if (_anomalies.Contains(AdminDevicePresentation.DeviceKey(_device))) _detail.Children.Add(Text(D("detail.anomalyBadge") + " · " + _device.Number("override_count") + " overrides · " + (AdminDevicePresentation.Age(_device, DateTimeOffset.UtcNow)?.ToString("N0") ?? "Unknown") + " days since update", 12));
-        if (profiles.Length == 0) { _detail.Children.Add(Text(D("detail.noProfilesTitle"))); _detail.Children.Add(Text(D("detail.noProfilesBody"), 12, true)); return; }
-        if (!profiles.Any(x => x.Id == _profile)) _profile = profiles[0].Id;
-        _detail.Children.Add(Select("Profile", profiles.Select(x => (x.Id, x.Name)), _profile, value => { _profile = value; _route = _route.WithQuery("profile", value); AdminShellPage.TryReplace(this, _route); RenderDetail(); }));
-        _detail.Children.Add(Toggle(D("settingsScope.allSettings"), _showAll || Overrides.Count == 0, value => { _showAll = value; RenderDetail(); }, Overrides.Count != 0));
-        var currentProfile = _profile;
-        var currentOverrides = Overrides.Where(x => x.Text("profile_id", "unknown-profile") == currentProfile).ToArray();
-        var reset = DetailButton(D("resetProfile.confirm"), "DeviceResetProfile", currentProfile, () => _ = ResetProfileAsync(currentProfile, currentOverrides));
-        reset.IsEnabled = currentOverrides.Length > 0 && currentProfile != "unknown-profile" && _device.Text("device_id").Length <= 128 && !Session.NeedsReview; _detail.Children.Add(reset);
-        var definitions = AdminDevicePresentation.Definitions(_revision, _device.Text("device_platform"), currentOverrides.Select(x => x.Text("key"))).ToArray();
-        var shown = definitions.Where(x => _showAll || Overrides.Count == 0 || currentOverrides.Any(row => row.Text("key") == x.Key)).ToArray();
-        foreach (var group in shown.GroupBy(x => x.Group))
-        {
-            var section = Section(group.Key);
-            foreach (var definition in group)
-            {
-                var existing = currentOverrides.FirstOrDefault(x => x.Text("key") == definition.Key);
-                var inherited = AdminDevicePresentation.Inherited(definition, currentProfile, _values);
-                var value = existing.Member("value") ?? inherited.Value;
-                var row = Section(definition.Label, Text(definition.Description, 12, true), Text(existing.ValueKind == JsonValueKind.Object ? "Device override" : inherited.Source, 12, true));
-                var canWrite = currentProfile != "unknown-profile" && _device.Text("device_id").Length <= 128 && !Session.NeedsReview;
-                row.Children.Add(SettingControl(definition, currentProfile, value, canWrite));
-                if (existing.ValueKind == JsonValueKind.Object)
-                {
-                    var key = definition.Key;
-                    var resetOne = DetailButton(T("web.admin.common.deviceOverrides.reset"), "DeviceReset_" + key, currentProfile, () => _ = ResetOneAsync(currentProfile, key)); resetOne.IsEnabled = canWrite; row.Children.Add(resetOne);
-                }
-                section.Children.Add(Panel(row));
-            }
-            _detail.Children.Add(section);
-        }
-        // Unknown stored keys stay visible/resettable; never silently discard a newer server's override.
-        foreach (var stored in currentOverrides.Where(x => definitions.All(d => d.Key != x.Text("key"))))
-        {
-            var key = stored.Text("key"); var row = Section(key, Text("Stored device override", 12, true));
-            row.Children.Add(DetailButton("Edit JSON", "DeviceJson_" + key, currentProfile, () => _ = EditJsonAsync(currentProfile, key, stored.Member("value") ?? JsonSerializer.SerializeToElement((object?)null))));
-            row.Children.Add(DetailButton(T("web.admin.common.deviceOverrides.reset"), "DeviceReset_" + key, currentProfile, () => _ = ResetOneAsync(currentProfile, key))); _detail.Children.Add(Panel(row));
-        }
+        var request = AdminRouteRequest.Device(user, device).WithQuery("profile", _profile.Length > 0 && _profile != "unknown-profile" ? _profile : null);
+        if (AdminShellPage.TryReplace(this, request)) { _route = request; _ = LoadDetailAsync(); RenderList(); } else AdminShellPage.Open(request);
     }
-    private UIElement SettingControl(DeviceSettingDefinition definition, string profile, JsonElement value, bool enabled)
-    {
-        var key = definition.Key; var owner = Session.Owner; var revision = _detailRevision;
-        if (definition.Type == "boolean") return Toggle(definition.Label, value.ValueKind == JsonValueKind.True, next => { if (TargetCurrent(owner, revision, profile)) _ = SaveSettingAsync(profile, key, JsonSerializer.SerializeToElement(next)); }, enabled);
-        if (definition.Options.Length > 0)
-        {
-            var select = Select(definition.Label, definition.Options.Select(x => (x.Value, x.Label)), DeviceSettingDefinition.Scalar(value), next =>
-            {
-                if (!TargetCurrent(owner, revision, profile)) return;
-                var typed = definition.Type is "integer" or "number" ? JsonDocument.Parse(next).RootElement.Clone() : JsonSerializer.SerializeToElement(next);
-                _ = SaveSettingAsync(profile, key, typed);
-            }); select.IsEnabled = enabled; return select;
-        }
-        var edit = DetailButton(key == "playback.subtitle_appearance" ? T("web.admin.common.deviceOverrides.edit.customize") : definition.Type == "json" ? "Edit JSON" : "Edit", "DeviceEdit_" + key, profile,
-            () => _ = key == "playback.subtitle_appearance" ? EditSubtitlesAsync(profile, value) : EditValueAsync(definition, profile, value));
-        edit.IsEnabled = enabled; return edit;
-    }
-    private async Task EditValueAsync(DeviceSettingDefinition definition, string profile, JsonElement value)
-    {
-        var owner = Session.Owner; var revision = _detailRevision;
-        if (definition.Type is "json" or "object" or "array") { await EditJsonAsync(profile, definition.Key, value); return; }
-        var input = Input(definition.Label, "DeviceSettingValue", DeviceSettingDefinition.Scalar(value));
-        JsonElement typed = default;
-        bool Valid()
-        {
-            if (definition.Type is "integer" or "number")
-            {
-                if (!double.TryParse(input.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n) || !double.IsFinite(n) || n < definition.Minimum || n > definition.Maximum || definition.Type == "integer" && n != Math.Truncate(n)) return false;
-                typed = JsonSerializer.SerializeToElement(n); return true;
-            }
-            typed = input.Text.Length == 0 && definition.Schema.Flag("nullable") ? JsonSerializer.SerializeToElement((object?)null) : JsonSerializer.SerializeToElement(input.Text); return true;
-        }
-        if (await _host.DialogAsync(definition.Label, input, T("common.save"), Valid) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, definition.Key, typed);
-    }
-    private async Task EditJsonAsync(string profile, string key, JsonElement value)
-    {
-        var owner = Session.Owner; var revision = _detailRevision;
-        var input = Input(D("jsonEditor.help"), "DeviceJsonValue", DeviceSettingDefinition.Scalar(value)); input.AcceptsReturn = true; input.MinHeight = 260; input.MinWidth = 320;
-        JsonElement typed = default;
-        bool Valid()
-        {
-            if (input.Text.Length > 64 * 1024) return false;
-            if (AdminDevicePresentation.Definition(key)?.Type != "object") { typed = JsonSerializer.SerializeToElement(input.Text); return true; }
-            try { using var parsed = JsonDocument.Parse(input.Text); typed = parsed.RootElement.Clone(); return true; } catch (JsonException) { return false; }
-        }
-        if (await _host.DialogAsync(key, input, D("jsonEditor.save"), Valid) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
-    }
-    private async Task EditSubtitlesAsync(string profile, JsonElement value)
-    {
-        var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (_subtitleDialog != null) return;
-        var dialog = new SubtitleAppearanceDialog { XamlRoot = XamlRoot, InitialValue = value.GetRawText(), ApplyToLocalPlayer = false,
-            CanReset = Overrides.Any(x => x.Text("profile_id") == profile && x.Text("key") == "playback.subtitle_appearance") };
-        dialog.SaveOverrideAsync = async raw =>
-        {
-            if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
-            if (!await Session.WriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance", JsonDocument.Parse(raw).RootElement.Clone()))) throw new InvalidOperationException("The override could not be saved. Reload and review.");
-        };
-        dialog.ResetOverrideAsync = async () =>
-        {
-            if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
-            if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance"))) throw new InvalidOperationException("The override could not be reset.");
-        };
-        void Retire() => DispatcherQueue.TryEnqueue(() => dialog.Hide());
-        Session.Retired += Retire; _subtitleDialog = dialog;
-        try { await dialog.ShowAsync(); } finally { Session.Retired -= Retire; dialog.InitialValue = null; if (ReferenceEquals(_subtitleDialog, dialog)) _subtitleDialog = null; }
-        if (Session.IsCurrent(owner)) await LoadDetailAsync();
-    }
-    private async Task SaveSettingAsync(string profile, string key, JsonElement value)
-    {
-        if (profile != _profile || profile == "unknown-profile") return;
-        var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (await Session.WriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, key, value))) await LoadDetailAsync();
-    }
-    private async Task ResetOneAsync(string profile, string key)
-    {
-        var owner = Session.Owner; var revision = _detailRevision;
-        var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (await _host.ConfirmAsync(D("resetSetting.title"), D("resetSetting.description"), D("resetSetting.confirm")) && TargetCurrent(owner, revision, profile) &&
-            await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, key))) await LoadDetailAsync();
-    }
-    private async Task ResetProfileAsync(string profile, IReadOnlyList<JsonElement> overrides)
-    {
-        var owner = Session.Owner; var revision = _detailRevision;
-        var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        var profileName = _device.Rows("profiles").FirstOrDefault(row => row.Text("profile_id") == profile).Text("profile_name", profile);
-        if (!await _host.ConfirmAsync(D("resetProfile.title", ("name", profileName)), D("resetProfile.description"), D("resetProfile.confirm")) || !TargetCurrent(owner, revision, profile)) return;
-        var completed = 0;
-        var success = await Session.WriteAsync(async lease =>
-        {
-            var result = await _api.ResetDeviceProfileAsync(lease, user, profile, device, overrides.Select(x => x.Text("key")).ToArray());
-            completed = result.Completed; if (result.OutcomeUnknown) throw new AdminResourceOutcomeUnknownException();
-            if (result.FailureStatus is { } status) throw new ApiException("reset_stopped", "The reset stopped. Reload to review remaining overrides.", status);
-        });
-        if (success) await LoadDetailAsync();
-        else _detail.Children.Add(Text($"Reset stopped after {completed} of {overrides.Count}. Reload and review the remaining overrides before trying again."));
-    }
-    private void RenderConnections()
-    {
-        var connections = _device.Rows("connections");
-        if (connections.Count == 0) return;
-        _detail.Children.Add(Text(C("title"), 16));
-        foreach (var connection in connections.Take(100))
-        {
-            var name = connection.Text("connection");
-            var title = name == "local" ? C("local") : name == "remote" ? C("remote") : name.StartsWith("provider:", StringComparison.Ordinal)
-                ? C("provider", ("provider", name[9..])) : "Other connection";
-            var panel = Section(title);
-            if (connection.Member("probe") is { ValueKind: JsonValueKind.Object } probe)
-            {
-                var transport = probe.Text("transport") switch { "wifi" => "wifi", "ethernet" => "ethernet", "cellular" => "cellular", _ => "otherNetwork" };
-                panel.Children.Add(Text(C("probe", ("lower_bound", probe.Flag("lower_bound") ? "yes" : "no"), ("rate", Rate(probe.Number("kbps"))), ("transport", C("transport." + transport)), ("measured", Relative(probe.Text("measured_at")))), 12, true));
-            }
-            if (connection.Member("playback_sample") is { ValueKind: JsonValueKind.Object } sample)
-                panel.Children.Add(Text(C("playbackSample", ("rate", Rate(sample.Number("kbps"))), ("seen", Relative(sample.Text("measured_at")))), 12, true));
-            if (connection.Member("learned_limit") is { ValueKind: JsonValueKind.Object } limit)
-            {
-                panel.Children.Add(Text(C("learnedLimit", ("rate", Rate(limit.Number("kbps"))), ("until", Date(limit.Text("expires_at")))), 12));
-                var user = _device.Text("user_id"); var device = _device.Text("device_id"); var id = connection.Text("id");
-                panel.Children.Add(DetailButton(C("clearLimit"), "DeviceResetLimit_" + id, null, () => _ = ResetLimitAsync(user, device, id)));
-            }
-            if (connection.Member("plan_summary") is { ValueKind: JsonValueKind.Object } plan && plan.Member("diagnostics") is { ValueKind: JsonValueKind.Object } diagnostics)
-            {
-                int.TryParse(diagnostics.Text("stall_count"), out var stalls);
-                double.TryParse(diagnostics.Text("stall_total_ms"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var milliseconds);
-                var seconds = double.IsFinite(milliseconds) ? Math.Max(0, Math.Round(milliseconds / 1000)) : 0;
-                var action = diagnostics.Text("buffering_action") switch { "ignored" => "ignored", "lowered" => "lowered", "restored" => "restored", "accepted" => "accepted", "kept" => "kept", "timed_out" => "timedOut", "cant_lower" => "cantLower", _ => "none" };
-                var summary = C("stalls", ("count", stalls), ("count_text", stalls)) + " · " + C("bufferingSeconds", ("count", seconds), ("count_text", seconds)) + " · " + C("bufferingAction." + action) + " · " + Relative(plan.Text("reported_at"));
-                panel.Children.Add(Text(C("latestPlayback", ("summary", summary)), 12, true));
-            }
-            _detail.Children.Add(Panel(panel));
-        }
-        if (connections.Count > 100) _detail.Children.Add(Text("Showing the first 100 connection observations.", 12, true));
-    }
-    private static string C(string key, params (string Name, object? Value)[] args) => T("web.admin.common.deviceConnections." + key, args);
-    private static string Rate(int kbps) => kbps >= 1000 ? (kbps / 1000d).ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) + " Mbps" : kbps + " kbps";
-    private static string Date(string value) => DateTimeOffset.TryParse(value, out var at) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDate(at) : "—";
+    private static string RelativeUpdated(string value) => string.IsNullOrEmpty(value) ? "—" : Relative(value);
     private static string Relative(string value) => DateTimeOffset.TryParse(value, out var at) && DateTimeOffset.UtcNow - at > TimeSpan.FromDays(30)
         ? Date(value) : AdminPlaybackAuditText.Relative(value, DateTimeOffset.UtcNow) ?? "—";
-    private async Task ResetLimitAsync(string user, string device, string connection)
-    {
-        if (await Session.WriteAsync(lease => _api.ResetLearnedLimitAsync(lease, user, device, connection))) await LoadDetailAsync();
-    }
-    private bool TargetCurrent(MonitorAuthorityLease? owner, long revision, string? profile) => Session.IsCurrent(owner) && revision == _detailRevision && (profile == null || profile == _profile && profile != "unknown-profile" && _device.Text("device_id").Length <= 128);
-    private Button DetailButton(string label, string id, string? profile, Action action)
-    {
-        var owner = Session.Owner; var revision = _detailRevision;
-        return Button(label, id, () => { if (TargetCurrent(owner, revision, profile) && !Session.Busy && !Session.NeedsReview) action(); });
-    }
+    private static string Date(string value) => DateTimeOffset.TryParse(value, out var at) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDate(at) : "—";
 }

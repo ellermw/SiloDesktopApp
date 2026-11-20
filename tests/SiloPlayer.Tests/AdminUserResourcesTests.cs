@@ -52,9 +52,9 @@ public sealed class AdminUserResourcesTests
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
         var api = new AdminUserResourcesApi(kit.Client); kit.Http.Respond = (_, _) => Task.FromResult(Reply(Group));
         var editor = await api.GetGroupAsync(lease, "2");
-        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"title":"Rejected","detail":"untrusted synthetic credential","status":400}""", null, (HttpStatusCode)status));
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"title":"Rejected","detail":"synthetic token https://source.invalid/x","status":400}""", null, (HttpStatusCode)status));
         var error = await Assert.ThrowsAsync<ApiException>(() => api.DeleteGroupAsync(lease, editor));
-        Assert.Equal(status, error.StatusCode); Assert.DoesNotContain("credential", error.ToString());
+        Assert.Equal(status, error.StatusCode); Assert.DoesNotContain("source.invalid", error.ToString());
         Assert.Equal(2, kit.Http.Requests.Count);
     }
 
