@@ -128,6 +128,9 @@ public sealed partial class AdminCollectionsPage
         if (Controller.Busy) return;
         var owner = Controller.Owner; var rendered = Controller.Draft;
         if (_invalidRules || _rules?.IsValid == false || _invalidFields.Count > 0) { Notice("Complete the rules and title limits before saving."); return; }
+        // Staged titles the server turned down. They are named in the notice, whatever else the save did.
+        var rejected = new List<string>(); string? reason = null;
+        string NotAdded() => rejected.Count == 0 ? "" : " Not added: " + string.Join(", ", rejected.Take(5)) + (rejected.Count > 5 ? " and " + (rejected.Count - 5) + " more" : "") + ". " + reason;
         try
         {
             IsHitTestVisible = false;
@@ -141,9 +144,12 @@ public sealed partial class AdminCollectionsPage
                 // Titles left staged by a save that stopped part-way go after the ones already added, as Add titles does.
                 var position = existed && _pendingTitles.Count > 0
                     ? AdminCollectionsApi.NextMemberPosition(await _api.ItemsAsync(owner!, id), Controller.Editor?.Value["item_count"]?.GetValue<int>() ?? 0) : 0;
-                foreach (var (item, _) in _pendingTitles.ToArray())
+                foreach (var (item, title) in _pendingTitles.ToArray())
                 {
-                    await Controller.CommandAsync(async lease => await _api.MembershipAsync(lease, id, item, true, position++));
+                    try { await Controller.CommandAsync(async lease => await _api.MembershipAsync(lease, id, item, true, position)); position++; }
+                    // A title the server turns down is dropped and named in the notice. Kept staged, it would be sent first on every Save
+                    // and hold back the titles and images staged after it.
+                    catch (Exception error) when (error is ArgumentException or ApiException { StatusCode: 400 or 404 or 422 }) { rejected.Add(title); reason ??= AdminCollectionsController.Message(error); }
                     _pendingTitles.Remove(item);
                 }
                 foreach (var (slot, art) in _artwork.ToArray())
@@ -160,16 +166,16 @@ public sealed partial class AdminCollectionsPage
                 if (Current(owner)) { try { await Controller.AdoptOwnChangeAsync(); } catch (Exception) { } }
                 throw;
             }
-            if (Current(owner)) { RenderEditor(); Notice(Controller.SaveWarning is { } warning ? "Collection saved. " + warning : "Collection saved"); }
+            if (Current(owner)) { RenderEditor(); Notice(Controller.SaveWarning is { } warning ? "Collection saved. " + warning + NotAdded() : rejected.Count == 0 ? "Collection saved" : "Collection saved." + NotAdded()); }
         }
         catch (ApiException error) when (error.StatusCode == 412)
-        { if (Current(owner)) { if (!ReferenceEquals(rendered, Controller.Draft)) RenderEditor(); Notice(AdminCollectionsController.Message(error)); await ReviewConflictAsync(); } }
+        { if (Current(owner)) { if (!ReferenceEquals(rendered, Controller.Draft)) RenderEditor(); Notice(AdminCollectionsController.Message(error) + NotAdded()); await ReviewConflictAsync(); } }
         catch (Exception error)
         {
             if (!Current(owner)) return;
             Notice((Controller.CreatedId != null && Controller.Editor == null
                 ? "The collection was created, but its saved copy could not be read. Press Save to load it; it will not be created again."
-                : AdminCollectionsController.Message(error)) + (Controller.SaveWarning is { } warning ? " " + warning : ""));
+                : AdminCollectionsController.Message(error)) + (Controller.SaveWarning is { } warning ? " " + warning : "") + NotAdded());
             // A save that went through replaced the draft before a title, an image or the last read failed. The inputs still write into the old one,
             // so the editor is rendered again on the saved copy; the titles and images still staged stay staged.
             if (Controller.OutcomeUnknown || !ReferenceEquals(rendered, Controller.Draft)) RenderEditor();

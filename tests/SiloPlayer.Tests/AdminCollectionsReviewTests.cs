@@ -506,4 +506,29 @@ public sealed class AdminCollectionsReviewTests
         Assert.Equal("\"r2\"", Assert.Single(sent));
         Assert.Single(kit.Http.Requests.Where(r => r.StartsWith("POST ")));
     }
+
+    // ── Sixth review (November 20) ─────────────────────────────────────────
+
+    // 1 - A staged title the server turns down is a plain rejection. The editor's Save drops it and names it; the title and the image staged after it still go.
+    [Fact]
+    public async Task RejectedStagedTitleDoesNotHoldBackTheTitleAndImageStagedAfterIt()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminCollectionsApi(kit.Client);
+        using var controller = new AdminCollectionsController(api, new(kit.Client), authority); controller.Open();
+        kit.Http.Respond = (r, _) => Task.FromResult(
+            r.Method == HttpMethod.Put && r.RequestUri!.AbsolutePath.EndsWith("/items/m1")
+                ? AdminMonitorKit.Json("{\"type\":\"validation\",\"status\":400,\"detail\":\"That title is not in this collection's libraries.\"}", HttpStatusCode.BadRequest)
+            : r.Method == HttpMethod.Put || r.Method == HttpMethod.Delete ? new HttpResponseMessage(HttpStatusCode.NoContent)
+            : Tagged(ManualCollection("Staged", 0)));
+        await controller.EditAsync(null, "manual", "1"); controller.Draft!["title"] = "Staged";
+        Assert.Equal("c", await controller.SaveAsync());
+        var rejected = await Assert.ThrowsAsync<ApiException>(() => controller.CommandAsync(lease => api.MembershipAsync(lease, "c", "m1", true, 0)));
+        Assert.Equal(400, rejected.StatusCode); Assert.False(controller.OutcomeUnknown);
+        // The rejected title took no position: the next one goes where it would have gone, and the staged image removal follows.
+        await controller.CommandAsync(lease => api.MembershipAsync(lease, "c", "m2", true, 0));
+        await controller.CommandAsync(lease => api.ArtworkAsync(lease, "c", "poster"));
+        Assert.Equal(new[] { "PUT /api/v2/admin/collections/c/items/m1", "PUT /api/v2/admin/collections/c/items/m2", "DELETE /api/v2/admin/collections/c/image?type=poster" },
+            kit.Http.Requests.Where(r => r.StartsWith("PUT ") || r.StartsWith("DELETE ")).ToArray());
+    }
 }

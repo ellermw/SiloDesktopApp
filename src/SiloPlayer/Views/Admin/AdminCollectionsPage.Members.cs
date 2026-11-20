@@ -14,14 +14,20 @@ public sealed partial class AdminCollectionsPage
         var owner = Controller.Owner; var serial = ++_memberRead;
         var id = Controller.Editor?.Value["id"]?.GetValue<string>();
         _preview.Children.Clear();
-        if (id == null)
+        // On a saved collection these are what a save that stopped part-way has not sent yet. They stay listed, so they can be removed before the next Save sends them.
+        void Staged(bool saved)
         {
+            if (saved && _pendingTitles.Count > 0) _preview.Children.Add(Text("Not added yet. Save adds these titles.", 13, true));
             foreach (var (item, title) in _pendingTitles.ToArray())
             {
                 var row = Wrap(); row.Children.Add(Text(title));
                 row.Children.Add(ActionButton("Remove", "CollectionPendingRemove_" + item, () => { _pendingTitles.Remove(item); return LoadMembersAsync(); }));
                 _preview.Children.Add(row);
             }
+        }
+        if (id == null)
+        {
+            Staged(false);
             _preview.Children.Add(Text(_pendingTitles.Count == 0 ? "Add titles, then create the collection." : $"{_pendingTitles.Count} titles ready to add", 13, true));
             return;
         }
@@ -68,12 +74,14 @@ public sealed partial class AdminCollectionsPage
             paging.Children.Add(ActionButton("Next", "CollectionMembersNext", async () => { _memberHistory.Push(_memberCursor); _memberCursor = next; await LoadMembersAsync(); }, hasMore && _memberHistory.Count < 100));
             paging.Children.Add(ActionButton("Restart titles", "CollectionMembersRestart", async () => { _memberCursor = null; _memberHistory.Clear(); await LoadMembersAsync(); }));
             _preview.Children.Add(paging);
+            Staged(true);
         }
         catch (Exception error)
         {
             if (!Current(owner) || serial != _memberRead) return;
             _preview.Children.Clear(); _preview.Children.Add(Text(AdminCollectionsController.Message(error)));
             _preview.Children.Add(ActionButton("Restart titles", "CollectionMembersRetry", async () => { _memberCursor = null; _memberHistory.Clear(); await LoadMembersAsync(); }));
+            Staged(true);
         }
     }
     private async Task TitlePickerAsync()
