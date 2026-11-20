@@ -1,0 +1,12 @@
+diff --git a/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersPresentation.cs b/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersPresentation.cs
+--- a/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersPresentation.cs
++++ b/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersPresentation.cs
+@@ -14,7 +14,7 @@
+     public static bool MatchesDownload(JsonObject row, string filter, bool android) => filter switch
+     {
+         "" => true,
+-        "on_device" => row.Text("status") == "completed",
++        "on_device" => !android && row.Text("status") == "completed",
+         "requested" => android && row.Text("status") is "ready" or "downloading",
+         "in_progress" => !android && row.Text("status") is "preparing" or "ready" or "downloading",
+         _ => row.Text("status") == filter

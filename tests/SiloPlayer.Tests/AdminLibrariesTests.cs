@@ -664,7 +664,9 @@ public sealed class AdminLibrariesTests
         var root = FindRepositoryRoot();
         var files = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(path => Path.GetFileName(path) is var name && (name.StartsWith("AdminLibrar", StringComparison.Ordinal) || name.StartsWith("AdminFolderBrowser", StringComparison.Ordinal)))
-            .Where(path => !path.EndsWith("AdminLibrariesText.cs", StringComparison.Ordinal)).ToArray();
+            .Where(path => !path.EndsWith("AdminLibrariesText.cs", StringComparison.Ordinal))
+            // Library settings shares the file prefix but takes its text from AdminText; AdminLibrarySettingsNavigationTests scans it.
+            .Where(path => !Path.GetFileName(path).StartsWith("AdminLibrarySettings", StringComparison.Ordinal)).ToArray();
         Assert.True(files.Length >= 15, "the Libraries sources were found");
         var keys = files.SelectMany(path => Regex.Matches(File.ReadAllText(path), "\"((?:web\\.admin|admin\\.native\\.libraries|web\\.common\\.sortable)\\.[A-Za-z0-9_.]+)\"").Select(match => match.Groups[1].Value))
             .Where(key => !key.EndsWith('.')).Distinct().ToArray();
