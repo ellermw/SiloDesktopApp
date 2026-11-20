@@ -1,22 +1,26 @@
 using System.Collections.ObjectModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
-using Windows.ApplicationModel.DataTransfer;
+using SiloPlayer.Services;
 using U = SiloPlayer.Controls.AdminSettingsUi;
 
 namespace SiloPlayer.Views.Admin;
 
-/// <summary>The Home Sections route, including its library-page tabs. No timers, catalog walks or entrance transitions.</summary>
+/// <summary>
+/// The Home sections route (/admin/sections), including its library-page switcher. No timers, catalog walks or entrance transitions.
+/// Official source: 217ff25 web/src/pages/AdminHomeRows.tsx and web/src/components/homeRows.
+/// </summary>
 public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private readonly AdminHomeSectionsApi _api;
@@ -28,9 +32,12 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
     private readonly StackPanel _alerts = new() { Spacing = 8 };
     private readonly TextBlock _status = U.Text("", 13, true);
     private readonly TextBlock _summary = U.Text("", 13, true);
+    private readonly TextBlock _libraryNote = U.Text("", 13, true);
+    private readonly TextBlock _reorderHint = U.Text("", 13, true);
     private readonly ListView _list = new() { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = true, AllowDrop = true,
         HorizontalContentAlignment = HorizontalAlignment.Stretch, CanDragItems = true, CanReorderItems = true };
     private readonly ObservableCollection<RowView> _rows = [];
+    private readonly StackPanel _selectionHeader = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
     private readonly StackPanel _selectionBar = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly StackPanel _defaults = new() { Spacing = 12 };
     private readonly Button _add = Action(T("web.home.rows.page.addRow"), "HomeSectionsAdd");
@@ -44,6 +51,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
     public AdminHomeSectionsController? Controller => _controller;
     public FrameworkElement ScrollContent => _body;
     public bool RequiresLeaveConfirmation => _editor != null && _editorDirty && _controller?.State.Owner?.IsCurrent == true;
+    private static ToastService? Toasts => App.Services.GetService<ToastService>();
 
     public AdminHomeSectionsPage() : this(App.Services.GetRequiredService<AdminHomeSectionsApi>(),
         App.Services.GetRequiredService<AdminMonitorAuthority>(), App.Services.GetRequiredService<AdminServerSettingsApi>()) { }
@@ -61,13 +69,15 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         titles.Children.Add(U.Text(T("web.admin.homeRows.page.subtitle"), 14, true)); heading.Children.Add(titles);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
         actions.Children.Add(_more); actions.Children.Add(_add); Grid.SetColumn(actions, 1); heading.Children.Add(actions);
+        AutomationProperties.SetName(_more, T("web.home.rows.page.actionsRegion"));
         _add.Click += (_, _) => OpenAdd(); _more.Click += MoreClick;
         _body.Children.Add(heading); _body.Children.Add(_pages); AutomationProperties.SetAutomationId(_pages, "HomeSectionsPageSelector");
         AutomationProperties.SetName(_pages, T("web.home.rows.page.pageSwitcher"));
-        _pages.Items.Add(new ComboBoxItem { Content = "Home", Tag = AdminHomeSectionScope.Home }); _pages.SelectedIndex = 0; _pages.SelectionChanged += PageChanged;
-        _body.Children.Add(_summary); _body.Children.Add(_alerts); _body.Children.Add(_status);
-        AutomationProperties.SetAutomationId(_list, "HomeSectionsRows"); AutomationProperties.SetName(_list, "Home rows");
+        _pages.Items.Add(new ComboBoxItem { Content = T("web.home.rows.pages.home"), Tag = AdminHomeSectionScope.Home }); _pages.SelectedIndex = 0; _pages.SelectionChanged += PageChanged;
+        _body.Children.Add(_summary); _body.Children.Add(_libraryNote); _body.Children.Add(_alerts); _body.Children.Add(_status);
+        AutomationProperties.SetAutomationId(_list, "HomeSectionsRows");
         _list.ItemTemplate = (DataTemplate)Resources["HomeSectionRowTemplate"]; _list.ItemsSource = _rows;
+        _list.ContainerContentChanging += RowContainerChanging;
         _list.ItemClick += async (_, args) => { if (!_selectMode && args.ClickedItem is RowView row) await OpenEditAsync(row.Row.Id); };
         _list.DragItemsStarting += (_, args) =>
         {
@@ -81,11 +91,11 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
                 await _controller.ReorderAsync(snapshot, _rows.Select(row => row.Row.Id).ToArray());
             if (_active) Render();
         };
-        _body.Children.Add(_list); _body.Children.Add(U.Text("Drag a row to move it, or use Move up / Move down in its menu. Changes save right away.", 12, true));
+        _body.Children.Add(_selectionHeader); _body.Children.Add(_list); _body.Children.Add(_reorderHint);
         _body.Children.Add(_selectionBar); _body.Children.Add(_defaults);
         _scroll.Content = _body; _root.Children.Add(_scroll); Content = _root;
         Loaded += (_, _) => Activate(); Unloaded += (_, _) => Close(); SizeChanged += (_, _) => Fit();
-        KeyDown += (_, args) => { if (args.Key == Windows.System.VirtualKey.Escape && _selectMode && _editor == null) { _selectMode = false; _selection.Clear(); Render(); args.Handled = true; } };
+        KeyDown += (_, args) => { if (args.Key == Windows.System.VirtualKey.Escape && _selectMode && _editor == null && _dialog == null) { ExitSelectMode(); args.Handled = true; } };
     }
 
     private void Fit()
@@ -118,75 +128,123 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         if (_authority.IsAvailable) _ = OpenAsync();
     });
     private void QueueRender() => DispatcherQueue.TryEnqueue(() => { if (_active) Render(); });
+
+    private async Task ReloadAllAsync()
+    {
+        var controller = _controller; if (controller == null || !await CanLeaveAsync()) return;
+        CloseEditor(); _selection.Clear(); _librariesFailed = false;
+        await controller.ReloadAsync();
+        if (_active && ReferenceEquals(controller, _controller)) { await LoadPagesAsync(); await LoadDefaultsAsync(); }
+    }
+
     private void Render()
     {
         if (_controller == null) return; var state = _controller.State;
         var current = state.Owner?.IsCurrent == true; var canWrite = _controller.CanWrite;
-        if (!current) { CloseEditor(); _dialog?.Hide(); _selection.Clear(); _settings = null; _defaults.Children.Clear(); ClearPageNames(); }
-        _add.IsEnabled = canWrite && state.Catalog != null && _editor == null; _more.IsEnabled = canWrite && _editor == null;
-        _status.Text = state.Busy ? T("web.admin.homeRows.page.loadingRows") : state.Error ?? (!current ? "Administrator access is required." : "");
-        _alerts.Children.Clear();
-        if (state.Error != null || state.ReviewRequired || state.Snapshot == null && !state.Busy && current)
-        {
-            if (state.ReviewRequired) _alerts.Children.Add(U.Text(state.OutcomeUnknown ? new AdminHomeSectionsUnknownException().Message : new AdminHomeSectionsConflictException().Message, 13));
-            var reload = Action(T("web.home.rows.reloadRows"), "HomeSectionsReload"); reload.IsEnabled = !state.Busy;
-            reload.Click += async (_, _) => { if (!await CanLeaveAsync()) return; CloseEditor(); _selection.Clear(); await _controller.ReloadAsync(); await LoadPagesAsync(); await LoadDefaultsAsync(); };
-            _alerts.Children.Add(reload);
-        }
+        if (!current) { CloseEditor(); _dialog?.Hide(); _selection.Clear(); _selectMode = false; _settings = null; _defaults.Children.Clear(); ClearPageNames(); }
+        _add.IsEnabled = canWrite && _editor == null; _more.IsEnabled = canWrite && _editor == null;
         var rows = current ? state.Snapshot?.Rows ?? [] : [];
-        _summary.Text = state.Snapshot == null ? "" : T("web.home.rows.page.summaryAdmin", new { row_count = rows.Count, shown_count = rows.Count(row => row.Enabled) });
+        _alerts.Children.Clear();
+        if (current && state.Failure == AdminHomeSectionsFailure.Conflict)
+            _alerts.Children.Add(Banner(T("web.home.rows.notes.conflict"), state.Busy));
+        else if (current && state.Failure == AdminHomeSectionsFailure.Unknown)
+            _alerts.Children.Add(Banner(state.Error ?? new AdminHomeSectionsUnknownException().Message, state.Busy));
+        else if (current && (state.Failure == AdminHomeSectionsFailure.Load || state.Snapshot == null && !state.Busy))
+            _alerts.Children.Add(Banner(state.Error ?? T("web.home.rows.page.loadFailed"), state.Busy));
+        else if (current && _librariesFailed)
+            _alerts.Children.Add(Banner("Library pages could not be loaded. Home is available; reload to try again.", state.Busy));
+        _status.Text = !current ? "Administrator access is required."
+            : state.Busy ? (state.Snapshot == null ? T("web.home.rows.page.loading") : T("web.admin.homeRows.page.loadingRows"))
+            : state.Failure == AdminHomeSectionsFailure.Refused ? state.Error ?? ""
+            : state.Snapshot != null && rows.Count == 0 ? T("web.home.rows.page.empty", new { page = PageLabel }) : "";
+        _summary.Text = state.Snapshot == null || !current ? "" : T("web.home.rows.page.summaryAdmin", new { row_count = (long)rows.Count, shown_count = rows.Count(row => row.Enabled) });
+        _libraryNote.Text = current && _scope.Kind == "library" ? T("web.home.rows.notes.libraryPage", new { library = PageLabel }) : "";
+        _libraryNote.Visibility = _libraryNote.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _reorderHint.Text = state.Snapshot != null && rows.Count > 0 && !_selectMode ? T("web.home.rows.notes.reorderHint") : "";
+        _reorderHint.Visibility = _reorderHint.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _list.CanDragItems = _list.CanReorderItems = canWrite && !_selectMode; _list.IsEnabled = !state.Busy && current;
+        AutomationProperties.SetName(_list, T("web.home.rows.page.listLabel", new { page = PageLabel }));
         _pages.IsEnabled = !state.Busy && current && _editor == null;
         // An in-flight drag retains its captured complete snapshot. Any replacement invalidates it.
         if (!ReferenceEquals(_dragSnapshot, state.Snapshot)) _dragSnapshot = null;
         _rows.Clear();
         var banner = rows.FirstOrDefault(row => row.Featured && row.Enabled)?.Id;
         foreach (var row in rows)
-        {
-            var source = row.Config.ValueKind == System.Text.Json.JsonValueKind.Object && row.SectionType == "collection" && row.Config.TryGetProperty("library_collection_id", out var id)
-                ? " · " + _collectionLabels.GetValueOrDefault(id.ToString(), "Unavailable collection") : "";
-            _rows.Add(new(row, _selectMode, _selection.Contains(row.Id), canWrite, row.Id == banner, source));
-        }
-        if (rows.Count == 0 && state.Snapshot != null && !state.Busy) _status.Text = T("web.home.rows.page.empty", new { page = PageLabel });
+            _rows.Add(new(row, _selectMode, _selection.Contains(row.Id), canWrite, row.Id == banner, DescribeRow(row)));
         _selection.IntersectWith(rows.Select(row => row.Id)); RenderSelection();
         if (_editor != null)
         {
             RefreshSave(); _editorFields.IsEnabled = !state.Busy;
             _editorBack.IsEnabled = _editorDelete.IsEnabled = canWrite;
-            if (state.Error != null) _editorNotice.Text = state.Error;
+            if (state.Error != null && state.Failure != AdminHomeSectionsFailure.None) _editorNotice.Text = state.Error;
         }
     }
+
+    private FrameworkElement Banner(string message, bool busy)
+    {
+        var reload = Action(T("web.home.rows.reloadRows"), "HomeSectionsReload"); reload.IsEnabled = !busy;
+        reload.Click += async (_, _) => await ReloadAllAsync();
+        var panel = new StackPanel { Spacing = 8 }; panel.Children.Add(U.Alert(message)); panel.Children.Add(reload);
+        return panel;
+    }
+
+    private IReadOnlyList<AdminHomeSectionPart> DescribeRow(AdminHomeSection row) => AdminHomeSectionsDescription.Describe(row, _scope.Kind == "home", CollectionLookup);
+    private AdminHomeSectionCollectionLookup CollectionLookup(string id) =>
+        !_collectionsLoaded ? AdminHomeSectionCollectionLookup.Unknown
+        : _collectionNames.TryGetValue(id, out var found) ? found : AdminHomeSectionCollectionLookup.Gone;
+
+    // ── Row list ─────────────────────────────────────────────
+
+    private void RowContainerChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.Item is not RowView row || args.ItemContainer.ContentTemplateRoot is not FrameworkElement root) return;
+        AutomationProperties.SetName(args.ItemContainer, row.Title);
+        if (root.FindName("MetaText") is TextBlock meta) row.FillMeta(meta);
+    }
+
     private void MoreClick(object sender, RoutedEventArgs args)
     {
+        var rows = _controller?.State.Snapshot?.Rows ?? [];
         var menu = new MenuFlyout();
-        Menu(menu, T("web.admin.homeRows.more.select"), () => { _selectMode = true; Render(); });
+        Menu(menu, T("web.admin.homeRows.more.select"), () => { _selectMode = true; Render(); FocusSelectAll(); }, !_selectMode && rows.Count > 0);
         MenuAsync(menu, T("web.admin.homeRows.more.restore"), RestoreAsync);
         menu.ShowAt(_more);
     }
-    private void SelectionClick(object sender, RoutedEventArgs args)
+
+    private async void ShownToggled(object sender, RoutedEventArgs args)
+    {
+        // The switch starts from the saved value; only a user change differs from it.
+        if (sender is not ToggleSwitch { DataContext: RowView row } toggle || _controller == null || toggle.IsOn == row.Row.Enabled) return;
+        await _controller.QuickAsync(row.Row, shown: toggle.IsOn);
+    }
+
+    private void RowSelectionChanged(object sender, RoutedEventArgs args)
     {
         if (sender is not CheckBox { DataContext: RowView row } box) return;
-        if (box.IsChecked == true && _selection.Count < 100) _selection.Add(row.Row.Id); else { _selection.Remove(row.Row.Id); box.IsChecked = false; }
+        if (box.IsChecked == true) { if (!_selection.Contains(row.Row.Id) && _selection.Count < MaxSelected) _selection.Add(row.Row.Id); else if (!_selection.Contains(row.Row.Id)) box.IsChecked = false; }
+        else _selection.Remove(row.Row.Id);
         RenderSelection();
     }
-    private async void ShownClick(object sender, RoutedEventArgs args)
-    { if (sender is Button { DataContext: RowView row } && _controller != null) await _controller.QuickAsync(row.Row, shown: !row.Row.Enabled); }
+
     private void RowMenuClick(object sender, RoutedEventArgs args)
     {
         if (sender is not Button { DataContext: RowView row } button || _controller == null) return;
+        var canWrite = _controller.CanWrite; var index = _rows.IndexOf(row);
         var menu = new MenuFlyout();
-        MenuAsync(menu, T("web.admin.homeRows.rowMenu.edit"), async () => await OpenEditAsync(row.Row.Id));
+        MenuAsync(menu, T("web.admin.homeRows.rowMenu.edit"), async () => await OpenEditAsync(row.Row.Id), canWrite);
         MenuAsync(menu, T(row.Row.Featured ? "web.admin.homeRows.rowMenu.stopUsingAsHero" : "web.admin.homeRows.rowMenu.useAsHero"),
-            async () => await _controller.QuickAsync(row.Row, hero: !row.Row.Featured), row.Row.SectionType != "collection_posters" || row.Row.Featured);
-        var index = _rows.IndexOf(row);
-        MenuAsync(menu, "Move up", async () => await MoveAsync(row.Row.Id, index - 1), index > 0);
-        MenuAsync(menu, "Move down", async () => await MoveAsync(row.Row.Id, index + 1), index < _rows.Count - 1);
-        MenuAsync(menu, T("web.home.rows.page.moveToTop"), async () => await MoveAsync(row.Row.Id, 0), index > 0);
-        MenuAsync(menu, T("web.home.rows.page.moveToBottom"), async () => await MoveAsync(row.Row.Id, _rows.Count - 1), index < _rows.Count - 1);
-        MenuAsync(menu, "Preview", async () => await PeekAsync(row.Row), _controller.State.Capabilities?.Preview == true);
-        if (CopyTargets(AdminHomeSectionDraft.From(row.Row)).Count > 0)
-            MenuAsync(menu, "Add to other libraries…", async () => await CopyAsync(row.Row));
-        MenuAsync(menu, T("web.admin.homeRows.rowMenu.delete"), async () => await DeleteAsync([row.Row.Id]));
+            async () => await _controller.QuickAsync(row.Row, hero: !row.Row.Featured), canWrite && (row.Row.Featured || !AdminHomeSectionsKinds.HoldsCollections(row.Row.SectionType)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        MenuAsync(menu, T("web.home.rows.page.moveToTop"), async () => await MoveAsync(row.Row.Id, 0), canWrite && index > 0);
+        MenuAsync(menu, T("web.home.rows.page.moveToBottom"), async () => await MoveAsync(row.Row.Id, _rows.Count - 1), canWrite && index < _rows.Count - 1);
+        // Native keyboard path for ordering; the WebUI's handle-and-arrow drag has no native list equivalent.
+        MenuAsync(menu, "Move up", async () => await MoveAsync(row.Row.Id, index - 1), canWrite && index > 0);
+        MenuAsync(menu, "Move down", async () => await MoveAsync(row.Row.Id, index + 1), canWrite && index < _rows.Count - 1);
+        if (_controller.State.Capabilities?.Preview == true) MenuAsync(menu, "Preview", async () => await PeekAsync(row.Row));
+        if (_scope.Kind == "library" && AdminHomeSectionDraft.From(row.Row) is { CanCopy: true } copyable && CopyTargets(copyable).Count > 0)
+            MenuAsync(menu, T("web.admin.homeRows.rowMenu.addToOtherLibraries"), async () => await CopyAsync(row.Row), canWrite);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        MenuAsync(menu, T("web.admin.homeRows.rowMenu.delete"), async () => await DeleteAsync([row.Row.Id]), canWrite);
         menu.ShowAt(button);
     }
     private async Task MoveAsync(string id, int target)
@@ -195,54 +253,69 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         var ids = snapshot.Rows.Select(row => row.Id).ToList(); ids.Remove(id); ids.Insert(target, id);
         await _controller.ReorderAsync(snapshot, ids);
     }
+
+    // ── Select mode ──────────────────────────────────────────
+
+    private const int MaxSelected = 100;
+    private void ExitSelectMode() { _selectMode = false; _selection.Clear(); Render(); FocusMore(); }
+    private void FocusSelectAll() => DispatcherQueue.TryEnqueue(() => _selectionHeader.Children.OfType<CheckBox>().FirstOrDefault()?.Focus(FocusState.Programmatic));
+    private void FocusMore() => DispatcherQueue.TryEnqueue(() => { if (_more.IsLoaded && _more.IsEnabled) _more.Focus(FocusState.Programmatic); });
+
     private void RenderSelection()
     {
-        _selectionBar.Children.Clear(); if (!_selectMode) return;
-        _selectionBar.Children.Add(U.Text($"{_selection.Count} selected", 13));
-        void Add(string label, Func<Task> action, bool enabled = true)
-        { var button = Action(label, "HomeSectionsSelect" + label.Replace(" ", "")); button.IsEnabled = _controller?.CanWrite == true && enabled; button.Click += async (_, _) => await action(); _selectionBar.Children.Add(button); }
-        Add("Select all", () => { _selection.Clear(); foreach (var row in _rows.Take(100)) _selection.Add(row.Row.Id); Render(); return Task.CompletedTask; });
-        Add("Turn on", () => SetSelectedShownAsync(true), _selection.Count > 0);
-        Add("Turn off", () => SetSelectedShownAsync(false), _selection.Count > 0);
-        Add("Delete", () => DeleteAsync(_selection.ToArray()), _selection.Count > 0);
-        Add("Done", () => { _selectMode = false; _selection.Clear(); Render(); return Task.CompletedTask; });
+        _selectionHeader.Children.Clear(); _selectionBar.Children.Clear();
+        _selectionHeader.Visibility = _selectionBar.Visibility = _selectMode ? Visibility.Visible : Visibility.Collapsed;
+        if (!_selectMode) return;
+        var rows = _controller?.State.Snapshot?.Rows ?? [];
+        var all = new CheckBox { Content = AdminHomeSectionsText.T("web.ui.selectMode.selectAll"), MinWidth = 0 };
+        AutomationProperties.SetAutomationId(all, "HomeSectionsSelectAll");
+        all.IsChecked = rows.Count > 0 && rows.Take(MaxSelected).All(row => _selection.Contains(row.Id)) ? true : _selection.Count > 0 ? null : false;
+        all.Click += (_, _) =>
+        {
+            if (_selection.Count > 0 && rows.Take(MaxSelected).All(row => _selection.Contains(row.Id)) || all.IsChecked != true) _selection.Clear();
+            else { _selection.Clear(); foreach (var row in rows.Take(MaxSelected)) _selection.Add(row.Id); }
+            Render();
+        };
+        var done = Action(AdminHomeSectionsText.T("common.done"), "HomeSectionsSelectDone"); done.Click += (_, _) => ExitSelectMode();
+        _selectionHeader.Children.Add(all);
+        _selectionHeader.Children.Add(U.Text(T("web.common.ui.selectMode.rows.limit", new { limit = (long)MaxSelected }), 12, true)); _selectionHeader.Children.Add(done);
+        var tooMany = _selection.Count > MaxSelected; var busy = _controller?.CanWrite != true || _selection.Count == 0 || tooMany;
+        var count = U.Text(T("web.ui.selectedCount", new { count = (long)_selection.Count, shown = _selection.Count }), 13);
+        AutomationProperties.SetLiveSetting(count, AutomationLiveSetting.Polite); _selectionBar.Children.Add(count);
+        if (tooMany) _selectionBar.Children.Add(U.Text(T("web.common.ui.selectMode.rows.tooMany", new { limit = (long)MaxSelected }), 12));
+        void Add(string label, string id, Func<Task> run)
+        { var button = Action(label, id); button.IsEnabled = !busy; button.Click += async (_, _) => await run(); _selectionBar.Children.Add(button); }
+        Add(T("web.home.rows.select.turnOn"), "HomeSectionsSelectTurnOn", () => SetSelectedShownAsync(true));
+        Add(T("web.home.rows.select.turnOff"), "HomeSectionsSelectTurnOff", () => SetSelectedShownAsync(false));
+        Add(T("web.home.rows.select.delete"), "HomeSectionsSelectDelete", () => DeleteAsync(_selection.ToArray()));
     }
+
     private async Task SetSelectedShownAsync(bool shown)
     {
-        if (_controller == null) return;
-        try { var controller = _controller; var sessions = await controller.PrepareDeletesAsync(_selection.ToArray());
-            if (ReferenceEquals(controller, _controller)) await controller.SetShownManyAsync(sessions, shown); }
-        catch (Exception) { if (_active) _status.Text = "Unable to read selected rows. Reload and review."; }
+        var controller = _controller; if (controller == null || _selection.Count is 0 or > MaxSelected) return;
+        AdminHomeSectionsBatchResult? result;
+        try { result = await controller.SetShownManyAsync(_selection.ToArray(), shown); }
+        catch (Exception) { if (_active) Toasts?.Error(T("web.admin.homeRows.select.changeFailed")); return; }
+        if (!_active || result == null) { if (_active && controller.State.Error != null) Toasts?.Error(controller.State.Error); return; }
+        ReportShown(result, shown);
     }
-    private async Task DeleteAsync(IReadOnlyList<string> ids)
+
+    private void ReportShown(AdminHomeSectionsBatchResult result, bool shown)
     {
-        var controller = _controller; if (controller?.CanWrite != true || _dialog != null) return;
-        var request = _editor == null ? ++_dialogRevision : _dialogRevision;
-        try
-        {
-            var sessions = await controller.PrepareDeletesAsync(ids);
-            if (request != _dialogRevision || !_active || !ReferenceEquals(controller, _controller)) return;
-            var names = string.Join("\n", sessions.Select(session => session.Row.Title));
-            if (await ConfirmAsync(ids.Count == 1 ? "Delete row?" : $"Delete {ids.Count} rows?", names + $"\n\nThis removes the rows from {PageLabel} for every profile. Your media and collections are kept.", "Delete", sessions[0].Owner) && controller.CanWrite)
-            { if (await controller.DeleteAsync(sessions)) { _selection.Clear(); CloseEditor(); } }
-        }
-        catch (Exception) { if (_active && request == _dialogRevision) _status.Text = "Unable to read the rows for deletion. Reload and review."; }
+        var changed = result.ChangedIds.Count; var failures = result.Failures; var attempted = changed + failures.Count;
+        string Reason(AdminHomeSectionsRowResult failure) => failure.Outcome == AdminHomeSectionsRowOutcome.Changed
+            ? T("web.admin.homeRows.select.rowChanged", new { title = RowTitleOf(failure) })
+            : T("web.admin.homeRows.select.rowFailed", new { title = RowTitleOf(failure), message = failure.Message ?? T("web.admin.homeRows.row.saveFailed") });
+        var detail = string.Join(" ", failures.Select(Reason));
+        if (attempted == 0) Toasts?.Success(T(shown ? "web.admin.homeRows.select.alreadyOn" : "web.admin.homeRows.select.alreadyOff"));
+        else if (failures.Count == 0) Toasts?.Success(T(shown ? "web.admin.homeRows.select.turnedOn" : "web.admin.homeRows.select.turnedOff", AdminHomeSectionsText.Count(changed)));
+        else if (changed > 0) Toasts?.Warning(T(shown ? "web.admin.homeRows.select.turnedOnPartial" : "web.admin.homeRows.select.turnedOffPartial", AdminHomeSectionsText.Count(attempted, ("done_text", changed))) + " " + detail);
+        else Toasts?.Error(T(shown ? "web.admin.homeRows.select.turnOnFailed" : "web.admin.homeRows.select.turnOffFailed", AdminHomeSectionsText.Count(attempted)) + " " + detail);
     }
-    private async Task RestoreAsync()
-    {
-        var controller = _controller; if (controller?.CanWrite != true || _dialog != null) return;
-        await controller.ReloadAsync();
-        if (!_active || !ReferenceEquals(controller, _controller) || controller.State.Snapshot is not { } snapshot || !controller.CanWrite) return;
-        var reset = new CheckBox { Content = "Also reset every profile's Home customizations", IsEnabled = controller.State.Capabilities?.ResetProfiles == true };
-        var body = new StackPanel { Spacing = 12 };
-        body.Children.Add(U.Text($"This replaces {snapshot.Rows.Count} rows on {PageLabel}, including disabled rows. Collections and media are kept.", 14));
-        foreach (var row in snapshot.Rows.Where(row => row.SectionType is "collection" or "collection_posters")) body.Children.Add(U.Text(row.Title, 13, true));
-        body.Children.Add(reset);
-        var all = new CheckBox { Content = _scope.Kind == "home" ? "Also restore every library page" : "Also restore the other library pages" };
-        body.Children.Add(all); body.Children.Add(U.Text("Pages restore one at a time. If a page changes or its result cannot be confirmed, the operation stops; reload and review all affected pages.", 12, true));
-        if (await ConfirmAsync($"Restore {PageLabel} to the default rows?", body, "Restore defaults", controller.State.Owner!) && controller.CanWrite)
-            await controller.RestoreAsync(snapshot, reset.IsChecked == true, all.IsChecked == true ? _libraries.Select(library => new AdminHomeSectionScope("library", library.Id)).Where(scope => scope != _scope).ToArray() : null);
-    }
+    private static string RowTitleOf(AdminHomeSectionsRowResult row) => row.Title;
+
+    // ── Dialogs ──────────────────────────────────────────────
+
     private async Task PeekAsync(AdminHomeSection row)
     {
         var owner = _controller?.State.Owner; var revision = ++_dialogRevision;
@@ -251,24 +324,29 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         {
             var preview = await _api.PreviewAsync(owner, AdminHomeSectionDraft.From(row), owner.Token, _scope);
             if (!_active || !owner.IsCurrent || revision != _dialogRevision) return;
-            var panel = PreviewPanel(preview); await ConfirmAsync(row.Title, panel, "Close", owner, confirmation: false);
+            await ShowAsync(RowTitle(row), PreviewPanel(preview), "Close", owner, confirmation: false);
         }
-        catch (Exception) { if (_active && owner.IsCurrent) _status.Text = "Couldn't load the preview. Try again."; }
+        catch (Exception) { if (_active && owner.IsCurrent) _status.Text = T("web.home.addRow.preview.failed"); }
     }
-    private async Task<bool> ConfirmAsync(string title, object body, string primary, MonitorAuthorityLease owner, bool confirmation = true)
+
+    private async Task<bool> ShowAsync(string title, object body, string primary, MonitorAuthorityLease owner, bool confirmation = true)
     {
         if (_dialog != null || !_active || !owner.IsCurrent) return false;
         var dialog = new ContentDialog { Title = title, Content = body is string text ? U.Text(text) : body,
-            PrimaryButtonText = primary, CloseButtonText = confirmation ? "Cancel" : "", DefaultButton = confirmation ? ContentDialogButton.Close : ContentDialogButton.Primary, XamlRoot = XamlRoot };
+            PrimaryButtonText = primary, CloseButtonText = confirmation ? AdminHomeSectionsText.T("common.cancel") : "", DefaultButton = confirmation ? ContentDialogButton.Close : ContentDialogButton.Primary, XamlRoot = XamlRoot };
         _dialog = dialog;
         try { var result = await dialog.ShowAsync(); return _active && owner.IsCurrent && ReferenceEquals(owner, _controller?.State.Owner) && result == ContentDialogResult.Primary; }
         catch (InvalidOperationException) { return false; }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
+
+    private static string RowTitle(AdminHomeSection row) => SiloPlayer.Core.Localization.AppStrings.ServerText(row.TitleKey, row.TitleArgs, row.Title);
+
     public async Task<bool> CanLeaveAsync()
     {
         if (!RequiresLeaveConfirmation) return true;
-        if (await ConfirmAsync("Discard changes?", "Your unsaved row changes will be lost.", "Discard", _controller!.State.Owner!)) { CloseEditor(); return true; }
+        var result = await U.ConfirmDiscardAsync(this, _controller!.State.Owner!, () => _dialog, dialog => _dialog = dialog);
+        if (result == true) { CloseEditor(); return true; }
         return !RequiresLeaveConfirmation;
     }
     public void SuspendAdminPage() => Close();
@@ -278,45 +356,53 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         if (!_active) return; _active = false; _dialogRevision++; _dialog?.Hide(); CloseEditor();
         _authority.AvailabilityChanged -= AuthorityChanged;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Saved -= InvalidateHome; _controller.Dispose(); _controller = null; }
-        _rows.Clear(); _selection.Clear(); _settings = null; _defaults.Children.Clear(); _status.Text = ""; ClearPageNames();
+        _rows.Clear(); _selection.Clear(); _selectMode = false; _settings = null; _defaults.Children.Clear(); _status.Text = ""; ClearPageNames();
     }
     private void InvalidateHome() => DispatcherQueue.TryEnqueue(() =>
-    { if (_active && _controller?.State.Owner?.IsCurrent == true) { App.Services.GetService<SiloPlayer.ViewModels.HomeViewModel>()?.InvalidateCache(); if (_controller.State.Error == null) _status.Text = "Rows updated."; } });
-    internal static string T(string key, object? args = null)
-    {
-        var values = args?.GetType().GetProperties().ToDictionary(property => property.Name, property => property.GetValue(args));
-        if (AdminLabels.TryGetValue(key, out var text)) return AdminText.Format(text, values ?? new Dictionary<string, object?>());
-        return SiloPlayer.Core.Localization.AppStrings.Get(key, values, key);
-    }
-    private static readonly Dictionary<string, string> AdminLabels = new()
-    {
-        ["web.admin.homeRows.page.title"] = "Sections",
-        ["web.admin.homeRows.page.subtitle"] = "The sections everyone sees on Home and on library pages. Profiles can still hide, rename or reorder them.",
-        ["web.admin.homeRows.page.loadingRows"] = "Loading the current rows…",
-        ["web.admin.homeRows.more.select"] = "Select rows",
-        ["web.admin.homeRows.more.restore"] = "Restore defaults…",
-        ["web.admin.homeRows.rowMenu.edit"] = "Edit row…",
-        ["web.admin.homeRows.rowMenu.delete"] = "Delete row…",
-        ["web.admin.homeRows.rowMenu.useAsHero"] = "Use as hero banner",
-        ["web.admin.homeRows.rowMenu.stopUsingAsHero"] = "Stop using as hero banner"
-    };
+    { if (_active && _controller?.State.Owner?.IsCurrent == true) App.Services.GetService<SiloPlayer.ViewModels.HomeViewModel>()?.InvalidateCache(); });
+
+    internal static string T(string key, object? args = null) => AdminHomeSectionsText.T(key, args);
     private static Button Action(string label, string id) => U.Action(label, id);
     private static void Menu(MenuFlyout menu, string label, Action action, bool enabled = true)
     { var item = new MenuFlyoutItem { Text = label, IsEnabled = enabled }; item.Click += (_, _) => action(); menu.Items.Add(item); }
     private void MenuAsync(MenuFlyout menu, string label, Func<Task> action, bool enabled = true)
     {
         var item = new MenuFlyoutItem { Text = label, IsEnabled = enabled };
-        item.Click += async (_, _) => { try { await action(); } catch (Exception) { if (_active) _status.Text = "Unable to complete this action. Reload and review the current rows."; } }; menu.Items.Add(item);
+        item.Click += async (_, _) => { try { await action(); } catch (Exception) { if (_active) _status.Text = T("web.admin.homeRows.page.loadRowsFailed"); } }; menu.Items.Add(item);
     }
+
+    /// <summary>One list row: the data its template binds to. The description is rebuilt as styled runs when the container is realized.</summary>
     [Microsoft.UI.Xaml.Data.Bindable]
-    public sealed record RowView(AdminHomeSection Row, bool SelectMode, bool Selected, bool CanWrite, bool Banner, string Source)
+    public sealed record RowView(AdminHomeSection Row, bool SelectMode, bool Selected, bool CanWrite, bool Banner, IReadOnlyList<AdminHomeSectionPart> Parts)
     {
-        public string Title => SiloPlayer.Core.Localization.AppStrings.ServerText(Row.TitleKey, Row.TitleArgs, Row.Title);
-        public string Description => $"{KindLabel(Row.SectionType)} · {Row.ItemLimit} titles" + Source + (Row.Featured ? " · Hero banner" : "") + (Banner && Row.WebOnly ? " · Web only" : "");
-        public string ShownLabel => Row.Enabled ? "On" : "Off";
-        public string ShownAccessibleLabel => (Row.Enabled ? "Turn off " : "Turn on ") + Row.Title;
-        public string MenuLabel => "Actions for " + Row.Title;
+        public string Title => RowTitle(Row);
+        public bool Shown => Row.Enabled;
+        public string MetaPlain => Row.Enabled ? string.Concat(Parts.Select(part => part.Text)) + TitleCountSuffix : Title + AdminHomeSectionsDescription.CollapsedText();
+        public Visibility TitleVisibility => Row.Enabled ? Visibility.Visible : Visibility.Collapsed;
+        public string ShownAccessibleLabel => AdminHomeSectionsDescription.SwitchLabel(Title, Row.Enabled);
+        public string MenuLabel => T("web.home.rows.page.rowMenu", new { row = Title });
+        public string SelectLabel => T("web.admin.homeRows.select.rowLabel", new { title = Title });
+        public string HeroText => T(Banner && Row.WebOnly ? "web.home.rows.line.heroBannerWebOnly" : "web.home.rows.line.heroBanner");
+        public Visibility HeroVisibility => Row.Featured ? Visibility.Visible : Visibility.Collapsed;
         public Visibility SelectionVisibility => SelectMode ? Visibility.Visible : Visibility.Collapsed;
         public Visibility GripVisibility => SelectMode ? Visibility.Collapsed : Visibility.Visible;
+        private string TitleCountSuffix => !AdminHomeSectionsKinds.HoldsCollections(Row.SectionType) && Row.ItemLimit > 0 ? " · " + AdminHomeSectionsDescription.TitleCount(Row.ItemLimit) : "";
+        public void FillMeta(TextBlock meta)
+        {
+            meta.Inlines.Clear();
+            if (!Row.Enabled)
+            {
+                meta.Inlines.Add(new Run { Text = Title, FontWeight = FontWeights.SemiBold }); meta.Inlines.Add(new Run { Text = AdminHomeSectionsDescription.CollapsedText() });
+                return;
+            }
+            foreach (var part in Parts)
+            {
+                var run = new Run { Text = part.Text };
+                if (part.Style == AdminHomeSectionPartStyle.Strong) run.FontWeight = FontWeights.Medium;
+                else if (part.Style == AdminHomeSectionPartStyle.Warning) { run.FontWeight = FontWeights.Medium; run.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 245, 158, 11)); }
+                meta.Inlines.Add(run);
+            }
+            if (TitleCountSuffix.Length > 0) meta.Inlines.Add(new Run { Text = TitleCountSuffix });
+        }
     }
 }

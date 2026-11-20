@@ -12,7 +12,7 @@ public sealed class AdminHomeSectionsApiTests
     private static HttpResponseMessage Tagged(string body, string tag = "\"r1\"")
     {
         var response = AdminMonitorKit.Json(body);
-        response.Headers.ETag = EntityTagHeaderValue.Parse(tag);
+        response.Headers.TryAddWithoutValidation("ETag", tag);
         return response;
     }
 

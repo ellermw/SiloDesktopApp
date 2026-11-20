@@ -58,7 +58,21 @@ public sealed partial class AdminHomeSectionsApi
         RequireSession(lease, session); draft.Validate();
         return MutationAsync(async () =>
         {
-            var response = await SendAsync<AdminHomeSection>(lease, HttpMethod.Patch, RowPath(session.Row.Id), draft.Body(webOnlySupported), session.ETag, ct).ConfigureAwait(false);
+            var response = await SendAsync<AdminHomeSection>(lease, HttpMethod.Patch, RowPath(session.Row.Id), draft.Body(webOnlySupported, session.Row), session.ETag, ct).ConfigureAwait(false);
+            ValidateRow(response.Body, session.Row.Id, new(session.Row.Scope, session.Row.LibraryId)); return response.Body;
+        }, lease);
+    }
+
+    /// <summary>A quick switch or hero change: only that field is sent, over the version just read (the official <c>updateAdminSection</c> with one member).</summary>
+    public Task<AdminHomeSection> QuickPatchAsync(MonitorAuthorityLease lease, AdminHomeSectionSession session, bool? enabled, bool? featured, CancellationToken ct = default)
+    {
+        RequireSession(lease, session);
+        if ((enabled == null) == (featured == null)) throw new ArgumentException("Change exactly one of shown and hero.");
+        var body = new Dictionary<string, object?>();
+        if (enabled != null) body["enabled"] = enabled.Value; else body["featured"] = featured!.Value;
+        return MutationAsync(async () =>
+        {
+            var response = await SendAsync<AdminHomeSection>(lease, HttpMethod.Patch, RowPath(session.Row.Id), body, session.ETag, ct).ConfigureAwait(false);
             ValidateRow(response.Body, session.Row.Id, new(session.Row.Scope, session.Row.LibraryId)); return response.Body;
         }, lease);
     }
@@ -92,10 +106,17 @@ public sealed partial class AdminHomeSectionsApi
     public Task RestoreAsync(MonitorAuthorityLease lease, AdminHomeSectionsSnapshot snapshot, bool resetProfiles, CancellationToken ct = default)
     {
         if (!ReferenceEquals(snapshot.Lease, lease)) throw new MonitorAuthorityRetiredException();
+        return RestorePageAsync(lease, snapshot.Scope, snapshot.ETag, resetProfiles, ct);
+    }
+
+    /// <summary>Restores one page over a strong order version; the body is <c>{"reset_profiles":bool}</c> exactly as the WebUI sends it.</summary>
+    public Task RestorePageAsync(MonitorAuthorityLease lease, AdminHomeSectionScope scope, string etag, bool resetProfiles, CancellationToken ct = default)
+    {
+        AdminValidators.RequireStrong(etag);
         return MutationAsync(async () =>
         {
-            await SendAsync<AdminHomeSectionOrder>(lease, HttpMethod.Put, Root + "/defaults" + snapshot.Scope.Query,
-                new { reset_profiles = resetProfiles }, snapshot.ETag, ct).ConfigureAwait(false);
+            await SendAsync<AdminHomeSectionOrder>(lease, HttpMethod.Put, Root + "/defaults" + scope.Query,
+                new Dictionary<string, object?> { ["reset_profiles"] = resetProfiles }, etag, ct).ConfigureAwait(false);
             return true;
         }, lease);
     }

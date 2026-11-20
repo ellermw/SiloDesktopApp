@@ -46,7 +46,13 @@ public sealed partial class AdminHomeSectionsPage
                 if (refs.Count >= 30) { _editorNotice.Text = "A row can hold up to 30 collections."; return; }
                 refs.Add(new JsonObject { ["library_collection_id"] = choice.Id }); SetConfig("collections", refs);
             }
-            else { draft.Config.Remove("user_collection_id"); SetConfig("library_collection_id", JsonValue.Create(choice.Id)); }
+            else
+            {
+                var current = _choiceLabels.GetValueOrDefault(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config));
+                AdminHomeSectionsDraftFactory.WithCollection(draft, choice.Id, choice.Label, current); Dirty();
+                // The name follows the pick; rebuild the form so the name box shows it.
+                RenderForm(); return;
+            }
             Refresh();
         }
         Refresh(); ChoicePicker(panel, "collections", Pick);
@@ -86,35 +92,45 @@ public sealed partial class AdminHomeSectionsPage
         panel.Children.Add(direct); panel.Children.Add(find); panel.Children.Add(status);
     }
 
-    private void LibrarySelector(StackPanel panel, string key)
+    /// <summary>Replaces the draft config's members with <paramref name="updated"/> in place, so arrays other editors hold stay the same instances when unchanged.</summary>
+    private void ApplyConfig(JsonObject updated)
+    {
+        var config = _draft!.Config;
+        foreach (var key in config.Select(pair => pair.Key).ToArray()) if (!updated.ContainsKey(key)) config.Remove(key);
+        foreach (var pair in updated) if (!config.ContainsKey(pair.Key) || !JsonNode.DeepEquals(config[pair.Key], pair.Value)) config[pair.Key] = pair.Value?.DeepClone();
+        Dirty();
+    }
+
+    /// <summary>"From": the libraries a row takes titles from (official LibraryFilterField), read and written with the backend's precedence.</summary>
+    private void LibrarySelector(StackPanel panel)
     {
         var draft = _draft!; var selection = new StackPanel { Spacing = 6 };
-        JsonArray Ids() => draft.Config[key] as JsonArray ?? new();
-        // Preserve a legacy filter until the user makes an explicit choice.
-        var legacy = key == "filter_library_ids" && draft.Config[key] == null ? draft.Config["filter_library_id"] ?? draft.Config["library_ids"] : null;
-        var chosen = Ids().Select(node => node!.ToString()).ToHashSet(StringComparer.Ordinal);
-        if (legacy is JsonArray array) { foreach (var item in array) if (item != null) chosen.Add(item.ToString()); }
-        else if (legacy != null) chosen.Add(legacy.ToString());
-        void Commit()
-        {
-            var ids = new JsonArray(); foreach (var id in chosen) if (int.TryParse(id, out var number)) ids.Add(number);
-            draft.Config.Remove("filter_library_id"); if (key == "filter_library_ids") draft.Config.Remove("library_ids");
-            SetConfig(key, ids.Count == 0 ? null : ids);
-        }
         void Refresh()
         {
-            selection.Children.Clear();
-            selection.Children.Add(U.Text(chosen.Count == 0 ? "From all libraries" : "From the selected libraries", 13));
+            selection.Children.Clear(); var chosen = AdminHomeSectionsRules.LibraryFilterIds(draft.Config);
+            selection.Children.Add(U.Text(chosen.Count == 0 ? T("web.home.addRow.params.allLibraries") : T("web.home.addRow.libraries"), 13));
             foreach (var id in chosen.ToArray())
             {
-                var remove = Action("Remove " + _choiceLabels.GetValueOrDefault("library:" + id, "library " + id), "HomeSectionLibraryRemove_" + id);
-                remove.Click += (_, _) => { chosen.Remove(id); Commit(); Refresh(); }; selection.Children.Add(remove);
+                var name = _libraries.FirstOrDefault(library => library.Id == id.ToString())?.Label ?? _choiceLabels.GetValueOrDefault("library:" + id) ?? "Library " + id;
+                var remove = Action("Remove " + name, "HomeSectionLibraryRemove_" + id);
+                remove.Click += (_, _) => { ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, chosen.Where(other => other != id))); Refresh(); RenderAfterLibraryChange(); };
+                selection.Children.Add(remove);
             }
         }
-        panel.Children.Add(selection); Refresh();
-        ChoicePicker(panel, "libraries", choice =>
-        { _choiceLabels["library:" + choice.Id] = choice.Label; if (chosen.Count < 1000) chosen.Add(choice.Id); Commit(); Refresh(); });
+        var field = new StackPanel { Spacing = 6 }; field.Children.Add(selection); Refresh();
+        ChoicePicker(field, "libraries", choice =>
+        {
+            _choiceLabels["library:" + choice.Id] = choice.Label;
+            var chosen = AdminHomeSectionsRules.LibraryFilterIds(draft.Config).ToList();
+            if (long.TryParse(choice.Id, out var id) && id > 0 && !chosen.Contains(id) && chosen.Count < 1000) chosen.Add(id);
+            ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, chosen)); Refresh(); RenderAfterLibraryChange();
+        });
+        field.Children.Add(U.Text(T("web.home.addRow.params.fromHint"), 12, true));
+        Field(panel, T("web.home.addRow.params.from"), field);
     }
+    /// <summary>The rule editor keeps its own copies of the groups it shows; rebuild it when the library filter moved the config under it.</summary>
+    private Action? _afterLibraryChange;
+    private void RenderAfterLibraryChange() => _afterLibraryChange?.Invoke();
 
     private void CuratedEditor(StackPanel panel)
     {

@@ -18,15 +18,16 @@ public sealed partial class AdminHomeSectionsPage
         void RenderRules()
         {
             host.Children.Clear();
-            _editorInvalid = false; RefreshSave();
+            foreach (var key in _fieldErrors.Keys.Where(key => key.StartsWith("rule:", StringComparison.Ordinal)).ToArray()) _fieldErrors.Remove(key);
+            RefreshSave();
             var scope = Value(draft.Config, "media_scope"); if (scope == "") scope = Value(draft.Config, "filter_type");
             Field(host, "Show", Select("HomeSectionRuleScope", [("", "Everything"), ("video", "Movies and shows"), ("movie", "Movies"), ("series", "Shows"), ("episode", "Episodes"), ("audiobook", "Audiobooks"), ("ebook", "Ebooks"), ("manga", "Manga")], scope,
-                value => { NormalizeRuleKeys(draft.Config); SetConfig("media_scope", value == "" ? null : JsonValue.Create(value)); RenderRules(); }));
-            LibrarySelector(host, "library_ids");
+                value => { AdminHomeSectionsRules.NormalizeQueryInPlace(draft.Config); SetConfig("media_scope", value == "" ? null : JsonValue.Create(value)); RenderRules(); }));
+            LibrarySelector(host);
             var groups = draft.Config["groups"] as JsonArray ?? new();
-            Field(host, "How groups combine", Select("HomeSectionGroupsMatch", [("all", "All groups (and)"), ("any", "Any group (or)")], Value(draft.Config, "match") == "any" ? "any" : "all", value => { NormalizeRuleKeys(draft.Config); SetConfig("match", JsonValue.Create(value)); }));
+            Field(host, "How groups combine", Select("HomeSectionGroupsMatch", [("all", "All groups (and)"), ("any", "Any group (or)")], Value(draft.Config, "match") == "any" ? "any" : "all", value => { AdminHomeSectionsRules.NormalizeQueryInPlace(draft.Config); SetConfig("match", JsonValue.Create(value)); }));
             if (groups.Count == 0) host.Children.Add(U.Text("No rules yet. Add a rule to choose what this row shows.", 13, true));
-            void Commit() { NormalizeRuleKeys(draft.Config); if (draft.Config["groups"] == null) draft.Config["groups"] = groups; Dirty(); }
+            void Commit() { if (draft.Config["groups"] == null) draft.Config["groups"] = groups; AdminHomeSectionsRules.NormalizeQueryInPlace(draft.Config); Dirty(); }
             for (var groupIndex = 0; groupIndex < groups.Count; groupIndex++)
             {
                 var at = groupIndex;
@@ -57,9 +58,8 @@ public sealed partial class AdminHomeSectionsPage
                         {
                             var valueBox = Input("Value", "HomeSectionRuleValue_" + at + "_" + ruleAt, QueryRuleValues.Format(NodeValue(rule["value"])), value =>
                             {
-                                try { rule["value"] = JsonSerializer.SerializeToNode(QueryRuleValues.Parse(field, Value(rule, "op"), value)); status.Text = ""; Commit(); }
-                                catch (FormatException ex) { status.Text = ex.Message; }
-                                SetInvalidRuleState(host);
+                                try { rule["value"] = JsonSerializer.SerializeToNode(QueryRuleValues.Parse(field, Value(rule, "op"), value)); Commit(); FieldError("rule:" + at + ":" + ruleAt, status, null); }
+                                catch (FormatException ex) { FieldError("rule:" + at + ":" + ruleAt, status, ex.Message); }
                             });
                             Field(row, op == "between" ? "From, to (separated by a comma)" : QueryRuleValues.IsDate(field) ? "Date (YYYY-MM-DD) or relative period (30d)" : "Value", valueBox);
                         }
@@ -77,11 +77,7 @@ public sealed partial class AdminHomeSectionsPage
             }
             var addGroup = Action("Add another group", "HomeSectionGroupAdd"); addGroup.IsEnabled = groups.Count < 20;
             addGroup.Click += (_, _) => { if (groups.Count <= 1) draft.Config["match"] = "any"; groups.Add(new JsonObject { ["match"] = "all", ["rules"] = new JsonArray(new JsonObject { ["field"] = "genre", ["op"] = "is", ["value"] = "" }) }); Commit(); RenderRules(); }; host.Children.Add(addGroup);
-            var sort = draft.Config["sort"] as JsonObject;
-            var sortFields = new[] { ("added_at", "Recently added"), ("title", "Title"), ("release_date", "Release date"), ("last_air_date", "Latest episode aired"), ("latest_episode_added", "Latest episode added"), ("year", "Year"), ("content_rating", "Content rating"), ("rating_imdb", "IMDb rating"), ("rating_tmdb", "TMDB rating"), ("rating_rt_critic", "RT critic score"), ("rating_rt_audience", "RT audience score"), ("runtime", "Duration"), ("resolution", "Resolution"), ("bitrate", "Bitrate"), ("progress", "Progress"), ("date_viewed", "Date viewed"), ("plays", "Plays"), ("author", "Author"), ("narrator", "Narrator"), ("series", "Series") }
-                .Where(option => CatalogRatingSortPolicy.AppliesToScope(option.Item1, scope == "" ? "all" : scope) && CatalogRatingSortPolicy.IsAvailable(option.Item1, _ruleCapabilities?.ShownRatingSources ?? new HashSet<string>(), sort == null ? Value(draft.Config, "sort") : Value(sort, "field"))).ToArray();
-            Field(host, "Order", Select("HomeSectionRuleSort", sortFields, sort == null ? Value(draft.Config, "sort") : Value(sort, "field"), value => { NormalizeRuleKeys(draft.Config); var node = draft.Config["sort"] as JsonObject ?? new(); if (draft.Config["sort"] == null) draft.Config["sort"] = node; node["field"] = value; Dirty(); }));
-            Field(host, "Direction", Select("HomeSectionRuleDirection", [("asc", "Ascending"), ("desc", "Descending")], sort == null ? Value(draft.Config, "order") : Value(sort, "order"), value => { NormalizeRuleKeys(draft.Config); ((JsonObject)draft.Config["sort"]!)["order"] = value; Dirty(); }));
+            _afterLibraryChange = RenderRules;
         }
         RenderRules();
         if (_ruleCapabilities == null) _ = LoadAsync();
@@ -95,16 +91,15 @@ public sealed partial class AdminHomeSectionsPage
             catch (Exception) { if (EditorCurrent(revision) && pickerRevision == _pickerRevision) host.Children.Add(U.Text("Extended rule options are unavailable. Existing rules are preserved.", 12, true)); }
         }
     }
-    private void SetInvalidRuleState(StackPanel host)
+    /// <summary>The rule row's order (official RuleSortField), under More options.</summary>
+    private void RuleSortField(StackPanel host)
     {
-        // Validation text belongs to this rule editor; a later corrected value restores Save.
-        bool HasError(DependencyObject root)
-        {
-            if (root is TextBlock { Text.Length: > 0 } text && text.FontSize == 12 && !text.Text.StartsWith("Extended rule")) return true;
-            for (var i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); i++) if (HasError(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i))) return true;
-            return false;
-        }
-        _editorInvalid = HasError(host); RefreshSave();
+        var draft = _draft!; var scope = Value(draft.Config, "media_scope"); if (scope == "") scope = Value(draft.Config, "filter_type");
+        var sort = draft.Config["sort"] as JsonObject;
+        var sortFields = new[] { ("added_at", "Recently added"), ("title", "Title"), ("release_date", "Release date"), ("last_air_date", "Latest episode aired"), ("latest_episode_added", "Latest episode added"), ("year", "Year"), ("content_rating", "Content rating"), ("rating_imdb", "IMDb rating"), ("rating_tmdb", "TMDB rating"), ("rating_rt_critic", "RT critic score"), ("rating_rt_audience", "RT audience score"), ("runtime", "Duration"), ("resolution", "Resolution"), ("bitrate", "Bitrate"), ("progress", "Progress"), ("date_viewed", "Date viewed"), ("plays", "Plays"), ("author", "Author"), ("narrator", "Narrator"), ("series", "Series") }
+            .Where(option => CatalogRatingSortPolicy.AppliesToScope(option.Item1, scope == "" ? "all" : scope) && CatalogRatingSortPolicy.IsAvailable(option.Item1, _ruleCapabilities?.ShownRatingSources ?? new HashSet<string>(), sort == null ? Value(draft.Config, "sort") : Value(sort, "field"))).ToArray();
+        Field(host, "Order", Select("HomeSectionRuleSort", sortFields, sort == null ? Value(draft.Config, "sort") : Value(sort, "field"), value => { AdminHomeSectionsRules.NormalizeQueryInPlace(draft.Config); var node = draft.Config["sort"] as JsonObject ?? new(); if (draft.Config["sort"] == null) draft.Config["sort"] = node; node["field"] = value; Dirty(); }));
+        Field(host, "Direction", Select("HomeSectionRuleDirection", [("asc", "Ascending"), ("desc", "Descending")], sort == null ? Value(draft.Config, "order") : Value(sort, "order"), value => { AdminHomeSectionsRules.NormalizeQueryInPlace(draft.Config); ((JsonObject)draft.Config["sort"]!)["order"] = value; Dirty(); }));
     }
     private static object? NodeValue(JsonNode? node) => node == null ? null : JsonSerializer.Deserialize<JsonElement>(node.ToJsonString());
     private AutoSuggestBox RuleValuePicker(JsonObject rule, QueryFieldDefinition definition, string scope, Action commit)
@@ -134,17 +129,6 @@ public sealed partial class AdminHomeSectionsPage
         box.GotFocus += async (_, _) => await Search("", false);
         box.Unloaded += (_, _) => pending?.Cancel();
         return box;
-    }
-    private static void NormalizeRuleKeys(JsonObject config)
-    {
-        if (config["media_scope"] == null && config["filter_type"] != null) config["media_scope"] = config["filter_type"]!.DeepClone();
-        if (config["library_ids"] == null)
-        {
-            if (config["filter_library_ids"] is JsonArray list) config["library_ids"] = list.DeepClone();
-            else if (config["filter_library_id"] != null) config["library_ids"] = new JsonArray(config["filter_library_id"]!.DeepClone());
-        }
-        if (config["sort"] is not JsonObject) config["sort"] = new JsonObject { ["field"] = Value(config, "sort") is { Length: > 0 } field ? field : "added_at", ["order"] = Value(config, "order") is { Length: > 0 } order ? order : "desc" };
-        config.Remove("filter_type"); config.Remove("filter_library_id"); config.Remove("filter_library_ids"); config.Remove("order");
     }
     private static string OperatorLabel(string op) => op switch
     {

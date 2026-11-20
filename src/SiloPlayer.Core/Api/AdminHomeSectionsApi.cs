@@ -13,11 +13,11 @@ public sealed partial class AdminHomeSectionsApi(SiloApiClient client)
     public async Task<AdminHomeSectionsSnapshot> ReadAsync(MonitorAuthorityLease lease, CancellationToken ct = default, AdminHomeSectionScope? scope = null)
     {
         scope ??= AdminHomeSectionScope.Home;
-        var before = await ReadOrderAsync(lease, scope, ct).ConfigureAwait(false);
+        var before = await ReadOrderCoreAsync(lease, scope, ct).ConfigureAwait(false);
         var list = await SendAsync<AdminHomeSectionList>(lease, HttpMethod.Get, Root + scope.Query, ct: ct).ConfigureAwait(false);
         if (list.Body.Page?.HasMore == true || !string.IsNullOrEmpty(list.Body.Page?.NextCursor) || list.Body.Items is null || list.Body.Items.Count > MaxRows)
             throw new InvalidDataException("The Home section list was incomplete.");
-        var after = await ReadOrderAsync(lease, scope, ct).ConfigureAwait(false);
+        var after = await ReadOrderCoreAsync(lease, scope, ct).ConfigureAwait(false);
         lease.ThrowIfRetired();
         if (!string.Equals(before.ETag, after.ETag, StringComparison.Ordinal))
             throw new InvalidDataException("Home sections changed while loading. Reload and review them.");
@@ -44,7 +44,9 @@ public sealed partial class AdminHomeSectionsApi(SiloApiClient client)
             new Dictionary<string, object?> { ["ordered_ids"] = orderedIds }, snapshot.ETag, ct).ConfigureAwait(false), lease).ConfigureAwait(false);
     }
 
-    private async Task<ApiResponse<AdminHomeSectionOrder>> ReadOrderAsync(MonitorAuthorityLease lease, AdminHomeSectionScope scope, CancellationToken ct)
+    public Task<ApiResponse<AdminHomeSectionOrder>> ReadOrderAsync(MonitorAuthorityLease lease, AdminHomeSectionScope scope, CancellationToken ct = default) => ReadOrderCoreAsync(lease, scope, ct);
+
+    private async Task<ApiResponse<AdminHomeSectionOrder>> ReadOrderCoreAsync(MonitorAuthorityLease lease, AdminHomeSectionScope scope, CancellationToken ct)
     {
         var response = await SendAsync<AdminHomeSectionOrder>(lease, HttpMethod.Get, Root + "/order" + scope.Query, ct: ct).ConfigureAwait(false);
         var order = response.Body;

@@ -1,26 +1,33 @@
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services.Admin;
-using U = SiloPlayer.Controls.AdminSettingsUi;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views.Admin;
 
+/// <summary>Library-page switching, the Collections link contract (?page=, ?add=, ?edit=, ?return=) and the bounded collection names.</summary>
 public sealed partial class AdminHomeSectionsPage
 {
     private readonly ComboBox _pages = new() { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Left };
     private AdminHomeSectionScope _scope = AdminHomeSectionScope.Home;
     private List<AdminHomeSectionChoice> _libraries = [];
-    private readonly Dictionary<string, string> _collectionLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AdminHomeSectionCollectionLookup> _collectionNames = new(StringComparer.Ordinal);
+    private bool _collectionsLoaded, _librariesFailed;
     private AdminRouteRequest _route = new(AdminRoute.HomeSections);
-    private bool _syncPages, _linksRead;
+    private bool _syncPages;
+    private string? _handledLinks;
     private string? _returnPath;
     private bool _linkedCollection;
-    private string PageLabel => _scope.LibraryId is { } id ? _libraries.FirstOrDefault(library => library.Id == id)?.Label ?? "Library " + id : "Home";
+    private string PageLabel => _scope.LibraryId is { } id ? _libraries.FirstOrDefault(library => library.Id == id)?.Label ?? AdminHomeSectionsText.T("web.admin.homeRows.restore.libraryFallback", new { id }) : T("web.home.rows.pages.home");
     protected override void OnNavigatedTo(NavigationEventArgs args)
     { _route = args.Parameter as AdminRouteRequest ?? new(AdminRoute.HomeSections); base.OnNavigatedTo(args); }
+
+    private IReadOnlyList<AdminHomeSectionLibraryPage> LibraryPages() => _libraries.Select(library => new AdminHomeSectionLibraryPage(library.Id, library.Label, library.Type)).ToArray();
+
     private async Task LoadPagesAsync()
     {
         var owner = _controller?.State.Owner; if (owner?.IsCurrent != true) return;
@@ -28,106 +35,140 @@ public sealed partial class AdminHomeSectionsPage
         {
             var libraries = await _api.ChoicesAsync(owner, "libraries", ct: owner.Token);
             if (!_active || !owner.IsCurrent || !ReferenceEquals(owner, _controller?.State.Owner)) return;
-            _libraries = libraries.Items;
-            var requested = _route.Get("page"); var desired = _libraries.Any(library => library.Id == requested) ? new AdminHomeSectionScope("library", requested) : AdminHomeSectionScope.Home;
+            _libraries = libraries.Items; _librariesFailed = false;
+            // An unknown or malformed ?page= opens Home, so a stale or hand-edited link still lands somewhere.
+            var requested = _route.Get("page"); var desired = requested != null && _libraries.Any(library => library.Id == requested) ? new AdminHomeSectionScope("library", requested) : AdminHomeSectionScope.Home;
             _syncPages = true;
             try
             {
-                _pages.Items.Clear(); _pages.Items.Add(new ComboBoxItem { Content = "Home", Tag = AdminHomeSectionScope.Home });
+                _pages.Items.Clear(); _pages.Items.Add(new ComboBoxItem { Content = T("web.home.rows.pages.home"), Tag = AdminHomeSectionScope.Home });
                 foreach (var library in _libraries) _pages.Items.Add(new ComboBoxItem { Content = library.Label, Tag = new AdminHomeSectionScope("library", library.Id) });
                 _pages.SelectedItem = _pages.Items.OfType<ComboBoxItem>().First(item => Equals(item.Tag, desired));
             }
             finally { _syncPages = false; }
             if (_scope != desired) { _scope = desired; CloseEditor(); await _controller!.OpenAsync(_scope); }
-            var active = _controller!.State.Owner;
-            if (active?.IsCurrent == true && _controller.State.Snapshot?.Rows.Any(row => row.SectionType is "collection" or "collection_posters") == true)
-            {
-                try
-                {
-                    var collections = await _api.ChoicesAsync(active, "collections", ct: active.Token);
-                    if (_active && active.IsCurrent && ReferenceEquals(active, _controller?.State.Owner))
-                    { _collectionLabels.Clear(); foreach (var collection in collections.Items) _collectionLabels[collection.Id] = collection.Label; Render(); }
-                }
-                catch (Exception) when (active.IsCurrent) { /* Names remain unavailable; saved identities and validators are kept. */ }
-            }
+            await LoadCollectionNamesAsync();
         }
-        catch (Exception) { if (_active && owner.IsCurrent) _status.Text = "Library pages could not be loaded. Reload rows to retry; Home remains available."; }
+        catch (Exception) { if (_active && owner.IsCurrent) { _librariesFailed = true; Render(); } }
     }
+
+    /// <summary>One bounded read of the collection list (2,000 at most), only when a row on this page names a collection.</summary>
+    private async Task LoadCollectionNamesAsync()
+    {
+        var active = _controller?.State.Owner;
+        if (active?.IsCurrent != true || _controller!.State.Snapshot?.Rows.Any(row => row.SectionType is "collection" or "collection_posters") != true) return;
+        try
+        {
+            var collections = await _api.ChoicesAsync(active, "collections", ct: active.Token);
+            if (!_active || !active.IsCurrent || !ReferenceEquals(active, _controller?.State.Owner)) return;
+            _collectionNames.Clear();
+            foreach (var collection in collections.Items) _collectionNames[collection.Id] = AdminHomeSectionCollectionLookup.Found(collection.Label, CollectionKind(collection.CollectionType));
+            _collectionsLoaded = true; Render();
+        }
+        catch (Exception) when (active.IsCurrent) { /* Names stay unknown; the rows keep their saved identities. */ }
+    }
+
+    private static string? CollectionKind(string type) => string.IsNullOrEmpty(type) ? null
+        : AdminHomeSectionsText.T(type switch { "manual" => "web.collections.types.kindManual", "smart" => "web.collections.types.kindSmart", _ => "web.collections.types.kindSynced" });
+
     private async void PageChanged(object sender, SelectionChangedEventArgs args)
     {
         if (_syncPages || _pages.SelectedItem is not ComboBoxItem { Tag: AdminHomeSectionScope scope } || scope == _scope || _controller == null) return;
         if (_controller.State.Busy || !await CanLeaveAsync())
         { _syncPages = true; _pages.SelectedItem = _pages.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, _scope)); _syncPages = false; return; }
-        CloseEditor(); _dialogRevision++; _dialog?.Hide(); _scope = scope; _selection.Clear(); _selectMode = false;
-        var query = _route.Query?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? new();
-        query["page"] = scope.LibraryId ?? "home"; foreach (var key in new[] { "add", "edit", "return" }) query.Remove(key);
+        CloseEditor(); _dialogRevision++; _dialog?.Hide(); _scope = scope; _selection.Clear(); _selectMode = false; _collectionsLoaded = false; _collectionNames.Clear();
+        var query = AdminHomeSectionsLinks.WithoutLinks(_route.Query) ?? new Dictionary<string, string>();
+        query["page"] = scope.LibraryId ?? "home";
         _route = new(AdminRoute.HomeSections, query); AdminShellPage.TryReplace(this, _route);
-        await _controller.OpenAsync(scope); await LoadDefaultsAsync();
-    }
-    private async Task ReadLinksAsync()
-    {
-        if (_linksRead || _controller?.CanWrite != true) return; _linksRead = true;
-        var edit = _route.Get("edit"); var add = _route.Get("add");
-        _returnPath = SafeReturnPath(_route.Get("return"));
-        var query = _route.Query?.Where(pair => pair.Key is not ("add" or "edit" or "return")).ToDictionary(pair => pair.Key, pair => pair.Value);
-        _route = new(AdminRoute.HomeSections, query); AdminShellPage.TryReplace(this, _route);
-        if (edit != null) { await OpenEditAsync(edit); return; }
-        if (add == null) return;
-        if (!add.StartsWith("collection:library:", StringComparison.Ordinal)) { _status.Text = "This collection cannot be added to an administrator row."; return; }
-        var owner = _controller.State.Owner!;
-        try
-        {
-            var choice = await _api.CollectionByIdAsync(owner, add["collection:library:".Length..], owner.Token);
-            if (!_active || !owner.IsCurrent || !ReferenceEquals(owner, _controller?.State.Owner)) return;
-            _session = null; _draft = new() { SectionType = "collection", Title = choice.Label, Config = new JsonObject { ["library_collection_id"] = choice.Id } };
-            BeginEditor(); _linkedCollection = true; _choiceLabels[choice.Id] = choice.Label; RenderForm();
-        }
-        catch (Exception) { if (_active && owner.IsCurrent) _status.Text = "The linked collection is not available."; }
+        var controller = _controller;
+        await controller.OpenAsync(scope);
+        if (_active && ReferenceEquals(controller, _controller)) { await LoadCollectionNamesAsync(); await LoadDefaultsAsync(); }
     }
 
-    private static string? SafeReturnPath(string? value)
+    // ── Links ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Follows ?add=, ?edit= and ?return= once the page's rows and capabilities are known, then drops them from the address
+    /// (217ff25 web/src/components/homeRows/useRowLinks.ts). Nothing opens until the page can change.
+    /// </summary>
+    private async Task ReadLinksAsync()
     {
-        if (value == null || !value.StartsWith("/admin/collections/", StringComparison.Ordinal)) return null;
+        var key = AdminHomeSectionsLinks.Key(_route.Query);
+        if (key == "" || key == _handledLinks) return;
+        var controller = _controller; if (controller == null || controller.State.Snapshot == null || controller.State.Capabilities == null) return;
+        _handledLinks = key;
+        var links = AdminHomeSectionsLinks.Read(_route.Query);
+        _route = new(AdminRoute.HomeSections, AdminHomeSectionsLinks.WithoutLinks(_route.Query)); AdminShellPage.TryReplace(this, _route);
+        if (links == null) return;
+        _returnPath = links.ReturnTo;
+        if (links.AddInvalid) { Toasts?.Error(T("web.home.rows.links.cantAdd")); return; }
+        if (links.Add != null) { await OpenLinkedAddAsync(controller, links); return; }
+        if (links.Edit != null)
+        {
+            if (!controller.CanWrite) { Toasts?.Error(T("web.home.rows.links.pageLocked")); return; }
+            if (controller.State.Snapshot.Rows.All(row => row.Id != links.Edit)) { Toasts?.Error(T("web.home.rows.links.rowGone")); return; }
+            await OpenEditAsync(links.Edit);
+        }
+    }
+
+    private async Task OpenLinkedAddAsync(AdminHomeSectionsController controller, AdminHomeSectionsLinks links)
+    {
+        if (!controller.CanWrite) { Toasts?.Error(T("web.home.rows.links.pageLocked")); return; }
+        if (controller.State.Catalog == null) { Toasts?.Error(T(controller.State.CatalogFailed ? "web.home.rows.links.noKinds" : "web.home.rows.links.cantAdd")); return; }
+        var recipe = controller.State.Catalog.Categories.SelectMany(group => group.Recipes).FirstOrDefault(entry => entry.Type == "collection");
+        var owner = controller.State.Owner!; AdminHomeSectionChoice choice;
         try
         {
-            var decoded = Uri.UnescapeDataString(value);
-            bool Unsafe(string path) => path.Contains('\\') || path.Contains("//", StringComparison.Ordinal) || path.Any(char.IsControl) || path.Split('/', '?', '#').Any(part => part is "." or "..");
-            return Unsafe(value) || Unsafe(decoded) ? null : value;
+            choice = await _api.CollectionByIdAsync(owner, links.Add!.Id, owner.Token);
+            if (!_active || !owner.IsCurrent || !ReferenceEquals(owner, _controller?.State.Owner) || !controller.CanWrite) return;
         }
-        catch (UriFormatException) { return null; }
+        catch (ApiException ex) when (ex.StatusCode is 404 or 400) { if (_active) Toasts?.Error(T("web.home.rows.links.cantAdd")); return; }
+        catch (InvalidDataException) { if (_active) Toasts?.Error(T("web.home.rows.links.cantAdd")); return; }
+        catch (Exception) { if (_active && owner.IsCurrent) Toasts?.Error(T("web.home.rows.links.noCollections")); return; }
+        if (recipe == null || recipe.Presets.Count == 0) { Toasts?.Error(T("web.home.rows.links.cantAdd")); return; }
+        // Add row opens on step 2 with the collection picked, named after it.
+        _session = null; _draft = AdminHomeSectionsDraftFactory.ForPreset(recipe, recipe.Presets[0]);
+        BeginEditor(); _linkedCollection = true; _choiceLabels[choice.Id] = choice.Label;
+        AdminHomeSectionsDraftFactory.WithCollection(_draft, choice.Id, choice.Label);
+        RenderForm();
     }
+
     private bool CanReturn => _linkedCollection && _returnPath != null && AdminRouteCatalog.TryResolve(_returnPath, out var target) && target.Request != null && AdminShellPage.CanOpen(target.Request);
     private async Task ReturnToCollectionAsync()
     { if (CanReturn && await CanLeaveAsync()) { var path = _returnPath!; CloseEditor(); AdminShellPage.TryOpenHref(path); } }
-    private void ClearPageNames()
+
+    /// <summary>After Add row from a link: the row's place, with "Move it" to open it here, and Back to the collection when it can be opened.</summary>
+    private void AfterLinkedAdd(string? id)
     {
-        _collectionLabels.Clear(); _libraries.Clear(); _syncPages = true;
-        try { _pages.Items.Clear(); _pages.Items.Add(new ComboBoxItem { Content = "Home", Tag = AdminHomeSectionScope.Home }); _pages.SelectedIndex = 0; }
-        finally { _syncPages = false; }
-        _scope = AdminHomeSectionScope.Home;
+        var back = CanReturn ? _returnPath : null;
+        var rows = _controller?.State.Snapshot?.Rows ?? [];
+        var at = id == null ? -1 : rows.ToList().FindIndex(row => row.Id == id);
+        if (id == null) { if (back != null) AdminShellPage.TryOpenHref(back); return; }
+        var position = at == -1 ? rows.Count : at + 1; var total = rows.Count;
+        var page = _scope.LibraryId ?? "home"; var label = PageLabel;
+        var message = _scope.Kind == "home" ? T("web.home.rows.links.addedHome", new { position = (long)position, total = (long)total })
+            : T("web.home.rows.links.addedLibrary", new { page = label, position = (long)position, total = (long)total });
+        if (back != null) AdminShellPage.TryOpenHref(back);
+        Toasts?.Success(message, T("web.home.rows.links.moveIt"), () =>
+        {
+            AdminShellPage.Open(new AdminRouteRequest(AdminRoute.HomeSections, new Dictionary<string, string> { ["page"] = page, ["edit"] = id }));
+            return Task.CompletedTask;
+        });
     }
 
+    private void ClearPageNames()
+    {
+        _collectionNames.Clear(); _collectionsLoaded = false; _libraries.Clear(); _syncPages = true;
+        try { _pages.Items.Clear(); _pages.Items.Add(new ComboBoxItem { Content = T("web.home.rows.pages.home"), Tag = AdminHomeSectionScope.Home }); _pages.SelectedIndex = 0; }
+        finally { _syncPages = false; }
+        _scope = AdminHomeSectionScope.Home; _handledLinks = null;
+    }
+
+    /// <summary>The other library pages a draft can also be added to (never this page), for Add row on a library page.</summary>
     private IReadOnlyList<AdminHomeSectionChoice> CopyTargets(AdminHomeSectionDraft draft)
     {
         if (_scope.LibraryId == null || !draft.CanCopy) return [];
-        string Kind(string type) => type.ToLowerInvariant() switch { "movies" or "movie" => "movie", "tv" or "series" or "show" or "tvshows" => "tv", "audiobooks" => "audiobook", "ebooks" => "ebook", var other => other };
-        var required = Value(draft.Config, "media_scope") != "" ? Kind(_libraries.FirstOrDefault(library => library.Id == _scope.LibraryId)?.Type ?? "") :
-            draft.SectionType == "next_in_series" ? "audiobook" : draft.SectionType == "trending_discover" && Value(draft.Config, "filter_type") is "movie" or "series" ? Kind(Value(draft.Config, "filter_type")) :
-            draft.SectionType == "continue_watching" ? Value(draft.Config, "continue_type") switch { "listening" => "audiobook", "reading" => "ebook", _ => Value(draft.Config, "filter_type") is "audiobook" or "ebook" ? Value(draft.Config, "filter_type") : "" } : "";
-        return _libraries.Where(library => library.Id != _scope.LibraryId && (required == "" || Kind(library.Type) == required)).ToArray();
-    }
-    private async Task CopyAsync(AdminHomeSection row)
-    {
-        var controller = _controller; if (controller?.CanWrite != true || _dialog != null) return;
-        var session = await controller.OpenEditAsync(row.Id); if (session == null || !_active) return;
-        if (AdminHomeSectionsController.Fingerprint(session.Row) != AdminHomeSectionsController.Fingerprint(row)) { _status.Text = "This row changed. Reload and review it before copying."; return; }
-        var draft = AdminHomeSectionDraft.From(session.Row); var targets = CopyTargets(draft); var chosen = new HashSet<string>(StringComparer.Ordinal);
-        var panel = new StackPanel { Spacing = 8 }; panel.Children.Add(U.Text("Each selected library page gets a new row at its bottom. Copies are never hero banners.", 13));
-        foreach (var library in targets)
-        {
-            var box = new CheckBox { Content = library.Label }; box.Click += (_, _) => { if (box.IsChecked == true && chosen.Count < 100) chosen.Add(library.Id); else { chosen.Remove(library.Id); box.IsChecked = false; } }; panel.Children.Add(box);
-        }
-        if (await ConfirmAsync("Add to other libraries", new ScrollViewer { Content = panel, MaxHeight = 420 }, "Add row", session.Owner) && chosen.Count > 0)
-            await controller.CopyAsync(session, chosen.ToArray());
+        var fits = AdminHomeSectionsRules.CopyTargetPages(draft.SectionType, draft.Config, LibraryPages(), _scope.LibraryId).Select(page => page.Id).ToHashSet(StringComparer.Ordinal);
+        return _libraries.Where(library => library.Id != _scope.LibraryId && fits.Contains(library.Id)).ToArray();
     }
 }

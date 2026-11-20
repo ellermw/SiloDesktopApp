@@ -1,6 +1,5 @@
 using System.Text.Json.Nodes;
 using System.Runtime.InteropServices.WindowsRuntime;
-using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -8,10 +7,12 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 using U = SiloPlayer.Controls.AdminSettingsUi;
 
 namespace SiloPlayer.Views.Admin;
 
+/// <summary>Add row (step 1: pick a kind; step 2: preview, variant, name, More options) and Edit row in one in-place modal panel (official AddRowDialog).</summary>
 public sealed partial class AdminHomeSectionsPage
 {
     private Grid? _editorOverlay;
@@ -19,46 +20,30 @@ public sealed partial class AdminHomeSectionsPage
     private StackPanel _editorFields = new() { Spacing = 16 };
     private readonly TextBlock _editorTitle = U.Text("", 24);
     private readonly TextBlock _editorNotice = U.Text("", 13);
+    private readonly TextBlock _editorFooter = U.Text("", 12, true);
     private readonly Button _editorSave = Action("Save", "HomeSectionSave");
     private readonly Button _editorBack = Action("All rows", "HomeSectionBack");
-    private readonly Button _editorDelete = Action("Delete row…", "HomeSectionDelete");
-    private AdminHomeSectionDraft? _draft;
+    private readonly Button _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
+    private AdminHomeSectionDraft? _draft, _original;
     private AdminHomeSectionSession? _session;
     private MonitorAuthorityLease? _editorOwner;
     private CancellationTokenSource? _editorReads;
-    private bool _editorDirty, _editorInvalid;
+    private bool _editorDirty;
+    /// <summary>Validation messages of the fields on screen. Cleared whenever the form is rebuilt, so a field that is no longer shown never keeps blocking Save.</summary>
+    private readonly Dictionary<string, string> _fieldErrors = new(StringComparer.Ordinal);
     private long _previewRevision, _pickerRevision;
     private readonly Dictionary<string, string> _choiceLabels = new(StringComparer.Ordinal);
     private readonly HashSet<string> _extraCopies = new(StringComparer.Ordinal);
+    private bool _pickerOnly;
 
-    private static readonly string[] GroupOrder = ["keep", "new", "popular", "picked", "moods", "collections"];
-    private static readonly Dictionary<string, (string Group, string Key, string Name)> Kinds = new()
-    {
-        ["continue_watching"] = ("keep", "continueWatching", "Continue watching"), ["next_up"] = ("keep", "nextUp", "Next up"),
-        ["next_in_series"] = ("keep", "nextInSeries", "Next in series"), ["watchlist"] = ("keep", "watchlist", "Watchlist"), ["favorites"] = ("keep", "favorites", "Favorites"),
-        ["recently_added"] = ("new", "recentlyAdded", "Recently added"), ["recently_released"] = ("new", "recentlyReleased", "New releases"),
-        ["new_to_library"] = ("new", "newToLibrary", "New this month"), ["returning_shows"] = ("new", "returningShows", "Returning shows"),
-        ["trending_on_server"] = ("popular", "trendingOnServer", "Trending on this server"), ["most_watched"] = ("popular", "mostWatched", "Most watched"),
-        ["trending_discover"] = ("popular", "trendingDiscover", "Trending worldwide"), ["profile_activity_feed"] = ("popular", "profileActivityFeed", "What others just watched"),
-        ["recommended_for_you"] = ("picked", "recommendedForYou", "Recommended for you"), ["because_you_watched"] = ("picked", "becauseYouWatched", "Because you watched"),
-        ["similar_users_liked"] = ("picked", "similarUsersLiked", "Profiles like you enjoyed"), ["taste_match"] = ("picked", "tasteMatch", "Top picks today"),
-        ["mood_collection"] = ("moods", "moodCollection", "Mood picks"), ["seasonal_themed"] = ("moods", "seasonalThemed", "Seasonal picks"),
-        ["editorial_spotlight"] = ("moods", "editorialSpotlight", "Spotlight"), ["format_showcase"] = ("moods", "formatShowcase", "4K & HDR showcase"),
-        ["hidden_gems"] = ("moods", "hiddenGems", "Hidden gems"), ["critically_acclaimed"] = ("moods", "criticallyAcclaimed", "Critically acclaimed"),
-        ["forgotten_favorites"] = ("moods", "forgottenFavorites", "Forgotten favorites"), ["genre_roulette"] = ("moods", "genreRoulette", "Genre roulette"),
-        ["random"] = ("moods", "random", "Surprise me"), ["short_watches"] = ("moods", "shortWatches", "Short & sweet"), ["anniversaries"] = ("moods", "anniversaries", "Anniversaries"),
-        ["collection"] = ("collections", "collection", "A collection"), ["collection_posters"] = ("collections", "collectionPosters", "Collections"),
-        ["custom_filter"] = ("collections", "customFilter", "Titles matching rules"), ["admin_curated_list"] = ("collections", "adminCuratedList", "Editor's picks"),
-        ["genre"] = ("collections", "genre", "Genre (no longer offered)"), ["award_winners"] = ("moods", "awardWinners", "Award winners (no longer offered)")
-    };
-    private static string KindLabel(string type) => Kinds.TryGetValue(type, out var kind) ? T("web.home.rows.kinds." + kind.Key) : "Row";
-    private static bool NotOffered(string type) => type is "next_up" or "admin_curated_list" or "genre" or "award_winners";
     private bool EditorCurrent(long revision) => _active && _editor != null && revision == _dialogRevision && _editorOwner is { IsCurrent: true } && ReferenceEquals(_editorOwner, _controller?.State.Owner);
+    private static string KindLabel(string type) => AdminHomeSectionsKinds.Label(type);
+    private AdminHomeSectionCatalog? Catalog => _controller?.State.Catalog;
 
     private void OpenAdd()
     {
-        if (_controller?.CanWrite != true || _controller.State.Catalog == null || _editor != null) return;
-        _session = null; _draft = null; BeginEditor(); RenderPicker();
+        if (_controller?.CanWrite != true || _editor != null) return;
+        _session = null; _draft = null; _original = null; BeginEditor(); RenderPicker();
     }
     private async Task OpenEditAsync(string id)
     {
@@ -68,87 +53,122 @@ public sealed partial class AdminHomeSectionsPage
         {
             var session = await controller.OpenEditAsync(id);
             if (!_active || revision != _dialogRevision || !ReferenceEquals(controller, _controller) || session == null || !session.Owner.IsCurrent) return;
-            _session = session; _draft = AdminHomeSectionDraft.From(session.Row); BeginEditor(); RenderForm();
+            _session = session; _draft = AdminHomeSectionsDraftFactory.FromRow(session.Row, Catalog); _original = CloneDraft(_draft); BeginEditor(); RenderForm();
         }
-        catch (Exception) { if (_active && revision == _dialogRevision) _status.Text = "Couldn't load this row. Reload and try again."; }
+        catch (Exception) { if (_active && revision == _dialogRevision) Toasts?.Error(T("web.admin.homeRows.page.loadRowsFailed")); }
     }
+    private static AdminHomeSectionDraft CloneDraft(AdminHomeSectionDraft draft) => new()
+    {
+        SectionType = draft.SectionType, Title = draft.Title, TitleFollowsVariant = draft.TitleFollowsVariant, Featured = draft.Featured, WebOnly = draft.WebOnly,
+        Enabled = draft.Enabled, ItemLimit = draft.ItemLimit, Config = (JsonObject)draft.Config.DeepClone()
+    };
+
     private void BeginEditor()
     {
         _dialogRevision++; _editorOwner = _controller!.State.Owner;
         _editorReads = CancellationTokenSource.CreateLinkedTokenSource(_editorOwner!.Token);
-        _editorDirty = _editorInvalid = false; _choiceLabels.Clear(); _extraCopies.Clear();
-        foreach (var pair in _collectionLabels) _choiceLabels[pair.Key] = pair.Value;
+        _editorDirty = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear();
+        foreach (var pair in _collectionNames) if (pair.Value.Title != null) _choiceLabels[pair.Key] = pair.Value.Title;
         _editorOverlay = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(185, 0, 0, 0)), TabFocusNavigation = KeyboardNavigationMode.Cycle };
         _editorOverlay.KeyDown += async (_, args) =>
         {
             if (!args.Handled && args.Key == Windows.System.VirtualKey.Escape) { args.Handled = true; if (await CanLeaveAsync()) CloseEditor(); }
         };
         _editor = new Border { Background = U.Brush("AppBackgroundBrush"), CornerRadius = new(20), Padding = new(24), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetAutomationId(_editor, "HomeSectionEditor"); AutomationProperties.SetName(_editor, _session == null ? "Add row" : "Edit row");
+        AutomationProperties.SetAutomationId(_editor, "HomeSectionEditor"); AutomationProperties.SetName(_editor, T(_session == null ? "web.home.addRow.addRow" : "web.home.addRow.editRow"));
         var layout = new Grid { RowSpacing = 16, TabFocusNavigation = KeyboardNavigationMode.Cycle };
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var header = new StackPanel { Spacing = 8 }; header.Children.Add(_editorTitle); header.Children.Add(_editorNotice); layout.Children.Add(header);
         _editorFields = new() { Spacing = 16 };
         var scroller = new ScrollViewer { Content = _editorFields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetRow(scroller, 1); layout.Children.Add(scroller);
-        var footer = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var cancel = Action("Cancel", "HomeSectionCancel"); cancel.Click += async (_, _) => { if (await CanLeaveAsync()) CloseEditor(); };
+        var footer = new StackPanel { Spacing = 8 };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var cancel = Action(AdminHomeSectionsText.T("common.cancel"), "HomeSectionCancel"); cancel.Click += async (_, _) => { if (await CanLeaveAsync()) CloseEditor(); };
         _editorSave.Click -= EditorSaveClick; _editorSave.Click += EditorSaveClick;
         _editorBack.Click -= EditorBackClick; _editorBack.Click += EditorBackClick;
         _editorDelete.Click -= EditorDeleteClick; _editorDelete.Click += EditorDeleteClick;
-        footer.Children.Add(_editorBack); footer.Children.Add(_editorDelete); footer.Children.Add(cancel); footer.Children.Add(_editorSave);
+        buttons.Children.Add(_editorBack); buttons.Children.Add(_editorDelete); buttons.Children.Add(cancel); buttons.Children.Add(_editorSave);
+        footer.Children.Add(_editorFooter); footer.Children.Add(buttons);
         Grid.SetRow(footer, 2); layout.Children.Add(footer); _editor.Child = layout; _editorOverlay.Children.Add(_editor); _root.Children.Add(_editorOverlay);
         _body.IsEnabled = false; Fit(); Render();
     }
-    private async void EditorBackClick(object sender, RoutedEventArgs args) { if (CanReturn) await ReturnToCollectionAsync(); else if (_editorBack.Content?.ToString() == "Back to row") RenderForm(); else RenderPicker(); }
+
+    private async void EditorBackClick(object sender, RoutedEventArgs args)
+    {
+        if (CanReturn) await ReturnToCollectionAsync();
+        else if (_draft != null && _pickerOnly) { _pickerOnly = false; RenderForm(); }
+        else RenderPicker();
+    }
     private async void EditorDeleteClick(object sender, RoutedEventArgs args) { if (_session != null) await DeleteAsync([_session.Row.Id]); }
+
     private async void EditorSaveClick(object sender, RoutedEventArgs args)
     {
-        if (_draft == null || _controller?.CanWrite != true || _editorInvalid || _editorOwner?.IsCurrent != true) return;
-        if (string.IsNullOrWhiteSpace(_draft.Title))
-        {
-            _draft.Title = _draft.SectionType == "collection" && _choiceLabels.TryGetValue(Value(_draft.Config, "library_collection_id"), out var collectionName)
-                ? collectionName : Kinds.GetValueOrDefault(_draft.SectionType).Name ?? "Row";
-        }
-        try { _draft.Validate(); }
+        if (_draft == null || _controller?.CanWrite != true || _fieldErrors.Count > 0 || _editorOwner?.IsCurrent != true) return;
+        var controller = _controller; var revision = _dialogRevision; var draft = _draft;
+        var fallback = draft.SectionType == "collection" && _choiceLabels.TryGetValue(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config), out var collectionName) ? collectionName : null;
+        // The name a save sends: typed, the collection's, the variant's or the kind's plain name.
+        draft.Title = AdminHomeSectionsDraftFactory.SavedTitle(draft, Catalog, fallback);
+        var copies = AdminHomeSectionsRules.LibraryCopyIds(draft, _scope, LibraryPages(), _extraCopies);
+        try { draft.Validate(); }
         catch (ArgumentException ex) { _editorNotice.Text = ex.Message; return; }
-        var revision = _dialogRevision; var controller = _controller;
-        if (await controller.SaveAsync(_session, _draft, _extraCopies.ToArray()) && EditorCurrent(revision))
-        { var back = CanReturn ? _returnPath : null; CloseEditor(); if (back != null) AdminShellPage.TryOpenHref(back); }
-        else if (EditorCurrent(revision))
+        var creating = _session == null; var before = controller.State.Snapshot?.Rows.Select(row => row.Id).ToHashSet(StringComparer.Ordinal) ?? [];
+        if (await controller.SaveAsync(_session, draft, copies) && EditorCurrent(revision))
         {
-            _editorNotice.Text = controller.State.Error ?? "Couldn't save this row.";
-            if (_session != null && !controller.State.OutcomeUnknown)
-            {
-                var reload = Action(T("web.home.addRow.reloadRow"), "HomeSectionReloadRow");
-                reload.Click += async (_, _) =>
-                {
-                    if (!EditorCurrent(revision) || !await ConfirmAsync("Reload row?", "Replace your draft with the current server row and review it before saving.", "Reload row", _editorOwner!)) return;
-                    await controller.ReloadAsync();
-                    if (!EditorCurrent(revision) || !controller.CanWrite) return;
-                    try
-                    {
-                        var fresh = await controller.OpenEditAsync(_session!.Row.Id);
-                        if (!EditorCurrent(revision) || fresh == null) return;
-                        _session = fresh; _draft = AdminHomeSectionDraft.From(fresh.Row); _editorDirty = false; RenderForm();
-                    }
-                    catch (Exception) { if (EditorCurrent(revision)) _editorNotice.Text = "Couldn't reload this row. Try again."; }
-                };
-                _editorFields.Children.Insert(0, reload);
-            }
-            else
-            {
-                var review = Action("Reload rows and review", "HomeSectionReviewUnknown");
-                review.Click += async (_, _) =>
-                {
-                    if (!EditorCurrent(revision) || !await CanLeaveAsync()) return;
-                    CloseEditor(); await controller.ReloadAsync();
-                    if (_active && ReferenceEquals(controller, _controller)) { await LoadPagesAsync(); await LoadDefaultsAsync(); }
-                };
-                _editorFields.Children.Insert(0, review);
-            }
+            var added = controller.State.NewIds.FirstOrDefault(); var linked = _linkedCollection;
+            CloseEditor();
+            if (creating && linked) AfterLinkedAdd(added);
+            else if (creating && added != null) ScrollToRow(added);
         }
+        else if (EditorCurrent(revision)) ShowSaveFailure(controller, revision, creating);
     }
+
+    private void ScrollToRow(string id)
+    {
+        var row = _rows.FirstOrDefault(entry => entry.Row.Id == id);
+        if (row != null) _list.ScrollIntoView(row);
+    }
+
+    private void ShowSaveFailure(AdminHomeSectionsController controller, long revision, bool creating)
+    {
+        var state = controller.State;
+        _editorNotice.Text = state.Failure == AdminHomeSectionsFailure.Conflict && !creating ? T("web.home.addRow.conflict") : state.Error ?? T(creating ? "web.home.addRow.addFailed" : "web.home.addRow.saveFailed");
+        if (state.Failure == AdminHomeSectionsFailure.Refused) return;
+        if (state.Failure == AdminHomeSectionsFailure.Conflict && !creating)
+        {
+            var reload = Action(T("web.home.addRow.reloadRow"), "HomeSectionReloadRow");
+            reload.Click += async (_, _) => await ReloadRowAsync(revision);
+            _editorFields.Children.Insert(0, reload); return;
+        }
+        var review = Action(T("web.home.rows.reloadRows"), "HomeSectionReviewUnknown");
+        review.Click += async (_, _) =>
+        {
+            if (!EditorCurrent(revision) || !await CanLeaveAsync()) return;
+            CloseEditor(); await ReloadAllAsync();
+        };
+        _editorFields.Children.Insert(0, review);
+    }
+
+    /// <summary>After a stale save: every field the admin changed keeps their value, every other field takes the row's new value; what changed elsewhere is named.</summary>
+    private async Task ReloadRowAsync(long revision)
+    {
+        var controller = _controller; var session = _session; var draft = _draft; var original = _original;
+        if (controller == null || session == null || draft == null || original == null || !EditorCurrent(revision)) return;
+        try
+        {
+            await controller.ReloadAsync();
+            if (!EditorCurrent(revision) || !controller.CanWrite) return;
+            var fresh = await controller.OpenEditAsync(session.Row.Id);
+            if (!EditorCurrent(revision) || fresh == null) return;
+            var upstream = AdminHomeSectionsDraftFactory.FromRow(fresh.Row, Catalog);
+            var changed = AdminHomeSectionsDraftFactory.MergeReloaded(original, draft, upstream);
+            _session = fresh; _original = CloneDraft(upstream); _draft = draft; _editorDirty = true; RenderForm();
+            var labels = changed.Select(field => T(field switch { "title" => "web.home.addRow.form.rowName", "shows" => "web.home.rows.draft.whatItShows", "itemLimit" => "web.home.addRow.more.itemLimit", _ => "web.home.addRow.more.heroBanner" }));
+            if (changed.Count > 0) _editorNotice.Text = T("web.home.addRow.changedElsewhere", new { fields = string.Join(", ", labels) });
+        }
+        catch (Exception) { if (EditorCurrent(revision)) _editorNotice.Text = T("web.home.addRow.reloadFailed"); }
+    }
+
     private void CloseEditor()
     {
         _dialogRevision++; _previewRevision++; _pickerRevision++;
@@ -156,168 +176,279 @@ public sealed partial class AdminHomeSectionsPage
         if (_editorOverlay != null) _root.Children.Remove(_editorOverlay);
         // These controls are reused in the next editor; detach them from the old visual tree.
         if (_editorSave.Parent is Panel footer) footer.Children.Clear();
+        if (_editorFooter.Parent is Panel footerHost) footerHost.Children.Clear();
         if (_editorTitle.Parent is Panel header) header.Children.Clear();
-        _editorFields.Children.Clear(); _editor = null; _editorOverlay = null; _draft = null; _session = null; _editorOwner = null;
-        _editorDirty = _editorInvalid = false; _body.IsEnabled = true; _choiceLabels.Clear(); _ruleCapabilities = null; _seasonalCatalog = null;
+        _editorFields.Children.Clear(); _editor = null; _editorOverlay = null; _draft = null; _original = null; _session = null; _editorOwner = null;
+        _editorDirty = false; _pickerOnly = false; _fieldErrors.Clear(); _body.IsEnabled = true; _choiceLabels.Clear(); _ruleCapabilities = null; _seasonalCatalog = null;
         _linkedCollection = false;
-        if (_active) { _add.IsEnabled = _controller?.CanWrite == true && _controller.State.Catalog != null; _more.IsEnabled = _controller?.CanWrite == true; _pages.IsEnabled = _controller?.State is { Busy: false, Owner.IsCurrent: true }; }
+        if (_active) { _add.IsEnabled = _controller?.CanWrite == true; _more.IsEnabled = _controller?.CanWrite == true; _pages.IsEnabled = _controller?.State is { Busy: false, Owner.IsCurrent: true }; }
         if (_active && _add.IsLoaded && _add.IsEnabled) _add.Focus(FocusState.Programmatic);
     }
+
+    // ── Step 1: pick a kind ──────────────────────────────────
+
     private void RenderPicker()
     {
         if (_editor == null) return;
-        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear();
-        _editorTitle.Text = _session == null ? "Add row to " + PageLabel : T("web.home.addRow.changeTitle"); _editorNotice.Text = T("web.home.addRow.pickDescription");
-        _editorSave.Visibility = Visibility.Collapsed; _editorDelete.Visibility = Visibility.Collapsed; _editorBack.Visibility = _draft == null ? Visibility.Collapsed : Visibility.Visible;
-        _editorBack.Content = "Back to row";
-        var catalog = _controller?.State.Catalog;
+        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _fieldErrors.Clear(); _editorNotice.Text = "";
+        var changing = _session != null;
+        _editorTitle.Text = changing ? T("web.home.addRow.changeTitle") : T("web.home.addRow.addTitle", new { page = PageLabel });
+        _editorNotice.Text = T(changing ? "web.home.addRow.changeDescription" : "web.home.addRow.pickDescription");
+        _editorFooter.Text = changing ? "" : T("web.home.addRow.footerPickStep", new { page = PageLabel });
+        _editorSave.Visibility = Visibility.Collapsed; _editorDelete.Visibility = Visibility.Collapsed;
+        _pickerOnly = _draft != null; _editorBack.Visibility = _draft == null ? Visibility.Collapsed : Visibility.Visible;
+        _editorBack.Content = changing ? T("web.home.addRow.editRow") : T("web.home.addRow.allRows");
+        var catalog = Catalog;
         if (catalog == null)
         {
-            _editorFields.Children.Add(U.Text(T("web.home.addRow.catalogFailed")));
-            var retry = Action("Retry", "HomeSectionCatalogRetry"); retry.Click += async (_, _) => { await _controller!.ReloadAsync(); if (_editor != null) RenderPicker(); }; _editorFields.Children.Add(retry); return;
+            var state = _controller?.State;
+            _editorFields.Children.Add(U.Text(T(state?.CatalogFailed == true ? "web.home.addRow.catalogFailed" : "web.home.addRow.catalogLoading")));
+            var retry = Action(T("web.home.rows.reloadRows"), "HomeSectionCatalogRetry");
+            retry.Click += async (_, _) => { retry.IsEnabled = false; await _controller!.ReloadCatalogAsync(); if (_editor != null) RenderPicker(); };
+            _editorFields.Children.Add(retry); return;
         }
-        var search = Input("Search rows", "HomeSectionKindSearch", "", _ => { });
-        search.Loaded += (_, _) => search.Focus(FocusState.Programmatic);
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var rows = _controller?.State.Snapshot?.Rows ?? [];
+        var typesOnPage = rows.Select(row => row.SectionType).ToHashSet(StringComparer.Ordinal);
+        var search = Input(T("web.home.addRow.picker.kinds"), "HomeSectionKindSearch", "", _ => { });
+        search.PlaceholderText = T("web.home.addRow.picker.kinds");
         var cards = new StackPanel { Spacing = 10 }; string? chosen = null;
         void Refresh()
         {
             cards.Children.Clear(); var query = search.Text.Trim();
-            var recipes = catalog.Categories.SelectMany(group => group.Recipes).Where(recipe => !NotOffered(recipe.Type) && (recipe.Presets.Count > 0 || recipe.Type == "custom_filter"));
-            foreach (var group in GroupOrder)
+            var groups = AdminHomeSectionsKinds.PickerGroups(catalog);
+            foreach (var (group, entries) in groups)
             {
                 if (chosen != null && group != chosen) continue;
-                var entries = recipes.Where(recipe => (Kinds.TryGetValue(recipe.Type, out var known) ? known.Group : "moods") == group &&
-                    (KindLabel(recipe.Type).Contains(query, StringComparison.CurrentCultureIgnoreCase) || recipe.Presets.Any(preset => preset.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase)))).ToArray();
-                if (entries.Length == 0) continue;
-                cards.Children.Add(U.Text(T("web.home.rows.groups." + group), 16));
-                foreach (var recipe in entries)
+                var matches = entries.Where(recipe => query == "" || KindLabel(recipe.Type).Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                    || AdminHomeSectionsKinds.Sentence(recipe.Type).Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                    || recipe.Presets.Any(preset => preset.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase))).ToArray();
+                if (matches.Length == 0) continue;
+                cards.Children.Add(U.Text(AdminHomeSectionsKinds.GroupLabel(group) + " · " + AdminHomeSectionsKinds.GroupBlurb(group), 14));
+                foreach (var recipe in matches)
                 {
-                    var card = Action(KindLabel(recipe.Type), "HomeSectionKind_" + recipe.Type);
+                    var onPage = typesOnPage.Contains(recipe.Type);
+                    var card = Action(KindLabel(recipe.Type) + (onPage ? " · " + T("web.home.addRow.onPage", new { page = PageLabel }) : ""), "HomeSectionKind_" + recipe.Type);
+                    AutomationProperties.SetName(card, KindLabel(recipe.Type) + ". " + AdminHomeSectionsKinds.Sentence(recipe.Type));
                     card.HorizontalAlignment = HorizontalAlignment.Stretch; card.HorizontalContentAlignment = HorizontalAlignment.Left;
                     card.Click += (_, _) => PickRecipe(recipe, recipe.Presets.FirstOrDefault()); cards.Children.Add(card);
-                    if (recipe.Presets.FirstOrDefault() is { } preset) cards.Children.Add(U.Text(preset.DescriptionShort, 12, true));
+                    cards.Children.Add(U.Text(AdminHomeSectionsKinds.Sentence(recipe.Type), 12, true));
                 }
             }
-            if (cards.Children.Count == 0) cards.Children.Add(U.Text("No rows match your search.", 13, true));
+            if (cards.Children.Count == 0)
+            {
+                cards.Children.Add(U.Text(T("web.home.addRow.picker.noMatch", new { query }), 13, true));
+                var clear = Action(T("web.home.addRow.picker.clearSearch"), "HomeSectionKindClear"); clear.Click += (_, _) => { search.Text = ""; };
+                cards.Children.Add(clear);
+            }
         }
-        var all = Action("All", "HomeSectionCategoryAll"); all.Click += (_, _) => { chosen = null; Refresh(); }; tabs.Children.Add(all);
-        foreach (var group in GroupOrder)
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var all = Action(T("web.home.addRow.collection.filterAll"), "HomeSectionCategoryAll"); all.Click += (_, _) => { chosen = null; Refresh(); }; tabs.Children.Add(all);
+        foreach (var group in AdminHomeSectionsKinds.GroupOrder)
         {
-            var tab = Action(T("web.home.rows.groups." + group), "HomeSectionCategory_" + group);
+            var tab = Action(AdminHomeSectionsKinds.GroupLabel(group), "HomeSectionCategory_" + group);
             tab.Click += (_, _) => { chosen = group; Refresh(); }; tabs.Children.Add(tab);
         }
         search.TextChanged += (_, _) => Refresh();
         _editorFields.Children.Add(search); _editorFields.Children.Add(new ScrollViewer { Content = tabs, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        _editorFields.Children.Add(cards); Refresh(); search.Focus(FocusState.Programmatic);
+        _editorFields.Children.Add(cards);
+        if (rows.Count > 0) _editorFields.Children.Add(U.Text(T("web.home.addRow.picker.onPageNote", new { page = PageLabel }), 12, true));
+        Refresh(); search.Focus(FocusState.Programmatic);
     }
+
     private void PickRecipe(AdminHomeRecipe recipe, AdminHomePreset? preset)
     {
-        var previous = _draft;
-        _draft = new()
+        var previous = _draft; var fresh = AdminHomeSectionsDraftFactory.ForPreset(recipe, preset);
+        if (previous != null)
         {
-            SectionType = recipe.Type, Title = previous?.Title ?? Kinds.GetValueOrDefault(recipe.Type).Name ?? preset?.DisplayName ?? "Row",
-            ItemLimit = previous?.ItemLimit ?? 20, Featured = previous?.Featured == true && recipe.Type != "collection_posters", WebOnly = previous?.WebOnly == true,
-            Enabled = previous?.Enabled ?? true, Config = preset?.DefaultParams.DeepClone().AsObject() ?? new()
-        };
-        if (previous == null && preset != null && recipe.Type is not ("collection" or "collection_posters" or "custom_filter")) _draft.Title = preset.DisplayName;
-        if (preset != null && recipe.Type == "seasonal_themed") _draft.ApplyVariant(preset);
-        _editorDirty = true; RenderForm();
+            // A new kind starts from its own settings; the name stays unless it was still following the old variant.
+            if (!previous.TitleFollowsVariant) { fresh.Title = previous.Title; fresh.TitleFollowsVariant = false; } else fresh.TitleFollowsVariant = true;
+            fresh.ItemLimit = previous.ItemLimit; fresh.Featured = previous.Featured && !AdminHomeSectionsKinds.HoldsCollections(fresh.SectionType); fresh.WebOnly = previous.WebOnly && fresh.Featured;
+        }
+        _draft = fresh; _editorDirty = true; _pickerOnly = false; RenderForm();
     }
+
+    // ── Step 2: the form ─────────────────────────────────────
+
     private void RenderForm()
     {
         var draft = _draft; if (draft == null || _editor == null) return;
-        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _editorInvalid = false;
-        _editorTitle.Text = _session == null ? KindLabel(draft.SectionType) : T("web.home.addRow.editRow");
-        _editorNotice.Text = _session == null ? "Step 2 of 2 · Add to " + PageLabel : T("web.home.addRow.editDescription", new { page = PageLabel });
-        _editorSave.Visibility = Visibility.Visible; _editorSave.Content = _session == null ? T("web.home.addRow.addRow") : T("web.home.addRow.save");
-        _editorSave.IsEnabled = _controller?.CanWrite == true; _editorDelete.Visibility = _session == null ? Visibility.Collapsed : Visibility.Visible;
-        var kindLocked = draft.SectionType == "continue_watching" && Value(draft.Config, "continue_type") == "reading";
-        _editorBack.Visibility = _session != null && kindLocked ? Visibility.Collapsed : Visibility.Visible; _editorBack.Content = _session == null ? T("web.home.addRow.allRows") : "Change";
-        if (CanReturn) _editorBack.Content = "Back to collection";
-        Field(_editorFields, "Shows", U.Text(KindLabel(draft.SectionType), 14));
-        var recipe = _controller?.State.Catalog?.Categories.SelectMany(group => group.Recipes).FirstOrDefault(entry => entry.Type == draft.SectionType);
-        if (recipe?.Presets.Count > 0 && !NotOffered(draft.SectionType) && !kindLocked && AdminHomeSectionDraft.VariantKeys(draft.SectionType).Count > 0)
-        {
-            var variants = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var preset in recipe.Presets) variants.Items.Add(new ComboBoxItem { Content = preset.DisplayName, Tag = preset });
-            variants.SelectedIndex = recipe.Presets.FindIndex(preset => preset.DefaultParams.All(pair => JsonNode.DeepEquals(draft.Config[pair.Key], pair.Value)));
-            AutomationProperties.SetAutomationId(variants, "HomeSectionVariant");
-            variants.SelectionChanged += (_, _) =>
-            {
-                if (variants.SelectedItem is not ComboBoxItem { Tag: AdminHomePreset preset }) return;
-                if (recipe.Presets.Any(entry => entry.DisplayName == draft.Title)) draft.Title = preset.DisplayName;
-                draft.ApplyVariant(preset); _editorDirty = true; RenderForm();
-            };
-            Field(_editorFields, "Variant", variants);
-        }
-        var name = Input("Row name", "HomeSectionTitle", draft.Title, value => { draft.Title = value; Dirty(); }, 500);
-        name.Loaded += (_, _) => name.Focus(FocusState.Programmatic);
-        Field(_editorFields, T("web.home.addRow.form.rowName"), name);
-        if (draft.SectionType == "collection") CollectionSelector(_editorFields, multiple: false);
-        else if (draft.SectionType == "collection_posters") CollectionSelector(_editorFields, multiple: true);
-        else if (draft.SectionType is "custom_filter" or "genre") RulesEditor(_editorFields);
-        else if (draft.SectionType == "admin_curated_list") CuratedEditor(_editorFields);
-        else if (draft.SectionType == "seasonal_themed") SeasonalEditor(_editorFields);
-        if (_scope.Kind == "home" && draft.SectionType is "recently_added" or "recently_released" or "watchlist" or "favorites") LibrarySelector(_editorFields, "filter_library_ids");
-        if (draft.SectionType is "trending_discover" or "watchlist" or "favorites")
-            ConfigSelect(_editorFields, "Show", "filter_type", [("", "Everything"), ("movie", "Movies"), ("series", "Shows"), ("audiobook", "Audiobooks")]);
-        var more = new StackPanel { Spacing = 14 };
-        if (draft.SectionType is "watchlist" or "favorites")
-        {
-            var orders = new[] { ("", "List order"), ("added_at:desc", "Newest added first"), ("added_at:asc", "Oldest added first"), ("title:asc", "Title A to Z"), ("title:desc", "Title Z to A"), ("release_date:desc", "Newest released first"), ("release_date:asc", "Oldest released first"), ("rating_imdb:desc", "Highest IMDb rating first") };
-            var current = Value(draft.Config, "sort"); if (current != "") current += ":" + (Value(draft.Config, "order") is { Length: > 0 } order ? order : current == "title" ? "asc" : "desc");
-            Field(more, "Order", Select("HomeSectionListOrder", orders, current, value =>
-            { var parts = value.Split(':'); SetConfig("sort", parts[0] == "" ? null : JsonValue.Create(parts[0])); SetConfig("order", parts.Length > 1 ? JsonValue.Create(parts[1]) : null); }));
-        }
-        if (draft.SectionType == "returning_shows") ConfigNumber(more, "Look back (days)", "lookback_days", 30);
-        if (draft.SectionType == "short_watches") ConfigNumber(more, "Maximum minutes", "max_minutes", 95);
-        if (draft.SectionType == "anniversaries") ConfigNumber(more, "Milestone years", "milestone_years", 5);
-        if (draft.SectionType == "taste_match") ConfigText(more, "Genre", "genre");
-        if (draft.SectionType == "editorial_spotlight")
-        {
-            var rotating = draft.Config["auto_rotate"] is JsonValue rotate && rotate.TryGetValue<bool>(out var savedRotate) ? savedRotate : string.IsNullOrEmpty(Value(draft.Config, "subject"));
-            Field(more, "Rotate automatically", Toggle("HomeSectionAutoRotate", rotating, value => { SetConfig("auto_rotate", JsonValue.Create(value)); RenderForm(); }));
-            if (rotating) ConfigSelect(more, "How often", "rotation_cadence", [("daily", "Every day"), ("weekly", "Every week"), ("monthly", "Every month")]);
-            else ConfigText(more, "Subject", "subject");
-        }
-        var limit = new NumberBox { Minimum = 1, Maximum = Math.Max(100, draft.ItemLimit), SmallChange = 1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, Value = draft.ItemLimit };
-        AutomationProperties.SetAutomationId(limit, "HomeSectionItemLimit");
-        limit.ValueChanged += (_, args) => { if (double.IsFinite(args.NewValue) && args.NewValue == Math.Truncate(args.NewValue)) { draft.ItemLimit = (int)args.NewValue; Dirty(); } };
-        Field(more, T("web.home.addRow.more.itemLimit"), limit);
-        if (draft.SectionType != "collection_posters")
-        {
-            Field(more, T("web.home.addRow.more.heroBanner"), Toggle("HomeSectionHero", draft.Featured, value => { draft.Featured = value; if (!value) draft.WebOnly = false; Dirty(); RenderForm(); }));
-            if (draft.Featured && _controller?.State.Capabilities?.WebOnly == true)
-                Field(more, T("web.home.addRow.more.showInApps"), Toggle("HomeSectionShowInApps", !draft.WebOnly, value => { draft.WebOnly = !value; Dirty(); }));
-        }
-        var expander = new Expander { Header = T("web.home.addRow.more.title"), Content = more, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        _editorFields.Children.Add(expander);
-        if (_session == null && _scope.Kind == "library")
-        {
-            var targets = draft.Featured ? Array.Empty<AdminHomeSectionChoice>() : CopyTargets(draft).ToArray();
-            _extraCopies.IntersectWith(targets.Select(library => library.Id));
-            if (targets.Length > 0)
-            {
-                var copies = new ListView { ItemsSource = targets, DisplayMemberPath = "Label", SelectionMode = ListViewSelectionMode.Multiple, IsMultiSelectCheckBoxEnabled = true, MaxHeight = 180 };
-                AutomationProperties.SetAutomationId(copies, "HomeSectionExtraCopies");
-                foreach (var library in targets.Where(library => _extraCopies.Contains(library.Id))) copies.SelectedItems.Add(library);
-                copies.SelectionChanged += (_, args) =>
-                {
-                    foreach (var library in args.RemovedItems.OfType<AdminHomeSectionChoice>()) _extraCopies.Remove(library.Id);
-                    foreach (var library in args.AddedItems.OfType<AdminHomeSectionChoice>()) if (_extraCopies.Count < 99) _extraCopies.Add(library.Id); else copies.SelectedItems.Remove(library);
-                    Dirty();
-                };
-                Field(_editorFields, "Also add to these library pages (up to 99)", copies);
-            }
-        }
-        var preview = new StackPanel { Spacing = 10 }; var refresh = Action("Preview", "HomeSectionPreview");
-        refresh.IsEnabled = _controller?.State.Capabilities?.Preview == true;
-        refresh.Click += async (_, _) => await PreviewDraftAsync(preview); _editorFields.Children.Add(refresh); _editorFields.Children.Add(preview);
-        if (!refresh.IsEnabled) preview.Children.Add(U.Text(T("web.home.addRow.previewUnavailable"), 13, true));
-        else preview.Children.Add(U.Text("Preview this draft before saving. Each profile may see different titles.", 13, true));
+        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _fieldErrors.Clear(); _pickerOnly = false;
+        var editing = _session != null; var onLibraryPage = _scope.Kind == "library";
+        _editorTitle.Text = editing ? T("web.home.addRow.editRow") : KindLabel(draft.SectionType);
+        _editorNotice.Text = editing ? T("web.home.addRow.editDescription", new { page = PageLabel })
+            : draft.SectionType == "custom_filter" ? T("web.home.addRow.customFilterDescription") : AdminHomeSectionsKinds.Sentence(draft.SectionType);
+        var copies = !editing && onLibraryPage && !draft.Featured && draft.CanCopy && CopyTargets(draft).Count > 0;
+        _editorFooter.Text = editing ? "" : T(copies ? "web.home.addRow.footerFormStepCopies" : "web.home.addRow.footerFormStep", new { page = PageLabel });
+        _editorSave.Visibility = Visibility.Visible; _editorSave.Content = T(editing ? "web.home.addRow.save" : "web.home.addRow.addRow");
+        _editorSave.IsEnabled = _controller?.CanWrite == true; _editorDelete.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
+        var kindLocked = AdminHomeSectionsKinds.VariantLocked(draft.SectionType, draft.Config);
+        _editorBack.Visibility = editing && kindLocked ? Visibility.Collapsed : Visibility.Visible;
+        _editorBack.Content = editing ? T("web.home.addRow.changeTitle") : T("web.home.addRow.allRows");
+        if (CanReturn) { _editorBack.Content = T("web.home.rows.links.back", new { collection = _choiceLabels.GetValueOrDefault(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config), KindLabel("collection")) }); _editorBack.Visibility = Visibility.Visible; }
+        var rules = draft.SectionType is "custom_filter" or "genre";
+        var control = draft.SectionType is "collection" or "collection_posters" or "admin_curated_list" || rules;
+        // Collection, rule and Editor's picks rows put their control above the preview; the others show the preview first.
+        var previewHost = new StackPanel { Spacing = 10 };
+        if (editing) Field(_editorFields, T("web.home.rows.draft.whatItShows"), U.Text(AdminHomeSectionsKinds.ShowsLabel(draft.SectionType, draft.Config), 14));
+        if (control) BuildKindControl(draft, rules);
+        _editorFields.Children.Add(previewHost);
+        BuildVariant(draft, kindLocked);
+        BuildPrimaryParams(draft, onLibraryPage);
+        BuildName(draft);
+        BuildCopies(draft, editing, onLibraryPage);
+        if (!AdminHomeSectionsKinds.HoldsCollections(draft.SectionType)) BuildMore(draft, rules);
+        BuildPreview(previewHost, draft);
         RefreshSave();
     }
+
+    private void BuildVariant(AdminHomeSectionDraft draft, bool kindLocked)
+    {
+        var family = AdminHomeSectionsKinds.Family(draft.SectionType);
+        if (family == null || kindLocked || AdminHomeSectionsKinds.NotOfferedForNewRows.Contains(draft.SectionType)) return;
+        var selected = AdminHomeSectionsRules.VariantOf(draft.SectionType, draft.Config);
+        var variants = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetAutomationId(variants, "HomeSectionVariant");
+        foreach (var option in family.Options) { var item = new ComboBoxItem { Content = T(option.LabelKey), Tag = option.PresetKey }; variants.Items.Add(item); if (option.PresetKey == selected) variants.SelectedItem = item; }
+        var hint = U.Text(family.Options.FirstOrDefault(option => option.PresetKey == selected)?.HintKey is { } key ? T(key) : "", 12, true);
+        variants.SelectionChanged += (_, _) =>
+        {
+            if (variants.SelectedItem is not ComboBoxItem { Tag: string key }) return;
+            AdminHomeSectionsDraftFactory.WithVariant(draft, Catalog, key); _editorDirty = true; RenderForm();
+        };
+        var box = new StackPanel { Spacing = 6 }; box.Children.Add(variants); box.Children.Add(hint);
+        Field(_editorFields, T(family.ControlKey), box);
+    }
+
+    private void BuildName(AdminHomeSectionDraft draft)
+    {
+        var fallback = draft.SectionType == "collection" ? _choiceLabels.GetValueOrDefault(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config)) : null;
+        var name = Input(T("web.home.addRow.form.rowName"), "HomeSectionTitle", draft.Title, value => { AdminHomeSectionsDraftFactory.WithTitle(draft, value); Dirty(); }, 500);
+        name.PlaceholderText = AdminHomeSectionsDraftFactory.SavedTitle(new AdminHomeSectionDraft { SectionType = draft.SectionType, Config = draft.Config }, Catalog, fallback);
+        name.Loaded += (_, _) => name.Focus(FocusState.Programmatic);
+        var box = new StackPanel { Spacing = 6 }; box.Children.Add(name);
+        var family = AdminHomeSectionsKinds.Family(draft.SectionType);
+        if (draft.SectionType == "collection" && draft.TitleFollowsVariant) box.Children.Add(U.Text(T("web.home.addRow.form.nameFromCollection"), 12, true));
+        else if (family != null && draft.TitleFollowsVariant) box.Children.Add(U.Text(T("web.home.addRow.form.nameFollows", new { variant = T(family.FollowsKey) }), 12, true));
+        Field(_editorFields, T("web.home.addRow.form.rowName"), box);
+    }
+
+    private void BuildCopies(AdminHomeSectionDraft draft, bool editing, bool onLibraryPage)
+    {
+        if (editing || !onLibraryPage) return;
+        IReadOnlyList<AdminHomeSectionChoice> targets = draft.Featured ? Array.Empty<AdminHomeSectionChoice>() : CopyTargets(draft);
+        _extraCopies.IntersectWith(targets.Select(library => library.Id));
+        if (targets.Count == 0 && !draft.Featured) return;
+        var panel = new StackPanel { Spacing = 6 };
+        if (draft.Featured) { panel.Children.Add(U.Text(T("web.home.addRow.pages.helpHero"), 12, true)); Field(_editorFields, T("web.home.addRow.pages.label"), panel); return; }
+        var copies = new ListView { ItemsSource = targets, DisplayMemberPath = "Label", SelectionMode = ListViewSelectionMode.Multiple, IsMultiSelectCheckBoxEnabled = true, MaxHeight = 180 };
+        AutomationProperties.SetAutomationId(copies, "HomeSectionExtraCopies");
+        foreach (var library in targets.Where(library => _extraCopies.Contains(library.Id))) copies.SelectedItems.Add(library);
+        copies.SelectionChanged += (_, args) =>
+        {
+            foreach (var library in args.RemovedItems.OfType<AdminHomeSectionChoice>()) _extraCopies.Remove(library.Id);
+            foreach (var library in args.AddedItems.OfType<AdminHomeSectionChoice>())
+                if (_extraCopies.Count < AdminHomeSectionsRules.BulkLibraryLimit - 1) _extraCopies.Add(library.Id); else copies.SelectedItems.Remove(library);
+            Dirty();
+        };
+        panel.Children.Add(copies); panel.Children.Add(U.Text(T("web.home.addRow.pages.help"), 12, true));
+        Field(_editorFields, T("web.home.addRow.pages.label"), panel);
+    }
+
+    private void BuildMore(AdminHomeSectionDraft draft, bool rules)
+    {
+        var more = new StackPanel { Spacing = 14 };
+        if (rules) RuleSortField(more);
+        BuildMoreParams(more, draft);
+        var limit = new NumberBox { Minimum = Math.Min(1, draft.ItemLimit), Maximum = Math.Max(AdminHomeSectionsDraftFactory.MaxFormItemLimit, draft.ItemLimit), SmallChange = 1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, Value = draft.ItemLimit, MinWidth = 120 };
+        AutomationProperties.SetAutomationId(limit, "HomeSectionItemLimit");
+        var limitHint = U.Text(T("web.home.addRow.more.itemLimitHint"), 12, true);
+        // Only a whole number in range reaches the draft; a blank or partial entry leaves the saved value in place.
+        limit.ValueChanged += (_, args) => { if (double.IsFinite(args.NewValue) && args.NewValue == Math.Truncate(args.NewValue) && args.NewValue is >= 1 and <= 500) { draft.ItemLimit = (int)args.NewValue; Dirty(); } };
+        var limitBox = new StackPanel { Spacing = 6 }; limitBox.Children.Add(limit); limitBox.Children.Add(limitHint);
+        Field(more, T("web.home.addRow.more.itemLimit"), limitBox);
+        var webOnly = _controller?.State.Capabilities?.WebOnly == true;
+        var hero = Toggle("HomeSectionHero", draft.Featured, value => { draft.Featured = value; if (!value) draft.WebOnly = false; if (value) _extraCopies.Clear(); Dirty(); RenderForm(); });
+        var heroBox = new StackPanel { Spacing = 6 }; heroBox.Children.Add(hero);
+        heroBox.Children.Add(U.Text(T(webOnly ? "web.home.addRow.more.heroHintWeb" : "web.home.addRow.more.heroHint"), 12, true));
+        Field(more, T("web.home.addRow.more.heroBanner"), heroBox);
+        if (draft.Featured && webOnly)
+        {
+            var apps = Toggle("HomeSectionShowInApps", !draft.WebOnly, value => { draft.WebOnly = !value; Dirty(); RenderForm(); });
+            var appsBox = new StackPanel { Spacing = 6 }; appsBox.Children.Add(apps);
+            appsBox.Children.Add(U.Text(T(draft.WebOnly ? "web.home.addRow.more.webOnlyHint" : "web.home.addRow.more.appsHint"), 12, true));
+            Field(more, T("web.home.addRow.more.showInApps"), appsBox);
+        }
+        var summary = (rules ? AdminHomeSectionsDescription.RuleSortSummary(draft.Config) + " · " : "") + AdminHomeSectionsDescription.TitleCount(draft.ItemLimit)
+            + " · " + T(draft.Featured ? (draft.WebOnly && webOnly ? "web.home.addRow.more.heroWebOnly" : "web.home.addRow.more.hero") : "web.home.addRow.more.notHero");
+        var expander = new Expander { Header = T("web.home.addRow.more.title") + " — " + summary, Content = more, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetAutomationId(expander, "HomeSectionMoreOptions");
+        _editorFields.Children.Add(expander);
+    }
+
+    private void BuildPrimaryParams(AdminHomeSectionDraft draft, bool onLibraryPage)
+    {
+        // Recently added and Recently released filter by library on Home only; a library page is already one library.
+        if (AdminHomeSectionsRules.UsesLibraryFilter(draft.SectionType) && !onLibraryPage) LibrarySelector(_editorFields);
+        else if (draft.SectionType == "trending_discover")
+            Field(_editorFields, T("web.home.addRow.params.trendingShow"), Select("HomeSection_filter_type",
+                [("", T("web.collections.tmdbSources.mediaBoth")), ("movie", T("web.collections.tmdbSources.mediaMovies")), ("series", T("web.collections.tmdbSources.mediaTv"))],
+                Value(draft.Config, "filter_type") is "movie" or "series" ? Value(draft.Config, "filter_type") : "", value => SetConfig("filter_type", value == "" ? null : JsonValue.Create(value))));
+        else if (draft.SectionType == "seasonal_themed") SeasonalEditor(_editorFields);
+    }
+
+    private void BuildMoreParams(StackPanel more, AdminHomeSectionDraft draft)
+    {
+        var type = draft.SectionType;
+        if (type is "watchlist" or "favorites")
+        {
+            Field(more, T("web.home.addRow.params.mediaType"), Select("HomeSection_filter_type",
+                [("", T("web.home.addRow.params.mediaEverything")), ("movie", T("web.home.addRow.params.mediaMovies")), ("series", T("web.home.addRow.params.mediaShows")), ("audiobook", T("web.home.addRow.params.mediaAudiobooks"))],
+                Value(draft.Config, "filter_type"), value => SetConfig("filter_type", value == "" ? null : JsonValue.Create(value))));
+            LibrarySelector(more);
+            var orders = new[] { ("", T("web.home.addRow.params.orderList")), ("added_at:desc", T("web.home.addRow.params.orderAddedDesc")), ("added_at:asc", T("web.home.addRow.params.orderAddedAsc")),
+                ("title:asc", T("web.home.addRow.params.orderTitleAsc")), ("title:desc", T("web.home.addRow.params.orderTitleDesc")), ("release_date:desc", T("web.home.addRow.params.orderReleaseDesc")),
+                ("release_date:asc", T("web.home.addRow.params.orderReleaseAsc")), ("rating_imdb:desc", T("web.home.addRow.params.orderImdbDesc")) };
+            var sort = Value(draft.Config, "sort"); var current = "";
+            if (sort != "") { var order = Value(draft.Config, "order") is { Length: > 0 } saved ? saved : sort == "title" ? "asc" : "desc"; current = sort + ":" + order; if (!orders.Any(option => option.Item1 == current)) current = ""; }
+            Field(more, T("web.home.addRow.order"), Select("HomeSectionListOrder", orders, current, value =>
+            { var parts = value.Split(':'); SetConfig("sort", parts[0] == "" ? null : JsonValue.Create(parts[0])); SetConfig("order", parts.Length > 1 ? JsonValue.Create(parts[1]) : null); }));
+        }
+        if (type == "returning_shows") ConfigNumber(more, T("web.home.addRow.params.lookBack"), "lookback_days", 30, T("web.home.addRow.params.lookBackHint"));
+        if (type == "short_watches") ConfigNumber(more, T("web.home.addRow.params.maxMinutes"), "max_minutes", 95, T("web.home.addRow.params.maxMinutesHint"));
+        if (type == "anniversaries") ConfigNumber(more, T("web.home.addRow.params.milestone"), "milestone_years", 5, T("web.home.addRow.params.milestoneHint"));
+        if (type == "taste_match")
+        {
+            var genre = Input(T("web.home.addRow.params.genre"), "HomeSection_genre", Value(draft.Config, "genre"), value => SetConfig("genre", JsonValue.Create(value)));
+            var box = new StackPanel { Spacing = 6 }; box.Children.Add(genre); box.Children.Add(U.Text(T("web.home.addRow.params.genreHint"), 12, true));
+            Field(more, T("web.home.addRow.params.genre"), box);
+        }
+        if (type == "editorial_spotlight")
+        {
+            // A preset with a pinned subject and no auto_rotate is pinned, as the server reads it.
+            var rotating = draft.Config["auto_rotate"] is JsonValue rotate && rotate.TryGetValue<bool>(out var savedRotate) ? savedRotate : string.IsNullOrEmpty(Value(draft.Config, "subject"));
+            Field(more, T("web.home.addRow.params.autoRotate"), Toggle("HomeSectionAutoRotate", rotating, value => { SetConfig("auto_rotate", JsonValue.Create(value)); RenderForm(); }));
+            if (rotating) Field(more, T("web.home.addRow.params.howOften"), Select("HomeSection_rotation_cadence",
+                [("daily", T("web.home.addRow.params.everyDay")), ("weekly", T("web.home.addRow.params.everyWeek")), ("monthly", T("web.home.addRow.params.everyMonth"))],
+                Value(draft.Config, "rotation_cadence") is { Length: > 0 } cadence ? cadence : "weekly", value => SetConfig("rotation_cadence", JsonValue.Create(value))));
+            else
+            {
+                var subject = Input(T("web.home.addRow.params.subject"), "HomeSection_subject", Value(draft.Config, "subject"), value => SetConfig("subject", JsonValue.Create(value)));
+                subject.PlaceholderText = T(Value(draft.Config, "subject_type") == "era" ? "web.home.addRow.params.subjectEra" : "web.home.addRow.params.subjectPerson");
+                Field(more, T("web.home.addRow.params.subject"), subject);
+            }
+        }
+    }
+
+    private void BuildKindControl(AdminHomeSectionDraft draft, bool rules)
+    {
+        if (draft.SectionType == "collection") CollectionSelector(_editorFields, multiple: false);
+        else if (draft.SectionType == "collection_posters") CollectionSelector(_editorFields, multiple: true);
+        else if (rules) RulesEditor(_editorFields);
+        else if (draft.SectionType == "admin_curated_list") CuratedEditor(_editorFields);
+    }
+
+    // ── Validation, dirty state and field helpers ────────────
+
     private bool DraftCanSave()
     {
         if (_draft == null) return false;
@@ -328,19 +459,36 @@ public sealed partial class AdminHomeSectionsPage
         }
         catch (ArgumentException) { return false; }
     }
-    private void RefreshSave() => _editorSave.IsEnabled = _controller?.CanWrite == true && !_editorInvalid && DraftCanSave();
-    private void Dirty() { _editorDirty = true; _previewRevision++; RefreshSave(); }
+    private void RefreshSave() => _editorSave.IsEnabled = _controller?.CanWrite == true && _fieldErrors.Count == 0 && DraftCanSave();
+    private long _draftVersion;
+    private void Dirty() { _editorDirty = true; _draftVersion++; RefreshSave(); }
+    /// <summary>Sets or clears the error of one on-screen field; the message shows beside it and Save waits until every shown field is valid.</summary>
+    private void FieldError(string key, TextBlock? slot, string? message)
+    {
+        if (message == null) _fieldErrors.Remove(key); else _fieldErrors[key] = message;
+        if (slot != null) slot.Text = message ?? "";
+        if (message != null) _editorNotice.Text = message;
+        RefreshSave();
+    }
     private void SetConfig(string key, JsonNode? value) { if (_draft == null) return; if (value == null) _draft.Config.Remove(key); else _draft.Config[key] = value; Dirty(); }
     private static string Value(JsonObject config, string key) => config[key]?.ToString() ?? "";
-    private void ConfigText(StackPanel panel, string label, string key) => Field(panel, label, Input(label, "HomeSection_" + key, Value(_draft!.Config, key), value => SetConfig(key, value == "" ? null : JsonValue.Create(value))));
-    private void ConfigNumber(StackPanel panel, string label, string key, int placeholder)
+
+    /// <summary>One optional whole-number setting; clearing it lets the server default apply. A stored value stays in the box until the admin edits it.</summary>
+    private void ConfigNumber(StackPanel panel, string label, string key, int placeholder, string hint)
     {
+        var error = U.Text("", 12);
         var box = Input(label, "HomeSection_" + key, Value(_draft!.Config, key), value =>
-        { if (value == "") { SetConfig(key, null); _editorInvalid = false; } else if (int.TryParse(value, out var number) && number > 0) { SetConfig(key, JsonValue.Create(number)); _editorInvalid = false; } else { _editorInvalid = true; _editorNotice.Text = "Enter a positive whole number."; } RefreshSave(); });
-        box.PlaceholderText = placeholder.ToString(); Field(panel, label, box);
+        {
+            var text = value.Trim();
+            if (text == "") { SetConfig(key, null); FieldError(key, error, null); }
+            else if (int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number) && number > 0) { SetConfig(key, JsonValue.Create(number)); FieldError(key, error, null); }
+            else FieldError(key, error, "Enter a whole number of 1 or more.");
+        }, 9);
+        box.PlaceholderText = placeholder.ToString(); box.Width = 128; box.HorizontalAlignment = HorizontalAlignment.Left;
+        var stack = new StackPanel { Spacing = 6 }; stack.Children.Add(box); stack.Children.Add(U.Text(hint, 12, true)); stack.Children.Add(error);
+        Field(panel, label, stack);
     }
-    private void ConfigSelect(StackPanel panel, string label, string key, (string Value, string Label)[] options) =>
-        Field(panel, label, Select("HomeSection_" + key, options, Value(_draft!.Config, key), value => SetConfig(key, value == "" ? null : JsonValue.Create(value))));
+
     private static TextBox Input(string label, string id, string value, Action<string> changed, int max = 500)
     {
         var input = U.Input(label, id); input.MaxLength = max; input.Text = value;
@@ -360,25 +508,47 @@ public sealed partial class AdminHomeSectionsPage
     }
     private static void Field(StackPanel panel, string label, FrameworkElement input)
     { var stack = new StackPanel { Spacing = 6 }; stack.Children.Add(U.Text(label, 13)); AutomationProperties.SetName(input, label); stack.Children.Add(input); panel.Children.Add(stack); }
+
+    // ── Preview ──────────────────────────────────────────────
+
+    private void BuildPreview(StackPanel host, AdminHomeSectionDraft draft)
+    {
+        host.Children.Clear();
+        var title = draft.Title.Trim() is { Length: > 0 } typed ? typed : AdminHomeSectionsDraftFactory.SavedTitle(draft, Catalog, draft.SectionType == "collection" ? _choiceLabels.GetValueOrDefault(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config)) : null);
+        var preview = new StackPanel { Spacing = 10 }; AutomationProperties.SetName(preview, T("web.home.addRow.preview.label", new { title }));
+        var refresh = Action(T("web.home.addRow.livePreview"), "HomeSectionPreview");
+        var wait = AdminHomeSectionsDraftFactory.PreviewWaitText(draft);
+        refresh.IsEnabled = _controller?.State.Capabilities?.Preview == true && wait == null;
+        refresh.Click += async (_, _) => await PreviewDraftAsync(preview);
+        host.Children.Add(refresh); host.Children.Add(preview);
+        if (_controller?.State.Capabilities?.Preview != true) preview.Children.Add(U.Text(T("web.home.addRow.previewUnavailable"), 13, true));
+        else if (wait != null) preview.Children.Add(U.Text(wait, 13, true));
+        else { preview.Children.Add(U.Text(T(_session == null ? "web.home.addRow.livePreviewAdd" : "web.home.addRow.livePreview"), 13, true)); _ = PreviewDraftAsync(preview); }
+    }
+
     private async Task PreviewDraftAsync(StackPanel panel)
     {
         if (_draft == null || _editorOwner == null || _editorReads == null) return;
-        var revision = _dialogRevision; var previewRevision = ++_previewRevision; var owner = _editorOwner;
-        panel.Children.Clear(); panel.Children.Add(U.Text("Loading preview…", 13, true));
+        var revision = _dialogRevision; var previewRevision = ++_previewRevision; var owner = _editorOwner; var version = _draftVersion;
+        panel.Children.Clear(); panel.Children.Add(U.Text(T("web.home.addRow.catalogLoading"), 13, true));
         try
         {
-            var result = await _api.PreviewAsync(owner, _draft, _editorReads.Token, _scope);
+            var draft = new AdminHomeSectionDraft { SectionType = _draft.SectionType, Title = "Preview", ItemLimit = Math.Max(1, _draft.ItemLimit), Config = _draft.Config };
+            var result = await _api.PreviewAsync(owner, draft, _editorReads.Token, _scope);
             if (!EditorCurrent(revision) || previewRevision != _previewRevision) return;
             panel.Children.Clear(); panel.Children.Add(PreviewPanel(result));
+            // Native adaptation: the WebUI refreshes the preview as the draft changes; here it refreshes on request.
+            if (version != _draftVersion) panel.Children.Add(U.Text("The draft changed after this preview. Choose Live preview to refresh it.", 12, true));
         }
-        catch (Exception ex) { if (EditorCurrent(revision) && previewRevision == _previewRevision) { panel.Children.Clear(); panel.Children.Add(U.Text(ex is ArgumentException ? ex.Message : "Couldn't load the preview. Try again.", 13, true)); } }
+        catch (Exception) { if (EditorCurrent(revision) && previewRevision == _previewRevision) { panel.Children.Clear(); panel.Children.Add(U.Text(T("web.home.addRow.preview.failed"), 13, true)); } }
     }
     private readonly SemaphoreSlim _posterSlots = new(2, 2);
     private StackPanel PreviewPanel(AdminHomeSectionPreview result)
     {
-        var panel = new StackPanel { Spacing = 8 }; panel.Children.Add(U.Text($"{result.TotalCount} titles", 13, true));
-        var cards = result.Collections.Count > 0 ? result.Collections : result.Items;
-        if (cards.Count == 0) panel.Children.Add(U.Text("No titles match this row yet.", 13, true));
+        var panel = new StackPanel { Spacing = 8 };
+        var cards = result.Collections.Count > 0 ? result.Collections : result.Items; var shown = Math.Min(12, cards.Count);
+        panel.Children.Add(U.Text(cards.Count == 0 ? T("web.home.addRow.preview.empty")
+            : T("web.home.addRow.preview.count", new { refreshing = "no", count = (long)result.TotalCount, total = result.TotalCount.ToString("N0"), shown = shown.ToString() }), 13, true));
         var rail = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         var owner = _editorOwner ?? _controller?.State.Owner;
         var token = _editorReads?.Token ?? owner?.Token ?? CancellationToken.None;

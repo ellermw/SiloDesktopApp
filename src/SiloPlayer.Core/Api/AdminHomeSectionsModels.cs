@@ -98,35 +98,14 @@ public sealed class AdminHomeSeasonalVibe
 /// <summary>Editor-owned clone. Unknown saved config members survive a rename or an unchanged source.</summary>
 public sealed class AdminHomeSectionDraft
 {
-    public static IReadOnlyList<string> VariantKeys(string type) => type switch
-    {
-        "continue_watching" => ["continue_type"], "trending_on_server" or "most_watched" => ["window"], "trending_discover" => ["source", "window"],
-        "mood_collection" => ["mood"], "seasonal_themed" => ["enabled_themes", "theme"], "editorial_spotlight" => ["subject_type", "subject"],
-        "format_showcase" => ["format", "sort"], _ => []
-    };
-    public void ApplyVariant(AdminHomePreset preset)
-    {
-        if (SectionType == "seasonal_themed")
-        {
-            Config.Remove("theme");
-            if (preset.Key == "se_family_movie_night")
-            { Config.Remove("custom_holidays"); Config.Remove("theme_dates"); Config["enabled_themes"] = new JsonArray("family_movie_night"); }
-            else Config["enabled_themes"] = new JsonArray("halloween", "christmas", "new_year", "valentines", "st_patricks", "easter", "thanksgiving", "summer_blockbuster", "saturday_morning");
-            return;
-        }
-        if (SectionType == "editorial_spotlight")
-        {
-            var rotating = Config["auto_rotate"]?.ToString() == "true" && Config["subject_type"]?.ToString() is "director" or "actor" or "studio";
-            Config.Remove("subject");
-            if (preset.Key == "es_era_80s") { Config.Remove("auto_rotate"); Config.Remove("rotation_cadence"); }
-            else if (!rotating) { Config["auto_rotate"] = true; Config["rotation_cadence"] = "weekly"; }
-        }
-        foreach (var key in VariantKeys(SectionType)) { Config.Remove(key); if (preset.DefaultParams[key] != null) Config[key] = preset.DefaultParams[key]!.DeepClone(); }
-    }
-    public bool CanCopy => SectionType is not ("collection" or "collection_posters" or "custom_filter" or "admin_curated_list" or "genre" or "award_winners") &&
-        !new[] { "filter_library_ids", "filter_library_id", "library_ids", "generated_library_id", "library_id" }.Any(key => Config[key] is JsonArray { Count: > 0 } || int.TryParse(Config[key]?.ToString(), out var id) && id > 0);
+    public static IReadOnlyList<string> VariantKeys(string type) => SiloPlayer.Core.Services.Admin.AdminHomeSectionsKinds.VariantKeys(type);
+    /// <summary>Switches this row to another preset of its kind; only the family's discriminator keys change.</summary>
+    public void ApplyVariant(string presetKey) => Config = SiloPlayer.Core.Services.Admin.AdminHomeSectionsKinds.ApplyVariant(SectionType, Config, presetKey);
+    public bool CanCopy => SiloPlayer.Core.Services.Admin.AdminHomeSectionsRules.CanCopyToLibraries(SectionType, Config);
     public string SectionType { get; set; } = "";
     public string Title { get; set; } = "";
+    /// <summary>The name is still the preset's, so picking another variant renames the row. Not part of any write.</summary>
+    public bool TitleFollowsVariant { get; set; }
     public bool Featured { get; set; }
     public bool WebOnly { get; set; }
     public bool Enabled { get; set; } = true;
@@ -134,14 +113,15 @@ public sealed class AdminHomeSectionDraft
     public JsonObject Config { get; set; } = new();
     public static AdminHomeSectionDraft From(AdminHomeSection row) => new()
     {
-        SectionType = row.SectionType, Title = row.Title, Featured = row.Featured, WebOnly = row.WebOnly,
-        Enabled = row.Enabled, ItemLimit = row.ItemLimit > 0 ? row.ItemLimit : 20,
+        SectionType = row.SectionType, Title = row.Title, Featured = row.Featured, WebOnly = row.Featured && row.WebOnly,
+        Enabled = row.Enabled, ItemLimit = row.ItemLimit,
         Config = row.Config.ValueKind == JsonValueKind.Object ? JsonNode.Parse(row.Config.GetRawText())!.AsObject() : new()
     };
     public void Validate()
     {
-        if (string.IsNullOrWhiteSpace(Title) || Title.Length > 500 || string.IsNullOrWhiteSpace(SectionType) || SectionType.Length > 100 ||
-            ItemLimit is < 1 or > 500) throw new ArgumentException("Supply a row name and between 1 and 500 titles.");
+        if (string.IsNullOrWhiteSpace(Title) || Title.Length > 500 || string.IsNullOrWhiteSpace(SectionType) || SectionType.Length > 100)
+            throw new ArgumentException("Supply a row name of up to 500 characters.");
+        if (ItemLimit is < 1 or > 500) throw new ArgumentException("The number of titles must be between 1 and 500.");
         if (Featured && SectionType == "collection_posters") throw new ArgumentException("A row of collections cannot be a hero banner.");
         if (SectionType == "collection" && string.IsNullOrWhiteSpace(Config["library_collection_id"]?.ToString()))
             throw new ArgumentException("Choose a collection.");
@@ -153,34 +133,33 @@ public sealed class AdminHomeSectionDraft
         if (SectionType == "seasonal_themed") ValidateSeasonal();
         if (Config.ToJsonString().Length > 128 * 1024) throw new ArgumentException("Row settings exceed their size limit.");
     }
-    public Dictionary<string, object?> Body(bool webOnlySupported)
+    /// <summary>
+    /// The write body. A create (<paramref name="saved"/> null) sends the config as drafted; an update sends the library-filter
+    /// finalized config, the saved <c>enabled</c>, and <c>web_only</c> only when a hero's choice differs from the saved row, as the WebUI does.
+    /// </summary>
+    public Dictionary<string, object?> Body(bool webOnlySupported, AdminHomeSection? saved = null)
     {
         var result = new Dictionary<string, object?>
         {
             ["section_type"] = SectionType, ["title"] = Title.Trim(), ["featured"] = Featured,
-            ["enabled"] = Enabled, ["item_limit"] = ItemLimit, ["config"] = Config.DeepClone()
+            ["enabled"] = saved?.Enabled ?? Enabled, ["item_limit"] = ItemLimit,
+            ["config"] = saved == null ? Config.DeepClone() : SiloPlayer.Core.Services.Admin.AdminHomeSectionsRules.UpdateConfig(SectionType, Config)
         };
-        if (webOnlySupported) result["web_only"] = Featured && WebOnly;
+        if (webOnlySupported && Featured && WebOnly != (saved != null && saved.Featured && saved.WebOnly)) result["web_only"] = WebOnly;
         return result;
     }
     private void ValidateSeasonal()
     {
         var custom = Config["custom_holidays"] as JsonArray;
-        if (Config["enabled_themes"] is JsonArray { Count: 0 } && custom is not { Count: > 0 }) throw new ArgumentException("Pick at least one holiday or add your own.");
+        if (Config["enabled_themes"] is JsonArray { Count: 0 } && custom is not { Count: > 0 }) throw new ArgumentException(SiloPlayer.Core.Services.Admin.AdminHomeSectionsText.T("web.home.addRow.seasonal.pickOne"));
         if (Config["theme_dates"] is JsonObject windows)
-            foreach (var entry in windows) if (entry.Value is not JsonObject dates || !MonthDay(dates["start"]?.ToString()) || !MonthDay(dates["end"]?.ToString()))
-                throw new ArgumentException("Enter complete holiday dates as MM-DD.");
+            foreach (var entry in windows)
+            {
+                if (entry.Value is not JsonObject dates) throw new ArgumentException(SiloPlayer.Core.Services.Admin.AdminHomeSectionsText.T("web.home.rows.seasonal.ownDatesInvalid"));
+                if (SiloPlayer.Core.Services.Admin.AdminHomeSectionsRules.HolidayDatesProblem(dates["start"]?.ToString(), dates["end"]?.ToString()) is { } problem) throw new ArgumentException(problem);
+            }
         if (custom == null) return;
-        foreach (var entry in custom)
-        {
-            if (entry is not JsonObject holiday || string.IsNullOrWhiteSpace(holiday["name"]?.ToString()) || !MonthDay(holiday["start"]?.ToString()) || !MonthDay(holiday["end"]?.ToString()))
-                throw new ArgumentException("Each holiday needs a name and valid MM-DD dates.");
-            var raw = holiday["list_url"]?.ToString()?.Trim() ?? "";
-            if (!Uri.TryCreate(raw, UriKind.Absolute, out var url) || url.Scheme is not ("https" or "http") || url.UserInfo.Length != 0 || raw.Split('/').ElementAtOrDefault(2)?.Contains('@') == true ||
-                url.Host.TrimEnd('.').ToLowerInvariant() is not ("mdblist.com" or "www.mdblist.com") || url.Port is not (80 or 443) || !url.AbsolutePath.StartsWith("/lists/", StringComparison.Ordinal))
-                throw new ArgumentException("Use a public MDBList list URL for each holiday.");
-        }
+        foreach (var entry in custom.OfType<JsonObject>())
+            if (SiloPlayer.Core.Services.Admin.AdminHomeSectionsRules.CustomHolidayProblem(entry) is { } problem) throw new ArgumentException(problem);
     }
-    private static bool MonthDay(string? text) => text is { Length: 5 } && text[2] == '-' &&
-        DateTime.TryParseExact("2000-" + text, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _);
 }

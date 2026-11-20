@@ -151,7 +151,7 @@ public sealed class AdminHomeSectionsWorkflowTests
     {
         var draft = new AdminHomeSectionDraft { SectionType = "trending_on_server", Title = "Trending" };
         draft.Config["window"] = "24h"; draft.Config["future_option"] = "keep"; draft.Config["filter_library_ids"] = new JsonArray(7);
-        draft.ApplyVariant(new() { Key = "tr_7d", DefaultParams = new() { ["window"] = "7d" } });
+        draft.ApplyVariant("tr_7d");
         Assert.Equal("7d", draft.Config["window"]!.ToString()); Assert.Equal("keep", draft.Config["future_option"]!.ToString()); Assert.Equal(7, draft.Config["filter_library_ids"]![0]!.GetValue<int>());
     }
 

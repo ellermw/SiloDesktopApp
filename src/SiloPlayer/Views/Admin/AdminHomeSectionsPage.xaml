@@ -3,23 +3,26 @@
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Page.Resources>
     <DataTemplate x:Key="HomeSectionRowTemplate">
-      <Grid Padding="8,12" ColumnSpacing="12" MinHeight="76">
+      <Grid Padding="8,10" ColumnSpacing="12" MinHeight="64">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <CheckBox IsChecked="{Binding Selected}" Visibility="{Binding SelectionVisibility}"
-                    AutomationProperties.Name="{Binding Title}" Click="SelectionClick"/>
+          <CheckBox IsChecked="{Binding Selected, Mode=OneTime}" Visibility="{Binding SelectionVisibility}" MinWidth="0"
+                    AutomationProperties.Name="{Binding SelectLabel}" Checked="RowSelectionChanged" Unchecked="RowSelectionChanged"/>
           <FontIcon Glyph="&#xE700;" FontSize="14" Visibility="{Binding GripVisibility}"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-          <TextBlock Text="{Binding Description}" FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Visibility="{Binding TitleVisibility}"/>
+          <TextBlock x:Name="MetaText" FontSize="12" Opacity="0.75" TextWrapping="Wrap"/>
         </StackPanel>
-        <Button Grid.Column="2" Content="{Binding ShownLabel}" IsEnabled="{Binding CanWrite}"
-                AutomationProperties.Name="{Binding ShownAccessibleLabel}" Click="ShownClick" VerticalAlignment="Center"/>
-        <Button Grid.Column="3" Content="&#x22EF;" IsEnabled="{Binding CanWrite}"
+        <Border Grid.Column="2" Visibility="{Binding HeroVisibility}" VerticalAlignment="Center" CornerRadius="11" Padding="8,2" Background="#26F59E0B">
+          <TextBlock Text="{Binding HeroText}" FontSize="12" FontWeight="SemiBold" Foreground="#F59E0B"/>
+        </Border>
+        <ToggleSwitch Grid.Column="3" x:Name="ShownSwitch" IsOn="{Binding Shown, Mode=OneTime}" IsEnabled="{Binding CanWrite}" OnContent="" OffContent="" MinWidth="0"
+                      AutomationProperties.Name="{Binding ShownAccessibleLabel}" Toggled="ShownToggled" VerticalAlignment="Center"/>
+        <Button Grid.Column="4" Content="&#x22EF;" IsEnabled="{Binding CanWrite}"
                 AutomationProperties.Name="{Binding MenuLabel}" Click="RowMenuClick" VerticalAlignment="Center"/>
       </Grid>
     </DataTemplate>
