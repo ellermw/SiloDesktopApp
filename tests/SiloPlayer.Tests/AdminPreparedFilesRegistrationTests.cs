@@ -73,6 +73,7 @@ public sealed class AdminPreparedFilesRegistrationTests
     [Fact]
     public void EveryMessageKeyTheFamilyReferencesExistsInThePinnedCatalog()
     {
+        const string Quote = "\"";
         var prefixes = new Dictionary<string, string>
         {
             ["PrepKey"] = "web.admin.downloads.preparation", ["FilesKey"] = "web.admin.downloads.preparedFiles", ["DevKey"] = "web.admin.downloads.deviceCopies",
@@ -83,11 +84,11 @@ public sealed class AdminPreparedFilesRegistrationTests
         foreach (var path in FamilySources().Where(p => p.EndsWith(".cs", StringComparison.Ordinal) && !p.EndsWith("TextCatalog.cs", StringComparison.Ordinal)))
         {
             var source = File.ReadAllText(path);
-            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, "\"((?:web\.admin\.downloads|configure\.native\.preparedFiles|web\.admin\.nodes\.hooks|web\.admin\.errors\.node)[A-Za-z0-9_.]*[A-Za-z0-9_])\""))
-                if (!AdminPreparedFilesText.Owns(m.Groups[1].Value)) missing.Add(Path.GetFileName(path) + ": " + m.Groups[1].Value);
-            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, "\b(PrepKey|FilesKey|DevKey|HistKey|LocKey)\s*\+\s*\"(\.[A-Za-z0-9_.]*[A-Za-z0-9_])\""))
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, Quote + "((?:web\\.admin\\.downloads|configure\\.native\\.preparedFiles|web\\.admin\\.nodes\\.hooks|web\\.admin\\.errors\\.node)[A-Za-z0-9_.]*[A-Za-z0-9_])" + Quote))
+                if (!prefixes.ContainsValue(m.Groups[1].Value) && !AdminPreparedFilesText.Owns(m.Groups[1].Value)) missing.Add(Path.GetFileName(path) + ": " + m.Groups[1].Value);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, "\\b(PrepKey|FilesKey|DevKey|HistKey|LocKey)\\s*\\+\\s*" + Quote + "(\\.[A-Za-z0-9_.]*[A-Za-z0-9_])" + Quote))
                 if (!AdminPreparedFilesText.Owns(prefixes[m.Groups[1].Value] + m.Groups[2].Value)) missing.Add(Path.GetFileName(path) + ": " + prefixes[m.Groups[1].Value] + m.Groups[2].Value);
-            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, "\$\"\{K\}(\.[A-Za-z0-9_.]*[A-Za-z0-9_])\""))
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(source, "\\$" + Quote + "\\{K\\}(\\.[A-Za-z0-9_.]*[A-Za-z0-9_])" + Quote))
                 if (!AdminPreparedFilesText.Owns(prefixes["K"] + m.Groups[1].Value)) missing.Add(Path.GetFileName(path) + ": " + prefixes["K"] + m.Groups[1].Value);
         }
         Assert.Empty(missing);

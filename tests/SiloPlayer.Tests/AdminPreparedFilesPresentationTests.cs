@@ -102,7 +102,7 @@ public sealed class AdminPreparedFilesPresentationTests
         Assert.Equal("Unknown title", AdminPreparedFilesPresentation.FileTitle(file));
         Assert.Equal("S2 · E5 Pilot", AdminPreparedFilesPresentation.FileSubtitle(file));
         Assert.Equal(new AdminFileRecipe("1080p HEVC", "10 Mbps"), AdminPreparedFilesPresentation.FileRecipe(file));
-        Assert.Equal(new AdminFileRecipe("Remux", "original quality"), AdminPreparedFilesPresentation.FileRecipe(new AdminPreparedFile { Format = "remux" }));
+        Assert.Equal(new AdminFileRecipe("Remux to MP4", "original quality"), AdminPreparedFilesPresentation.FileRecipe(new AdminPreparedFile { Format = "remux" }));
         Assert.Equal("1 downloading · 2 waiting · 3 finished", AdminPreparedFilesPresentation.FileUsage(file));
         Assert.Equal("No downloads", AdminPreparedFilesPresentation.FileUsage(new AdminPreparedFile()));
         var now = DateTimeOffset.Parse("2026-11-20T00:00:00Z");
