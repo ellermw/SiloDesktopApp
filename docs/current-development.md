@@ -124,6 +124,44 @@ environment-managed worker setting disabled Restore defaults for all), both fixe
 Not observed: live-server behavior, all DPI, Narrator/IME, real plugin combinations and complete visual parity. Scope,
 evidence and limits: docs/parity/admin-manage-library-settings.md.
 
+# November 20 — Configure Sign-in, API Keys and Policy (Access family)
+
+`/admin/settings/sign-in`, `/admin/api-keys` and `/admin/policy` are implemented, registered
+(`AddAdminSignInSecurity()`) and reachable through the real Admin navigation. The three pages had been
+listed as unsupported in `AdminRouteCatalog.UnsupportedPatterns`; `api-keys` and `policy` are removed from
+it (the shared navigation test no longer lists `/admin/api-keys` as unsupported). Official source pin:
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Version `1.2.1181-beta.1` unchanged. Branch
+`t3/admin-signin-security`, merged with `origin/beta` (25 commits) before the final run.
+
+Review findings fixed with regression tests: the policy title/toggle/lifecycle labels now follow the adopted
+snapshot (`AdminPolicyPresentation`); the override list and the API key list are re-read from the server's
+canonical first page after a create; a numeric field the server holds as explicit `null` is sent back as `null`
+unless the administrator changed it. Also fixed from the first compile and native run: a missing namespace,
+unusable `StackPanel.IsEnabled`, anonymous request bodies replaced by dictionaries, multi-line text boxes losing
+everything after the first line break (assigned before `AcceptsReturn`), a refused local value permanently blocking
+later writes, the shared date/time preference formatter, clipboard history excluded for the one-time key.
+
+Second independent review (seven findings, all confirmed and fixed with regression tests): creates whose outcome is
+unknown or whose list re-read failed now block every create and row write on API Keys and Policy until the page-level
+reload (opening, cancelling or saving a single-row editor no longer lifts it); a definite policy-enable 409 shows its
+reason and is retryable; "All overrides" re-reads the list after editor-side writes; a revoke/tier change whose list
+re-read fails is still reported as done; the save-time "no provider" refusal uses the provider text; a non-string
+provider `display_name` no longer crashes the page; account pages beyond the first are read (cap 1,000) so API Keys
+owners and the break-glass check do not depend on the first page, and an incomplete list leaves the break-glass
+decision to the server as on the official page (a settings 409 is shown with the break-glass text).
+
+Observed on exact source after the fixes (lane `D:/SiloPlayer-build/admin-completion-lane-a`, label
+`signin-fix-final-r3`, source commit `70de5e745`): focused unit run 167 passed, full unit suite 9,835 passed/0
+failed, app build, publish, native host and the native selectors `admin-signin-security`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor` all passed, with source and payload seals verified. An earlier attempt
+(`signin-fix-final-r1`) failed one unrelated test in another family (`LibraryBackgroundRefreshTests.RetainedRefreshHandbackRestartsCanceledLettersAndCount(churn: False)`)
+that passed on rerun without change. Not observed: live SSO/LDAP servers, servers with more than 50 accounts, a real
+clipboard, other DPIs, screen-reader or IME behaviour, installer execution. Earlier run before the fixes: lane
+`admin-completion-lane-b`, `signin-final-r2`, 146 focused / 9,755 full. Scoped record and deviations:
+[admin-sign-in-security-20261117.md](parity/admin-sign-in-security-20261117.md).
+
+---
+
 # November 17 — Configure Integrations verified Beta increment
 
 AI, Recommendations and Compatibility are implemented in the registered native shell,

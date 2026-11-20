@@ -382,6 +382,7 @@ public partial class App : Application
         services.AddSingleton<AdminMonitorApi>();
         services.AddSingleton<AdminMonitorAuthority>();
         AdminConfigureServices.Add(services);
+        services.AddAdminSignInSecurity();
         services.AddAdminPlaybackAudit();
         services.AddAdminSubtitleFiles();
         services.AddAdminUsers();
