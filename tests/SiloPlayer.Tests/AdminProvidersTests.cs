@@ -419,6 +419,7 @@ public sealed class AdminProvidersTests
                 var path = request.RequestUri!.AbsolutePath;
                 HttpResponseMessage response =
                     path.EndsWith("/subtitle-providers") ? AdminMonitorKit.Json("""{"providers":[{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false}]}""")
+                    : path.Contains("/subtitle-providers/") ? AdminMonitorKit.Json(JsonSerializer.Serialize(new { provider_name = path[(path.LastIndexOf('/') + 1)..], enabled = true, has_api_key = true, has_credentials = false }))
                     : path.EndsWith("/markers/providers") ? (MarkerListStatus == "ok" ? AdminMonitorKit.Json(MarkerProvidersJson) : AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable))
                     : path.EndsWith("/plugins/installations") ? AdminMonitorKit.Json("""{"items":[],"page":{"has_more":false}}""")
                     : path.EndsWith("effective") ? AdminMonitorKit.Json("""{"markers.mode":"both"}""")
@@ -622,6 +623,42 @@ public sealed class AdminProvidersTests
         Assert.False(h.Controller.State.MarkerOutcomeUnknown);
         Assert.False(h.Controller.State.ReloadRequired);
         Assert.Equal(5, Assert.Single(h.Controller.State.MarkerProviders).FetchPriority);
+        Assert.Single(h.Writes);
+    }
+
+    [Fact]
+    public async Task SubtitleEditorOpenedWhileAnotherSaveIsPendingIsRefusedAndNeverSettlesItsOutcome()
+    {
+        using var h = new Harness();
+        var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Write = _ => pending.Task;
+        await h.Controller.OpenAsync();
+        var editor = await h.Controller.GetSubtitleEditorAsync("subdl");
+        Assert.NotNull(editor);
+        Assert.Null(h.Controller.State.BusyProvider);
+
+        var save = h.Controller.SaveSubtitleAsync(editor!, new AdminSubtitleProviderChange { Enabled = false });
+        Assert.Equal("subdl", h.Controller.State.BusyProvider);
+
+        // Another tile is opened while the write is in flight: the read is refused and the write stays the busy owner.
+        Assert.Null(await h.Controller.GetSubtitleEditorAsync("subsource"));
+        Assert.Equal("subdl", h.Controller.State.BusyProvider);
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.DoesNotContain(h.Kit.Http.Requests, request => request.Contains("/subtitle-providers/subsource", StringComparison.Ordinal));
+        Assert.Single(h.Kit.Http.Requests.Where(request => request.EndsWith("/subtitle-providers", StringComparison.Ordinal)));
+
+        pending.SetResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+        Assert.False(await save);
+        Assert.Null(h.Controller.State.BusyProvider);
+        Assert.True(h.Controller.State.SubtitleOutcomeUnknown);
+
+        // Reading another provider's editor says nothing about the unknown write; only the canonical list does.
+        Assert.NotNull(await h.Controller.GetSubtitleEditorAsync("subsource"));
+        Assert.True(h.Controller.State.SubtitleOutcomeUnknown && h.Controller.State.ReloadRequired);
+
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.False(h.Controller.State.SubtitleOutcomeUnknown);
+        Assert.False(h.Controller.State.ReloadRequired);
         Assert.Single(h.Writes);
     }
 

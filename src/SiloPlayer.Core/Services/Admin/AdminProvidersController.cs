@@ -303,14 +303,15 @@ public sealed class AdminProvidersController : IDisposable
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return null; }
         using (action)
         {
+            // A read never runs beside another provider action: finishing it would release that action's busy state.
+            lock (_gate) { if (_state.BusyProvider != null) return null; }
             Update(action, () => _state = _state with { BusyProvider = provider, ProviderFeedback = null });
             try
             {
                 var editor = await _providers.GetSubtitleProviderAsync(action, provider).ConfigureAwait(false);
+                // One provider's editor settles no conflict or unknown outcome; only the re-read canonical list does.
                 Update(action, () => _state = _state with
                 {
-                    SubtitleConflict = false,
-                    SubtitleOutcomeUnknown = false,
                     SubtitleProviders = Array.AsReadOnly(_state.SubtitleProviders.Select(item =>
                         item.ProviderName == provider
                             ? new AdminSubtitleProvider

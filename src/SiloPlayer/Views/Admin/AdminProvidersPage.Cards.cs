@@ -183,13 +183,15 @@ public sealed partial class AdminProvidersPage
         if (!expanded)
         {
             var open = U.Action(configured ? "Manage" : "Connect", "ProvidersSubtitleOpen_" + SafeId(id), primary: true);
-            open.HorizontalAlignment = HorizontalAlignment.Left; open.Click += async (_, _) => await ExpandSubtitleAsync(state, provider);
+            // Opening may load the editor, which the controller refuses while another provider action is pending.
+            open.HorizontalAlignment = HorizontalAlignment.Left; open.IsEnabled = state.BusyProvider == null; open.Click += async (_, _) => await ExpandSubtitleAsync(state, provider);
             body.Children.Add(open); return Card(body, false);
         }
         if (!_subtitleEditors.TryGetValue(id, out var editor) || !_subtitleDrafts.TryGetValue(id, out var draft))
         {
             body.Children.Add(Quiet(state.BusyProvider == id ? "Loading provider configuration…" : "Provider configuration could not be loaded."));
-            var retry = U.Action("Reload", "ProvidersSubtitleReload_" + SafeId(id)); retry.Click += async (_, _) => await ExpandSubtitleAsync(state, provider, reload: true);
+            var retry = U.Action("Reload", "ProvidersSubtitleReload_" + SafeId(id)); retry.IsEnabled = state.BusyProvider == null;
+            retry.Click += async (_, _) => await ExpandSubtitleAsync(state, provider, reload: true);
             body.Children.Add(retry); return Card(body, true);
         }
         var canEdit = !draft.SaveAttempted && state.BusyProvider == null && !state.SubtitleConflict && !state.SubtitleOutcomeUnknown;
