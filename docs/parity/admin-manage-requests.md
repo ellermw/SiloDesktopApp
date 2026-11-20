@@ -243,7 +243,7 @@ reported two P2 defects, both now fixed:
 app and both failed. `recheck-green-r20` nonincrementally rebuilt everything on
 the corrected source and passed 125 focused and 9,734 full unit cases with no
 failures or skips, the app build, publish, host build and all six native
-groups, including all 16 corrective scenarios.
+groups, including all 20 corrective scenarios.
 
 - r18 PID 4660: ACQ `2026-11-20T13:53:06.8636243Z`, REL
   `2026-11-20T14:01:13.5685624Z`.
