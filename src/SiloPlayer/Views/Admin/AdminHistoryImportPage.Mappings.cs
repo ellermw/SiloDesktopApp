@@ -211,7 +211,7 @@ public sealed partial class AdminHistoryImportPage
         if (_nextRun != null && _runs.Count >= 500) _runPanel.Children.Add(Text("Showing 500 recent runs. Earlier runs remain on the server.", 12, true));
         UpdateActions();
     }
-    private static string FormatDate(string value) => DateTimeOffset.TryParse(value, out var at) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDate(at) + " " + at.ToLocalTime().ToString("t", CultureInfo.CurrentCulture) : "—";
+    private static string FormatDate(string value) => DateTimeOffset.TryParse(value, out var at) ? SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(at) : "—";
     private FrameworkElement RunDetails(JsonElement run)
     {
         var details = Stack(8); details.Margin = new(36, 0, 0, 0);
