@@ -1,3 +1,30 @@
+# November 17 - Ebook/comic protected-install startup follow-up
+
+On fresh Beta `248aafd62ed65b868c0e7356926e4d83204649cd` (version
+`1.2.1181-beta.1`, numeric `1.2.1180.1` unchanged), ebook/comic reader startup
+now explicitly creates its WebView2 environment in writable per-user storage
+instead of relying on the unpackaged default beside the protected executable.
+The previous native fixture's SDK folder override masked this installation
+failure. Normal ebook Read and comic chapter-row Read both reproduce the exact
+generic error with installed bytes under equivalent protected-directory rights;
+both pass with the corrected source and those same rights.
+
+Release publish and native host build pass. The final two native runs assert
+default-folder E_ACCESSDENIED, the actual selected writable directory, visible
+text/images, sandboxing, progress, reconnect/access refresh and profile
+retirement. Publish/host bytes match and changed production/fixture documents
+are checksum-bound to their PDBs. A subsequent full-unit launch was held by a
+failed finite mutex acquisition; no units ran and no retry followed. Synthetic
+books/protected host only; private-book live interoperability is not certified.
+
+Evidence and hashes: [reader startup handoff](parity/2026-11-17-reader-protected-install.md)
+and `D:/SiloPlayer-build/books-reader-followup-20261117`. Last owned lease
+released `2026-11-17T10:55:49.7653626Z`. Installed player/settings/files remain
+untouched. This is a new Beta follow-up; earlier submitted PRs are not revisited.
+After this source is submitted, the Beta pipeline owns all further work.
+
+---
+
 # November 16 — Configure Backups verification and Beta handoff
 
 Configure > Server > Backups is implemented as one route family: `/admin/backups`,

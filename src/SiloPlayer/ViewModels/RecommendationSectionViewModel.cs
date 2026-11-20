@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
 
 namespace SiloPlayer.ViewModels;
 
@@ -17,10 +18,19 @@ public partial class RecommendationSectionViewModel : ObservableObject
     // The section and access context whose items are held, set once a load has applied them.
     private RecommendationSectionNavigationArgs? _loadedArgs;
     private ApiRequestContext? _loadedContext;
+    private bool _metadataDirty;
 
     public RecommendationSectionViewModel(RecommendationsApi recommendationsApi)
     {
         _recommendationsApi = recommendationsApi;
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
+        {
+            if (change.Kind != MediaSurfaceChangeKind.ItemMetadataRefreshed
+                || change.Context is { } context && !_recommendationsApi.IsCurrentContext(context)) return;
+            // Invalidate even while kept offscreen; only the active section rereads.
+            _metadataDirty = true;
+            if (_currentArgs != null) _ = LoadAsync(_currentArgs);
+        });
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
         {
             if (!_recommendationsApi.IsCurrentContext(change.Context)) return;
@@ -73,6 +83,7 @@ public partial class RecommendationSectionViewModel : ObservableObject
             MediaItemCollectionReconciler.Apply(Items, response.Items.Where(item => item.UserState?.NotInterested != true).ToArray());
             _loadedArgs = args;
             _loadedContext = context;
+            _metadataDirty = false;
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested)
         {
@@ -96,7 +107,10 @@ public partial class RecommendationSectionViewModel : ObservableObject
     /// Whether the items held are <paramref name="args"/>'s complete section under the current
     /// access context, so Back can show them as they were instead of loading them again.
     /// </summary>
-    public bool Holds(RecommendationSectionNavigationArgs args) =>
+    public bool Holds(RecommendationSectionNavigationArgs args) => !_metadataDirty && Retains(args);
+
+    /// <summary>A stale copy of this section can still stay mounted during a Back reread.</summary>
+    public bool Retains(RecommendationSectionNavigationArgs args) =>
         args == _loadedArgs && _loadedContext is { } context && _recommendationsApi.IsCurrentContext(context);
 
     /// <summary>Resumes a held section without loading, so later changes refresh it while visible.</summary>
@@ -113,6 +127,7 @@ public partial class RecommendationSectionViewModel : ObservableObject
         CancelLoad();
         _loadedArgs = null;
         _loadedContext = null;
+        _metadataDirty = false;
         Items.Clear();
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
     }
