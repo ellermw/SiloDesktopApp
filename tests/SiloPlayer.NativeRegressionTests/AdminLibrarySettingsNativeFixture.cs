@@ -35,6 +35,7 @@ internal static class AdminLibrarySettingsNativeFixture
     {
         for (var index = 0; index < milliseconds / 25 && !condition(); index++) await Task.Delay(25);
         if (!condition()) throw new InvalidOperationException("Timed out: " + label);
+        Program.Log("STEP: " + label);
     }
 
     private sealed class Server : HttpMessageHandler

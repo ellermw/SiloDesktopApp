@@ -344,7 +344,7 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
         }
         finally { _syncing = false; }
 
-        foreach (var key in R.Keys)
+        foreach (var key in R.Keys.Where(_rows.ContainsKey))
         {
             var description = _descriptions[key];
             if (Managed(key)) description = (description.Length == 0 ? "" : description + " ") + T("configure.native.settings.managedByEnvironment");
@@ -378,7 +378,7 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
         SetGroup(_maturity, R.MaturityKeys, T("web.admin.settings.libraryMetadata.maturity.description"), state, showDirty: false);
         SetGroup(_ratings, R.RatingsKeys, T("web.admin.settings.libraryMetadata.ratings.description"), state, showDirty: false);
         SetGroup(_subtitle, R.SubtitleKeys, T("web.admin.settings.libraryMetadata.subtitleSync.description"), state);
-        foreach (var key in R.Keys)
+        foreach (var key in R.Keys.Where(_rows.ContainsKey))
         {
             var groupKeys = key == R.ExtraRatingSources ? R.RatingsKeys : key is R.SubtitleAutoSync or R.SubtitleSyncExecution or R.SubtitleSyncNodeCapacity ? R.SubtitleKeys
                 : key == R.UnratedContent ? R.MaturityKeys : R.ScanningKeys.Contains(key) ? R.ScanningKeys : R.GeneralKeys;
