@@ -10,6 +10,20 @@ public sealed class AdminUserResourceDeviceTests
     private static readonly DateTimeOffset Now = new(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void ANumberControlWritesOnlyARealChangeAtTheStepsPrecision()
+    {
+        var speed = AdminDevicePresentation.Definition("player.playback_speed")!; var sync = AdminDevicePresentation.Definition("player.audio_sync_ms")!;
+        Assert.Equal(2, AdminDevicePresentation.StepDigits(speed)); Assert.Equal(0, AdminDevicePresentation.StepDigits(sync));
+        // Focus loss reads the shown text back: the same value, or one that differs only past the digits shown, is not a change.
+        Assert.Null(AdminDevicePresentation.NumberChange(speed, 1.25, 1.25)); Assert.Null(AdminDevicePresentation.NumberChange(speed, 1.25, 1.2500000000004));
+        Assert.Null(AdminDevicePresentation.NumberChange(speed, 1.234, 1.234)); Assert.Null(AdminDevicePresentation.NumberChange(speed, 1.25, double.NaN));
+        // A spin step carries no floating-point noise into the request.
+        Assert.Equal("1.3", AdminDevicePresentation.NumberChange(speed, 1.25, 1.25 + 0.05)); Assert.Equal("1.2", AdminDevicePresentation.NumberChange(speed, 1.25, 1.25 - 0.05));
+        Assert.Equal("1.23", AdminDevicePresentation.NumberChange(speed, 1.234, 1.23)); Assert.Equal("1", AdminDevicePresentation.NumberChange(speed, 1.25, 1));
+        Assert.Equal("4501", AdminDevicePresentation.NumberChange(sync, 4500, 4501)); Assert.Equal("-20", AdminDevicePresentation.NumberChange(sync, 0, -20.4));
+    }
+
+    [Fact]
     public void DefinitionsAreTheDeviceScopedManifestInOrderWithOnlyRetiredThemeWithheld()
     {
         var keys = AdminDevicePresentation.AllDefinitions.Select(x => x.Key).ToArray();

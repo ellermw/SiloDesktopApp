@@ -134,6 +134,27 @@ public static class AdminDevicePresentation
         }
     }
 
+    /// <summary>The fraction digits a number setting's step implies (0.05 gives 2; an integer setting has none), six at most.</summary>
+    public static int StepDigits(DeviceSettingDefinition definition)
+    {
+        if (definition.Type == "integer") return 0;
+        var step = (decimal)definition.Step; var digits = 0;
+        while (digits < 6 && step != decimal.Truncate(step)) { step *= 10; digits++; }
+        return digits;
+    }
+
+    /// <summary>
+    /// What a number control writes when its box reports <paramref name="next"/>: the value at the step's precision, or null when
+    /// nothing changed. The box shows ten significant digits, so its own text read back on focus loss can differ from the stored
+    /// value by that much; that is not a change, and a stored value the step would not produce is never rewritten by it.
+    /// </summary>
+    public static string? NumberChange(DeviceSettingDefinition definition, double current, double next)
+    {
+        if (!double.IsFinite(next) || Math.Abs(next - current) <= 1e-9 * Math.Max(1, Math.Abs(current))) return null;
+        var snapped = Math.Round(next, StepDigits(definition), MidpointRounding.AwayFromZero);
+        return snapped == current ? null : snapped.ToString("R", CultureInfo.InvariantCulture);
+    }
+
     public static string ControlKind(DeviceSettingDefinition definition)
     {
         if (definition.Data.TryGetProperty("recommended_control", out var recommended) && recommended.ValueKind == JsonValueKind.String)

@@ -121,6 +121,19 @@ public sealed class AdminUserResourcesTests
     }
 
     [Fact]
+    public async Task ADeviceIdThatCannotBeAUrlSegmentDoesNotFailTheFleet()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client);
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"items":[{"user_id":"7","device_id":"desk"},{"user_id":"7","device_id":".."},{"user_id":"7","device_id":""},{"user_id":"8","device_id":"desk"}],"page":{"has_more":false}}"""));
+        Assert.Equal(4, (await api.ListDevicesAsync(lease)).Items.Count);
+        // The same device twice is still refused, and such an id still cannot be put in a URL.
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"items":[{"user_id":"7","device_id":".."},{"user_id":"7","device_id":".."}],"page":{"has_more":false}}"""));
+        await Assert.ThrowsAsync<InvalidDataException>(() => api.ListDevicesAsync(lease));
+        await Assert.ThrowsAsync<ArgumentException>(() => api.GetDeviceAsync(lease, "7", ".."));
+    }
+
+    [Fact]
     public async Task DeviceDetailChecksCompositeIdentityAndIgnoresLegacyOverrides()
     {
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();

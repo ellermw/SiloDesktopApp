@@ -55,6 +55,26 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(All(c.History).OfType<PasswordBox>().All(x => x.Password.Length == 0), "no credential remains in the page");
         });
 
+        await ScenarioAsync(c, "history import: a refused create keeps the typed API key for the corrected retry", async () =>
+        {
+            s.Reset();
+            await c.OpenAsync(SourceRoute(), "History Import");
+            await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportAddSource"), "page ready");
+            Click(Find<Button>(c.History, "ImportAddSource")); await Until(() => Dialog(c.Frame) != null, "add dialog opened");
+            var dialog = Dialog(c.Frame)!;
+            await SetTextAsync(Find<TextBox>(dialog, "ImportSourceName"), "Fixture duplicate"); await SetTextAsync(Find<TextBox>(dialog, "ImportSourceUrl"), "https://jellyfin.invalid");
+            await SetPasswordAsync(All(dialog).OfType<PasswordBox>().First(), "synthetic-api-key");
+            s.Fail("POST", "/api/v2/admin/history-import-sources", 422, ProblemBody("A server with this address already exists."));
+            Click(Primary(dialog)); await Until(() => HasText(dialog, "A server with this address already exists."), "a refused create shows the server's detail in the dialog");
+            Check(Dialog(c.Frame) != null && All(dialog).OfType<PasswordBox>().First().Password == "synthetic-api-key", "a refused create keeps the typed API key");
+            await SetTextAsync(Find<TextBox>(dialog, "ImportSourceName"), "Fixture corrected"); Click(Primary(dialog));
+            await Until(() => Dialog(c.Frame) == null && s.Count("POST", "/history-import-sources") == 2, "the corrected create is sent once");
+            var corrected = JsonNode.Parse(s.Last("POST", "/history-import-sources")!.Body)!.AsObject();
+            Check(corrected["name"]!.GetValue<string>() == "Fixture corrected" && corrected["admin_token"]?.GetValue<string>() == "synthetic-api-key", "the corrected create still carries the API key");
+            await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportAddSource"), "the page reloaded");
+            Check(All(c.History).OfType<PasswordBox>().All(x => x.Password.Length == 0), "no credential remains in the page");
+        });
+
         await ScenarioAsync(c, "history import: edit and token dialogs, conflict, lost answer", async () =>
         {
             s.Reset();

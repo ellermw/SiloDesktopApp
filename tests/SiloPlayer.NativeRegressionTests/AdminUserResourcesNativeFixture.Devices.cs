@@ -75,5 +75,15 @@ internal static partial class AdminUserResourcesNativeFixture
             await Until(() => c.Devices.Session.NeedsReview, "a transport failure mid-reset stops the sequence");
             Check(s.Count("DELETE", ValuesPath) >= deletes + 1, "earlier keys were sent once and none were repeated");
         });
+
+        await ScenarioAsync(c, "devices: a fractional setting shows its exact value and opening it writes nothing", async () =>
+        {
+            s.Reset(); s.Values.Add(AdminUserResourcesFakeServer.Obj("""{"key":"player.playback_speed","scope":"profile_device","profile_id":"p7","device_id":"desktop","value":1.25,"updated_at":"2026-11-01T00:00:00Z"}"""));
+            await c.OpenAsync(AdminRouteRequest.Device("7", "desktop").WithQuery("profile", "p7"), "Device detail (fractional)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceSetting_player.playback_speed"), "the playback speed override is shown");
+            var speed = Find<NumberBox>(c.Devices, "DeviceSetting_player.playback_speed"); await Until(() => speed.IsLoaded && speed.Text.Length > 0, "the number box shows its text");
+            Check(speed.Value == 1.25 && speed.Text.Replace(',', '.') == "1.25", "a fractional override shows its exact value, not a rounded one");
+            Check(s.Count("PUT", ValuesPath) == 0, "showing the device writes nothing");
+        });
     }
 }

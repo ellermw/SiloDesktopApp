@@ -222,7 +222,9 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
                             if (editor == null) await _api.CreateImportSourceAsync(owner, JsonSerializer.SerializeToElement(body)); else await _api.SaveImportSourceAsync(owner, editor, JsonSerializer.SerializeToElement(body));
                             wrote = true;
                         }
-                        finally { token = ""; credential.Password = ""; password.Password = ""; }
+                        // The typed key stays until the save is accepted or the dialog closes (217ff25 AdminHistoryImport.tsx handleSave):
+                        // cleared on a refusal, the corrected retry would be sent without it.
+                        finally { token = ""; password.Password = ""; if (wrote) credential.Password = ""; }
                     });
                     return wrote;
                 });

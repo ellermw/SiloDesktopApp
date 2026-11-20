@@ -12,7 +12,7 @@ public sealed partial class AdminUserResourcesApi
     public Task<IReadOnlyList<JsonElement>> ListAllDevicesAsync(MonitorAuthorityLease owner, CancellationToken ct = default) =>
         ConfigurationAsync(owner, cursor => ListDevicesAsync(owner, cursor, ct), maxPages: 100, maxRows: 10_000, tooManyMessage: Services.Admin.AdminUserResourceText.T("web.admin.errors.devicesTooMany"));
     public Task<AdminResourcePage> ListDevicesAsync(MonitorAuthorityLease owner, string? cursor = null, CancellationToken ct = default) =>
-        PageAsync(owner, Devices, cursor, row => NumericId(row.Text("user_id")) + "/" + Segment(row.Text("device_id")), ct);
+        PageAsync(owner, Devices, cursor, row => NumericId(row.Text("user_id")) + "/" + row.Text("device_id"), ct);
     public async Task<JsonElement> GetDeviceAsync(MonitorAuthorityLease owner, string userId, string deviceId, CancellationToken ct = default)
     {
         var body = await ReadAsync(owner, DevicePath(userId, deviceId), ct).ConfigureAwait(false);

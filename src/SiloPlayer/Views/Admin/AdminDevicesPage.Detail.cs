@@ -28,7 +28,8 @@ public sealed partial class AdminDevicesPage
     {
         var pageOwner = Session.Owner; var revision = ++_detailRevision; var user = _route.Segment(0); var device = _route.Segment(1);
         if (user == null || device == null) { ShowEmptyDetail(); return; }
-        _detail.Children.Clear(); _detail.Children.Add(Padded(Text("Loading device…", 12, true)));
+        // The device on screen is no longer the one the route names: nothing may redraw it, or write to it, while the new one loads.
+        _device = default; _detail.Children.Clear(); _detail.Children.Add(Padded(Text("Loading device…", 12, true)));
         var detail = await Session.ReadAsync("device", owner => _api.GetDeviceAsync(owner, user, device));
         if (!Session.IsCurrent(pageOwner) || revision != _detailRevision) return;
         if (detail.ValueKind != JsonValueKind.Object) { ShowDetailProblem(Session.Error != null ? "loadError" : "notFound"); return; }
@@ -72,7 +73,7 @@ public sealed partial class AdminDevicesPage
 
     private void RenderDetailBody()
     {
-        _detailRevision++; _detail.Children.Clear();
+        _detail.Children.Clear();
         if (_device.ValueKind != JsonValueKind.Object) return;
         var tabs = Tabs(); var overrides = DeviceOverrides; var kind = AdminDevicePresentation.Platform(_device.Text("device_platform")); var anomaly = DeviceAnomaly;
         var header = new Grid { ColumnSpacing = 12, Margin = new(20, 16, 20, 12) }; header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -240,15 +241,12 @@ public sealed partial class AdminDevicesPage
         {
             var fallback = double.TryParse(AdminDevicePresentation.DefaultString(definition), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : 0;
             var current = double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) && value.Length > 0 && double.IsFinite(parsed) ? parsed : fallback;
-            var integer = definition.Type == "integer";
             var box = new NumberBox { Minimum = definition.Minimum, Maximum = definition.Maximum, SmallChange = definition.Step, LargeChange = definition.Step * 10, Value = Math.Clamp(current, definition.Minimum, definition.Maximum),
                 SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline, MinWidth = 160, IsEnabled = enabled, HorizontalAlignment = HorizontalAlignment.Right };
+            // A fractional setting always shows its fraction, so the text the box reads back on focus loss is the value it holds.
+            if (AdminDevicePresentation.StepDigits(definition) is > 0 and var digits) box.NumberFormatter = new Windows.Globalization.NumberFormatting.DecimalFormatter { IntegerDigits = 1, FractionDigits = digits };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(box, label); Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(box, "DeviceSetting_" + key);
-            box.ValueChanged += (_, e) =>
-            {
-                if (double.IsNaN(e.NewValue) || Math.Abs(e.NewValue - current) < 1e-9) return;
-                Commit((integer ? Math.Round(e.NewValue) : e.NewValue).ToString("R", CultureInfo.InvariantCulture));
-            };
+            box.ValueChanged += (_, e) => { if (AdminDevicePresentation.NumberChange(definition, current, e.NewValue) is { } changed) Commit(changed); };
             return box;
         }
         if (kind == "select")
