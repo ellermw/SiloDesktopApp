@@ -28,6 +28,7 @@ public static class AdminAutoscanText
         // Native-only wording for local refusals (nothing was sent).
         ["sourceDialog.changedUnderneath"] = "This source changed. Close and reopen Edit to review the current configuration.",
         ["sourceDialog.notWebhook"] = "This source is not in webhook delivery mode.",
+        ["common.tryAgain"] = "Try again",
         ["sources.pluginsUnavailable"] = "The Plugins page is not available in this app yet.",
         ["sourceDialog.busy"] = "Another change or read is still in progress. Wait a moment and try again.",
         ["sourceDialog.reviewList"] = "Close the editor and review the reloaded list before submitting again.",

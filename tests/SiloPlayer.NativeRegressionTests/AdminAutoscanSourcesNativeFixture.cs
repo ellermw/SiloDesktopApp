@@ -54,6 +54,7 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "Sources navigation has no slide transition");
             Check(Find<TextBlock>(shell, "AutoscanFeedback") != null && Texts(shell).Contains("Autoscan"), "Sources title and feedback are rendered");
             Check(Find<Button>(shell, "AutoscanRunNow")?.Visibility == Visibility.Visible, "Run now is visible for an enabled polling source");
+            Check(Find<Button>(shell, "AutoscanRetry")?.Visibility == Visibility.Collapsed, "a healthy page shows no standing refresh control");
             await Capture(shell, "autoscan-sources-wide.png");
             var toggle = Need<ToggleSwitch>(shell, "AutoscanEnabled"); toggle.IsOn = false;
             await Settled(page); Check(!server.Enabled && server.DefaultInterval == 600 && server.Debounce == 60, "global enable preserves both polling defaults");
@@ -161,6 +162,7 @@ internal static partial class AdminAutoscanSourcesNativeFixture
 
             server.FailSources = true; await page.Controller!.ReloadAsync(); await Until(() => page.Controller.State is { Stale: true, Loading: false }); await Task.Delay(120);
             Check(Find<FrameworkElement>(shell, "AutoscanSource_original") != null && !Need<Button>(shell, "AutoscanEdit_original").IsEnabled, "failed refresh retains stale rows and disables replacement writes");
+            Check(Need<Button>(shell, "AutoscanRetry").Visibility == Visibility.Visible && Need<TextBlock>(shell, "AutoscanFeedback").Text.Length > 0, "a failed refresh shows the failure and offers recovery");
             server.FailSources = false; await Invoke(Need<Button>(shell, "AutoscanRetry")); await Settled(page);
             window.AppWindow.ResizeClient(new(800, 600)); await Task.Delay(150); await Capture(shell, "autoscan-sources-compact.png");
             await Invoke(Need<Button>(shell, "AutoscanAdd")); await Invoke(Need<Button>(shell, "AutoscanPlugin_fixture.poll_poll"));

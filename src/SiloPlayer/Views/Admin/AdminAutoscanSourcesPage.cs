@@ -134,8 +134,10 @@ public sealed partial class AdminAutoscanSourcesPage : Page, IAdminGutterScrollP
         _loading.Visibility = state.Loading ? Visibility.Visible : Visibility.Collapsed;
         _feedback.Text = string.Join("\n", new[] { state.Error, state.Notice, state.OptionsError, state.Loaded && !state.SourcesComplete ? "Showing at most 1,000 sources. Reload or reduce the configured list before editing." : null }.Where(s => s != null));
         _feedback.Visibility = _feedback.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _retry.Visibility = Visibility.Visible;
-        _retry.Content = state.Error != null || state.OptionsError != null ? "Retry" : "Refresh";
+        // Recovery is offered whenever a read failed (the page, the source types or servers, the library paths) or the list is stale; no standing button.
+        var failed = state.Error != null || state.OptionsError != null || state.Stale;
+        _retry.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
+        _retry.Content = T("common.tryAgain");
         _retry.IsEnabled = current && !state.Loading && !state.Busy;
         _rows.Children.Clear();
         if (!current) { CloseEditor(true); return; }
