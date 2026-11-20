@@ -40,6 +40,32 @@ remain untouched. This increment is submitted only to the authorized Beta pipeli
 no merge, installer execution, stable release or production action is authorized here.
 ---
 
+# November 17 — Notifications verified Beta candidate
+
+Configure > Integrations > Notifications is implemented on
+`t3/admin-notification-settings`, based on exact Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`. Official GitHub main was rechecked
+at `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`; version remains
+`1.2.1181-beta.1` under pipeline control. This complete family includes seven
+delivery channels, relay/Discord setup, processing/policy settings, server-channel
+CRUD/tests/secret rotation, production registration and regression fixtures.
+
+Final nonincremental verification: **76 focused / 8,061 full unit cases pass**,
+zero failures/skips; app/publish/host build and source-root/Core PDB proof pass.
+Six native groups pass: Notifications, Manage foundation, General, Monitor,
+Email and Security. Seven actual Notifications wide/compact/page/dialog PNGs
+were inspected. The exact 582-file product remained byte-identical throughout.
+The additional unchanged Downloads selector times out on its retained-bandwidth
+fixture expectation; it is not claimed passing and was not changed here.
+
+The four independent review findings and full-suite URL/date policy failures
+are corrected. Actual RED/GREEN, ACQ/REL, source/payload hashes, captures and
+limits are recorded in [Notifications](parity/admin-notifications.md).
+Live delivery, all-DPI/accessibility and complete visual parity remain unverified.
+No direct merge, stable release, installer or installed-player action is included.
+
+---
+
 # November 17 - Ebook/comic protected-install startup follow-up
 
 On fresh Beta `248aafd62ed65b868c0e7356926e4d83204649cd` (version
