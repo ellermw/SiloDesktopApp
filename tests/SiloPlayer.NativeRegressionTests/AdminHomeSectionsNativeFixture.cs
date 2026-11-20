@@ -270,6 +270,7 @@ internal static class AdminHomeSectionsNativeFixture
             Check(server.Requests.Count(item => item.Method == "DELETE") == 2, "the reviewed delete is sent once more only after the explicit reload");
 
             // ── Restore: toggles, per-page results ──
+            await PageMenu(page, "Restore defaults…"); var restore = await DialogTexts(window, "Restore Home to the default rows?");
             Check(restore.Any(text => text.Contains("replaced by Silo's default rows")) && restore.Contains("Resetting profiles isn't available on this server.") == false, "the restore dialog names what is replaced");
             ToggleByName(window, "Also restore every library page"); ToggleByName(window, "Also reset every profile's Home and library pages");
             await Until(() => OpenDialogTexts(window).Contains("Restore Home and every library page to the default rows?"));
