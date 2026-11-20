@@ -1,3 +1,18 @@
+# November 17 — Autoscan Settings source candidate
+
+The isolated `t3/admin-autoscan-settings` worker on Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd` authors only
+`/admin/settings/autoscan`: polling defaults, complete saved server connection
+create/edit/delete/check/setup dialogs, dedicated API/controller, production registration,
+unit/native fixtures and XBF/source allowlists. Official pin
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Version remains
+`1.2.1181-beta.1`. No commit, push, PR, build, tests, native/browser launch,
+mutex acquisition, generated outputs, installer or installed-player change.
+All runtime and visual acceptance is pending the coordinator's serialized lane.
+Contract trace, intentional safeguards, concurrency limits and exact acceptance commands:
+`docs/parity/admin-autoscan-settings.md`. Sources/Activity remain separate writers;
+this page never exposes enable/Run now or writes generic server settings.
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
