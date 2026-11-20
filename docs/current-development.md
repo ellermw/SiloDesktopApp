@@ -1,7 +1,11 @@
 # November 20 - Admin Manage Playback: Nodes and Playback Settings
 
-Branch `t3/admin-playback-nodes-settings`, merged with Beta `db49c4c93` (stable `1.2.1194` merged into beta; version
-unchanged here). Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback`
+Branch `t3/admin-playback-nodes-settings`, merged with Beta `d90f40965` (stable `1.2.1194` plus the merged Library settings
+page; version unchanged here). Final run after that merge: playback-lead-final-r1 on merge commit 00fa14b66, build lease
+2026-11-20T16:45:54Z to 16:51:32Z: 341 focused and 9,854 full unit cases passed with no failures or skips; app build,
+publish and native host built; native selectors admin-playback-administration (94 PASS lines, 0 FAIL),
+admin-manage-library-settings, admin-manage-foundation, admin-configure-general and admin-monitor passed; source seal
+(2,503 build inputs) and 582-file payload unchanged across the run. The run named further below predates that merge. Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback`
 are registered and reachable through the real Admin navigation. Two earlier review findings (enabled switch restore,
 marker-task status badges) and seven findings of a second independent review were fixed: the egress limit can no longer
 overflow into an unhandled exception, the node acceleration override list matches the server's enum (no VideoToolbox), an
