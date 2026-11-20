@@ -72,6 +72,7 @@ public sealed partial class AdminRequestsPage
     private async Task RefreshConfigurationAsync()
     {
         var owner = Owner; var generation = _generation; if (!Current(owner)) return;
+        ClearReadNotice();
         try
         {
             var servers = await _api.ListIntegrationsAsync(owner!);
@@ -84,13 +85,14 @@ public sealed partial class AdminRequestsPage
             }
             RenderServers();
         }
-        catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error)); throw; }
+        catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error), true); throw; }
     }
     private async Task EditServerAsync(string? id)
     {
         var owner = Owner; if (!Current(owner)) return;
         var current = id == null ? null : await _api.GetIntegrationAsync(owner!, id);
         if (!Current(owner)) return;
+        if (current != null) ClearReadNotice();
         var data = current?.Value ?? new JsonObject { ["name"] = "", ["enabled"] = true, ["base_url"] = "", ["supported_media_types"] = new JsonArray(), ["plugin_config"] = new JsonObject() };
         var types = RouterTypes().ToArray(); if (types.Length == 0) { Notice(S("web.admin.settings.requests.servers.noPlugin")); return; }
         var form = new RequestForm(data); form.Text("name", S("web.admin.settings.requests.serverEditor.name"), "AdminRequestServerName", maximum: 200);

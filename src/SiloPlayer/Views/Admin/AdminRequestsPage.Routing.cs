@@ -77,6 +77,7 @@ public sealed partial class AdminRequestsPage
                     actions.Children.Add(Button(S("web.admin.settings.requests.shared.delete"), "AdminRequestRuleDelete-" + id, async () =>
                     {
                         var canonical = await _api.GetRouteAsync(owner!, id);
+                        if (Current(owner)) ClearReadNotice();
                         if (Current(owner) && await ConfirmAsync("Delete rule?", "Delete “" + J.Text(canonical.Value, "name") + "”? Requests that matched it will use the next matching rule.", "Delete"))
                             await WriteAsync(lease => _api.DeleteDocumentAsync(lease, canonical), RefreshConfigurationAsync);
                     }));
@@ -119,7 +120,8 @@ public sealed partial class AdminRequestsPage
     private async Task EditRuleAsync(string id)
     {
         var owner = Owner; if (!Current(owner)) return;
-        var document = await _api.GetRouteAsync(owner!, id); if (Current(owner)) await RuleEditorAsync(document, document.Value, false);
+        var document = await _api.GetRouteAsync(owner!, id); if (!Current(owner)) return;
+        ClearReadNotice(); await RuleEditorAsync(document, document.Value, false);
     }
     private async Task RuleEditorAsync(AdminRequestDocument? current, JsonObject data, bool animePreset)
     {

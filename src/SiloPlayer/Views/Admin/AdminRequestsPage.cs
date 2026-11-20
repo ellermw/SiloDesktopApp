@@ -124,7 +124,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
         catch (Exception error) { if (Current(owner) && generation == _generation) { _content.Children.Clear(); Notice(AdminRequestRules.Error(error)); _content.Children.Add(Button("Try again", "AdminRequestsRetry", ReloadAsync)); } if (_pendingWriteReview != null) throw; }
     }
     private bool _readNotice;
-    /// <summary>A read notice reports a failed refresh, so the next refresh replaces it. Every other notice stays until a load, review or successful write.</summary>
+    /// <summary>A read notice reports a failed read, so the next refresh or successful read replaces it. Every other notice stays until a load, review or successful write.</summary>
     private void Notice(string message, bool read = false) { _readNotice = read && message.Length > 0; _notice.Text = message; _notice.Visibility = message.Length == 0 ? Visibility.Collapsed : Visibility.Visible; }
     private void ClearReadNotice() { if (_readNotice) Notice(""); }
     private static string S(string key, object? args = null) => AdminRequestsText.T(key, args);
@@ -138,7 +138,8 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
             button.IsEnabled = false;
             try { await action(); }
             catch (OperationCanceledException) { }
-            catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error)); }
+            // Writes report their own failures, so what reaches a button is a failed read.
+            catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error), true); }
             finally { if (Current(owner)) button.IsEnabled = true; }
         };
         return button;
@@ -211,7 +212,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
             args.Cancel = true; if (sending || _busy || !action.IsCurrent || !Current(pageOwner) || mutates && _pendingWriteReview != null) return;
             var deferral = args.GetDeferral(); sending = true; fieldHost.IsEnabled = false; dialog.IsPrimaryButtonEnabled = false;
             if (mutates) { _busy = true; SetWriteReview(ReconcileCurrentAsync); }
-            try { await save(action); action.ThrowIfRetired(); if (Current(pageOwner)) { completed = true; dialog.Hide(); } }
+            try { await save(action); action.ThrowIfRetired(); if (Current(pageOwner)) { completed = true; if (mutates) Notice(""); dialog.Hide(); } }
             catch (Exception error)
             {
                 if (action.IsCurrent && Current(pageOwner))

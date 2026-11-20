@@ -493,6 +493,24 @@ internal static partial class AdminRequestsManagementNativeFixture
             await Until(() => Find(frame, "AdminRequestsWriteReview") is Button { Visibility: Visibility.Collapsed } && Find(frame, "AdminRequestDetails-7") != null);
             Check(((ComboBox)Find(frame, "AdminRequestQueueMedia")!).SelectedItem is ComboBoxItem { Tag: "movie" }, "the review reloads the queue under the chosen filter");
         });
+        await Case("failed Settings retry is cleared by a successful retry", async (server, shell, frame) =>
+        {
+            // Settings is reopened with the server list failing, so the servers section offers its own retry.
+            server.FailConfigurationReads = true;
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestQueue));
+            await Until(() => Find(frame, "AdminRequestDetails-7") != null);
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestSettings));
+            await Until(() => Find(frame, "AdminRequestServersRetry") is Button { IsEnabled: true });
+            var failures = server.FailedConfigurationReads;
+            Click(Find(frame, "AdminRequestServersRetry")!);
+            await Until(() => server.FailedConfigurationReads > failures && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible } && Find(frame, "AdminRequestServersRetry") is Button { IsEnabled: true });
+            Check(Find(frame, "AdminRequestServerEdit-integration-2") == null, "a failed Settings retry reports the failure and keeps the retry reachable");
+            server.FailConfigurationReads = false;
+            Click(Find(frame, "AdminRequestServersRetry")!);
+            await Until(() => Find(frame, "AdminRequestServerEdit-integration-2") != null);
+            await Task.Delay(100);
+            Check(Find(frame, "AdminRequestServersRetry") == null && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, "a successful Settings retry loads the servers and clears the failure notice");
+        });
         if (failed > 0) throw new InvalidOperationException(failed + " Requests correction scenarios failed.");
     }
 
