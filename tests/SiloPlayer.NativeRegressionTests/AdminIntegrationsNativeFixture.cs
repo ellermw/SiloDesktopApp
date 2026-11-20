@@ -172,6 +172,7 @@ internal static class AdminIntegrationsNativeFixture
             ReviewCheck(!Find<TextBox>(page, "AdminIntegration-ai.chat_model").IsReadOnly, "provider models retain manual entry");
             await CaptureBoth(window, outer, "integrations-ai");
             var textProvider = Find<ComboBox>(page, "AdminIntegration-ai.text_provider_id");
+            await SelectionKeepsControl(page, handler, textProvider, "a text provider");
             textProvider.SelectedItem = textProvider.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "__add");
             var key = Find<PasswordBox>(page, "AdminAiProviderKey"); key.Password = "fixture-private-key";
             Invoke(Find<Button>(page, "AdminAiProviderTest"));
@@ -282,6 +283,7 @@ internal static class AdminIntegrationsNativeFixture
             ReviewCheck(nextCron.IsEnabled && Find<TextBox>(page, "AdminIntegration-recommendations.embeddings_cron").IsEnabled && Find<ComboBox>(page, "AdminIntegration-recommendations.embedding_provider_id").IsEnabled && (!pickerReady || modelPicker.IsEnabled), "a field commit leaves the other Recommendations inputs enabled");
             handler.WriteGate.SetResult(); handler.WriteGate = null; await commit; await Idle(page);
             ReviewCheck(nextCron.IsEnabled && (!focusHeld || ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), nextCron)), "the field focus moved to keeps it through the commit and its follow-up read");
+            await SelectionKeepsControl(page, handler, Find<ComboBox>(page, "AdminIntegration-recommendations.embedding_provider_id"), "an embedding provider");
             handler.Conflict = true; controller.Set("recommendations.diversity_lambda", "0.8"); await controller.SaveFieldsAsync(["recommendations.diversity_lambda"]);
             await Until(() => Enabled(page, "AdminIntegrationsReloadKeep"), "conflict recovery UI");
             handler.Conflict = false; Invoke(Find<Button>(page, "AdminIntegrationsReloadKeep")); await Idle(page);
@@ -367,6 +369,21 @@ internal static class AdminIntegrationsNativeFixture
     {
         Program.Log((condition ? "PASS: " : "FAIL: ") + label);
         if (!condition) ReviewFailures.Add(label);
+    }
+    /// <summary>Changes a provider selection, holds the read it starts, then restores the saved selection.</summary>
+    private static async Task SelectionKeepsControl(AdminIntegrationsPage page, Server handler, ComboBox combo, string label)
+    {
+        await Idle(page);
+        var saved = (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        // Focus is only asserted where the fixture window can take it; enablement is asserted everywhere.
+        var focusHeld = combo.Focus(FocusState.Keyboard) && ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), combo);
+        handler.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "");
+        await Until(() => handler.InFlight == 1, "held read after choosing " + label);
+        ReviewCheck(combo.IsEnabled, "choosing " + label + " leaves its selector enabled while the read it starts is in flight");
+        handler.ReadGate.SetResult(); handler.ReadGate = null; await Idle(page);
+        ReviewCheck(combo.IsEnabled && (!focusHeld || ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), combo)), "the selector used to choose " + label + " keeps focus until that read settles");
+        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == saved); await Idle(page);
     }
     private static async Task CaptureBoth(Window window, Frame root, string name)
     {

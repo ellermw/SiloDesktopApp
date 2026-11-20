@@ -39,7 +39,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     private AdminChatGptStatus? _connection;
     private IReadOnlyList<AdminChatGptModel> _accountModels = [];
     private readonly Dictionary<string, IReadOnlyList<AdminAiModel>> _models = new(StringComparer.Ordinal);
-    private bool _active, _retired, _syncing, _busy, _domainReading, _quietRead, _domainLoaded, _refreshAgain, _commandUnknown;
+    private bool _active, _retired, _syncing, _busy, _domainReading, _quietRead, _domainLoaded, _refreshAgain, _refreshHeld, _commandUnknown;
     private string? _domainError;
     private string? _accountModelsError;
     private ContentDialog? _dialog;
@@ -84,7 +84,13 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         _leave = new(() => _controller?.State.Owner, () => _controller?.State.DirtyKeys.Count > 0 || _providerDirty, () => { _controller?.Discard(); ClearProviderEditor(); });
         _controller.Changed += QueueRender;
         // Recommendations saves a field as focus leaves it, so its follow-up read is quiet: a foreground read would disable the control focus has just moved to.
-        _controller.Saved += changedKeys => { DispatcherQueue.TryEnqueue(async () => { _models.Clear(); await ReadDomainAsync(quiet: _route == AdminRoute.Recommendations); }); };
+        _controller.Saved += changedKeys => { DispatcherQueue.TryEnqueue(async () =>
+        {
+            var quiet = _route == AdminRoute.Recommendations; _models.Clear();
+            // A read already in flight may predate the save; read once more after it.
+            if (_active && _domainReading) RepeatRead(quiet);
+            await ReadDomainAsync(quiet);
+        }); };
         Build(); _openTask = OpenAsync(_controller);
     }
     private async Task OpenAsync(AdminIntegrationSettingsController controller)
@@ -95,7 +101,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     // A page retired by an authority change reopens once admin authority is available again.
     private void OnAuthorityChanged() => DispatcherQueue.TryEnqueue(() => { if (_retired && !_active && IsLoaded && _authority.IsAvailable) Open(); });
     private bool Current(AdminIntegrationSettingsController controller) => _active && ReferenceEquals(controller, _controller) && controller.State.Owner?.IsCurrent == true;
-    /// <summary>A foreground domain read holds the controls. The background poll does not: disabling and re-enabling them every five seconds would move keyboard focus.</summary>
+    /// <summary>A foreground domain read holds the controls. A quiet one (the background poll, or the refresh a selection or edit asks for) does not: disabling and re-enabling them would move keyboard focus.</summary>
     private bool DomainHeld => _domainReading && !_quietRead;
     private bool Ready => _active && _domainLoaded && !_busy && !DomainHeld && !_commandUnknown && _controller?.State is { Loaded: true, Loading: false, Saving: false, Conflict: false, OutcomeUnknown: false, Owner.IsCurrent: true };
     private void Build()
@@ -223,18 +229,21 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             if (Current(controller))
             {
                 BuildDomain(); Render(controller.State); SchedulePoll();
-                if (_refreshAgain) { _refreshAgain = false; DispatcherQueue.TryEnqueue(async () => await RefreshDomainAsync()); }
+                if (_refreshAgain) { var quiet = !_refreshHeld; _refreshAgain = _refreshHeld = false; DispatcherQueue.TryEnqueue(async () => await ReadDomainAsync(quiet)); }
             }
             else if (_active && _controller is { } replacement && Current(replacement)) DispatcherQueue.TryEnqueue(async () => await RefreshDomainAsync());
         }
     }
     private IEnumerable<string> SelectedProviderIds() => _route == AdminRoute.AiSettings
         ? new[] { Value("ai.text_provider_id"), Value("ai.speech_provider_id") } : new[] { Value("recommendations.embedding_provider_id") };
+    // The provider selector, model picker or model box asking for this has focus, so the read is quiet: a foreground read would disable the selector or picker under it.
     private void RequestModelRefresh()
     {
-        if (_domainReading) _refreshAgain = true;
-        else _ = RefreshDomainAsync();
+        if (_domainReading) RepeatRead(quiet: true);
+        else _ = ReadDomainAsync(quiet: true);
     }
+    /// <summary>Asks for one more read after the one in flight. It holds the controls only if one of its requesters needs that.</summary>
+    private void RepeatRead(bool quiet) { _refreshAgain = true; _refreshHeld |= !quiet; }
     private void SchedulePoll()
     {
         if (_active && !_busy && !_domainReading && !_commandUnknown && _domainError == null &&
@@ -279,7 +288,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
                 {
                     _busy = false;
                     // A read that began before the command settled may predate its effect; read once more after it.
-                    if (!_commandUnknown) { if (_domainReading) _refreshAgain = true; await RefreshDomainAsync(); }
+                    if (!_commandUnknown) { if (_domainReading) RepeatRead(quiet: false); await RefreshDomainAsync(); }
                     if (failure != null) _domainError = failure;
                     if (_fieldCommits.Count > 0 && !_commandUnknown && !controller.State.Saving) _fieldCommitTask = CommitFieldsCoreAsync();
                     BuildDomain(); Render(controller.State); SchedulePoll();
@@ -427,7 +436,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         // Only an authority retirement keeps listening for a reopen; navigation, unload and suspension are final.
         if (!retired) { _retired = false; _authority.AvailabilityChanged -= OnAuthorityChanged; }
         if (!_active) return;
-        _active = false; _retired = retired; _poll.Stop(); _modelDebounce.Stop(); _refreshAgain = false;
+        _active = false; _retired = retired; _poll.Stop(); _modelDebounce.Stop(); _refreshAgain = false; _refreshHeld = false;
         _dialog?.Hide(); ClearLogin(); ClearProviderEditor();
         _syncing = true; ClearPrivateTree(ContentRoot); _syncing = false;
         var controller = _controller; _controller = null; _leave = null;
