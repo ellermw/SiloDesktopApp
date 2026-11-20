@@ -645,7 +645,8 @@ internal static class AdminCollectionsNativeFixture
                 server.JobTerminal = true;
                 await Until(() => page.Controller.StarterJobId == null, "the finished job is observed", 9000);
                 server.ServeActiveJob = false;
-                await Until(() => Find<Button>(page, "CollectionEdit_c2") != null, "list is back");
+                // The editor routes above carry a library, so the list is in Arrange (board) mode.
+                await Until(() => Find<Button>(page, "CollectionEdit_c2") != null || Find<Button>(page, "CollectionBoardEdit_c2") != null, "list is reloaded after the job finishes");
             });
             await Step("template poster travels with the import", async () =>
             {
