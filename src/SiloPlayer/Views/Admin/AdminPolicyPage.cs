@@ -140,9 +140,9 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
         _name = U.Text(AdminPolicyPresentation.Title(Controller.Snapshot!), 22); _overrideCan = U.Text(AdminPolicyPresentation.OverrideCan(Controller.Snapshot!), 13, true); _view.Children.Add(_name); _view.Children.Add(_overrideCan);
         _rail = U.Text("", 12, true); AutomationProperties.SetName(_rail, T("editor.lifecycleLabel")); _view.Children.Add(_rail);
         _source = AdminAccessPageUi.Multiline("Rego source", "PolicySource", Controller.Draft, 360); _source.MaxLength = 262144; _source.FontFamily = new("Consolas");
-        _source.TextChanging += (_, _) => { if (!_sync) Controller.SetDraft(_source.Text); }; _view.Children.Add(_source);
+        _source.TextChanging += (_, _) => { if (!_sync) Controller.SetDraft(AdminAccessPageUi.Lines(_source.Text)); }; _view.Children.Add(_source);
         _comment = U.Input(T("editor.commentLabel"), "PolicyComment", T("editor.commentPlaceholder")); _comment.Width = double.NaN; _comment.HorizontalAlignment = HorizontalAlignment.Stretch; _comment.MaxLength = 10000;
-        _comment.TextChanging += (_, _) => { if (!_sync) Controller.SetComment(_comment.Text); }; _view.Children.Add(_comment);
+        _comment.TextChanging += (_, _) => { if (!_sync) Controller.SetComment(AdminAccessPageUi.Lines(_comment.Text)); }; _view.Children.Add(_comment);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         actions.Children.Add(Command(T("editor.validate"), "PolicyValidate", Controller.ValidateAsync));
         actions.Children.Add(Command(T("editor.save"), "PolicySave", async () =>
@@ -174,7 +174,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
     {
         var editable = !Controller.Busy && Controller.Available;
         _sync = true;
-        try { if (_source != null) { _source.IsEnabled = editable; if (_source.Text != Controller.Draft) _source.Text = Controller.Draft; } if (_comment != null) { _comment.IsEnabled = editable; if (_comment.Text != Controller.Comment) _comment.Text = Controller.Comment; } }
+        try { if (_source != null) { _source.IsEnabled = editable; if (AdminAccessPageUi.Lines(_source.Text) != Controller.Draft) _source.Text = Controller.Draft; } if (_comment != null) { _comment.IsEnabled = editable; if (AdminAccessPageUi.Lines(_comment.Text) != Controller.Comment) _comment.Text = Controller.Comment; } }
         finally { _sync = false; }
         foreach (var command in _commands.Values) command.IsEnabled = editable;
         if (_commands.TryGetValue("PolicySave", out var save)) save.IsEnabled = editable && Controller.Validated && !Controller.ReviewRequired;

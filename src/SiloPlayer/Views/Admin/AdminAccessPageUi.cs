@@ -87,11 +87,13 @@ internal sealed class AdminAccessPageUi
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) ClearPrivateControls(VisualTreeHelper.GetChild(root, i));
     }
     internal static StackPanel Stack(params UIElement[] children) { var result = new StackPanel { Spacing = 12 }; foreach (var child in children) result.Children.Add(child); return result; }
+    /// <summary>TextBox reports line breaks as CR; the server and drafts use LF.</summary>
+    internal static string Lines(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
     internal static string Selected(ComboBox input) => (input.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
     internal static void Select(ComboBox input, string value) => input.SelectedItem = input.Items.OfType<ComboBoxItem>().FirstOrDefault(i => i.Tag as string == value);
     internal static TextBox Multiline(string label, string id, string value, int height = 220)
     {
-        var input = U.Input(label, id); input.Text = value; input.AcceptsReturn = true; input.TextWrapping = TextWrapping.Wrap;
+        var input = U.Input(label, id); input.AcceptsReturn = true; input.TextWrapping = TextWrapping.Wrap; input.Text = value; // AcceptsReturn first: a single-line box truncates at the first line break.
         input.Width = double.NaN; input.Height = height; input.HorizontalAlignment = HorizontalAlignment.Stretch; input.IsSpellCheckEnabled = false; input.IsTextPredictionEnabled = false; return input;
     }
 }
