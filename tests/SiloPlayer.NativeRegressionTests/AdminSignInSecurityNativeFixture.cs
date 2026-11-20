@@ -307,7 +307,7 @@ internal static class AdminSignInSecurityNativeFixture
             foreach (var typed in new[] { "fixture-readers\r", "fixture-readers\rSilo ", "fixture-readers\rSilo Admins" })
             {
                 groups.Text = typed; var held = groups.Text; await Task.Delay(150);
-                if (groups.Text != held) Program.Log("INFO: group list box was set to [" + Codes(typed) + "], read back [" + Codes(held) + "], holds [" + Codes(groups.Text) + "] after 150 ms");
+                if (groups.Text != held) Program.Log("INFO: group list box was set to [" + Codes(typed) + "], read back [" + Codes(held) + "], holds [" + Codes(groups.Text) + "] after 150 ms; same box on the page: " + ReferenceEquals(groups, Input(signIn, "SignIn_3_ldap_allowed_groups")) + "; the page's box holds [" + Codes(Input(signIn, "SignIn_3_ldap_allowed_groups").Text) + "]; box loaded: " + groups.IsLoaded + "; controller busy: " + ((AdminSignInSettingsPage)signIn).Controller.Busy + ", review required: " + ((AdminSignInSettingsPage)signIn).Controller.ReviewRequired);
                 Check(groups.Text == held, "typed group list is kept as typed (" + typed.Length + " characters)");
             }
             Check(groups.Text.Replace("\r\n", "\n").Replace('\r', '\n') == "fixture-readers\nSilo Admins", "a second group with a space can be typed on its own line");

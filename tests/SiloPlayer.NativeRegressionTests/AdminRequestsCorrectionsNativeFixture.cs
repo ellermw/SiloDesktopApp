@@ -410,8 +410,11 @@ internal static partial class AdminRequestsManagementNativeFixture
             Check(Armed(), "a failed poll leaves the next poll armed");
             server.FailQueueReads = false;
             Check(await Poll(), "polling continues after a failed poll");
-            await Settled(() => Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed } && Armed(), 240);
-            Check(Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed } && Rows() && Armed(), "the next successful poll clears the failure notice, keeps the rows and stays armed");
+            await Settled(() => Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, 240);
+            Check(Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, "the next successful poll clears the failure notice");
+            // The poll now runs every 50 ms: rows are redrawn and the timer is stopped during each read, so each is waited for on its own.
+            await Settled(Rows, 240); Check(Rows(), "the next successful poll keeps the rows");
+            await Settled(Armed, 240); Check(Armed(), "the next successful poll stays armed");
         });
         await Case("retired action capture is a silent abort", async (server, shell, frame) =>
         {
