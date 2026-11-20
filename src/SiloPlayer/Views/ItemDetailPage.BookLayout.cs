@@ -29,6 +29,7 @@ public sealed partial class ItemDetailPage
     private readonly List<(UIElement Element, Panel Parent, int Index)> _audiobookBorrowed = [];
     private IReadOnlyList<AudiobookDetailPresentation.ChapterRow> _audiobookChapterRows = [];
     private bool _audiobookChaptersExpanded;
+    private MediaItemDetail? _audiobookChapterOwner;
     private int _audiobookRenderedChapter = -2;
     private bool _audiobookChapterStartsShown = true;
     private TextBlock? _audiobookLeftInChapter;
@@ -199,7 +200,9 @@ public sealed partial class ItemDetailPage
         App.Services.GetRequiredService<PlayerService>().SetAudiobookPresentation(item);
         _audiobookHasFiles = item.Versions.Count > 0;
         _audiobookChapterRows = AudiobookDetailPresentation.BuildChapterRows(item.Versions);
-        _audiobookChaptersExpanded = false;
+        // Retained metadata updates rebuild rows without losing expansion intent.
+        if (!ReferenceEquals(_audiobookChapterOwner, item)) _audiobookChaptersExpanded = false;
+        _audiobookChapterOwner = item;
         _audiobookRenderedChapter = -2;
         _audiobookResumeSeconds = Math.Max(0, item.UserData?.PositionSeconds ?? 0);
         _audiobookDurationTotal = item.Audiobook?.TotalDurationSeconds is > 0 ? item.Audiobook.TotalDurationSeconds
@@ -515,16 +518,8 @@ public sealed partial class ItemDetailPage
         AudiobookMoreFlyout.Items.Clear();
         if (!canCurate) return;
         var edit = MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Edit Metadata", Icon = new FontIcon { Glyph = "" } }, text: "web.detail.actions.editMetadata");
-        edit.Click += async (_, _) =>
-        {
-            var client = App.Services.GetRequiredService<SiloApiClient>();
-            var authority = client.CaptureContext();
-            if (!IsCurrentDetail(item.ContentId)) return;
-            var dialog = new Dialogs.EditMetadataDialog(item) { XamlRoot = XamlRoot };
-            await dialog.ShowAsync();
-            if (dialog.HasSaved && IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority))
-            { await ViewModel.ReloadAsync(item.ContentId); if (IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority)) UpdateUI(); }
-        };
+        // Same fresh read, write ownership and identity guards as the generic detail menu (#4241, #4329).
+        edit.Click += async (_, _) => await OpenFreshEditMetadataAsync(item, edit);
         AudiobookMoreFlyout.Items.Add(edit);
         var match = MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Match Item", Icon = new FontIcon { Glyph = "" } }, text: "web.detail.actions.matchItem");
         match.Click += MatchButton_Click;

@@ -6,6 +6,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
 
 namespace SiloPlayer.ViewModels;
 
@@ -17,6 +18,7 @@ public partial class RecommendationsViewModel : ObservableObject
     private bool _loadInProgress;
     private bool _reloadRequested;
     private bool _hasLoaded;
+    private bool _active = true;
     private long _loadGeneration;
     private ApiRequestContext? _loadedContext;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
@@ -25,6 +27,15 @@ public partial class RecommendationsViewModel : ObservableObject
     {
         _catalogApi = catalogApi;
         _recommendationsApi = recommendationsApi;
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
+        {
+            if (change.Kind != MediaSurfaceChangeKind.ItemMetadataRefreshed
+                || change.Context is { } context && !_catalogApi.IsCurrentContext(context)) return;
+            _lastLoadedAt = DateTime.MinValue;
+            ++_loadGeneration;
+            if (_loadInProgress) _reloadRequested = _active;
+            else if (_active && _hasLoaded) _ = LoadAsync();
+        });
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
         {
             if (!_catalogApi.IsCurrentContext(change.Context)) return;
@@ -37,9 +48,22 @@ public partial class RecommendationsViewModel : ObservableObject
                         MediaItemStateUpdater.SetNotInterested(row.Items[index], change.Marked.Value);
                         if (change.Marked.Value) row.Items.RemoveAt(index);
                     }
-            if (_loadInProgress) _reloadRequested = true;
-            else if (_hasLoaded) _ = LoadAsync();
+            if (_loadInProgress) _reloadRequested = _active;
+            else if (_active && _hasLoaded) _ = LoadAsync();
         });
+    }
+
+    public void BeginVisit()
+    {
+        _active = true;
+        if (_loadInProgress) _reloadRequested = true;
+    }
+
+    public void Suspend()
+    {
+        _active = false;
+        ++_loadGeneration;
+        _reloadRequested = false;
     }
 
     // Rows displayed on the page (web: rows from /recommendations/discover)
@@ -61,7 +85,7 @@ public partial class RecommendationsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (_loadInProgress) return;
+        if (!_active || _loadInProgress) return;
         var context = _catalogApi.CaptureContext();
         if (_loadedContext == context && Rows.Count > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
         if (_loadedContext != context) { Rows.Clear(); TasteProfile = null; _hasLoaded = false; _loadedContext = context; }
@@ -103,7 +127,7 @@ public partial class RecommendationsViewModel : ObservableObject
             _loadInProgress = false;
             IsLoading = false;
             IsTasteProfileLoading = false;
-            if (_reloadRequested) { _reloadRequested = false; _ = LoadAsync(); }
+            if (_reloadRequested) { _reloadRequested = false; if (_active) _ = LoadAsync(); }
         }
     }
 
