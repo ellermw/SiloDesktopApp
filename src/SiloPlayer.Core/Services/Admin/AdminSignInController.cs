@@ -145,6 +145,21 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         var autos = _auto.ToArray();
         try
         {
+            if (_form.DirtyKeys.Contains(Local) && _form.Get(Local) == "false")
+            {
+                // These read-only checks run before the first config or binding write, so a refusal here changes nothing. With the whole list known and no
+                // break-glass admin, or a candidate that no longer qualifies, refuse. With a list that is not fully known (longer than the cap, or unread)
+                // the server's own transactional check decides, as it does for the official page.
+                var candidate = Accounts.FirstOrDefault(BreakGlass);
+                if (candidate == null && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
+                if (candidate != null)
+                {
+                    var account = await api.AccountAsync(owner, candidate.Id).ConfigureAwait(false);
+                    if (!BreakGlass(account) && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
+                }
+                var providers = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
+                if (!providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)) throw new AdminAccessException("provider_required", 409);
+            }
             foreach (var item in configs)
             {
                 await api.SaveConfigAsync(owner, item.Provider, item.Write).ConfigureAwait(false);
@@ -160,20 +175,6 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         }
         if (_form.DirtyKeys.Count > 0)
         {
-            if (_form.DirtyKeys.Contains(Local) && _form.Get(Local) == "false")
-            {
-                // With the whole list known and no break-glass admin, or a candidate that no longer qualifies, refuse before writing. With a list that is
-                // not fully known (longer than the cap, or unread) the server's own transactional check decides, as it does for the official page.
-                var candidate = Accounts.FirstOrDefault(BreakGlass);
-                if (candidate == null && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
-                if (candidate != null)
-                {
-                    var account = await api.AccountAsync(owner, candidate.Id).ConfigureAwait(false);
-                    if (!BreakGlass(account) && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
-                }
-                var providers = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
-                if (!providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)) throw new AdminAccessException("provider_required", 409);
-            }
             var intent = _form.CaptureSave(Managed);
             try
             {
@@ -187,9 +188,39 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             catch (ApiException refused) when (refused.StatusCode == 409 && intent.Values.ContainsKey(Local)) { throw new AdminAccessException("break_glass_required", 409); }
             finally { Publish(owner, () => _form?.EndSave(intent)); }
         }
-        var refreshed = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
-        Publish(owner, () => { Providers = refreshed; Message = "Sign-in settings saved."; });
+        // Everything is already persisted: a failed re-read must not turn it into a reported failure.
+        await RefreshProvidersAsync(owner, "Sign-in settings saved.", configs.Length > 0 || autos.Length > 0).ConfigureAwait(false);
     }, write: true);
+    /// <summary>
+    /// Re-reads the providers after a write that already succeeded. A failed read keeps the success message and never reports the write as failed.
+    /// When that write changed provider state the list is then unknown, as after an open that could not load it: no pre-write value is shown or
+    /// saved again, and only provider-dependent settings wait for the page-level reload.
+    /// </summary>
+    private async Task RefreshProvidersAsync(MonitorAuthorityLease owner, string done, bool providersChanged)
+    {
+        try
+        {
+            var refreshed = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
+            Publish(owner, () =>
+            {
+                Providers = refreshed; Message = done;
+                if (Capabilities is { Available: true }) { ProvidersKnown = true; ProviderError = null; }
+            });
+        }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
+        catch
+        {
+            Publish(owner, () =>
+            {
+                Message = done; if (!providersChanged) return;
+                // Edits staged against the list that is no longer known go with it.
+                foreach (var draft in _drafts.Values) draft.Value.Clear(); _drafts.Clear(); _auto.Clear();
+                Providers = []; ProvidersKnown = false; TestResults = new Dictionary<string, AdminSignInTestResult>();
+                ProviderError = "The provider list could not be refreshed. Reload before changing provider-dependent settings.";
+                Message = done + " The provider list could not be refreshed: reload to see the current provider state.";
+            });
+        }
+    }
     public Task SetBindingAsync(AdminSignInProvider captured, bool enabled, bool? autoProvision, bool confirmed) => RunAsync(async owner =>
     {
         if (!confirmed || Capabilities is not { Available: true, LiveProviderChanges: true } || !Providers.Contains(captured)) return;
@@ -197,8 +228,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         var provider = providers.SingleOrDefault(p => p.Id == captured.Id && p.Auth?.Id == captured.Auth?.Id) ?? throw new AdminAccessException("not_found", 404);
         if (enabled && (!provider.Enabled || ProviderDirty(captured) || !provider.Network && (AdminSignInSchemaRules.Missing(provider).Count > 0 || providers.Any(p => !p.Network && p.Id != provider.Id && p.Enabled && p.Binding?.Enabled == true)))) throw new ArgumentException("Save setup and turn off the other provider first.");
         await api.SaveBindingAsync(owner, provider.Id, Binding(provider, enabled, autoProvision)).ConfigureAwait(false);
-        var refreshed = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
-        Publish(owner, () => { Providers = refreshed; Message = enabled ? "Sign-in provider turned on." : "Sign-in provider turned off."; });
+        await RefreshProvidersAsync(owner, enabled ? "Sign-in provider turned on." : "Sign-in provider turned off.", providersChanged: true).ConfigureAwait(false);
     }, write: true);
     public Task TestAsync(AdminSignInProvider captured, string? username = null) => RunAsync(async owner =>
     {

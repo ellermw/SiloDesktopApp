@@ -8,6 +8,8 @@ public abstract class AdminAccessController : IDisposable
 {
     /// <summary>Hard bound on accounts read for permission and break-glass decisions (the official page walks every page; this client stops here and treats a longer list as not fully known).</summary>
     public const int AccountCap = 1000;
+    /// <summary>Hard bound on account pages requested by one walk (the cap in pages of 50): pages that only repeat accounts already read still end it, with the list not fully known.</summary>
+    public const int AccountPageCap = AccountCap / 50;
     protected readonly object Gate = new();
     private readonly AdminAuthorityLifetime _lifetime;
     private bool _busy, _disposed;
@@ -39,16 +41,19 @@ public abstract class AdminAccessController : IDisposable
         try { _lifetime.Open(); } catch (OperationCanceledException) { Notify(); return; }
         await RunAsync(load, reconcile: true).ConfigureAwait(false);
     }
-    /// <summary>Reads account pages from <paramref name="cursor"/> until the list ends or the hard cap is reached; a remaining cursor means the list is not fully known.</summary>
+    /// <summary>Reads account pages from <paramref name="cursor"/> until the list ends or a hard cap (accounts or pages) is reached; a remaining cursor means the list is not fully known. A cursor the server repeats is an invalid list.</summary>
     protected static async Task<(IReadOnlyList<AdminAccessAccount> Items, string? Cursor)> ReadAccountPagesAsync(
         Func<string?, Task<AdminAccessPage<AdminAccessAccount>>> read, IReadOnlyList<AdminAccessAccount> seed, string? cursor, bool first)
     {
-        var items = seed.ToList();
-        while (first || cursor != null && items.Count < AccountCap)
+        var items = seed.ToList(); var cursors = new HashSet<string>(StringComparer.Ordinal);
+        if (!first && cursor != null) cursors.Add(cursor);
+        for (var pages = 0; pages < AccountPageCap && (first || cursor != null && items.Count < AccountCap); pages++)
         {
             var page = await read(first ? null : cursor).ConfigureAwait(false); first = false;
             foreach (var account in page.Items) if (items.All(a => a.Id != account.Id)) items.Add(account);
             cursor = page.Page!.NextCursor;
+            // Accounts already read are skipped, so a cursor cycle (A, B, A...) never reaches the account cap: a cursor used before ends the walk as an invalid list.
+            if (cursor != null && !cursors.Add(cursor)) throw new AdminAccessException("invalid_response");
         }
         return (items, cursor);
     }

@@ -13,6 +13,8 @@ internal static class AdminAccessRules
         if (page.Items == null || page.Items.Count > size || page.Page == null || page.Page.HasMore &&
             (page.Items.Count == 0 || !AdminPaging.IsValidCursor(page.Page.NextCursor) || page.Page.NextCursor == cursor) ||
             !page.Page.HasMore && !string.IsNullOrEmpty(page.Page.NextCursor)) throw new AdminAccessException("invalid_response");
+        // Every caller reads a null cursor as the end of the list: an empty one sent with has_more=false is that end, never a continuation.
+        if (!page.Page.HasMore) page.Page.NextCursor = null;
         return page;
     }
     internal static async Task<AdminAccessPage<AdminAccessAccount>> AccountsAsync(SiloApiClient client, MonitorAuthorityLease owner, string? cursor)

@@ -958,4 +958,118 @@ public sealed class AdminAccessSecurityTests
         Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);                  // the one write was sent once and refused by the server
         Assert.Contains("break-glass administrator", MessageOf(h.Controller));  // with the break-glass explanation, not a generic failure
     }
+
+    // ---- Follow-up review findings: bounded account walk, end-of-list cursor, persisted sign-in writes, LF provider fields ----
+
+    private const string TwoAccounts = """{"id":"1","username":"fixture","role":"admin","enabled":true,"is_owner":false},{"id":"2","username":"fixture","role":"user","enabled":true,"is_owner":false}""";
+    /// <summary>Answers every account page with the same two accounts and the cursor <paramref name="next"/> picks for that read; null ends the list with an empty cursor. Returns the read counter.</summary>
+    private static Func<int> RepeatAccounts(ControllerHarness h, Func<int, string?> next)
+    {
+        var original = h.Kit.Http.Respond!; var reads = 0;
+        h.Kit.Http.Respond = (request, ct) =>
+        {
+            if (request.RequestUri!.AbsolutePath != "/api/v2/admin/users") return original(request, ct);
+            var cursor = next(++reads);
+            return Task.FromResult(Reply("{\"items\":[" + TwoAccounts + "],\"page\":{\"has_more\":" + (cursor == null ? "false,\"next_cursor\":\"\"" : "true,\"next_cursor\":\"" + cursor + "\"") + "}}"));
+        };
+        return () => reads;
+    }
+
+    [Fact]
+    public async Task AccountCursorCycleFailsTheWalkAsAnInvalidListInsteadOfKeepingThePageBusy()
+    {
+        using var h = new ControllerHarness(); var reads = RepeatAccounts(h, read => read % 2 == 1 ? "b" : "a"); // first page -> b -> a -> b ...
+        await h.Open();
+        Assert.Equal(3, reads()); // the third answer names a cursor that was already used
+        Assert.False(Flag(h.Controller, "Busy")); Assert.False(Flag(h.Controller, "AccountsLoaded"));
+        Assert.Contains("invalid response", MessageOf(h.Controller));
+    }
+
+    [Fact]
+    public async Task AccountPagesRepeatedUnderFreshCursorsStopAtThePageCapWithTheListNotFullyKnown()
+    {
+        using var h = new ControllerHarness(); var reads = RepeatAccounts(h, read => "c" + read);
+        await h.Open();
+        Assert.Equal(20, reads());
+        Assert.True(Flag(h.Controller, "AccountsLoaded")); Assert.Equal(2, Count(h.Controller, "Accounts")); Assert.NotNull(Property2(h.Controller, "AccountCursor"));
+    }
+
+    [Fact]
+    public async Task EmptyCursorOnTheLastAccountPageEndsTheWalkSoKeyActionsAreOffered()
+    {
+        using var h = new ControllerHarness(); var reads = RepeatAccounts(h, _ => null);
+        await h.Open();
+        Assert.Equal(1, reads());
+        Assert.True(Flag(h.Controller, "AccountsLoaded")); Assert.Null(Property2(h.Controller, "AccountCursor")); Assert.True(CanManageKey(h.Controller, "1"));
+        Assert.Equal("", MessageOf(h.Controller));
+    }
+
+    [Fact]
+    public async Task EmptyCursorOnTheLastKeyPageIsReadAsTheEndOfTheList()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("{\"items\":[" + Key + "],\"page\":{\"has_more\":false,\"next_cursor\":\"\"}}"));
+        var page = await Call(Api("AdminApiKeysApi", kit.Client), "ListAsync", owner);
+        Assert.Null(Property2(Property(page!, "Page"), "NextCursor"));
+    }
+
+    /// <summary>Fails every provider read once a write was sent, as a follow-up refresh that times out would.</summary>
+    private static void FailProviderReadsAfterAWrite(SignInHarness h)
+    {
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => h.Writes.Count > 0 && request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/api/v2/admin/plugins/installations"
+            ? throw new HttpRequestException("synthetic provider list failure") : original(request, ct);
+    }
+
+    [Fact]
+    public async Task PersistedSignInSaveIsStillReportedWhenTheFollowUpProviderReadFails()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.EditSecret(); FailProviderReadsAfterAWrite(h);
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/plugins/installations/3/config"], h.Writes);
+        Assert.StartsWith("Sign-in settings saved.", MessageOf(h.Controller)); Assert.Contains("reload", MessageOf(h.Controller));
+        Assert.False(Flag(h.Controller, "ReviewRequired"));
+        // The pre-save provider values are not shown as the saved configuration; only provider-dependent settings wait for the reload.
+        Assert.False(Flag(h.Controller, "ProvidersKnown")); Assert.Equal(0, Count(h.Controller, "Providers")); Assert.Equal(0, Property(h.Controller, "DirtyCount"));
+    }
+
+    [Fact]
+    public async Task SettingsOnlySaveKeepsTheProviderListItDidNotChangeWhenTheFollowUpReadFails()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.SetLocal(false); FailProviderReadsAfterAWrite(h);
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);
+        Assert.Equal("Sign-in settings saved.", MessageOf(h.Controller));
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.True(Flag(h.Controller, "ProvidersKnown")); Assert.Equal(1, Count(h.Controller, "Providers"));
+    }
+
+    [Fact]
+    public async Task PersistedProviderTurnOffIsStillReportedWhenTheFollowUpProviderReadFails()
+    {
+        using var h = new SignInHarness(); await h.Open(); FailProviderReadsAfterAWrite(h);
+        await Call(h.Controller, "SetBindingAsync", h.Provider, false, null, true);
+        Assert.Equal(["PUT /api/v2/admin/plugins/installations/3/auth-binding"], h.Writes);
+        Assert.StartsWith("Sign-in provider turned off.", MessageOf(h.Controller)); Assert.DoesNotContain("could not be completed", MessageOf(h.Controller));
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.False(Flag(h.Controller, "ProvidersKnown"));
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task RefusedLocalPasswordDisableWritesNoProviderConfigurationFirst(bool breakGlass, bool providerOn)
+    {
+        using var h = new SignInHarness(); await h.Open(); h.EditSecret(); h.SetLocal(false); h.HasBreakGlass = breakGlass; h.ProviderOn = providerOn;
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Empty(h.Writes);
+        Assert.Equal(2, Property(h.Controller, "DirtyCount")); // a refusal changes nothing: both staged changes are still there
+    }
+
+    [Fact]
+    public void ProviderTextFieldsAreStagedWithLfLineBreaks()
+    {
+        // TextBox reports line breaks as CR: a multi-line string field (a certificate, a template) is normalized before it is staged, compared or sent.
+        var page = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminSignInSettingsPage.cs"));
+        Assert.Contains("Controller.SetField(provider, schema, field, AdminAccessPageUi.Lines(text.Text))", page);
+        Assert.DoesNotContain("Controller.SetField(provider, schema, field, text.Text)", page);
+    }
 }

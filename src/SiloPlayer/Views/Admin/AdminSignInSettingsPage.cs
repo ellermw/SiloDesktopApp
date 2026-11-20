@@ -309,7 +309,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         }
         if (input is TextBox text)
         {
-            text.TextChanging += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, text.Text); };
+            text.TextChanging += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, AdminAccessPageUi.Lines(text.Text)); };
             text.LostFocus += (_, _) => { if (!_sync && _ui.Active) Render(); }; // text left behind that is not a value goes back to the staged one.
         }
         else if (input is PasswordBox secret) secret.PasswordChanged += (_, _) => { if (!_sync) Controller.SetField(provider, schema, field, secret.Password); };
