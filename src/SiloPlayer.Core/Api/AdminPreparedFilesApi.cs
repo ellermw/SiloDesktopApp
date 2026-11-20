@@ -4,7 +4,7 @@ using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Core.Api;
 
-/// <summary>Official admin prepared-file contracts pinned to Server/WebUI 217ff25a.</summary>
+/// <summary>Official admin prepared-file contracts pinned to Server/WebUI 66b836f82.</summary>
 public sealed class AdminPreparedFilesApi(SiloApiClient client)
 {
     public async Task<AdminDownloadStorage> GetStorageAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
@@ -19,8 +19,8 @@ public sealed class AdminPreparedFilesApi(SiloApiClient client)
     {
         var list = (await client.AdminPreparedFilesSendAsync<AdminDownloadPreparationList>(lease, HttpMethod.Get,
             "/api/v2/admin/downloads/preparations?limit=" + AdminPreparedFilesContract.PreparationLimit, ct: ct).ConfigureAwait(false)).Body;
-        if (list.Items == null || list.Counts == null || list.Items.Count > AdminPreparedFilesContract.PreparationLimit)
-            throw new AdminListInconsistentException(AdminListProblem.OversizedPage);
+        if (list.Items == null || list.Counts == null) throw new InvalidDataException("The preparation list is missing its items or counts.");
+        if (list.Items.Count > AdminPreparedFilesContract.PreparationLimit) throw new AdminListInconsistentException(AdminListProblem.OversizedPage);
         if (list.Counts.Running < 0 || list.Counts.Queued < 0 || list.Counts.Retrying < 0 || list.Counts.Paused < 0 || list.Counts.FailedRecent < 0)
             throw new InvalidDataException("Invalid preparation counts.");
         ValidateDistinct(list.Items, x => x.Id, ValidatePreparation);
@@ -169,26 +169,35 @@ public sealed class AdminPreparedFilesApi(SiloApiClient client)
         return read.Items;
     }
 
+    /// <summary>
+    /// Saves a node's prepared-file directory and/or budget override under the exact strong validator it was read with.
+    /// Only the fields that changed are sent (an omitted override is left as it is); an explicit null restores the
+    /// inherited value, as the official editor does.
+    /// </summary>
     public async Task<AdminVersioned<AdminPreparedFilesNode>> UpdateNodeLocationAsync(MonitorAuthorityLease lease, AdminPreparedFilesNode node,
-        string? directoryOverride, long? budgetOverride, CancellationToken ct = default)
+        AdminNodeLocationChange change, CancellationToken ct = default)
     {
         if (AdminPreparedFileQuery.PositiveId(node.Id) == null) throw new ArgumentException("Invalid node ID.", nameof(node));
         if (!AdminValidators.IsStrong(node.ConfigETag)) throw new AdminValidatorException();
-        var dir = string.IsNullOrWhiteSpace(directoryOverride) ? null : directoryOverride.Trim();
-        if (dir != null && (!dir.StartsWith('/') || dir.Length > 4096)) throw new ArgumentException("Use an absolute node path.", nameof(directoryOverride));
-        if (budgetOverride is < 0) throw new ArgumentOutOfRangeException(nameof(budgetOverride));
-        var body = new Dictionary<string, object?>
+        if (!change.HasChanges) throw new ArgumentException("There is nothing to save.", nameof(change));
+        var body = new Dictionary<string, object?>();
+        if (change.DirectoryChanged)
         {
-            ["download_artifact_dir_override"] = dir,
-            ["download_artifact_max_bytes_override"] = budgetOverride,
-        };
+            var dir = string.IsNullOrWhiteSpace(change.Directory) ? null : change.Directory.Trim();
+            if (dir != null && (!dir.StartsWith('/') || dir.Length > 4096)) throw new ArgumentException("Use an absolute node path.", nameof(change));
+            body["download_artifact_dir_override"] = dir;
+        }
+        if (change.BudgetChanged)
+        {
+            if (change.BudgetBytes is < 0) throw new ArgumentOutOfRangeException(nameof(change));
+            body["download_artifact_max_bytes_override"] = change.BudgetBytes;
+        }
         var response = await client.AdminPreparedFilesSendAsync<AdminPreparedFilesNode>(lease, HttpMethod.Put,
             "/api/v2/admin/nodes/" + node.Id, body, node.ConfigETag, ct).ConfigureAwait(false);
         if (response.Body.Id != node.Id || !AdminValidators.IsStrong(response.ETag) || response.Body.ConfigETag != response.ETag)
             throw new InvalidDataException("The node write acknowledgement is inconsistent.");
         return new(response.Body, response.ETag);
     }
-
     private async Task<AdminDownloadRevokeResult> SendRevokeAsync(MonitorAuthorityLease lease, Dictionary<string, object?> body, CancellationToken ct)
     {
         var result = (await client.AdminPreparedFilesSendAsync<AdminDownloadRevokeResult>(lease, HttpMethod.Post,
@@ -265,7 +274,7 @@ public sealed class AdminPreparedFilesApi(SiloApiClient client)
                     || usage.OtherBytes < 0 || usage.FSUsedBytes < 0 || usage.FSTotalBytes < 0 || usage.MeasuredAt == default))
                 throw new InvalidDataException("Invalid download storage location.");
     }
-    private static string DeviceKey(AdminDownloadDevice device) => device.UserId + "\n" + device.ProfileId + "\n" + device.DeviceId;
+    private static string DeviceKey(AdminDownloadDevice device) => device.UserId + "/" + device.ProfileId + "/" + device.DeviceId;
     private static void ValidateCursor(string? cursor) { if (cursor != null && !AdminPaging.IsValidCursor(cursor)) throw new ArgumentException("Invalid cursor.", nameof(cursor)); }
     private static void RequireLocation(string location) { if (!AdminPreparedFilesContract.IsLocation(location)) throw new ArgumentException("Invalid storage location.", nameof(location)); }
     private static string[] RequireIds(IReadOnlyList<string> ids)

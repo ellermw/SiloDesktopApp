@@ -253,6 +253,8 @@ public sealed class AdminDownloadEntry
     public string DeviceName { get; set; } = "";
     public DateTimeOffset? RevokedAt { get; set; }
     public string RevokedReason { get; set; } = "";
+    public string? CreatedClientIp { get; set; }
+    public string? LastClientIp { get; set; }
     public string Location { get; set; } = "";
     public string LocationName { get; set; } = "";
 }
@@ -303,6 +305,13 @@ public sealed class AdminPreparedFilesNode
     public DateTimeOffset CreatedAt { get; set; }
     public string? DownloadArtifactDirOverride { get; set; }
     public long? DownloadArtifactMaxBytesOverride { get; set; }
+    public List<string> EnvManaged { get; set; } = [];
+}
+
+/// <summary>The changed fields of a node location edit; unchanged fields are never sent.</summary>
+public sealed record AdminNodeLocationChange(bool DirectoryChanged, string? Directory, bool BudgetChanged, long? BudgetBytes)
+{
+    public bool HasChanges => DirectoryChanged || BudgetChanged;
 }
 
 public sealed record AdminDownloadRevokeTarget

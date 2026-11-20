@@ -7,7 +7,7 @@ using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
 
-/// <summary>Official prepared-file administration wire contracts at Server 217ff25a.</summary>
+/// <summary>Official prepared-file administration wire contracts at Server 66b836f82.</summary>
 public sealed class AdminPreparedFilesApiTests
 {
     private static readonly string File = """{"id":"art-1","state":"cached","format":"transcode","location":"node:9","location_name":"gpu-1","media_file_id":"42","title":"Dune","media_type":"movie","container":"mp4","video_codec":"h264","audio_codec":"aac","bytes":1200,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","waiting":0,"downloading":0,"finished":1,"stale_waiting":0}""";
@@ -21,9 +21,9 @@ public sealed class AdminPreparedFilesApiTests
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         kit.Http.Respond = (request, _) => Task.FromResult(AdminMonitorKit.Json(request.RequestUri!.AbsolutePath switch
         {
-            "/api/v2/admin/downloads/storage/files" => $$"""{"items":[{{File}}],"page":{"has_more":false}}""",
-            "/api/v2/admin/downloads/devices" => $$"""{"items":[{{Device}}],"page":{"has_more":false}}""",
-            "/api/v2/admin/downloads/storage/events" => $$"""{"items":[{{Event}}],"page":{"has_more":false}}""",
+            "/api/v2/admin/downloads/storage/files" => $$$"""{"items":[{{{File}}}],"page":{"has_more":false}}""",
+            "/api/v2/admin/downloads/devices" => $$$"""{"items":[{{{Device}}}],"page":{"has_more":false}}""",
+            "/api/v2/admin/downloads/storage/events" => $$$"""{"items":[{{{Event}}}],"page":{"has_more":false}}""",
             _ => "{}",
         }));
         using var lease = authority.Capture();
@@ -86,7 +86,6 @@ public sealed class AdminPreparedFilesApiTests
     }
 
     [Theory]
-    [InlineData("files", """{"items":[],"page":{"has_more":true,"next_cursor":"x"}}""")]
     [InlineData("files", """{"items":[FILE],"page":{"has_more":true}}""")]
     [InlineData("files", """{"items":[FILE,FILE],"page":{"has_more":false}}""")]
     [InlineData("devices", """{"items":[DEVICE,DEVICE],"page":{"has_more":false}}""")]
@@ -99,7 +98,7 @@ public sealed class AdminPreparedFilesApiTests
         using var lease = authority.Capture();
         var api = new AdminPreparedFilesApi(kit.Client);
 
-        var run = kind switch
+        Func<Task> run = kind switch
         {
             "files" => () => (Task)api.ListFilesAsync(lease, new(), null),
             "devices" => () => (Task)api.ListDevicesAsync(lease, new(), null),
@@ -129,9 +128,9 @@ public sealed class AdminPreparedFilesApiTests
 
         await api.RunPreparationActionAsync(lease, "pause", ids);
         Assert.Equal(2, kit.Http.Requests.Count(r => r == "POST /api/v2/admin/downloads/preparations/pause"));
-        Assert.Contains("\"id-500\"", kit.Http.Bodies[^2]);
-        Assert.DoesNotContain("\"id-501\"", kit.Http.Bodies[^2]);
-        Assert.Equal("{\"ids\":[\"id-501\"]}", kit.Http.Bodies[^1]);
+        Assert.Contains("\"id-500\"", kit.Http.Bodies.ToArray()[^2]);
+        Assert.DoesNotContain("\"id-501\"", kit.Http.Bodies.ToArray()[^2]);
+        Assert.Equal("{\"ids\":[\"id-501\"]}", kit.Http.Bodies.ToArray()[^1]);
 
         await api.DeleteFilesAsync(lease, ids, includeInUse: true);
         Assert.Equal(2, kit.Http.Requests.Count(r => r == "POST /api/v2/admin/downloads/storage/files/delete"));
@@ -143,7 +142,7 @@ public sealed class AdminPreparedFilesApiTests
 
         await api.CleanupLocationAsync(lease, "node:9");
         await api.DeleteUntrackedAsync(lease, "node:9");
-        Assert.EndsWith("POST /api/v2/admin/downloads/storage/locations/node:9/untracked/delete", kit.Http.Requests.Last());
+        Assert.EndsWith("POST /api/v2/admin/downloads/storage/locations/node:9/untracked/delete".Replace("node:9", "node%3A9"), kit.Http.Requests.Last());
         Assert.All(kit.Http.Requests.Where(r => r.StartsWith("POST ")), request => Assert.DoesNotContain("C:\\", request));
     }
 
@@ -195,18 +194,44 @@ public sealed class AdminPreparedFilesApiTests
         var api = new AdminPreparedFilesApi(kit.Client);
         var node = new AdminPreparedFilesNode { Id = "9", ConfigETag = "\"v1\"" };
 
-        var saved = await api.UpdateNodeLocationAsync(lease, node, "/prepared", 1_500_000_000);
+        var saved = await api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(true, "/prepared", true, 1_500_000_000));
         Assert.Equal("PUT /api/v2/admin/nodes/9", kit.Http.Requests.Single());
         Assert.Equal("\"v1\"", match);
         Assert.Equal("\"v2\"", saved.ETag);
         Assert.Equal("\"v2\"", saved.Value.ConfigETag);
-        Assert.Contains("\"download_artifact_dir_override\":\"/prepared\"", kit.Http.Bodies.Single());
-        Assert.Contains("\"download_artifact_max_bytes_override\":1500000000", kit.Http.Bodies.Single());
+        Assert.Equal("{\"download_artifact_dir_override\":\"/prepared\",\"download_artifact_max_bytes_override\":1500000000}", kit.Http.Bodies.Single());
 
         node.ConfigETag = "W/\"weak\"";
-        await Assert.ThrowsAsync<AdminValidatorException>(() => api.UpdateNodeLocationAsync(lease, node, null, null));
+        await Assert.ThrowsAsync<AdminValidatorException>(() => api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(true, null, false, null)));
     }
 
+    [Fact]
+    public async Task NodeLocationUpdateSendsOnlyTheChangedFieldsAndAnExplicitNullToInherit()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (_, _) =>
+        {
+            var response = AdminMonitorKit.Json("{\"id\":\"9\",\"name\":\"gpu-1\",\"type\":\"transcode\",\"url\":\"https://node\",\"enabled\":true,\"healthy\":true,\"active_jobs\":0,\"egress_kbps\":0,\"created_at\":\"2026-01-01T00:00:00Z\",\"config_etag\":\"\\\"v2\\\"\"}");
+            response.Headers.ETag = new EntityTagHeaderValue("\"v2\"");
+            return Task.FromResult(response);
+        };
+        using var lease = authority.Capture();
+        var api = new AdminPreparedFilesApi(kit.Client);
+        var node = new AdminPreparedFilesNode { Id = "9", ConfigETag = "\"v1\"" };
+
+        await api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(true, "  ", false, null));
+        Assert.Equal("{\"download_artifact_dir_override\":null}", kit.Http.Bodies.Last());
+        await api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(false, null, true, null));
+        Assert.Equal("{\"download_artifact_max_bytes_override\":null}", kit.Http.Bodies.Last());
+        await api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(false, null, true, 0));
+        Assert.Equal("{\"download_artifact_max_bytes_override\":0}", kit.Http.Bodies.Last());
+
+        var sent = kit.Http.Requests.Count;
+        await Assert.ThrowsAsync<ArgumentException>(() => api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(false, null, false, null)));
+        await Assert.ThrowsAsync<ArgumentException>(() => api.UpdateNodeLocationAsync(lease, node, new AdminNodeLocationChange(true, "relative/path", false, null)));
+        Assert.Equal(sent, kit.Http.Requests.Count);
+    }
     private static string ActionResults(string requestBody, string outcome)
     {
         using var request = System.Text.Json.JsonDocument.Parse(requestBody);

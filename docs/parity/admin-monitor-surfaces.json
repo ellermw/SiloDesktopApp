@@ -188,6 +188,8 @@
     "src/SiloPlayer.Core/Services/Admin/AdminPreparedFilesController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPreparedFilesPresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPreparedFilesText.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminPreparedFilesTextCatalog.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminPreparationPresentation.cs",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.cs",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.Devices.cs",
     "src/SiloPlayer/Views/Admin/AdminPreparedFilesPage.Dialogs.cs",

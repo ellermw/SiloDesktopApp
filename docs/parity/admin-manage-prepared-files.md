@@ -1,94 +1,76 @@
 # Admin Manage > Downloads > Prepared Files
 
-Source-only candidate prepared November 17, 2026 from Desktop Beta
-`248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1` unchanged.
-The exact official reference is Silo Server/WebUI
-`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`, read from the pinned objects in
-`D:/SiloPlayer-work/server-upstream-nov14`. The native route is `/admin/downloads`
-(`AdminRoute.PreparedFiles`) and is registered only through `AddAdminPreparedFiles()`.
-Viewer Downloads and Manage > Downloads > Settings are separate surfaces and are unchanged; the
-server-location dialog only navigates to the existing Download Settings page.
+Native page for `/admin/downloads` (`AdminRoute.PreparedFiles`), registered only through `AddAdminPreparedFiles()`.
+The official reference is Silo Server/WebUI commit `66b836f82a32de2fb3e5dfae6c285c19eea1096d`, read from the pinned
+objects in `D:/SiloPlayer-work/server-upstream-nov14`. The page was first written against `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`;
+the comparison below is against the newer commit. Viewer Downloads and Manage > Downloads > Settings are separate surfaces.
 
-## Scope
+## What changed upstream between the two commits (for this page)
 
-The page follows `pages/AdminDownloads.tsx` and the five components under
-`pages/admin-downloads`: `StorageTab`, `PreparationTab`, `PreparedFilesTab`,
-`DeviceCopiesTab`, `HistoryTab`, and `EditLocationDialog`. It has the official tab order and
-URL state (`tab`, prepared-file `location`, and stale-device entry), loading/error/empty states,
-bounded Load more controls, and compact horizontal filter scrolling.
+- `PreparationTab.tsx`: a row's title now underlines on hover when it links to its item, and the first requester link underlines on hover.
+  Layout, columns, strings and actions are unchanged.
+- `App.tsx` / `RealtimeEventsProvider.tsx`: every admin page now subscribes the `downloads` channel in addition to `download_preparations`,
+  and a `downloads` snapshot or event re-reads the storage views (overview, files, devices, entries, history). The background
+  preparation refresh is wrapped in an error boundary (a browser concern with no native counterpart).
+- Server: download rows and entries gained `created_client_ip` and `last_client_ip`; the storage capabilities gained `client_ip` and
+  `change_events`; node rows gained `env_managed` and a node update that changes a field the node declares from its environment is refused
+  with 422 `managed_by_environment`; remote preparation reports node-at-capacity and node-storage-full refusals. The official Downloads
+  page displays none of these, so the native page decodes the new entry and node fields and shows nothing new (a refused node save shows
+  the server's own detail).
+- `web/src/locales/en.json`: every `web.admin.downloads.*` string is taken from this commit
+  (`AdminPreparedFilesTextCatalog`, 482 keys with the four node-write keys). The shared translation catalog excludes `web.admin.*`, so
+  this text is English, like the other Admin pages.
 
-- Storage: decimal storage totals, official-priority warnings, server/node online and disk state,
-  directory/budget source, prepared/untracked/waiting counts, browse-by-location, cleanup,
-  guarded node directory/budget editing, and confirmed untracked deletion.
-- Preparation: active-state counts; state, worker, and text filters; source/output/progress,
-  requester and worker facts; row and selected pause/resume/cancel/remove controls. Cancel copy
-  names lost encoding progress and affected waiting downloads.
-- Prepared files: title search; location, state, format, and official sort choices; recipe,
-  location, disk size, last-use and usage state; selected deletion. In-use files are excluded by
-  default and require an explicit opt-in explaining that they will be prepared again.
-- Device copies: person/device search, stale-only and official sort choices; expandable bounded
-  download lists; selected, single, and whole-device revocation; optional reason; default-on
-  monitor pausing for whole-device revocation; next-connection/cache/stale-device consequences.
-- History: official reason/location/1, 7, 30 or all-kept filters, storage policy summary, event
-  item/location/actor/bytes details, and bounded paging.
+## Tabs
 
-## Wire and ownership contracts
+- **Storage** (`StorageTab`): five totals tiles, official-priority warnings with their actions (edit location, review untracked, review
+  devices, view files), one card per location (status, directory, scratch / own disk / temporary badges, pending directory, segmented disk
+  meter with ceiling and scratch-admission markers, legend, prepared-versus-budget line, untracked / drift / full notes, counts, browse,
+  edit, clean-up) and the meter key. Clean-up has no official confirmation and sends once; confirmed untracked deletion names the location.
+  The overview refreshes every 60 s and on events.
+- **Preparation** (`PreparationTab`): state bar with per-state filter chips and counts, per-worker chips, live text filter, selection
+  toolbar (pause, resume, cancel with the official prompt that names lost encoding and waiting downloads), the
+  Title / Output / Worker / Progress / Requested by table with per-job pause, resume, cancel (remove for failed jobs), details panel
+  (source, output, job, requesters) and the FFmpeg console (the 12 newest FFmpeg rows of the job, one read per open) with a link to the
+  native Logs page. Rows patch from `download_preparation.progress` events; other events re-read the queue (2 s leading-plus-trailing
+  coalescing). A 60 s maintenance read runs while jobs are in flight and a single read is scheduled when the oldest listed failure
+  ages out of the server's 24 h list.
+- **Prepared files** (`PreparedFilesTab`): title search (Enter or leaving the box), location / state / format / sort filters, selection
+  with the official delete dialog (cached files by default, in-use files only by explicit opt-in, three titles then "N more"), table
+  (title and subtitle, prepared-as, location, on disk, last used, used by with the stale-device note, state with expiry), bounded Load more.
+- **Device copies** (`DeviceCopiesTab`): person / device search, stale-only toggle, sort, expandable download lists with per-entry and
+  selected revocation, whole-device revocation with the optional reason and the default-on monitor pause, stale and cache-expiry
+  consequences, bounded Load more. The Storage "review devices" warning opens it pre-filtered to stale devices.
+- **History** (`HistoryTab`): four policy tiles, reason / location (including Devices) / 1, 7, 30 days or all-kept filters, table of
+  when, what happened, item, location, size and by, bounded Load more.
+- **Edit location** (`EditLocationDialog`): servers show their directory, default budget, cache period and ceiling with a link to
+  Download Settings; nodes edit a directory override and a budget (default, custom GB, none) with the official validation and
+  directory-change note.
 
-- Reads use `GET /api/v2/admin/downloads/storage`, `/preparations?limit=200`,
-  `/storage/files`, `/devices`, `/entries`, and `/storage/events`. Cursor lists request 50 rows and
-  retain at most 10 pages (500 rows); repeated/missing cursors, oversized pages, duplicate or
-  missing identities, invalid locations/states, and malformed values fail closed.
-- Actions use the exact official POST routes: `/preparations/{pause|resume|cancel}`,
-  `/storage/files/delete`, `/storage/locations/{location}/cleanup`,
-  `/storage/locations/{location}/untracked/delete`, and `/revoke`. IDs are distinct and batched at
-  500. Prepared-artifact IDs use the official `[A-Za-z0-9_-]{1,128}` alphabet before send.
-  Every distinct requested ID must receive exactly one result; truncated, duplicate, or unrequested
-  acknowledgements fail closed.
-- Node edits read bounded `/api/v2/admin/nodes` pages and `PUT /api/v2/admin/nodes/{id}` with the
-  exact strong `config_etag` in `If-Match`. A response must return the same node identity and the
-  same new strong validator in its ETag and body. Server directory policy remains informational
-  here and is edited by the existing Download Settings page.
-- Every write is single-send with no authentication retry/replay. Transport/server uncertainty is
-  reported as unknown and followed by authoritative reads. No workflow reads, guesses, or deletes
-  a local Windows path; prepared-file deletion is exclusively server-side.
-- The controller owns one visible visit. Reads have independent cancellation and sequence guards;
-  query changes, account/profile/server authority retirement, unload, and shell departure discard
-  late results and clear retained rows, selections, expansions, and dialogs. Page re-entry creates a
-  fresh controller and authority lease.
+## Contracts and write rules
+
+- Reads are bounded: cursor lists request 50 rows and keep at most 10 pages; repeated or missing cursors, oversized pages, duplicate or
+  missing identities and malformed values fail closed. A response is applied only while it is the newest read of its data and the page,
+  server and account are unchanged; a superseded read's late failure raises nothing.
+- Every write is single-send: no authentication retry, no replay after a timeout. A 4xx answer (other than 408) is a refusal and shows
+  the server's own detail; a timeout, transport failure or 5xx after sending is an unknown outcome that blocks destructive actions and
+  node writes until the affected lists are read again (a Reload control stays reachable). Deletes, revocations and cancellations send exactly
+  the rows their dialog named.
+- Node writes send only the changed override fields under the strong `config_etag` the node was read with (an explicit null restores the
+  inherited value); an untouched editor sends nothing.
+- No local Windows path is read or deleted; all removal is server-side.
+
+## Deliberate differences
+
+- Narrow widths scroll tables horizontally instead of hiding columns per breakpoint, and there is no separate mobile card for
+  preparation rows.
+- Results are shown in a persistent inline notice with Dismiss instead of toasts, so an unknown outcome stays visible.
+- The Prepared files select-all box sits above the table (WinUI tables have no header checkbox or indeterminate state here).
+- Loading skeletons are simple placeholders.
+- Interface text is English (see above); a language change does not re-render this page.
+- Entry client-IP fields, the new storage capability flags and `env_managed` are decoded but not displayed.
 
 ## Integration
 
-- `App.xaml.cs`: `services.AddAdminPreparedFiles();`
-- `docs/parity/admin-monitor-surfaces.json`: all 15 new Admin source/XAML files.
-- `installer/build.ps1`: `Views/Admin/AdminPreparedFilesPage.xbf` is approved.
-- Native dispatch: `SILO_NATIVE_TEST_ONLY=admin-prepared-files` enters the real registered Admin
-  shell/Frame with a synthetic server, covers all tabs and destructive dialogs, checks exact node
-  `If-Match`, retires authority, and authors wide/compact captures.
-- `.codex-tmp/admin-prepared-files/tests-only.patch` preserves the pre-production tests-only
-  checkpoint for coordinator-observed RED evidence.
-
-## Authored verification and acceptance
-
-No .NET, build, test, app, native, browser, mutex, or generated-output command was run in this
-source-only slot. All results are unobserved. The coordinator must first remeasure output/free-space
-limits, then run each .NET stage under the required single nonblocking `SiloOct18Build` acquisition
-and release it in `finally`. From this worktree, the stage commands are:
-
-```powershell
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --filter "FullyQualifiedName~AdminPreparedFiles|FullyQualifiedName~AdminManageNavigationTests|FullyQualifiedName~UserOnlyClientArchitectureTests"
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release
-dotnet publish src/SiloPlayer/SiloPlayer.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishDir=<fresh-absolute-publish-directory>
-& tests/SiloPlayer.NativeRegressionTests/run.ps1 -AppDirectory <fresh-absolute-publish-directory> -Only admin-prepared-files
-& tests/SiloPlayer.NativeRegressionTests/run.ps1 -AppDirectory <fresh-absolute-publish-directory> -Only admin-manage-foundation
-& tests/SiloPlayer.NativeRegressionTests/run.ps1 -AppDirectory <fresh-absolute-publish-directory> -Only admin-manage-download-settings
-```
-
-Acceptance also requires inspecting `admin-prepared-files-wide.png` and
-`admin-prepared-files-compact.png`, source/PDB binding to this exact candidate, the literal native
-completion sentinel, and confirmation that Viewer Downloads and Download Settings behavior remain
-unchanged.
-
-Limits: synthetic HTTP and authored source only. Compilation, runtime behavior, live-server
-interoperability, actual filesystem permission failures, 412 conflict rendering, Narrator/IME,
-light theme, all DPI/width combinations, and complete pixel parity are not certified. No installer,
-installed-player/settings, credentials, production, commit, push, or PR action occurred.
+`App.xaml.cs` (`AddAdminPreparedFiles`), `installer/build.ps1` (`Views/Admin/AdminPreparedFilesPage.xbf`),
+`docs/parity/admin-monitor-surfaces.json` (all family sources), native selector `admin-prepared-files`.

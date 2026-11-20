@@ -1,52 +1,67 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
-using SiloPlayer.Services;
-using Windows.UI.Text;
+using static SiloPlayer.Views.Admin.LogsNativeUi;
 
 namespace SiloPlayer.Views.Admin;
 
-/// <summary>Native five-tab `/admin/downloads` management page.</summary>
+/// <summary>
+/// Manage &gt; Downloads &gt; Prepared Files (<c>/admin/downloads</c>): the five official tabs (Storage, Preparation, Prepared files,
+/// Device copies, History) of Silo Server/WebUI <c>pages/AdminDownloads.tsx</c> and <c>pages/admin-downloads/*</c> at 66b836f82.
+/// Each tab is a persistent view whose list regions are rebuilt from controller snapshots while its filter controls are
+/// kept, so a background refresh never moves focus or resets what the administrator typed. Pages swap in place with no
+/// entrance or slide transition.
+/// </summary>
 public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPage, IAdminPageSuspension
 {
+    private static readonly string[] TabIds = ["storage", "preparation", "files", "devices", "history"];
+
     private readonly AdminPreparedFilesApi _api;
     private readonly AdminMonitorAuthority _authority;
+    private readonly AdminPreparedFilesRealtimeSource? _realtime;
+    private readonly AdminMonitorApi? _monitor;
     private readonly DispatcherQueue _dispatcher;
     private readonly ScrollViewer _scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-    private readonly StackPanel _layout = new() { Spacing = 20 };
-    private readonly StackPanel _tabs = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
-    private readonly Border _notice = new() { Visibility = Visibility.Collapsed, Padding = new Thickness(12), CornerRadius = new CornerRadius(8) };
-    private readonly TextBlock _noticeText = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Grid _body = new();
+    private readonly StackPanel _layout = Stack(24);
+    private readonly StackPanel _tabs = Inline(4);
+    private readonly StackPanel _notices = Stack(8);
+    private readonly ContentControl _bodyHost = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Dictionary<string, Button> _tabButtons = [];
-    private readonly HashSet<string> _selectedFiles = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _selectedPreparations = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _selectedEntries = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _expandedDevices = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TextBlock> _tabLabels = [];
+    private readonly Dictionary<string, Border> _tabBadges = [];
+    private readonly Dictionary<string, TabView> _views = [];
     private AdminRouteRequest _request = new(AdminRoute.PreparedFiles);
     private ContentDialog? _dialog;
+    private string? _shownTab;
     private bool _opened;
     private bool _renderQueued;
     private bool _disposed;
 
     public AdminPreparedFilesController Controller { get; private set; }
-    ScrollViewer IAdminGutterScrollPage.AdminScrollViewer => _scroll;
+    public FrameworkElement ScrollContent => _layout;
 
-    public AdminPreparedFilesPage() : this(App.Services.GetRequiredService<AdminPreparedFilesApi>(), App.Services.GetRequiredService<AdminMonitorAuthority>()) { }
+    /// <summary>Test seam: the tab the content area shows.</summary>
+    internal string? ShownTab => _shownTab;
 
-    public AdminPreparedFilesPage(AdminPreparedFilesApi api, AdminMonitorAuthority authority)
+    public AdminPreparedFilesPage() : this(App.Services.GetRequiredService<AdminPreparedFilesApi>(), App.Services.GetRequiredService<AdminMonitorAuthority>(),
+        App.Services.GetService<AdminPreparedFilesRealtimeSource>(), App.Services.GetService<AdminMonitorApi>()) { }
+
+    public AdminPreparedFilesPage(AdminPreparedFilesApi api, AdminMonitorAuthority authority, AdminPreparedFilesRealtimeSource? realtime = null, AdminMonitorApi? monitor = null)
     {
-        _api = api; _authority = authority; _dispatcher = DispatcherQueue.GetForCurrentThread();
+        _api = api; _authority = authority; _realtime = realtime; _monitor = monitor; _dispatcher = DispatcherQueue.GetForCurrentThread();
         Controller = CreateController();
         InitializeComponent();
+        NavigationCacheMode = NavigationCacheMode.Disabled;
         AutomationProperties.SetAutomationId(this, "AdminPreparedFilesPage");
         BuildShell();
         Loaded += OnLoaded;
@@ -59,12 +74,25 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
         base.OnNavigatedTo(e);
     }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        SuspendAdminPage();
+        base.OnNavigatedFrom(e);
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_opened) return;
         if (_disposed) { Controller = CreateController(); _disposed = false; }
         _opened = true;
-        await Controller.OpenAsync(_request.Get("tab"), _request.Get("location"), _request.Get("stale") == "1");
+        await OpenControllerAsync();
+    }
+
+    private async Task OpenControllerAsync()
+    {
+        foreach (var view in _views.Values) view.Reset();
+        try { await Controller.OpenAsync(_request.Get("tab"), _request.Get("location"), _request.Get("stale") == "1"); }
+        catch (Exception) when (_disposed) { }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -75,16 +103,17 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
 
     public void SuspendAdminPage()
     {
-        _dialog?.Hide(); _dialog = null;
+        if (_disposed) return;
+        try { _dialog?.Hide(); } catch (Exception) { /* already closing */ }
+        _dialog = null;
         Controller.Changed -= QueueRender; Controller.Retired -= QueueReopen; Controller.Dispose();
-        _selectedFiles.Clear(); _selectedPreparations.Clear(); _selectedEntries.Clear(); _expandedDevices.Clear();
-        _preparationStateFilter = null; _preparationWorkerFilter = null; _preparationSearch = "";
+        foreach (var view in _views.Values) view.Reset();
         _opened = false; _disposed = true;
     }
 
     private AdminPreparedFilesController CreateController()
     {
-        var controller = new AdminPreparedFilesController(_api, _authority);
+        var controller = new AdminPreparedFilesController(_api, _authority, _realtime?.Channel, new SystemAdminScheduler(), _monitor);
         controller.Changed += QueueRender;
         controller.Retired += QueueReopen;
         return controller;
@@ -93,70 +122,99 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
     private void BuildShell()
     {
         _scroll.Content = _layout;
-        _layout.MaxWidth = AdminShellPage.ContentMaxWidth;
-        _layout.Margin = new Thickness(24, 20, 24, 40);
-        var title = Text("Downloads", 30, FontWeights.SemiBold);
-        var subtitle = Text("Preparing downloads, the prepared files on the server and nodes, and the copies on people's devices.", 14);
-        subtitle.Foreground = Brush("TextFillColorSecondaryBrush", Microsoft.UI.Colors.Gray);
-        _layout.Children.Add(new StackPanel { Spacing = 5, Children = { title, subtitle } });
-        foreach (var tab in new[] { "storage", "preparation", "files", "devices", "history" })
+        _scroll.Padding = new Thickness(0, 20, 0, 40); // the shell applies the gutters and maximum width to the layout
+        _layout.Children.Add(Header(T("web.admin.downloads.page.title"), T("web.admin.downloads.page.subtitle")));
+        foreach (var tab in TabIds)
         {
-            var button = Button(AdminPreparedFilesText.Tab(tab), "PreparedFilesTab" + char.ToUpperInvariant(tab[0]) + tab[1..], () => OpenTab(tab));
-            button.Padding = new Thickness(14, 8, 14, 8);
+            var label = new TextBlock { Text = AdminPreparedFilesText.Tab(tab), FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
+            var content = Inline(8);
+            content.Children.Add(label);
+            _tabLabels[tab] = label;
+            if (tab == "preparation")
+            {
+                var count = new TextBlock { FontSize = 10, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
+                var badge = new Border { Child = count, CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 3, 6, 3), Background = Tint("MutedBrush", 0.5) };
+                content.Children.Add(badge);
+                _tabBadges[tab] = badge;
+            }
+            var button = new Button
+            {
+                Content = content, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = 40, Padding = new Thickness(14, 6, 14, 6),
+                BorderThickness = new Thickness(0, 0, 0, 2), BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CornerRadius = new CornerRadius(0),
+            };
+            AutomationProperties.SetAutomationId(button, "PreparedFilesTab_" + tab);
+            AutomationProperties.SetName(button, AdminPreparedFilesText.Tab(tab));
+            var id = tab;
+            button.Click += (_, _) => OpenTab(id);
             _tabButtons[tab] = button;
             _tabs.Children.Add(button);
         }
-        var tabScroller = new ScrollViewer { HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
-            VerticalScrollMode = ScrollMode.Disabled, Content = _tabs };
-        _layout.Children.Add(tabScroller);
-        _notice.Child = _noticeText; _notice.Background = Brush("CardBackgroundFillColorSecondaryBrush", Microsoft.UI.Colors.DimGray);
-        _layout.Children.Add(_notice);
-        _layout.Children.Add(_body);
+        var strip = new Border { BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = new ScrollViewer { Content = _tabs, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled } };
+        _layout.Children.Add(strip);
+        _layout.Children.Add(_notices);
+        _layout.Children.Add(_bodyHost);
         PageRoot.Children.Add(_scroll);
+        _views["storage"] = new StorageView(this);
+        _views["preparation"] = new PreparationView(this);
+        _views["files"] = new FilesView(this);
+        _views["devices"] = new DevicesView(this);
+        _views["history"] = new HistoryView(this);
     }
 
+    // ---- Navigation -------------------------------------------------------------------------------
+
+    private void ReplaceRoute(string tab, string? location = null, bool stale = false)
+    {
+        var query = new Dictionary<string, string>();
+        if (tab != "storage") query["tab"] = tab;
+        if (!string.IsNullOrEmpty(location)) query["location"] = location;
+        if (stale) query["stale"] = "1";
+        var request = new AdminRouteRequest(AdminRoute.PreparedFiles, query.Count == 0 ? null : query);
+        if (AdminShellPage.TryReplace(this, request)) _request = request;
+    }
+
+    /// <summary>A tab opens with its own default filters, as the official tabs remount when left.</summary>
     private async void OpenTab(string tab)
     {
+        if (_disposed || Controller.State.ActiveTab == tab) return;
+        ReplaceRoute(tab);
+        await ActivateAsync(tab, null, false);
+    }
+
+    private async Task ActivateAsync(string tab, string? location, bool stale)
+    {
         if (_disposed) return;
-        var request = new AdminRouteRequest(AdminRoute.PreparedFiles,
-            tab == "storage" ? null : new Dictionary<string, string> { ["tab"] = tab });
-        if (AdminShellPage.TryReplace(this, request)) _request = request;
-        if (tab == "files" && Controller.State.ActiveTab != "files" && Controller.State.FileQuery.Location != null)
-            await Controller.SetFileQueryAsync(Controller.State.FileQuery with { Location = null });
-        if (tab == "devices" && Controller.State.ActiveTab != "devices" && Controller.State.DeviceQuery.Stale)
-            await Controller.SetDeviceQueryAsync(Controller.State.DeviceQuery with { Stale = false });
+        _views[tab].Reset();
+        await Controller.SetFileQueryAsync(new AdminPreparedFileQuery { Location = location });
+        await Controller.SetDeviceQueryAsync(new AdminDownloadDeviceQuery { Stale = stale });
+        await Controller.SetHistoryQueryAsync(new AdminDownloadHistoryQuery());
         await Controller.SetActiveTabAsync(tab);
     }
 
     private async void OpenFilesAt(string location)
     {
         if (_disposed || !AdminPreparedFilesContract.IsLocation(location)) return;
-        var request = new AdminRouteRequest(AdminRoute.PreparedFiles,
-            new Dictionary<string, string> { ["tab"] = "files", ["location"] = location });
-        if (AdminShellPage.TryReplace(this, request)) _request = request;
-        await Controller.SetFileQueryAsync(Controller.State.FileQuery with { Location = location });
-        await Controller.SetActiveTabAsync("files");
+        ReplaceRoute("files", location);
+        await ActivateAsync("files", location, false);
     }
 
     private async void OpenDevices(bool stale)
     {
         if (_disposed) return;
-        var query = new Dictionary<string, string> { ["tab"] = "devices" };
-        if (stale) query["stale"] = "1";
-        var request = new AdminRouteRequest(AdminRoute.PreparedFiles, query);
-        if (AdminShellPage.TryReplace(this, request)) _request = request;
-        _expandedDevices.Clear(); _selectedEntries.Clear();
-        await Controller.SetDeviceQueryAsync(Controller.State.DeviceQuery with { Stale = stale });
-        await Controller.SetActiveTabAsync("devices");
+        ReplaceRoute("devices", null, stale);
+        await ActivateAsync("devices", null, stale);
     }
 
     private void QueueReopen()
     {
         _dispatcher.TryEnqueue(async () =>
         {
-            _dialog?.Hide(); _dialog = null;
+            try { _dialog?.Hide(); } catch (Exception) { /* already closing */ }
+            _dialog = null;
             if (_disposed || !_opened || !_authority.IsAvailable) return;
-            await Controller.OpenAsync(_request.Get("tab"), _request.Get("location"), _request.Get("stale") == "1");
+            await OpenControllerAsync();
         });
     }
 
@@ -167,121 +225,232 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
         _dispatcher.TryEnqueue(() => { _renderQueued = false; if (!_disposed) Render(Controller.State); });
     }
 
+    // ---- Rendering --------------------------------------------------------------------------------
+
     private void Render(AdminPreparedFilesSnapshot state)
     {
-        foreach (var pair in _tabButtons)
+        var active = state.ActiveTab;
+        var accent = Brush("AccentBrush");
+        foreach (var (tab, button) in _tabButtons)
         {
-            pair.Value.IsEnabled = pair.Key != state.ActiveTab;
-            pair.Value.FontWeight = pair.Key == state.ActiveTab ? FontWeights.SemiBold : FontWeights.Normal;
-            var count = pair.Key == "preparation"
-                ? state.PreparationsLoaded ? state.PreparationCounts.Running + state.PreparationCounts.Queued + state.PreparationCounts.Retrying
-                : state.Storage.Value?.PreparingJobs
-                : null;
-            pair.Value.Content = AdminPreparedFilesText.Tab(pair.Key) + (count is > 0 ? $"  {count}" : "");
+            var selected = tab == active;
+            button.BorderBrush = selected ? accent : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            _tabLabels[tab].FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
+            AutomationProperties.SetItemStatus(button, selected ? "selected" : "");
         }
+        var activeJobs = state.PreparationsLoaded ? AdminPreparationPresentation.ActiveCount(state.PreparationCounts) : 0;
+        if (_tabBadges.TryGetValue("preparation", out var badge) && badge.Child is TextBlock count)
+        {
+            count.Text = activeJobs > 99 ? T("web.admin.downloads.controls.countOverflow") : activeJobs.ToString(System.Globalization.CultureInfo.CurrentCulture);
+            count.Foreground = Brush(activeJobs > 0 ? "AccentBrush" : "SecondaryTextBrush");
+            badge.Background = activeJobs > 0 ? Tint("AccentBrush", 0.12) : Tint("MutedBrush", 0.5);
+        }
+        RenderNotices(state);
+        if (state.Owner == null)
+        {
+            if (_shownTab != "closed")
+            {
+                _bodyHost.Content = Panel(Text(T("configure.native.preparedFiles.adminRequired")), 16, 24, true);
+                _shownTab = "closed";
+            }
+            return;
+        }
+        if (_shownTab != active)
+        {
+            _bodyHost.Content = _views[active].Root;
+            _shownTab = active;
+        }
+        _views[active].Update(state);
+    }
+
+    private void RenderNotices(AdminPreparedFilesSnapshot state)
+    {
+        _notices.Children.Clear();
         if (state.LastAction is { } action)
         {
-            _notice.Visibility = Visibility.Visible; _noticeText.Text = action.Message;
-            _notice.Background = Brush(action.Outcome is AdminActionOutcome.Failed or AdminActionOutcome.Unknown ? "SystemFillColorCriticalBackgroundBrush" : "SystemFillColorSuccessBackgroundBrush",
-                action.Outcome is AdminActionOutcome.Failed or AdminActionOutcome.Unknown ? Microsoft.UI.Colors.DarkRed : Microsoft.UI.Colors.DarkGreen);
+            var failed = action.Outcome is AdminActionOutcome.Failed or AdminActionOutcome.Unknown;
+            var row = Inline(12);
+            row.Children.Add(Icon(failed ? "circle-alert" : "circle-check", 16, Brush(failed ? "ErrorBrush" : "SuccessBrush")));
+            var message = Text(action.Message, 14, !failed);
+            message.MaxWidth = 900;
+            AutomationProperties.SetAutomationId(message, "PreparedFilesNoticeText");
+            row.Children.Add(message);
+            var dismiss = Button(T("configure.native.preparedFiles.dismiss"), "PreparedFilesNoticeDismiss", "GhostButtonStyle");
+            dismiss.Click += (_, _) => Controller.DismissNotice();
+            row.Children.Add(dismiss);
+            var panel = Panel(row, 12, 0, true);
+            panel.Padding = new Thickness(16, 8, 16, 8);
+            AutomationProperties.SetAutomationId(panel, "PreparedFilesNotice");
+            AutomationProperties.SetLiveSetting(panel, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+            _notices.Children.Add(panel);
         }
-        else _notice.Visibility = Visibility.Collapsed;
-        _body.Children.Clear();
-        _body.Children.Add(state.Owner == null ? Message("Administrator access is required.") : state.ActiveTab switch
+        if (state.DestructiveBlocked)
         {
-            "preparation" => BuildPreparation(state), "files" => BuildFiles(state), "devices" => BuildDevices(state),
-            "history" => BuildHistory(state), _ => BuildStorage(state),
-        });
+            var row = Inline(12);
+            row.Children.Add(Icon("triangle-alert", 16, Brush("WarningBrush")));
+            row.Children.Add(Text(T("configure.native.preparedFiles.blocked"), 14));
+            var reload = Button(T("configure.native.preparedFiles.reload"), "PreparedFilesBlockedReload", "OutlineButtonStyle");
+            reload.Click += (_, _) => _ = Controller.ReloadBlockedAsync();
+            row.Children.Add(reload);
+            var panel = Panel(row, 12, 0, true);
+            panel.Padding = new Thickness(16, 8, 16, 8);
+            AutomationProperties.SetAutomationId(panel, "PreparedFilesBlocked");
+            _notices.Children.Add(panel);
+        }
     }
 
-    private async Task<bool> ConfirmAsync(string title, string description, string confirm, UIElement? extra = null)
+    // ---- Shared building blocks -------------------------------------------------------------------
+
+    internal static string T(string key, object? values = null) => AdminPreparedFilesText.T(key, values);
+
+    private static string Format(DateTimeOffset value) => SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(value);
+
+    private abstract class TabView(AdminPreparedFilesPage page)
     {
-        if (_dialog != null || XamlRoot == null) return false;
-        var content = new StackPanel { Spacing = 12 };
-        content.Children.Add(Text(description, 14));
-        if (extra != null) content.Children.Add(extra);
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = content, PrimaryButtonText = confirm, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary };
-        _dialog = dialog;
-        try { return await dialog.ShowAsync() == ContentDialogResult.Primary; }
-        catch (OperationCanceledException) { return false; }
-        finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+        protected AdminPreparedFilesPage P { get; } = page;
+        public abstract UIElement Root { get; }
+        public abstract void Update(AdminPreparedFilesSnapshot state);
+        /// <summary>Back to the defaults a freshly mounted official tab starts with.</summary>
+        public virtual void Reset() { }
     }
 
-    private static TextBlock Text(string value, double size = 14, FontWeight? weight = null) => new()
+    private static TextBlock Strong(string text, double size = 14, bool muted = false)
     {
-        Text = value, FontSize = size, FontWeight = weight ?? FontWeights.Normal, TextWrapping = TextWrapping.Wrap,
-    };
-    private static Button Button(string label, string id, Action click)
-    {
-        var button = new Button { Content = label };
-        AutomationProperties.SetAutomationId(button, id); AutomationProperties.SetName(button, label);
-        button.Click += (_, _) => click(); return button;
-    }
-    private static Border Message(string value, string? action = null, Action? click = null)
-    {
-        var stack = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center };
-        stack.Children.Add(Text(value, 14));
-        if (action != null && click != null) stack.Children.Add(Button(action, "PreparedFilesRetry", click));
-        return Card(stack, new Thickness(24));
-    }
-    private static Border Card(UIElement child, Thickness? padding = null) => new()
-    {
-        Child = child, Padding = padding ?? new Thickness(16), CornerRadius = new CornerRadius(10),
-        Background = Brush("CardBackgroundFillColorDefaultBrush", Microsoft.UI.Colors.Black),
-        BorderBrush = Brush("CardStrokeColorDefaultBrush", Microsoft.UI.Colors.DimGray), BorderThickness = new Thickness(1),
-    };
-    private static Brush Brush(string key, Windows.UI.Color fallback) => Application.Current.Resources.TryGetValue(key, out var resource) && resource is Brush brush
-        ? brush : new SolidColorBrush(fallback);
-    private static ComboBox Select(string id, IEnumerable<(string Value, string Label)> choices, string selected, Action<string> changed)
-    {
-        var combo = new ComboBox { MinWidth = 150 };
-        AutomationProperties.SetAutomationId(combo, id);
-        foreach (var choice in choices) combo.Items.Add(new ComboBoxItem { Content = choice.Label, Tag = choice.Value });
-        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(x => Equals(x.Tag, selected)) ?? combo.Items.FirstOrDefault();
-        combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is ComboBoxItem item && item.Tag is string value) changed(value); };
-        return combo;
-    }
-    private static StackPanel Toolbar(params UIElement[] children) { var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; foreach (var child in children) panel.Children.Add(child); return panel; }
-    private static ScrollViewer Horizontal(UIElement content) => new()
-    {
-        Content = content, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
-        VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-    };
-    private static StackPanel Section(string title, string? subtitle = null)
-    {
-        var section = new StackPanel { Spacing = 12 }; section.Children.Add(Text(title, 20, FontWeights.SemiBold));
-        if (!string.IsNullOrEmpty(subtitle)) { var text = Text(subtitle, 13); text.Foreground = Brush("TextFillColorSecondaryBrush", Microsoft.UI.Colors.Gray); section.Children.Add(text); }
-        return section;
+        var block = Text(text, size, muted);
+        block.FontWeight = FontWeights.SemiBold;
+        return block;
     }
 
-    private static Border Stat(string label, string value, string detail)
+    /// <summary>A text block whose rich tags draw as bold, code and muted runs.</summary>
+    private static TextBlock RichText(IEnumerable<AdminPreparedRichRun> runs, double size = 14, bool muted = false)
     {
-        var content = new StackPanel { Spacing = 3, MinWidth = 150 };
-        var caption = Text(label.ToUpperInvariant(), 11, FontWeights.SemiBold);
-        caption.CharacterSpacing = 70;
-        caption.Foreground = Brush("TextFillColorSecondaryBrush", Microsoft.UI.Colors.Gray);
-        content.Children.Add(caption);
-        content.Children.Add(Text(value, 22, FontWeights.SemiBold));
-        var note = Text(detail, 12);
-        note.Foreground = Brush("TextFillColorSecondaryBrush", Microsoft.UI.Colors.Gray);
-        content.Children.Add(note);
-        return Card(content, new Thickness(14));
-    }
-
-    private static TextBox SearchBox(string id, string placeholder, string? value, Action<string> apply)
-    {
-        var box = new TextBox { PlaceholderText = placeholder, Text = value ?? "", MinWidth = 190 };
-        AutomationProperties.SetAutomationId(box, id);
-        box.KeyDown += (_, e) =>
+        var block = new TextBlock { FontSize = size, TextWrapping = TextWrapping.Wrap, Foreground = Brush(muted ? "SecondaryTextBrush" : "PrimaryTextBrush"), LineHeight = size <= 12 ? 16 : 20 };
+        foreach (var run in runs)
         {
-            if (e.Key != Windows.System.VirtualKey.Enter) return;
-            e.Handled = true;
-            apply(box.Text.Trim());
+            var inline = new Run { Text = run.Text };
+            if (run.Has("b") || run.Has("strong")) inline.FontWeight = FontWeights.SemiBold;
+            if (run.Has("code")) inline.FontFamily = new FontFamily("Consolas");
+            if (run.Has("hint") || run.Has("muted")) inline.Foreground = Brush("SecondaryTextBrush");
+            block.Inlines.Add(inline);
+        }
+        return block;
+    }
+
+    private static Border Tile(string label, string value, UIElement detail, Brush? valueBrush = null)
+    {
+        var stack = Stack(4);
+        stack.Children.Add(Text(label, 12, true));
+        var amount = Text(value, 24); amount.FontWeight = FontWeights.SemiBold;
+        if (valueBrush != null) amount.Foreground = valueBrush;
+        stack.Children.Add(amount);
+        stack.Children.Add(detail);
+        return Panel(stack, 16, 16, true);
+    }
+
+    private static Border Pill(string text, string tone)
+    {
+        var (foreground, background) = tone switch
+        {
+            "active" => (Brush("PrimaryTextBrush"), Tint("Chart1Brush", 0.30)),
+            "cached" => (Brush("PrimaryTextBrush"), Tint("Chart2Brush", 0.30)),
+            "warning" => (Brush("WarningBrush"), Tint("WarningBrush", 0.12)),
+            "danger" => (Brush("ErrorBrush"), Tint("ErrorBrush", 0.12)),
+            "success" => (Brush("SuccessBrush"), Tint("SuccessBrush", 0.12)),
+            "neutral" => (Brush("PrimaryTextBrush"), Tint("MutedBrush", 0.8)),
+            _ => (Brush("SecondaryTextBrush"), Tint("MutedBrush", 0.8)),
         };
-        box.LostFocus += (_, _) => apply(box.Text.Trim());
+        var label = new TextBlock { Text = text, FontSize = 12, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.NoWrap };
+        return new Border { Child = label, Background = background, CornerRadius = new CornerRadius(12), Padding = new Thickness(8, 2, 8, 2), HorizontalAlignment = HorizontalAlignment.Left };
+    }
+
+    private static CheckBox Check(string label, string id, bool isChecked, bool enabled, Action<bool> changed)
+    {
+        var box = new CheckBox { MinWidth = 0, IsEnabled = enabled, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(8, 0, 0, 0) };
+        if (!string.IsNullOrEmpty(label)) box.Content = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap, FontSize = 14 };
+        box.IsChecked = isChecked;
+        AutomationProperties.SetAutomationId(box, id);
+        AutomationProperties.SetName(box, label);
+        // Handlers attach after the initial state is set, so showing a saved value never reads as a change.
+        box.Checked += (_, _) => changed(true);
+        box.Unchecked += (_, _) => changed(false);
         return box;
     }
 
+    /// <summary>
+    /// A search box that applies its text on Enter or when it loses focus (the official SearchField). The starting text is never
+    /// applied: only a different trimmed value is reported, so WinUI's initial text notification cannot start a read.
+    /// </summary>
+    private sealed class SearchField
+    {
+        private readonly TextBox _box;
+        private string _applied = "";
+        public SearchField(string label, string id, double width, Action<string> apply)
+        {
+            _box = Input(label, id, width);
+            _box.FontSize = 13; _box.Height = 32;
+            AutomationProperties.SetName(_box, label);
+            void Commit()
+            {
+                var value = _box.Text.Trim();
+                if (value == _applied) return;
+                _applied = value;
+                apply(value);
+            }
+            _box.KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; Commit(); } };
+            _box.LostFocus += (_, _) => Commit();
+        }
+        public UIElement Root => _box;
+        public string Applied => _applied;
+        public void Reset() { _applied = ""; _box.Text = ""; }
+    }
+
+    private static Button LoadMore(bool loading, Action click)
+    {
+        var button = Button(loading ? T("web.admin.downloads.controls.loadingMore") : T("web.admin.downloads.controls.loadMore"), "PreparedFilesLoadMore");
+        button.IsEnabled = !loading; button.HorizontalAlignment = HorizontalAlignment.Center;
+        button.Click += (_, _) => click();
+        return button;
+    }
+
+    /// <summary>A centered message, optionally with a reload control the administrator can always reach.</summary>
+    private static Border Message(string text, string? reloadId = null, Action? reload = null, string? reloadLabel = null)
+    {
+        var stack = Stack(12);
+        var message = Text(text, 14, true); message.HorizontalAlignment = HorizontalAlignment.Center; message.TextAlignment = TextAlignment.Center;
+        stack.Children.Add(message);
+        if (reload != null)
+        {
+            var button = Button(reloadLabel ?? T("common.tryAgain"), reloadId ?? "PreparedFilesReload");
+            button.HorizontalAlignment = HorizontalAlignment.Center;
+            button.Click += (_, _) => reload();
+            stack.Children.Add(button);
+        }
+        return Panel(stack, 16, 24, true);
+    }
+
+    /// <summary>The banner above rows that stay on screen after a background read failed.</summary>
+    private static Border StaleBanner(string reloadId, Action reload) =>
+        Message(T("configure.native.preparedFiles.backgroundFailed"), reloadId, reload, T("configure.native.preparedFiles.reload"));
+
+    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
+    {
+        if (_dialog != null || XamlRoot == null || _disposed) return ContentDialogResult.None;
+        dialog.XamlRoot = XamlRoot;
+        dialog.Resources["ContentDialogMaxWidth"] = 560d;
+        _dialog = dialog;
+        try { return await dialog.ShowAsync(); }
+        catch (OperationCanceledException) { return ContentDialogResult.None; }
+        finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+    }
+
+    private ContentDialog NewDialog(string title, UIElement content, string primary, bool destructive, string? cancel = null)
+    {
+        var dialog = new ContentDialog { Title = title, Content = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 520 },
+            PrimaryButtonText = primary, CloseButtonText = cancel ?? T("common.cancel"), DefaultButton = destructive ? ContentDialogButton.Close : ContentDialogButton.Primary };
+        if (destructive) dialog.PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"];
+        return dialog;
+    }
+
     private static string LocationName(AdminDownloadStorage? storage, string key) =>
-        storage?.Locations.FirstOrDefault(x => x.Key == key)?.Name ?? (key == "server" ? "Server" : key);
+        storage?.Locations.FirstOrDefault(x => x.Key == key)?.Name ?? key;
 }

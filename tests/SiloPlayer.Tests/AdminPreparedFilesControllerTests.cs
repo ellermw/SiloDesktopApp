@@ -1,12 +1,64 @@
+using System.Net;
+using System.Net.WebSockets;
+using System.Text.Json;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
 
+/// <summary>Visit state, live updates and the write rules of the prepared-files page. Synthetic data only; Silo Server 66b836f82 contracts.</summary>
 public sealed class AdminPreparedFilesControllerTests
 {
-    private static string File(string id) => $$"""{"id":"{{id}}","state":"cached","format":"transcode","location":"server","location_name":"Server","media_file_id":"42","title":"Title {{id}}","media_type":"movie","container":"mp4","video_codec":"h264","audio_codec":"aac","bytes":10,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","waiting":0,"downloading":0,"finished":1,"stale_waiting":0}""";
+    private const string Storage = "{\"locations\":[],\"cache_hours\":72,\"disk_ceiling_percent\":85,\"default_budget_bytes\":0,\"stale_device_days\":14,\"preparing_jobs\":0,\"freed_last_30_days_bytes\":0}";
+    private const string Counts = "{\"running\":1,\"queued\":0,\"retrying\":0,\"paused\":0,\"failed_recent\":0}";
+
+    private static string File(string id, string state = "cached") => $$"""{"id":"{{id}}","state":"{{state}}","format":"transcode","location":"server","location_name":"Server","media_file_id":"42","title":"Title {{id}}","media_type":"movie","container":"mp4","video_codec":"h264","audio_codec":"aac","bytes":10,"created_at":"2026-10-08T09:30:00Z","last_used_at":"2026-10-08T09:30:00Z","waiting":0,"downloading":0,"finished":1,"stale_waiting":0}""";
+
+    private static string Job(string id, string state = "running") => $$"""{"id":"{{id}}","state":"{{state}}","format":"transcode","log_session_id":"log-{{id}}","media_file_id":"42","media_title":"Title {{id}}","media_type":"movie","attempts":1,"max_attempts":3,"created_at":"2026-10-08T09:30:00Z","progress_unavailable":false,"source":{"audio_tracks":[],"duration_seconds":100,"file_size":1000,"hdr":false},"output":{"all_audio_tracks":false,"audio_codec":"aac","container":"mp4","video_codec":"h264"},"requesters":[{"user_id":"7","username":"maya","profile_id":"p1","status":"preparing"}]}""";
+
+    private static string Preparations(params string[] jobs) => "{\"counts\":" + Counts + ",\"items\":[" + string.Join(',', jobs) + "]}";
+
+    private static string Pathname(HttpRequestMessage request) => request.RequestUri!.AbsolutePath;
+
+    /// <summary>Answers reads from the supplied scripts and every write with <paramref name="write"/>.</summary>
+    private static Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> Server(Func<HttpRequestMessage, Task<HttpResponseMessage>> write,
+        string files = "{\"items\":[],\"page\":{\"has_more\":false}}", string preparations = "")
+    {
+        return (request, _) =>
+        {
+            if (request.Method == HttpMethod.Post || request.Method == HttpMethod.Put) return write(request);
+            var path = Pathname(request);
+            if (path.EndsWith("/storage", StringComparison.Ordinal)) return Task.FromResult(AdminMonitorKit.Json(Storage));
+            if (path.EndsWith("/preparations", StringComparison.Ordinal)) return Task.FromResult(AdminMonitorKit.Json(preparations.Length == 0 ? Preparations() : preparations));
+            return Task.FromResult(AdminMonitorKit.Json(files));
+        };
+    }
+
+    private sealed class Channel : IAdminRealtimeChannel
+    {
+        public int Leases;
+        public string[] Subscribed = [];
+        public WebSocketState CurrentState => WebSocketState.Open;
+        public event Action<string, JsonElement>? SnapshotReceived;
+        public event Action<string, string, JsonElement>? EventReceived;
+        public event Action<WebSocketState>? StateChanged { add { } remove { } }
+        public IDisposable Subscribe(params string[] channels)
+        {
+            Subscribed = channels;
+            Interlocked.Increment(ref Leases);
+            return new Release(() => Interlocked.Decrement(ref Leases));
+        }
+        public bool TryGetLatestSnapshot(string channel, out JsonElement snapshot) { snapshot = default; return false; }
+        public void Snapshot(string channel) => SnapshotReceived?.Invoke(channel, default);
+        public void Raise(string channel, string name, string json = "{}") => EventReceived?.Invoke(channel, name, JsonDocument.Parse(json).RootElement.Clone());
+        private sealed class Release(Action release) : IDisposable
+        {
+            private Action? _release = release;
+            public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
+        }
+    }
 
     [Fact]
     public async Task ChangedFiltersRetireOldReadsAndRestartWithoutTheirCursor()
@@ -14,8 +66,8 @@ public sealed class AdminPreparedFilesControllerTests
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         var slow = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-        kit.Http.Respond = (request, _) => request.RequestUri!.Query.Contains("q=old") ? slow.Task
-            : Task.FromResult(AdminMonitorKit.Json("{\"items\":[" + File("new") + "],\"page\":{\"has_more\":false}}"));
+        kit.Http.Respond = (request, token) => request.RequestUri!.Query.Contains("q=old") ? slow.Task
+            : Server(_ => throw new InvalidOperationException(), "{\"items\":[" + File("new") + "],\"page\":{\"has_more\":false}}")(request, token);
         using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
         await controller.OpenAsync("files", null);
 
@@ -30,17 +82,39 @@ public sealed class AdminPreparedFilesControllerTests
     }
 
     [Fact]
+    public async Task ASupersededReadsLateFailureRaisesNoError()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var slow = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        kit.Http.Respond = (request, token) => request.RequestUri!.Query.Contains("q=old") ? slow.Task
+            : Server(_ => throw new InvalidOperationException(), "{\"items\":[" + File("new") + "],\"page\":{\"has_more\":false}}")(request, token);
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
+        await controller.OpenAsync("files", null);
+        var old = controller.SetFileQueryAsync(controller.State.FileQuery with { Search = "old" });
+        await controller.SetFileQueryAsync(controller.State.FileQuery with { Search = "new" });
+
+        slow.SetException(new IOException("late transport failure"));
+        await old;
+
+        Assert.Null(controller.State.Files.Error);
+        Assert.Equal("new", Assert.Single(controller.State.Files.Items).Id);
+    }
+
+    [Fact]
     public async Task LoadMoreIsBoundedAndDoesNotWalkAWholeServerCollection()
     {
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         var page = 0;
-        kit.Http.Respond = (request, _) =>
+        kit.Http.Respond = (request, token) =>
         {
-            if (request.RequestUri!.AbsolutePath.EndsWith("/storage", StringComparison.Ordinal))
-                return Task.FromResult(AdminMonitorKit.Json("{\"locations\":[],\"cache_hours\":72,\"disk_ceiling_percent\":85,\"default_budget_bytes\":0,\"stale_device_days\":14,\"preparing_jobs\":0,\"freed_last_30_days_bytes\":0}"));
-            page++;
-            return Task.FromResult(AdminMonitorKit.Json("{\"items\":[" + File(page.ToString()) + "],\"page\":{\"has_more\":true,\"next_cursor\":\"c" + page + "\"}}"));
+            if (Pathname(request).EndsWith("/storage/files", StringComparison.Ordinal))
+            {
+                page++;
+                return Task.FromResult(AdminMonitorKit.Json("{\"items\":[" + File(page.ToString()) + "],\"page\":{\"has_more\":true,\"next_cursor\":\"c" + page + "\"}}"));
+            }
+            return Server(_ => throw new InvalidOperationException())(request, token);
         };
         using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
         await controller.OpenAsync("files", null);
@@ -57,13 +131,15 @@ public sealed class AdminPreparedFilesControllerTests
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         var page = 0;
-        kit.Http.Respond = (request, _) =>
+        kit.Http.Respond = (request, token) =>
         {
-            if (request.RequestUri!.AbsolutePath.EndsWith("/storage", StringComparison.Ordinal))
-                return Task.FromResult(AdminMonitorKit.Json("{\"locations\":[],\"cache_hours\":72,\"disk_ceiling_percent\":85,\"default_budget_bytes\":0,\"stale_device_days\":14,\"preparing_jobs\":0,\"freed_last_30_days_bytes\":0}"));
-            page++;
-            var next = page == 1 ? "c1" : page == 2 ? "c2" : "c1";
-            return Task.FromResult(AdminMonitorKit.Json("{\"items\":[" + File(page.ToString()) + "],\"page\":{\"has_more\":true,\"next_cursor\":\"" + next + "\"}}"));
+            if (Pathname(request).EndsWith("/storage/files", StringComparison.Ordinal))
+            {
+                page++;
+                var next = page == 1 ? "c1" : page == 2 ? "c2" : "c1";
+                return Task.FromResult(AdminMonitorKit.Json("{\"items\":[" + File(page.ToString()) + "],\"page\":{\"has_more\":true,\"next_cursor\":\"" + next + "\"}}"));
+            }
+            return Server(_ => throw new InvalidOperationException())(request, token);
         };
         using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
 
@@ -77,29 +153,145 @@ public sealed class AdminPreparedFilesControllerTests
     }
 
     [Fact]
-    public async Task DestructiveWriteIsSentOnceThenReconciledWithoutReplayAfterUncertainFailure()
+    public async Task AFailedBackgroundRefreshKeepsTheRowsAndTheNextReadRecovers()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var fail = false;
+        kit.Http.Respond = (request, token) => fail && Pathname(request).EndsWith("/storage/files", StringComparison.Ordinal)
+            ? throw new IOException("offline")
+            : Server(_ => throw new InvalidOperationException(), "{\"items\":[" + File("one") + "],\"page\":{\"has_more\":false}}")(request, token);
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
+        await controller.OpenAsync("files", null);
+
+        fail = true;
+        await controller.ReloadFilesAsync();
+        Assert.NotNull(controller.State.Files.Error);
+        Assert.Equal("one", Assert.Single(controller.State.Files.Items).Id);
+
+        fail = false;
+        await controller.ReloadFilesAsync();
+        Assert.Null(controller.State.Files.Error);
+    }
+
+    [Fact]
+    public async Task AnUncertainDeleteIsSentOnceBlocksDestructiveActionsAndIsLiftedByReadingAgain()
     {
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         var writes = 0;
-        kit.Http.Respond = (request, _) =>
+        var failReads = true;
+        kit.Http.Respond = (request, token) =>
         {
-            if (request.Method == HttpMethod.Post)
+            if (failReads && request.Method == HttpMethod.Get && Pathname(request).EndsWith("/storage/files", StringComparison.Ordinal) && writes > 0)
+                throw new IOException("still down");
+            return Server(_ =>
             {
                 writes++;
                 throw new IOException("connection closed after dispatch");
-            }
-            return Task.FromResult(AdminMonitorKit.Json(request.RequestUri!.AbsolutePath.EndsWith("/storage")
-                ? "{\"locations\":[],\"cache_hours\":72,\"disk_ceiling_percent\":85,\"default_budget_bytes\":0,\"stale_device_days\":14,\"preparing_jobs\":0,\"freed_last_30_days_bytes\":0}"
-                : "{\"items\":[" + File("one") + "],\"page\":{\"has_more\":false}}"));
+            }, "{\"items\":[" + File("one") + "],\"page\":{\"has_more\":false}}")(request, token);
         };
         using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
         await controller.OpenAsync("files", null);
-        await controller.DeleteFilesAsync([controller.State.Files.Items[0]], includeInUse: false);
+        var row = controller.State.Files.Items[0];
+
+        await controller.DeleteFilesAsync([row], includeInUse: false);
 
         Assert.Equal(1, writes);
         Assert.Equal(AdminActionOutcome.Unknown, controller.State.LastAction?.Outcome);
-        Assert.Contains("Check the current list", controller.State.LastAction?.Message);
+        Assert.True(controller.State.DestructiveBlocked);
+        await controller.DeleteFilesAsync([row], includeInUse: false);
+        Assert.Equal(1, writes);
+
+        failReads = false;
+        await controller.ReloadBlockedAsync();
+        Assert.False(controller.State.DestructiveBlocked);
+    }
+
+    [Fact]
+    public async Task ARefusedDeleteShowsTheServersProblemAndDoesNotBlockARetry()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var writes = 0;
+        kit.Http.Respond = Server(_ =>
+        {
+            writes++;
+            return Task.FromResult(AdminMonitorKit.Json("{\"type\":\"https://silo.test/problems/forbidden\",\"title\":\"Forbidden\",\"status\":403,\"detail\":\"Synthetic refusal detail.\"}", HttpStatusCode.Forbidden));
+        }, "{\"items\":[" + File("one") + "],\"page\":{\"has_more\":false}}");
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
+        await controller.OpenAsync("files", null);
+
+        await controller.DeleteFilesAsync([controller.State.Files.Items[0]], includeInUse: false);
+
+        Assert.Equal(AdminActionOutcome.Failed, controller.State.LastAction?.Outcome);
+        Assert.False(controller.State.DestructiveBlocked);
+        Assert.Contains("Synthetic refusal detail.", controller.State.LastAction?.Message);
+        await controller.DeleteFilesAsync([controller.State.Files.Items[0]], includeInUse: false);
+        Assert.Equal(2, writes);
+    }
+
+    [Fact]
+    public async Task DeleteResultsAreReportedAsTheOfficialToastWouldAndDeleteOnlyTheConfirmedRows()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var body = "";
+        kit.Http.Respond = Server(request =>
+        {
+            body = kit.Http.Bodies.Last();
+            return Task.FromResult(AdminMonitorKit.Json("{\"results\":[{\"id\":\"a\",\"outcome\":\"deleted\",\"bytes\":10},{\"id\":\"b\",\"outcome\":\"in_use\",\"bytes\":0}]}"));
+        }, "{\"items\":[" + File("a") + "," + File("b", "in_use") + "," + File("c") + "],\"page\":{\"has_more\":false}}");
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
+        await controller.OpenAsync("files", null);
+        var rows = controller.State.Files.Items;
+
+        await controller.DeleteFilesAsync([rows[0], rows[1]], includeInUse: false);
+
+        Assert.Equal("{\"ids\":[\"a\",\"b\"],\"include_in_use\":false}", body);
+        Assert.Equal(AdminActionOutcome.Partial, controller.State.LastAction?.Outcome);
+        Assert.Equal("Deleted 1 prepared file (10 B); 1 skipped", controller.State.LastAction?.Message);
+    }
+
+    [Fact]
+    public async Task CancelActsOnExactlyTheConfirmedJobsOnceAndASuccessReadsTheQueueAgain()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var cancels = 0;
+        string? body = null;
+        kit.Http.Respond = Server(request =>
+        {
+            cancels++;
+            body = kit.Http.Bodies.Last();
+            return Task.FromResult(AdminMonitorKit.Json("{\"results\":[{\"id\":\"j1\",\"outcome\":\"applied\"}]}"));
+        }, preparations: Preparations(Job("j1"), Job("j2")));
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
+        await controller.OpenAsync("preparation", null);
+        var reads = kit.Http.Requests.Count(r => r.EndsWith("/preparations?limit=200", StringComparison.Ordinal));
+
+        await controller.RunPreparationActionAsync("cancel", [controller.State.Preparations[0]]);
+
+        Assert.Equal(1, cancels);
+        Assert.Equal("{\"ids\":[\"j1\"]}", body);
+        Assert.Equal(AdminActionOutcome.Applied, controller.State.LastAction?.Outcome);
+        Assert.True(kit.Http.Requests.Count(r => r.EndsWith("/preparations?limit=200", StringComparison.Ordinal)) > reads);
+    }
+
+    [Fact]
+    public async Task AnUnconfirmedUntrackedListingFailureIsAnAnswerNotAnUnknownOutcome()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = Server(_ => Task.FromResult(AdminMonitorKit.Json("{\"type\":\"https://silo.test/problems/dependency_unavailable\",\"title\":\"Unavailable\",\"status\":503}", HttpStatusCode.ServiceUnavailable)));
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
+        await controller.OpenAsync("storage", null);
+
+        await controller.DeleteUntrackedAsync(new AdminDownloadStorageLocation { Key = "node:9", Name = "gpu-1" });
+
+        Assert.Equal(AdminActionOutcome.Failed, controller.State.LastAction?.Outcome);
+        Assert.Equal("Couldn't list gpu-1's directory. Try again later.", controller.State.LastAction?.Message);
+        Assert.False(controller.State.DestructiveBlocked);
     }
 
     [Fact]
@@ -112,7 +304,7 @@ public sealed class AdminPreparedFilesControllerTests
         using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
         var open = controller.OpenAsync("storage", null);
         kit.SetRole("user");
-        pending.SetResult(AdminMonitorKit.Json("{\"locations\":[],\"cache_hours\":72,\"disk_ceiling_percent\":85,\"default_budget_bytes\":0,\"stale_device_days\":14,\"preparing_jobs\":0,\"freed_last_30_days_bytes\":0}"));
+        pending.SetResult(AdminMonitorKit.Json(Storage));
         await open;
 
         Assert.Null(controller.State.Owner);
@@ -122,5 +314,129 @@ public sealed class AdminPreparedFilesControllerTests
         Assert.Empty(controller.State.History.Items);
         Assert.Empty(controller.State.Preparations);
         Assert.Throws<MonitorAuthorityRetiredException>(() => controller.CaptureAction());
+    }
+
+    // ---- Live updates -----------------------------------------------------------------------------
+
+    [Fact]
+    public async Task TheVisitLeasesBothOfficialChannelsAndReleasesThemWhenItEnds()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = Server(_ => throw new InvalidOperationException());
+        var channel = new Channel();
+        var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority, channel, new BackupScheduler());
+
+        await controller.OpenAsync("storage", null);
+        Assert.Equal(["download_preparations", "downloads"], channel.Subscribed);
+        Assert.Equal(1, channel.Leases);
+
+        controller.Dispose();
+        Assert.Equal(0, channel.Leases);
+    }
+
+    [Fact]
+    public async Task EventsAndSnapshotsRefreshTheRightViewsAndProgressPatchesRunningRowsInPlace()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = Server(_ => throw new InvalidOperationException(), "{\"items\":[" + File("a") + "],\"page\":{\"has_more\":false}}", Preparations(Job("j1"), Job("j2", "queued")));
+        var channel = new Channel();
+        var scheduler = new BackupScheduler();
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority, channel, scheduler);
+        await controller.OpenAsync("files", null);
+        int Count(string suffix) => kit.Http.Requests.Count(r => r.Contains(suffix, StringComparison.Ordinal));
+        var preparationReads = Count("/preparations?");
+        var fileReads = Count("/storage/files?");
+
+        channel.Raise("download_preparations", "download_preparation.progress", "{\"id\":\"j1\",\"progress\":{\"encoded_seconds\":50,\"duration_seconds\":100,\"speed\":2,\"updated_at\":\"2026-10-08T09:31:00Z\"}}");
+        Assert.Equal(50, controller.State.Preparations.Single(x => x.Id == "j1").Progress!.EncodedSeconds);
+        Assert.Equal(preparationReads, Count("/preparations?"));
+
+        // A job that is not running (or not listed) cannot be patched, so the list is read again.
+        channel.Raise("download_preparations", "download_preparation.progress", "{\"id\":\"j2\",\"progress\":{\"encoded_seconds\":1,\"duration_seconds\":100,\"speed\":1,\"updated_at\":\"2026-10-08T09:31:00Z\"}}");
+        await Eventually.True(() => Count("/preparations?") > preparationReads, "a progress event for a queued job re-reads the queue");
+
+        scheduler.Advance(TimeSpan.FromSeconds(3));
+        channel.Raise("download_preparations", "download_storage.changed");
+        await Eventually.True(() => Count("/storage/files?") > fileReads, "a storage event re-reads the active list");
+        scheduler.Advance(TimeSpan.FromSeconds(3));
+        var again = Count("/storage/files?");
+        channel.Raise("downloads", "download.changed");
+        await Eventually.True(() => Count("/storage/files?") > again, "a downloads event re-reads the storage views");
+    }
+
+    [Fact]
+    public async Task ABurstOfEventsCostsAtMostOneLeadingAndOneTrailingRead()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = Server(_ => throw new InvalidOperationException(), preparations: Preparations(Job("j1")));
+        var channel = new Channel();
+        var scheduler = new BackupScheduler();
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority, channel, scheduler);
+        await controller.OpenAsync("preparation", null);
+        int Reads() => kit.Http.Requests.Count(r => r.Contains("/preparations?", StringComparison.Ordinal));
+        var before = Reads();
+
+        for (var i = 0; i < 20; i++) channel.Raise("download_preparations", "download_preparation.queued");
+        await Eventually.True(() => Reads() == before + 1, "the leading read");
+        scheduler.Advance(AdminPreparedFilesController.EventCoalescing);
+        await Eventually.True(() => Reads() == before + 2, "the trailing read");
+        await Task.Delay(50);
+        Assert.Equal(before + 2, Reads());
+    }
+
+    [Fact]
+    public async Task PollsRunOnTheOfficialCadencesAndStopWhenTheVisitEnds()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = Server(_ => throw new InvalidOperationException(), preparations: Preparations(Job("j1")));
+        var scheduler = new BackupScheduler();
+        var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority, new Channel(), scheduler);
+        await controller.OpenAsync("storage", null);
+        int Reads(string suffix) => kit.Http.Requests.Count(r => r.Contains(suffix, StringComparison.Ordinal));
+        var storage = Reads("/downloads/storage");
+        var preparations = Reads("/preparations?");
+
+        Assert.Equal(2, scheduler.Pending.Count(x => x == AdminPreparedFilesController.StoragePoll));
+        scheduler.Advance(TimeSpan.FromSeconds(60));
+        await Eventually.True(() => Reads("/downloads/storage") > storage && Reads("/preparations?") > preparations, "both polls ran");
+
+        controller.Dispose();
+        Assert.Empty(scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task NoPreparationPollRunsWhileNothingIsInFlightButTheFailureExpiryTimerIsArmed()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var failed = Job("f1", "failed").Replace("\"attempts\":1", "\"attempts\":3,\"failed_at\":\"2026-11-16T10:00:00Z\"");
+        kit.Http.Respond = Server(_ => throw new InvalidOperationException(), preparations: "{\"counts\":{\"running\":0,\"queued\":0,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[" + failed + "]}");
+        var scheduler = new BackupScheduler();
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority, new Channel(), scheduler);
+        await controller.OpenAsync("preparation", null);
+
+        // The 60 s timer left is the storage poll; the preparation maintenance poll runs only while jobs are in flight.
+        Assert.Single(scheduler.Pending, x => x == AdminPreparedFilesController.PreparationMaintenance);
+        // failed_at + 24 h + 1 s, measured from the scheduler's clock (2026-11-16T12:00:00Z): 22 h 0 m 1 s.
+        Assert.Contains(TimeSpan.FromHours(22) + TimeSpan.FromSeconds(1), scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task AFailureTimestampFarInTheFutureNeverBreaksTheRealSchedulerAndFallsBackToTheMaintenanceCadence()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var failed = Job("f1", "failed").Replace("\"attempts\":1", "\"attempts\":3,\"failed_at\":\"2099-10-08T09:30:00Z\"");
+        kit.Http.Respond = Server(_ => throw new InvalidOperationException(), preparations: "{\"counts\":{\"running\":0,\"queued\":0,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[" + failed + "]}");
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority, null, new SystemAdminScheduler());
+
+        await controller.OpenAsync("preparation", null);
+
+        Assert.True(controller.State.PreparationsLoaded);
+        Assert.Null(controller.State.PreparationsError);
     }
 }
