@@ -113,10 +113,10 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             Check(server.Rotations == rotations, "rotation waits for destructive confirmation");
             await Invoke(Need<Button>(Dialog(window)!, "PrimaryButton")); await Until(() => Dialog(window) == null); await Until(() => server.Rotations == rotations + 1); await Settled(page);
             Check(server.Rotations == rotations + 1, "rotation sends exactly one request");
-            await Invoke(Need<Button>(shell, "AutoscanEditorDelete")); await Until(() => Dialog(window) != null);
+            await OpenDialog(window, Need<Button>(shell, "AutoscanEditorDelete"));
             await Invoke(Need<Button>(Dialog(window)!, "CloseButton")); await Until(() => Dialog(window) == null);
             Check(server.Sources.Any(s => s.Id == webhook.Id), "cancelled deletion preserves the source");
-            await Invoke(Need<Button>(shell, "AutoscanEditorDelete")); await Until(() => Dialog(window) != null); await Invoke(Need<Button>(Dialog(window)!, "PrimaryButton"));
+            await OpenDialog(window, Need<Button>(shell, "AutoscanEditorDelete")); await Invoke(Need<Button>(Dialog(window)!, "PrimaryButton"));
             await Until(() => Dialog(window) == null && Find<Grid>(shell, "AutoscanEditor") == null); await Settled(page);
             Check(server.Sources.All(s => s.Id != webhook.Id), "confirmed delete removes only the selected source");
             // A webhook source whose endpoint generation fails stays in the Connect flow with a retry; the create is not repeated.
@@ -192,6 +192,17 @@ internal static partial class AdminAutoscanSourcesNativeFixture
     { Program.Log((condition ? "PASS: " : "FAIL: ") + label); if (!condition) throw new InvalidOperationException(label); }
     private static async Task Until(Func<bool> condition)
     { for (var i = 0; i < 240 && !condition(); i++) await Task.Delay(25); if (!condition()) throw new TimeoutException("Autoscan fixture prerequisite did not settle."); }
+    // A confirmation that is still finishing closing ignores a new request; invoke again until the next one opens.
+    private static async Task OpenDialog(Window window, ButtonBase opener)
+    {
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            await Invoke(opener);
+            for (var i = 0; i < 40 && Dialog(window) == null; i++) await Task.Delay(25);
+            if (Dialog(window) != null) return;
+        }
+        throw new TimeoutException("The confirmation dialog did not open.");
+    }
     private static async Task Settled(AdminAutoscanSourcesPage page)
     { await Until(() => page.Controller is { State.Loading: false, State.Busy: false }); await Task.Delay(60); }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject node)
