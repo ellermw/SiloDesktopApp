@@ -387,6 +387,7 @@ public partial class App : Application
         services.AddAdminUsers();
         services.AddAdminLibraries();
         services.AddAdminUserResources();
+        services.AddAdminRequests();
 
         services.AddSingleton<LogsStreamClient>();
         services.AddSingleton(sp => new ServerActivityStore(
