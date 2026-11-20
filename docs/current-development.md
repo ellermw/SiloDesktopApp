@@ -1,3 +1,22 @@
+# November 20 — Manage Autoscan Sources candidate
+
+Manage > Autoscan > Sources (`/admin/autoscan`) is implemented on `t3/admin-autoscan-sources`, merged with fresh
+`origin/beta`; version stamps are unchanged. Official contracts were read at pinned Silo Server
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` (`AdminAutoscan.tsx` and `pages/admin/autoscan/*`, `internal/apiv2/admin_autoscan_*.go`).
+The page covers the global switch and Run now, the sources list, add and edit of every source type (descriptor config form,
+interval, path mappings, rewrite suggestions, inline server create and test, label), webhook generate/copy/rotate with the
+first-source Connect flow, and confirmed delete. Writes are sent once; a definite refusal (4xx) shows the redacted, bounded
+server reason and lets the admin correct and retry, while only a timeout, transport failure or unusable acknowledgement is an
+unknown outcome that blocks writes until the state is read again. Secret and dynamic fields never appear in a source form (the
+server drops them), and their stored values are sent back unchanged. Shared edits are additive: `ProviderSchemaForm` gains an
+overload (the two-argument form is unchanged) and `PluginAdminFormField` gains `FillFrom`. Activity and Settings are separate
+families and are not in this change. Observed: the focused `AdminAutoscan` unit tests (65) and the full unit suite (9,865) passed
+in run `autosrc-final-r3`; the `admin-autoscan-sources` native fixture passed with 90 checks in `autosrc-hn-r3`, with captures
+inspected at current DPI. Earlier full runs each had unrelated failures (`LibraryBackgroundRefreshTests.ContentRefreshRejectsPreMutationViewportAndHeldWindowSnapshots`
+in two runs and `AppUpdateExitTests.ExitHelperVerificationAcceptsOnlyTheExpectedPackageWithoutLaunchingAnything` once) that did not
+recur on an unchanged rerun. The acceptance run on the final source is recorded in the hand-off report. Not verified: a live server,
+other DPI scales, screen readers, pixel parity. Scope, write semantics and limits: [Autoscan Sources](parity/admin-autoscan-sources.md).
+
 # November 20 — Configure Providers candidate
 
 Configure > Integrations > Providers (`/admin/settings/providers`) is implemented on
@@ -271,21 +290,6 @@ settings, installer execution, release or direct merge. The owner-authorized
 feature commit/non-draft Beta PR hands subsequent review/QA/fixes to the pipeline.
 
 ---
-
-
-# November 17 — Autoscan Sources source-only candidate
-
-Uncommitted candidate in `C:/Users/Michael/.t3/worktrees/SiloPlayer/t3-19374284-ebfef51653ca8ba9`,
-branch `t3/admin-autoscan-sources`, base Beta `248aafd62ed65b868c0e7356926e4d83204649cd`,
-version `1.2.1181-beta.1` unchanged. Official reference
-`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Sources is implemented and registered through
-`AddAdminAutoscanSources()` with complete source/config/connection/webhook/mapping workflows,
-unit sources and a real-shell native fixture. Activity and Settings remain separate queued work.
-No runtime verification, output generation, commit, push or PR occurred; the installed player
-and sibling worktrees remain untouched. Tests are authored, **unrun**. Coordinator acceptance
-must observe compilation, XAML/native behavior and captures before making parity claims.
-Scope, exact contracts, source-only review and acceptance commands:
-[Autoscan Sources candidate](parity/admin-autoscan-sources.md).
 
 
 # November 16 - Admin Manage Libraries for separate Beta submission
