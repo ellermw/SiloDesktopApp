@@ -1,3 +1,16 @@
+# November 17 — Home Sections source candidate, runtime unobserved
+
+The `/admin/sections` candidate in branch `t3/admin-home-sections` is based on
+Beta `248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1`
+unchanged. Official source pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+It includes the registered native page, its Home/library tabs, full row editor,
+source selectors/preview, guarded row/order/bulk/delete/restore workflows,
+Next Up defaults, source/XBF inventory and authored unit/native fixtures.
+This is uncommitted source for coordinator acceptance; all new tests, builds,
+native interactions and captures remain unrun. No mutex, generated outputs,
+installed-player action, commit, push or PR occurred in this source-only lane.
+See [scope, source references and exact acceptance commands](parity/2026-11-17-admin-home-sections.md).
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through

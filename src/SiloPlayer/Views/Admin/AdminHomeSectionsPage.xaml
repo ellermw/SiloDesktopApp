@@ -1,0 +1,27 @@
+<Page x:Class="SiloPlayer.Views.Admin.AdminHomeSectionsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Page.Resources>
+    <DataTemplate x:Key="HomeSectionRowTemplate">
+      <Grid Padding="8,12" ColumnSpacing="12" MinHeight="76">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <CheckBox IsChecked="{Binding Selected}" Visibility="{Binding SelectionVisibility}"
+                    AutomationProperties.Name="{Binding Title}" Click="SelectionClick"/>
+          <FontIcon Glyph="&#xE700;" FontSize="14" Visibility="{Binding GripVisibility}"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+          <TextBlock Text="{Binding Description}" FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+        </StackPanel>
+        <Button Grid.Column="2" Content="{Binding ShownLabel}" IsEnabled="{Binding CanWrite}"
+                AutomationProperties.Name="{Binding ShownAccessibleLabel}" Click="ShownClick" VerticalAlignment="Center"/>
+        <Button Grid.Column="3" Content="&#x22EF;" IsEnabled="{Binding CanWrite}"
+                AutomationProperties.Name="{Binding MenuLabel}" Click="RowMenuClick" VerticalAlignment="Center"/>
+      </Grid>
+    </DataTemplate>
+  </Page.Resources>
+</Page>
