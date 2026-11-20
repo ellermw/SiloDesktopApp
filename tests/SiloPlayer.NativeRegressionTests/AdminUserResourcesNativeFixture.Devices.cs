@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Views.Admin;
 
 internal static partial class AdminUserResourcesNativeFixture

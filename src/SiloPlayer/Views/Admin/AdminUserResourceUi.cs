@@ -18,6 +18,16 @@ internal static class AdminUserResourceUi
     internal static TextBlock Mono(string text, double size = 12, bool muted = true) => LogsNativeUi.Text(text, size, muted, mono: true);
     internal static T Id<T>(T element, string id) where T : DependencyObject { AutomationProperties.SetAutomationId(element, id); return element; }
     internal static Brush Brush(string key) => LogsNativeUi.Brush(key);
+    /// <summary>Releases an element that is reused across renders from whatever holds it, so it can be placed in a new tree.</summary>
+    internal static void Detach(FrameworkElement element)
+    {
+        switch (element.Parent)
+        {
+            case Panel panel: panel.Children.Remove(element); break;
+            case Border border: border.Child = null; break;
+            case ContentControl content: content.Content = null; break;
+        }
+    }
     internal static Button Button(string label, string id, Action action, bool accent = false)
     {
         var button = LogsNativeUi.Button(label, id, accent ? "" : "OutlineButtonStyle");

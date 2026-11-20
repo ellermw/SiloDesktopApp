@@ -75,6 +75,7 @@ public sealed partial class AdminAccessGroupsPage
     private void RenderEditor()
     {
         if (_editor == null || _draft == null) return;
+        foreach (var reusable in new FrameworkElement[] { _libraryBox, _downloadsBox, _requestsBox, _permissionsBox, _members }) Detach(reusable);
         var group = _editor.Value; var isDefault = group.Flag("is_default"); _writes.Clear();
         var elements = new List<UIElement> { Button(G("allGroups"), "GroupBack", () => AdminShellPage.Open(new(AdminRoute.AccessGroups))) };
 
@@ -119,7 +120,7 @@ public sealed partial class AdminAccessGroupsPage
         var permissions = Stack(10); permissions.Children.Add(Text(G("permissions.heading"), 16)); permissions.Children.Add(Text(G("permissions.help"), 12, true)); permissions.Children.Add(_permissionsBox); RenderPermissions();
         elements.Add(Panel(permissions));
 
-        _members.Children.Clear(); if (_members.Parent is Panel old) old.Children.Remove(_members);
+        _members.Children.Clear();
         elements.Add(Panel(_members)); RenderMembers();
 
         _saveMessage = Text("", 12); _saveMessage.Foreground = Brush("ErrorBrush");
