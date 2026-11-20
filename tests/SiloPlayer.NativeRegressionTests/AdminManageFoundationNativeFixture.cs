@@ -132,7 +132,7 @@ internal static class AdminManageFoundationNativeFixture
             await Task.Delay(200);
             Check(ReferenceEquals(inner.Content, shown) && shell.CurrentRoute == AdminRoute.Activity, "unregistered routes are ignored without a Dashboard fallback");
             Check(!inner.CanGoBack, "ignored routes add no history");
-            Check(AdminShellPage.TryOpenHref("/admin/maintenance") is { Kind: AdminRouteResolutionKind.Unsupported }, "a Configure link reports unsupported");
+            Check(AdminShellPage.TryOpenHref("/admin/maintenance") is { Kind: AdminRouteResolutionKind.Unsupported, Request: null }, "a Configure page without a registration in this host reports unsupported");
             Check(AdminShellPage.TryOpenHref("/admin/users?tab=invitations") is { Kind: AdminRouteResolutionKind.Unsupported, Request: null }
 
                 && ReferenceEquals(inner.Content, shown), "a Manage link resolves without opening a missing page");

@@ -24,6 +24,14 @@ public static class SiloHttpClientFactory
         EnableMultipleHttp2Connections = true,
     };
 
+    /// <summary>Backups enforce operation deadlines across both headers and bounded body reads.</summary>
+    public static HttpClient CreateBackupsClient()
+    {
+        var client = CreateClient();
+        client.Timeout = Timeout.InfiniteTimeSpan;
+        return client;
+    }
+
     /// <summary>
     /// Creates a Silo API HTTP client with compression, HTTP/2, pooling, and
     /// credential-safe redirect behavior configured consistently.
