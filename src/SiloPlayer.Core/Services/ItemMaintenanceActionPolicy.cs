@@ -10,6 +10,13 @@ public readonly record struct ItemMaintenanceActions(
 /// </summary>
 public static class ItemMaintenanceActionPolicy
 {
+    public static bool CanEditCard(bool canCurateMetadata, string? itemType)
+        => canCurateMetadata && (itemType?.Trim().ToLowerInvariant() is "movie" or "series" or "audiobook");
+
+    public static bool CanEditDetail(bool canCurateMetadata, string? itemType)
+        => CanEditCard(canCurateMetadata, itemType)
+           || canCurateMetadata && (itemType?.Trim().ToLowerInvariant() is "season" or "episode");
+
     public static ItemMaintenanceActions Resolve(bool canCurateMetadata, string? itemType)
     {
         if (!canCurateMetadata)
@@ -18,7 +25,7 @@ public static class ItemMaintenanceActionPolicy
         var normalizedType = itemType?.Trim().ToLowerInvariant();
         if (normalizedType == "box_set") return default;
         return new ItemMaintenanceActions(
-            CanMatch: normalizedType is "movie" or "series",
+            CanMatch: normalizedType is "movie" or "series" or "audiobook",
             CanRefreshMetadata: true);
     }
 }

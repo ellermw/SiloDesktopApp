@@ -1,0 +1,12 @@
+diff --git a/src/SiloPlayer.Core/Api/AdminUsersApi.cs b/src/SiloPlayer.Core/Api/AdminUsersApi.cs
+--- a/src/SiloPlayer.Core/Api/AdminUsersApi.cs
++++ b/src/SiloPlayer.Core/Api/AdminUsersApi.cs
+@@ -71,7 +71,7 @@
+         lease.ThrowIfRetired();
+         if (reviewed.Epoch != lease.Epoch || reviewed.Viewer.Text("id") != lease.AccountId) throw new MonitorAuthorityRetiredException();
+         var fresh = await ReviewAsync(lease, reviewed.User.Text("id"), ct).ConfigureAwait(false);
+-        if (fresh.ETag != reviewed.ETag || !JsonNode.DeepEquals(fresh.User, reviewed.User)) throw new AdminUsersReviewRequiredException();
++        if (fresh.ETag != reviewed.ETag && !JsonNode.DeepEquals(fresh.User, reviewed.User)) throw new AdminUsersReviewRequiredException();
+         var operation = write.Operation;
+         var owner = fresh.Viewer.Flag("is_owner");
+         var target = fresh.User;

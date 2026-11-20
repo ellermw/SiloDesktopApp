@@ -1356,13 +1356,13 @@ public partial class ItemDetailViewModel : ObservableObject,
     /// reconciled by the owned state sweep; selections and companions stay
     /// mounted. Returns false if the refresh did not commit.
     /// </summary>
-    public async Task<bool> RefreshServerMetadataAsync(string contentId)
+    public async Task<bool> RefreshServerMetadataAsync(string contentId, bool structural = false)
     {
         _detailPrefetchCache.Invalidate(contentId);
         if (!_stateRefreshActive || IsLoading || Item is not { } item || item.ContentId != contentId) return false;
         var context = _catalogApi.CaptureContext();
         var libraryId = LibraryId;
-        if (!await ReloadContainerMetadataAsync(item)) return false;
+        if (!await ReloadContainerMetadataAsync(item, structural)) return false;
         if (item.Type is "series" or "season")
         {
             // Metadata refresh can discover files, including from another device.
@@ -1400,7 +1400,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         Episodes.Clear();
     }
 
-    private async Task<bool> ReloadContainerMetadataAsync(MediaItemDetail item)
+    private async Task<bool> ReloadContainerMetadataAsync(MediaItemDetail item, bool structural = false)
     {
         _metadataLoadCts?.Cancel();
         using var owner = new CancellationTokenSource();
@@ -1461,6 +1461,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             item.Audiobook = fresh.Audiobook;
             item.Ebook = fresh.Ebook;
             item.Manga = fresh.Manga;
+            // Book chapter/read/download rows use the catalog inventory, not
+            // /watch. Keep viewer state and the mounted item intact.
+            if (structural && (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
+                || item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase)))
+                item.Versions = fresh.Versions;
             item.ReleaseDate = fresh.ReleaseDate;
             item.FirstAirDate = fresh.FirstAirDate;
             item.LastAirDate = fresh.LastAirDate;
