@@ -12,7 +12,7 @@ internal static class AdminConfigureServices
     /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
     internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).Concat(AdminSecuritySettingsController.Keys)
         .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminStorageSettingsController.Keys).Concat(AdminSearchSettingsController.Keys).Concat(AdminBackupsController.Keys).Concat(AdminNotificationSettingsController.Keys)
-        .Concat(AdminIntegrationsSettings.AllKeys).Concat(AdminLibrarySettingsController.Keys).Concat(AdminProvidersController.Keys).Distinct(StringComparer.Ordinal).ToArray());
+        .Concat(AdminIntegrationsSettings.AllKeys).Concat(AdminLibrarySettingsController.Keys).Concat(AdminProvidersController.Keys).Concat(AdminPlaybackSettingsRules.Keys).Concat(AdminPlaybackSettingsRules.RoutingKeys).Distinct(StringComparer.Ordinal).ToArray());
     internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).Concat(AdminSecuritySettingsController.Secrets)
         .Concat(AdminDownloadSettingsController.Secrets).Concat(AdminStorageSettingsController.Secrets).Concat(AdminSearchSettingsController.Secrets).Concat(AdminBackupsController.Secrets).Concat(AdminNotificationSettingsController.Secrets)
         .Concat(AdminProvidersController.Secrets).Distinct(StringComparer.Ordinal).ToArray());
@@ -69,5 +69,8 @@ internal static class AdminConfigureServices
         services.AddSingleton<AdminNotificationSettingsApi>();
         services.AddTransient<AdminNotificationSettingsController>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.NotificationSettings, typeof(AdminNotificationSettingsPage)));
+        services.AddSingleton<AdminPlaybackAdministrationApi>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.Nodes, typeof(AdminNodesPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.PlaybackSettings, typeof(AdminPlaybackSettingsPage)));
     }
 }
