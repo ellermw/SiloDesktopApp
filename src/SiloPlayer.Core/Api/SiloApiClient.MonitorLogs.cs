@@ -10,7 +10,7 @@ namespace SiloPlayer.Core.Api;
 public partial class SiloApiClient
 {
     internal async Task<ApiResponse<T>> MonitorLogsSendAsync<T>(MonitorAuthorityLease lease, HttpMethod method, string path,
-        object? body = null, string? etag = null, CancellationToken ct = default, int maxBytes = 8 * 1024 * 1024)
+        object? body = null, string? etag = null, CancellationToken ct = default, int maxBytes = 8 * 1024 * 1024, HttpClient? transport = null)
     {
         lease.ThrowIfRetired();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
@@ -19,7 +19,7 @@ public partial class SiloApiClient
             etag == null ? null : new Dictionary<string, string> { ["If-Match"] = etag });
         try
         {
-            using var response = await SendWithRetryAsync(request, linked.Token, allowTokenRefresh: false).ConfigureAwait(false);
+            using var response = await SendWithRetryAsync(request, linked.Token, allowTokenRefresh: false, transport).ConfigureAwait(false);
             lease.ThrowIfRetired();
             if (response.StatusCode == HttpStatusCode.PreconditionFailed)
                 throw new LoggingSettingsConflictException(response.Headers.ETag?.ToString());
