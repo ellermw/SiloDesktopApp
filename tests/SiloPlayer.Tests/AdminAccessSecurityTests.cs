@@ -278,7 +278,7 @@ public sealed class AdminAccessSecurityTests
         Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create());
         var ids = ((System.Collections.IEnumerable)Property(h.Controller, "Rows")).Cast<object>().Select(row => (string)Property(row, "Id")).ToArray();
         Assert.Equal(["7", "8"], ids);
-        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/api-keys"));
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r.StartsWith("GET /api/v2/admin/api-keys?", StringComparison.Ordinal) || r == "GET /api/v2/admin/api-keys"));
         Assert.Single(h.Writes);
         Assert.False((bool)Property(h.Controller, "ReviewRequired"));
     }
