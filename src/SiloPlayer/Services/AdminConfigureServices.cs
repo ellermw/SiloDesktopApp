@@ -11,9 +11,9 @@ internal static class AdminConfigureServices
 {
     /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
     internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).Concat(AdminSecuritySettingsController.Keys)
-        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminStorageSettingsController.Keys).Concat(AdminSearchSettingsController.Keys).Concat(AdminBackupsController.Keys).Distinct(StringComparer.Ordinal).ToArray());
+        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminStorageSettingsController.Keys).Concat(AdminSearchSettingsController.Keys).Concat(AdminBackupsController.Keys).Concat(AdminNotificationSettingsController.Keys).Distinct(StringComparer.Ordinal).ToArray());
     internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).Concat(AdminSecuritySettingsController.Secrets)
-        .Concat(AdminDownloadSettingsController.Secrets).Concat(AdminStorageSettingsController.Secrets).Concat(AdminSearchSettingsController.Secrets).Concat(AdminBackupsController.Secrets).Distinct(StringComparer.Ordinal).ToArray());
+        .Concat(AdminDownloadSettingsController.Secrets).Concat(AdminStorageSettingsController.Secrets).Concat(AdminSearchSettingsController.Secrets).Concat(AdminBackupsController.Secrets).Concat(AdminNotificationSettingsController.Secrets).Distinct(StringComparer.Ordinal).ToArray());
 
     internal static void Add(IServiceCollection services)
     {
@@ -53,5 +53,8 @@ internal static class AdminConfigureServices
             sp.GetRequiredService<AdminServerSettingsStore>(), sp.GetRequiredService<AdminMonitorAuthority>(), download: sp.GetService<AdminBackupSignedDownload>()));
         services.AddTransient(sp => new AdminBackupRestoreController(sp.GetRequiredService<AdminBackupsApi>(), sp.GetRequiredService<AdminMonitorAuthority>()));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.Backups, typeof(AdminBackupsPage)));
+        services.AddSingleton<AdminNotificationSettingsApi>();
+        services.AddTransient<AdminNotificationSettingsController>();
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.NotificationSettings, typeof(AdminNotificationSettingsPage)));
     }
 }
