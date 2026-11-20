@@ -30,7 +30,7 @@ internal static partial class AdminRequestsManagementNativeFixture
         internal bool Conflict, Watchlist = true, Routing = true, Discover = true;
         internal bool Corrections, MissingSeriesFallback, Downloading;
         internal bool StoredPluginSecret, FractionalNumbers, PreviewOverrides, RulesForReorder, LoseReorder, FailConfigurationReads, QueuedProgress, ProgressOnTarget;
-        internal bool ConditionalPluginSecret, OverlapPreviews, HoldPreviewOptions, LoseCreate;
+        internal bool ConditionalPluginSecret, OverlapPreviews, HoldPreviewOptions, LoseCreate, CreateWithoutIdentity, FailEarlierPreview;
         internal readonly TaskCompletionSource<bool> PreviewReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource<bool> ReleasePreviewRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool _previewWaitingOptions;
@@ -54,6 +54,8 @@ internal static partial class AdminRequestsManagementNativeFixture
                     LoseCreate = false; FailConfigurationReads = true;
                     return Json("{}", HttpStatusCode.ServiceUnavailable);
                 }
+                if (request.Method == HttpMethod.Post && path == "/api/v2/admin/request-integrations" && CreateWithoutIdentity)
+                    return Json("{\"name\":\"Synthetic added server\"}", HttpStatusCode.Created);
                 if (request.Method == HttpMethod.Post && path == "/api/v2/admin/request-routes/order")
                 {
                     if (LoseReorder) { LoseReorder = false; FailConfigurationReads = true; return Json("{}", HttpStatusCode.ServiceUnavailable); }
@@ -78,6 +80,7 @@ internal static partial class AdminRequestsManagementNativeFixture
                     {
                         if (HoldPreviewOptions) _previewWaitingOptions = true;
                         else { PreviewReadStarted.TrySetResult(true); await ReleasePreviewRead.Task.WaitAsync(ct); }
+                        if (FailEarlierPreview) return Json("{}", HttpStatusCode.ServiceUnavailable);
                         return Json("{\"facts\":{},\"tiers\":[{\"quality\":\"hd\",\"integration_id\":\"integration-1\",\"integration_name\":\"Earlier selection\",\"route_name\":\"Everything else\",\"overrides\":{\"quality_profile_id\":1}}],\"rules\":[]}");
                     }
                     return Json("{\"facts\":{},\"tiers\":[{\"quality\":\"hd\",\"integration_name\":\"Latest selection\",\"route_name\":\"Everything else\"}],\"rules\":[]}");

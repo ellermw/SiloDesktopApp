@@ -255,10 +255,15 @@ public sealed partial class AdminRequestsPage
                     if (expected != revision) return;
                     var selection = ++previewRevision; preview.Children.Clear();
                     var requestedBy = requester.Text.Trim();
-                    var result = await _api.PreviewRouteAsync(owner!, J.Text(item, "media_type"), J.Number(item, "tmdb_id"), requestedBy.Length == 0 ? null : requestedBy);
-                    if (!Current(owner) || expected != revision || selection != previewRevision || requester.Text.Trim() != requestedBy) return;
-                    var rendered = await RoutePreviewAsync(result, owner!, owner!.Token);
-                    if (!Current(owner) || expected != revision || selection != previewRevision || requester.Text.Trim() != requestedBy) return; preview.Children.Clear(); preview.Children.Add(rendered);
+                    try
+                    {
+                        var result = await _api.PreviewRouteAsync(owner!, J.Text(item, "media_type"), J.Number(item, "tmdb_id"), requestedBy.Length == 0 ? null : requestedBy);
+                        if (!Current(owner) || expected != revision || selection != previewRevision || requester.Text.Trim() != requestedBy) return;
+                        var rendered = await RoutePreviewAsync(result, owner!, owner!.Token);
+                        if (!Current(owner) || expected != revision || selection != previewRevision || requester.Text.Trim() != requestedBy) return; preview.Children.Clear(); preview.Children.Add(rendered);
+                    }
+                    // A superseded selection's late failure says nothing about the preview now on screen.
+                    catch (Exception) when (!Current(owner) || expected != revision || selection != previewRevision || requester.Text.Trim() != requestedBy) { }
                 }));
             }
         });

@@ -1,4 +1,14 @@
-# November 17 — Admin Requests scoped acceptance for Beta review
+# November 20 — Admin Requests submitted for Beta review
+
+The family below was committed, current Beta `f35bb7e59d14f8e7f2e53bac982953fa3d5dc7da`
+(`1.2.1194-beta.1`) was merged normally, and an independent recheck of the last
+review corrections found two P2 defects that are fixed with regression tests.
+Final run `recheck-green-r20` on the merged, corrected source passed 125 focused and
+9,734 full unit cases, the app build, publish and host build, and all six native
+groups. Details and receipts are in the [scoped handoff](parity/admin-manage-requests.md).
+The November 17 record follows unchanged.
+
+## November 17 — Admin Requests scoped acceptance
 
 Prepared branch `t3/admin-request-management` remains based on
 `248aafd62ed65b868c0e7356926e4d83204649cd`; app/numeric versions stay

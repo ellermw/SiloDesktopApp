@@ -143,6 +143,23 @@ public sealed class AdminRequestsManagementTests
         await Assert.ThrowsAnyAsync<Exception>(() => Call(api, "GetLayoutAsync", owner));
     }
 
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"id\":\"\"}")]
+    [InlineData("{\"id\":\"..\"}")]
+    public async Task An_accepted_create_without_a_usable_identity_is_unconfirmed_not_a_validation_error(string json)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Tagged(json, status: HttpStatusCode.Created));
+        var api = Api(kit.Client);
+        var draft = JsonNode.Parse("{\"name\":\"Synthetic\",\"enabled\":true,\"base_url\":\"router.test:8989\",\"installation_id\":\"7\",\"capability_id\":\"arr\",\"supported_media_types\":[],\"plugin_config\":{}}")!.AsObject();
+        // ArgumentException means "nothing was sent, edit and save again"; the page would then allow a duplicate create.
+        await Assert.ThrowsAsync<InvalidDataException>(() => Call(api, "CreateIntegrationAsync", owner, draft));
+        Assert.Equal("POST /api/v2/admin/request-integrations", Assert.Single(kit.Http.Requests));
+    }
+
     [Fact]
     public async Task Retired_lease_cannot_even_begin_an_administrative_write()
     {

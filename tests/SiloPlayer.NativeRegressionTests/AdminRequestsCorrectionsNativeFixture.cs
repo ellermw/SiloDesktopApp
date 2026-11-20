@@ -236,6 +236,35 @@ internal static partial class AdminRequestsManagementNativeFixture
             await Until(() => Dialog(shell) is { IsLoaded: true });
             Check(server.Calls.Count(call => call == "POST /api/v2/admin/request-integrations") == 1, "canonical recovery allows a new editor without an automatic mutation");
         }, server => server.LoseCreate = true);
+        await Case("superseded failed preview stays silent", async (server, shell, frame) =>
+        {
+            ((TextBox)Find(frame, "AdminRequestPreviewSearch")!).Text = "Synthetic";
+            Click(Find(frame, "AdminRequestPreviewSearchGo")!);
+            await Until(() => Find(frame, "AdminRequestPreviewTitle-456") != null);
+            var earlier = (Button)Find(frame, "AdminRequestPreviewTitle-123")!;
+            Click(earlier); await Until(() => server.PreviewReadStarted.Task.IsCompleted);
+            Click(Find(frame, "AdminRequestPreviewTitle-456")!);
+            await Until(() => Walk(frame).OfType<TextBlock>().Any(text => text.Text.Contains("Latest selection")));
+            server.ReleasePreviewRead.TrySetResult(true);
+            await Until(() => earlier.IsEnabled);
+            await Task.Delay(100);
+            Check(Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed } && Walk(frame).OfType<TextBlock>().Any(text => text.Text.Contains("Latest selection")), "a superseded title's late failure neither raises a notice nor removes the latest preview");
+        }, server => { server.OverlapPreviews = true; server.FailEarlierPreview = true; });
+        await Case("accepted create without a usable identity stays unconfirmed", async (server, shell, frame) =>
+        {
+            Click(Find(frame, "AdminRequestServerAdd")!);
+            await Until(() => Dialog(shell) is { IsLoaded: true }); var dialog = Dialog(shell)!;
+            ((TextBox)Find(dialog, "AdminRequestServerName")!).Text = "Synthetic added server";
+            ((TextBox)Find(dialog, "AdminRequestServerUrl")!).Text = "http://added.test:7878";
+            ((PasswordBox)Find(dialog, "AdminRequestServerApiKey")!).Password = "synthetic-added-key";
+            Choose((ComboBox)Find(dialog, "AdminRequestPlugin-service_kind")!, "radarr");
+            ((TextBox)Find(dialog, "AdminRequestPlugin-folder")!).Text = "synthetic";
+            ClickPrimary(dialog);
+            await Until(() => Walk(dialog).OfType<TextBlock>().Any(text => text.Text.Contains("was not confirmed") || text.Text.Contains("Invalid record identity")));
+            Check(!dialog.IsPrimaryButtonEnabled && Field<Delegate>(CurrentPage(shell), "_pendingWriteReview") != null, "an accepted create without a usable identity cannot be saved again before canonical review");
+            Check(server.Calls.Count(call => call == "POST /api/v2/admin/request-integrations") == 1, "the accepted create was sent exactly once");
+            dialog.Hide(); await ClosedAsync(shell, dialog);
+        }, server => server.CreateWithoutIdentity = true);
         await Case("routing previews name effective overrides on both surfaces", async (server, shell, frame) =>
         {
             ((TextBox)Find(frame, "AdminRequestPreviewSearch")!).Text = "Synthetic";

@@ -208,7 +208,58 @@ named quality profile and series type. This is not complete visual parity.
 - Frozen r11, r12 and r13 payloads/hosts join the preserved r5/r6 baselines.
   Historical failed receipts and original captures remain intact.
 
-A bounded independent correction recheck remains the next Beta delivery gate.
+## Review corrections r16 and r17, Beta merge r18 and recheck r19 and r20
+
+A further frozen review after r14 reported four defects. `review-red-r16`
+rebuilt only the host against the r14 product and observed all four new native
+scenarios failing: a hidden saved plugin credential crossing to a replacement
+connection's Test, a held earlier title overwriting the latest route preview,
+the same for the metadata preview, and a closed unknown create dropping the
+canonical review barrier. `review-green-r17` corrected five page files and
+passed 125 focused and the full unit suite plus all six native groups on base
+`248aafd62ed65b868c0e7356926e4d83204649cd`.
+
+On November 20 the family was committed and current Beta
+`f35bb7e59d14f8e7f2e53bac982953fa3d5dc7da` (`1.2.1194-beta.1`) was merged
+normally, with no rebase. Two documentation conflicts were resolved by keeping
+both sides. `beta-merge-r18` then passed 122 focused and 9,731 full unit cases
+and the same six native groups on the merged source. The focused count fell by
+three because Beta removed three "unsupported page" navigation cases for pages
+that now exist.
+
+An independent read-only recheck of the four corrections confirmed three and
+reported two P2 defects, both now fixed:
+
+- A create that the server accepted but answered without a usable record
+  identity surfaced as `ArgumentException`, which the editor treats as "nothing
+  was sent": the review barrier was cleared and Save re-enabled, so a second
+  click could create a duplicate. `AdminRequestsApi.CreateAsync` now reports it
+  as an unconfirmed result, which keeps the barrier until canonical review.
+- A superseded title whose slow preview read later failed raised a page notice
+  over the valid preview on screen. That late failure is now ignored when the
+  selection is no longer current.
+
+`recheck-red-r19` ran the two new native scenarios against the r18 published
+app and both failed. `recheck-green-r20` nonincrementally rebuilt everything on
+the corrected source and passed 125 focused and 9,734 full unit cases with no
+failures or skips, the app build, publish, host build and all six native
+groups, including all 16 corrective scenarios.
+
+- r18 PID 4660: ACQ `2026-11-20T13:53:06.8636243Z`, REL
+  `2026-11-20T14:01:13.5685624Z`.
+- r19 PID 43600: ACQ `2026-11-20T14:03:45.5098246Z`, REL
+  `2026-11-20T14:06:48.1379699Z`; failed as intended.
+- r20 PID 45508: ACQ `2026-11-20T14:10:50.5933076Z`, REL
+  `2026-11-20T14:19:07.6824466Z`.
+- r20 source seal: 2,492 build inputs,
+  `9f3521a2079c4df3fdf0b643198adab18ddcc3bea48d806734b354d0821f9e08`.
+- r20 payload: 582 files,
+  `a4cf1e8477a1a892cce426abddcaf8ec53f0d328f612da1e26008de96c4805af`.
+
+The recheck also noted, without counting it as a defect, that the saved server
+API key is not required again when only the URL changes; whether a stored key is
+reused for a changed URL is decided by the server and was not observed here.
+No captures were re-inspected after r14.
 
 ## Ancillary failures and remaining limits
 
@@ -236,5 +287,5 @@ The installed player, its settings, Requests977 and all pipeline-owned PRs remai
 untouched. A read-only r12 observation showed installed PID 31132 rather than
 the earlier PID 39668; no process or installation action was taken.
 No installer ran, version was stamped, branch rebased,
-merge performed or stable release published. Final independent source review
-and the authorized non-draft Beta handoff remain the next delivery gates.
+merge into Beta performed or stable release published. Review, QA and merge of the
+Beta pull request belong to the pipeline.

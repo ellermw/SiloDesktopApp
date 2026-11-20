@@ -105,7 +105,10 @@ public sealed class AdminRequestsApi(SiloApiClient client)
     private async Task<AdminRequestDocument> CreateAsync(MonitorAuthorityLease owner, string resource, JsonObject body, CancellationToken ct)
     {
         var response = await client.AdminRequestsSendAsync(owner, HttpMethod.Post, Root + resource, body, ct: ct).ConfigureAwait(false);
-        var id = AdminRequestJson.Text(response.Body, "id"); OpaqueId(id);
+        var id = AdminRequestJson.Text(response.Body, "id");
+        // The POST was accepted, so the record may exist: an unusable reply is an unconfirmed result, not a pre-send validation error.
+        try { OpaqueId(id); }
+        catch (ArgumentException error) { throw new InvalidDataException("The server did not return a usable identity for the new record.", error); }
         AdminValidators.RequireStrong(response.ETag);
         return new(response.Body, response.ETag!, resource + "/" + Uri.EscapeDataString(id), owner);
     }
