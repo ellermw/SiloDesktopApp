@@ -2,8 +2,8 @@
 
 `t3/admin-collections-page` completes Collections (`/admin/collections`, `/new`, `/:id/edit`): list,
 Arrange board and shelves, new-collection picker, templates, starter packs, and manual/smart/synced
-editors, registered through the real Admin shell. Beta was merged into the branch (normal merge);
-version `1.2.1181-beta.1` is untouched. Official contracts: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+editors, registered through the real Admin shell. Beta was merged into the branch (normal merges, last at
+`db49c4c93`, stable `1.2.1194` merged into beta); this branch changes no version number. Official contracts: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
 
 Seven review findings were fixed with regression tests, and running the code exposed more (JsonObject
 request bodies serialized as node members, an editor re-render exception, Click-only checkbox handlers).
@@ -14,7 +14,13 @@ validation reasons hidden, a failed hide after import dropped, pasted list links
 sent, and the unknown-outcome list check reading only the filtered library. Details, deviations and limits:
 [docs/parity/admin-collections.md](parity/admin-collections.md).
 
-Acceptance (after the second review): label collections-fix-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a,
+Final acceptance after merging Beta `db49c4c93`: label collections-lead-final-r1 on merge commit 23e4d5bcb, build
+lease 2026-11-20T16:17:21Z–16:23:40Z: focused 57/57 and full 9,754/9,754 unit cases (0 failures, 0 skipped); app build,
+publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL), admin-manage-foundation,
+admin-configure-general and admin-monitor passed; source seal (2,489 build inputs) and 582-file payload unchanged across
+the run. That merge brought only version stamps, README and release notes.
+
+Acceptance before that merge (after the second review): label collections-fix-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a,
 task admin-families-nov20), stage final on commit 016ea09ac, build lease 2026-11-20T16:09:43Z–16:15:58Z. Focused unit
 run 57/57 (filter FullyQualifiedName~AdminCollections) and full unit suite 9,754/9,754 passed (0 failures, 0 skipped);
 app build, publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL),
