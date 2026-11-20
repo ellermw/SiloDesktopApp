@@ -100,7 +100,7 @@ public sealed partial class AdminUserResourcesApi
     public async Task<AdminImportReceipt> CancelImportRunAsync(MonitorAuthorityLease owner, string id, CancellationToken ct = default)
     {
         var result = await SendAsync(owner, HttpMethod.Post, RunPath(id) + "/cancel", ct: ct).ConfigureAwait(false);
-        if (result.Body.Text("id") != id) throw new AdminResourceOutcomeUnknownException(); return Receipt(result, true);
+        if (result.Body.Text("id") != id) throw new AdminResourceOutcomeUnknownException(); return Receipt(result, result.Status == 202);
     }
     private static string RunPath(string id) => Import + "/runs/" + Segment(id);
     private static AdminImportReceipt Receipt(AdminResourceResponse response, bool requireLocation)

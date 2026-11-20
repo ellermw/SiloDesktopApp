@@ -1,5 +1,6 @@
 using System.Net;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 
@@ -102,6 +103,19 @@ public sealed class AdminUserResourceTransportTests
         var first = controller.ReadAsync("poll", _ => gate.Task);
         Assert.Equal("newer", await controller.ReadAsync("poll", _ => Task.FromResult("newer")));
         gate.SetException(new HttpRequestException("late")); Assert.Null(await first); Assert.Null(controller.Error);
+    }
+
+    [Fact]
+    public async Task ACancelAnsweredWithoutAStatusLocationIsCompleteButAnAcceptedOneNeedsIt()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client); const string run = """{"id":"run1","status":"canceled","terminal":true,"cancelable":false}""";
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply(run, HttpStatusCode.OK, null)); // 200 carries no headers in the official contract
+        var done = await api.CancelImportRunAsync(lease, "run1"); Assert.True(done.Value.Flag("terminal"));
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply(run, HttpStatusCode.Accepted, null)); // 202 promises a Location
+        await Assert.ThrowsAsync<AdminResourceOutcomeUnknownException>(() => api.CancelImportRunAsync(lease, "run1"));
+        kit.Http.Respond = (_, _) => { var accepted = Reply(run, HttpStatusCode.Accepted, null); accepted.Headers.Location = new Uri("/api/v2/admin/history-imports/runs/run1", UriKind.Relative); return Task.FromResult(accepted); };
+        Assert.Equal("/api/v2/admin/history-imports/runs/run1", (await api.CancelImportRunAsync(lease, "run1")).Location);
     }
 
     [Fact]
