@@ -766,7 +766,7 @@ internal static class AdminCollectionsNativeFixture
                 await Until(() => page.Controller.Editor?.Value["id"]?.ToString().StartsWith("new") == true && Find<Button>(page, "CollectionEditorSave")?.Content?.ToString() == "Save", "the editor is rendered again on the created collection");
                 var id = page.Controller.Editor!.Value["id"]!.ToString();
                 Check(Texts(page).Any(t => t.Contains("This title cannot be added.")), "the rejected title's reason stays shown");
-                Check(!page.Controller.OutcomeUnknown && page.RequiresLeaveConfirmation, "a rejected title is not an unknown outcome and stays staged");
+                Check(!page.Controller.OutcomeUnknown && Texts(page).Any(t => t.Contains("Not added:")), "a rejected title is not an unknown outcome and is named as not added");
                 server.Intercept = null; var staged = server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Count();
                 await SetText(Find<TextBox>(page, "CollectionDescription")!, "Edited after the rejected title");
                 Check(page.Controller.Dirty && page.Controller.Draft!["description"]?.ToString() == "Edited after the rejected title", "an edit after the rejected title reaches the current draft and counts as unsaved");
@@ -774,7 +774,7 @@ internal static class AdminCollectionsNativeFixture
                 await Until(() => server.Sent("PATCH", "/api/v2/admin/collections/" + id).Any(), "the next Save patches the created collection");
                 Check(JsonNode.Parse(server.Sent("PATCH", "/api/v2/admin/collections/" + id).Last().Body)!["description"]?.ToString() == "Edited after the rejected title", "the next Save sends the edit made after the rejected title");
                 await Until(() => Texts(page).Any(t => t.StartsWith("Collection saved")), "saved");
-                Check(server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Count() == staged + 1, "the title left staged is sent once more with the next Save");
+                Check(server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Count() == staged, "the rejected title is not sent again with the next Save");
                 await BackToListAsync();
             });
 

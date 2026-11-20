@@ -521,6 +521,8 @@ internal static partial class AdminRequestsManagementNativeFixture
             server.FailQueueReads = true;
             Click(Find(frame, "AdminRequestLoadMore")!);
             await Until(() => server.QueueReads > reads && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible } && Find(frame, "AdminRequestLoadMore") is Button { IsEnabled: true });
+            // The rows are drawn again with the notice; their action buttons enter the visual tree one layout pass later.
+            await Until(() => Find(frame, "AdminRequestDetails-7") != null);
             Check(Find(frame, "AdminRequestDetails-7") != null && Find(frame, "AdminRequestQueueRetry") == null, "a failed Load more reports the failure and keeps the loaded rows and the continuation");
             server.FailQueueReads = false;
             Click(Find(frame, "AdminRequestLoadMore")!);
