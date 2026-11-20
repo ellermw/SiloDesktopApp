@@ -186,7 +186,9 @@ internal static class AdminSignInSecurityNativeFixture
     }
     private static async Task<FrameworkElement> Open(Frame outer, string href, string pageName)
     {
-        Check(AdminShellPage.TryOpenHref(href).Kind == SiloPlayer.Core.Services.Admin.AdminRouteResolutionKind.Route, "production route " + href);
+        outer.NavigationFailed += (_, e) => Program.Log("NAVFAIL " + e.SourcePageType.Name + ": " + e.Exception);
+        var resolved = AdminShellPage.TryOpenHref(href); Program.Log("resolution " + resolved?.Kind);
+        Check(resolved?.Kind == SiloPlayer.Core.Services.Admin.AdminRouteResolutionKind.Route, "production route " + href);
         await Until(() => outer.Content is AdminShellPage);
         var shell = (AdminShellPage)outer.Content; var frame = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!;
         await Until(() => frame.Content?.GetType().Name == pageName && ((FrameworkElement)frame.Content).IsLoaded);
