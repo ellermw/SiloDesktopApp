@@ -1,3 +1,16 @@
+# November 17 - Autoscan Activity source-only candidate
+
+The isolated t3/admin-autoscan-activity candidate at Beta base
+248aafd62ed65b868c0e7356926e4d83204649cd implements and registers
+/admin/autoscan/activity (Scans/Polls, live status/queue, bounded identity-owned
+reads, details and explicit uncertain-cancellation reconciliation). Version
+1.2.1181-beta.1 is unchanged. Official reference:
+217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb. The page, unit/native fixtures,
+registration and allowlists are authored source only; no build/test/native run
+or captures were observed, and no release/installed-player/pipeline PR changed.
+See [the scoped source handoff](parity/2026-11-17-admin-autoscan-activity.md)
+for exact scope, bounds, native adaptations and serialized acceptance commands.
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
