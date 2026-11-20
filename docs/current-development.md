@@ -1,3 +1,51 @@
+# November 17 — Admin Requests scoped acceptance for Beta review
+
+Prepared branch `t3/admin-request-management` remains based on
+`248aafd62ed65b868c0e7356926e4d83204649cd`; app/numeric versions stay
+`1.2.1181-beta.1` / `1.2.1180.1`, with stamping reserved for the pipeline.
+The 25-path family implements Queue, Discover and Requests Settings, including
+server/plugin editors, routing and the authority-owned sidebar count.
+
+Official contract pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. A direct
+GitHub main fetch resolved `13dec5cc2d7f7de31c019a0de51faba0f66a980a`; scoped
+Requests contract paths and all 723 Requests catalog keys are unchanged.
+
+Final review found five further defects. Seven new native RED scenarios on the
+sealed r11 product reproduced saved-secret loss, fractional number/bound errors,
+missing preview overrides, queued-progress starvation and reopened unresolved
+mutations. Direct fixes retain private saved secrets only for unchanged
+connections, preserve numeric schema semantics, render named overrides, poll
+download presence and retain a canonical-review write barrier after failed reads.
+
+Fresh `review-green-r13` verification passed 125 focused / 8,057 full unit cases
+with no failures/skips, including one ignored source-root/Core-PDB proof, followed
+by nonincremental x64 app/host builds, self-contained publish and all six scoped
+native groups. Fixture-only viewport capture corrections then passed the same
+six groups as `capture-final-r14` on identical r13 product bytes. All fourteen
+corrective scenarios pass. Eleven primary captures were inspected or matched
+inspected bytes. The source/582-file payload seals and app DLL/PDB/PRI host
+equality passed; this is not an all-app/host-PDB source-document proof.
+
+The broader viewer permissions selector is not accepted: r9 failed an unchanged
+removal-dialog primary-button lookup; one bounded r10 continuation failed an
+unchanged profile-editor viewport assertion. Both failed receipts remain
+preserved; neither is reported as passing or expanded into unrelated changes.
+
+The last lease was PID 27040, ACQ `2026-11-17T17:55:34.0002725Z`, REL
+`2026-11-17T17:59:06.9558427Z`, exactly one nonblocking `WaitOne(0)`. Inclusive
+preflight was 32.6739758271724 GiB, with both drive floors satisfied. No cleanup
+occurred; the installed player and Requests977 remain untouched. Historical
+r5/r6/r11/r12/r13 payloads and failed receipts remain preserved.
+
+Evidence lives under `D:/SiloPlayer-build/admin-completion-requests`; the
+[scoped handoff](parity/admin-manage-requests.md) records source/payload hashes,
+historical failure boundaries and exact limits. Final independent read-only
+reviews precede the authorized non-draft Beta submission. This entry does not
+certify live-server/plugin interoperability, all DPI/accessibility, complete
+visual parity, an installer or a stable release.
+
+---
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through

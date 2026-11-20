@@ -995,6 +995,7 @@ public partial class SiloApiClient
                     VersionPolicy = request.VersionPolicy,
                 };
                 AddHeaders(retry);
+                if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var sensitiveRequests)) retry.Options.Set(AdminRequestsSensitiveOption, sensitiveRequests);
                 // A token refresh must replay the same conditional mutation.
                 foreach (var validator in request.Headers.IfMatch) retry.Headers.IfMatch.Add(validator);
                 foreach (var validator in request.Headers.IfNoneMatch) retry.Headers.IfNoneMatch.Add(validator);
@@ -1053,6 +1054,8 @@ public partial class SiloApiClient
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=device_bootstrap_transport_failed");
                 else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
+                else if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var requestsSensitive) && requestsSensitive)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=request_administration_transport_failed");
                 else
                     Services.LocalLog.AppendException("api_diagnostics.txt", ex,
                         summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds}", actionId);

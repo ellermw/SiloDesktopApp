@@ -385,6 +385,7 @@ public partial class App : Application
         services.AddAdminPlaybackAudit();
         services.AddAdminSubtitleFiles();
         services.AddAdminLibraries();
+        services.AddAdminRequests();
 
         services.AddSingleton<LogsStreamClient>();
         services.AddSingleton(sp => new ServerActivityStore(
