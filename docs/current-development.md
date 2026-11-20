@@ -9,7 +9,12 @@ Seven review findings were fixed with regression tests, and running the code exp
 request bodies serialized as node members, an editor re-render exception, Click-only checkbox handlers).
 Details, deviations and limits: [docs/parity/admin-collections.md](parity/admin-collections.md).
 
-FINAL_RUN_PLACEHOLDER
+Acceptance: label collections-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-b, task admin-families-nov20),
+stage final, build lease 2026-11-20T15:20:53Z–15:26:46Z. Focused unit run 31/31 and full unit suite
+9,728/9,728 passed (0 failures, 0 skipped); app build, publish and native host built; native selectors
+admin-collections (149 checks), admin-manage-foundation, admin-configure-general and admin-monitor all
+passed; source and payload seals verified. Eight synthetic PNGs from admin-collections were captured and the
+list and smart-editor captures were inspected (other captures were not individually reviewed).
 
 Not observed: live-server compatibility, all-DPI/IME/Narrator, physical drag-and-drop, artwork file
 picker, complete visual parity. Home Sections is a separate family and not registered here.
