@@ -147,6 +147,24 @@
     "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.Rows.cs",
     "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.cs",
     "src/SiloPlayer/Views/Admin/AdminSubtitlesPage.xaml",
-    "src/SiloPlayer/Views/Admin/AdminSubtitlesRegistration.cs"
+    "src/SiloPlayer/Views/Admin/AdminSubtitlesRegistration.cs",
+    "src/SiloPlayer.Core/Api/AdminUserResourcesApi.cs",
+    "src/SiloPlayer.Core/Api/AdminUserResourcesApi.Devices.cs",
+    "src/SiloPlayer.Core/Api/AdminUserResourcesApi.HistoryImport.cs",
+    "src/SiloPlayer.Core/Api/SiloApiClient.AdminUserResources.cs",
+    "src/SiloPlayer.Core/Models/Admin/AdminUserResourceModels.cs",
+    "src/SiloPlayer.Core/Models/Admin/admin-user-resources.en.json",
+    "src/SiloPlayer.Core/Models/Admin/admin-device-settings.json",
+    "src/SiloPlayer.Core/Services/Admin/AdminUserResourceController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminUserResourceText.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminDevicePresentation.cs",
+    "src/SiloPlayer/Views/Admin/AdminUserResourceUi.cs",
+    "src/SiloPlayer/Views/Admin/AdminUserResourcesRegistration.cs",
+    "src/SiloPlayer/Views/Admin/AdminAccessGroupsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminAccessGroupsPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminDevicesPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminDevicesPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminHistoryImportPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminHistoryImportPage.xaml"
   ]
 }

@@ -1,3 +1,22 @@
+# November 17 — Admin user resources source-only candidate
+
+Uncommitted Access Groups, Devices (account/device/profile descendants) and
+History Import candidate prepared in `t3/admin-access-groups-devices-history-import`
+at exact Beta `248aafd62ed65b868c0e7356926e4d83204649cd`, version
+`1.2.1181-beta.1` unchanged. Official source pin is
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Pending Users PR194 and all other
+submitted PRs remain untouched and pipeline-owned.
+
+Production pages, authority-bound transport/controller, registrations, scoped
+catalog/manifest resources, approved-file/XBF entries, 57 authored focused unit
+cases and a real shell/Frame native fixture with six planned captures are present.
+The initial test-only checkpoint and complete final patch are retained under
+`.codex-tmp/admin-user-resources-20261117`. **No .NET/build/test/app/native/browser
+runtime or mutex acquisition occurred: RED/GREEN, compilation, rendered visual
+parity and interoperability remain unobserved.** Coordinator runtime acceptance
+and independent review are required; no commit, push, PR or delivery occurred.
+See [contracts, self-review and exact acceptance steps](parity/admin-user-resources-2026-11-17.md).
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
