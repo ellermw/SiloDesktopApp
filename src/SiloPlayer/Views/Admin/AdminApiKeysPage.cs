@@ -104,7 +104,7 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
                 copy.Click += (_, _) =>
                 {
                     if (!owner.IsCurrent || secret == null) return;
-                    try { var package = new DataPackage(); package.SetText(secret); Clipboard.SetContent(package); dialog.Hide(); }
+                    try { var package = new DataPackage(); package.SetText(secret); Clipboard.SetContentWithOptions(package, new ClipboardContentOptions { IsAllowedInHistory = false, IsRoamable = false }); dialog.Hide(); }
                     catch { error.Text = T("create.copyFailed"); if (!content.Children.Contains(error)) content.Children.Add(error); }
                 };
                 dialog.CloseButtonText = "Close";
