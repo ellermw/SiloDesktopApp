@@ -63,9 +63,7 @@ public sealed partial class AdminAutoscanSourcesPage : Page, IAdminGutterScrollP
         var toolbar = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
         toolbar.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); toolbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         toolbar.RowDefinitions.Add(new() { Height = GridLength.Auto }); toolbar.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var plugins = new HyperlinkButton { Content = U.Text(T("sources.pluginsHint"), 12, true), Padding = new(0), HorizontalAlignment = HorizontalAlignment.Left };
-        plugins.Click += (_, _) => AdminShellPage.TryOpenHref("/admin/plugins");
-        plugins.IsEnabled = AdminShellPage.CanOpen(new(AdminRoute.Plugins));
+        var plugins = PluginsHint();
         toolbar.Children.Add(plugins); toolbar.Children.Add(_add); Grid.SetColumn(_add, 1);
         toolbar.SizeChanged += (_, args) => { var narrow = args.NewSize.Width < 560; Grid.SetRow(_add, narrow ? 1 : 0); Grid.SetColumn(_add, narrow ? 0 : 1); _add.HorizontalAlignment = narrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right; };
         _body.Children.Add(toolbar); _body.Children.Add(_rows);
@@ -78,6 +76,20 @@ public sealed partial class AdminAutoscanSourcesPage : Page, IAdminGutterScrollP
         Loaded += (_, _) => Activate(); Unloaded += (_, _) => Close();
     }
     private static string T(string key, params (string Name, object? Value)[] values) => AdminAutoscanText.T(key, values);
+    /// <summary>The hint with its Plugins link; the link is plain text with a tooltip while no Plugins page is in this build.</summary>
+    private static TextBlock PluginsHint()
+    {
+        var hint = U.Text("", 12, true); var openable = AdminShellPage.CanOpen(new(AdminRoute.Plugins));
+        foreach (var (text, tag) in AdminAutoscanText.Rich("sources.pluginsHint"))
+        {
+            if (tag != "link") { hint.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = text }); continue; }
+            if (!openable) { hint.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = text }); continue; }
+            var link = new Microsoft.UI.Xaml.Documents.Hyperlink(); link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = text });
+            link.Click += (_, _) => AdminShellPage.TryOpenHref("/admin/plugins"); hint.Inlines.Add(link);
+        }
+        if (!openable) ToolTipService.SetToolTip(hint, T("sources.pluginsUnavailable"));
+        return hint;
+    }
     protected override void OnNavigatedFrom(NavigationEventArgs e) { Close(); base.OnNavigatedFrom(e); }
     private void Activate()
     {
@@ -113,7 +125,7 @@ public sealed partial class AdminAutoscanSourcesPage : Page, IAdminGutterScrollP
         var state = c.State; _renderedOwner = state.Owner;
         var current = c.IsCurrent(state.Owner);
         _syncing = true; _enabled.IsOn = state.Settings?.Enabled == true; _syncing = false;
-        var writable = current && state.Loaded && !state.Stale && !state.Loading && !state.Busy;
+        var writable = current && state.Loaded && !state.Stale && !state.Loading && !state.Busy && !state.UnknownOutcome;
         _enabled.IsEnabled = writable && state.Settings != null;
         _badge.Text = state.Settings == null ? "" : T(state.Settings.Enabled ? "page.enabled" : "page.disabled");
         _run.Visibility = AdminAutoscanRunNow.IsVisible(state.Settings?.Enabled, state.Loaded && state.SourcesComplete ? state.Sources.Select(s => new AdminAutoscanRunNowSource(s.Enabled, s.DeliveryMode)).ToArray() : null) ? Visibility.Visible : Visibility.Collapsed;
@@ -149,7 +161,7 @@ public sealed partial class AdminAutoscanSourcesPage : Page, IAdminGutterScrollP
         var identity = new StackPanel { Spacing = 4 }; identity.Children.Add(U.Text(title, 14)); identity.Children.Add(U.Text(P.Subtitle(source, state), 12, true));
         var descriptor = P.Descriptor(state.Available.FirstOrDefault(p => p.PluginId == source.PluginId && p.CapabilityId == source.CapabilityId));
         var targets = P.Targets(source, descriptor, state.Libraries);
-        var feeds = U.Text(state.OptionsReady ? P.TargetsText(targets) : "Library paths unavailable", 12, true);
+        var feeds = U.Text(state.OptionsReady ? P.TargetsText(targets) : T("sources.targets.unknown"), 12, true);
         var status = new StackPanel { Spacing = 4 }; var health = P.Health(source); var healthText = U.Text(health.Text, 13);
         if (health.Error) healthText.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive); status.Children.Add(healthText);
         if (source.Enabled && source.DeliveryMode == "webhook" && !source.WebhookConfigured) healthText.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Warning);
@@ -200,16 +212,19 @@ public sealed partial class AdminAutoscanSourcesPage : Page, IAdminGutterScrollP
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && c.IsCurrent(owner); }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
-    internal async Task DeleteAsync(string id, MonitorAuthorityLease owner)
+    /// <summary>Null when nothing was asked of the server (cancelled or no longer current); otherwise the write's outcome for the caller to show.</summary>
+    internal async Task<AdminAutoscanResult<object>?> DeleteAsync(string id, MonitorAuthorityLease owner)
     {
-        var c = _controller; var source = c?.State.Sources.FirstOrDefault(s => s.Id == id); if (source == null || c == null) return;
-        if (!await ConfirmAsync(T("sources.deleteTitle"), T("sources.deleteDescription", ("name", P.Title(source, c.State.Available))), T("sources.deleteConfirm"), owner)) return;
-        if (await c.DeleteAsync(id, owner) != null) CloseEditor(true);
+        var c = _controller; var source = c?.State.Sources.FirstOrDefault(s => s.Id == id); if (source == null || c == null) return null;
+        if (!await ConfirmAsync(T("sources.deleteTitle"), T("sources.deleteDescription", ("name", P.Title(source, c.State.Available))), T("sources.deleteConfirm"), owner)) return null;
+        var result = await c.DeleteAsync(id, owner);
+        if (result.Succeeded) CloseEditor(true);
+        return result;
     }
-    internal async Task RotateAsync(string id, MonitorAuthorityLease owner)
+    internal async Task<AdminAutoscanResult<AdminAutoscanSource>?> RotateAsync(string id, MonitorAuthorityLease owner)
     {
-        var c = _controller; if (c == null) return;
-        if (await ConfirmAsync(T("webhook.rotate.title"), T("webhook.rotate.description"), T("webhook.rotate.confirm"), owner)) await c.ConfigureWebhookAsync(id, true, owner);
+        var c = _controller; if (c == null) return null;
+        return await ConfirmAsync(T("webhook.rotate.title"), T("webhook.rotate.description"), T("webhook.rotate.confirm"), owner) ? await c.ConfigureWebhookAsync(id, true, owner) : null;
     }
     internal void CopyWebhook(string id, MonitorAuthorityLease owner)
     {

@@ -37,7 +37,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
     private readonly CancellationTokenSource _reads = new();
     private AdminAutoscanAvailableSource? _plugin;
     private AdminAutoscanEditorDraft? _draft;
-    private string? _createdId;
+    private string? _createdId, _createdProvider;
     private bool _closed, _saving, _uncertain;
     private long _generation;
     private Control? _opener;
@@ -70,7 +70,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
         if (source != null)
         {
             var delete = U.Action(T("sourceDialog.deleteSource"), "AutoscanEditorDelete"); delete.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive);
-            delete.Click += async (_, _) => await _page.DeleteAsync(source.Id, _owner); _footer.Children.Add(delete);
+            delete.Click += async (_, _) => { if (Busy) return; var result = await _page.DeleteAsync(source.Id, _owner); if (Current && result is { Succeeded: false }) _error.Text = result.Message ?? ""; }; _footer.Children.Add(delete);
         }
         _footer.Children.Add(_cancel); _footer.Children.Add(_save); Grid.SetRow(_footer, 2); _layout.Children.Add(_footer);
         _cancel.Click += (_, _) => { if (!Busy) CloseRequested?.Invoke(); };
@@ -83,7 +83,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
             _draft = new(source, P.Descriptor(_plugin)); BuildSections();
         }
         _title.Text = source == null ? T("sourceDialog.addTitle") : T("sourceDialog.editTitle", ("name", P.Title(source, controller.State.Available)));
-        _description.Text = source == null ? T("sourceDialog.addDescription") : P.Subtitle(source, controller.State);
+        _description.Text = source == null ? T("sourceDialog.addDescription") : string.Join(" · ", new[] { P.Subtitle(source, controller.State), controller.State.OptionsReady ? T("sources.editFeeds", ("feeds", P.DescribeTargets(P.Targets(source, P.Descriptor(_plugin), controller.State.Libraries)))) : null }.Where(part => !string.IsNullOrEmpty(part)));
         SyncState();
     }
     private static string T(string key, params (string Name, object? Value)[] values) => AdminAutoscanText.T(key, values);
@@ -184,7 +184,6 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
             var form = new Core.Models.Plugins.PluginAdminForm { Fields = fields, Sections = draft.Form.Sections?.Where(section => section.FieldKeys.Any(key => fields.Any(f => f.Key == key))).ToList() };
             var schema = new ProviderSchemaForm(form, draft.Config, draft.ConfigErrors);
             schema.Changed += () => { draft.ConfigDirty = true; Changed(); }; settings.Children.Add(schema);
-            foreach (var secret in Descendants<PasswordBox>(schema)) _secrets.Add(secret);
             foreach (var field in form.Fields)
             {
                 if (P.Fill(field.FillFrom, _controller.State.Libraries) is { Length: > 0 } fill)
@@ -192,8 +191,6 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
                     var button = U.Action(T("sourceForm.fillButton", ("field", field.Label)), "AutoscanFill_" + field.Key);
                     button.Click += (_, _) => { draft.Config[field.Key] = fill; draft.ConfigDirty = true; Changed(); BuildSections(); }; settings.Children.Add(button);
                 }
-                if (_baseline != null && (field.Secret || field.Control == "PASSWORD"))
-                { var clear = new CheckBox { Content = "Clear saved " + field.Label, IsChecked = draft.ClearedSecrets.Contains(field.Key) }; clear.Checked += (_, _) => { draft.ClearedSecrets.Add(field.Key); draft.ConfigDirty = true; Changed(); }; clear.Unchecked += (_, _) => { draft.ClearedSecrets.Remove(field.Key); draft.ConfigDirty = true; Changed(); }; settings.Children.Add(clear); }
             }
         }
         if (settings.Children.Count > 0) AddSection("settings", settings);
@@ -222,24 +219,33 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
         if (draft.Validate() is { } problem) { _error.Text = problem; foreach (var tab in _tabBodies) tab.Body.Visibility = Visibility.Visible; return; }
         var live = _baseline == null ? null : _controller.State.Sources.FirstOrDefault(s => s.Id == _baseline.Id);
         if (_baseline != null && (live == null || !AdminAutoscanEditorDraft.SameConfiguration(live, _baseline))) { _error.Text = "This source changed. Close and reopen Edit to review the current configuration."; _uncertain = true; SyncState(); return; }
-        _saving = true; SyncState();
+        _saving = true; _error.Text = ""; SyncState();
         try
         {
             var body = draft.Build(live);
             var result = _baseline == null ? await _controller.CreateSourceAsync(_plugin!.PluginId, _plugin.CapabilityId, body, _owner) : await _controller.UpdateSourceAsync(_baseline.Id, body, _owner, _baseline);
             if (!Current) return;
-            if (result == null) { _uncertain = true; _error.Text = _controller.State.Error ?? "Review the refreshed source list before another submission."; return; }
+            switch (result.Outcome)
+            {
+                // A definite refusal wrote nothing: the draft stays editable so it can be corrected and sent again.
+                case AdminAutoscanOutcome.Refused: _error.Text = result.Message ?? ""; return;
+                case AdminAutoscanOutcome.Skipped: _error.Text = T("sourceDialog.busy"); return;
+                // Only an unknown outcome locks the editor; the controller has re-read the canonical state.
+                case AdminAutoscanOutcome.Unknown: _uncertain = true; _error.Text = (result.Message ?? "") + " " + T("sourceDialog.reviewList"); return;
+            }
             Dirty = false;
             if (_baseline != null || draft.DeliveryMode != "webhook") { _saving = false; CloseRequested?.Invoke(); return; }
-            _createdId = result.Id;
-            // The first-source transition does not dismiss this editor or repeat creation.
-            await _controller.ConfigureWebhookAsync(result.Id, false, _owner);
+            _createdId = result.Value!.Id;
+            // The first-source transition does not dismiss this editor or repeat creation. Generating the endpoint is
+            // idempotent for an existing endpoint, so a failure is reported as what it is and retried explicitly.
+            var hook = await _controller.ConfigureWebhookAsync(_createdId, false, _owner);
             if (!Current) return;
             _title.Text = T("sourceDialog.connectTitle"); _description.Text = T("sourceDialog.connectDescription");
-            ClearSecretControls(); Dirty = false;
+_createdProvider = P.Provider(draft.Descriptor, result.Value.SourceConfig); draft.Dispose(); _draft = null; Dirty = false;
             _content.Children.Clear(); _content.Children.Add(_sections); _content.Children.Add(_error); _sections.Children.Clear(); _sections.Children.Add(WebhookSection());
+            if (!hook.Succeeded) _error.Text = hook.Message ?? T("sourceDialog.webhookFailedBody");
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException) { if (Current) _error.Text = "The source could not be saved. Review the refreshed list before submitting again."; _uncertain = true; }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { if (Current) _error.Text = T("common.sourceWriteUnconfirmed"); _uncertain = true; }
         finally { _saving = false; if (Current) SyncState(); }
     }
     internal void SyncState()

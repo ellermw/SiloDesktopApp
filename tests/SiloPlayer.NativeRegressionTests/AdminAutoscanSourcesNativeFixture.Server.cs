@@ -24,8 +24,9 @@ internal static partial class AdminAutoscanSourcesNativeFixture
         internal readonly ConcurrentQueue<string> Requests = new();
         internal readonly List<AdminAutoscanSource> Sources = [new() { Id = "original", PluginId = "fixture.poll", CapabilityId = "poll", Label = "Original source", DeliveryMode = "poll", Enabled = true, ConnectionId = "connection-original", SourceConfig = new() { ["unknown"] = "retained" }, PathRewrites = [new() { From = "/remote/movies", To = "/media/movies" }] }];
         private readonly List<AdminAutoscanConnection> _connections = [new() { Id = "connection-original", Name = "Original server", Kind = "radarr", HasApiKey = true }];
-        internal bool Enabled = true, FailSources;
-        internal int DefaultInterval = 600, Debounce = 60, Rotations, ConnectionWrites;
+        internal bool Enabled = true, FailSources, TriggerConflict;
+        // Counts of upcoming source writes to refuse with 422 or to lose in transport, and webhook creations to fail.
+        internal int DefaultInterval = 600, Debounce = 60, Rotations, ConnectionWrites, RefuseSourceWrites, DropSourceResponses, FailWebhookCreates;
         internal string? LastConnectionBody;
         private int _sequence;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -57,11 +58,14 @@ internal static partial class AdminAutoscanSourcesNativeFixture
                     var create = JsonSerializer.Deserialize<AdminAutoscanConnectionCreate>(body, Options)!;
                     var connection = new AdminAutoscanConnection { Id = "connection-new", Name = create.Name, Kind = create.Kind, HasApiKey = true }; _connections.Add(connection); return Json(connection, HttpStatusCode.Created);
                 }
+                if (path == root + "/trigger" && TriggerConflict) return Problem(HttpStatusCode.Conflict, "conflict", "A poll is already running.");
                 if (path == root + "/trigger") return Json(new { key = "autoscan_poll", state = "running", execution_scope = "process" });
                 if (path == root + "/sources" && request.Method == HttpMethod.Get)
                     return FailSources ? Json(new { }, HttpStatusCode.ServiceUnavailable) : Json(new { items = Sources, page = new { has_more = false } });
                 if (path == root + "/sources" && request.Method == HttpMethod.Post)
                 {
+                    if (RefuseSourceWrites > 0) { RefuseSourceWrites--; return Problem(HttpStatusCode.UnprocessableEntity, "validation_failed", "Invalid source configuration."); }
+                    if (DropSourceResponses > 0) { DropSourceResponses--; throw new HttpRequestException("synthetic transport loss"); }
                     var write = JsonSerializer.Deserialize<AdminAutoscanSource>(body, Options)!;
                     write.Id = "created-" + ++_sequence; Sources.Add(write); return Json(write, HttpStatusCode.Created);
                 }
@@ -72,12 +76,15 @@ internal static partial class AdminAutoscanSourcesNativeFixture
                     if (parts.Length > 1 && parts[1] == "rewrite-suggestions") return Json(new { proposed = new[] { new { from = "/remote/extras", to = "/media/movies/extras", match_depth = 2 } }, unmatched = Array.Empty<string>(), ambiguous = Array.Empty<object>(), covered = new[] { "/remote/movies" } });
                     if (parts.Length > 1 && parts[1] == "webhook")
                     {
+                        if (parts.Length == 2 && FailWebhookCreates > 0) { FailWebhookCreates--; return Json(new { }, HttpStatusCode.InternalServerError); }
                         if (parts.Length > 2 && parts[2] == "rotate") Rotations++;
                         source.WebhookConfigured = true; source.WebhookUrl = "/api/v1/autoscan/webhooks/synthetic-" + Rotations; return Json(source);
                     }
                     if (request.Method == HttpMethod.Delete) { Sources.Remove(source); return new(HttpStatusCode.NoContent); }
                     if (request.Method == HttpMethod.Put)
                     {
+                        if (RefuseSourceWrites > 0) { RefuseSourceWrites--; return Problem(HttpStatusCode.UnprocessableEntity, "validation_failed", "Invalid source configuration."); }
+                        if (DropSourceResponses > 0) { DropSourceResponses--; throw new HttpRequestException("synthetic transport loss"); }
                         var write = JsonSerializer.Deserialize<AdminAutoscanSourceWrite>(body, Options)!;
                         source.Enabled = write.Enabled; source.Label = write.Label; source.ConnectionId = write.ConnectionId; source.PollIntervalSeconds = write.PollIntervalSeconds; source.PathRewrites = write.PathRewrites; source.SourceConfig = write.SourceConfig;
                         return Json(source);
@@ -87,6 +94,7 @@ internal static partial class AdminAutoscanSourcesNativeFixture
                 return Json(new { items = Array.Empty<object>(), page = new { has_more = false } });
             }
         }
+        private static HttpResponseMessage Problem(HttpStatusCode code, string type, string detail) => Json(new { type = "https://fixture.invalid/docs/api/v2/problems/" + type, title = "Problem", status = (int)code, detail }, code);
         private static HttpResponseMessage Json(object body, HttpStatusCode code = HttpStatusCode.OK) => new(code) { Content = new StringContent(JsonSerializer.Serialize(body, Options), Encoding.UTF8, "application/json") };
     }
 }

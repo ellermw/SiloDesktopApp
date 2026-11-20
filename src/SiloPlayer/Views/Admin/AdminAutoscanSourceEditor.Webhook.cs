@@ -29,10 +29,10 @@ internal sealed partial class AdminAutoscanSourceEditor
         {
             if (!Current || Busy || SourceId() is not { } id) return;
             _saving = true; SyncState();
-            try { await _controller.ConfigureWebhookAsync(id, false, _owner); }
+            try { var result = await _controller.ConfigureWebhookAsync(id, false, _owner); if (Current) _error.Text = result.Succeeded ? "" : result.Message ?? ""; }
             finally { _saving = false; if (Current) SyncState(); }
         };
-        _rotateEndpoint = U.Action(T("webhook.endpoint.rotate"), "AutoscanWebhookRotate"); _rotateEndpoint.Click += async (_, _) => { if (Current && SourceId() is { } id) await _page.RotateAsync(id, _owner); };
+        _rotateEndpoint = U.Action(T("webhook.endpoint.rotate"), "AutoscanWebhookRotate"); _rotateEndpoint.Click += async (_, _) => { if (!Current || Busy || SourceId() is not { } id) return; var result = await _page.RotateAsync(id, _owner); if (Current && result != null) _error.Text = result.Succeeded ? "" : result.Message ?? ""; };
         actions.Children.Add(_copyEndpoint); actions.Children.Add(_generateEndpoint); actions.Children.Add(_rotateEndpoint); section.Children.Add(actions);
         var reload = U.Action("Reload endpoint state", "AutoscanWebhookReload"); reload.Click += async (_, _) => { if (Current) { await _controller.ReloadAsync(); SyncWebhook(); } }; section.Children.Add(reload);
         section.Children.Add(U.Text(T("webhook.endpoint.alreadySetUp"), 12, true));
@@ -44,7 +44,7 @@ internal sealed partial class AdminAutoscanSourceEditor
     {
         if (_webhookInstructions == null) return;
         var section = _webhookInstructions; section.Children.Clear();
-        var provider = _draft == null ? "auto" : ProviderConnectionConfig.Scalar(_draft.Config.GetValueOrDefault("webhook_provider"));
+        var provider = _draft == null ? _createdProvider ?? "auto" : ProviderConnectionConfig.Scalar(_draft.Config.GetValueOrDefault("webhook_provider"));
         if (provider is not ("auto" or "sonarr" or "radarr")) provider = _draft == null ? "auto" : P.Provider(_draft.Descriptor);
         section.Children.Add(U.Text(T("webhook.instructions.copyStep"), 14));
         section.Children.Add(U.Text(T("webhook.instructions.settingsStep"), 14));

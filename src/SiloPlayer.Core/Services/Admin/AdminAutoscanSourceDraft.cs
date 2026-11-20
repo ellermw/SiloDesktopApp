@@ -32,7 +32,8 @@ public static class AdminAutoscanSourceDraft
         Enabled = enabled,
         DeliveryMode = source.DeliveryMode,
         PollIntervalSeconds = source.PollIntervalSeconds,
-        PathRewrites = source.PathRewrites.Select(row => new AdminAutoscanPathRewrite { From = row.From, To = row.To }).ToList(),
+        // Trimmed, complete rewrites only: the shape the server stores (sourceUpdateBody / cleanRewrites).
+        PathRewrites = source.PathRewrites.Select(row => new AdminAutoscanPathRewrite { From = row.From.Trim(), To = row.To.Trim() }).Where(row => row.From.Length > 0 && row.To.Length > 0).ToList(),
         SourceConfig = new(source.SourceConfig),
         Label = source.Label,
     };
@@ -44,7 +45,8 @@ public static class AdminAutoscanSourceDraft
         {
             var from = !string.IsNullOrWhiteSpace(row.From);
             var to = !string.IsNullOrWhiteSpace(row.To);
-            if (from != to) return false;
+            // A new webhook source starts with seeded rows that only carry the Silo side; until touched they are suggestions, not unfinished input.
+            if (from != to && !(creating && webhook)) return false;
             if (from) usable++;
         }
         return !webhook || usable > 0 || (!creating && !hadMappings);

@@ -49,6 +49,9 @@ public sealed class AdminAutoscanSourceDraftTests
         Assert.True(AdminAutoscanSourceDraft.ValidMappings([], webhook: true, hadMappings: false, creating: false));
         Assert.False(AdminAutoscanSourceDraft.ValidMappings([], webhook: true, hadMappings: true, creating: false));
         Assert.True(AdminAutoscanSourceDraft.ValidMappings([new() { From = " /source ", To = " /target " }], true, false, true));
+        // Seeded rows with only the Silo side do not block a new webhook source that has one complete mapping.
+        Assert.True(AdminAutoscanSourceDraft.ValidMappings([new() { From = "/source", To = "/target" }, new() { To = "/seeded" }], webhook: true, hadMappings: false, creating: true));
+        Assert.False(AdminAutoscanSourceDraft.ValidMappings([new() { From = "/source", To = "/target" }, new() { To = "/seeded" }], webhook: true, hadMappings: true, creating: false));
     }
 
     [Fact]

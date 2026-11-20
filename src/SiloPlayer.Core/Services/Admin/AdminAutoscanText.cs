@@ -7,6 +7,31 @@ public static class AdminAutoscanText
 {
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        // web.admin.common.autoscan.* notices, same pinned en.json.
+        ["common.connectionCreateUnconfirmed"] = "Connection creation could not be confirmed. Refresh connections before submitting again.",
+        ["common.connectionCreated"] = "Autoscan connection created",
+        ["common.pollAlreadyRunning"] = "A poll is already running and may skip recently polled sources. Press Run now again when it finishes to poll every source.",
+        ["common.pollStartUnconfirmed"] = "Autoscan start could not be confirmed. Check task and activity state before running again.",
+        ["common.pollStarted"] = "Autoscan poll started on this server process. Check activity for source outcomes.",
+        ["common.settingsSaved"] = "Autoscan settings saved",
+        ["common.settingsSavedNoRescheduler"] = "Settings saved; no poll-task rescheduler is configured on this server.",
+        ["common.settingsSavedRescheduleFailed"] = "Settings saved, but poll-task rescheduling failed. Runtime may retain its previous schedule until restart.",
+        ["common.settingsUnconfirmed"] = "Settings persistence could not be confirmed. Reload settings before submitting again.",
+        ["common.sourceCreated"] = "Autoscan source created",
+        ["common.sourceDeleteUnconfirmed"] = "Source deletion could not be confirmed. Refresh sources before submitting again; running work may continue.",
+        ["common.sourceDeleted"] = "Autoscan source deleted",
+        ["common.sourceSaved"] = "Autoscan source saved",
+        ["common.sourceWriteUnconfirmed"] = "Source write could not be confirmed. Refresh sources before another explicit submission.",
+        ["common.webhookCreated"] = "Webhook endpoint created or already configured",
+        ["common.webhookRotated"] = "Webhook URL rotated. Copy the new URL into Sonarr or Radarr; the old one no longer works.",
+        ["common.webhookUnconfirmed"] = "Webhook change could not be confirmed. Refresh source state before another explicit submission.",
+        // Native-only wording for local refusals (nothing was sent).
+        ["sourceDialog.changedUnderneath"] = "This source changed. Close and reopen Edit to review the current configuration.",
+        ["sourceDialog.notWebhook"] = "This source is not in webhook delivery mode.",
+        ["sources.pluginsUnavailable"] = "The Plugins page is not available in this app yet.",
+        ["sourceDialog.busy"] = "Another change or read is still in progress. Wait a moment and try again.",
+        ["sourceDialog.reviewList"] = "Close the editor and review the reloaded list before submitting again.",
+        ["sourceDialog.invalidRequest"] = "The source configuration is invalid or too large. Check it and try again.",
         ["connections.delete.confirm"] = "Delete",
         ["connections.delete.description"] = "“{name}” will be removed. Deletion is blocked while scan sources reference this connection. Reconfigure those sources first.",
         ["connections.delete.title"] = "Delete connection?",
@@ -253,6 +278,12 @@ public static class AdminAutoscanText
         ["webhook.triggerHint.listAnd"] = "{items} and {last}",
         ["webhook.triggerHint.text"] = "Paste into {settings_path}, method POST. Tick {triggers}.",
     };
+    /// <summary>The formatted message split on its rich-text tags (for an inline link), tag null for plain text.</summary>
+    public static IReadOnlyList<(string Text, string? Tag)> Rich(string key, params (string Name, object? Value)[] values)
+    {
+        var args = values.ToDictionary(value => value.Name, value => value.Value);
+        return AdminLibrariesText.Segments(English.TryGetValue(key, out var pattern) ? AdminText.Format(pattern, args) : AppStrings.Get(key, args, fallback: key));
+    }
     public static string T(string key, params (string Name, object? Value)[] values)
     {
         var args = values.ToDictionary(value => value.Name, value => value.Value);

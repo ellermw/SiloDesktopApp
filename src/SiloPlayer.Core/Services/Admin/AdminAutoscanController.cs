@@ -10,6 +10,8 @@ public sealed record AdminAutoscanState
     public bool Loading { get; init; }
     public bool Busy { get; init; }
     public bool Stale { get; init; }
+    /// <summary>A write's outcome is unknown; writes stay closed until the canonical state has been read again.</summary>
+    public bool UnknownOutcome { get; init; }
     public string? Error { get; init; }
     public string? Notice { get; init; }
     public AdminAutoscanSettings? Settings { get; init; }
@@ -88,6 +90,8 @@ public sealed class AdminAutoscanController : IDisposable
                 Sources = sources.Result?.Items ?? _state.Sources,
                 SourcesComplete = sources.Result?.IsComplete ?? _state.SourcesComplete,
                 Stale = !fresh,
+                // The canonical state has been read again: an unknown outcome no longer blocks writes.
+                UnknownOutcome = _state.UnknownOutcome && !fresh,
                 Error = fresh ? null : AdminAutoscanText.T(_state.Loaded ? "sources.refreshFailed" : "sources.loadFailed"),
                 Available = available.Result?.Items ?? _state.Available,
                 Connections = connections.Result?.Items ?? _state.Connections,
@@ -99,42 +103,60 @@ public sealed class AdminAutoscanController : IDisposable
         Changed?.Invoke();
     }
 
-    public Task<AdminAutoscanSettingsResult?> SetEnabledAsync(bool enabled, MonitorAuthorityLease owner) => MutateAsync(owner, null, async (lease, state) =>
+    public Task<AdminAutoscanResult<AdminAutoscanSettingsResult>> SetEnabledAsync(bool enabled, MonitorAuthorityLease owner) => MutateAsync(owner, null, async (lease, state) =>
     {
         var saved = state.Settings!;
         return await _api.UpdateSettingsAsync(lease, new() { Enabled = enabled, DefaultPollIntervalSeconds = saved.DefaultPollIntervalSeconds, DebounceSeconds = saved.DebounceSeconds }).ConfigureAwait(false);
-    }, result => result.RescheduleState == "failed" ? "Settings saved; poll-task rescheduling failed on this process. Review Activity before running again."
-        : result.RescheduleState == "not_configured" ? "Settings saved; poll-task rescheduling is not configured on this process." : "Settings saved; rescheduling applied on this process.");
+    }, result => AdminAutoscanText.T(result.RescheduleState == "failed" ? "common.settingsSavedRescheduleFailed"
+        : result.RescheduleState == "not_configured" ? "common.settingsSavedNoRescheduler" : "common.settingsSaved"),
+    AdminAutoscanText.T("common.settingsUnconfirmed"));
 
-    public Task<AdminAutoscanTriggerReceipt?> TriggerAsync(MonitorAuthorityLease owner) => MutateAsync(owner, null,
-        (lease, _) => _api.TriggerAsync(lease), _ => "Autoscan poll task accepted on this process. This is not scan completion; inspect Activity for per-source outcomes.");
-    public Task<object?> DeleteAsync(string id, MonitorAuthorityLease owner) => MutateAsync<object>(owner, id, async (lease, _) =>
-    { await _api.DeleteSourceAsync(lease, id).ConfigureAwait(false); return new object(); }, _ => "Source deleted. Already-running work may continue.");
-    public Task<AdminAutoscanSource?> SetSourceEnabledAsync(string id, bool enabled, MonitorAuthorityLease owner) => MutateAsync(owner, id,
-        (lease, state) => _api.UpdateSourceAsync(lease, id, AdminAutoscanSourceDraft.FromSource(state.Sources.Single(s => s.Id == id), enabled)), _ => "Source saved.");
-    public Task<AdminAutoscanSource?> CreateSourceAsync(string pluginId, string capabilityId, AdminAutoscanSourceWrite body, MonitorAuthorityLease owner) =>
-        MutateAsync(owner, null, (lease, _) => _api.CreateSourceAsync(lease, pluginId, capabilityId, body), _ => "Source created.");
-    public Task<AdminAutoscanSource?> UpdateSourceAsync(string id, AdminAutoscanSourceWrite body, MonitorAuthorityLease owner, AdminAutoscanSource? baseline = null) =>
+    public Task<AdminAutoscanResult<AdminAutoscanTriggerReceipt>> TriggerAsync(MonitorAuthorityLease owner) => MutateAsync(owner, null,
+        (lease, _) => _api.TriggerAsync(lease), _ => AdminAutoscanText.T("common.pollStarted"), AdminAutoscanText.T("common.pollStartUnconfirmed"),
+        // The trigger's only documented 409: a poll is already running here. A known state, not an unknown outcome.
+        refusal: error => error.StatusCode == 409 ? AdminAutoscanText.T("common.pollAlreadyRunning") : null);
+    public Task<AdminAutoscanResult<object>> DeleteAsync(string id, MonitorAuthorityLease owner) => MutateAsync<object>(owner, id, async (lease, _) =>
+    { await _api.DeleteSourceAsync(lease, id).ConfigureAwait(false); return new object(); }, _ => AdminAutoscanText.T("common.sourceDeleted"), AdminAutoscanText.T("common.sourceDeleteUnconfirmed"));
+    public Task<AdminAutoscanResult<AdminAutoscanSource>> SetSourceEnabledAsync(string id, bool enabled, MonitorAuthorityLease owner) => MutateAsync(owner, id,
+        (lease, state) => _api.UpdateSourceAsync(lease, id, AdminAutoscanSourceDraft.FromSource(state.Sources.Single(s => s.Id == id), enabled)),
+        _ => AdminAutoscanText.T("common.sourceSaved"), AdminAutoscanText.T("common.sourceWriteUnconfirmed"));
+    public Task<AdminAutoscanResult<AdminAutoscanSource>> CreateSourceAsync(string pluginId, string capabilityId, AdminAutoscanSourceWrite body, MonitorAuthorityLease owner) =>
+        MutateAsync(owner, null, (lease, _) => _api.CreateSourceAsync(lease, pluginId, capabilityId, body),
+            _ => AdminAutoscanText.T("common.sourceCreated"), AdminAutoscanText.T("common.sourceWriteUnconfirmed"));
+    public Task<AdminAutoscanResult<AdminAutoscanSource>> UpdateSourceAsync(string id, AdminAutoscanSourceWrite body, MonitorAuthorityLease owner, AdminAutoscanSource? baseline = null) =>
         MutateAsync(owner, id, (lease, state) =>
         {
             var live = state.Sources.Single(s => s.Id == id);
+            // Nothing has been sent yet: a changed row is a refusal to overwrite it blindly, not an unknown outcome.
             if (baseline != null && !AdminAutoscanEditorDraft.SameConfiguration(live, baseline))
-                throw new InvalidOperationException("The source changed. Close and reopen Edit to review it.");
+                throw new AdminAutoscanRefusedException(AdminAutoscanText.T("sourceDialog.changedUnderneath"));
             // Enabled belongs to the live row; the editor never overwrites its switch.
             body.Enabled = live.Enabled;
             return _api.UpdateSourceAsync(lease, id, body);
-        }, _ => "Source saved.");
-    public Task<AdminAutoscanSource?> ConfigureWebhookAsync(string id, bool rotate, MonitorAuthorityLease owner) => MutateAsync(owner, id,
-        (lease, state) => state.Sources.Single(s => s.Id == id).DeliveryMode == "webhook" ? _api.WebhookAsync(lease, id, rotate) : throw new InvalidOperationException(),
-        _ => rotate ? "Webhook URL rotated. Update the connected service with the new URL." : "Webhook URL generated.");
-    public Task<AdminAutoscanConnection?> CreateConnectionAsync(AdminAutoscanConnectionCreate body, MonitorAuthorityLease owner) =>
-        MutateAsync(owner, null, (lease, _) => _api.CreateConnectionAsync(lease, body), _ => "Server added.");
+        }, _ => AdminAutoscanText.T("common.sourceSaved"), AdminAutoscanText.T("common.sourceWriteUnconfirmed"));
+    public Task<AdminAutoscanResult<AdminAutoscanSource>> ConfigureWebhookAsync(string id, bool rotate, MonitorAuthorityLease owner) => MutateAsync(owner, id,
+        (lease, state) => state.Sources.Single(s => s.Id == id).DeliveryMode == "webhook" ? _api.WebhookAsync(lease, id, rotate) : throw new AdminAutoscanRefusedException(AdminAutoscanText.T("sourceDialog.notWebhook")),
+        _ => AdminAutoscanText.T(rotate ? "common.webhookRotated" : "common.webhookCreated"), AdminAutoscanText.T("common.webhookUnconfirmed"));
+    public Task<AdminAutoscanResult<AdminAutoscanConnection>> CreateConnectionAsync(AdminAutoscanConnectionCreate body, MonitorAuthorityLease owner) =>
+        MutateAsync(owner, null, (lease, _) => _api.CreateConnectionAsync(lease, body), _ => AdminAutoscanText.T("common.connectionCreated"),
+            AdminAutoscanText.T("common.connectionCreateUnconfirmed"), extraSecrets: [body.ApiKeyRef]);
 
+    /// <summary>Tests one draft or saved server. The check is not a configuration change; a failed check reports the server's own text.</summary>
     public async Task<AdminAutoscanConnectionCheck?> TestConnectionAsync(AdminAutoscanConnectionTest body, MonitorAuthorityLease owner, CancellationToken ct = default)
     {
         if (!IsCurrent(owner)) return null;
-        try { using var action = CaptureAction(owner); var result = await _api.TestConnectionAsync(action, body, ct).ConfigureAwait(false); return IsCurrent(owner) && !ct.IsCancellationRequested ? result : null; }
-        catch (Exception ex) when (ex is not OutOfMemoryException) { return IsCurrent(owner) ? new() { Ok = false } : null; }
+        try
+        {
+            using var action = CaptureAction(owner);
+            var result = await _api.TestConnectionAsync(action, body, ct).ConfigureAwait(false);
+            return IsCurrent(owner) && !ct.IsCancellationRequested ? result : null;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            if (!IsCurrent(owner) || ct.IsCancellationRequested || AdminFailures.Classify(ex, owner) is AdminFailureKind.Retired or AdminFailureKind.Cancelled) return null;
+            var text = ex is ApiException { StatusCode: >= 400 and < 500 and not 408 } api ? AdminAutoscanFailures.RefusalText(api, [body.ApiKeyRef]) : AdminAutoscanText.T("connections.form.testRequestFailed");
+            return new() { Ok = false, Error = text };
+        }
     }
     public async Task<IReadOnlyList<AdminAutoscanRequestIntegration>?> ReusableIntegrationsAsync(MonitorAuthorityLease owner, CancellationToken ct = default)
     {
@@ -160,36 +182,63 @@ public sealed class AdminAutoscanController : IDisposable
     {
         lock (_gate)
         {
-            if (!IsCurrent(owner) || _state.Busy || _state.Loading || _state.Stale) return null;
+            if (!IsCurrent(owner) || _state.Busy || _state.Loading || _state.Stale || _state.UnknownOutcome) return null;
             var source = _state.Sources.FirstOrDefault(s => s.Id == id);
             return source?.WebhookConfigured == true ? AdminAutoscanPresentation.WebhookUrl(source.WebhookUrl, owner.Context.BaseUrl) : null;
         }
     }
 
-    private async Task<T?> MutateAsync<T>(MonitorAuthorityLease owner, string? id, Func<MonitorAuthorityLease, AdminAutoscanState, Task<T>> operation, Func<T, string> receipt) where T : class
+    private async Task<AdminAutoscanResult<T>> MutateAsync<T>(MonitorAuthorityLease owner, string? id, Func<MonitorAuthorityLease, AdminAutoscanState, Task<T>> operation,
+        Func<T, string> receipt, string unconfirmed, Func<ApiException, string?>? refusal = null, string?[]? extraSecrets = null) where T : class
     {
         AdminAutoscanState snapshot;
         lock (_gate)
         {
             snapshot = _state;
-            if (!IsCurrent(owner) || snapshot.Busy || snapshot.Loading || snapshot.Stale || !snapshot.Loaded || snapshot.Settings == null ||
-                id != null && (!snapshot.SourcesComplete || !snapshot.Sources.Any(s => s.Id == id))) return null;
+            if (!IsCurrent(owner) || snapshot.Busy || snapshot.Loading || snapshot.Stale || snapshot.UnknownOutcome || !snapshot.Loaded || snapshot.Settings == null ||
+                id != null && (!snapshot.SourcesComplete || !snapshot.Sources.Any(s => s.Id == id))) return AdminAutoscanResult<T>.Skipped;
             _state = snapshot with { Busy = true, Error = null, Notice = null }; ++_revision;
         }
-        Changed?.Invoke(); T? result = null;
+        Changed?.Invoke();
+        T? result = null; Exception? failure = null;
         try { using var action = CaptureAction(owner); result = await operation(action, snapshot).ConfigureAwait(false); }
-        catch (Exception ex) when (ex is not OutOfMemoryException) { /* Never echo provider errors or replay a write. */ }
-        // Readback settles current state, never proves an unknown create/rotation receipt.
-        // Keep Busy through readback and receipt publication: another mutation
-        // cannot enter the gap between its predecessor's write and reconciliation.
-        await ReloadAsync(reconcilingWrite: true).ConfigureAwait(false);
+        catch (Exception ex) when (ex is not OutOfMemoryException) { failure = ex; /* Never replay a write. */ }
+
+        var secrets = snapshot.Sources.Select(s => s.WebhookUrl).Concat(extraSecrets ?? []).ToArray();
+        // A refusal is a definite answer: nothing was written and the admin may correct and retry.
+        // Anything else after a send is unknown until the canonical state has been read again.
+        AdminAutoscanOutcome outcome; string? message = null;
+        if (failure == null) { outcome = AdminAutoscanOutcome.Succeeded; message = receipt(result!); }
+        else if (AdminFailures.Classify(failure, owner) is AdminFailureKind.Retired or AdminFailureKind.Cancelled && !(failure is OperationCanceledException && failure.InnerException is TimeoutException))
+            outcome = AdminAutoscanOutcome.Skipped;
+        else if (failure is AdminAutoscanRefusedException local) { outcome = AdminAutoscanOutcome.Refused; message = local.Message; }
+        else if (failure is ArgumentException) { outcome = AdminAutoscanOutcome.Refused; message = AdminAutoscanText.T("sourceDialog.invalidRequest"); }
+        else if (failure is ApiException api && AdminAutoscanFailures.IsRefusal(api))
+        { outcome = AdminAutoscanOutcome.Refused; message = refusal?.Invoke(api) ?? AdminAutoscanFailures.RefusalText(api, secrets); }
+        else { outcome = AdminAutoscanOutcome.Unknown; message = unconfirmed; }
+
         lock (_gate)
         {
-            if (!IsCurrent(owner)) return null;
-            _state = _state with { Busy = false, Notice = result != null ? receipt(result) : null,
-                Error = result == null ? "The change could not be confirmed. Review the reloaded state before another explicit submission." : _state.Error };
+            if (!IsCurrent(owner)) return AdminAutoscanResult<T>.Skipped;
+            // Keep Busy through any readback and receipt publication: another change
+            // cannot enter the gap between its predecessor's write and reconciliation.
+            _state = _state with { UnknownOutcome = outcome == AdminAutoscanOutcome.Unknown };
         }
-        Changed?.Invoke(); return result;
+        // A refusal changed nothing, so the loaded state stands (unless the server says the target moved: 404 or 409);
+        // everything else is re-read, never replayed.
+        if (outcome is AdminAutoscanOutcome.Succeeded or AdminAutoscanOutcome.Unknown || failure is ApiException { StatusCode: 404 or 409 }) await ReloadAsync(reconcilingWrite: true).ConfigureAwait(false);
+        lock (_gate)
+        {
+            if (!IsCurrent(owner)) return AdminAutoscanResult<T>.Skipped;
+            _state = _state with
+            {
+                Busy = false,
+                Notice = outcome == AdminAutoscanOutcome.Succeeded ? message : null,
+                Error = outcome is AdminAutoscanOutcome.Refused or AdminAutoscanOutcome.Unknown ? message : _state.Error,
+            };
+        }
+        Changed?.Invoke();
+        return new(outcome, outcome == AdminAutoscanOutcome.Succeeded ? result : null, message);
     }
     private void OnRetired() { Clear(); Retired?.Invoke(); }
     private void ClearSecrets()
@@ -199,3 +248,6 @@ public sealed class AdminAutoscanController : IDisposable
     public void Dispose()
     { lock (_gate) { if (_disposed) return; _disposed = true; } _lifetime.Retired -= OnRetired; _lifetime.Dispose(); Clear(); Changed = null; Retired = null; }
 }
+
+/// <summary>Raised before anything is sent when the change is refused locally (the stored row moved, or the source is not a webhook).</summary>
+internal sealed class AdminAutoscanRefusedException(string message) : Exception(message);

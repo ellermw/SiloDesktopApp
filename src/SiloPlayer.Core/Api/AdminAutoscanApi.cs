@@ -18,11 +18,11 @@ public sealed class AdminAutoscanApi(SiloApiClient client)
                 AdminPaging.WithPage(Root + "/" + suffix, limit, cursor), ct: token)!, identity, ct);
 
     public Task<AdminListRead<AdminAutoscanSource>> ListSourcesAsync(MonitorAuthorityLease lease, CancellationToken ct = default) =>
-        Walk(lease, "sources", s => s.Id, ct);
+        Walk<AdminAutoscanSource>(lease, "sources", s => s.Id, ct);
     public Task<AdminListRead<AdminAutoscanAvailableSource>> ListAvailableSourcesAsync(MonitorAuthorityLease lease, CancellationToken ct = default) =>
-        Walk(lease, "scan-source-plugins", s => string.IsNullOrEmpty(s.PluginId) || string.IsNullOrEmpty(s.CapabilityId) ? null : s.PluginId + "\n" + s.CapabilityId, ct);
+        Walk<AdminAutoscanAvailableSource>(lease, "scan-source-plugins", s => string.IsNullOrEmpty(s.PluginId) || string.IsNullOrEmpty(s.CapabilityId) ? null : s.PluginId + "\n" + s.CapabilityId, ct);
     public Task<AdminListRead<AdminAutoscanConnection>> ListConnectionsAsync(MonitorAuthorityLease lease, CancellationToken ct = default) =>
-        Walk(lease, "connections", c => c.Id, ct);
+        Walk<AdminAutoscanConnection>(lease, "connections", c => c.Id, ct);
     public async Task<IReadOnlyList<AdminAutoscanRequestIntegration>> ReusableIntegrationsAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
     {
         const string path = "/api/v2/admin/request-integrations";
@@ -76,7 +76,7 @@ public sealed class AdminAutoscanApi(SiloApiClient client)
         var payload = SourceBody(body);
         payload["plugin_id"] = pluginId; payload["capability_id"] = capabilityId;
         var result = await client.AdminAutoscanSendAsync<AdminAutoscanSource>(lease, HttpMethod.Post, Root + "/sources", HttpStatusCode.Created, payload, ct).ConfigureAwait(false);
-        ValidateId(result.Id);
+        RequireReturnedId(result.Id);
         if (result.PluginId != pluginId || result.CapabilityId != capabilityId) throw new InvalidDataException("The server returned a different source type.");
         return result;
     }
@@ -114,7 +114,7 @@ public sealed class AdminAutoscanApi(SiloApiClient client)
         if (!string.IsNullOrEmpty(body.RequestIntegrationId)) payload["request_integration_id"] = body.RequestIntegrationId;
         else { payload["base_url"] = body.BaseUrl; if (body.ApiKeyRef.Length > 0) payload["api_key_ref"] = body.ApiKeyRef; }
         var result = await client.AdminAutoscanSendAsync<AdminAutoscanConnection>(lease, HttpMethod.Post, Root + "/connections", HttpStatusCode.Created, payload, ct).ConfigureAwait(false);
-        ValidateId(result.Id);
+        RequireReturnedId(result.Id);
         return result;
     }
     public Task<AdminAutoscanConnectionCheck> TestConnectionAsync(MonitorAuthorityLease lease, AdminAutoscanConnectionTest body, CancellationToken ct = default)
@@ -124,6 +124,11 @@ public sealed class AdminAutoscanApi(SiloApiClient client)
         else if (!string.IsNullOrEmpty(body.RequestIntegrationId)) payload["request_integration_id"] = body.RequestIntegrationId;
         else { payload["base_url"] = body.BaseUrl; if (body.ApiKeyRef.Length > 0) payload["api_key_ref"] = body.ApiKeyRef; }
         return client.AdminAutoscanSendAsync<AdminAutoscanConnectionCheck>(lease, HttpMethod.Post, Root + "/connections/test", HttpStatusCode.OK, payload, ct);
+    }
+    // A write answered without a usable identity was sent: its outcome is unknown, never "nothing was sent".
+    private static void RequireReturnedId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length > 256) throw new InvalidDataException("The server answered without a usable identity.");
     }
     private static void ValidateId(string id)
     {

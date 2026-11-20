@@ -35,7 +35,7 @@ public sealed class AdminAutoscanSourcesWorkflowTests
         await controller.OpenAsync(); var owner = controller.State.Owner!;
         var write = controller.SetEnabledAsync(false, owner); await entered.Task;
         Assert.True(controller.State.Busy); Assert.True(controller.State.Loading);
-        Assert.Null(await controller.DeleteAsync("one", owner));
+        Assert.Equal(AdminAutoscanOutcome.Skipped, (await controller.DeleteAsync("one", owner)).Outcome);
         readback.SetResult(AdminMonitorKit.Json(Sources)); await write;
         Assert.False(controller.State.Busy);
         Assert.Single(kit.Http.Requests.Where(r => r.StartsWith("PUT") || r.StartsWith("DELETE")));
@@ -95,7 +95,7 @@ public sealed class AdminAutoscanSourcesWorkflowTests
         using var controller = new AdminAutoscanController(new(kit.Client), authority);
         await controller.OpenAsync();
         var created = await controller.CreateSourceAsync("p", "c", new() { DeliveryMode = "poll" }, controller.State.Owner!);
-        Assert.Null(created); Assert.Single(kit.Http.Requests.Where(r => r.StartsWith("POST")));
+        Assert.Equal(AdminAutoscanOutcome.Unknown, created.Outcome); Assert.Null(created.Value); Assert.Single(kit.Http.Requests.Where(r => r.StartsWith("POST")));
         Assert.Contains("could not be confirmed", controller.State.Error!);
     }
 

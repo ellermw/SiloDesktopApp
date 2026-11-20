@@ -6,6 +6,7 @@
     "src/SiloPlayer.Core/Models/Admin/AdminAutoscanModels.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminAutoscanController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminAutoscanEditorDraft.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminAutoscanOutcome.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminAutoscanPresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminAutoscanRunNow.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminAutoscanSourceDraft.cs",

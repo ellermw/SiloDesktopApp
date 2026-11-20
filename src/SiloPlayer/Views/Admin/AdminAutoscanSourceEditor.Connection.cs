@@ -54,11 +54,13 @@ internal sealed partial class AdminAutoscanSourceEditor
         string ReuseId() => (reuse.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
         string Kind() => (kind.SelectedItem as ComboBoxItem)?.Tag as string ?? kinds[0];
         var serverRows = new Dictionary<string, AdminAutoscanRequestIntegration>();
+        // After an unknown creation outcome the draft stays locked: adding again could duplicate the server.
+        var createLocked = false;
         void Update()
         {
             var linked = ReuseId().Length > 0; manualFields.Visibility = linked ? Visibility.Collapsed : Visibility.Visible;
             test.IsEnabled = !_testing && !_connectionSaving && (linked || url.Text.Trim().Length > 0);
-            create.IsEnabled = !_testing && !_connectionSaving && (linked || name.Text.Trim().Length > 0 && url.Text.Trim().Length > 0 && key.Password.Trim().Length > 0);
+            create.IsEnabled = !createLocked && !_testing && !_connectionSaving && (linked || name.Text.Trim().Length > 0 && url.Text.Trim().Length > 0 && key.Password.Trim().Length > 0);
             cancel.IsEnabled = !_connectionSaving; select.IsEnabled = !_connectionSaving;
         }
         void Edit() { Changed(); outcome.Text = ""; Update(); }
@@ -100,7 +102,9 @@ internal sealed partial class AdminAutoscanSourceEditor
             try
             {
                 var result = await _controller.TestConnectionAsync(request, _owner, _reads.Token);
-                if (Current && generation == _generation) outcome.Text = result?.Ok == true ? T("connections.form.connected") : T("connections.form.testRequestFailed");
+                if (Current && generation == _generation)
+                    outcome.Text = result?.Ok == true ? (string.IsNullOrEmpty(result.Version) ? T("connections.form.connected") : T("connections.form.connectedVersion", ("version", result.Version)))
+                        : result?.Error is { Length: > 0 } reason ? reason : T("connections.form.connectionFailed");
             }
             finally { request.ApiKeyRef = ""; _testing = false; if (Current) Update(); }
         };
@@ -114,10 +118,13 @@ internal sealed partial class AdminAutoscanSourceEditor
             {
                 var result = await _controller.CreateConnectionAsync(request, _owner);
                 if (!Current || generation != _generation) return;
+                // A definite refusal keeps the typed fields so they can be corrected and sent again.
+                if (result.Outcome == AdminAutoscanOutcome.Refused) { outcome.Text = result.Message ?? ""; return; }
+                if (!result.Succeeded)
+                { createLocked = result.Outcome == AdminAutoscanOutcome.Unknown; outcome.Text = result.Outcome == AdminAutoscanOutcome.Unknown ? (result.Message ?? "") + " " + T("sourceDialog.reviewList") : T("sourceDialog.busy"); return; }
                 key.Password = "";
-                if (result == null)
-                { outcome.Text = "Server creation could not be confirmed. Review the reloaded server list before adding again."; create.IsEnabled = false; return; }
-                var item = new ComboBoxItem { Content = result.Name, Tag = result.Id }; select.Items.Insert(Math.Max(0, select.Items.Count - 1), item); select.SelectedItem = item; draft.ConnectionId = result.Id; Dirty = true; add.Visibility = Visibility.Collapsed;
+                var created = result.Value!;
+                var item = new ComboBoxItem { Content = created.Name, Tag = created.Id }; select.Items.Insert(Math.Max(0, select.Items.Count - 1), item); select.SelectedItem = item; draft.ConnectionId = created.Id; Dirty = true; add.Visibility = Visibility.Collapsed;
             }
             finally { request.ApiKeyRef = ""; _connectionSaving = false; if (Current) { SyncState(); Update(); } }
         };

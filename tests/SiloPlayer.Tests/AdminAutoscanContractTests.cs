@@ -137,15 +137,31 @@ public sealed class AdminAutoscanContractTests
     }
 
     [Fact]
-    public void SavedSecretIsWriteOnlyPreservedWhenUnchangedAndClearedOnRetirement()
+    public void SecretAndDynamicFieldsAreNeverOfferedAndTheirStoredValuesReturnUnchangedWhenConfigChanges()
     {
-        var source = new AdminAutoscanSource { DeliveryMode = "poll", SourceConfig = new() { ["secret"] = "synthetic-secret", ["text"] = "old" } };
-        var descriptor = new AdminAutoscanDescriptor { ConfigForm = new() { Fields = [new() { Key = "secret", Secret = true }, new() { Key = "text" }] } };
+        var source = new AdminAutoscanSource { DeliveryMode = "poll", SourceConfig = new() { ["secret"] = "synthetic-secret", ["lookup"] = "synthetic-lookup", ["text"] = "old" } };
+        var descriptor = new AdminAutoscanDescriptor { ConfigForm = new() { Fields = [
+            new() { Key = "secret", Secret = true }, new() { Key = "password", Control = "PASSWORD" }, new() { Key = "lookup", DynamicOptions = true }, new() { Key = "text" }] } };
         var draft = new AdminAutoscanEditorDraft(source, descriptor);
-        Assert.Equal("", draft.Config["secret"]); draft.ConfigDirty = true; draft.Config["text"] = "new";
+        // The server drops these fields from source forms; no control, value or validation exists for them here.
+        Assert.Equal(["text"], draft.Form.Fields.Select(field => field.Key));
+        Assert.DoesNotContain("secret", draft.Config.Keys);
+        // An untouched config goes back exactly as stored; a changed one keeps what the form never offered.
         Assert.Equal("synthetic-secret", draft.Build(source).SourceConfig["secret"]);
-        draft.ClearedSecrets.Add("secret"); Assert.Equal("", draft.Build(source).SourceConfig["secret"]);
-        draft.Dispose(); Assert.Empty(draft.Config); Assert.Empty(draft.ClearedSecrets);
+        draft.ConfigDirty = true; draft.Config["text"] = "new";
+        var body = draft.Build(source).SourceConfig;
+        Assert.Equal("synthetic-secret", body["secret"]); Assert.Equal("synthetic-lookup", body["lookup"]); Assert.Equal("new", body["text"]);
+        draft.Dispose(); Assert.Empty(draft.Config);
+    }
+
+    [Fact]
+    public void EmptyStoredValueStaysAndUntouchedDefaultlessFieldStaysAbsent()
+    {
+        var source = new AdminAutoscanSource { DeliveryMode = "poll", SourceConfig = new() { ["held"] = "" } };
+        var descriptor = new AdminAutoscanDescriptor { ConfigForm = new() { Fields = [new() { Key = "held" }, new() { Key = "never" }] } };
+        using var draft = new AdminAutoscanEditorDraft(source, descriptor); draft.ConfigDirty = true;
+        var config = draft.Build(source).SourceConfig;
+        Assert.Equal("", config["held"]); Assert.False(config.ContainsKey("never"));
     }
 
     [Fact]

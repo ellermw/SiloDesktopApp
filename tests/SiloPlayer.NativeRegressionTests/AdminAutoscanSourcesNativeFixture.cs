@@ -60,7 +60,11 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             Check(Need<Button>(shell, "AutoscanRunNow").Visibility == Visibility.Collapsed, "Run now hides when Autoscan is off");
             Need<ToggleSwitch>(shell, "AutoscanEnabled").IsOn = true; await Settled(page);
             await Invoke(Need<Button>(shell, "AutoscanRunNow")); await Settled(page);
-            Check(page.Controller!.State.Notice?.Contains("process") == true && page.Controller.State.Notice?.Contains("completion") == true, "Run now explains process acknowledgement versus scan completion");
+            Check(page.Controller!.State.Notice?.Contains("process") == true && page.Controller.State.Notice?.Contains("completed") != true, "Run now reports a process-level start, never scan completion");
+            // A poll already running is a known state (409), not an unknown outcome: writes stay open.
+            server.TriggerConflict = true; await Invoke(Need<Button>(shell, "AutoscanRunNow")); await Settled(page);
+            Check(page.Controller.State.Error?.Contains("already running") == true && !page.Controller.State.UnknownOutcome && Need<Button>(shell, "AutoscanRunNow").IsEnabled, "Run now answered with a conflict says a poll is already running and stays usable");
+            server.TriggerConflict = false;
 
             // Full polling create: descriptor, inline manual connection, test, mappings and source receipt.
             await Invoke(Need<Button>(shell, "AutoscanAdd"));
@@ -115,7 +119,45 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             await Invoke(Need<Button>(shell, "AutoscanEditorDelete")); await Until(() => Dialog(window) != null); await Invoke(Need<Button>(Dialog(window)!, "PrimaryButton"));
             await Until(() => Dialog(window) == null && Find<Grid>(shell, "AutoscanEditor") == null); await Settled(page);
             Check(server.Sources.All(s => s.Id != webhook.Id), "confirmed delete removes only the selected source");
+            // A webhook source whose endpoint generation fails stays in the Connect flow with a retry; the create is not repeated.
+            var createsBefore = server.Requests.Count(r => r == "POST /api/v2/admin/autoscan/sources");
+            server.FailWebhookCreates = 1;
+            await Invoke(Need<Button>(shell, "AutoscanAdd")); await Invoke(Need<Button>(shell, "AutoscanPlugin_fixture.webhook_arr"));
+            Need<TextBox>(shell, "AutoscanMappingFrom_0").Text = "/arr/movies"; Need<TextBox>(shell, "AutoscanLabel").Text = "Webhook retry";
+            await Invoke(Need<Button>(shell, "AutoscanEditorSave")); await Settled(page);
+            await Until(() => Find<Button>(shell, "AutoscanWebhookGenerate") is { Visibility: Visibility.Visible, IsEnabled: true });
+            Check(Texts(shell).Contains("Almost done — connect your service") && Need<TextBlock>(shell, "AutoscanEditorError").Text.Length > 0 && Need<Button>(shell, "AutoscanWebhookCopy").IsEnabled == false, "failed endpoint generation is reported and offers a retry");
+            await Invoke(Need<Button>(shell, "AutoscanWebhookGenerate")); await Settled(page);
+            await Until(() => Find<Button>(shell, "AutoscanWebhookCopy") is { IsEnabled: true });
+            Check(server.Requests.Count(r => r == "POST /api/v2/admin/autoscan/sources") == createsBefore + 1, "retrying endpoint generation never repeats the source creation");
+            await Invoke(Need<Button>(shell, "AutoscanEditorSave")); await Until(() => Find<Grid>(shell, "AutoscanEditor") == null);
+            server.Sources.Clear();
             server.Sources.AddRange(savedPollSources); await page.Controller!.ReloadAsync(); await Settled(page);
+
+            // A source write the server refuses (422): the editor stays open with the reason and the typed draft, and sends again once corrected.
+            await Invoke(Need<Button>(shell, "AutoscanEdit_original")); await Invoke(Need<Button>(shell, "AutoscanTab_general"));
+            Need<TextBox>(shell, "AutoscanLabel").Text = "Refused then corrected"; server.RefuseSourceWrites = 1;
+            var putsBefore = server.Requests.Count(r => r.StartsWith("PUT /api/v2/admin/autoscan/sources/original"));
+            await Invoke(Need<Button>(shell, "AutoscanEditorSave")); await Settled(page);
+            Check(Find<Grid>(shell, "AutoscanEditor") != null && Need<TextBlock>(shell, "AutoscanEditorError").Text.Contains("Invalid source configuration") && Need<TextBox>(shell, "AutoscanLabel").Text == "Refused then corrected", "a refused source write shows the server reason and keeps the draft editable");
+            Check(Need<Button>(shell, "AutoscanEditorSave").IsEnabled && !page.Controller!.State.UnknownOutcome && server.Sources.Single(s => s.Id == "original").Label == "Original source", "a refusal changes nothing and does not lock writes");
+            await Invoke(Need<Button>(shell, "AutoscanEditorSave")); await Until(() => Find<Grid>(shell, "AutoscanEditor") == null); await Settled(page);
+            Check(server.Sources.Single(s => s.Id == "original").Label == "Refused then corrected" && server.Requests.Count(r => r.StartsWith("PUT /api/v2/admin/autoscan/sources/original")) == putsBefore + 2, "the corrected source is sent once more, not replayed");
+
+            // An unknown outcome (transport loss after sending): the editor locks, the canonical state is re-read, and nothing is replayed.
+            await Invoke(Need<Button>(shell, "AutoscanEdit_original")); await Invoke(Need<Button>(shell, "AutoscanTab_general"));
+            Need<TextBox>(shell, "AutoscanLabel").Text = "Lost in transit"; server.DropSourceResponses = 1;
+            putsBefore = server.Requests.Count(r => r.StartsWith("PUT /api/v2/admin/autoscan/sources/original"));
+            await Invoke(Need<Button>(shell, "AutoscanEditorSave")); await Settled(page);
+            Check(Need<TextBlock>(shell, "AutoscanEditorError").Text.Contains("could not be confirmed") && !Need<Button>(shell, "AutoscanEditorSave").IsEnabled, "an unknown write outcome is reported and locks the editor");
+            Check(server.Requests.Count(r => r.StartsWith("PUT /api/v2/admin/autoscan/sources/original")) == putsBefore + 1 && server.Sources.Single(s => s.Id == "original").Label == "Refused then corrected", "an unknown write is sent once and never replayed");
+            await Invoke(Need<Button>(shell, "AutoscanEditorCancel")); await Until(() => Find<Grid>(shell, "AutoscanEditor") == null); await Settled(page);
+            Check(!page.Controller!.State.UnknownOutcome && !page.Controller.State.Stale, "the canonical state was read again after the unknown outcome");
+
+            // A row switch whose write is lost follows the saved value again once the state is re-read.
+            server.DropSourceResponses = 1; Need<ToggleSwitch>(shell, "AutoscanOn_original").IsOn = false; await Settled(page);
+            await Until(() => Find<ToggleSwitch>(shell, "AutoscanOn_original") is { IsOn: true, IsEnabled: true });
+            Check(server.Sources.Single(s => s.Id == "original").Enabled && page.Controller.State.Error?.Contains("could not be confirmed") == true, "a lost enable switch write reports the unknown outcome and the switch follows the saved value");
 
             server.FailSources = true; await page.Controller!.ReloadAsync(); await Until(() => Find<Button>(shell, "AutoscanRetry")?.Visibility == Visibility.Visible);
             Check(Find<FrameworkElement>(shell, "AutoscanSource_original") != null && !Need<Button>(shell, "AutoscanEdit_original").IsEnabled, "failed refresh retains stale rows and disables replacement writes");

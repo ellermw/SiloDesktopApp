@@ -108,6 +108,7 @@ public sealed class AdminAutoscanConnectionCheck
 {
     public bool Ok { get; set; }
     public string? Version { get; set; }
+    public string? Error { get; set; }
 }
 public sealed class AdminAutoscanProposedRewrite
 {

@@ -87,7 +87,10 @@ public static class AdminAutoscanPresentation
         return new(libraries.Where(l => l.Enabled && l.Paths.Any(root => paths.Any(path => Within(path, Normalize(root))))).ToArray(), false, false);
     }
     private static bool Within(string a, string b) => a.Length > 0 && b.Length > 0 && (a == b || a.StartsWith(b + '/', StringComparison.Ordinal) || b.StartsWith(a + '/', StringComparison.Ordinal));
-    public static string TargetsText(AdminAutoscanTargets targets) => targets.Unknown ? T("sources.targets.unknown") : targets.Unresolvable ? T("sources.targets.noPaths") : targets.Libraries.Count == 0 ? T("sources.targets.none") : string.Join(", ", targets.Libraries.Select(l => l.Name));
+    /// <summary>The row's Feeds column: only an unknown or empty result is words; otherwise the library names.</summary>
+    public static string TargetsText(AdminAutoscanTargets targets) => targets.Unknown ? T("sources.targets.unknown") : targets.Libraries.Count == 0 ? T("sources.targets.none") : string.Join(", ", targets.Libraries.Select(l => l.Name));
+    /// <summary>describeTargets: the edit dialog's "Feeds" summary.</summary>
+    public static string DescribeTargets(AdminAutoscanTargets targets) => targets.Unresolvable ? T("sources.targets.noPaths") : targets.Unknown ? T("sources.targets.unknown") : targets.Libraries.Count == 0 ? T("sources.targets.noMatch") : string.Join(", ", targets.Libraries.Select(l => l.Name));
     private static string? Kind(string type) => type.Trim().ToLowerInvariant() switch { "movie" or "movies" => "movie", "series" or "show" or "shows" or "tv" or "tvshows" => "tv", "mixed" => "mixed", _ => null };
     public static string? Fill(string? fillFrom, IReadOnlyList<AdminLibrary> libraries)
     {

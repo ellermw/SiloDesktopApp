@@ -9,14 +9,16 @@ public sealed class ProviderSchemaForm : StackPanel
     private readonly PluginAdminForm _form;
     private readonly Dictionary<string, object?> _values;
     private readonly Func<Dictionary<string, string>> _validate;
+    private readonly bool _nameControls;
     private readonly Dictionary<FrameworkElement, IEnumerable<PluginAdminFormCondition>?> _visibility = [];
     private readonly TextBlock _errors = new() { TextWrapping = TextWrapping.Wrap };
     public event Action? Changed;
     public bool IsValid => _validate().Count == 0;
-    public ProviderSchemaForm(PluginAdminForm form, Dictionary<string, object?> values) : this(form, values, null) { }
-    public ProviderSchemaForm(PluginAdminForm form, Dictionary<string, object?> values, Func<Dictionary<string, string>>? validate)
+    public ProviderSchemaForm(PluginAdminForm form, Dictionary<string, object?> values) : this(form, values, null, false) { }
+    /// <summary>Optional domain validation (for example fields hidden by a section condition) and accessible names/ids on every editor; the two-argument form is unchanged.</summary>
+    public ProviderSchemaForm(PluginAdminForm form, Dictionary<string, object?> values, Func<Dictionary<string, string>>? validate, bool nameControls = true)
     {
-        _form = form; _values = values; _validate = validate ?? (() => ProviderConnectionConfig.Validate(_form, _values)); Spacing = 12;
+        _form = form; _values = values; _nameControls = nameControls; _validate = validate ?? (() => ProviderConnectionConfig.Validate(_form, _values)); Spacing = 12;
         var sectionKeys = new HashSet<string>();
         foreach (var section in form.Sections ?? [])
         {
@@ -40,6 +42,7 @@ public sealed class ProviderSchemaForm : StackPanel
         void Set(object? next) { _values[field.Key] = next; Refresh(); Changed?.Invoke(); }
         void Name(FrameworkElement editor)
         {
+            if (!_nameControls) return;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(editor, field.Label);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(editor, "ProviderField_" + field.Key);
         }
