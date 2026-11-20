@@ -18,6 +18,112 @@ now resizes the real ended screen to 3440x1000 and measured the picture at 864-1
 Not observed: a physical 21:9 or 32:9 monitor with the installed player, other DPI scales, a live server and complete
 visual parity. Evidence: D:\SiloPlayer-build\finished-centering.
 
+# November 20 - Admin Manage Playback: Nodes and Playback Settings
+
+Branch `t3/admin-playback-nodes-settings`, merged with Beta `d90f40965` (stable `1.2.1194` plus the merged Library settings
+page; version unchanged here). Final run after that merge: playback-lead-final-r1 on merge commit 00fa14b66, build lease
+2026-11-20T16:45:54Z to 16:51:32Z: 341 focused and 9,854 full unit cases passed with no failures or skips; app build,
+publish and native host built; native selectors admin-playback-administration (94 PASS lines, 0 FAIL),
+admin-manage-library-settings, admin-manage-foundation, admin-configure-general and admin-monitor passed; source seal
+(2,503 build inputs) and 582-file payload unchanged across the run. The run named further below predates that merge. Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback`
+are registered and reachable through the real Admin navigation. Two earlier review findings (enabled switch restore,
+marker-task status badges) and seven findings of a second independent review were fixed: the egress limit can no longer
+overflow into an unhandled exception, the node acceleration override list matches the server's enum (no VideoToolbox), an
+untouched editor no longer blanks a stored address it cannot show, an older marker-task poll cannot overwrite a newer run,
+a hidden row's invalid draft no longer blocks Save, a definite 4xx refusal to run a marker task is no longer reported as
+"unconfirmed", and a failed background node refresh keeps the rows and polling. Observed: one `-Stage final` run
+(`playback-fix-final-r1`, lane `D:/SiloPlayer-build/admin-completion-lane-a`) on commit `cd39c93df`: focused unit tests
+282/0 failed, full unit suite 9,795/0 failed, native selectors `admin-playback-administration` (94 PASS, 0 FAIL),
+`admin-manage-foundation`, `admin-configure-general` and `admin-monitor` passed. One native assertion was changed (node
+list refresh failure no longer demands a review lock; official react-query page keeps data and keeps polling). Not
+observed: a live server, real phone/GPU/transcode node, network enrollment, all-DPI or assistive-technology runs, and
+side-by-side visual parity beyond the fixture captures. No push, pull request or release was made.
+See [scope, official contracts, findings and limits](parity/admin-playback.md).
+
+---
+
+# November 20 — Admin Requests submitted for Beta review
+
+The family below was committed, current Beta `f35bb7e59d14f8e7f2e53bac982953fa3d5dc7da`
+(`1.2.1194-beta.1`) was merged normally, and an independent recheck of the last
+review corrections found two P2 defects that are fixed with regression tests.
+Final run `recheck-green-r20` on the merged, corrected source passed 125 focused and
+9,734 full unit cases, the app build, publish and host build, and all six native
+groups. Details and receipts are in the [scoped handoff](parity/admin-manage-requests.md).
+The November 17 record follows unchanged.
+
+## November 17 — Admin Requests scoped acceptance
+
+Prepared branch `t3/admin-request-management` remains based on
+`248aafd62ed65b868c0e7356926e4d83204649cd`; app/numeric versions stay
+`1.2.1181-beta.1` / `1.2.1180.1`, with stamping reserved for the pipeline.
+The 25-path family implements Queue, Discover and Requests Settings, including
+server/plugin editors, routing and the authority-owned sidebar count.
+
+Official contract pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. A direct
+GitHub main fetch resolved `13dec5cc2d7f7de31c019a0de51faba0f66a980a`; scoped
+Requests contract paths and all 723 Requests catalog keys are unchanged.
+
+Final review found five further defects. Seven new native RED scenarios on the
+sealed r11 product reproduced saved-secret loss, fractional number/bound errors,
+missing preview overrides, queued-progress starvation and reopened unresolved
+mutations. Direct fixes retain private saved secrets only for unchanged
+connections, preserve numeric schema semantics, render named overrides, poll
+download presence and retain a canonical-review write barrier after failed reads.
+
+Fresh `review-green-r13` verification passed 125 focused / 8,057 full unit cases
+with no failures/skips, including one ignored source-root/Core-PDB proof, followed
+by nonincremental x64 app/host builds, self-contained publish and all six scoped
+native groups. Fixture-only viewport capture corrections then passed the same
+six groups as `capture-final-r14` on identical r13 product bytes. All fourteen
+corrective scenarios pass. Eleven primary captures were inspected or matched
+inspected bytes. The source/582-file payload seals and app DLL/PDB/PRI host
+equality passed; this is not an all-app/host-PDB source-document proof.
+
+The broader viewer permissions selector is not accepted: r9 failed an unchanged
+removal-dialog primary-button lookup; one bounded r10 continuation failed an
+unchanged profile-editor viewport assertion. Both failed receipts remain
+preserved; neither is reported as passing or expanded into unrelated changes.
+
+The last lease was PID 27040, ACQ `2026-11-17T17:55:34.0002725Z`, REL
+`2026-11-17T17:59:06.9558427Z`, exactly one nonblocking `WaitOne(0)`. Inclusive
+preflight was 32.6739758271724 GiB, with both drive floors satisfied. No cleanup
+occurred; the installed player and Requests977 remain untouched. Historical
+r5/r6/r11/r12/r13 payloads and failed receipts remain preserved.
+
+Evidence lives under `D:/SiloPlayer-build/admin-completion-requests`; the
+[scoped handoff](parity/admin-manage-requests.md) records source/payload hashes,
+historical failure boundaries and exact limits. Final independent read-only
+reviews precede the authorized non-draft Beta submission. This entry does not
+certify live-server/plugin interoperability, all DPI/accessibility, complete
+visual parity, an installer or a stable release.
+
+---
+
+# November 20 — Configure Providers candidate
+
+Configure > Integrations > Providers (`/admin/settings/providers`) is implemented on
+`t3/admin-provider-settings`, merged with fresh `origin/beta`; version stamps are unchanged.
+Official contracts were read at pinned Silo Server `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`
+(`ProvidersSettings.tsx`, `MarkerProviderTiles.tsx`, `WatchProviderTiles.tsx`). The page covers
+watch-provider plugin status, MDBList, subtitle providers (OpenSubtitles, SubDL, SubSource) and
+marker providers, with strong-ETag subtitle editors, single-send writes and no replay of unknown
+outcomes. Four review findings (Disconnect after authority replacement, truncation before
+redaction, unreachable marker reload, edits lost during a pending marker save) are fixed with
+regression tests. Scope, deviations and limits: [Providers](parity/admin-configure-providers.md).
+An independent read-only review of the final diff then confirmed those four fixes and reported one P1 and
+three P2 defects, all fixed with tests: Reload was unreachable after a failed credential-status or section
+read; an erased key or failed Disconnect made Test send an empty key; a non-submitter marker provider with
+stored sharing wrote contribute fields the admin never changed; and Save dropped a key typed while the
+credential status was unavailable.
+Final run `providers-lead-final-r1` on commit `07a7bc3c208ddbc40f14fd377194af746f114311`: 29 focused and
+9,726 full unit tests pass with zero failures or skips; the app build, self-contained publish and native host
+build pass; and the `admin-configure-providers` (89 checks), `admin-manage-foundation`,
+`admin-configure-general` and `admin-monitor` native selectors pass.
+Live-server compatibility, rendered-capture inspection and all-DPI/accessibility remain unverified.
+
+---
+
 # November 20 — Manage Libraries > Library settings Beta candidate
 
 Manage > Libraries > Library settings (/admin/settings/library, official page "Library & Metadata") is implemented in
