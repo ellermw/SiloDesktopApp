@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email and Security settings pages and the Network access tool page",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Library & Metadata settings, Playback History and Skip Markers read-only pages), and the Configure catalog with the General, Email and Security settings pages and the Network access tool page",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminLibrariesApi.Diagnostics.cs",
     "src/SiloPlayer.Core/Api/AdminLibrariesApi.cs",
@@ -12,6 +12,7 @@
     "src/SiloPlayer.Core/Api/AdminMonitorApi.cs",
     "src/SiloPlayer.Core/Api/AdminPlaybackHistoryApi.cs",
     "src/SiloPlayer.Core/Api/AdminServerSettingsApi.cs",
+    "src/SiloPlayer.Core/Api/AdminLibrarySettingsApi.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminActivity.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminLibraries.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.MonitorLogs.cs",
@@ -31,6 +32,8 @@
     "src/SiloPlayer.Core/Services/Admin/AdminActivityPresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminFolderBrowserSession.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminGeneralSettingsController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminLibrarySettingsController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminLibrarySettingsRules.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminLibrariesController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminLibrariesText.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminLibraryDiagnostics.cs",
@@ -137,6 +140,8 @@
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.Editors.cs",
     "src/SiloPlayer/Views/Admin/AdminDownloadSettingsPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminLibrarySettingsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminLibrarySettingsPage.xaml",
     "src/SiloPlayer.Core/Api/AdminSubtitlesApi.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminSubtitles.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminSubtitlesModels.cs",
