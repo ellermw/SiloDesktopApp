@@ -384,7 +384,7 @@ internal static class AdminSignInSecurityNativeFixture
     private static FrameworkElement? Scope;
     private static void Scroll(FrameworkElement page, double offset)
     {
-        DependencyObject? node = ((IAdminGutterScrollPage)page).ScrollContent;
+        DependencyObject? node = (DependencyObject?)page.GetType().GetProperty("ScrollContent")!.GetValue(page);
         while (node != null && node is not ScrollViewer) node = VisualTreeHelper.GetParent(node);
         Check(node is ScrollViewer, "page scroller found"); ((ScrollViewer)node!).ChangeView(null, offset, null, true);
     }
