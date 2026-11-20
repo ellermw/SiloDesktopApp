@@ -352,4 +352,60 @@ public sealed class AdminCollectionsReviewTests
         await controller.SaveAsync();
         Assert.DoesNotContain("poster_url", kit.Http.Bodies.First(b => b.Length > 0));
     }
+
+    // ── Third review (November 20) ─────────────────────────────────────────
+
+    // 1 - Removing the rows moves the collection's own counters and revision. Only a changed definition needs new consent.
+    [Theory]
+    [InlineData("{\"id\":\"c\",\"title\":\"Test\",\"visibility\":\"visible\",\"row_count\":0,\"home_row_count\":0,\"item_count\":4,\"updated_at\":\"2026-11-20T10:00:01Z\",\"last_sync_status\":\"success\"}", true)]
+    [InlineData("{\"id\":\"c\",\"title\":\"Renamed elsewhere\",\"visibility\":\"visible\",\"row_count\":0,\"home_row_count\":0,\"item_count\":3,\"updated_at\":\"2026-11-20T10:00:01Z\",\"last_sync_status\":\"running\"}", false)]
+    public async Task DeleteWithRowsIgnoresServerCountersButNotAChangedDefinition(string afterRows, bool deleted)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        var rowRemoved = false;
+        kit.Http.Respond = (r, _) =>
+        {
+            var path = r.RequestUri!.AbsolutePath;
+            if (r.Method == HttpMethod.Delete)
+            {
+                if (path.Contains("/sections/")) rowRemoved = true; else Assert.Equal("\"r2\"", r.Headers.GetValues("If-Match").Single());
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            }
+            if (path.EndsWith("/sections")) return Task.FromResult(Tagged("{\"items\":[{\"id\":\"s\",\"title\":\"Row\"}]}"));
+            if (path.Contains("/sections/")) return Task.FromResult(Tagged("{\"id\":\"s\",\"section_type\":\"collection\",\"config\":{\"library_collection_id\":\"c\"}}", "\"s1\""));
+            return Task.FromResult(rowRemoved ? Tagged(afterRows, "\"r2\"")
+                : Tagged("{\"id\":\"c\",\"title\":\"Test\",\"visibility\":\"visible\",\"row_count\":1,\"home_row_count\":1,\"item_count\":3,\"updated_at\":\"2026-11-20T10:00:00Z\",\"last_sync_status\":\"running\"}"));
+        };
+        var api = new AdminCollectionsApi(kit.Client); var plan = await api.PrepareDeleteAsync(owner, "c", true);
+        if (deleted) await api.DeleteAsync(owner, plan, true);
+        else await Assert.ThrowsAsync<AdminCollectionChangedException>(() => api.DeleteAsync(owner, plan, true));
+        Assert.Contains("DELETE /api/v2/admin/sections/s", kit.Http.Requests);
+        Assert.Equal(deleted, kit.Http.Requests.Contains("DELETE /api/v2/admin/collections/c"));
+    }
+
+    // 2 - Only mdblist.com and its subdomains are MDBList. A host that merely ends in those letters is somebody else's.
+    [Theory]
+    [InlineData("https://mdblist.com/lists/a/b", "https://mdblist.com/lists/a/b/json")]
+    [InlineData("https://www.mdblist.com/lists/a/b/", "https://www.mdblist.com/lists/a/b/json")]
+    [InlineData("https://notmdblist.com/lists/a/b", "")]
+    [InlineData("https://evilmdblist.com/lists/a/b", "")]
+    [InlineData("https://mdblist.com.evil.invalid/lists/a/b", "")]
+    [InlineData("https://mdblist.com:8443/lists/a/b", "")]
+    [InlineData("https://someone@mdblist.com/lists/a/b", "")]
+    [InlineData("http://mdblist.com/lists/a/b", "")]
+    public void MdbListFeedAcceptsOnlyMdbListHosts(string url, string feed) =>
+        Assert.Equal(feed, AdminCollectionsApi.MdbListFeed(new AdminMdbListEntry("12", "Top watched", "someone", "", "movie", 100, 9, url)));
+
+    // 3 - Only an explicit removal, with no source at all, deletes artwork. A blank link is rejected and sends nothing.
+    [Fact]
+    public async Task BlankArtworkLinkNeverRemovesTheImage()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        var api = new AdminCollectionsApi(kit.Client);
+        foreach (var blank in new[] { "", "   " }) await Assert.ThrowsAsync<ArgumentException>(() => api.ArtworkAsync(owner, "c", "poster", blank));
+        Assert.Empty(kit.Http.Requests);
+        await api.ArtworkAsync(owner, "c", "poster");
+        Assert.Equal("DELETE /api/v2/admin/collections/c/image?type=poster", Assert.Single(kit.Http.Requests));
+    }
 }

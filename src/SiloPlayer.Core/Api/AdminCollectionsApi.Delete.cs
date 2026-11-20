@@ -69,10 +69,7 @@ public sealed partial class AdminCollectionsApi
         await WriteAsync(lease, HttpMethod.Delete, observed.Path, observed: observed).ConfigureAwait(false);
     }
 
-    private static bool SameDefinition(JsonObject first, JsonObject second)
-    {
-        var a = (JsonObject)first.DeepClone(); var b = (JsonObject)second.DeepClone();
-        foreach (var key in new[] { "poster_url", "backdrop_url" }) { a.Remove(key); b.Remove(key); }
-        return JsonNode.DeepEquals(a, b);
-    }
+    /// <summary>What the confirmation was given for. Row and title counters, sync state, timestamps and artwork URLs are the server's own and move with this run's row changes.</summary>
+    private static readonly string[] DefinitionFields = ["title", "description", "slug", "library_id", "library_ids", "collection_type", "visibility", "query_definition", "sort_config", "source_config", "source_url", "sync_schedule"];
+    private static bool SameDefinition(JsonObject first, JsonObject second) => DefinitionFields.All(key => JsonNode.DeepEquals(first[key], second[key]));
 }

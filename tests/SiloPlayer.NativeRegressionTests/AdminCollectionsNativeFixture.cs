@@ -191,7 +191,13 @@ internal static class AdminCollectionsNativeFixture
             if (path.EndsWith("/sections") && path.StartsWith("/api/v2/admin/collections/")) return Reply(JsonNode.Parse("""{"items":[{"id":"s1","title":"Shared fixture row","scope":"home","enabled":true}]}""")!.AsObject());
             if (path == "/api/v2/admin/sections/s1")
             {
-                if (mutating && request.Method == HttpMethod.Patch) { Row["config"] = body["config"]!.DeepClone(); _revision++; }
+                if (mutating && request.Method == HttpMethod.Patch)
+                {
+                    Row["config"] = body["config"]!.DeepClone(); _revision++;
+                    // A collection the row no longer shows reports no rows on its own GET from here on.
+                    var shown = (Row["config"]?["collections"] as JsonArray)?.Select(r => r?["library_collection_id"]?.ToString()).ToHashSet() ?? [];
+                    foreach (var c in Collections.Values.Where(c => c["row_count"] != null && !shown.Contains(c["id"]!.ToString()))) { c["row_count"] = 0; c["home_row_count"] = 0; }
+                }
                 return Reply(Row);
             }
             if (path.StartsWith("/api/v2/admin/collections/"))

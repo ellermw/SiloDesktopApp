@@ -247,7 +247,9 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
     public Task<AdminCollectionSnapshot> ArtworkAsync(MonitorAuthorityLease lease, string id, string slot, string? source = null, byte[]? bytes = null, string mediaType = "image/png")
     {
         if (slot is not ("poster" or "backdrop")) throw new ArgumentException("Invalid artwork slot.");
-        if (bytes == null && string.IsNullOrWhiteSpace(source)) return WriteAsync(lease, HttpMethod.Delete, Root + "/" + Id(id) + "/image?type=" + slot);
+        // Removal is explicit: no source at all. A blank link is rejected, never read as a removal.
+        if (bytes == null && source == null) return WriteAsync(lease, HttpMethod.Delete, Root + "/" + Id(id) + "/image?type=" + slot);
+        if (bytes == null && string.IsNullOrWhiteSpace(source)) throw new ArgumentException("Enter an image URL, or use Remove image.");
         if (bytes is { Length: > 10485760 } || bytes is { Length: 0 } || mediaType is not ("image/png" or "image/jpeg" or "image/webp")) throw new ArgumentException("Use a PNG, JPEG or WebP image up to 10 MiB.");
         var form = new MultipartFormDataContent();
         if (bytes != null) { var image = new ByteArrayContent(bytes); image.Headers.ContentType = new(mediaType); form.Add(image, "image", "collection-image"); }

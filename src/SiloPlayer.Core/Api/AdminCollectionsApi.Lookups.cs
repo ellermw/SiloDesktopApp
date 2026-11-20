@@ -65,8 +65,9 @@ public sealed partial class AdminCollectionsApi
         }
         return new(isConfigured, lists);
     }
-    /// <summary>The list a search hit follows: its own JSON feed, as the official picker stores it. Empty when MDBList reported no page.</summary>
+    /// <summary>The list a search hit follows: its own JSON feed, as the official picker stores it. Empty when MDBList reported no page, or a page that is not on mdblist.com or one of its subdomains.</summary>
     public static string MdbListFeed(AdminMdbListEntry entry) =>
-        Uri.TryCreate(entry.Url, UriKind.Absolute, out var page) && page.Scheme == Uri.UriSchemeHttps && page.UserInfo.Length == 0 && page.Host.EndsWith("mdblist.com", StringComparison.OrdinalIgnoreCase)
+        Uri.TryCreate(entry.Url, UriKind.Absolute, out var page) && page.Scheme == Uri.UriSchemeHttps && page.UserInfo.Length == 0 && page.IsDefaultPort &&
+        (page.Host.Equals("mdblist.com", StringComparison.OrdinalIgnoreCase) || page.Host.EndsWith(".mdblist.com", StringComparison.OrdinalIgnoreCase))
             ? page.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/json" : "";
 }

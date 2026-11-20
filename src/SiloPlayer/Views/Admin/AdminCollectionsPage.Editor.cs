@@ -446,7 +446,7 @@ public sealed partial class AdminCollectionsPage
         foreach (var slot in new[] { "poster", "backdrop" })
         {
             panel.Children.Add(Text(slot == "poster" ? "Poster" : "Backdrop", 15));
-            Input(panel, "Image URL", "CollectionArtworkUrl_" + slot, _artwork.GetValueOrDefault(slot).Source ?? "", value => { if (value.Length == 0) _artwork.Remove(slot); else _artwork[slot] = (value.Trim(), null, "image/png"); });
+            Input(panel, "Image URL", "CollectionArtworkUrl_" + slot, _artwork.GetValueOrDefault(slot).Source ?? "", value => { var link = value.Trim(); if (link.Length == 0) _artwork.Remove(slot); else _artwork[slot] = (link, null, "image/png"); });
             var actions = Wrap();
             actions.Children.Add(ActionButton("Upload image", "CollectionArtworkUpload_" + slot, () => PickArtworkAsync(slot)));
             actions.Children.Add(ActionButton("Remove image", "CollectionArtworkRemove_" + slot, () => { _artwork[slot] = (null, null, "image/png"); Notice("Image removal is staged. Save to apply it."); return Task.CompletedTask; }));
