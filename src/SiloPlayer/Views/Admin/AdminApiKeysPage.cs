@@ -71,8 +71,8 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
     private async Task CreateAsync()
     {
         var owner = Controller.Owner; if (owner is not { IsCurrent: true } || Controller.Busy || _ui.Dialog != null) return;
-        var label = U.Input("Label", "ApiKeyLabel"); label.Width = double.NaN; label.HorizontalAlignment = HorizontalAlignment.Stretch; label.MaxLength = 4096;
-        var users = U.Select("User", "ApiKeyUser", Controller.Accounts.Where(a => Controller.CanManage(a.Id)).Select(a => (a.Id, a.Username))); AdminAccessPageUi.Select(users, owner.AccountId);
+        var label = U.Input(T("create.label"), "ApiKeyLabel"); label.Width = double.NaN; label.HorizontalAlignment = HorizontalAlignment.Stretch; label.MaxLength = 4096;
+        var users = U.Select(T("create.user"), "ApiKeyUser", Controller.Accounts.Where(a => Controller.CanManage(a.Id)).Select(a => (a.Id, a.Username))); AdminAccessPageUi.Select(users, owner.AccountId);
         var access = U.Select(T("create.access"), "ApiKeyAccess", [("full", T("access.full")), ("scoped", T("create.accessScoped"))]); access.SelectedIndex = 0;
         var choices = new StackPanel { Spacing = 8 }; var checks = new Dictionary<string, CheckBox>();
         foreach (var scope in Controller.Capabilities!.Scopes)
@@ -82,7 +82,14 @@ public sealed partial class AdminApiKeysPage : Page, IAdminGutterScrollPage, IAd
         }
         choices.Visibility = Visibility.Collapsed; access.SelectionChanged += (_, _) => choices.Visibility = AdminAccessPageUi.Selected(access) == "scoped" ? Visibility.Visible : Visibility.Collapsed;
         var error = U.Text("", 13); var submit = U.Action(T("create.submit"), "ApiKeyCreateSubmit", primary: true);
-        var content = AdminAccessPageUi.Stack(U.Text(T("create.description")), U.Text("Label"), label, U.Text("User"), users, U.Text(T("create.access")), access, U.Text(T("create.accessFullHint"), 12, true), choices, U.Text(T("create.scopesHint"), 12, true), error, submit);
+        // Like the official form, the access choice only exists when the server offers scopes; otherwise every key is full access.
+        var content = AdminAccessPageUi.Stack(U.Text(T("create.description")), U.Text(T("create.label")), label, U.Text(T("create.user")), users);
+        if (Controller.Capabilities!.Scopes.Count > 0)
+        {
+            content.Children.Add(U.Text(T("create.access"))); content.Children.Add(access); content.Children.Add(U.Text(T("create.accessFullHint"), 12, true));
+            content.Children.Add(choices); content.Children.Add(U.Text(T("create.scopesHint"), 12, true));
+        }
+        content.Children.Add(error); content.Children.Add(submit);
         var dialog = new ContentDialog { Title = T("create.title"), Content = content, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
         dialog.Closing += (_, args) => { if (Controller.Busy && owner.IsCurrent) args.Cancel = true; };
         var dialogOpen = true;
