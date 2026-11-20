@@ -109,7 +109,7 @@ public sealed class AdminPlaybackTask
 }
 public sealed class AdminPlaybackTaskExecution
 {
-    public string? CompletedAt { get; set; } public string? Status { get; set; }
+    public string? CompletedAt { get; set; } public string? Status { get; set; } public string? TaskKey { get; set; } public string? ErrorMessage { get; set; }
     public Dictionary<string, System.Text.Json.JsonElement>? ResultData { get; set; }
 }
 public sealed record AdminPlaybackSupport(bool Trickplay, bool DetectionKindSettings, AdminPlaybackHardware? Hardware,

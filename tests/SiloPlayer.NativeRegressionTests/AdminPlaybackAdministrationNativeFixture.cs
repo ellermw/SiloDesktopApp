@@ -16,6 +16,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.Views.Admin;
 using Windows.Graphics.Imaging;
@@ -25,15 +26,19 @@ using Windows.Storage;
 internal static class AdminPlaybackAdministrationNativeFixture
 {
     private static void Check(bool value, string label) { Program.Log((value ? "PASS: " : "FAIL: ") + label); if (!value) throw new InvalidOperationException(label); }
+    private static Func<string>? Diagnose;
     private static async Task Until(Func<bool> predicate, string label)
     {
         for (var i = 0; i < 240 && !predicate(); i++) await Task.Delay(25);
+        if (!predicate()) { try { Program.Log("DIAGNOSTIC: " + Diagnose?.Invoke()); } catch (Exception failure) { Program.Log("DIAGNOSTIC failed: " + failure.GetType().Name); } }
         Check(predicate(), label);
     }
     private sealed class Server : HttpMessageHandler
     {
-        internal int Writes; internal string? IfMatch, LastBody; internal bool Conflict;
+        internal int Writes, TaskRuns; internal string? IfMatch, LastBody; internal bool Conflict;
+        internal bool RejectNodePut, DropNodePutAck, FailNodesList, EmptyNodes, DropTaskRunAck;
         internal string? AddedNode;
+        internal string Tasks = """{"items":[{"key":"sync_markers","name":"Sync online markers","state":"idle","last_execution":{"task_key":"sync_markers","status":"failed","completed_at":"2026-11-01T10:00:00Z","error_message":"Synthetic provider unreachable"}},{"key":"detect_intro_markers","name":"Detect markers on this server","state":"idle","last_execution":{"task_key":"detect_intro_markers","status":"cancelled","completed_at":"2026-11-01T11:00:00Z"}},{"key":"contribute_markers","name":"Share detected markers","state":"idle","last_execution":{"task_key":"contribute_markers","status":"completed","completed_at":"2026-11-01T12:00:00Z","result_data":{"submitted":1200,"skipped":3,"invalid":0,"failed":2}}}]}""";
         internal readonly Dictionary<string, string> Values = new() { ["playback.hw_accel"] = "auto", ["playback.transcode_enabled"] = "true", ["allow_4k_transcode"] = "true", ["markers.mode"] = "both", ["markers.online_storage"] = "stored", ["playback.preview_image_width"] = "300", ["playback.trickplay_interval_seconds"] = "10" };
         internal string Node = """{"id":"fixture-node","name":"Synthetic GPU","type":"transcode","url":"https://worker.invalid","enabled":true,"healthy":true,"group":"rack-a","active_jobs":2,"max_jobs":4,"egress_kbps":0,"max_bandwidth_kbps":0,"drain_requested":false,"drain_state":"none","key_issued":true,"config_etag":"\"node-1\"","capabilities":{"resolved":"qsv","render_devices":["/dev/dri/renderD128"],"transport_features":["trickplay_extract_v2"]},"network_access":{"synthetic-overlay":{"state":"connected","hostname":"synthetic-node"}}}""";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -43,6 +48,8 @@ internal static class AdminPlaybackAdministrationNativeFixture
             {
                 Writes++; IfMatch = request.Headers.IfMatch.SingleOrDefault()?.ToString(); LastBody = await request.Content!.ReadAsStringAsync(ct);
                 if (Conflict) return Json(new { type = "precondition_failed", status = 412 }, HttpStatusCode.PreconditionFailed);
+                if (!path.EndsWith("/settings") && RejectNodePut) return Json(new { type = "validation_failed", status = 422 }, HttpStatusCode.UnprocessableEntity);
+                if (!path.EndsWith("/settings") && DropNodePutAck) throw new HttpRequestException("synthetic lost acknowledgement");
                 if (path.EndsWith("/settings"))
                 {
                     using var document = JsonDocument.Parse(LastBody);
@@ -63,6 +70,11 @@ internal static class AdminPlaybackAdministrationNativeFixture
             else if (request.Method == HttpMethod.Post)
             {
                 Writes++;
+                if (path.EndsWith("/run"))
+                {
+                    TaskRuns++; if (DropTaskRunAck) throw new HttpRequestException("synthetic lost acknowledgement");
+                    var key = path.Split('/')[^2]; return Json(new { key, name = key, state = "running" });
+                }
                 if (path.EndsWith("/nodes"))
                 {
                     LastBody = await request.Content!.ReadAsStringAsync(ct); var created = JsonNode.Parse(LastBody)!.AsObject(); created["id"] = "created-node"; created["config_etag"] = "\"node-1\""; created["enabled"] = true; created["healthy"] = true;
@@ -84,7 +96,10 @@ internal static class AdminPlaybackAdministrationNativeFixture
             else if (path.EndsWith("/markers/capabilities")) body = new { allowed = true, state = "available", detection_kind_settings = true };
             else if (path == "/api/v2/libraries/capabilities") body = new { trickplay = true };
             else if (path.EndsWith("/hw-accel")) body = new { resolved = "qsv", render_devices = new[] { "/dev/dri/renderD128" }, render_device_details = new[] { new { path = "/dev/dri/renderD128", description = "Synthetic Intel GPU" } }, detected_backends = new[] { new { backend = "qsv", verified = true } } };
+            else if (path.EndsWith("/nodes") && FailNodesList) return Json(new { type = "internal", status = 500 }, HttpStatusCode.InternalServerError);
+            else if (path.EndsWith("/nodes") && EmptyNodes) return JsonText("{\"items\":[]}");
             else if (path.EndsWith("/nodes")) return JsonText("{\"items\":[" + Node + (AddedNode == null ? "" : "," + AddedNode) + "]}");
+            else if (path.EndsWith("/admin/tasks")) return JsonText(Tasks);
             else body = new { items = Array.Empty<object>() };
             return Json(body);
         }
@@ -115,15 +130,26 @@ internal static class AdminPlaybackAdministrationNativeFixture
             Check(All(inner).OfType<TextBlock>().Any(t => t.Text.Contains("synthetic-overlay")), "reported network provider is shown");
             await Capture(outer, "playback-nodes.png");
             var nodes = (FrameworkElement)inner.Content;
+            Diagnose = () =>
+            {
+                var current = inner.Content as FrameworkElement; var builder = new StringBuilder("writes=" + server.Writes + " dialogOpen=" + (current != null && Field(current, "_dialog") != null));
+                if (current != null)
+                {
+                    
+                    if (Field(current, "_dialog") is ContentDialog open) builder.Append(" dialog=[").Append(string.Join(" | ", All(open).OfType<TextBlock>().Where(t => t.Text.Length > 0).Select(t => t.Text).Take(40))).Append(']');
+                    if (Field(current, "_controller") is { } controller) { var state = controller.GetType().GetProperty("State")!.GetValue(controller)!; builder.Append(" state=").Append(string.Join(",", new[] { "Busy", "Loading", "Loaded", "ReviewRequired" }.Select(name => name + "=" + state.GetType().GetProperty(name)!.GetValue(state)))); }
+                }
+                return builder.ToString();
+            };
             Invoke(Find<Button>(nodes, "NodeCheck_fixture-node")); await Until(() => server.Writes == 1, "health check sent once");
             await Until(() => NodeIdle(nodes) && Find<Button>(nodes, "NodeEdit_fixture-node").IsEnabled, "health reconciliation finished");
             var beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeReprobe_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes), "reprobe sent once and reconciled");
-            beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && server.Node.Contains("draining"), "drain acknowledgement reconciled");
-            beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && !server.Node.Contains("draining"), "resume acknowledgement reconciled");
+            await Until(() => DrainLabel(nodes) == "Drain Synthetic GPU", "drain action rendered"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && server.Node.Contains("draining"), "drain acknowledgement reconciled");
+            await Until(() => DrainLabel(nodes) == "Resume Synthetic GPU", "resume action rendered after the drain reload"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && !server.Node.Contains("draining"), "resume acknowledgement reconciled");
             Invoke(Find<Button>(inner, "NodeEdit_fixture-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "edit dialog opened");
             var dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(All(dialog).OfType<ComboBox>().Any(c => AutomationProperties.GetAutomationId(c) == "Node_source_access"), "source access capability shows local/core selector");
-            await Capture(dialog, "playback-node-editor.png"); Find<TextBox>(dialog, "Node_name").Text = "Synthetic GPU edited";
+            await Capture(dialog, "playback-node-editor.png"); Find<TextBox>(dialog, "Node_name").Text = "Synthetic GPU edited"; await Task.Delay(300);
             Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded, "editor saved and closed");
             Check(server.IfMatch == "\"node-1\"", "node editor sends captured configuration validator");
             using (var update = JsonDocument.Parse(server.LastBody!)) Check(update.RootElement.GetProperty("source_access").GetString() == "local", "typed node editor sends source access");
@@ -135,15 +161,45 @@ internal static class AdminPlaybackAdministrationNativeFixture
             await Capture(dialog, "playback-node-key.png"); Invoke(DialogButton(dialog, "I saved the key")); await Until(() => !dialog.IsLoaded, "key dialog closed");
             Check(All(dialog).OfType<PasswordBox>().All(box => box.Password.Length == 0), "key erased after close");
             Invoke(Find<Button>(nodes, "NodesAdd_proxy")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "proxy creation dialog opened");
-            dialog = (ContentDialog)Field(nodes, "_dialog")!; Find<TextBox>(dialog, "Node_name").Text = "Created proxy"; Find<TextBox>(dialog, "Node_url").Text = "https://proxy.invalid";
+            dialog = (ContentDialog)Field(nodes, "_dialog")!; Find<TextBox>(dialog, "Node_name").Text = "Created proxy"; Find<TextBox>(dialog, "Node_url").Text = "https://proxy.invalid"; await Task.Delay(300);
             Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded && server.AddedNode != null, "proxy create saved");
             Invoke(Find<Button>(nodes, "NodeDelete_created-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "delete confirmation opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; Invoke(DialogButton(dialog, "Delete")); await Until(() => !dialog.IsLoaded && server.AddedNode == null, "guarded delete accepts empty 204");
             Invoke(Find<Button>(nodes, "NodeRoutingPreset_gpu")); await Until(() => Find<Button>(nodes, "NodeRoutingSave").IsEnabled, "routing preset stages own draft");
             Invoke(Find<Button>(nodes, "NodeRoutingSave")); await Until(() => server.Values.GetValueOrDefault("playback.routing.remux_execution") == "prefer_api" && !Shown(Find<Button>(nodes, "NodeRoutingSave")), "routing preset saved with exact five-key contract");
+            // Review finding 1: a rejected or unconfirmed enabled update returns the switch to the saved value.
+            await Until(() => NodeIdle(nodes) && Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsEnabled, "node switch ready");
+            var enabledSwitch = Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node"); Check(enabledSwitch.IsOn, "enabled switch shows the saved enabled node");
+            server.RejectNodePut = true; var beforeReject = server.Writes; enabledSwitch.IsOn = false;
+            await Until(() => server.Writes == beforeReject + 1 && NodeIdle(nodes), "disable sent once and rejected");
+            await Until(() => Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsOn, "rejected update restores the enabled switch to its saved value");
+            await Until(() => All(nodes).OfType<TextBlock>().Any(t => t.Text.Contains("refused")), "rejection is reported to the admin"); Check(!StateFlag(nodes, "ReviewRequired"), "validation rejection needs no review");
+            server.RejectNodePut = false; server.DropNodePutAck = true; var beforeLost = server.Writes; Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsOn = false;
+            await Until(() => server.Writes == beforeLost + 1 && NodeIdle(nodes), "disable with lost acknowledgement sent once");
+            await Until(() => Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsOn, "unknown outcome keeps the saved switch value");
+            await Until(() => StateFlag(nodes, "ReviewRequired") && !Find<ToggleSwitch>(nodes, "NodeEnabled_fixture-node").IsEnabled, "unknown outcome blocks further writes until reload");
+            server.DropNodePutAck = false; Invoke(Find<Button>(nodes, "NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes), "explicit reload reconciles the unknown outcome");
+            Check(server.Writes == beforeLost + 1, "unknown outcome was never replayed");
+            server.FailNodesList = true; await ((AdminPlaybackNodesController)Field(nodes, "_controller")!).ReloadAsync();
+            await Until(() => StateFlag(nodes, "ReviewRequired") && Shown(Find<Button>(nodes, "NodesReload")), "node list failure shows the error with a reload action");
+            server.FailNodesList = false; server.EmptyNodes = true; Invoke(Find<Button>(nodes, "NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes), "reload after failure");
+            await Until(() => All(nodes).OfType<TextBlock>().Any(t => t.Text == "No transcode nodes yet. Add one to move transcoding off this server."), "empty transcode section is shown");
+            await Capture(outer, "playback-nodes-empty.png"); server.EmptyNodes = false;
             AdminShellPage.TryOpenHref("/admin/settings/playback"); await Until(() => inner.Content?.GetType().Name == "AdminPlaybackSettingsPage" && All(inner).OfType<ToggleSwitch>().Any(), "Playback Settings enters the registered page");
             var playback = (FrameworkElement)inner.Content;
             await Until(() => Shown(Find<FrameworkElement>(playback, "PlaybackRow_playback.preview_image_width")), "trickplay capability reveals preview settings");
+            // Review finding 2: the last execution status of each marker task is rendered as the official badge and result line.
+            await Until(() => All(playback).Any(c => c is FrameworkElement e && AutomationProperties.GetAutomationId(e) == "PlaybackTaskStatus_sync_markers"), "marker task status badges render");
+            string BadgeText(string key) => All(Find<Border>(playback, "PlaybackTaskStatus_" + key)).OfType<TextBlock>().Single().Text;
+            Check(BadgeText("sync_markers") == "failed" && BadgeText("detect_intro_markers") == "cancelled" && BadgeText("contribute_markers") == "Completed with errors", "badge shows the failed, cancelled and completed-with-errors last executions");
+            Check(Find<TextBlock>(playback, "PlaybackTaskResult_contribute_markers").Text.Replace(' ', ' ') == "Last result: 1,200 submitted, 3 skipped, 2 failed", "contribute result line summarises the last run");
+            Check(Find<TextBlock>(playback, "PlaybackTaskResult_sync_markers").Text.StartsWith("Last run: "), "other tasks show the last run date");
+            Check(ToolTipService.GetToolTip(Find<Border>(playback, "PlaybackTaskStatus_sync_markers")) as string == "Synthetic provider unreachable", "failed run shows the server error as the badge tooltip");
+            await Capture(Find<StackPanel>(playback, "PlaybackMarkerTasks"), "playback-settings-marker-tasks.png");
+            var beforeRun = server.TaskRuns; Invoke(Find<Button>(playback, "PlaybackTaskRun_sync_markers")); await Until(() => server.TaskRuns == beforeRun + 1, "marker task run sent once");
+            server.DropTaskRunAck = true; beforeRun = server.TaskRuns; await Until(() => Find<Button>(playback, "PlaybackTaskRun_detect_intro_markers").IsEnabled, "second task can run");
+            Invoke(Find<Button>(playback, "PlaybackTaskRun_detect_intro_markers")); await Until(() => server.TaskRuns == beforeRun + 1 && !Find<Button>(playback, "PlaybackTaskRun_detect_intro_markers").IsEnabled, "lost acknowledgement leaves the task marked unconfirmed and is not replayed");
+            server.DropTaskRunAck = false;
             Find<ToggleSwitch>(playback, "Playback_allow_4k_transcode").IsOn = false;
             await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_playback.prefer_lower_version_transcode")), "4K dependent row hides");
             var mode = Find<ComboBox>(playback, "Playback_markers.mode"); mode.SelectedItem = mode.Items.OfType<ComboBoxItem>().Single(i => (string)i.Tag == "off");
@@ -158,7 +214,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
             server.Conflict = true; Find<TextBox>(playback, "Playback_playback.watched_threshold").Text = "80";
             await Until(() => Find<Button>(outer, "PlaybackSave").IsEnabled, "threshold draft staged");
             var beforeConflict = server.Writes; Invoke(Find<Button>(outer, "PlaybackSave")); await Until(() => StateFlag(playback, "Conflict"), "strong ETag conflict keeps draft for review");
-            Check(server.Writes == beforeConflict + 1 && !Find<Button>(outer, "PlaybackSave").IsEnabled, "conflict does not automatically replay");
+            await Until(() => !Find<Button>(outer, "PlaybackSave").IsEnabled, "conflicted draft cannot be saved again until reviewed"); Check(server.Writes == beforeConflict + 1, "conflict does not automatically replay");
             server.Conflict = false; Invoke(Find<Button>(playback, "PlaybackReload")); await Until(() => !StateFlag(playback, "Conflict") && !StateFlag(playback, "Loading") && Find<Button>(outer, "PlaybackSave").IsEnabled, "explicit reload preserves draft for review");
             Invoke(Find<Button>(outer, "PlaybackSave")); await Until(() => !Shown(Find<Button>(outer, "PlaybackSave")), "reviewed draft saves after reconciliation");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
@@ -175,6 +231,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
     }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => All(root).OfType<T>().Single(c => AutomationProperties.GetAutomationId(c) == id);
     private static object? Field(object value, string name) => value.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(value);
+    private static string? DrainLabel(FrameworkElement page) => All(page).OfType<Button>().FirstOrDefault(b => AutomationProperties.GetAutomationId(b) == "NodeDrain_fixture-node") is { IsEnabled: true } button ? ToolTipService.GetToolTip(button) as string : null;
     private static bool NodeIdle(object page)
     {
         var controller = Field(page, "_controller"); if (controller == null) return false;

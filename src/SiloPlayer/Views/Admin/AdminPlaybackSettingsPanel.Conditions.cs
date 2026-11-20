@@ -6,6 +6,7 @@ using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 using U = SiloPlayer.Controls.AdminSettingsUi;
 using R = SiloPlayer.Core.Services.Admin.AdminPlaybackSettingsRules;
+using Status = SiloPlayer.Core.Services.Admin.AdminPlaybackMarkerTaskStatus;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -134,24 +135,31 @@ internal sealed partial class AdminPlaybackSettingsPanel
         var suffix = backend?.Verified == true ? device == null ? "detected" : "detectedOnDevice" : backend?.Skipped == true ? "notAccessible" : backend != null ? "checkFailed" : hardware.Resolved == "videotoolbox" ? "needsNativeMac" : "notFound";
         return T("web.admin.settings.playback.hwAccel." + suffix + node, new { backend = label, device = device ?? "" });
     }
+    /// <summary>Official TaskStatusBadge for the last marker run: destructive for failures, outline for cancelled, the server's error as tooltip.</summary>
+    private static FrameworkElement StatusBadge(AdminPlaybackTask task, string label)
+    {
+        var tone = Status.Tone(task);
+        var destructive = tone == AdminPlaybackMarkerTaskStatus.BadgeTone.Destructive;
+        var badge = AdminMonitorUi.Badge(label, destructive ? AdminMonitorUi.Red500 : AdminMonitorUi.Muted, fontSize: 12,
+            backgroundAlpha: tone == AdminPlaybackMarkerTaskStatus.BadgeTone.Outline ? 0 : .12, borderAlpha: .3,
+            foreground: destructive ? AdminMonitorUi.Red500 : AdminMonitorUi.Foreground, radius: 8);
+        AutomationProperties.SetAutomationId(badge, "PlaybackTaskStatus_" + task.Key); AutomationProperties.SetName(badge, label);
+        if (Status.ErrorText(task) is { } error) { ToolTipService.SetToolTip(badge, error); AutomationProperties.SetHelpText(badge, error); }
+        return badge;
+    }
     private void RenderTasks()
     {
         _tasks.Children.Clear();
         foreach (var key in SiloPlayer.Core.Api.AdminPlaybackAdministrationApi.MarkerTasks)
         {
             var task = _support?.Tasks.FirstOrDefault(task => task.Key == key); var suffix = key == "sync_markers" ? "sync" : key == "detect_intro_markers" ? "detect" : "contribute";
-            var row = new StackPanel { Spacing = 6 }; row.Children.Add(U.Text(task?.Name is { Length: > 0 } name ? name : T("web.admin.settings.markers.tasks." + suffix + "Name"), 14));
+            var row = new StackPanel { Spacing = 6 };
+            var heading = new LogsWrapPanel { Spacing = 8 };
+            heading.Children.Add(U.Text(task?.Name is { Length: > 0 } name ? name : T("web.admin.settings.markers.tasks." + suffix + "Name"), 14));
+            if (task != null && Status.StatusLabel(task) is { } statusLabel) heading.Children.Add(StatusBadge(task, statusLabel));
+            row.Children.Add(heading);
             row.Children.Add(U.Text(task?.Description is { Length: > 0 } description ? description : T("web.admin.settings.markers.tasks." + suffix + "Description"), 12, true));
-            var last = task?.LastExecution;
-            var result = last?.CompletedAt is { } completed ? T("web.admin.settings.markers.tasks.lastRun", new { date = DateTimeOffset.TryParse(completed, out var date) ? date.ToLocalTime().ToString("g") : "—" }) : T("web.admin.settings.markers.tasks.neverRun");
-            if (key == "contribute_markers" && last?.ResultData is { } data)
-            {
-                var parts = new List<string>();
-                foreach (var (field, text) in new[] { ("submitted", "submitted"), ("skipped", "skipped"), ("invalid", "refused"), ("failed", "failed") })
-                    if (data.TryGetValue(field, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetInt64(out var count) && (field != "invalid" || count > 0)) parts.Add(T("web.admin.settings.markers.tasks." + text, new { count, count_text = count.ToString("N0") }));
-                if (parts.Count > 0) result = T("web.admin.settings.markers.tasks." + (data.TryGetValue("retry_after_seconds", out var retry) && retry.ValueKind == System.Text.Json.JsonValueKind.Number && retry.TryGetInt64(out var seconds) && seconds > 0 ? "lastResultRateLimited" : "lastResult"), new { parts = string.Join(T("web.admin.settings.markers.tasks.resultSeparator"), parts) });
-            }
-            row.Children.Add(U.Text(result, 12, true));
+            var result = U.Text(Status.ResultText(task), 12, true); AutomationProperties.SetAutomationId(result, "PlaybackTaskResult_" + key); row.Children.Add(result);
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             var history = U.Action(T("web.admin.settings.markers.tasks.history"), "PlaybackTaskHistory_" + key); Link(history, "/admin/tasks/" + key); actions.Children.Add(history);
             var running = task?.State is "running" or "cancelling";

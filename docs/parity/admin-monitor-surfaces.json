@@ -5,6 +5,7 @@
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminPlaybackAdministration.cs",
     "src/SiloPlayer.Core/Models/Admin/AdminPlaybackAdministrationModels.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPlaybackAdministrationText.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminPlaybackMarkerTaskStatus.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPlaybackNodeEditor.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPlaybackNodesController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPlaybackSettingsController.cs",

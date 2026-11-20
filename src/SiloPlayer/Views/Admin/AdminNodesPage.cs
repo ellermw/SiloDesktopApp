@@ -141,8 +141,16 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         if (DrainDescription(node) is { } drain) content.Children.Add(U.Text(drain, 12, true));
         var actions = new LogsWrapPanel { Spacing = 8 }; var enabled = new ToggleSwitch { IsOn = node.Enabled, OffContent = "", OnContent = "", MinWidth = 0 };
         enabled.Tag = AdminValidators.IsStrong(node.ConfigETag);
-        AutomationProperties.SetName(enabled, T("web.admin.nodes.unit.enable", new { name = node.Name }));
-        enabled.Toggled += async (_, _) => { if (_controller != null && enabled.IsOn != node.Enabled) await _controller.UpdateAsync(node, new Dictionary<string, object?> { ["enabled"] = enabled.IsOn }); }; actions.Children.Add(enabled);
+        AutomationProperties.SetName(enabled, T("web.admin.nodes.unit.enable", new { name = node.Name })); AutomationProperties.SetAutomationId(enabled, "NodeEnabled_" + node.Id);
+        // The official switch is controlled (checked={node.enabled}): a rejected, conflicting or unconfirmed update leaves the saved value showing.
+        var restoring = false;
+        enabled.Toggled += async (_, _) =>
+        {
+            if (restoring || enabled.IsOn == node.Enabled) return;
+            var controller = _controller; var saved = controller != null && await controller.UpdateAsync(node, new Dictionary<string, object?> { ["enabled"] = enabled.IsOn });
+            if (saved || enabled.IsOn == node.Enabled) return;
+            restoring = true; try { enabled.IsOn = node.Enabled; } finally { restoring = false; }
+        }; actions.Children.Add(enabled);
         AddAction("check", "NodeCheck_", "web.admin.nodes.unit.checkHealth");
         if (node.Type == "transcode") AddAction("reprobe", "NodeReprobe_", "web.admin.nodes.unit.reprobe");
         if (node.Type == "transcode" && (node.Enabled || node.DrainRequested == true) && _controller!.State.Capabilities is { Available: true, Drain: true })

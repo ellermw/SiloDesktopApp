@@ -160,7 +160,7 @@ public sealed class AdminPlaybackAdministrationTests
     public async Task ListStopsAtItsPageBudgetAndDisclosesContinuation()
     {
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
-        var calls = 0; kit.Http.Respond = (_, _) => Task.FromResult(Response($$"""{"items":[{{Node.Replace("node/one", "n" + ++calls)}}],"page":{"next_cursor":"c{{calls}}"}}"""));
+        var calls = 0; kit.Http.Respond = (_, _) => { var item = Node.Replace("node/one", "n" + ++calls); return Task.FromResult(Response("{\"items\":[" + item + "],\"page\":{\"next_cursor\":\"c" + calls + "\"}}")); };
         dynamic api = Api(kit); dynamic window = await api.ListNodesAsync(lease, CancellationToken.None);
         Assert.True((bool)window.HasMore); Assert.InRange(calls, 1, 8);
         Assert.Equal(calls, ((System.Collections.ICollection)window.Items).Count);

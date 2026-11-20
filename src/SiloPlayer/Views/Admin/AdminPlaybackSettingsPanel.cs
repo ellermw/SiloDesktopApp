@@ -37,6 +37,7 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
     private readonly Dictionary<string, Button> _presets = new(StringComparer.Ordinal);
     private readonly TextBlock _customPreset = U.Text(T("web.admin.settings.nodeRouting.presets.custom"), 12, true);
     private readonly StackPanel _tasks = new() { Spacing = 14 };
+    private void NameTasks() => AutomationProperties.SetAutomationId(_tasks, "PlaybackMarkerTasks");
     private readonly HashSet<string> _uncertainTasks = new(StringComparer.Ordinal);
     private readonly HashSet<string> _pendingTasks = new(StringComparer.Ordinal);
     private readonly Button _supportReload = U.Action(AdminText.T("web.admin.activity.page.refresh"), "PlaybackSupportReload");
@@ -54,7 +55,7 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
 
     internal AdminPlaybackSettingsPanel(AdminPlaybackSettingsController controller, bool routing, FrameworkElement host)
     {
-        _controller = controller; _routing = routing; _host = host; Spacing = 12;
+        _controller = controller; _routing = routing; _host = host; Spacing = 12; NameTasks();
         _preferences = App.Services.GetService<LoggingDisclosurePreferences>() ?? new LoggingDisclosurePreferences(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "monitor-ui"));
         SaveBar = new(routing ? "NodeRouting" : "Playback");
         Children.Add(_message); Children.Add(_reload); Children.Add(_restart); Children.Add(_fields);
@@ -101,7 +102,14 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
         if (field.Kind == "toggle")
         {
             var toggle = new ToggleSwitch { OffContent = "", OnContent = "", MinWidth = 0 };
-            toggle.Toggled += (_, _) => Set(field.Key, toggle.IsOn ? "true" : "false"); editor = toggle;
+            toggle.Toggled += (_, _) =>
+            {
+                if (_syncing || _confirming || _disposed) return;
+                Set(field.Key, toggle.IsOn ? "true" : "false");
+                // A refused change (busy, retired or env-managed) must not leave the switch showing a value that was never staged.
+                var staged = R.Get(_controller.State.Values, field.Key) == "true";
+                if (toggle.IsOn != staged) { _syncing = true; try { toggle.IsOn = staged; } finally { _syncing = false; } }
+            }; editor = toggle;
         }
         else if (field.Options != null)
         {
