@@ -62,6 +62,14 @@ public partial class PlayerService : IDisposable
     // snapshot a page still holds is not trusted after a mutation.
     private readonly UserStateRevision _userStateRevision;
     private readonly WatchDetailFreshness<WatchDetailResponse> _watchDetailFreshness;
+
+    /// <summary>Retires held and prefetched /watch snapshots after a metadata job.</summary>
+    public void InvalidateWatchDetail(string contentId)
+    {
+        _userStateRevision.Advance(contentId);
+        _watchDetailPrefetches.Invalidate(contentId);
+    }
+
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
     private readonly SemaphoreSlim _playbackDialogGate = new(1, 1);
     private readonly AutoSkipMarkerIdentity _autoSkipMarkerIdentity = new();

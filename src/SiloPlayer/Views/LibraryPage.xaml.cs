@@ -962,9 +962,13 @@ public sealed partial class LibraryPage : Page,
 
     public void Receive(MediaSurfaceChanged message)
     {
+        var context = message.Context ?? _stateSettings.CaptureContext();
+        var visit = _libraryVisit;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated || (message.Context is {} owner && !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(owner))) return;
+            if (!_isNavigated || visit != _libraryVisit || context != _stateSettings.CaptureContext()) return;
+            if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed)
+                QueueCatalogContentRefresh(context, libraryId: null);
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item => message.Kind switch
             {
                 MediaSurfaceChangeKind.FavoriteAdded => MediaItemStateUpdater.SetFavorite(item, true),
@@ -984,10 +988,12 @@ public sealed partial class LibraryPage : Page,
     {
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var owner = message.Identity ?? catalog.CaptureIdentityContext();
+        var visit = _libraryVisit;
         if (!catalog.IsCurrentIdentityContext(owner)) return;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_isNavigated || !catalog.IsCurrentIdentityContext(owner)) return;
+            if (!_isNavigated || visit != _libraryVisit || !catalog.IsCurrentIdentityContext(owner)) return;
+            ViewModel.TrackPendingProgressSave(message.Persisted);
             var changed = ViewModel.UpdateCachedItems(message.ContentId, item =>
                 MediaItemStateUpdater.SetPlaybackProgress(
                     item,

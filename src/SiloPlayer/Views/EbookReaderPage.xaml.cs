@@ -68,6 +68,9 @@ public sealed partial class EbookReaderPage : Page
     private long _localSettingsRevision;
     private Dictionary<string, object?>? _latestReaderConfig;
     private string _readerSettingsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-settings");
+    private static string ReaderWebViewDataDirectory => Environment.GetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY") is { Length: > 0 } isolated
+        ? Path.GetFullPath(isolated)
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-webview");
     private readonly DispatcherTimer _progressTimer = new() { Interval = TimeSpan.FromSeconds(8) };
     private readonly DispatcherTimer _contextTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly Dictionary<Button, FrameworkElement> _profileChecks = [];
@@ -182,7 +185,10 @@ public sealed partial class EbookReaderPage : Page
                 ShowFailure(() => T("web.reader.page.unsupportedFormat", "Unsupported ebook format."));
                 return;
             }
-            await ReaderWebView.EnsureCoreWebView2Async();
+            var readerEnvironment = await CoreWebView2Environment.CreateWithOptionsAsync(
+                null, ReaderWebViewDataDirectory, new CoreWebView2EnvironmentOptions());
+            EnsureReaderContext();
+            await ReaderWebView.EnsureCoreWebView2Async(readerEnvironment);
             EnsureReaderContext();
             ConfigureReaderWebView();
             await LoadPreferencesAsync();

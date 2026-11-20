@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Controls;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Services;
@@ -25,6 +26,7 @@ namespace SiloPlayer;
 public sealed partial class MainWindow
 {
     private AdminMonitorAuthority? _adminAuthority;
+    private AdminMaintenanceApi? _maintenanceApi;
     private bool _criticalContentLoaded;
     private HomeViewModel? _criticalContentSource;
     private bool _criticalContentSawLoading;
@@ -37,6 +39,8 @@ public sealed partial class MainWindow
         try { _adminAuthority = App.Services.GetService<AdminMonitorAuthority>(); }
         catch (InvalidOperationException) { _adminAuthority = null; }
         if (_adminAuthority != null) _adminAuthority.AvailabilityChanged += OnAdminAvailabilityChanged;
+        _maintenanceApi = App.Services.GetService<AdminMaintenanceApi>();
+        if (_maintenanceApi != null) _maintenanceApi.CatalogChanged += OnMaintenanceCatalogChanged;
         // The shared store is app-lifetime: resolving it here starts the admin channel
         // lease for an acting admin even before any indicator is shown.
         try { _ = App.Services.GetService<ServerActivityStore>(); }
@@ -77,6 +81,7 @@ public sealed partial class MainWindow
     private void DisposeAdminMonitor()
     {
         if (_adminAuthority != null) _adminAuthority.AvailabilityChanged -= OnAdminAvailabilityChanged;
+        if (_maintenanceApi != null) _maintenanceApi.CatalogChanged -= OnMaintenanceCatalogChanged;
         _navigationService.Navigated -= OnNavigated_AdminMonitor;
         ContentFrame.Navigating -= OnAdminNavigating;
         DetachCriticalContentSource();
@@ -104,6 +109,17 @@ public sealed partial class MainWindow
         }
         finally { _adminNavigationApproved = false; _adminNavigationPending = false; }
     }
+
+    private void OnMaintenanceCatalogChanged(ApiRequestContext context, long epoch) => DispatcherQueue.TryEnqueue(() =>
+    {
+        // The API action lease is disposed before this callback runs. Check its authority epoch
+        // and context instead; a retired account must never refresh another owner's shell.
+        if (_windowClosed || _adminAuthority is not { IsAvailable: true } authority || authority.Epoch != epoch
+            || !_apiClient.IsCurrentContext(context)) return;
+        _catalogApi.InvalidateLibraryCache();
+        if (_hydratedShellKey is { } key && IsCurrentShellHydration(key, _shellHydrationCts?.Token ?? CancellationToken.None))
+            _ = RunShellWorkAsync("maintenance_library_navigation", () => _viewModel.ReloadLibrariesAsync(_shellHydrationCts?.Token ?? CancellationToken.None));
+    });
 
     private void OnAdminAvailabilityChanged() => DispatcherQueue.TryEnqueue(UpdateAdminChrome);
 
