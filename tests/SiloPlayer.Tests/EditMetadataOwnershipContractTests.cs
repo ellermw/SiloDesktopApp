@@ -9,8 +9,10 @@ public sealed class EditMetadataOwnershipContractTests
     public void DetailEditorFetchesCurrentItemUnderNavigationAndAuthorityBeforeOpening()
     {
         var code = Source("src/SiloPlayer/Views/ItemDetailPage.xaml.cs");
-        var start = code.IndexOf("edit.Click += async", StringComparison.Ordinal);
-        var end = code.IndexOf("MoreFlyout.Items.Add(edit)", start, StringComparison.Ordinal);
+        // Both detail menus (generic and audiobook layout) open through this one method.
+        Assert.Contains("edit.Click += async (_, _) => await OpenFreshEditMetadataAsync(item, edit);", code);
+        var start = code.IndexOf("private async Task OpenFreshEditMetadataAsync(", StringComparison.Ordinal);
+        var end = code.IndexOf("private void BuildMoreFlyout()", start, StringComparison.Ordinal);
         var opening = code[start..end];
         var fetch = opening.IndexOf("GetItemDetailAsync(item.ContentId, loading.Token)", StringComparison.Ordinal);
         var guard = opening.IndexOf("if (!Current()) return;", fetch, StringComparison.Ordinal);
@@ -21,7 +23,7 @@ public sealed class EditMetadataOwnershipContractTests
         Assert.Contains("AuthorizationPolicy.CanCurateMetadata(auth)", opening);
         Assert.Contains("ReferenceEquals(_navigationCts, navigation)", opening);
         Assert.Contains("CreateLinkedTokenSource(navigation.Token)", opening);
-        Assert.Contains("edit.IsEnabled = false", opening);
+        Assert.Contains("trigger.IsEnabled = false", opening);
         Assert.Contains("MediaItemCardActions.Problem(ex)", opening);
         Assert.Contains("PendingWrites.Revision", opening);
     }
@@ -30,8 +32,10 @@ public sealed class EditMetadataOwnershipContractTests
     public void DetailReloadAfterEditingSurvivesTransportReconnectButNotIdentityOrNavigationRetirement()
     {
         var code = Source("src/SiloPlayer/Views/ItemDetailPage.xaml.cs");
-        var start = code.IndexOf("edit.Click += async", StringComparison.Ordinal);
-        var end = code.IndexOf("MoreFlyout.Items.Add(edit)", start, StringComparison.Ordinal);
+        // Both detail menus (generic and audiobook layout) open through this one method.
+        Assert.Contains("edit.Click += async (_, _) => await OpenFreshEditMetadataAsync(item, edit);", code);
+        var start = code.IndexOf("private async Task OpenFreshEditMetadataAsync(", StringComparison.Ordinal);
+        var end = code.IndexOf("private void BuildMoreFlyout()", start, StringComparison.Ordinal);
         var opening = code[start..end];
         var show = opening.IndexOf("await dialog.ShowAsync()", StringComparison.Ordinal);
         Assert.True(opening.IndexOf("DetachRead();", StringComparison.Ordinal) < show);

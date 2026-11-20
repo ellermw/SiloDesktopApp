@@ -41,14 +41,17 @@ public sealed partial class RecommendationSectionPage : Page
         // A cached page can miss poster-size changes while it is away.
         ApplyCardLayout(ActualWidth);
         var args = e.Parameter as RecommendationSectionNavigationArgs;
-        // The frame reuses this instance for any section. Only Back to the section it still holds
-        // completely, under the same profile, keeps its items and scroll position.
+        // The frame reuses this instance for any section. Back keeps a complete section,
+        // or rereads its metadata-dirty copy in place under the same access context.
         var keep = e.NavigationMode == NavigationMode.Back && args != null && ViewModel.TryResume(args);
         _args = args;
         _loaded = keep;
         if (keep) return;
-        ViewModel.Reset();
-        ScrollToTop();
+        if (e.NavigationMode != NavigationMode.Back || args == null || !ViewModel.Retains(args))
+        {
+            ViewModel.Reset();
+            ScrollToTop();
+        }
         UpdatePageState();
         // Navigating from this section straight to another keeps the page in the tree, so Loaded
         // does not fire again: load here instead.

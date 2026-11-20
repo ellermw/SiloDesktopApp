@@ -1,6 +1,7 @@
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
 
@@ -23,6 +24,33 @@ public partial class LibraryViewModel
     private (int Start, int Count)? _refreshRequestedViewport;
     // The query whose catch-up handed the gate back without confirming its held rows.
     private int _catalogRefreshReleasedVersion = -1;
+    private long _cardMutationRevision;
+    private PendingCatalogWrites _pendingProgressSaves = new();
+    private ApiIdentityContext? _progressSaveIdentity;
+
+    public void TrackPendingProgressSave(Task persisted)
+    {
+        var identity = _catalogApi.CaptureIdentityContext();
+        if (_progressSaveIdentity != identity)
+        {
+            _pendingProgressSaves = new PendingCatalogWrites();
+            _progressSaveIdentity = identity;
+        }
+        _pendingProgressSaves.Track(persisted);
+    }
+
+    private async Task WaitForProgressSavesAsync(CancellationToken ct)
+    {
+        if (_progressSaveIdentity == _catalogApi.CaptureIdentityContext())
+            await _pendingProgressSaves.WaitAsync(ct);
+        // This app-lifetime registry also sees final saves while LibraryPage
+        // is unsubscribed. Its identity scope survives request-context changes.
+        if (_detailPrefetchCache != null)
+            await _detailPrefetchCache.WaitForProgressSettlementAsync(ct);
+    }
+
+    private (long Card, long Progress) CatalogMutationRevision =>
+        (_cardMutationRevision, _detailPrefetchCache?.ProgressSaveRevision ?? 0);
 
     /// <summary>Content rereads retain authorized rows; transport recovery paints only confirmed rows.</summary>
     public MediaItem? GetRenderableWindowItem(int index)
@@ -197,6 +225,7 @@ public partial class LibraryViewModel
         var replacements = new List<(int Start, int Count, CatalogResponse Response)>();
         var pending = new List<(int Start, int Count, bool Viewport)>();
         var refreshed = 0;
+        var mutationRevision = CatalogMutationRevision;
         void TakeRequestedViewport()
         {
             if (_refreshRequestedViewport is not { } requested) return;
@@ -255,6 +284,11 @@ public partial class LibraryViewModel
             const int MaxSnapshotAttempts = 2;
             for (var attempt = 0; attempt < MaxSnapshotAttempts; attempt++)
             {
+                // Progress notifications precede their final server write. A
+                // fresh snapshot is authoritative only after those writes settle.
+                await WaitForProgressSavesAsync(ct);
+                if (!Current()) return CatalogRefreshResult.Deferred;
+                mutationRevision = CatalogMutationRevision;
                 snapshot = null;
                 replacements.Clear();
                 // Keep viewport rows already read under this context renderable;
@@ -271,6 +305,7 @@ public partial class LibraryViewModel
                     while (pending.Count > 0)
                     {
                         if (!Current()) return CatalogRefreshResult.Deferred;
+                        if (mutationRevision != CatalogMutationRevision) break;
                         TakeRequestedViewport();
                         var (start, count, viewportChunk) = pending[0];
                         pending.RemoveAt(0);
@@ -289,6 +324,7 @@ public partial class LibraryViewModel
                         await FetchWindowAsync(start, count, false, response => replacement = response, snapshot, ct,
                             publishState: false);
                         if (!Current()) return CatalogRefreshResult.Deferred;
+                        if (mutationRevision != CatalogMutationRevision) break;
                         if (replacement is null || string.IsNullOrWhiteSpace(replacement.Snapshot))
                             return FailRefresh("The server did not return a catalog snapshot.");
                         snapshot ??= replacement.Snapshot;
@@ -308,6 +344,15 @@ public partial class LibraryViewModel
                 catch (ApiException ex) when (ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor" && Current())
                 {
                     snapshotChanged = true;
+                }
+                if (mutationRevision != CatalogMutationRevision)
+                {
+                    // Neither early viewport publication nor the final held-row
+                    // merge may install any part of a pre-mutation snapshot.
+                    _confirmedRefreshViewport = null;
+                    _confirmedRefreshViewportVersion = -1;
+                    attempt--; // Accepted mutations are not cursor-churn failures.
+                    continue;
                 }
                 if (!snapshotChanged) break;
                 // A scan/user-state change is not a failed transport. Retry fresh;
