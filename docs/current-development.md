@@ -1,3 +1,19 @@
+# November 17 — Collections source candidate, runtime unrun
+
+The isolated `t3/admin-collections-page` checkout on Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd` contains an uncommitted registered
+Admin Collections page and its new/edit descendants, board/list, shelves, manual/smart/synced
+editors, templates/packs, guarded row-reference deletion and regression sources. Version
+`1.2.1181-beta.1` remains pipeline-owned and unchanged. Official source was read with
+`git show` at `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` from the existing upstream checkout.
+
+This worker was source-only: no build, tests, native/browser, mutex, generated output or
+installed-player/settings action. Seventeen unit cases and a real registered-shell native
+fixture are authored and unrun. Visual/live-server/all-DPI parity is unobserved. Home Sections
+and viewer collection pages remain separate. Scope, exact upstream references, bounded-read
+and guarded-write trace, self-review and acceptance commands are in
+[the Collections handoff](parity/2026-11-17-admin-collections.md). No commit/push/PR occurred.
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
