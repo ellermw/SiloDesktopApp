@@ -21,13 +21,14 @@ public sealed class AutoscanInspector
     private AdminAutoscanActivityLabels _labels;
     private readonly StackPanel _header = Stack(8), _tabs = Inline(16), _pathsPanel = Stack(12), _scansPanel = Stack(12);
     private readonly StackPanel _pathsChips = Stack(0), _pathsList = Stack(0), _scansChips = Stack(0), _scansList = Stack(0);
-    private readonly Border _pathsPager = new(), _scansPager = new(), _truncated = new();
+    private readonly Border _pathsPager = new(), _scansPager = new(), _truncated = new(), _runsNote = new();
     private readonly Grid _pathsBar = new(), _scansBar = new();
     private readonly TextBox _pathsSearch, _scansSearch;
     private readonly Button _pathsClear, _scansClear, _pathsReset, _scansReset;
     private string _tab, _outcome = "all", _scanStatus = "all";
     private int _pathsPage, _pathsSize = D.DefaultPathsPageSize, _scansPage, _scansSize = D.DefaultScansPageSize;
     private bool _syncing;
+    private int _rebuilding;
     public StackPanel Root { get; } = Stack(16);
     public string Id => _event.Id;
     public AdminAutoscanActivityEvent Event => _event;
@@ -42,7 +43,8 @@ public sealed class AutoscanInspector
         BuildBar(_scansBar, _scansSearch, _scansClear, _scansReset, _scansChips);
         _truncated.BorderThickness = new(0, 0, 0, 1); _truncated.BorderBrush = Brush("BorderBrush"); _truncated.Padding = new(0, 0, 0, 8);
         _pathsPanel.Children.Add(_truncated); _pathsPanel.Children.Add(_pathsBar); _pathsPanel.Children.Add(_pathsList); _pathsPanel.Children.Add(_pathsPager);
-        _scansPanel.Children.Add(_scansBar); _scansPanel.Children.Add(_scansList); _scansPanel.Children.Add(_scansPager);
+        _runsNote.BorderThickness = new(0, 0, 0, 1); _runsNote.BorderBrush = Brush("BorderBrush"); _runsNote.Padding = new(0, 0, 0, 8);
+        _scansPanel.Children.Add(_runsNote); _scansPanel.Children.Add(_scansBar); _scansPanel.Children.Add(_scansList); _scansPanel.Children.Add(_scansPager);
         Root.Children.Add(_header); Root.Children.Add(_tabs); Root.Children.Add(_pathsPanel); Root.Children.Add(_scansPanel);
         Refresh();
     }
@@ -83,7 +85,25 @@ public sealed class AutoscanInspector
 
     private bool Phone => (_header.XamlRoot?.Size.Width ?? 1200) < 640;
 
-    private void Refresh()
+    /// <summary>
+    /// Rebuilds part of the sheet. The controls the admin used (a tab, a chip, a pager button, the scan-id jump) are rebuilt as new objects,
+    /// so the one that had keyboard focus is gone afterwards; the outermost rebuild puts focus back on the control with the same
+    /// automation id (the official sheet keeps its buttons mounted and so keeps focus). Nested rebuilds share the outer capture.
+    /// </summary>
+    private void Rebuild(Action body, string? focusAfter = null)
+    {
+        var outer = _rebuilding == 0;
+        var id = outer ? FocusedIdIn(Root.XamlRoot, Root) : null;
+        _rebuilding++;
+        try { body(); } finally { _rebuilding--; }
+        if (id != null) RestoreFocusById(Root.DispatcherQueue, Root, focusAfter ?? id);
+    }
+
+    private void Refresh() => Rebuild(RefreshAll);
+    private void RefreshPaths() => Rebuild(BuildPaths);
+    private void RefreshScans() => Rebuild(BuildScans);
+
+    private void RefreshAll()
     {
         RefreshHeader(); RefreshTabs(); RefreshPaths(); RefreshScans();
         _pathsPanel.Visibility = _tab == "paths" ? Visibility.Visible : Visibility.Collapsed;
@@ -115,7 +135,7 @@ public sealed class AutoscanInspector
     {
         _tabs.Children.Clear();
         _tabs.Children.Add(TabButton("paths", A.T("details.paths"), _event.ChangesReturned));
-        _tabs.Children.Add(TabButton("scans", A.T("details.scansCreated"), _event.ScanRuns?.Count ?? 0));
+        _tabs.Children.Add(TabButton("scans", A.T("details.scansCreated"), (_event.ScanRuns?.Count ?? 0) + _event.ScanRunsOmitted));
     }
 
     private Button TabButton(string tab, string label, long count)
@@ -174,7 +194,7 @@ public sealed class AutoscanInspector
         return new Border { Child = list, BorderBrush = Brush("BorderBrush"), BorderThickness = new(1), CornerRadius = new(8), Background = Tint("SurfaceBrush", 0.5) };
     }
 
-    private void RefreshPaths()
+    private void BuildPaths()
     {
         var changes = _event.Changes ?? [];
         _truncated.Visibility = _event.ChangesTruncated ? Visibility.Visible : Visibility.Collapsed;
@@ -187,7 +207,6 @@ public sealed class AutoscanInspector
         }
         _pathsBar.Visibility = changes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         var outcomes = D.OutcomeCounts(changes);
-        if (_outcome != "all" && outcomes.All(entry => entry.Outcome != _outcome)) _outcome = "all";
         _pathsChips.Children.Clear();
         if (outcomes.Count > 1)
         {
@@ -263,15 +282,22 @@ public sealed class AutoscanInspector
     private void JumpToRun(string runId)
     {
         _syncing = true; _scansSearch.Text = runId; _syncing = false;
-        _scanStatus = "all"; _scansPage = 0; _tab = "scans"; Refresh();
+        _scanStatus = "all"; _scansPage = 0; _tab = "scans";
+        Rebuild(RefreshAll, "AutoscanInspectorTab_scans");
     }
 
-    private void RefreshScans()
+    private void BuildScans()
     {
         var runs = _event.ScanRuns ?? [];
+        _runsNote.Visibility = _event.ScanRunsOmitted > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (_event.ScanRunsOmitted > 0)
+        {
+            var row = Inline(8); row.Children.Add(Glyph("triangle-alert", 14, Solid(Amber)));
+            var note = Text(A.T("native.runsOmitted", new { shown = AdminText.FormatNumber(runs.Count), total = AdminText.FormatNumber(runs.Count + _event.ScanRunsOmitted) }), 12, true);
+            AutomationProperties.SetAutomationId(note, "AutoscanInspectorRunsOmitted"); row.Children.Add(note); _runsNote.Child = row;
+        }
         _scansBar.Visibility = runs.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         var statuses = D.ScanStatusCounts(runs);
-        if (_scanStatus != "all" && statuses.All(entry => entry.Status != _scanStatus)) _scanStatus = "all";
         _scansChips.Children.Clear();
         if (statuses.Count > 1)
         {

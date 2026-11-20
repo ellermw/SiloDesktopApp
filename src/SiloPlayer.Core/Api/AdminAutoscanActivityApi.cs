@@ -29,12 +29,18 @@ public sealed class AdminAutoscanActivityApi(SiloApiClient client)
         return path;
     }
 
+    /// <summary>
+    /// Reads one history page. Like the official <c>adminAutoscanScans.ts</c> / <c>adminAutoscanEvents.ts</c>, only the page the admin asked
+    /// for (<paramref name="targetPage"/>) has its rows validated; a page walked only to obtain its continuation gets the envelope checks
+    /// (shape, total, page size, continuation) so one odd row on an earlier page cannot fail every later page.
+    /// </summary>
     public async Task<AdminAutoscanActivityWindow<AdminAutoscanActivityScan>> ReadScansAsync(MonitorAuthorityLease lease,
-        AdminAutoscanActivityFilter filter, string? cursor = null, CancellationToken ct = default)
+        AdminAutoscanActivityFilter filter, string? cursor = null, CancellationToken ct = default, bool targetPage = true)
     {
         var page = await client.AdminLibrarySendAsync<AdminAutoscanActivityPage<AdminAutoscanActivityScan>>(lease, HttpMethod.Get,
             HistoryPath(AdminAutoscanHistory.Scans, filter, cursor), ct: ct).ConfigureAwait(false);
-        var window = Validate(page, filter.Limit, cursor, row => row?.Id);
+        var window = Validate(page, filter.Limit, cursor, row => row?.Id, targetPage);
+        if (!targetPage) return window;
         foreach (var scan in window.Items)
         {
             ValidateRun(scan);
@@ -45,17 +51,25 @@ public sealed class AdminAutoscanActivityApi(SiloApiClient client)
     }
 
     public async Task<AdminAutoscanActivityWindow<AdminAutoscanActivityEvent>> ReadEventsAsync(MonitorAuthorityLease lease,
-        AdminAutoscanActivityFilter filter, string? cursor = null, CancellationToken ct = default)
+        AdminAutoscanActivityFilter filter, string? cursor = null, CancellationToken ct = default, bool targetPage = true)
     {
         var page = await client.AdminLibrarySendAsync<AdminAutoscanActivityPage<AdminAutoscanActivityEvent>>(lease, HttpMethod.Get,
             HistoryPath(AdminAutoscanHistory.Polls, filter, cursor), ct: ct).ConfigureAwait(false);
-        var window = Validate(page, filter.Limit, cursor, row => row?.Id);
+        var window = Validate(page, filter.Limit, cursor, row => row?.Id, targetPage);
+        if (!targetPage) return window;
         foreach (var poll in window.Items)
         {
             if (!NumericId(poll.Id) || !EventStatus(poll.Status) ||
                 !string.IsNullOrEmpty(poll.DeliveryMode) && poll.DeliveryMode is not ("poll" or "webhook") ||
-                poll.ScanRuns == null || poll.ScanRuns.Count > MaxEventRuns || poll.Changes?.Count > 50 ||
+                poll.ScanRuns == null || poll.Changes?.Count > 50 ||
                 new[] { poll.DurationMs, poll.ChangesReturned, poll.ChangesResolved, poll.TargetsClaimed, poll.ScansCreated, poll.ScansReused, poll.ScansSuppressed }.Any(count => count < 0)) throw Invalid();
+            // An event that created more runs than the display bound keeps its first runs and says how many it left out, so the
+            // other rows of the page still show; the inspector and the Details summary state the omission.
+            if (poll.ScanRuns.Count > MaxEventRuns)
+            {
+                poll.ScanRunsOmitted = poll.ScanRuns.Count - MaxEventRuns;
+                poll.ScanRuns.RemoveRange(MaxEventRuns, poll.ScanRuns.Count - MaxEventRuns);
+            }
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (var run in poll.ScanRuns)
             {
@@ -68,15 +82,18 @@ public sealed class AdminAutoscanActivityApi(SiloApiClient client)
         return window;
     }
 
-    private static AdminAutoscanActivityWindow<T> Validate<T>(AdminAutoscanActivityPage<T>? page, int limit, string? cursor, Func<T, string?> identity)
+    private static AdminAutoscanActivityWindow<T> Validate<T>(AdminAutoscanActivityPage<T>? page, int limit, string? cursor, Func<T, string?> identity, bool rows)
     {
         if (page?.Page == null || page.Items == null || page.Total is < 0 or > 9007199254740991 || page.Items.Count > limit ||
             page.Page.HasMore && (!AdminPaging.IsValidCursor(page.Page.NextCursor) || page.Page.NextCursor == cursor)) throw Invalid();
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in page.Items)
+        if (rows)
         {
-            var id = identity(item);
-            if (string.IsNullOrEmpty(id) || !ids.Add(id)) throw Invalid();
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in page.Items)
+            {
+                var id = identity(item);
+                if (string.IsNullOrEmpty(id) || !ids.Add(id)) throw Invalid();
+            }
         }
         return new(page.Items.AsReadOnly(), page.Total, page.Page.HasMore ? page.Page.NextCursor : null);
     }

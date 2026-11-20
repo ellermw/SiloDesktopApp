@@ -199,9 +199,12 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
     {
         _debounce.Stop();
         if (_syncing || !_active || _controller?.State is not { IsOpen: true } state) return;
+        // The controller trims the search, so "foo " that settles to "foo" is not a change; only a real change closes the inspector.
+        var query = _search.Text.Trim(); var status = Selected(_status);
+        if (query == state.Query && status == state.SelectedStatus) return;
         // The status chosen here belongs to the shown view; the search and page size are shared by both.
         CloseInspector();
-        _ = _controller.FilterAsync(_search.Text, Selected(_status), state.PageSize);
+        _ = _controller.FilterAsync(query, status, state.PageSize);
     }
 
     /// <summary>A newer read of the same poll replaces the inspector's data (the latest snapshot is kept even when the poll leaves the page).</summary>
@@ -238,24 +241,9 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
         if (id != null && FindControl(_rows, "AutoscanActivityDetails_" + id) is { IsEnabled: true } trigger) trigger.Focus(FocusState.Programmatic);
     }
 
-    private static bool IsInside(DependencyObject? element, DependencyObject region)
-    {
-        for (; element != null; element = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(element)) if (ReferenceEquals(element, region)) return true;
-        return false;
-    }
+    private string? CaptureFocus(Panel region) => FocusedIdIn(XamlRoot, region);
 
-    private string? CaptureFocus(Panel region)
-    {
-        if (XamlRoot == null || Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) is not Control control || !IsInside(control, region)) return null;
-        var id = AutomationProperties.GetAutomationId(control);
-        return id.Length == 0 ? null : id;
-    }
-
-    private void RestoreFocus(Panel region, string? id)
-    {
-        if (id == null) return;
-        DispatcherQueue.TryEnqueue(() => { if (_active && FindControl(region, id) is { IsEnabled: true } control) control.Focus(FocusState.Programmatic); });
-    }
+    private void RestoreFocus(Panel region, string? id) => RestoreFocusById(DispatcherQueue, region, id, () => _active);
 
     private void Render()
     {
@@ -277,7 +265,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
                     _status.Items.Add(new ComboBoxItem { Content = scans ? A.ScanStatus(status, true) : A.T("pollStatus." + status), Tag = status });
                 _historyIcon.Child = Glyph(scans ? "list-checks" : "history", 16, Brush("AccentBrush"));
             }
-            if (!_debounce.IsEnabled && _search.Text != state.Query) _search.Text = state.Query;
+            // The box shows what was typed: a trailing space the controller trimmed away is not a difference to write back (that would move the caret).
+            if (!_debounce.IsEnabled && _search.Text.Trim() != state.Query) _search.Text = state.Query;
             SetSelected(_status, state.SelectedStatus);
         }
         finally { _syncing = false; }

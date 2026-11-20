@@ -225,7 +225,7 @@ internal static class AutoscanUi
             else
                 foreach (var entry in D.PageWindow(safe, pageCount))
                 {
-                    if (entry is not { } index) { var gap = Text("â€¦", 14, true); gap.Opacity = 0.6; AutomationProperties.SetAccessibilityView(gap, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw); nav.Children.Add(gap); continue; }
+                    if (entry is not { } index) { var gap = Text("\u2026", 14, true); gap.Opacity = 0.6; AutomationProperties.SetAccessibilityView(gap, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw); nav.Children.Add(gap); continue; }
                     var button = Button(AdminText.FormatNumber(index + 1), id + "Page" + (index + 1), index == safe ? "AccentButtonStyle" : "GhostButtonStyle");
                     button.MinWidth = 32; button.Height = 32; button.MinHeight = 32; button.Padding = new(8, 0, 8, 0); button.CornerRadius = new(6);
                     AutomationProperties.SetName(button, A.T("web.ui.pagination.page", new { page = index + 1 }));
@@ -319,6 +319,49 @@ internal static class AutoscanUi
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
             if (FindControl(VisualTreeHelper.GetChild(root, index), id) is { } match) return match;
         return null;
+    }
+
+    internal static bool IsInsideRegion(DependencyObject? element, DependencyObject region)
+    {
+        for (; element != null; element = VisualTreeHelper.GetParent(element)) if (ReferenceEquals(element, region)) return true;
+        return false;
+    }
+
+    /// <summary>The automation id of the control that has keyboard focus inside <paramref name="region"/>, or null when focus is elsewhere.</summary>
+    internal static string? FocusedIdIn(XamlRoot? root, DependencyObject region)
+    {
+        if (root == null || Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root) is not Control control || !IsInsideRegion(control, region)) return null;
+        var id = AutomationProperties.GetAutomationId(control);
+        return id.Length == 0 ? null : id;
+    }
+
+    /// <summary>
+    /// The pager button to use when the one the admin pressed is now disabled (Next or Last on the last page, First or Previous on the first):
+    /// the opposite direction, which is enabled whenever the pager has more than one page.
+    /// </summary>
+    internal static string? FallbackFocusId(string id)
+    {
+        foreach (var (suffix, other) in new[] { ("First", "Next"), ("Previous", "Next"), ("Last", "Previous"), ("Next", "Previous") })
+            if (id.EndsWith(suffix, StringComparison.Ordinal)) return id[..^suffix.Length] + other;
+        return null;
+    }
+
+    /// <summary>
+    /// Puts keyboard focus back on the control with <paramref name="id"/> after its region was rebuilt (a rebuilt control is a new object, so
+    /// the one that had focus is gone). It waits for the rebuilt tree, does nothing when the control already has focus, and falls back
+    /// to the neighbouring pager button when the pressed one is now disabled.
+    /// </summary>
+    internal static void RestoreFocusById(Microsoft.UI.Dispatching.DispatcherQueue? queue, DependencyObject region, string? id, Func<bool>? alive = null)
+    {
+        if (id == null || queue == null) return;
+        queue.TryEnqueue(() =>
+        {
+            if (alive != null && !alive()) return;
+            var target = FindControl(region, id) is { IsEnabled: true } exact ? exact
+                : FallbackFocusId(id) is { } other && FindControl(region, other) is { IsEnabled: true } fallback ? fallback : null;
+            if (target?.XamlRoot == null || ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(target.XamlRoot), target)) return;
+            target.Focus(FocusState.Programmatic);
+        });
     }
 
     internal static bool HasAncestor<T>(DependencyObject? element) where T : DependencyObject

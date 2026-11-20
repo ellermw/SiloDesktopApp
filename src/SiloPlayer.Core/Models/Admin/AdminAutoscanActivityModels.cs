@@ -94,6 +94,8 @@ public sealed class AdminAutoscanActivityEvent
     public long ScansSuppressed { get; set; }
     public string? ErrorMessage { get; set; }
     public List<AdminAutoscanActivityRun>? ScanRuns { get; set; }
+    /// <summary>Runs the server listed beyond the display bound and the page left out (set when the event is read, never sent by the server).</summary>
+    [JsonIgnore] public long ScanRunsOmitted { get; set; }
     public List<AdminAutoscanActivityChange>? Changes { get; set; }
     public bool ChangesTruncated { get; set; }
 }

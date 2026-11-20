@@ -352,7 +352,6 @@ public sealed partial class AdminAutoscanActivityTests
         harness.Wire.Reply = request => request.Method == HttpMethod.Post ? throw new HttpRequestException("synthetic uncertainty")
             : Task.FromResult(Json("""{"enabled":true,"active_scans":1,"accepted_scans":0,"running_scans":1,"sources":[],"running_polls":[]}"""));
         await controller.CancelAsync("7");
-        await controller.ReconcileCancelAsync("7"); Assert.True(controller.State.CancelReview.ContainsKey("7"));
         channel.Event("scan.completed", """{"id":"target","library_id":7,"mode":"file","trigger":"autoscan","status":"cancelled"}""");
         Assert.True(controller.State.CancelReview.ContainsKey("7"));
         await controller.ReconcileCancelAsync("7");

@@ -78,7 +78,7 @@ public static class AdminAutoscanActivityDisplay
 
     public static string DetailsSummary(AdminAutoscanActivityEvent poll)
     {
-        var linked = (poll.ScanRuns?.Count ?? 0) + JoinedRunCount(poll);
+        var linked = (poll.ScanRuns?.Count ?? 0) + poll.ScanRunsOmitted + JoinedRunCount(poll);
         // Joined runs are only known from recorded changes, so a truncated log can omit some; the count is then a lower bound.
         var paths = A.Count("details.pathCount", poll.ChangesReturned);
         var linkedText = A.T("details.linkedCount", new { count = linked, count_text = A.Number(linked) + (poll.ChangesTruncated ? "+" : "") });

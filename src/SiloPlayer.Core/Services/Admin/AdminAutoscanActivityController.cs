@@ -18,6 +18,11 @@ public sealed record AdminAutoscanHistoryState<T>
     public bool Loaded { get; init; }
     public bool Fetching { get; init; }
     public AdminFailureKind? Failure { get; init; }
+    /// <summary>
+    /// The rows still shown belong to the page or page size the admin just left; they stay on screen (with their pager) while the
+    /// next read loads, so the control the admin used is not rebuilt away. A failed read then clears them.
+    /// </summary>
+    public bool Stale { get; init; }
     /// <summary>Pages the page offers: the WebUI refuses an offset of 100 pages or more, so the native list stops there too.</summary>
     public int PageCount => (int)Math.Min(AdminAutoscanActivityApi.MaxHistoryPages, Math.Max(1, (Total + Filter.Limit - 1) / Filter.Limit));
     /// <summary>More matching rows exist than the 100 reachable pages hold.</summary>
@@ -69,12 +74,9 @@ public sealed class AdminAutoscanActivityController : IDisposable
     private IDisposable? _timer, _subscription;
     private Action<string, JsonElement>? _snapshot;
     private Action<string, string, JsonElement>? _event;
-    private long _sequence, _statusSequence, _scanObservation, _refreshEpoch, _reviewSequence;
+    private long _sequence, _statusSequence, _refreshEpoch, _reviewSequence;
     private bool _disposed;
     private bool _visible = true;
-    private bool _labelsDirty;
-    private readonly Dictionary<string, long> _uncertainAt = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _terminalReviewEvidence = new(StringComparer.Ordinal);
     public event Action? Changed;
     public event Action? AuthorityRetired;
 
@@ -131,17 +133,26 @@ public sealed class AdminAutoscanActivityController : IDisposable
         return AdminCursorPager.ScopeOf(_owner!, filter.Limit, history.ToString(), filter.Query, filter.Status);
     }
 
-    /// <summary>Both views start again from their first page with the filters as they now stand; caller holds the gate.</summary>
-    private void ResetViewsLocked(AdminAutoscanHistory? only = null)
+    /// <summary>A view that starts over; with <paramref name="keep"/> the shown rows stay (stale) until the next read replaces them.</summary>
+    private static AdminAutoscanHistoryState<T> Fresh<T>(AdminAutoscanActivityFilter filter, AdminAutoscanHistoryState<T>? keep = null) =>
+        keep is { Loaded: true, Items.Count: > 0 }
+            ? new() { Filter = filter, Items = keep.Items, Total = keep.Total, Loaded = true, Stale = true }
+            : new() { Filter = filter, Total = keep?.Total ?? 0 };
+
+    /// <summary>
+    /// Both views start again from their first page with the filters as they now stand; caller holds the gate. A change of page size alone
+    /// (<paramref name="keepRows"/>) keeps the shown view's rows on screen until the new page arrives.
+    /// </summary>
+    private void ResetViewsLocked(AdminAutoscanHistory? only = null, bool keepRows = false)
     {
         if (only is null or AdminAutoscanHistory.Scans)
         {
-            _state = _state with { Scans = new() { Filter = FilterOf(AdminAutoscanHistory.Scans) } };
+            _state = _state with { Scans = Fresh(FilterOf(AdminAutoscanHistory.Scans), keepRows && _state.Selected == AdminAutoscanHistory.Scans ? _state.Scans : null) };
             _scanCursors = new(ScopeOf(AdminAutoscanHistory.Scans));
         }
         if (only is null or AdminAutoscanHistory.Polls)
         {
-            _state = _state with { Polls = new() { Filter = FilterOf(AdminAutoscanHistory.Polls) } };
+            _state = _state with { Polls = Fresh(FilterOf(AdminAutoscanHistory.Polls), keepRows && _state.Selected == AdminAutoscanHistory.Polls ? _state.Polls : null) };
             _pollCursors = new(ScopeOf(AdminAutoscanHistory.Polls));
         }
     }
@@ -181,7 +192,8 @@ public sealed class AdminAutoscanActivityController : IDisposable
             _state = _state with { Selected = history };
             ResetViewsLocked(history);
         }
-        return RefreshAsync();
+        // Like the official view change, only the history query is read again; the status and the names are not.
+        return StartHistoryAsync();
     }
 
     /// <summary>Applies the search text, the shown view's status and the page size; any change returns to the first page.</summary>
@@ -192,13 +204,14 @@ public sealed class AdminAutoscanActivityController : IDisposable
             if (!Current) return Task.CompletedTask;
             var filter = new AdminAutoscanActivityFilter(query.Trim(), status, limit);
             _ = AdminAutoscanActivityApi.HistoryPath(_state.Selected, filter);
-            if (filter == FilterOf(_state.Selected)) return Task.CompletedTask;
+            var shown = FilterOf(_state.Selected);
+            if (filter == shown) return Task.CompletedTask;
             CancelHistoryLocked();
             _state = _state with { Query = filter.Query, PageSize = limit };
             _state = _state.Selected == AdminAutoscanHistory.Scans ? _state with { ScanStatus = status } : _state with { PollStatus = status };
-            ResetViewsLocked();
+            ResetViewsLocked(keepRows: filter.Query == shown.Query && filter.Status == shown.Status);
         }
-        return RefreshAsync();
+        return StartHistoryAsync();
     }
 
     /// <summary>The official Reset: clears the search and both views' status filters (page size stays).</summary>
@@ -211,7 +224,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
             _state = _state with { Query = "", ScanStatus = "", PollStatus = "" };
             ResetViewsLocked();
         }
-        return RefreshAsync();
+        return StartHistoryAsync();
     }
 
     /// <summary>Moves to a page of the shown view; an out-of-range index is clamped into the reachable pages.</summary>
@@ -227,10 +240,11 @@ public sealed class AdminAutoscanActivityController : IDisposable
                 (scans ? _state.Scans.Failure : _state.Polls.Failure) == null) return Task.CompletedTask;
             CancelHistoryLocked();
             var filter = FilterOf(_state.Selected);
-            _state = scans ? _state with { Scans = new() { Filter = filter, PageIndex = target, Total = _state.Scans.Total } }
-                : _state with { Polls = new() { Filter = filter, PageIndex = target, Total = _state.Polls.Total } };
+            // The rows of the page being left stay on screen, with the pager the admin used, until the target page arrives.
+            _state = scans ? _state with { Scans = Fresh(filter, _state.Scans) with { PageIndex = target, Total = _state.Scans.Total } }
+                : _state with { Polls = Fresh(filter, _state.Polls) with { PageIndex = target, Total = _state.Polls.Total } };
         }
-        return RefreshAsync();
+        return StartHistoryAsync();
     }
 
     public Task NextAsync() => GoToPageAsync(PageIndexOf(State.Selected) + 1);
@@ -242,6 +256,11 @@ public sealed class AdminAutoscanActivityController : IDisposable
     /// </summary>
     public Task ReloadHistoryAsync() => RefreshAsync(explicitReload: true);
 
+    /// <summary>
+    /// The page's periodic refresh, its open and the visible-again read: the status, the shown history page and, only when the names
+    /// have not been read or the last lookup failed, the names. A page, filter or view change reads the history alone
+    /// (<see cref="StartHistoryAsync"/>), and the names are never re-read because a scan finished.
+    /// </summary>
     public Task RefreshAsync(bool explicitReload = false)
     {
         Task work;
@@ -251,31 +270,14 @@ public sealed class AdminAutoscanActivityController : IDisposable
             _timer?.Dispose(); _timer = null;
             var owner = _owner!;
             if (explicitReload) { CancelHistoryLocked(); CancelStatusLocked(); }
-            if (_historyTask.IsCompleted)
-            {
-                var history = _state.Selected; var filter = FilterOf(history); var seq = ++_sequence;
-                var target = PageIndexOf(history); var cursors = CursorsOf(history);
-                _historyRead = CancellationTokenSource.CreateLinkedTokenSource(_readLifetime!.Token);
-                _state = history == AdminAutoscanHistory.Scans ? _state with { Scans = _state.Scans with { Fetching = true } }
-                    : _state with { Polls = _state.Polls with { Fetching = true } };
-                _historyTask = history == AdminAutoscanHistory.Scans
-                    ? ReadHistoryAsync(owner, history, cursors, filter, target, explicitReload, seq, _historyRead, (cursor, token) => _api.ReadScansAsync(owner, filter, cursor, token),
-                        (window, index, total) => _state with { Scans = _state.Scans with { Items = window, Total = total, PageIndex = index, Loaded = true, Fetching = false, Failure = null } },
-                        failure => _state with { Scans = _state.Scans with { Fetching = false, Failure = failure } })
-                    : ReadHistoryAsync(owner, history, cursors, filter, target, explicitReload, seq, _historyRead, (cursor, token) => _api.ReadEventsAsync(owner, filter, cursor, token),
-                        (window, index, total) => _state with { Polls = _state.Polls with { Items = window, Total = total, PageIndex = index, Loaded = true, Fetching = false, Failure = null } },
-                        failure => _state with { Polls = _state.Polls with { Fetching = false, Failure = failure } });
-            }
+            if (_historyTask.IsCompleted) StartHistoryLocked(owner, explicitReload);
             if (_statusTask.IsCompleted)
             {
                 _state = _state with { StatusFetching = true };
                 _statusTask = ReadStatusAsync(owner, _readLifetime!.Token, ++_statusSequence);
             }
-            if (_labelsTask.IsCompleted && (explicitReload || _labelsDirty || _state.Labels == AdminAutoscanActivityLabels.Empty || _state.LabelsFailed))
-            {
-                _labelsDirty = false;
+            if (_labelsTask.IsCompleted && (_state.Labels == AdminAutoscanActivityLabels.Empty || _state.LabelsFailed))
                 _labelsTask = ReadLabelsAsync(owner, _readLifetime!.Token);
-            }
             work = Task.WhenAll(_historyTask, _statusTask, _labelsTask);
             _ = ScheduleAfterAsync(owner, work, ++_refreshEpoch);
             _state = _state with { Revision = _state.Revision + 1 };
@@ -284,9 +286,45 @@ public sealed class AdminAutoscanActivityController : IDisposable
         return work;
     }
 
+    /// <summary>Reads the shown view's current page and nothing else (the official page change refetches only the history query).</summary>
+    private Task StartHistoryAsync()
+    {
+        Task work;
+        lock (_gate)
+        {
+            if (!Current || !_visible) return Task.CompletedTask;
+            if (_historyTask.IsCompleted) StartHistoryLocked(_owner!, false);
+            work = _historyTask;
+            _state = _state with { Revision = _state.Revision + 1 };
+        }
+        Notify();
+        return work;
+    }
+
+    /// <summary>Starts the read of the shown view's current page (walking continuations when needed); caller holds the gate.</summary>
+    private void StartHistoryLocked(MonitorAuthorityLease owner, bool rewalk)
+    {
+        var history = _state.Selected; var filter = FilterOf(history); var seq = ++_sequence;
+        var target = PageIndexOf(history); var cursors = CursorsOf(history);
+        _historyRead = CancellationTokenSource.CreateLinkedTokenSource(_readLifetime!.Token);
+        _state = history == AdminAutoscanHistory.Scans ? _state with { Scans = _state.Scans with { Fetching = true } }
+            : _state with { Polls = _state.Polls with { Fetching = true } };
+        _historyTask = history == AdminAutoscanHistory.Scans
+            ? ReadHistoryAsync(owner, history, cursors, filter, target, rewalk, seq, _historyRead, (cursor, onTarget, token) => _api.ReadScansAsync(owner, filter, cursor, token, onTarget),
+                (window, index, total) => _state with { Scans = _state.Scans with { Items = window, Total = total, PageIndex = index, Loaded = true, Fetching = false, Failure = null, Stale = false } },
+                failure => _state with { Scans = FailedHistory(_state.Scans, failure) })
+            : ReadHistoryAsync(owner, history, cursors, filter, target, rewalk, seq, _historyRead, (cursor, onTarget, token) => _api.ReadEventsAsync(owner, filter, cursor, token, onTarget),
+                (window, index, total) => _state with { Polls = _state.Polls with { Items = window, Total = total, PageIndex = index, Loaded = true, Fetching = false, Failure = null, Stale = false } },
+                failure => _state with { Polls = FailedHistory(_state.Polls, failure) });
+    }
+
+    /// <summary>A failed read keeps the rows of a background refresh, but the rows of a page the admin already left are dropped for the error panel.</summary>
+    private static AdminAutoscanHistoryState<T> FailedHistory<T>(AdminAutoscanHistoryState<T> view, AdminFailureKind failure) =>
+        view.Stale ? view with { Items = [], Loaded = false, Fetching = false, Failure = failure, Stale = false } : view with { Fetching = false, Failure = failure };
+
     private async Task ReadHistoryAsync<T>(MonitorAuthorityLease owner, AdminAutoscanHistory history, HistoryCursors cursors, AdminAutoscanActivityFilter filter,
         int target, bool rewalk, long seq, CancellationTokenSource read,
-        Func<string?, CancellationToken, Task<AdminAutoscanActivityWindow<T>>> readPage,
+        Func<string?, bool, CancellationToken, Task<AdminAutoscanActivityWindow<T>>> readPage,
         Func<IReadOnlyList<T>, int, long, AdminAutoscanActivityState> apply, Func<AdminFailureKind, AdminAutoscanActivityState> fail)
     {
         await Task.Yield();
@@ -300,7 +338,8 @@ public sealed class AdminAutoscanActivityController : IDisposable
                 var index = cursors.KnownAtOrBefore(target); var reached = false;
                 while (true)
                 {
-                    var window = await readPage(cursors.CursorFor(index), read.Token).ConfigureAwait(false);
+                    // Only the page being shown has its rows validated; the pages walked to reach it just yield their continuation.
+                    var window = await readPage(cursors.CursorFor(index), index == target, read.Token).ConfigureAwait(false);
                     total = window.Total;
                     if (index == target)
                     {
@@ -392,7 +431,6 @@ public sealed class AdminAutoscanActivityController : IDisposable
             var scans = data.EnumerateArray().Select(AdminLibraryPresentation.ParseScan)
                 .OfType<AdminLibraryScanRun>().Where(scan => scan.IsActive && scan.Trigger == "autoscan" && AdminAutoscanActivityApi.NumericId(scan.LibraryId))
                 .DistinctBy(scan => scan.Id).Take(AdminAutoscanActivityApi.MaxActiveScans + 1).ToArray();
-            _scanObservation++;
             _state = _state with { Queue = SortQueue(scans.Take(AdminAutoscanActivityApi.MaxActiveScans)), QueueCapped = scans.Length > AdminAutoscanActivityApi.MaxActiveScans, Revision = _state.Revision + 1 };
         }
         Notify();
@@ -407,19 +445,9 @@ public sealed class AdminAutoscanActivityController : IDisposable
             var scans = _state.Queue.Where(row => row.Id != scan.Id).ToList();
             var overflow = scan.IsActive && scan.Trigger == "autoscan" && scans.Count >= AdminAutoscanActivityApi.MaxActiveScans;
             if (scan.IsActive && scan.Trigger == "autoscan" && !overflow) scans.Add(scan);
-            if (scan.IsActive) _terminalReviewEvidence.Remove(scan.LibraryId);
-            if (scan.Status is "completed" or "failed" or "cancelled" && _state.CancelReview.ContainsKey(scan.LibraryId) &&
-                !_state.QueueCapped && !scans.Any(row => row.LibraryId == scan.LibraryId)) _terminalReviewEvidence.Add(scan.LibraryId);
+            // A scan event only updates the live queue. The official page never re-reads library, source or connection names because
+            // a scan finished, so a stream of events cannot become a stream of lookup requests.
             _state = _state with { Queue = SortQueue(scans), QueueCapped = _state.QueueCapped || overflow, Revision = _state.Revision + 1 };
-            if (scan.Status is "completed" or "failed" or "cancelled")
-            {
-                _labelsDirty = true;
-                if (_visible && _labelsTask.IsCompleted)
-                {
-                    _labelsDirty = false;
-                    _labelsTask = ReadLabelsAsync(owner, _readLifetime!.Token);
-                }
-            }
         }
         Notify();
     }
@@ -438,7 +466,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
         {
             if (!Current || !_visible || _state.Cancelling != null || _state.CancelReview.Count >= AdminAutoscanActivityApi.MaxActiveScans ||
                 _state.CancelReview.ContainsKey(libraryId) || !_state.Queue.Any(scan => scan.LibraryId == libraryId)) return;
-            owner = _owner!; _uncertainAt[libraryId] = _scanObservation; _terminalReviewEvidence.Remove(libraryId);
+            owner = _owner!;
             _state = _state with { Cancelling = libraryId, Message = null, Revision = _state.Revision + 1 };
         }
         Notify();
@@ -446,7 +474,6 @@ public sealed class AdminAutoscanActivityController : IDisposable
         try
         {
             await _api.CancelAsync(owner, libraryId).ConfigureAwait(false);
-            lock (_gate) { if (!Owns(owner)) return; _uncertainAt.Remove(libraryId); }
             message = AdminAutoscanActivityText.T("web.common.scans.cancelRequested");
         }
         catch (Exception error)
@@ -457,7 +484,6 @@ public sealed class AdminAutoscanActivityController : IDisposable
                 if (IsRefusal(error))
                 {
                     // A definite 4xx answer: nothing was applied, so the admin can read the reason and try again.
-                    _uncertainAt.Remove(libraryId);
                     message = error is ApiException api ? ApiProblemText.Display(api, null) : AdminAutoscanActivityText.T("web.common.scans.cancelFailed");
                 }
                 else
@@ -473,18 +499,24 @@ public sealed class AdminAutoscanActivityController : IDisposable
         Notify();
     }
 
+    /// <summary>
+    /// The admin's explicit way out of an unknown cancellation. The cancel is never replayed here: this only re-reads the live status.
+    /// Rule: a status read started by this action (so after the unknown outcome was recorded) that completes successfully is the
+    /// canonical re-read, and it lifts the block for that library whatever it shows. The scan is then either gone, or still listed
+    /// and visibly running, and a further Cancel is a new, deliberate request that the admin makes, not a blind repeat. A failed read
+    /// keeps the block. It does not depend on a realtime snapshot ever arriving.
+    /// </summary>
     public async Task ReconcileCancelAsync(string libraryId)
     {
         MonitorAuthorityLease owner;
-        long observation;
-        bool terminal;
-        long sequence;
+        long sequence, statusSequence;
         CancellationToken token;
         lock (_gate)
         {
             if (!Current || !_visible || _state.Reconciling != null || !_state.CancelReview.ContainsKey(libraryId)) return;
-            owner = _owner!; observation = _scanObservation; terminal = _terminalReviewEvidence.Contains(libraryId);
-            sequence = ++_reviewSequence; token = _readLifetime!.Token;
+            owner = _owner!; sequence = ++_reviewSequence; token = _readLifetime!.Token;
+            // This read is the newest status read; an older periodic read still in flight must not overwrite it, and it must not overwrite a newer one.
+            statusSequence = ++_statusSequence;
             _state = _state with { Reconciling = libraryId, Revision = _state.Revision + 1 };
         }
         Notify();
@@ -495,22 +527,23 @@ public sealed class AdminAutoscanActivityController : IDisposable
             lock (_gate)
             {
                 if (!Owns(owner) || sequence != _reviewSequence || token.IsCancellationRequested) return;
-                _state = _state with { Reconciling = null, Message = AdminAutoscanActivityText.T("native.reconcileFailed"), Revision = _state.Revision + 1 };
+                _state = _state with { Reconciling = null, StatusFetching = _statusSequence == statusSequence ? false : _state.StatusFetching,
+                    Message = AdminAutoscanActivityText.T("native.reconcileFailed"), Revision = _state.Revision + 1 };
             }
             Notify(); return;
         }
         lock (_gate)
         {
             if (!Owns(owner) || sequence != _reviewSequence || token.IsCancellationRequested) return;
-            _state = _state with { Reconciling = null, Status = status, StatusFailure = null };
-            if (status.ActiveScans == 0 || !_state.QueueCapped &&
-                (terminal && !_state.Queue.Any(scan => scan.LibraryId == libraryId) || observation > _uncertainAt.GetValueOrDefault(libraryId)))
+            // The counts are shown only while no newer status read has been started since this one.
+            if (_statusSequence == statusSequence) _state = _state with { Status = status, StatusFailure = null, StatusFetching = false };
+            var reviews = _state.CancelReview.ToDictionary(entry => entry.Key, entry => entry.Value); reviews.Remove(libraryId);
+            var listed = !_state.QueueCapped && status.ActiveScans > 0 && _state.Queue.Any(scan => scan.LibraryId == libraryId);
+            _state = _state with
             {
-                var reviews = _state.CancelReview.ToDictionary(entry => entry.Key, entry => entry.Value); reviews.Remove(libraryId); _uncertainAt.Remove(libraryId);
-                _terminalReviewEvidence.Remove(libraryId);
-                _state = _state with { CancelReview = reviews, Message = AdminAutoscanActivityText.T("native.cancelReviewed"), Revision = _state.Revision + 1 };
-            }
-            else _state = _state with { Message = AdminAutoscanActivityText.T("native.waitSnapshot"), Revision = _state.Revision + 1 };
+                Reconciling = null, CancelReview = reviews, Revision = _state.Revision + 1,
+                Message = AdminAutoscanActivityText.T(listed ? "native.cancelStillListed" : "native.cancelReviewed")
+            };
         }
         Notify();
     }
@@ -552,8 +585,8 @@ public sealed class AdminAutoscanActivityController : IDisposable
         if (_channel != null) { _channel.SnapshotReceived -= _snapshot; _channel.EventReceived -= _event; }
         _subscription?.Dispose(); _subscription = null;
         _owner?.Dispose(); _owner = null; _statusTask = _labelsTask = Task.CompletedTask;
-        _scanCursors = new(""); _pollCursors = new(""); _uncertainAt.Clear(); _terminalReviewEvidence.Clear();
-        _scanObservation = 0; _refreshEpoch++; _reviewSequence++; _visible = true; _labelsDirty = false;
+        _scanCursors = new(""); _pollCursors = new("");
+        _refreshEpoch++; _reviewSequence++; _visible = true;
     }
 
     private void AuthorityChanged() { Suspend(); AuthorityRetired?.Invoke(); }
