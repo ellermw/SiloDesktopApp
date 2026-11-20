@@ -357,7 +357,11 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminActivityPage.xbf',
     'Views/Admin/AdminSubtitlesPage.xbf',
     'Views/Admin/AdminLibrariesPage.xbf',
+<<<<<<< HEAD
     'Views/Admin/AdminAutoscanActivityPage.xbf',
+=======
+    'Views/Admin/AdminCollectionsPage.xbf',
+>>>>>>> origin/beta
     'Views/Admin/AdminRequestsPage.xbf',
     'Views/Admin/AdminLogsPage.xbf',
     'Views/Admin/AdminDiagnosticsPage.xbf',
@@ -366,6 +370,9 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminEmailSettingsPage.xbf',
     'Views/Admin/AdminNotificationSettingsPage.xbf',
     'Views/Admin/AdminSecuritySettingsPage.xbf',
+    'Views/Admin/AdminApiKeysPage.xbf',
+    'Views/Admin/AdminSignInSettingsPage.xbf',
+    'Views/Admin/AdminPolicyPage.xbf',
     'Views/Admin/AdminNetworkAccessSettingsPage.xbf',
     'Views/Admin/AdminSearchSettingsPage.xbf',
     'Views/Admin/AdminDownloadSettingsPage.xbf',

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # November 20 — Autoscan Activity aligned with the official inspector sheet
 
 `/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `f36e3bd4a`; version stamps unchanged) was
@@ -20,6 +21,45 @@ Final run `autoact3-final-r1` (stage final, committed source `24f5cc9df`, lane `
 publish and native host build passed, and the `admin-autoscan-activity` (62 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
 native selectors passed; source and payload seals verified. Not observed: live-server/phone interoperability, all-DPI and screen-reader behaviour, a fixture-driven row click, and visual inspection of the
 new pager-gap and focus states beyond the fixture checks. Nothing was pushed.
+=======
+# November 20 — Collections (Manage > Libraries > Collections) built and verified
+
+`t3/admin-collections-page` completes Collections (`/admin/collections`, `/new`, `/:id/edit`): list,
+Arrange board and shelves, new-collection picker, templates, starter packs, and manual/smart/synced
+editors, registered through the real Admin shell. Beta was merged into the branch (normal merges, last at
+`db49c4c93`, stable `1.2.1194` merged into beta); this branch changes no version number. Official contracts: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+
+Seven review findings were fixed with regression tests, and running the code exposed more (JsonObject
+request bodies serialized as node members, an editor re-render exception, Click-only checkbox handlers).
+A second independent review of the final diff (November 20) found eight more defects; all eight were confirmed
+against the code and the official source and fixed, each with a unit and/or native test: starter-job poll failure
+and cap left the job id behind, job id stored for a retired authority, new member position colliding after a removal,
+validation reasons hidden, a failed hide after import dropped, pasted list links not cleaned, template poster not
+sent, and the unknown-outcome list check reading only the filtered library. Details, deviations and limits:
+[docs/parity/admin-collections.md](parity/admin-collections.md).
+
+Final acceptance after merging Beta `db49c4c93`: label collections-lead-final-r1 on merge commit 23e4d5bcb, build
+lease 2026-11-20T16:17:21Z–16:23:40Z: focused 57/57 and full 9,754/9,754 unit cases (0 failures, 0 skipped); app build,
+publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL), admin-manage-foundation,
+admin-configure-general and admin-monitor passed; source seal (2,489 build inputs) and 582-file payload unchanged across
+the run. That merge brought only version stamps, README and release notes.
+
+Acceptance before that merge (after the second review): label collections-fix-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a,
+task admin-families-nov20), stage final on commit 016ea09ac, build lease 2026-11-20T16:09:43Z–16:15:58Z. Focused unit
+run 57/57 (filter FullyQualifiedName~AdminCollections) and full unit suite 9,754/9,754 passed (0 failures, 0 skipped);
+app build, publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL),
+admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) all passed; source and payload
+seals verified. The earlier acceptance run (collections-final-r1, lane B, 31 focused, 9,728 full, 149 admin-collections
+checks) predates these fixes. Before the final run, the page-level native checks for the starter-job poll failure,
+member position and list check were shown to fail with those fixes temporarily reverted
+(collections-fix-negative-r1; source restored from Git afterwards).
+
+Not observed: live-server compatibility, all-DPI/IME/Narrator, physical drag-and-drop, artwork file
+picker, complete visual parity. The authority-retirement race between a queued starter-pack answer and the dialog
+continuation is covered by a controller unit test only, not by the real page. The final run's synthetic captures were not
+reviewed again. Home Sections is a separate family and not registered here.
+No push, PR, installer or installed-player action occurred.
+>>>>>>> origin/beta
 
 ---
 
@@ -148,6 +188,44 @@ environment-managed worker setting disabled Restore defaults for all), both fixe
 
 Not observed: live-server behavior, all DPI, Narrator/IME, real plugin combinations and complete visual parity. Scope,
 evidence and limits: docs/parity/admin-manage-library-settings.md.
+
+# November 20 — Configure Sign-in, API Keys and Policy (Access family)
+
+`/admin/settings/sign-in`, `/admin/api-keys` and `/admin/policy` are implemented, registered
+(`AddAdminSignInSecurity()`) and reachable through the real Admin navigation. The three pages had been
+listed as unsupported in `AdminRouteCatalog.UnsupportedPatterns`; `api-keys` and `policy` are removed from
+it (the shared navigation test no longer lists `/admin/api-keys` as unsupported). Official source pin:
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Version `1.2.1181-beta.1` unchanged. Branch
+`t3/admin-signin-security`, merged with `origin/beta` (25 commits) before the final run.
+
+Review findings fixed with regression tests: the policy title/toggle/lifecycle labels now follow the adopted
+snapshot (`AdminPolicyPresentation`); the override list and the API key list are re-read from the server's
+canonical first page after a create; a numeric field the server holds as explicit `null` is sent back as `null`
+unless the administrator changed it. Also fixed from the first compile and native run: a missing namespace,
+unusable `StackPanel.IsEnabled`, anonymous request bodies replaced by dictionaries, multi-line text boxes losing
+everything after the first line break (assigned before `AcceptsReturn`), a refused local value permanently blocking
+later writes, the shared date/time preference formatter, clipboard history excluded for the one-time key.
+
+Second independent review (seven findings, all confirmed and fixed with regression tests): creates whose outcome is
+unknown or whose list re-read failed now block every create and row write on API Keys and Policy until the page-level
+reload (opening, cancelling or saving a single-row editor no longer lifts it); a definite policy-enable 409 shows its
+reason and is retryable; "All overrides" re-reads the list after editor-side writes; a revoke/tier change whose list
+re-read fails is still reported as done; the save-time "no provider" refusal uses the provider text; a non-string
+provider `display_name` no longer crashes the page; account pages beyond the first are read (cap 1,000) so API Keys
+owners and the break-glass check do not depend on the first page, and an incomplete list leaves the break-glass
+decision to the server as on the official page (a settings 409 is shown with the break-glass text).
+
+Observed on exact source after the fixes (lane `D:/SiloPlayer-build/admin-completion-lane-a`, label
+`signin-fix-final-r3`, source commit `70de5e745`): focused unit run 167 passed, full unit suite 9,835 passed/0
+failed, app build, publish, native host and the native selectors `admin-signin-security`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor` all passed, with source and payload seals verified. An earlier attempt
+(`signin-fix-final-r1`) failed one unrelated test in another family (`LibraryBackgroundRefreshTests.RetainedRefreshHandbackRestartsCanceledLettersAndCount(churn: False)`)
+that passed on rerun without change. Not observed: live SSO/LDAP servers, servers with more than 50 accounts, a real
+clipboard, other DPIs, screen-reader or IME behaviour, installer execution. Earlier run before the fixes: lane
+`admin-completion-lane-b`, `signin-final-r2`, 146 focused / 9,755 full. Scoped record and deviations:
+[admin-sign-in-security-20261117.md](parity/admin-sign-in-security-20261117.md).
+
+---
 
 # November 17 — Configure Integrations verified Beta increment
 

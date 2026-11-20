@@ -1026,9 +1026,15 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdminLibrariesNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+<<<<<<< HEAD
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-autoscan-activity")
             {
                 await AdminAutoscanActivityNativeFixture.RunAsync(_window);
+=======
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-collections")
+            {
+                await AdminCollectionsNativeFixture.RunAsync(_window);
+>>>>>>> origin/beta
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-requests-management")
@@ -1065,6 +1071,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-email")
             {
                 await AdminEmailSettingsNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-signin-security")
+            {
+                await AdminSignInSecurityNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-notifications")
