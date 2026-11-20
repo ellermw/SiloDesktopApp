@@ -208,6 +208,26 @@ public sealed class AdminHomeSectionsControllerTests
     }
 
     [Fact]
+    public async Task RestoreThatRunsOutOfTimeReportsEveryPageItDidNotReachAsNotRestored()
+    {
+        var (kit, authority, controller, server) = await OpenAsync(); using var _k = kit; using var _a = authority; using var _c = controller;
+        server.Orders["library:8"] = []; server.Orders["library:9"] = [];
+        controller.RestoreBudget = TimeSpan.FromSeconds(1);
+        // The first other page's version read outlives the budget; nothing was sent for it or for the page after it.
+        kit.Http.Respond = async (request, ct) =>
+        {
+            if (request.Method == HttpMethod.Get && request.RequestUri!.Query.Contains("library_id=8")) await Task.Delay(Timeout.Infinite, ct);
+            return await server.HandleAsync(request, ct);
+        };
+        var result = await controller.RestoreAsync(controller.State.Snapshot!, false, [new("library", "8"), new("library", "9")]);
+        Assert.True(result.PrimaryRestored);
+        Assert.Equal(new[] { "8", "9" }, result.Failures.Select(failure => failure.LibraryId));
+        Assert.All(result.Failures, failure => { Assert.False(failure.Unknown); Assert.Contains("ran out of time", failure.Message); });
+        Assert.Equal("/api/v2/admin/sections/defaults?scope=home", Assert.Single(server.Writes).Path);
+        Assert.True(controller.CanWrite); Assert.False(controller.State.OutcomeUnknown);
+    }
+
+    [Fact]
     public async Task CreateSendsTheBottomPositionAndAnUnusableAnswerIsUnknown()
     {
         var (kit, authority, controller, server) = await OpenAsync(); using var _k = kit; using var _a = authority; using var _c = controller;

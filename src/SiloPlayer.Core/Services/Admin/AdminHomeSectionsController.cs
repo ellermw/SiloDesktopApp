@@ -62,6 +62,9 @@ public sealed class AdminHomeSectionsController : IDisposable
     private long _revision;
     private bool _disposed;
     private AdminHomeSectionScope _scope = AdminHomeSectionScope.Home;
+    /// <summary>How long one restore may run across pages. Pages it has not reached by then are reported as not restored.</summary>
+    internal TimeSpan RestoreBudget { get; set; } = TimeSpan.FromSeconds(90);
+    private const string RestoreOutOfTime = "Not restored: the restore ran out of time.";
     public AdminHomeSectionsController(AdminHomeSectionsApi api, AdminMonitorAuthority authority)
     { _api = api; _lifetime = new(authority); _lifetime.Retired += Clear; }
     public AdminHomeSectionsState State { get { lock (_gate) return _state; } }
@@ -222,16 +225,19 @@ public sealed class AdminHomeSectionsController : IDisposable
             if (!ReferenceEquals(snapshot, reviewed)) throw new AdminHomeSectionsConflictException();
             if (resetProfiles && !caps.ResetProfiles) throw new ArgumentException("Profile reset is unavailable.");
             if (alsoPages is { Count: > 2000 } || alsoPages?.Any(page => page.Kind != "library") == true) throw new ArgumentException("Invalid library restore targets.");
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(owner.Token); deadline.CancelAfter(TimeSpan.FromSeconds(90));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(owner.Token); deadline.CancelAfter(RestoreBudget);
             await _api.RestoreAsync(owner, reviewed, resetProfiles, deadline.Token).ConfigureAwait(false);
             primary = true;
-            var stopped = false;
+            var stopped = false; var timedOut = false;
             foreach (var page in (alsoPages ?? []).Distinct().Where(page => page != snapshot.Scope))
             {
                 var id = page.LibraryId ?? "";
                 if (stopped) { failures.Add(new(id, false, "Not restored: an earlier page could not be confirmed.")); continue; }
+                // Past the budget nothing more is sent. A page whose restore was never sent kept its rows, so it is named, not unknown.
+                if (timedOut || owner.IsCurrent && deadline.IsCancellationRequested) { timedOut = true; failures.Add(new(id, false, RestoreOutOfTime)); continue; }
                 string etag;
                 try { etag = (await _api.ReadOrderAsync(owner, page, deadline.Token).ConfigureAwait(false)).ETag!; }
+                catch (OperationCanceledException) when (owner.IsCurrent && deadline.IsCancellationRequested) { timedOut = true; failures.Add(new(id, false, RestoreOutOfTime)); continue; }
                 catch (Exception ex) when (owner.IsCurrent && ex is not OperationCanceledException || ex is OperationCanceledException && owner.IsCurrent && !deadline.IsCancellationRequested)
                 { failures.Add(new(id, false, ex is ApiException api ? RefusalText(api) : "Its version could not be read.")); continue; }
                 try { await _api.RestorePageAsync(owner, page, etag, resetProfiles, deadline.Token).ConfigureAwait(false); }

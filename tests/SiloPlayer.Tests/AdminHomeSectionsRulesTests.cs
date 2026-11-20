@@ -170,6 +170,18 @@ public sealed class AdminHomeSectionsRulesTests
         Assert.Null(AdminHomeSectionsRules.VariantOf("recently_added", Config("{}")));
     }
 
+    [Theory]
+    [InlineData("https:/mdblist.com/lists/x")]
+    [InlineData("http:mdblist.com/lists/x")]
+    [InlineData("https:\\\\mdblist.com\\lists\\x")]
+    [InlineData("https:/mdblist.com/lists/x?next=a://b")]
+    public void AListLinkWithoutItsAuthorityWrittenOutIsInvalidNotAnError(string url)
+    {
+        Assert.False(AdminHomeSectionsRules.IsMdbListList(url));
+        var holiday = new JsonObject { ["name"] = "x", ["start"] = "01-01", ["end"] = "01-02", ["list_url"] = url };
+        Assert.Equal(AdminHomeSectionsText.T("web.home.rows.seasonal.listInvalid"), AdminHomeSectionsRules.CustomHolidayProblem(holiday));
+    }
+
     [Fact]
     public void UpdateConfigFinalizesLibraryFilterKindsAndLeavesRuleAndCollectionRowsAsDrafted()
     {

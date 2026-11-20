@@ -53,7 +53,13 @@ public sealed class AdminHomePreset
     public string DescriptionShort { get; set; } = "";
     public JsonObject DefaultParams { get; set; } = new();
 }
-public sealed class AdminHomeSectionChoices { public List<AdminHomeSectionChoice> Items { get; set; } = []; public ApiPageInfo? Page { get; set; } }
+public sealed class AdminHomeSectionChoices
+{
+    public List<AdminHomeSectionChoice> Items { get; set; } = [];
+    public ApiPageInfo? Page { get; set; }
+    /// <summary>The server holds more choices than this window, so an identity missing from it is unknown, not gone.</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public bool Truncated => Page is { } page && (page.HasMore || !string.IsNullOrEmpty(page.NextCursor));
+}
 public sealed class AdminHomeSectionChoice
 {
     public string Id { get; set; } = "";

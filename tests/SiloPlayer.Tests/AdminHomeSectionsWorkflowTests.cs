@@ -76,6 +76,19 @@ public sealed class AdminHomeSectionsWorkflowTests
         Assert.Equal("GET /api/v2/admin/collections", kit.Http.Requests.Single());
     }
 
+    [Theory]
+    [InlineData("""{"items":[{"id":"7","title":"Synthetic"}],"page":{"has_more":true,"next_cursor":"next"}}""", true)]
+    [InlineData("""{"items":[{"id":"7","title":"Synthetic"}],"page":{"has_more":false,"next_cursor":"next"}}""", true)]
+    [InlineData("""{"items":[{"id":"7","title":"Synthetic"}],"page":{"has_more":false}}""", false)]
+    [InlineData("""{"items":[{"id":"7","title":"Synthetic"}]}""", false)]
+    public async Task ACollectionListTheServerCutShortSaysSoThatAMissingCollectionIsNotCalledGone(string body, bool truncated)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture(); var api = new AdminHomeSectionsApi(kit.Client);
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(body));
+        Assert.Equal(truncated, (await api.ChoicesAsync(lease, "collections")).Truncated);
+    }
+
     [Fact]
     public void CollectionRowsCannotBecomeHeroesAndDraftBoundsAreEnforced()
     {

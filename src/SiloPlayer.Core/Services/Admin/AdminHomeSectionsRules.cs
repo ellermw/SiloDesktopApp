@@ -168,7 +168,9 @@ public static class AdminHomeSectionsRules
     {
         var raw = value?.Trim() ?? "";
         if (!Uri.TryCreate(raw, UriKind.Absolute, out var url) || url.Scheme is not ("https" or "http")) return false;
-        var authority = raw.Split("://", 2)[1].Split('/', '?', '#')[0];
+        // Uri also accepts "https:/host" and "http:host"; the server needs the authority written out after "://".
+        if (!raw.StartsWith(url.Scheme + "://", StringComparison.OrdinalIgnoreCase)) return false;
+        var authority = raw[(url.Scheme.Length + 3)..].Split('/', '?', '#')[0];
         return !authority.Contains('@') && url.UserInfo.Length == 0 && url.Port is 80 or 443 && url.Host.TrimEnd('.').ToLowerInvariant() is "mdblist.com" or "www.mdblist.com" &&
             url.AbsolutePath.StartsWith("/lists/", StringComparison.Ordinal);
     }

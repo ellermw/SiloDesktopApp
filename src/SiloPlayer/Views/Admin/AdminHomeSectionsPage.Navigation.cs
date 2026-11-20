@@ -16,7 +16,7 @@ public sealed partial class AdminHomeSectionsPage
     private AdminHomeSectionScope _scope = AdminHomeSectionScope.Home;
     private List<AdminHomeSectionChoice> _libraries = [];
     private readonly Dictionary<string, AdminHomeSectionCollectionLookup> _collectionNames = new(StringComparer.Ordinal);
-    private bool _collectionsLoaded, _librariesFailed;
+    private bool _collectionsLoaded, _collectionsPartial, _librariesFailed;
     private AdminRouteRequest _route = new(AdminRoute.HomeSections);
     private bool _syncPages;
     private string? _handledLinks;
@@ -63,7 +63,7 @@ public sealed partial class AdminHomeSectionsPage
             if (!_active || !active.IsCurrent || !ReferenceEquals(active, _controller?.State.Owner)) return;
             _collectionNames.Clear();
             foreach (var collection in collections.Items) _collectionNames[collection.Id] = AdminHomeSectionCollectionLookup.Found(collection.Label, CollectionKind(collection.CollectionType));
-            _collectionsLoaded = true; Render();
+            _collectionsLoaded = true; _collectionsPartial = collections.Truncated; Render();
         }
         catch (Exception) when (active.IsCurrent) { /* Names stay unknown; the rows keep their saved identities. */ }
     }

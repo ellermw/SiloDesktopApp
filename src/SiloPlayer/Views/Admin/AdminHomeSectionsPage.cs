@@ -203,13 +203,20 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
     private IReadOnlyList<AdminHomeSectionPart> DescribeRow(AdminHomeSection row) => AdminHomeSectionsDescription.Describe(row, _scope.Kind == "home", CollectionLookup);
     private AdminHomeSectionCollectionLookup CollectionLookup(string id) =>
         !_collectionsLoaded ? AdminHomeSectionCollectionLookup.Unknown
-        : _collectionNames.TryGetValue(id, out var found) ? found : AdminHomeSectionCollectionLookup.Gone;
+        : _collectionNames.TryGetValue(id, out var found) ? found
+        // A list the server cut short cannot say a collection is gone.
+        : _collectionsPartial ? AdminHomeSectionCollectionLookup.Unknown : AdminHomeSectionCollectionLookup.Gone;
 
     // ── Row list ─────────────────────────────────────────────
 
     private void RowContainerChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
-        if (args.Item is not RowView row || args.ItemContainer.ContentTemplateRoot is not FrameworkElement root) return;
+        if (args.ItemContainer.ContentTemplateRoot is not FrameworkElement root) return;
+        var row = args.InRecycleQueue ? null : args.Item as RowView;
+        // A container shows one row at a time. The row it showed before lets go, so a later Render cannot write that row's values into it.
+        if (root.Tag is RowView previous && !ReferenceEquals(previous, row)) previous.DetachRoot(root);
+        root.Tag = row;
+        if (row == null) return;
         AutomationProperties.SetName(args.ItemContainer, row.Title);
         row.AttachRoot(root);
     }
@@ -406,6 +413,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
             Sync();
         }
         public void AttachRoot(FrameworkElement root) { _root = root; Sync(); }
+        public void DetachRoot(FrameworkElement root) { if (ReferenceEquals(_root, root)) _root = null; }
         /// <summary>Puts the saved values back into the realized controls: a binding does not push an unchanged value over what the admin just flipped.</summary>
         private void Sync()
         {
