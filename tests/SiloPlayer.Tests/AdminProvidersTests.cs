@@ -263,6 +263,125 @@ public sealed class AdminProvidersTests
         Assert.DoesNotContain("never-print", JsonSerializer.Serialize(new { text = change.ToString() }));
     }
 
+    [Theory]
+    [InlineData("subdl")]
+    [InlineData("opensubtitles")]
+    public async Task SubtitleSaveAndTestOmitCredentialsThatWereLeftBlank(string provider)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminProvidersApi(kit.Client);
+        var bodies = new List<string>();
+        kit.Http.Respond = async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = AdminMonitorKit.Json(JsonSerializer.Serialize(new
+                {
+                    provider_name = provider, enabled = true, has_api_key = true, has_credentials = true,
+                }));
+                response.Headers.ETag = new("\"subtitle-v4\"");
+                return response;
+            }
+            bodies.Add(await request.Content!.ReadAsStringAsync());
+            return request.Method == HttpMethod.Put
+                ? AdminMonitorKit.Json("""{"saved_revision":"5","local_apply":"applied","local_applied_revision":"5"}""")
+                : AdminMonitorKit.Json("""{"success":true}""");
+        };
+        using var lease = authority.Capture();
+        var editor = await api.GetSubtitleProviderAsync(lease, provider);
+        var draft = new AdminSubtitleProviderDraft(editor.Provider, editor.Enabled, editor.HasApiKey, editor.HasCredentials);
+        // Only the enabled state is changed; whitespace in a key or username box is not a typed credential.
+        draft.SetEnabled(false);
+        draft.SetApiKey("  ");
+        draft.SetUsername(" ");
+
+        await api.TestSubtitleProviderAsync(lease, provider, draft.StagedChange());
+        await api.SaveSubtitleProviderAsync(lease, editor, draft.CaptureChange());
+
+        Assert.Equal(2, bodies.Count);
+        foreach (var body in bodies)
+        {
+            using var sent = JsonDocument.Parse(body);
+            Assert.False(sent.RootElement.GetProperty("enabled").GetBoolean());
+            Assert.False(sent.RootElement.TryGetProperty("api_key", out _));
+            Assert.False(sent.RootElement.TryGetProperty("username", out _));
+            Assert.False(sent.RootElement.TryGetProperty("password", out _));
+            Assert.False(sent.RootElement.TryGetProperty("clear_credentials", out _));
+        }
+    }
+
+    [Fact]
+    public void SubtitleStagedChangeCarriesOnlyTheCredentialsThatWereTyped()
+    {
+        var account = new AdminSubtitleProviderDraft("opensubtitles", enabled: true, hasApiKey: false, hasCredentials: true);
+        account.SetPassword("synthetic-password");
+        var passwordOnly = account.StagedChange();
+        Assert.Null(passwordOnly.Username);
+        Assert.Equal("synthetic-password", passwordOnly.Password);
+        Assert.Null(passwordOnly.ApiKey);
+
+        account.SetUsername("synthetic-user");
+        var both = account.CaptureChange();
+        Assert.Equal("synthetic-user", both.Username);
+        Assert.Equal("synthetic-password", both.Password);
+
+        var key = new AdminSubtitleProviderDraft("subdl", enabled: true, hasApiKey: true, hasCredentials: false);
+        Assert.Null(key.StagedChange().ApiKey);
+        key.SetApiKey("synthetic-key");
+        Assert.Equal("synthetic-key", key.StagedChange().ApiKey);
+        Assert.False(key.SaveAttempted);
+
+        var cleared = key.CaptureChange(clear: true);
+        Assert.True(cleared.ClearCredentials);
+        Assert.Null(cleared.ApiKey);
+    }
+
+    [Theory]
+    [InlineData(.55, "55")]
+    [InlineData(.57, "57")]
+    [InlineData(.07, "7")]
+    [InlineData(.29, "29")]
+    [InlineData(.125, "12.5")]
+    [InlineData(.9500000000000001, "95")]
+    [InlineData(0d, "0")]
+    [InlineData(1d, "100")]
+    public void MarkerConfidenceIsShownWithoutFloatingPointNoiseAndUnchangedTextKeepsTheSavedValue(double saved, string shown)
+    {
+        var draft = new AdminMarkerProviderDraft(new AdminMarkerProvider
+        {
+            Provider = "p", IsSubmitter = true, FetchPriority = 10, FetchMinConfidence = saved, ContributeMinConfidence = saved,
+        });
+
+        Assert.Equal(shown, draft.FetchMinimumPercent);
+        Assert.Equal(shown, draft.ContributeMinimumPercent);
+        Assert.True(draft.IsValid);
+        Assert.False(draft.AdvancedDirty);
+        Assert.False(draft.Dirty);
+        Assert.Empty(draft.CapturePatch());
+
+        // Another edit never drags the untouched confidence along as a drifted value.
+        draft.FetchPriority = "5";
+        Assert.Equal(["fetch_priority"], draft.CapturePatch().Keys);
+    }
+
+    [Fact]
+    public void MarkerConfidenceTypedAsAPercentageIsShownAsTypedAfterTheServerAcknowledgesIt()
+    {
+        var draft = new AdminMarkerProviderDraft(MarkerProvider());
+        draft.FetchMinimumPercent = "55";
+        var patch = draft.BeginSave();
+        var sent = (double)Assert.Single(patch).Value!;
+        Assert.Equal(.55, sent);
+
+        var acknowledged = MarkerProvider();
+        acknowledged.FetchMinConfidence = sent;
+        var next = draft.Rebase(acknowledged);
+
+        Assert.Equal("55", next.FetchMinimumPercent);
+        Assert.False(next.Dirty);
+    }
+
     [Fact]
     public void ProviderTestResultsRemainScopedToTheTileThatRanThem()
     {

@@ -130,12 +130,15 @@ public sealed partial class AdminProvidersPage
         save.IsEnabled = !managed && !state.SensitiveStatusError && !state.SavingSettings && draft.Trim().Length > 0 && !state.SettingsConflict && !state.SettingsOutcomeUnknown;
         save.Click += async (_, _) =>
         {
-            if (_controller == null) return;
-            _controller.SetMdblistApiKey(_mdblistDraft);
+            var controller = _controller;
+            if (controller == null) return;
+            controller.SetMdblistApiKey(_mdblistDraft);
             // The key was refused (status unavailable, managed or busy): nothing was saved, so keep what was typed.
-            if (!_controller.State.DirtyKeys.Contains("mdblist.api_key")) return;
-            await _controller.SaveMdblistAsync();
-            if (!_controller.State.SettingsConflict && !_controller.State.SettingsOutcomeUnknown && !_controller.State.DirtyKeys.Contains("mdblist.api_key")) { _mdblistDraft = ""; _mdblistEdited = false; Render(_controller.State); }
+            if (!controller.State.DirtyKeys.Contains("mdblist.api_key")) return;
+            await controller.SaveMdblistAsync();
+            // A page closed while the request was pending already discarded its controller and drafts.
+            if (!ReferenceEquals(controller, _controller)) return;
+            if (!controller.State.SettingsConflict && !controller.State.SettingsOutcomeUnknown && !controller.State.DirtyKeys.Contains("mdblist.api_key")) { _mdblistDraft = ""; _mdblistEdited = false; Render(controller.State); }
         };
         var testButton = U.Action(state.CheckingMdblist ? "Testing…" : "Test connection", "ProvidersMDBListTest", secondary: true);
         testButton.IsEnabled = !state.CheckingMdblist && (configured || draft.Trim().Length > 0);
@@ -154,9 +157,12 @@ public sealed partial class AdminProvidersPage
             clear.Click += async (_, _) =>
             {
                 var owner = await ConfirmForCurrentOwnerAsync("Clear MDBList credentials?", "MDBList search and browse stop working. Lists already imported by URL are unaffected.", "Clear");
-                if (owner == null || _controller == null) return;
-                await _controller.ClearMdblistAsync(owner);
-                if (!_controller.State.SettingsConflict && !_controller.State.SettingsOutcomeUnknown) { _mdblistDraft = ""; _mdblistEdited = false; Render(_controller.State); }
+                var controller = _controller;
+                if (owner == null || controller == null) return;
+                await controller.ClearMdblistAsync(owner);
+                // A page closed while the request was pending already discarded its controller and drafts.
+                if (!ReferenceEquals(controller, _controller)) return;
+                if (!controller.State.SettingsConflict && !controller.State.SettingsOutcomeUnknown) { _mdblistDraft = ""; _mdblistEdited = false; Render(controller.State); }
             };
             actions.Children.Add(clear);
         }
@@ -220,7 +226,7 @@ public sealed partial class AdminProvidersPage
         save.IsEnabled = canEdit;
         save.Click += async (_, _) => await SaveSubtitleAsync(editor, draft, clear: false);
         var test = U.Action("Test connection", "ProvidersSubtitleTest_" + SafeId(id), secondary: true);
-        test.IsEnabled = state.BusyProvider == null; test.Click += async (_, _) => { if (_controller != null) await _controller.TestSubtitleAsync(id, SubtitleChange(draft)); };
+        test.IsEnabled = state.BusyProvider == null; test.Click += async (_, _) => { if (_controller != null) await _controller.TestSubtitleAsync(id, draft.StagedChange()); };
         actions.Children.Add(save); actions.Children.Add(test);
         if (configured)
         {
@@ -253,16 +259,18 @@ public sealed partial class AdminProvidersPage
 
     private async Task SaveSubtitleAsync(AdminSubtitleProviderEditor editor, AdminSubtitleProviderDraft draft, bool clear)
     {
-        if (_controller == null) return;
-        var state = _controller.State;
+        var controller = _controller;
+        if (controller == null) return;
+        var state = controller.State;
         // The editor and draft must still be the ones this tile was showing; a replaced authority clears them.
         if (!_subtitleEditors.TryGetValue(editor.Provider, out var liveEditor) || !ReferenceEquals(liveEditor, editor) ||
             !_subtitleDrafts.TryGetValue(editor.Provider, out var liveDraft) || !ReferenceEquals(liveDraft, draft)) return;
         if (draft.SaveAttempted || state.BusyProvider != null || state.SubtitleConflict || state.SubtitleOutcomeUnknown) return;
-        var saved = await _controller.SaveSubtitleAsync(editor, draft.CaptureChange(clear));
-        if (!saved) return;
+        var saved = await controller.SaveSubtitleAsync(editor, draft.CaptureChange(clear));
+        // A page closed while the request was pending already discarded its controller and drafts.
+        if (!saved || !ReferenceEquals(controller, _controller)) return;
         draft.ClearSecrets(); _subtitleDrafts.Remove(editor.Provider); _subtitleEditors.Remove(editor.Provider); _expandedTile = null;
-        Render(_controller.State);
+        Render(controller.State);
     }
 
     private async Task SaveMarkerAsync(string provider)
@@ -282,10 +290,6 @@ public sealed partial class AdminProvidersPage
         else _markerDrafts[provider] = next;
         Render(controller.State);
     }
-
-    private static AdminSubtitleProviderChange SubtitleChange(AdminSubtitleProviderDraft draft) => draft.Provider == "opensubtitles"
-        ? new() { Enabled = draft.Enabled, Username = draft.Username, Password = draft.Password }
-        : new() { Enabled = draft.Enabled, ApiKey = draft.ApiKey };
 
     private Border MarkerTile(AdminProvidersState state, AdminMarkerProvider provider)
     {

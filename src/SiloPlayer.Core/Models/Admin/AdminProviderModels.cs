@@ -112,10 +112,12 @@ public sealed class AdminSubtitleProviderDraft
         if (SaveAttempted) throw new InvalidOperationException("Reload saved provider configuration before saving again.");
         SaveAttempted = true;
         if (clear) return new() { Enabled = false, ClearCredentials = true };
-        return Provider == "opensubtitles"
-            ? new() { Enabled = Enabled, Username = Username, Password = Password }
-            : new() { Enabled = Enabled, ApiKey = ApiKey };
+        return StagedChange();
     }
+    /// <summary>The staged values for a save or test. A credential left blank is omitted, so the saved one is kept and never replaced by an empty value.</summary>
+    public AdminSubtitleProviderChange StagedChange() => Provider == "opensubtitles"
+        ? new() { Enabled = Enabled, Username = Username.Trim().Length > 0 ? Username : null, Password = Password.Length > 0 ? Password : null }
+        : new() { Enabled = Enabled, ApiKey = ApiKey.Trim().Length > 0 ? ApiKey : null };
     /// <summary>A successful canonical reload permits one new attempt without clearing the retained draft.</summary>
     public void RearmAfterReload(AdminSubtitleProviderEditor editor)
     {
@@ -281,7 +283,10 @@ public sealed partial class AdminMarkerProviderDraft
         return IntegerPattern().IsMatch(input) &&
             long.TryParse(input, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value);
     }
-    /// <summary>An unchanged percentage keeps the saved 0-1 value exact; multiplying and dividing can otherwise introduce floating-point drift.</summary>
+    /// <summary>
+    /// An unchanged percentage keeps the saved 0-1 value exact; multiplying and dividing can otherwise introduce floating-point drift.
+    /// The comparison uses the rounded percentage the field shows, so the displayed text always maps back to the saved value.
+    /// </summary>
     private static bool TryConfidence(string input, double saved, out double value)
     {
         if (!TryPercent(input, out value)) return false;
@@ -294,7 +299,8 @@ public sealed partial class AdminMarkerProviderDraft
         value = percent / 100d;
         return parsed && double.IsFinite(percent) && percent is >= 0 and <= 100;
     }
-    private static string Percent(double value) => (value * 100d).ToString("G17", CultureInfo.InvariantCulture);
+    /// <summary>The percentage shown in the field, rounded so binary noise such as 55.000000000000007 never reaches the admin.</summary>
+    private static string Percent(double value) => Math.Round(value * 100d, 6).ToString("0.######", CultureInfo.InvariantCulture);
     [GeneratedRegex("^[+-]?[0-9]+$", RegexOptions.CultureInvariant)] private static partial Regex IntegerPattern();
 }
 
