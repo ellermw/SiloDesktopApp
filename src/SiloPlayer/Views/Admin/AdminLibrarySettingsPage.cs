@@ -294,16 +294,20 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
         _header.Visibility = _loading.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
         var showFields = current && state.Loaded && !accessBlocked;
         _fields.Visibility = showFields ? Visibility.Visible : Visibility.Collapsed;
-        _alerts.Visibility = current && (state.Error != null || state.Loading && _alerts.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
+        // Without the environment-managed status no key is known to be writable: read-only until Reload succeeds.
+        var statusUnknown = current && state.Loaded && state.SensitiveStatusError;
+        var notice = state.Error != null || statusUnknown;
+        _alerts.Visibility = current && (notice || state.Loading && _alerts.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
         _retry.Visibility = loadFailed || state.Loading && !state.Loaded && _alerts.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
-        _reload.Visibility = state.Loaded && state.Error != null ? Visibility.Visible : Visibility.Collapsed;
+        _reload.Visibility = state.Loaded && notice ? Visibility.Visible : Visibility.Collapsed;
         _retry.IsEnabled = _reload.IsEnabled = current && !state.Saving;
         _retry.IsHitTestVisible = _reload.IsHitTestVisible = !state.Loading;
         if (state.Error != null) U.UpdateLiveText(_errorText, ErrorMessage(state));
+        else if (statusUnknown) U.UpdateLiveText(_errorText, T("configure.native.settings.managedStatusUnavailable"));
 
         bool Dirty(string key) => state.DirtyKeys.Contains(key);
         bool Managed(string key) => state.ManagedByEnv.Contains(key);
-        var editable = current && state.Loaded && !state.Loading && !accessBlocked;
+        var editable = current && state.Loaded && !state.Loading && !accessBlocked && !state.SensitiveStatusError;
         _syncing = true;
         try
         {
@@ -388,7 +392,7 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
                 !allRestart && state.RestartKeys.Has(key));
         }
 
-        var writable = state.DirtyKeys.Any(key => !Managed(key)) && state.Errors.Keys.All(Managed);
+        var writable = !state.SensitiveStatusError && state.DirtyKeys.Any(key => !Managed(key)) && state.Errors.Keys.All(Managed);
         _saveBar.State(current ? state.DirtyKeys.Count : 0, state.Saving,
             current && writable && !state.Loading && !accessBlocked && !state.Conflict && !state.OutcomeUnknown);
         _saveBar.SetAvailableWidth(ActualWidth);

@@ -30,7 +30,9 @@ public sealed class AdminLibrarySettingsControllerTests
         internal string Capability = """{"revision":"r1","state":"available","allowed":true,"plugin_declared_sources":true}""";
         internal string Sources = """{"items":[{"source":"imdb","label":"IMDb","name":"IMDb","always_shown":true},{"source":"rt_critic","label":"Rotten Tomatoes critics","name":"RT","always_shown":false,"provider":"MDBList"}]}""";
         internal string Nodes = """{"items":[{"id":"1","name":"node","type":"transcode","enabled":true,"healthy":true}],"page":{"has_more":false}}""";
+        internal string Sensitive = """{"configured":[],"managed_by_env":[]}""";
         internal HttpStatusCode CapabilityStatus = HttpStatusCode.OK, SourcesStatus = HttpStatusCode.OK, NodesStatus = HttpStatusCode.OK;
+        internal HttpStatusCode SensitiveStatus = HttpStatusCode.OK;
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
 
         internal Harness()
@@ -49,7 +51,7 @@ public sealed class AdminLibrarySettingsControllerTests
                 HttpResponseMessage response = path switch
                 {
                     "/api/v2/admin/settings/effective" => AdminMonitorKit.Json(Effective),
-                    "/api/v2/admin/settings/sensitive-status" => AdminMonitorKit.Json("""{"configured":[],"managed_by_env":[]}"""),
+                    "/api/v2/admin/settings/sensitive-status" => AdminMonitorKit.Json(Sensitive, SensitiveStatus),
                     "/api/v2/admin/settings/restart-keys" => AdminMonitorKit.Json("""{"keys":[],"prefixes":[]}"""),
                     "/api/v2/admin/rating-sources/capabilities" => AdminMonitorKit.Json(Capability, CapabilityStatus),
                     "/api/v2/admin/rating-sources" => AdminMonitorKit.Json(Sources, SourcesStatus),
@@ -111,6 +113,41 @@ public sealed class AdminLibrarySettingsControllerTests
         Assert.True(h.Controller.State.RatingSourcesError);
         Assert.Empty(h.Controller.State.RatingSources);
         Assert.True(h.Controller.State.Loaded);
+    }
+
+    [Fact]
+    public async Task FailedManagedStatusLocksEveryKeyUntilAReloadSucceeds()
+    {
+        using var h = new Harness { SensitiveStatus = HttpStatusCode.ServiceUnavailable };
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.Loaded);
+        Assert.True(h.Controller.State.SensitiveStatusError);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+        h.Controller.Set(R.ScannerWorkers, "12");
+        h.Controller.RestoreWorkerDefaults();
+        h.Controller.SetRatingSource("rt_critic", false);
+        Assert.Equal("4", h.Controller.State.Values[R.ScannerWorkers]);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        await h.Controller.SaveAsync();
+        Assert.Empty(h.Writes);
+
+        h.SensitiveStatus = HttpStatusCode.OK;
+        h.Sensitive = """{"configured":[],"managed_by_env":["scanner.workers"]}""";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.False(h.Controller.State.SensitiveStatusError);
+        Assert.Equal([R.ScannerWorkers], h.Controller.State.ManagedByEnv);
+        h.Controller.Set(R.ScannerWorkers, "12");
+        h.Controller.Set(R.MatcherWorkers, "12");
+        Assert.Equal([R.MatcherWorkers], h.Controller.State.DirtyKeys);
+
+        // A later failed status read keeps the draft staged but does not write it.
+        h.SensitiveStatus = HttpStatusCode.ServiceUnavailable;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.True(h.Controller.State.SensitiveStatusError);
+        Assert.Equal("12", h.Controller.State.Values[R.MatcherWorkers]);
+        Assert.Equal([R.MatcherWorkers], h.Controller.State.DirtyKeys);
+        await h.Controller.SaveAsync();
+        Assert.Empty(h.Writes);
     }
 
     [Fact]

@@ -34,8 +34,9 @@ snapshot owns exactly these current official values:
 
 The settings write carries one strong `If-Match` validator and only dirty owned keys. Conflicts and unknown outcomes retain
 the draft and require explicit reload; non-idempotent writes are never replayed. Late edits remain dirty over acknowledged
-values. Environment-managed keys stay read-only. Navigation retirement cancels in-flight reads, clears values and controls,
-and closes the dirty-leave dialog.
+values. Environment-managed keys stay read-only; when that status cannot be read, every key stays read-only and no draft
+is written until a reload succeeds. Navigation retirement cancels in-flight reads, clears values and controls, and closes
+the dirty-leave dialog.
 
 Rating capability/source reads and the bounded admin node list are advisory. A capability failure behaves like an older
 server and hides Ratings; a source-list failure keeps the supported group with its own warning. A node-list failure leaves

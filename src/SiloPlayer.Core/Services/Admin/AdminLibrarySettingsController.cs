@@ -13,6 +13,8 @@ public sealed record AdminLibrarySettingsState
     public bool Saving { get; init; }
     public bool Conflict { get; init; }
     public bool OutcomeUnknown { get; init; }
+    /// <summary>The environment-managed status is unread, so no key is known to be writable.</summary>
+    public bool SensitiveStatusError { get; init; }
     public bool RestartRequired { get; init; }
     public string? Error { get; init; }
     public string? ErrorCode { get; init; }
@@ -103,9 +105,10 @@ public sealed class AdminLibrarySettingsController : IDisposable
         var restart = _store.GetRestartKeysAsync(owner);
         AdminSettingsSensitiveStatus? status = null;
         LoggingRestartKeys restartKeys = new();
+        bool sensitiveError = false;
         try { status = await sensitive.ConfigureAwait(false); }
         catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
-        catch { }
+        catch { sensitiveError = true; }
         try { restartKeys = await restart.ConfigureAwait(false); }
         catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
         catch { }
@@ -119,7 +122,7 @@ public sealed class AdminLibrarySettingsController : IDisposable
                 _state = _state with
                 {
                     Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false,
-                    Error = null, ErrorCode = null, Failure = null,
+                    Error = null, ErrorCode = null, Failure = null, SensitiveStatusError = sensitiveError,
                     ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()),
                     RestartKeys = restartKeys,
                 };
@@ -194,7 +197,9 @@ public sealed class AdminLibrarySettingsController : IDisposable
         catch { Update(owner, () => _state = _state with { NodesKnown = false, TranscodeNodeAvailable = false }); }
     }
 
-    private bool CanEdit(string key) => _form != null && _state.Loaded && !_state.Loading && !_state.ManagedByEnv.Contains(key);
+    // An unread environment-managed status locks every key: any of them may be set by the environment.
+    private bool CanEdit(string key) => _form != null && _state.Loaded && !_state.Loading && !_state.SensitiveStatusError &&
+        !_state.ManagedByEnv.Contains(key);
 
     public void Set(string key, string value)
     {
@@ -242,6 +247,8 @@ public sealed class AdminLibrarySettingsController : IDisposable
             {
                 if (!_lifetime.IsCurrent(action) || _form == null || _state.Loading || _state.Saving || _state.Conflict || _state.OutcomeUnknown) return;
                 if (_state.Errors.Keys.Any(key => !_state.ManagedByEnv.Contains(key))) return;
+                // A draft kept across a failed status read stays staged, but is not written until a reload succeeds.
+                if (_state.SensitiveStatusError) return;
                 intent = _form.CaptureSave(_state.ManagedByEnv);
                 if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
                 _state = _state with { Saving = true, Error = null, ErrorCode = null, Failure = null };
