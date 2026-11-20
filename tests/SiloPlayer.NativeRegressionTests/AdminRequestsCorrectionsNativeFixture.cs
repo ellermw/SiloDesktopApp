@@ -471,6 +471,28 @@ internal static partial class AdminRequestsManagementNativeFixture
             await Until(() => Find(frame, "AdminRequestDetails-7") != null);
             Check(Find(frame, "AdminRequestQueueRetry") == null && Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Collapsed }, "a successful retry replaces the error state and clears its notice");
         });
+        await Case("failed filter read under a write review stays in the page", async (server, shell, frame) =>
+        {
+            shell.Navigate(new AdminRouteRequest(AdminRoute.RequestQueue));
+            await Until(() => Find(frame, "AdminRequestApprove-7") != null);
+            await Task.Delay(200);
+            string Shown() => Find(frame, "AdminRequestsNotice") is TextBlock { Visibility: Visibility.Visible } notice ? notice.Text : "";
+            bool Review() => Find(frame, "AdminRequestsWriteReview") is Button { Visibility: Visibility.Visible, IsEnabled: true };
+            // The fixture answers the approval without the request's identity, so the write is unconfirmed, and its reconciling read fails.
+            server.FailQueueReads = true;
+            Click(Find(frame, "AdminRequestApprove-7")!);
+            await Until(() => Review() && Shown().Contains("before making another change"));
+            var reads = server.QueueReads;
+            // An exception leaving the selector's handler would reach the application and end this run.
+            Choose((ComboBox)Find(frame, "AdminRequestQueueMedia")!, "movie");
+            await Until(() => server.QueueReads > reads && Shown().Length > 0 && !Shown().Contains("before making another change"));
+            await Task.Delay(100);
+            Check(Review() && Find(frame, "AdminRequestQueueRetry") != null, "a failed filter read under a pending write review is reported in the page and keeps the review reachable");
+            server.FailQueueReads = false;
+            Click(Find(frame, "AdminRequestsWriteReview")!);
+            await Until(() => Find(frame, "AdminRequestsWriteReview") is Button { Visibility: Visibility.Collapsed } && Find(frame, "AdminRequestDetails-7") != null);
+            Check(((ComboBox)Find(frame, "AdminRequestQueueMedia")!).SelectedItem is ComboBoxItem { Tag: "movie" }, "the review reloads the queue under the chosen filter");
+        });
         if (failed > 0) throw new InvalidOperationException(failed + " Requests correction scenarios failed.");
     }
 

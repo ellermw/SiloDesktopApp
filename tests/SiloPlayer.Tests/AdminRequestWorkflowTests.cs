@@ -111,6 +111,24 @@ public sealed class AdminRequestWorkflowTests
         authority.Retire(); Assert.Null(store.Current);
     }
 
+    [Fact]
+    public async Task Count_store_raises_changed_only_when_the_badge_changes()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        var pending = 3; var raised = 0;
+        // The counts read refuses a negative count, which stands in for any failed read.
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("{\"needs_approval\":" + Volatile.Read(ref pending) + ",\"in_progress\":2,\"failed\":1,\"done\":9}"));
+        using var store = new AdminRequestCountStore(new AdminRequestsApi(kit.Client), authority);
+        store.Changed += () => Interlocked.Increment(ref raised);
+        await store.GetAsync(owner, true); await store.GetAsync(owner, true);
+        Assert.Equal(1, Volatile.Read(ref raised)); Assert.Equal(3, store.Current!.Count);
+        Volatile.Write(ref pending, 4); await store.GetAsync(owner, true); await store.GetAsync(owner, true);
+        Assert.Equal(2, Volatile.Read(ref raised)); Assert.Equal(4, store.Current!.Count);
+        Volatile.Write(ref pending, -1);
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.GetAsync(owner, true)); await Assert.ThrowsAsync<InvalidDataException>(() => store.GetAsync(owner, true));
+        Assert.Equal(3, Volatile.Read(ref raised)); Assert.Null(store.Current);
+    }
+
     private static HttpResponseMessage Tagged(string body) { var response = AdminMonitorKit.Json(body); response.Headers.TryAddWithoutValidation("ETag", "\"synthetic\""); return response; }
 
     [Fact]

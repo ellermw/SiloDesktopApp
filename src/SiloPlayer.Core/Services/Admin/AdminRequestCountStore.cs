@@ -14,6 +14,7 @@ public sealed class AdminRequestCountStore : IAdminNavBadgeSource, IDisposable
     private Task<JsonObject>? _read;
     private JsonObject? _counts;
     private long _epoch;
+    private int _badge;
     private DateTimeOffset _readAt;
     private bool _disposed;
     public AdminRequestCountStore(AdminRequestsApi api, AdminMonitorAuthority authority) { _api = api; _authority = authority; authority.AvailabilityChanged += Retire; }
@@ -24,8 +25,7 @@ public sealed class AdminRequestCountStore : IAdminNavBadgeSource, IDisposable
         {
             lock (_gate)
             {
-                if (!_authority.IsAvailable || _authority.Epoch != _epoch || _counts == null) return null;
-                var count = AdminRequestJson.Number(_counts, "needs_approval");
+                var count = BadgeLocked();
                 return count == 0 ? null : new(AdminNavBadgeKind.Count, count,
                     AdminRequestsText.T("web.admin.requests.queue.view.needsApproval") + ": " + AdminText.FormatNumber(count));
             }
@@ -34,7 +34,7 @@ public sealed class AdminRequestCountStore : IAdminNavBadgeSource, IDisposable
     public event Action? Changed
     {
         add { lock (_gate) { _changed += value; if (!_disposed && _poll == null) { _poll = new(); _ = PollAsync(_poll.Token); } } }
-        remove { lock (_gate) { _changed -= value; if (_changed == null) { _poll?.Cancel(); _poll?.Dispose(); _poll = null; _counts = null; } } }
+        remove { lock (_gate) { _changed -= value; if (_changed == null) { _poll?.Cancel(); _poll?.Dispose(); _poll = null; _counts = null; _badge = 0; } } }
     }
     public async Task<JsonObject> GetAsync(MonitorAuthorityLease caller, bool force = false)
     {
@@ -63,12 +63,17 @@ public sealed class AdminRequestCountStore : IAdminNavBadgeSource, IDisposable
         await Task.Yield();
         while (!ct.IsCancellationRequested)
         {
+            var wait = TimeSpan.FromSeconds(60);
             try { if (_authority.IsAvailable) { using var lease = _authority.Capture(ct); await GetAsync(lease).ConfigureAwait(false); } }
+            // 404 or 501 means this server has no Requests admin API, so it is asked far less often.
+            catch (ApiException error) when (error.StatusCode is 404 or 501) { wait = TimeSpan.FromMinutes(10); }
             catch (Exception) { if (ct.IsCancellationRequested) break; }
-            try { await Task.Delay(TimeSpan.FromSeconds(60), ct).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
+            try { await Task.Delay(wait, ct).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
         }
     }
     private void Retire() { lock (_gate) { _counts = null; _read = null; _epoch = 0; } Raise(); }
-    private void Raise() { Action? handler; lock (_gate) handler = _changed; handler?.Invoke(); }
+    private int BadgeLocked() => !_authority.IsAvailable || _authority.Epoch != _epoch || _counts == null ? 0 : AdminRequestJson.Number(_counts, "needs_approval");
+    /// <summary>Listeners rebuild the sidebar, so they hear only a badge that differs from the last one announced.</summary>
+    private void Raise() { Action? handler; lock (_gate) { var badge = BadgeLocked(); if (badge == _badge) return; _badge = badge; handler = _changed; } handler?.Invoke(); }
     public void Dispose() { lock (_gate) { if (_disposed) return; _disposed = true; _poll?.Cancel(); _poll?.Dispose(); _poll = null; _changed = null; _counts = null; } _authority.AvailabilityChanged -= Retire; }
 }

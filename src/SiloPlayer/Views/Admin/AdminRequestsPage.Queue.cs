@@ -75,9 +75,22 @@ public sealed partial class AdminRequestsPage
         _content.Children.Add(new ScrollViewer { Content = tabs, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
         var search = Input(_search, "AdminRequestQueueSearch", S("web.admin.requests.queue.searchPlaceholder")); search.MaxLength = 200;
         var media = Select("AdminRequestQueueMedia", [("", S("web.admin.requests.queue.media.all")), ("movie", S("web.admin.requests.queue.media.movies")), ("series", S("web.admin.requests.queue.media.series"))], _media);
-        media.SelectionChanged += async (_, _) => { if (!Current(owner)) return; _media = Selected(media); ReplaceLocation("media_type", _media.Length == 0 ? null : _media); await RefreshQueueAsync(); };
+        // These two are event handlers, not Button actions: a read that fails or is superseded under a write review rethrows and must end here.
+        async Task ApplyFilter(Func<Task> refresh)
+        {
+            try { await refresh(); }
+            catch (OperationCanceledException) { }
+            catch (Exception error) { if (Current(owner)) Notice(AdminRequestRules.Error(error), true); }
+        }
+        media.SelectionChanged += async (_, _) =>
+        {
+            if (!Current(owner) || Selected(media) == _media) return;
+            // Like a Button, a filter is refused during a write so it cannot supersede the reconciling read; the selector returns to the applied filter.
+            if (_busy) { media.SelectedItem = media.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, _media)); return; }
+            _media = Selected(media); ReplaceLocation("media_type", _media.Length == 0 ? null : _media); await ApplyFilter(() => RefreshQueueAsync());
+        };
         async Task Search() { _search = search.Text.Trim(); ReplaceLocation("q", _search.Length == 0 ? null : _search); await RefreshQueueAsync(); }
-        search.KeyDown += async (_, args) => { if (args.Key == Windows.System.VirtualKey.Enter && Current(owner)) { args.Handled = true; await Search(); } };
+        search.KeyDown += async (_, args) => { if (args.Key == Windows.System.VirtualKey.Enter && Current(owner)) { args.Handled = true; if (!_busy) await ApplyFilter(Search); } };
         _content.Children.Add(Stack(Field(S("web.admin.requests.queue.searchLabel"), search), Row(media, Button(S("web.admin.requests.queue.searchLabel"), "AdminRequestQueueSearchGo", Search))));
         if (_user != null) _content.Children.Add(Button(S("web.admin.requests.queue.clearUserFilter"), "AdminRequestClearUser", async () => { _user = null; ReplaceLocation("user", null); await RefreshQueueAsync(); }));
         _bulkBar = Stack(); _content.Children.Add(_bulkBar);
