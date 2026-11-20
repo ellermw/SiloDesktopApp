@@ -17,6 +17,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
 {
     private readonly AdminAccessPageUi _ui;
     private readonly Dictionary<string, Button> _tabs = [], _commands = [];
+    private Microsoft.UI.Xaml.Media.Brush? _tabBackground;
     private readonly StackPanel _view = new() { Spacing = 16 }, _versions = new() { Spacing = 8 }, _review = new() { Spacing = 8 };
     private readonly TextBlock _validation = U.Text("", 12), _simulation = U.Text("", 12), _health = U.Text("", 12);
     private TextBox? _source, _comment, _input;
@@ -36,7 +37,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
         { Reopen = () => Controller.OpenAsync(Controller.Tab, Controller.Snapshot?.Value.Id), RequiresDiscard = () => RequiresLeaveConfirmation };
         foreach (var (id, label) in new[] { ("documents", "overrides"), ("vendor", "baseline"), ("decisions", "decisions") })
         {
-            var button = U.Action(T("tab." + label), "PolicyTab_" + id); _tabs[id] = button; _ui.Actions.Children.Add(button);
+            var button = U.Action(T("tab." + label), "PolicyTab_" + id); _tabs[id] = button; _tabBackground = button.Background; _ui.Actions.Children.Add(button);
             button.Click += async (_, _) => { if (Controller.Busy) return; await Controller.SelectTabAsync(id); };
         }
         Loaded += async (_, _) => await Controller.OpenAsync(_location.Get("tab") ?? "documents", _location.Get("document")); Unloaded += (_, _) => Close();
@@ -54,7 +55,11 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
     private void Render()
     {
         if (!Controller.Current) { _viewKey = null; return; }
-        foreach (var (id, button) in _tabs) { button.IsEnabled = Controller.Available && !Controller.Busy; AutomationProperties.SetHelpText(button, id == Controller.Tab ? "Selected" : ""); }
+        foreach (var (id, button) in _tabs)
+        {
+            var selected = id == Controller.Tab; button.IsEnabled = Controller.Available && !Controller.Busy; AutomationProperties.SetHelpText(button, selected ? "Selected" : "");
+            button.Background = selected ? U.Brush("MutedBrush") : _tabBackground; button.FontWeight = selected ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
+        }
         if (!Controller.Available)
         {
             _ui.Fields.Children.Clear();

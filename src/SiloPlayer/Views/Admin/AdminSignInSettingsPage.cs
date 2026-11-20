@@ -149,7 +149,10 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 var choices = new RadioButtons { Header = T("provider.slot.groupLabel"), MaxColumns = 3 };
                 foreach (var p in providers) choices.Items.Add(new RadioButton { Content = ProviderTitle(p, providers), Tag = p.Id });
                 choices.Items.Add(new RadioButton { Content = T("provider.slot.noneTitle"), Tag = "none" });
-                choices.SelectedIndex = choices.Items.OfType<RadioButton>().Select((b, i) => (b, i)).First(pair => pair.b.Tag as string == _pickedProvider).i;
+                var pickedIndex = choices.Items.OfType<RadioButton>().Select((b, i) => (b, i)).First(pair => pair.b.Tag as string == _pickedProvider).i;
+                choices.SelectedIndex = pickedIndex;
+                // The selection is asserted again once realized so the active provider is always shown as chosen.
+                choices.Loaded += (_, _) => { var prior = _sync; _sync = true; try { choices.SelectedIndex = pickedIndex; } finally { _sync = prior; } };
                 choices.SelectionChanged += (_, _) =>
                 {
                     if (_sync || Controller.Busy) return;

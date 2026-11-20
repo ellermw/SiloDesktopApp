@@ -233,9 +233,9 @@ internal static class AdminSignInSecurityNativeFixture
             await ClickWhenReady(signIn, "SignInTest_3"); await Until(() => HasTextContaining(signIn, "Synthetic directory group verified"));
             Check(!server.Writes.Any(w => w.EndsWith("/config")), "connection test never saves configuration");
             await Capture(outer, "access-sign-in.png");
-            Descendants(signIn).OfType<ScrollViewer>().First(s => AutomationProperties.GetName(s) == "Sign-in").ChangeView(null, 650, null, true);
+            Scroll(signIn, 650);
             await Task.Delay(100); await Capture(outer, "access-sign-in-provider.png");
-            Descendants(signIn).OfType<ScrollViewer>().First(s => AutomationProperties.GetName(s) == "Sign-in").ChangeView(null, 0, null, true);
+            Scroll(signIn, 0);
             Toggle(signIn, "SignIn_signup.enabled", true);
             Input(signIn, "SignIn_3_limits_page_size").Text = "40";
             await Until(() => Buttons(signIn).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
@@ -340,7 +340,7 @@ internal static class AdminSignInSecurityNativeFixture
             Check(HasTextContaining(policy, "✓ Validated"), "lifecycle rail reaches Validated");
             Click(policy, "PolicySimulate"); await Until(() => HasTextContaining(policy, "synthetic"));
             await Capture(outer, "access-policy-editor.png");
-            Descendants(policy).OfType<ScrollViewer>().First(s => AutomationProperties.GetName(s) == "Policy").ChangeView(null, 950, null, true);
+            Scroll(policy, 950);
             await Task.Delay(100); await Capture(outer, "access-policy-test.png");
             server.Writes.Clear(); server.Reset.Add("POST /api/v2/admin/policy/documents/9/versions");
             Click(policy, "PolicySave"); var saveFail = await Dialog(policy); Primary(saveFail);
@@ -358,7 +358,7 @@ internal static class AdminSignInSecurityNativeFixture
             await Until(() => !activate.IsLoaded && server.Count("PUT /api/v2/admin/policy/documents/9/active-version") == 1);
             Check(server.Guards["PUT /api/v2/admin/policy/documents/9/active-version"] == Etag, "activation uses the reviewed strong validator");
             Click(policy, "PolicyTab_vendor"); await Until(() => HasText(policy, "permission.rego"));
-            Descendants(policy).OfType<ScrollViewer>().First(s => AutomationProperties.GetName(s) == "Policy").ChangeView(null, 0, null, true);
+            Scroll(policy, 0);
             await Capture(outer, "access-policy-baseline.png");
             Click(policy, "PolicyTab_decisions"); await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyDecision_12"));
             Select(policy, "PolicyAllowed", "false"); Click(policy, "PolicyApplyFilters");
@@ -382,6 +382,12 @@ internal static class AdminSignInSecurityNativeFixture
     }
 
     private static FrameworkElement? Scope;
+    private static void Scroll(FrameworkElement page, double offset)
+    {
+        DependencyObject? node = ((IAdminGutterScrollPage)page).ScrollContent;
+        while (node != null && node is not ScrollViewer) node = VisualTreeHelper.GetParent(node);
+        Check(node is ScrollViewer, "page scroller found"); ((ScrollViewer)node!).ChangeView(null, offset, null, true);
+    }
     private static string Id(DependencyObject element) => AutomationProperties.GetAutomationId(element);
     private static IEnumerable<Button> Buttons(DependencyObject root) => Descendants(root).OfType<Button>();
     private static bool HasText(DependencyObject root, string text) => Descendants(root).OfType<TextBlock>().Any(t => t.Text == text);
