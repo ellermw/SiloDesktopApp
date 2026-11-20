@@ -22,6 +22,9 @@ public sealed partial class AdminCollectionsPage
     private QueryRulesEditor? _rules;
     private bool _invalidRules;
     private readonly HashSet<string> _invalidFields = [];
+    // One editor run at a time: a Save with its staged titles and images, a title change, or Sync now. Controller.Busy covers only each command
+    // inside a run, and a focused button still answers Enter and Space while the page takes no pointer input.
+    private bool _editorBusy;
     private void RenderEditor()
     {
         _surface.Children.Clear();
@@ -125,7 +128,7 @@ public sealed partial class AdminCollectionsPage
     private void ClearStaged() { _artwork.Clear(); _pendingTitles.Clear(); _memberCursor = null; _memberHistory.Clear(); _rules = null; _invalidRules = false; _invalidFields.Clear(); }
     private async Task SaveEditorAsync()
     {
-        if (Controller.Busy) return;
+        if (Controller.Busy || _editorBusy) return;
         var owner = Controller.Owner; var rendered = Controller.Draft;
         if (_invalidRules || _rules?.IsValid == false || _invalidFields.Count > 0) { Notice("Complete the rules and title limits before saving."); return; }
         // Staged titles the server turned down. They are named in the notice, whatever else the save did.
@@ -133,7 +136,7 @@ public sealed partial class AdminCollectionsPage
         string NotAdded() => rejected.Count == 0 ? "" : " Not added: " + string.Join(", ", rejected.Take(5)) + (rejected.Count > 5 ? " and " + (rejected.Count - 5) + " more" : "") + ". " + reason;
         try
         {
-            IsHitTestVisible = false;
+            _editorBusy = true; IsHitTestVisible = false;
             var existed = Controller.Editor != null;
             var id = await Controller.SaveAsync(posterStaged: _artwork.ContainsKey("poster"));
             if (!Current(owner)) return;
@@ -180,7 +183,7 @@ public sealed partial class AdminCollectionsPage
             // so the editor is rendered again on the saved copy; the titles and images still staged stay staged.
             if (Controller.OutcomeUnknown || !ReferenceEquals(rendered, Controller.Draft)) RenderEditor();
         }
-        finally { IsHitTestVisible = true; }
+        finally { IsHitTestVisible = true; _editorBusy = false; }
     }
     private readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
     private StackPanel _storedSort = Stack(8);
@@ -368,8 +371,12 @@ public sealed partial class AdminCollectionsPage
             _contents.Children.Add(Text($"{Controller.Editor?.Value["last_sync_status"]} · {Controller.Editor?.Value["last_sync_at"]} · Next: {Controller.Editor?.Value["next_sync_at"]}", 13, true));
             if (Controller.Capabilities?.Imports == true) _contents.Children.Add(ActionButton("Sync now", "CollectionEditorSync", async () =>
             {
+                if (Controller.Busy || _editorBusy) return;
                 if (Controller.Dirty) { Notice("Save changes before syncing. Sync now uses the saved list."); return; }
-                await RunAsync(async lease => { await _api.SyncAsync(lease, id); }, false); await Controller.EditAsync(id); RenderEditor();
+                // Held through the closing read: a Save started meanwhile would cancel it, or be cancelled by it.
+                _editorBusy = true;
+                try { await RunAsync(async lease => { await _api.SyncAsync(lease, id); }, false); await Controller.EditAsync(id); RenderEditor(); }
+                finally { _editorBusy = false; }
             }));
             _contents.Children.Add(ActionButton("Preview titles", "CollectionSavedPreview", async () =>
             {

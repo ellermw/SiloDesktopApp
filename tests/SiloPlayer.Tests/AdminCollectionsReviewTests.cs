@@ -531,4 +531,27 @@ public sealed class AdminCollectionsReviewTests
         Assert.Equal(new[] { "PUT /api/v2/admin/collections/c/items/m1", "PUT /api/v2/admin/collections/c/items/m2", "DELETE /api/v2/admin/collections/c/image?type=poster" },
             kit.Http.Requests.Where(r => r.StartsWith("PUT ") || r.StartsWith("DELETE ")).ToArray());
     }
+
+    // ── Seventh review (November 20) ───────────────────────────────────────
+
+    // 2 - A list's id is MDBList's own, not a v2 collection identity. A numbered one is kept as text and never turns the whole answer away.
+    [Theory]
+    [InlineData("12")]
+    [InlineData("\"12\"")]
+    public void MdbListSearchKeepsANumericListIdAsText(string id)
+    {
+        var found = AdminCollectionsApi.ParseMdbListSearch(JsonNode.Parse(
+            "{\"configured\":true,\"items\":[{\"id\":" + id + ",\"user_id\":3,\"name\":\"Top watched\",\"items\":100,\"url\":\"https://mdblist.com/lists/someone/top\"},{\"id\":\"other\",\"name\":\"Other\"}]}")!.AsObject());
+        Assert.Equal(2, found.Lists.Count); Assert.Equal("12", found.Lists[0].Id); Assert.Equal("Top watched", found.Lists[0].Name);
+        Assert.Equal("https://mdblist.com/lists/someone/top/json", AdminCollectionsApi.MdbListFeed(found.Lists[0]));
+    }
+
+    [Theory]
+    [InlineData("{\"name\":\"No id\"}")]
+    [InlineData("{\"id\":\"\",\"name\":\"Blank\"}")]
+    [InlineData("{\"id\":1.5,\"name\":\"Fraction\"}")]
+    [InlineData("{\"id\":true,\"name\":\"Flag\"}")]
+    [InlineData("{\"id\":{\"nested\":1},\"name\":\"Object\"}")]
+    public void MdbListSearchStillRejectsAListWithoutAUsableId(string list) =>
+        Assert.Throws<InvalidDataException>(() => AdminCollectionsApi.ParseMdbListSearch(JsonNode.Parse("{\"configured\":true,\"items\":[" + list + "]}")!.AsObject()));
 }

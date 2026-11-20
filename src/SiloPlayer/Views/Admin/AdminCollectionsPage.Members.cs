@@ -86,7 +86,7 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task TitlePickerAsync()
     {
-        var owner = Controller.Owner!; var draft = Controller.Draft; if (draft == null) return;
+        var owner = Controller.Owner!; var draft = Controller.Draft; if (draft == null || _editorBusy) return;
         var libraries = (draft["library_ids"] as JsonArray)?.Select(v => v!.ToString()).ToArray() ?? [];
         if (libraries.Length == 0) { Notice("Pick libraries first."); return; }
         var body = Stack(12); var results = Stack(8);

@@ -124,7 +124,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         finally { IsHitTestVisible = true; }
     }
     /// <summary>A title change in the editor of a saved collection. The same gated run adopts the collection's moved revision, so the next Save is not a conflict with this page's own change.</summary>
-    private Task RunTitlesAsync(Func<MonitorAuthorityLease, Task> change) => RunAsync(async lease =>
+    private Task RunTitlesAsync(Func<MonitorAuthorityLease, Task> change) => _editorBusy ? Task.CompletedTask : RunAsync(async lease =>
     {
         try { await change(lease); }
         finally

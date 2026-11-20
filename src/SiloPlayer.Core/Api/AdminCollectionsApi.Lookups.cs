@@ -57,7 +57,7 @@ public sealed partial class AdminCollectionsApi
         var lists = new List<AdminMdbListEntry>();
         foreach (var node in items.Take(50))
         {
-            if (node is not JsonObject list || AdminCollectionsApi.CanonicalId(list["id"]) is not { } id || list["name"] is not JsonValue name || !name.TryGetValue<string>(out var title))
+            if (node is not JsonObject list || MdbListId(list["id"]) is not { } id || list["name"] is not JsonValue name || !name.TryGetValue<string>(out var title))
                 throw new InvalidDataException("The MDBList search answer was not recognized.");
             lists.Add(new(id, title, list["user_name"]?.ToString() ?? "", list["description"]?.ToString() ?? "", list["media_type"]?.ToString() ?? "",
                 list["items"] is JsonValue count && count.TryGetValue<int>(out var total) ? total : 0,
@@ -65,6 +65,9 @@ public sealed partial class AdminCollectionsApi
         }
         return new(isConfigured, lists);
     }
+    /// <summary>MDBList's own id for a list, kept as text. It is not a v2 collection identity: the server may forward MDBList's whole number as it is, so that is taken as well as a string.</summary>
+    private static string? MdbListId(JsonNode? node) =>
+        CanonicalId(node) ?? (node is JsonValue value && value.TryGetValue<long>(out var number) ? number.ToString(System.Globalization.CultureInfo.InvariantCulture) : null);
     /// <summary>The list a search hit follows: its own JSON feed, as the official picker stores it. Empty when MDBList reported no page, or a page that is not on mdblist.com or one of its subdomains.</summary>
     public static string MdbListFeed(AdminMdbListEntry entry) =>
         Uri.TryCreate(entry.Url, UriKind.Absolute, out var page) && page.Scheme == Uri.UriSchemeHttps && page.UserInfo.Length == 0 && page.IsDefaultPort &&
