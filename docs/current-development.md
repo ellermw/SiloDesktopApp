@@ -1,13 +1,18 @@
 # November 20 - Admin Manage Playback: Nodes and Playback Settings
 
-Branch `t3/admin-playback-nodes-settings`, merged with Beta `f35bb7e59` (`1.2.1194-beta.1`, version unchanged).
-Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback` are registered
-and reachable through the real Admin navigation. Two review findings were fixed: a rejected, conflicting or
-unconfirmed enabled update returns the Nodes switch to its saved value, and the last marker task execution status
-is rendered as the official badge and result line. Observed: one `-Stage final` run (`playback-final-r1`, lane
-`D:/SiloPlayer-build/admin-completion-lane-a`): focused unit tests 254/0 failed, full unit suite 9,767/0 failed, native
-selectors `admin-playback-administration`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` passed.
-Not observed: a live server, real phone/GPU/transcode node, network enrollment, all-DPI or assistive-technology runs, and
+Branch `t3/admin-playback-nodes-settings`, merged with Beta `db49c4c93` (stable `1.2.1194` merged into beta; version
+unchanged here). Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback`
+are registered and reachable through the real Admin navigation. Two earlier review findings (enabled switch restore,
+marker-task status badges) and seven findings of a second independent review were fixed: the egress limit can no longer
+overflow into an unhandled exception, the node acceleration override list matches the server's enum (no VideoToolbox), an
+untouched editor no longer blanks a stored address it cannot show, an older marker-task poll cannot overwrite a newer run,
+a hidden row's invalid draft no longer blocks Save, a definite 4xx refusal to run a marker task is no longer reported as
+"unconfirmed", and a failed background node refresh keeps the rows and polling. Observed: one `-Stage final` run
+(`playback-fix-final-r1`, lane `D:/SiloPlayer-build/admin-completion-lane-a`) on commit `cd39c93df`: focused unit tests
+282/0 failed, full unit suite 9,795/0 failed, native selectors `admin-playback-administration` (94 PASS, 0 FAIL),
+`admin-manage-foundation`, `admin-configure-general` and `admin-monitor` passed. One native assertion was changed (node
+list refresh failure no longer demands a review lock; official react-query page keeps data and keeps polling). Not
+observed: a live server, real phone/GPU/transcode node, network enrollment, all-DPI or assistive-technology runs, and
 side-by-side visual parity beyond the fixture captures. No push, pull request or release was made.
 See [scope, official contracts, findings and limits](parity/admin-playback.md).
 

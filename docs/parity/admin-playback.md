@@ -1,7 +1,7 @@
 # Manage > Playback: Nodes and Playback Settings
 
-November 20, 2026. Branch `t3/admin-playback-nodes-settings`, merged with Beta `f35bb7e59` (version
-`1.2.1194-beta.1`, unchanged here). Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+November 20, 2026. Branch `t3/admin-playback-nodes-settings`, merged with Beta `db49c4c93` (stable 1.2.1194 merged; version
+unchanged here). Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
 Scope: `/admin/nodes` and `/admin/settings/playback` only. History and Skip Markers (#170), the installed
 player, updater, local playback preferences and libmpv code are untouched.
 
@@ -110,12 +110,38 @@ installed-player restart, decoder modification or shared/generated output is par
    `AdminPlaybackMarkerTaskStatus`, which also owns the official result line (never run / last run date / contribute
    result summary / rate-limit note).
 
+## Second independent review (November 20), all seven findings fixed
+
+Each was confirmed in the code and against the pinned official source before changing anything.
+
+| # | Finding | Fix | Test |
+| --- | --- | --- | --- |
+| D1 | `mbps * 1000` threw `OverflowException` for about 26 or more digits and escaped the async-void Save handler | Compare `mbps <= int.MaxValue / 1000m` before scaling; the input is trimmed; out-of-range is the usual validation message. Egress is the only scaled numeric field; capacity is an `int.TryParse` | `AdminPlaybackSecondReviewTests` (26-digit, decimal maximum, 2147483.648, negative, exponent; the 2147483.647 edge) |
+| D2 | Node override list offered VideoToolbox, which the server's `hwAccelOverrideValues` (`internal/nodepool/repository.go`) and the official `hwAccelOverrideOptions()` omit, so Save returned 422 | `AdminPlaybackNodeEditor.HwAccelOverrideValues` (inherit, auto, qsv, vaapi, nvenc, none) feeds both the dialog (`NodeHardwareOptions`, official labels `web.admin.nodes.hwAccel.*`) and `Capture`. The cluster-wide `playback.hw_accel` list keeps VideoToolbox (`admin_settings.go:942`) | Unit list/enum and refusal tests; native step checks the dialog's option tags and that the cluster-wide select still offers VideoToolbox |
+| D3 | A stored address that fails the native check (credentials, query, no scheme) was blanked in the form and then saved as empty (`public_url` null) | The form still never shows such a value, but an untouched field is now left out of the request (`url`, `public_url`); a typed value or a typed-then-cleared value is an explicit choice and is validated and sent. Official sends the stored text back unchanged; showing it is withheld here because it may carry credentials | Unit tests: untouched leaves both alone, edited is sent, cleared sends null, invalid edit refused, displayable stored value is still sent exactly |
+| D4 | A task poll sent before a run could land after it and flip the running row back to idle | The poll captures `_supportSequence` and drops its answer if it changed; `RunTask` bumps the sequence before it sends | Native step holds a poll in flight, runs the task, releases the older answer and checks the row stays running. Reverting only the sequence check made that step FAIL (run `playback-fix-red-r1`) |
+| D5 | A hidden row's invalid draft kept Save disabled with no visible error (buffer ahead with throttling off, marker workers when mode is online or off, preview rows without trickplay) | `AdminPlaybackSettingsRules.HiddenInvalidKeys`; the controller resets such a draft to its saved value (not while saving) and learns capability visibility from `SetVisibilityContext`. A valid hidden draft is kept, as the official page keeps hidden values (its hidden inputs are simply not rendered) | Unit rules and controller tests; native step: invalid buffer ahead blocks Save, switching throttling off re-enables it |
+| D6 | Any exception from Run now (including 409 or another 4xx) was treated as unconfirmed and locked the row | An `ApiException` with a 4xx status other than 408 is a refusal: a toast, a support/task refresh from the server, and no lock | Native step: a 409 leaves the task runnable and is not replayed |
+| D7 | Any background node refresh failure set `ReviewRequired`, stopped polling and disabled every control; official `useAdminNodes` is a react-query `useQuery` that keeps `data` and keeps its `refetchInterval` | `ReviewRequired` is set on a reload failure only when nothing was ever loaded or a write outcome is unknown; otherwise the rows stay, the error and a reload action show, and polling continues | Unit tests: refresh failure keeps rows and recovers, first-load failure blocks, failure after an unknown write keeps writes blocked; native step: after a refresh failure the rows and the switch stay usable |
+
+The reviewer's gap is closed: `PreconditionFailedThroughTheEnabledSwitchBlocksReplayUntilReload` (unit) and a native
+step drive a 412 through the node enabled switch (switch restored to the saved value, writes blocked, message and Reload
+shown, no replay, reload recovers).
+
+Changed existing assertions: one. The native step "node list failure shows the error with a reload action" asserted that a
+failed refresh of an already loaded page sets `ReviewRequired`; it now asserts the error and the Reload action are shown
+while `ReviewRequired` is false and the loaded node and its switch stay usable (D7; official source above). A wait for the
+created proxy's editor to close was added before the delete step, because the first run of this fixture lost a race
+between the editor closing and the delete click.
+
 ## Tests
 
-Observed on this source (`playback-final-r1`, lane `D:/SiloPlayer-build/admin-completion-lane-a`, one `-Stage final`
-run): focused unit filter 254 passed / 0 failed; full unit suite 9,767 passed / 0 failed; native selectors
-`admin-playback-administration` (73 PASS, 0 FAIL), `admin-manage-foundation`, `admin-configure-general` and
-`admin-monitor` all passed.
+Observed on this source (`playback-fix-final-r1`, commit `cd39c93df`, lane `D:/SiloPlayer-build/admin-completion-lane-a`, one
+`-Stage final` run): focused unit filter 282 passed / 0 failed; full unit suite 9,795 passed / 0 failed; native selectors
+`admin-playback-administration` (94 PASS, 0 FAIL), `admin-manage-foundation`, `admin-configure-general` and
+`admin-monitor` all passed. Earlier runs of this review: `playback-fix-native-r1` failed at "delete confirmation opened"
+(a race in the fixture, fixed above) and `playback-fix-red-r1` was the deliberate check that the D4 step fails without its fix.
+`AdminPlaybackSecondReviewTests` is new (28 tests).
 
 - `AdminPlaybackAdministrationTests`, `AdminPlaybackNodesTests`: registration/resource approval, key counts,
   rules, editor null/omission semantics, transport bounds, unknown outcomes and no replay.
