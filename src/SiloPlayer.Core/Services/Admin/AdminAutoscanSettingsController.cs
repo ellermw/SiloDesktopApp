@@ -135,7 +135,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
         // Official: reuse is the default for a new connection when a Requests Sonarr/Radarr server exists; an edit starts from the raw saved values.
         return state with { Editor = saved == null ? new() { Reuse = first != null, IntegrationId = first?.Id ?? "" }
             : new() { Id = saved.Id, Name = saved.Name, Kind = saved.Kind, BaseUrl = saved.BaseUrl ?? "", HasApiKey = saved.HasApiKey,
-                Reuse = saved.RequestIntegrationId != null, IntegrationId = saved.RequestIntegrationId ?? "" }, TestResult = null, TestError = null, Error = null, Notice = null };
+                Reuse = saved.RequestIntegrationId != null, IntegrationId = saved.RequestIntegrationId ?? "" }, TestResult = null, TestError = null, Error = null, Notice = null, RescheduleState = null };
     });
 
     public void EditConnection(AdminAutoscanConnectionEditor editor)
@@ -165,7 +165,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
         Changed?.Invoke();
     }
     public void RequestDelete(string id) => Edit(state => !state.ConnectionsLoaded || state.Editor != null ? state : state with
-        { DeleteTarget = state.Connections.FirstOrDefault(row => row.Id == id), Error = null, Notice = null });
+        { DeleteTarget = state.Connections.FirstOrDefault(row => row.Id == id), Error = null, Notice = null, RescheduleState = null });
 
     public async Task SaveConnectionAsync()
     {
@@ -191,7 +191,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
                 action.ThrowIfRetired(); submitted = true;
                 var saved = await _api.SaveConnectionAsync(action, editor.Id, body).ConfigureAwait(false);
                 Update(action, state => state with { Editor = null, TestResult = null, TestError = null, Error = null,
-                    Connections = Sorted(state.Connections.Where(row => row.Id != saved.Id).Append(saved)), Notice = T.T(editor.Id == null ? "created" : "updated") });
+                    Connections = Sorted(state.Connections.Where(row => row.Id != saved.Id).Append(saved)), Notice = T.T(editor.Id == null ? "created" : "updated"), RescheduleState = null });
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
             catch (Exception error) { Failed(action, error, submitted, T.T(editor.Id == null ? "createUnconfirmed" : "updateUnconfirmed")); }
@@ -217,7 +217,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
                 if (!await CheckTargetAsync(action, target.Id).ConfigureAwait(false)) return;
                 action.ThrowIfRetired(); submitted = true;
                 await _api.DeleteConnectionAsync(action, target.Id).ConfigureAwait(false);
-                Update(action, state => state with { DeleteTarget = null, Error = null, Connections = Array.AsReadOnly(state.Connections.Where(row => row.Id != target.Id).ToArray()), Notice = T.T("deleted") });
+                Update(action, state => state with { DeleteTarget = null, Error = null, Connections = Array.AsReadOnly(state.Connections.Where(row => row.Id != target.Id).ToArray()), Notice = T.T("deleted"), RescheduleState = null });
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { }
             catch (Exception error) { Failed(action, error, submitted, T.T("deleteUnconfirmed")); }

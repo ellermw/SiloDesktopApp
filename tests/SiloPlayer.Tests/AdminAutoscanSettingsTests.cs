@@ -137,6 +137,38 @@ public sealed class AdminAutoscanSettingsTests
     }
 
     [Fact]
+    public async Task ALaterConnectionResultIsNotHiddenByAnEarlierRescheduleWarning()
+    {
+        using var harness = new Harness(); await harness.Controller.OpenAsync();
+        harness.Controller.EditDefaults("600", "0");
+        harness.Respond = request => Task.FromResult(request.Method == HttpMethod.Get ? harness.Default(request)
+            : request.RequestUri!.AbsolutePath.EndsWith("/settings")
+                ? AdminMonitorKit.Json("""{"settings":{"enabled":true,"default_poll_interval_seconds":600,"debounce_seconds":0},"reschedule_state":"failed"}""")
+                : AdminMonitorKit.Json("""{"id":"new","name":"New","kind":"sonarr","base_url":"http://new:8989","has_api_key":true}""", HttpStatusCode.Created));
+        await harness.Controller.SaveDefaultsAsync(); Assert.Equal("failed", harness.Controller.State.RescheduleState);
+        harness.Controller.OpenEditor(); Assert.Null(harness.Controller.State.RescheduleState);
+        harness.Controller.EditConnection(harness.Controller.State.Editor! with { Reuse = false, Name = "New", BaseUrl = "http://new:8989", ApiKey = "synthetic-key" });
+        await harness.Controller.SaveConnectionAsync();
+        Assert.Null(harness.Controller.State.RescheduleState); Assert.Equal("Autoscan connection created", harness.Controller.State.Notice);
+    }
+
+    [Fact]
+    public async Task ADroppedConnectionIsLoggedOnlyAsAFixedCategory()
+    {
+        var directory = Path.Combine(TestRepository.Root, ".codex-tmp", "autoscan-settings-transport", Guid.NewGuid().ToString("N"));
+        using var operation = LocalLog.BeginOperation("autoscan-settings-transport-fixture", directory);
+        using var harness = new Harness(); await harness.Controller.OpenAsync(); harness.Controller.OpenEditor();
+        harness.Controller.EditConnection(harness.Controller.State.Editor! with { Reuse = false, Name = "New", BaseUrl = "http://new:8989", ApiKey = "synthetic-key" });
+        harness.Respond = request => request.Method == HttpMethod.Get ? Task.FromResult(harness.Default(request))
+            : Task.FromException<HttpResponseMessage>(new HttpRequestException("synthetic-host.invalid:8989 refused synthetic-key"));
+        await harness.Controller.SaveConnectionAsync();
+        Assert.True(harness.Controller.State.NeedsReview);
+        var diagnostics = File.ReadAllText(Path.Combine(directory, "api_diagnostics.txt"));
+        Assert.Contains("error=autoscan_transport_failed", diagnostics);
+        Assert.DoesNotContain("synthetic-key", diagnostics); Assert.DoesNotContain("synthetic-host.invalid", diagnostics);
+    }
+
+    [Fact]
     public async Task ARefusedConnectionSaveKeepsTheTypedKeyAndTheCorrectedRetrySendsIt()
     {
         using var harness = new Harness(); await harness.Controller.OpenAsync(); harness.Controller.OpenEditor();
