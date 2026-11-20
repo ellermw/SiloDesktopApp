@@ -119,6 +119,8 @@ internal static partial class AdminUserResourcesNativeFixture
         var context = new Context { Window = window, Frame = frame, Server = server, Authority = authority };
         try
         {
+            try { _ = AdminUserResourceText.T("common.save"); }
+            catch (Exception error) { Program.Log("PROBE: " + (error.InnerException ?? error)); throw; }
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
             Check(!services.GetServices<AdminPageRegistration>().Any(x => x.Route == AdminRoute.Users), "family does not register or reimplement the Users page");
             Check(new[] { AdminRoute.AccessGroups, AdminRoute.Devices, AdminRoute.HistoryImport }.All(route => services.GetServices<AdminPageRegistration>().Any(x => x.Route == route)), "all three routes are registered");
