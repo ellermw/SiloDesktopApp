@@ -39,6 +39,8 @@ public sealed class AdminAutoscanEditorDraft : IDisposable
         Form.Fields.RemoveAll(field => unsupported.Contains(field.Key));
         var stored = new Dictionary<string, string>(source?.SourceConfig ?? []);
         foreach (var key in unsupported) if (stored.TryGetValue(key, out var kept)) _unmanaged[key] = kept;
+        // A source whose capability offers no form at all: the editor shows none of its keys, so a change to "Sent by" must not erase them.
+        if (descriptor.ConfigForm == null) foreach (var (key, value) in stored) if (key != "webhook_provider") _unmanaged[key] = value;
         if (source is { PluginId: "silo.autoscan.cephfs", CapabilityId: "cephfs" })
         {
             foreach (var (oldKey, key) in new[] { ("movie_nested_paths", "movie_flat_paths"), ("tv_nested_paths", "tv_flat_paths") })
@@ -64,8 +66,8 @@ public sealed class AdminAutoscanEditorDraft : IDisposable
             return AdminAutoscanText.T("sourceDialog.problem.chooseServer");
         if (DeliveryMode == "poll" && !AdminAutoscanSourceDraft.TryInterval(Interval, out _))
             return AdminAutoscanText.T("sourceDialog.problem.intervalInvalid");
-        if (!AdminAutoscanSourceDraft.ValidMappings(Mappings, DeliveryMode == "webhook", _hadMappings, _creating))
-            return AdminAutoscanText.T("sourceDialog.problem.mappingIncomplete");
+        if (AdminAutoscanSourceDraft.MappingProblem(Mappings, DeliveryMode == "webhook", _hadMappings, _creating) is { } mapping)
+            return AdminAutoscanText.T("sourceDialog.problem." + mapping);
         if (Mappings.Count > 1000 || Label.Length > 1024) return "The source exceeds its configuration limits.";
         return ConfigErrors().Values.FirstOrDefault();
     }

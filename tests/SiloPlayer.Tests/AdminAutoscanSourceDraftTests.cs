@@ -45,6 +45,22 @@ public sealed class AdminAutoscanSourceDraftTests
     public void NewWebhookRequiresACompleteMappingAndIncompleteRowsAreRejected()
     {
         Assert.False(AdminAutoscanSourceDraft.ValidMappings([], webhook: true, hadMappings: false, creating: true));
+        // Which problem it is decides the message: a half-filled row is "incomplete", no complete row at all is "required".
+        Assert.Equal("mappingRequired", AdminAutoscanSourceDraft.MappingProblem([], webhook: true, hadMappings: false, creating: true));
+        Assert.Equal("mappingRequired", AdminAutoscanSourceDraft.MappingProblem([new() { To = "/seeded" }], webhook: true, hadMappings: false, creating: true));
+        Assert.Equal("mappingRequired", AdminAutoscanSourceDraft.MappingProblem([new() { From = "/source" }], webhook: true, hadMappings: false, creating: true));
+        Assert.Equal("mappingRequired", AdminAutoscanSourceDraft.MappingProblem([], webhook: true, hadMappings: true, creating: false));
+        Assert.Equal("mappingIncomplete", AdminAutoscanSourceDraft.MappingProblem([new() { From = "/source" }], webhook: true, hadMappings: true, creating: false));
+        Assert.Equal("mappingIncomplete", AdminAutoscanSourceDraft.MappingProblem([new() { From = "/source" }], webhook: false, hadMappings: false, creating: false));
+        Assert.Null(AdminAutoscanSourceDraft.MappingProblem([], webhook: false, hadMappings: true, creating: false));
+        using (var webhook = new AdminAutoscanEditorDraft(null, new AdminAutoscanDescriptor { DeliveryModes = ["webhook"], Connection = "none" }))
+            Assert.Equal(AdminAutoscanText.T("sourceDialog.problem.mappingRequired"), webhook.Validate());
+        // With no config form the editor shows none of the stored keys, so changing "Sent by" sends every one of them back.
+        var stored = new AdminAutoscanSource { Id = "s", DeliveryMode = "webhook", SourceConfig = new() { ["webhook_provider"] = "sonarr", ["other"] = "kept", ["empty"] = "" }, PathRewrites = [new() { From = "/a", To = "/b" }] };
+        using var formless = new AdminAutoscanEditorDraft(stored, new AdminAutoscanDescriptor { DeliveryModes = ["webhook"], Connection = "none" });
+        formless.Config["webhook_provider"] = "radarr"; formless.ConfigDirty = true;
+        var sent = formless.Build(stored).SourceConfig;
+        Assert.Equal(3, sent.Count); Assert.Equal("radarr", sent["webhook_provider"]); Assert.Equal("kept", sent["other"]); Assert.Equal("", sent["empty"]);
         Assert.False(AdminAutoscanSourceDraft.ValidMappings([new() { From = "/source", To = "" }], false, false, false));
         Assert.True(AdminAutoscanSourceDraft.ValidMappings([], webhook: true, hadMappings: false, creating: false));
         Assert.False(AdminAutoscanSourceDraft.ValidMappings([], webhook: true, hadMappings: true, creating: false));

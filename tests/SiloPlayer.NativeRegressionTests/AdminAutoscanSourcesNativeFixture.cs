@@ -80,19 +80,25 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             await Invoke(Need<Button>(shell, "AutoscanConnectionCreate")); await Settled(page);
             Check(server.ConnectionWrites == 1 && server.LastConnectionBody?.Contains("api_key_ref") == true, "inline server creation uses the write-only credential contract once");
             Need<ToggleSwitch>(shell, "ProviderField_flag").IsOn = true;
+            var rootsBox = Need<TextBox>(shell, "ProviderField_roots");
             await Invoke(Need<Button>(shell, "AutoscanFill_roots"));
+            Check(ReferenceEquals(rootsBox, Need<TextBox>(shell, "ProviderField_roots")), "Fill changes only its field: the editor is not rebuilt");
             Check(Need<ToggleSwitch>(shell, "ProviderField_flag").IsOn && Need<TextBox>(shell, "ProviderField_roots").Text == "/media/movies", "schema controls retain typed values while fill-from uses enabled library paths");
             Need<TextBox>(shell, "AutoscanInterval").Text = "42"; Need<TextBox>(shell, "AutoscanLabel").Text = "New poll source";
             await Invoke(Need<Button>(shell, "AutoscanMappingAdd")); Need<TextBox>(shell, "AutoscanMappingFrom_0").Text = "/remote/movies"; Need<TextBox>(shell, "AutoscanMappingTo_0").Text = "/media/movies";
             await Invoke(Need<Button>(shell, "AutoscanEditorSave")); await Until(() => Find<Grid>(shell, "AutoscanEditor") == null); await Settled(page);
             var poll = server.Sources.Single(s => s.Label == "New poll source"); Check(poll.Enabled && poll.PollIntervalSeconds == 42 && poll.ConnectionId == "connection-new", "created poll source is enabled with explicit interval and bound server");
             Check(poll.SourceConfig.GetValueOrDefault("flag") == "true" && poll.SourceConfig.GetValueOrDefault("roots") == "/media/movies", "source creation serializes typed descriptor values once");
+            // The stored configuration holds a key the descriptor does not declare; an edit that leaves the settings alone must resend it all as stored.
+            lock (server.Sources) poll.SourceConfig["undeclared"] = "kept"; await page.Controller!.ReloadAsync(); await Settled(page);
             await Invoke(Need<Button>(shell, "AutoscanEdit_" + poll.Id));
             await Invoke(Need<Button>(shell, "AutoscanTab_paths")); await Invoke(Need<Button>(shell, "AutoscanMappingsSync"));
             await Until(() => Find<Button>(shell, "AutoscanMappingsApply") != null); await Invoke(Need<Button>(shell, "AutoscanMappingsApply"));
             await Invoke(Need<Button>(shell, "AutoscanTab_general")); Need<TextBox>(shell, "AutoscanLabel").Text = "Edited poll source";
             await Invoke(Need<Button>(shell, "AutoscanEditorSave")); await Until(() => Find<Grid>(shell, "AutoscanEditor") == null); await Settled(page);
             Check(server.Sources.Single(s => s.Id == poll.Id).PathRewrites.Count == 2, "selected mapping preview is saved with the complete source");
+            var keptConfig = server.Sources.Single(s => s.Id == poll.Id).SourceConfig;
+            Check(keptConfig.Count == 3 && keptConfig.GetValueOrDefault("undeclared") == "kept" && keptConfig.GetValueOrDefault("roots") == "/media/movies" && keptConfig.GetValueOrDefault("flag") == "true", "an edit that leaves the settings alone resends the stored configuration, undeclared keys included");
 
             // Webhook creation remains mounted through the empty/nonempty list transition.
             var savedPollSources = server.Sources.ToArray(); server.Sources.Clear(); await page.Controller!.ReloadAsync(); await Settled(page);

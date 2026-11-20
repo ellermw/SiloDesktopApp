@@ -155,7 +155,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
         if (draft.DeliveryMode == "poll")
         {
             var interval = Input(T("sourceDialog.interval.label"), "AutoscanInterval", draft.Interval); interval.PlaceholderText = T("sourceDialog.interval.placeholder");
-            interval.TextChanged += (_, _) => { draft.Interval = interval.Text; Changed(); }; settings.Children.Add(Field(T("sourceDialog.interval.label"), interval));
+            interval.TextChanged += (_, _) => { if (interval.Text == draft.Interval) return; draft.Interval = interval.Text; Changed(); }; settings.Children.Add(Field(T("sourceDialog.interval.label"), interval));
             settings.Children.Add(U.Text(_controller.State.Settings is { } saved ? T("sourceDialog.interval.helpWithDefault", ("interval", P.Interval(saved.DefaultPollIntervalSeconds))) : T("sourceDialog.interval.help"), 12, true));
         }
         if (draft.DeliveryMode == "webhook" && (draft.Form.Fields.Any(f => f.Key == "webhook_provider") || draft.Config.ContainsKey("webhook_provider")))
@@ -166,7 +166,7 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
             foreach (var key in new[] { "auto", "sonarr", "radarr" }) { var item = new ComboBoxItem { Content = key == "auto" ? T("webhook.provider.auto") : P.ProviderName(key), Tag = key }; provider.Items.Add(item); if (key == chosen || chosen.Length == 0 && key == "auto") provider.SelectedItem = item; }
             provider.SelectionChanged += (_, _) =>
             {
-                if (provider.SelectedItem is not ComboBoxItem { Tag: string key }) return;
+                if (provider.SelectedItem is not ComboBoxItem { Tag: string key } || key == ProviderConnectionConfig.Scalar(draft.Config.GetValueOrDefault("webhook_provider"))) return;
                 draft.Config["webhook_provider"] = key; draft.ConfigDirty = true; Changed();
                 if (_baseline == null && !draft.MappingsDirty) { draft.Mappings = P.SeedMappings(key, _controller.State.Libraries); RenderMappings(); }
                 RenderWebhookInstructions();
@@ -192,14 +192,14 @@ internal sealed partial class AdminAutoscanSourceEditor : Grid
                 if (P.Fill(field.FillFrom, _controller.State.Libraries) is { Length: > 0 } fill)
                 {
                     var button = U.Action(T("sourceForm.fillButton", ("field", field.Label)), "AutoscanFill_" + field.Key);
-                    button.Click += (_, _) => { draft.Config[field.Key] = fill; draft.ConfigDirty = true; Changed(); BuildSections(); }; settings.Children.Add(button);
+                    button.Click += (_, _) => { if (schema.TrySetText(field.Key, fill)) return; draft.Config[field.Key] = fill; draft.ConfigDirty = true; Changed(); BuildSections(); }; settings.Children.Add(button);
                 }
             }
         }
         if (settings.Children.Count > 0) AddSection("settings", settings);
         if (draft.DeliveryMode != "webhook") AddSection("paths", PathsSection());
         var general = new StackPanel { Spacing = 12 };
-        var label = Input(T("sourceDialog.label.label"), "AutoscanLabel", draft.Label); label.MaxLength = 1024; label.TextChanged += (_, _) => { draft.Label = label.Text; Changed(); };
+        var label = Input(T("sourceDialog.label.label"), "AutoscanLabel", draft.Label); label.MaxLength = 1024; label.TextChanged += (_, _) => { if (label.Text == draft.Label) return; draft.Label = label.Text; Changed(); };
         general.Children.Add(Field(T("sourceDialog.label.label"), label)); general.Children.Add(U.Text(T("sourceDialog.label.help", ("name", _plugin?.DisplayName ?? _baseline?.CapabilityId ?? "")), 12, true));
         if (_baseline != null) { general.Children.Add(U.Text(T("sourceDialog.general.type", ("type", P.TypeName(_baseline, _controller.State.Available)), ("mode", draft.DeliveryMode)), 12, true)); general.Children.Add(U.Text(_baseline.PluginId, 12, true)); general.Children.Add(U.Text(T("sourceDialog.general.changeType"), 12, true)); }
         AddSection("general", general);

@@ -38,7 +38,15 @@ public static class AdminAutoscanSourceDraft
         Label = source.Label,
     };
 
-    public static bool ValidMappings(IReadOnlyList<AdminAutoscanPathRewrite> rows, bool webhook, bool hadMappings, bool creating)
+    public static bool ValidMappings(IReadOnlyList<AdminAutoscanPathRewrite> rows, bool webhook, bool hadMappings, bool creating) =>
+        MappingProblem(rows, webhook, hadMappings, creating) == null;
+
+    /// <summary>
+    /// The official problem with the path mappings, if any (66b836f82 SourceDialog.tsx): "mappingIncomplete" for a row with one side,
+    /// "mappingRequired" when a new webhook source, or one that had mappings, is left without a complete row. A webhook source saved
+    /// earlier without mappings stays editable, and a polling source may have none.
+    /// </summary>
+    public static string? MappingProblem(IReadOnlyList<AdminAutoscanPathRewrite> rows, bool webhook, bool hadMappings, bool creating)
     {
         var usable = 0;
         foreach (var row in rows)
@@ -46,9 +54,9 @@ public static class AdminAutoscanSourceDraft
             var from = !string.IsNullOrWhiteSpace(row.From);
             var to = !string.IsNullOrWhiteSpace(row.To);
             // A new webhook source starts with seeded rows that only carry the Silo side; until touched they are suggestions, not unfinished input.
-            if (from != to && !(creating && webhook)) return false;
-            if (from) usable++;
+            if (from != to && !(creating && webhook)) return "mappingIncomplete";
+            if (from && to) usable++;
         }
-        return !webhook || usable > 0 || (!creating && !hadMappings);
+        return webhook && usable == 0 && (creating || hadMappings) ? "mappingRequired" : null;
     }
 }
