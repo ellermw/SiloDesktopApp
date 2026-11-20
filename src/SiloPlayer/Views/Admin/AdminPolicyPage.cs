@@ -90,20 +90,33 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
             var card = new StackPanel { Spacing = 12 }; card.Children.Add(U.Text(Domain(domain), 18)); card.Children.Add(U.Text(T("domain." + domain + ".governs"), 13, true));
             var create = U.Action(T("overrides.new"), "PolicyNew_" + domain); create.IsEnabled = !Controller.Busy && !Controller.ReviewRequired; create.Click += async (_, _) => await CreateAsync(domain); card.Children.Add(create);
             var rows = Controller.Documents.Where(d => d.Domain == domain).ToArray();
-            if (rows.Length == 0) card.Children.Add(U.Text(T("overrides.empty"), 13, true));
+            if (rows.Length == 0) card.Children.Add(U.Text(T("overrides.emptyExample", new { example = T("domain." + domain + ".example") }), 13, true));
             foreach (var document in rows)
             {
                 var open = U.Action(document.Name, "PolicyDocument_" + document.Id); open.IsEnabled = !Controller.Busy;
                 open.Click += async (_, _) => { if (!RequiresLeaveConfirmation || await CanLeaveAsync()) await Controller.SelectAsync(document.Id); };
-                card.Children.Add(AdminAccessPageUi.Stack(open, U.Text(Status(document) + " · " + document.UpdatedAt, 12, true)));
+                var rowToggle = U.Action(T(document.Enabled ? "enabled.disable" : "enabled.enable"), "PolicyRowEnabled_" + document.Id);
+                rowToggle.IsEnabled = !Controller.Busy && !Controller.ReviewRequired; rowToggle.Click += async (_, _) => await ToggleRowAsync(document.Id);
+                card.Children.Add(AdminAccessPageUi.Stack(open, U.Text(Status(document) + " · " + T("overrides.updated", new { date = FormatDate(document.UpdatedAt) }), 12, true), rowToggle));
             }
             _view.Children.Add(new Border { Child = card, Padding = new(20), CornerRadius = new(16), Background = U.Brush("SecondaryBrush") });
         }
         if (Controller.DocumentCursor != null) _view.Children.Add(Command(T("overrides.loadMore"), "PolicyMoreDocuments", Controller.MoreDocumentsAsync, !Controller.Busy && Controller.Documents.Count < 1000));
     }
+    private async Task ToggleRowAsync(string id)
+    {
+        var owner = Controller.Owner; if (owner is not { IsCurrent: true }) return;
+        await Controller.ReviewToggleAsync(id);
+        var reviewed = Controller.Toggle; if (reviewed == null || reviewed.Value.Id != id || !ReferenceEquals(owner, Controller.Owner)) return;
+        var target = !reviewed.Value.Enabled; var targetState = target ? "enabled" : "disabled";
+        var confirmed = await _ui.ConfirmAsync(T(target ? "enabled.enable" : "enabled.disable"),
+            T("enabled.confirmText", new { name = reviewed.Value.Name, state = AdminPolicyPresentation.EnabledState(reviewed), target = targetState }), T("enabled.confirm", new { target = targetState }));
+        if (confirmed && ReferenceEquals(owner, Controller.Owner)) await Controller.ApplyToggleAsync(reviewed, target, true); else Controller.CancelToggle();
+    }
+    private static string FormatDate(string value) => DateTimeOffset.TryParse(value, out var date) ? date.ToLocalTime().ToString("g") : value;
     private async Task CreateAsync(string domain)
     {
-        var name = U.Input(T("overrides.nameLabel", new { domain = Domain(domain) }), "PolicyName"); name.MaxLength = 500;
+        var name = U.Input(T("overrides.nameLabel", new { domain = Domain(domain) }), "PolicyName", T("overrides.namePlaceholderExample", new { example = T("domain." + domain + ".example") })); name.MaxLength = 500;
         var error = U.Text("", 13);
         var dialog = new ContentDialog { Title = T("overrides.new"), Content = AdminAccessPageUi.Stack(U.Text(T("domain." + domain + ".governs")), name, error), PrimaryButtonText = T("overrides.create"), CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
         var owner = Controller.Owner;

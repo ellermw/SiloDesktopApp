@@ -12,6 +12,8 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
     public string? DocumentCursor { get; private set; }
     public AdminPolicySnapshot? Snapshot { get; private set; }
     public AdminPolicySnapshot? Review { get; private set; }
+    /// <summary>Canonical snapshot read for one list-row enable/disable confirmation; never reused for another document.</summary>
+    public AdminPolicySnapshot? Toggle { get; private set; }
     public IReadOnlyList<AdminPolicyVersion> Versions { get; private set; } = [];
     public string? VersionCursor { get; private set; }
     public AdminPolicyVersion? SelectedVersion { get; private set; }
@@ -35,7 +37,7 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
     public int EditorRevision { get; private set; }
     protected override void Reset()
     {
-        Capability = null; Tab = "documents"; Documents = []; DocumentCursor = null; Snapshot = Review = null; Versions = []; VersionCursor = null;
+        Capability = null; Tab = "documents"; Documents = []; DocumentCursor = null; Snapshot = Review = Toggle = null; Versions = []; VersionCursor = null;
         SelectedVersion = SavedVersion = null; Draft = _seed = Comment = ""; _validated = null; Validation = null; Simulation = null; Vendor = []; Decisions = []; Decision = null;
         Filters = new(); DecisionCursor = NextDecisionCursor = null; _previous.Clear(); EditorRevision++;
     }
@@ -167,6 +169,21 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
         await EnsureCapabilityAsync(owner).ConfigureAwait(false);
         var result = await api.ActivateAsync(owner, reviewed, version.Id).ConfigureAwait(false);
         Publish(owner, () => { ReviewRequired = true; Review = null; Message = result.ApplicationMessage; });
+    }, write: true);
+    public Task ReviewToggleAsync(string id) => RunAsync(async owner =>
+    {
+        if (!Available || !Documents.Any(d => d.Id == id)) return;
+        var snapshot = await api.GetAsync(owner, id).ConfigureAwait(false); Publish(owner, () => Toggle = snapshot);
+    });
+    public void CancelToggle() { lock (Gate) { if (Busy) return; Toggle = null; } Notify(); }
+    public Task ApplyToggleAsync(AdminPolicySnapshot reviewed, bool enabled, bool confirmed) => RunAsync(async owner =>
+    {
+        if (!confirmed || !Available || !ReferenceEquals(Toggle, reviewed)) return;
+        await EnsureCapabilityAsync(owner).ConfigureAwait(false);
+        var result = await api.EnableAsync(owner, reviewed, enabled).ConfigureAwait(false);
+        Publish(owner, () => { Toggle = null; Message = result.ApplicationMessage; });
+        // The persisted change is not replayed; the canonical list is re-read so every row reflects the server.
+        var message = result.ApplicationMessage; await LoadTabAsync(owner, "documents").ConfigureAwait(false); Publish(owner, () => Message = message);
     }, write: true);
     public Task SetEnabledAsync(AdminPolicySnapshot reviewed, bool enabled, bool confirmed) => RunAsync(async owner =>
     {
