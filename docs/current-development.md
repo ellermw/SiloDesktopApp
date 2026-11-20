@@ -1,25 +1,14 @@
-# November 17 - Admin Manage Prepared Files source-only candidate
+# November 20 â€” Admin Manage Prepared Files completed against official 66b836f82
 
-Manage > Downloads > Prepared Files (`/admin/downloads`) is implemented as one registered native
-page with Storage, Preparation, Prepared files, Device copies and History tabs. It includes the
-official filters/sorts and bounded paging, storage/node/server/device/artifact status, strong-ETag
-node location/budget edits, cleanup, confirmed untracked and prepared-file deletion,
-pause/resume/cancel, and device/entry revocation confirmations. Every destructive operation uses
-the official server endpoint and is single-send; no local prepared-file path is read or deleted.
-Viewer Downloads and the existing Download Settings page are unchanged except that server-location
-information can open the latter.
-
-This uncommitted source candidate is based exactly on Beta
-`248aafd62ed65b868c0e7356926e4d83204649cd`; version `1.2.1181-beta.1` is unchanged and
-pipeline-owned. Official Server/WebUI source is exactly
-`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Unit and actual-control native regressions were
-authored test-first, with the tests-only checkpoint preserved at
-`.codex-tmp/admin-prepared-files/tests-only.patch`, but the source-only slot ran no .NET, build,
-test, app, native, browser, mutex, or generated-output command. Every runtime result is therefore
-unobserved and awaits the coordinator's serialized acceptance lane. No commit, push or PR occurred.
-
-Scope, contracts, coordinator-run commands, integration details, and remaining live/visual limits:
-`docs/parity/admin-manage-prepared-files.md`.
+Manage > Downloads > Prepared Files (`/admin/downloads`) is complete on branch `t3/admin-prepared-file-management`, merged with
+Beta `f36e3bd4a` (`1.2.1194`) and compared with official Silo Server/WebUI `66b836f82a32de2fb3e5dfae6c285c19eea1096d` (the first
+draft used `217ff25abc`). Five tabs (Storage, Preparation, Prepared files, Device copies, History), the server and node location
+editors, every official `web.admin.downloads.*` string, the `download_preparations` and `downloads` realtime channels with the
+official 60 s polls, single-send writes with refusal versus unknown-outcome handling, and a native fixture covering failed reads and
+refused, stale and unknown writes. Final run `prepfiles-final-r4` passed 150 focused and 9,899 full unit cases and the four native
+selectors `admin-prepared-files`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`. Not observed: a live
+server, real realtime delivery, light theme, every DPI/width and pixel parity. Details, upstream differences and deliberate
+deviations: [scoped note](parity/admin-manage-prepared-files.md).
 
 ---
 

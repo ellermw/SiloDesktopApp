@@ -74,3 +74,26 @@ the comparison below is against the newer commit. Viewer Downloads and Manage > 
 
 `App.xaml.cs` (`AddAdminPreparedFiles`), `installer/build.ps1` (`Views/Admin/AdminPreparedFilesPage.xbf`),
 `docs/parity/admin-monitor-surfaces.json` (all family sources), native selector `admin-prepared-files`.
+
+## Verification (observed)
+
+Final run `prepfiles-final-r4` on source commit `30376961398026f1ddc8ca64f0f9ee686d59442a` (lane `admin-completion-lane-a`, task
+`admin-families-nov20`, one lease ACQ `2026-11-20T22:16:11Z` / REL `2026-11-20T22:22:05Z`): 150 focused unit cases and the full unit
+suite of 9,899 cases with no failures, the unit/app/publish/host builds, and four native selectors, all passing:
+`admin-prepared-files`, `admin-manage-foundation`, `admin-configure-general`, `admin-monitor`.
+
+The `admin-prepared-files` fixture drives the registered route through the real Admin shell and Frame on a synthetic server:
+every tab's populated state, failed reads with a reachable Reload (files, devices, history, storage, background queue refresh),
+the delete dialog with a refused, an unknown-outcome and a successful write (exact ids, sent once, block lifted only by a
+successful re-read), clean-up, the untracked dialog, the server and node location editors (untouched editor sends nothing, changed
+field only, refusal keeps the draft, stale validator offers Reload, unknown outcome blocks replay), preparation filters with
+keyboard focus kept while typing, live progress patching from a realtime event, details panel and FFmpeg console, pause and
+cancel dialogs, device and entry revocation with an unknown outcome, the stale-device warning navigation, history defaults, and
+authority loss clearing every row and releasing the realtime leases. Wide, compact, Storage and Preparation captures were
+inspected (Storage and Preparation at the 1440 px width).
+
+Not observed: a live server, real realtime delivery, light theme, every DPI and width, Narrator/IME, and pixel parity with the WebUI.
+One earlier full-suite attempt (`prepfiles-final-r2`) failed two unrelated tests
+(`AdminStorageSettingsControllerTests.DismissHidesOnlyTheCurrentFailedJob`, a known flake, and
+`AdminLibrariesControllerTests.MatcherDetailReadRetriesWithoutRetryNowAndStopsOnCollapseOrRetirement`); the unchanged rerun passed
+with no source change to either.
