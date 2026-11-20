@@ -329,11 +329,12 @@ internal sealed class AdminSettingsSaveBar : Grid
         _count.MaxWidth = Math.Max(0, Math.Min(240, available - 220));
     }
 
-    internal void State(int dirty, bool saving, bool canSave)
+    /// <param name="saveLabel">Replaces "Save" when the action does something else, e.g. Storage's "Review transition".</param>
+    internal void State(int dirty, bool saving, bool canSave, string? saveLabel = null)
     {
         Visibility = dirty > 0 ? Visibility.Visible : Visibility.Collapsed;
         AdminSettingsUi.UpdateLiveText(_count, AdminText.T("web.shell.saveBar.count", new { count = dirty, shown = dirty }));
-        Save.Content = AdminText.T(saving ? "web.ui.saving" : "common.save");
+        Save.Content = saving ? AdminText.T("web.ui.saving") : saveLabel ?? AdminText.T("common.save");
         AutomationProperties.SetName(Save, Save.Content.ToString());
         Save.IsEnabled = canSave && !saving; Discard.IsEnabled = !saving;
     }
@@ -461,6 +462,7 @@ internal sealed class AdminSettingsLabel : Panel
 internal sealed class AdminSettingsGroup : Grid
 {
     private readonly StackPanel _heading = new() { Spacing = 6 };
+    private readonly Grid _titleRow = new() { ColumnSpacing = 8 };
     private readonly TextBlock _title;
     private readonly TextBlock _description;
     private readonly Border _dirty = new() { Width = 6, Height = 6, CornerRadius = new(3), Background = AdminSettingsUi.Accent, Visibility = Visibility.Collapsed };
@@ -474,15 +476,15 @@ internal sealed class AdminSettingsGroup : Grid
         ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         RowDefinitions.Add(new() { Height = GridLength.Auto });
         RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var titleRow = new Grid { ColumnSpacing = 8 };
-        titleRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        titleRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        _titleRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        _titleRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        _titleRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         _title = AdminSettingsUi.Text(title, 15); _title.FontWeight = FontWeights.SemiBold; _title.CharacterSpacing = -25;
         AutomationProperties.SetHeadingLevel(_title, AutomationHeadingLevel.Level2);
-        titleRow.Children.Add(_title); Grid.SetColumn(_dirty, 1); titleRow.Children.Add(_dirty);
+        _titleRow.Children.Add(_title); Grid.SetColumn(_dirty, 1); _titleRow.Children.Add(_dirty);
         AutomationProperties.SetName(_dirty, AdminText.T("web.admin.settings.fields.groupUnsavedChanges"));
         ToolTipService.SetToolTip(_dirty, AdminText.T("web.admin.settings.fields.groupUnsavedChanges"));
-        _heading.Children.Add(titleRow);
+        _heading.Children.Add(_titleRow);
         AutomationProperties.SetName(this, title);
         _description = AdminSettingsUi.Text(description, 13, true);
         _description.Visibility = description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -512,6 +514,16 @@ internal sealed class AdminSettingsGroup : Grid
     {
         _title.Text = title;
         AutomationProperties.SetName(this, title);
+    }
+
+    /// <summary>Adds or replaces the compact action at the right of the group heading (official FieldGroup actions).</summary>
+    internal void SetAction(FrameworkElement? action)
+    {
+        foreach (var existing in _titleRow.Children.OfType<FrameworkElement>().Where(child => Grid.GetColumn(child) == 2).ToArray())
+            _titleRow.Children.Remove(existing);
+        if (action == null) return;
+        Grid.SetColumn(action, 2);
+        _titleRow.Children.Add(action);
     }
 
     internal void State(bool dirty, string description)
