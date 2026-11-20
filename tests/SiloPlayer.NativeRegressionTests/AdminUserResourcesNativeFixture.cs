@@ -35,10 +35,13 @@ internal static partial class AdminUserResourcesNativeFixture
     }
     private static async Task Until(Func<bool> condition, string label, int milliseconds = 12000)
     {
-        for (var elapsed = 0; elapsed < milliseconds && !condition(); elapsed += 25) await Task.Delay(25);
-        if (!condition() && Application.Current is not null && Window.Current is null) LogStatus();
-        Check(condition(), label);
+        bool Holds() { try { return condition(); } catch (InvalidOperationException) { return false; } }
+        for (var elapsed = 0; elapsed < milliseconds && !Holds(); elapsed += 25) await Task.Delay(25);
+        if (!Holds() && Application.Current is not null && Window.Current is null) LogStatus();
+        Check(Holds(), label);
     }
+    /// <summary>A dialog counts as gone only after its owner has finished with it too, so the next action is not refused as "already showing".</summary>
+    private static async Task GoneAsync(Context c, string label) { await Until(() => Dialog(c.Frame) == null, label); await Task.Delay(250); }
     private static IEnumerable<DependencyObject> All(DependencyObject parent)
     {
         yield return parent;

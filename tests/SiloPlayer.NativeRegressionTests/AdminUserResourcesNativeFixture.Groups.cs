@@ -57,7 +57,7 @@ internal static partial class AdminUserResourcesNativeFixture
             Click(Primary(dialog)); await Until(() => HasText(dialog, "may have reached the server"), "a lost answer is reported as an unknown outcome");
             Check(c.Groups.Session.NeedsReview && !Primary(dialog).IsEnabled, "an unknown create blocks another attempt");
             Check(s.Count("POST", GroupsPath) == 3, "the lost create was not replayed");
-            Click(Find<Button>(dialog, "DialogReload")); await Until(() => Dialog(c.Frame) == null, "reload closes the dialog");
+            Click(Find<Button>(dialog, "DialogReload")); await GoneAsync(c, "reload closes the dialog");
             await Until(() => Has(c.Groups, "GroupCard_5"), "the reload finds the group the lost answer created");
         });
 
@@ -153,7 +153,7 @@ internal static partial class AdminUserResourcesNativeFixture
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupDelete"), "editor rendered");
             Click(Find<Button>(c.Groups, "GroupDelete")); await Until(() => Dialog(c.Frame) != null, "delete confirmation opened");
             Check(HasText(Dialog(c.Frame)!, "Family"), "the confirmation names where the members go");
-            Dialog(c.Frame)!.Hide(); await Until(() => Dialog(c.Frame) == null, "confirmation cancelled"); Check(s.Count("DELETE", GroupsPath) == 0, "a cancelled delete sends nothing");
+            Dialog(c.Frame)!.Hide(); await GoneAsync(c, "confirmation cancelled"); Check(s.Count("DELETE", GroupsPath) == 0, "a cancelled delete sends nothing");
             Click(Find<Button>(c.Groups, "GroupDelete")); await Until(() => Dialog(c.Frame) != null, "confirmation opened again");
             s.Fail("DELETE", GroupsPath + "/3", 409, ProblemBody("This group is still in use.", 409)); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && HasText(c.Groups, "This group is still in use."), "a refused delete shows the server's detail and keeps the editor");
@@ -190,9 +190,9 @@ internal static partial class AdminUserResourcesNativeFixture
             // two selected members; the first answer is lost, so the second is not attempted
             Find<CheckBox>(c.Groups, "GroupMember_10").IsChecked = true; Find<CheckBox>(c.Groups, "GroupMember_7").IsChecked = true; SelectTag(Find<ComboBox>(c.Groups, "GroupMoveTarget"), "2");
             Click(Find<Button>(c.Groups, "GroupMoveMembers")); await Until(() => Dialog(c.Frame) != null, "third move confirmation opened");
-            s.LoseAnswer("PUT", "/api/v2/admin/users/10"); var users7 = s.Count("PUT", "/api/v2/admin/users/7"); Click(Primary(Dialog(c.Frame)!));
+            s.LoseAnswer("PUT", "/api/v2/admin/users/7"); var users10 = s.Count("PUT", "/api/v2/admin/users/10"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => c.Groups.Session.NeedsReview && HasText(c.Groups, "not attempted"), "a lost answer stops the batch and lists the rest as not attempted");
-            Check(s.Count("PUT", "/api/v2/admin/users/7") == users7 && s.Count("PUT", "/api/v2/admin/users/10") == 2, "nothing was replayed and the second account was never sent");
+            Check(s.Count("PUT", "/api/v2/admin/users/10") == users10 && s.Count("PUT", "/api/v2/admin/users/7") == 2, "nothing was replayed and the second account was never sent");
         });
     }
 }

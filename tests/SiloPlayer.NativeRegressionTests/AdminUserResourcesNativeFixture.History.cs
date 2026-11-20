@@ -73,7 +73,7 @@ internal static partial class AdminUserResourcesNativeFixture
             dialog = Dialog(c.Frame)!; await SetPasswordAsync(All(dialog).OfType<PasswordBox>().First(), "synthetic-key-one"); s.TouchSource("3");
             Click(Primary(dialog)); await Until(() => c.History.Session.NeedsReview && Has(dialog, "DialogReload"), "a stale validator locks the dialog and offers a reload");
             Check(!Primary(dialog).IsEnabled && s.Count("PUT", "/sources/3/token") == 1, "no second attempt is possible and nothing was repeated");
-            Click(Find<Button>(dialog, "DialogReload")); await Until(() => Dialog(c.Frame) == null, "reload closes the dialog");
+            Click(Find<Button>(dialog, "DialogReload")); await GoneAsync(c, "reload closes the dialog");
             await Until(() => !c.History.Session.NeedsReview && Has(c.History, "ImportToken") && Find<Button>(c.History, "ImportToken").IsEnabled, "the page reloaded");
             await Task.Delay(700); Click(Find<Button>(c.History, "ImportToken")); await Until(() => Dialog(c.Frame) != null, "token dialog opened again");
             await SetPasswordAsync(All(Dialog(c.Frame)!).OfType<PasswordBox>().First(), "synthetic-key-two"); Click(Primary(Dialog(c.Frame)!));
@@ -97,7 +97,7 @@ internal static partial class AdminUserResourcesNativeFixture
             Click(Find<Button>(dialog, "ImportSaveMapping")); await Until(() => s.Count("POST", ImportPath + "/mappings") == 2 && !Has(dialog, "ImportExternal_ext-2"), "an accepted mapping leaves the dialog open for the next user");
             var mapping = JsonNode.Parse(s.Last("POST", ImportPath + "/mappings")!.Body)!.AsObject();
             Check(mapping["source_id"]!.GetValue<string>() == "3" && mapping["external_user_id"]!.GetValue<string>() == "ext-2" && mapping["silo_user_id"]!.GetValue<string>() == "8" && mapping["silo_profile_id"]!.GetValue<string>() == "p1", "the mapping body names source, external user, Silo user and profile");
-            dialog.Hide(); await Until(() => Dialog(c.Frame) == null, "discovery dialog closed");
+            dialog.Hide(); await GoneAsync(c, "discovery dialog closed");
             await Until(() => Has(c.History, "ImportRun_10"), "the new mapping is listed");
 
             SelectTag(Find<ComboBox>(c.History, "ImportLookback"), "72");
@@ -117,7 +117,7 @@ internal static partial class AdminUserResourcesNativeFixture
             await c.OpenAsync(SourceRoute(), "History Import");
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportDeleteSource") && Find<Button>(c.History, "ImportDeleteSource").IsEnabled, "page ready");
             Click(Find<Button>(c.History, "ImportDeleteSource")); await Until(() => Dialog(c.Frame) != null, "delete confirmation opened");
-            Dialog(c.Frame)!.Hide(); await Until(() => Dialog(c.Frame) == null, "cancelled"); Check(s.Count("DELETE", "/history-import-sources/3") == 0, "a cancelled delete sends nothing");
+            Dialog(c.Frame)!.Hide(); await GoneAsync(c, "cancelled"); Check(s.Count("DELETE", "/history-import-sources/3") == 0, "a cancelled delete sends nothing");
             Click(Find<Button>(c.History, "ImportDeleteSource")); await Until(() => Dialog(c.Frame) != null, "delete confirmation opened again"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && HasText(c.History, T("web.admin.historyImport.sourceBar.emptyTitle")), "with no source left the page explains how to start");
             Check(s.Count("DELETE", "/history-import-sources/3") == 1, "the confirmed delete was sent once");

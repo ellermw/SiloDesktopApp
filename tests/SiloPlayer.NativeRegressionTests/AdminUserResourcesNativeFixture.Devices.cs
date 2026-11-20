@@ -65,7 +65,7 @@ internal static partial class AdminUserResourcesNativeFixture
             Click(Find<Button>(c.Devices, "ResourceReload")); await Until(() => !c.Devices.Session.NeedsReview && Has(c.Devices, "DeviceSetting_player.hdr_enabled") && Find<ToggleSwitch>(c.Devices, "DeviceSetting_player.hdr_enabled").IsOn, "the reload shows the value the server holds");
 
             Click(Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms")); await Until(() => Dialog(c.Frame) != null, "reset confirmation opened");
-            Dialog(c.Frame)!.Hide(); await Until(() => Dialog(c.Frame) == null, "reset cancelled"); Check(s.Count("DELETE", ValuesPath) == 0, "a cancelled reset sends nothing");
+            Dialog(c.Frame)!.Hide(); await GoneAsync(c, "reset cancelled"); Check(s.Count("DELETE", ValuesPath) == 0, "a cancelled reset sends nothing");
             Click(Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms")); await Until(() => Dialog(c.Frame) != null, "reset confirmation opened again"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && !Has(c.Devices, "DeviceReset_player.audio_sync_ms"), "a confirmed reset removes the override");
 

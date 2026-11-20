@@ -192,13 +192,13 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
         if (Is("GET", "admin", "users", "*", "settings", "values")) return Json(Page(Clone2(_values), _revision));
         if (Is("PUT", "admin", "users", "*", "settings", "values", "*"))
         {
-            var row = new JsonObject { ["key"] = Id(5 + 1), ["scope"] = "profile_device", ["profile_id"] = q["profile_id"], ["device_id"] = q["device_id"], ["value"] = payload!["value"]?.DeepClone(), ["updated_at"] = "2026-11-20T00:00:00Z" };
+            var row = new JsonObject { ["key"] = Id(5), ["scope"] = "profile_device", ["profile_id"] = q["profile_id"], ["device_id"] = q["device_id"], ["value"] = payload!["value"]?.DeepClone(), ["updated_at"] = "2026-11-20T00:00:00Z" };
             var existing = _values.OfType<JsonObject>().FirstOrDefault(x => x["key"]!.GetValue<string>() == row["key"]!.GetValue<string>() && x["scope"]!.GetValue<string>() == "profile_device" && x["profile_id"]?.GetValue<string>() == q["profile_id"] && x["device_id"]?.GetValue<string>() == q["device_id"]);
             if (existing != null) _values.Remove(existing); _values.Add(row); return Json(Clone(row));
         }
         if (Is("DELETE", "admin", "users", "*", "settings", "values", "*"))
         {
-            var existing = _values.OfType<JsonObject>().FirstOrDefault(x => x["key"]!.GetValue<string>() == Id(6) && x["scope"]!.GetValue<string>() == "profile_device" && x["profile_id"]?.GetValue<string>() == q["profile_id"] && x["device_id"]?.GetValue<string>() == q["device_id"]);
+            var existing = _values.OfType<JsonObject>().FirstOrDefault(x => x["key"]!.GetValue<string>() == Id(5) && x["scope"]!.GetValue<string>() == "profile_device" && x["profile_id"]?.GetValue<string>() == q["profile_id"] && x["device_id"]?.GetValue<string>() == q["device_id"]);
             if (existing == null) return Problem(HttpStatusCode.NotFound, "Not found", "No such override.", "not_found"); _values.Remove(existing); return new HttpResponseMessage(HttpStatusCode.NoContent);
         }
 
