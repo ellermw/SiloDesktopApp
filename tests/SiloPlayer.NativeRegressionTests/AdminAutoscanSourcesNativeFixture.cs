@@ -111,7 +111,7 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             await Invoke(Need<Button>(shell, "AutoscanEdit_" + webhook.Id));
             var rotations = server.Rotations; await Invoke(Need<Button>(shell, "AutoscanWebhookRotate")); await Until(() => Dialog(window) != null);
             Check(server.Rotations == rotations, "rotation waits for destructive confirmation");
-            await Invoke(Need<Button>(Dialog(window)!, "PrimaryButton")); await Until(() => Dialog(window) == null); await Settled(page);
+            await Invoke(Need<Button>(Dialog(window)!, "PrimaryButton")); await Until(() => Dialog(window) == null); await Until(() => server.Rotations == rotations + 1); await Settled(page);
             Check(server.Rotations == rotations + 1, "rotation sends exactly one request");
             await Invoke(Need<Button>(shell, "AutoscanEditorDelete")); await Until(() => Dialog(window) != null);
             await Invoke(Need<Button>(Dialog(window)!, "CloseButton")); await Until(() => Dialog(window) == null);

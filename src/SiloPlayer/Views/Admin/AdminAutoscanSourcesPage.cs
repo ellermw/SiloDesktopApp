@@ -208,7 +208,8 @@ public sealed partial class AdminAutoscanSourcesPage : Page, IAdminGutterScrollP
         var c = _controller; if (c == null || !c.IsCurrent(owner) || _dialog != null || XamlRoot == null) return false;
         var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = U.Text(description, 14), PrimaryButtonText = accept, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
         AutomationProperties.SetAutomationId(dialog, "AutoscanConfirmation"); _dialog = dialog;
-        using var cancel = owner.Token.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
+        // A lambda, not the method group: a delegate whose target is the dialog itself is unwrapped as a WinRT object and fails to marshal.
+        using var cancel = owner.Token.Register(() => DispatcherQueue.TryEnqueue(() => dialog.Hide()));
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && c.IsCurrent(owner); }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
