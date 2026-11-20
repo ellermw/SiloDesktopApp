@@ -63,10 +63,10 @@ internal static class OverlayBadgeRenderer
                 ("status", "pending") => "web.item.card.statusScanning",
                 ("status", "unmatched") => "web.item.card.statusUnmatched",
                 ("status", "ambiguous") => "web.item.card.statusAmbiguous",
-                ("show_status", "returning") => "web.settings.overlays.badge.showStatus.value.returning",
-                ("show_status", "ended") => "web.settings.overlays.badge.showStatus.value.ended",
-                ("show_status", "cancelled") => "web.settings.overlays.badge.showStatus.value.cancelled",
-                ("show_status", "upcoming") => "web.settings.overlays.badge.showStatus.value.upcoming",
+                ("show_status", "Returning" or "returning") => "web.settings.overlays.badge.showStatus.value.returning",
+                ("show_status", "Ended" or "ended") => "web.settings.overlays.badge.showStatus.value.ended",
+                ("show_status", "Cancelled" or "cancelled") => "web.settings.overlays.badge.showStatus.value.cancelled",
+                ("show_status", "Upcoming" or "upcoming") => "web.settings.overlays.badge.showStatus.value.upcoming",
                 ("upcoming_event", "series_premiere") => "web.calendar.event.badge.seriesPremiere",
                 ("upcoming_event", "season_premiere") => "web.calendar.event.badge.seasonPremiere",
                 ("upcoming_event", "finale") => "web.calendar.event.badge.finale",
@@ -134,7 +134,7 @@ internal static class OverlayBadgeRenderer
             if (images is null || !images.SupportsImages || configOwner is not { } bound || !images.IsCurrentImageOwner(bound)) return;
             var owner = ++epoch;
             var context = images.CaptureImageOwner();
-            var valueRef = valueKey is not null && config.ValueImages?.TryGetValue(valueKey, out var matched) == true ? matched : null;
+            var valueRef = OverlayRegistry.ResolveValueImage(config, id, valueKey);
             var bitmap = await DecodeAsync(valueRef, owner, context);
             if (owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return;
             if (bitmap is not null)
