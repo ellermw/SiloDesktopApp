@@ -1,3 +1,438 @@
+# November 20 — Collections (Manage > Libraries > Collections) built and verified
+
+`t3/admin-collections-page` completes Collections (`/admin/collections`, `/new`, `/:id/edit`): list,
+Arrange board and shelves, new-collection picker, templates, starter packs, and manual/smart/synced
+editors, registered through the real Admin shell. Beta was merged into the branch (normal merges, last at
+`db49c4c93`, stable `1.2.1194` merged into beta); this branch changes no version number. Official contracts: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+
+Seven review findings were fixed with regression tests, and running the code exposed more (JsonObject
+request bodies serialized as node members, an editor re-render exception, Click-only checkbox handlers).
+A second independent review of the final diff (November 20) found eight more defects; all eight were confirmed
+against the code and the official source and fixed, each with a unit and/or native test: starter-job poll failure
+and cap left the job id behind, job id stored for a retired authority, new member position colliding after a removal,
+validation reasons hidden, a failed hide after import dropped, pasted list links not cleaned, template poster not
+sent, and the unknown-outcome list check reading only the filtered library. Details, deviations and limits:
+[docs/parity/admin-collections.md](parity/admin-collections.md).
+
+Final acceptance after merging Beta `db49c4c93`: label collections-lead-final-r1 on merge commit 23e4d5bcb, build
+lease 2026-11-20T16:17:21Z–16:23:40Z: focused 57/57 and full 9,754/9,754 unit cases (0 failures, 0 skipped); app build,
+publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL), admin-manage-foundation,
+admin-configure-general and admin-monitor passed; source seal (2,489 build inputs) and 582-file payload unchanged across
+the run. That merge brought only version stamps, README and release notes.
+
+Acceptance before that merge (after the second review): label collections-fix-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a,
+task admin-families-nov20), stage final on commit 016ea09ac, build lease 2026-11-20T16:09:43Z–16:15:58Z. Focused unit
+run 57/57 (filter FullyQualifiedName~AdminCollections) and full unit suite 9,754/9,754 passed (0 failures, 0 skipped);
+app build, publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL),
+admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) all passed; source and payload
+seals verified. The earlier acceptance run (collections-final-r1, lane B, 31 focused, 9,728 full, 149 admin-collections
+checks) predates these fixes. Before the final run, the page-level native checks for the starter-job poll failure,
+member position and list check were shown to fail with those fixes temporarily reverted
+(collections-fix-negative-r1; source restored from Git afterwards).
+
+Not observed: live-server compatibility, all-DPI/IME/Narrator, physical drag-and-drop, artwork file
+picker, complete visual parity. The authority-retirement race between a queued starter-pack answer and the dialog
+continuation is covered by a controller unit test only, not by the real page. The final run's synthetic captures were not
+reviewed again. Home Sections is a separate family and not registered here.
+No push, PR, installer or installed-player action occurred.
+
+---
+
+# November 20 - Admin Manage Playback: Nodes and Playback Settings
+
+Branch `t3/admin-playback-nodes-settings`, merged with Beta `d90f40965` (stable `1.2.1194` plus the merged Library settings
+page; version unchanged here). Final run after that merge: playback-lead-final-r1 on merge commit 00fa14b66, build lease
+2026-11-20T16:45:54Z to 16:51:32Z: 341 focused and 9,854 full unit cases passed with no failures or skips; app build,
+publish and native host built; native selectors admin-playback-administration (94 PASS lines, 0 FAIL),
+admin-manage-library-settings, admin-manage-foundation, admin-configure-general and admin-monitor passed; source seal
+(2,503 build inputs) and 582-file payload unchanged across the run. The run named further below predates that merge. Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback`
+are registered and reachable through the real Admin navigation. Two earlier review findings (enabled switch restore,
+marker-task status badges) and seven findings of a second independent review were fixed: the egress limit can no longer
+overflow into an unhandled exception, the node acceleration override list matches the server's enum (no VideoToolbox), an
+untouched editor no longer blanks a stored address it cannot show, an older marker-task poll cannot overwrite a newer run,
+a hidden row's invalid draft no longer blocks Save, a definite 4xx refusal to run a marker task is no longer reported as
+"unconfirmed", and a failed background node refresh keeps the rows and polling. Observed: one `-Stage final` run
+(`playback-fix-final-r1`, lane `D:/SiloPlayer-build/admin-completion-lane-a`) on commit `cd39c93df`: focused unit tests
+282/0 failed, full unit suite 9,795/0 failed, native selectors `admin-playback-administration` (94 PASS, 0 FAIL),
+`admin-manage-foundation`, `admin-configure-general` and `admin-monitor` passed. One native assertion was changed (node
+list refresh failure no longer demands a review lock; official react-query page keeps data and keeps polling). Not
+observed: a live server, real phone/GPU/transcode node, network enrollment, all-DPI or assistive-technology runs, and
+side-by-side visual parity beyond the fixture captures. No push, pull request or release was made.
+See [scope, official contracts, findings and limits](parity/admin-playback.md).
+
+---
+
+# November 20 — Admin Requests submitted for Beta review
+
+The family below was committed, current Beta `f35bb7e59d14f8e7f2e53bac982953fa3d5dc7da`
+(`1.2.1194-beta.1`) was merged normally, and an independent recheck of the last
+review corrections found two P2 defects that are fixed with regression tests.
+Final run `recheck-green-r20` on the merged, corrected source passed 125 focused and
+9,734 full unit cases, the app build, publish and host build, and all six native
+groups. Details and receipts are in the [scoped handoff](parity/admin-manage-requests.md).
+The November 17 record follows unchanged.
+
+## November 17 — Admin Requests scoped acceptance
+
+Prepared branch `t3/admin-request-management` remains based on
+`248aafd62ed65b868c0e7356926e4d83204649cd`; app/numeric versions stay
+`1.2.1181-beta.1` / `1.2.1180.1`, with stamping reserved for the pipeline.
+The 25-path family implements Queue, Discover and Requests Settings, including
+server/plugin editors, routing and the authority-owned sidebar count.
+
+Official contract pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. A direct
+GitHub main fetch resolved `13dec5cc2d7f7de31c019a0de51faba0f66a980a`; scoped
+Requests contract paths and all 723 Requests catalog keys are unchanged.
+
+Final review found five further defects. Seven new native RED scenarios on the
+sealed r11 product reproduced saved-secret loss, fractional number/bound errors,
+missing preview overrides, queued-progress starvation and reopened unresolved
+mutations. Direct fixes retain private saved secrets only for unchanged
+connections, preserve numeric schema semantics, render named overrides, poll
+download presence and retain a canonical-review write barrier after failed reads.
+
+Fresh `review-green-r13` verification passed 125 focused / 8,057 full unit cases
+with no failures/skips, including one ignored source-root/Core-PDB proof, followed
+by nonincremental x64 app/host builds, self-contained publish and all six scoped
+native groups. Fixture-only viewport capture corrections then passed the same
+six groups as `capture-final-r14` on identical r13 product bytes. All fourteen
+corrective scenarios pass. Eleven primary captures were inspected or matched
+inspected bytes. The source/582-file payload seals and app DLL/PDB/PRI host
+equality passed; this is not an all-app/host-PDB source-document proof.
+
+The broader viewer permissions selector is not accepted: r9 failed an unchanged
+removal-dialog primary-button lookup; one bounded r10 continuation failed an
+unchanged profile-editor viewport assertion. Both failed receipts remain
+preserved; neither is reported as passing or expanded into unrelated changes.
+
+The last lease was PID 27040, ACQ `2026-11-17T17:55:34.0002725Z`, REL
+`2026-11-17T17:59:06.9558427Z`, exactly one nonblocking `WaitOne(0)`. Inclusive
+preflight was 32.6739758271724 GiB, with both drive floors satisfied. No cleanup
+occurred; the installed player and Requests977 remain untouched. Historical
+r5/r6/r11/r12/r13 payloads and failed receipts remain preserved.
+
+Evidence lives under `D:/SiloPlayer-build/admin-completion-requests`; the
+[scoped handoff](parity/admin-manage-requests.md) records source/payload hashes,
+historical failure boundaries and exact limits. Final independent read-only
+reviews precede the authorized non-draft Beta submission. This entry does not
+certify live-server/plugin interoperability, all DPI/accessibility, complete
+visual parity, an installer or a stable release.
+
+---
+
+# November 20 — Configure Providers candidate
+
+Configure > Integrations > Providers (`/admin/settings/providers`) is implemented on
+`t3/admin-provider-settings`, merged with fresh `origin/beta`; version stamps are unchanged.
+Official contracts were read at pinned Silo Server `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`
+(`ProvidersSettings.tsx`, `MarkerProviderTiles.tsx`, `WatchProviderTiles.tsx`). The page covers
+watch-provider plugin status, MDBList, subtitle providers (OpenSubtitles, SubDL, SubSource) and
+marker providers, with strong-ETag subtitle editors, single-send writes and no replay of unknown
+outcomes. Four review findings (Disconnect after authority replacement, truncation before
+redaction, unreachable marker reload, edits lost during a pending marker save) are fixed with
+regression tests. Scope, deviations and limits: [Providers](parity/admin-configure-providers.md).
+An independent read-only review of the final diff then confirmed those four fixes and reported one P1 and
+three P2 defects, all fixed with tests: Reload was unreachable after a failed credential-status or section
+read; an erased key or failed Disconnect made Test send an empty key; a non-submitter marker provider with
+stored sharing wrote contribute fields the admin never changed; and Save dropped a key typed while the
+credential status was unavailable.
+Final run `providers-lead-final-r1` on commit `07a7bc3c208ddbc40f14fd377194af746f114311`: 29 focused and
+9,726 full unit tests pass with zero failures or skips; the app build, self-contained publish and native host
+build pass; and the `admin-configure-providers` (89 checks), `admin-manage-foundation`,
+`admin-configure-general` and `admin-monitor` native selectors pass.
+Live-server compatibility, rendered-capture inspection and all-DPI/accessibility remain unverified.
+
+---
+
+# November 20 — Manage Libraries > Library settings Beta candidate
+
+Manage > Libraries > Library settings (/admin/settings/library, official page "Library & Metadata") is implemented in
+the registered native shell: General, Scanning (conditional real-time monitoring, worker counts, Advanced lookups/batch,
+Restore defaults), Maturity limits, capability-gated Ratings and Subtitle sync with Advanced placement/capacity, one guarded
+save, Discard, conflict/unknown-outcome handling and authority retirement. Branch t3/admin-library-settings, merged with
+origin/beta f35bb7e59 on 2026-11-20; the version (1.2.1194-beta.1 from Beta) is not changed by this branch. Official contracts were read at
+217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb; the page's strings (48) and server limits were compared with that pin.
+
+Observed, under the SiloOct18Build lease, in final run library-settings-lead-final-r3 on commit
+19a414df496d8a75c7e9daaa4f01ead637c9ac96: 108 focused and 9,755 full unit cases passed with no failures or skips; the app
+build, self-contained publish and native host build passed; native selectors admin-manage-library-settings (84 checks),
+admin-manage-foundation, admin-configure-general and admin-monitor passed on one unchanged 582-file payload. Running the
+page exposed and fixed a KeyNotFoundException in Render that crashed the host on first load. An independent read-only
+review of the final diff reported two P2 defects (a malformed saved rating source could not be toggled off, and one
+environment-managed worker setting disabled Restore defaults for all), both fixed before that run.
+
+Not observed: live-server behavior, all DPI, Narrator/IME, real plugin combinations and complete visual parity. Scope,
+evidence and limits: docs/parity/admin-manage-library-settings.md.
+
+# November 20 — Configure Sign-in, API Keys and Policy (Access family)
+
+`/admin/settings/sign-in`, `/admin/api-keys` and `/admin/policy` are implemented, registered
+(`AddAdminSignInSecurity()`) and reachable through the real Admin navigation. The three pages had been
+listed as unsupported in `AdminRouteCatalog.UnsupportedPatterns`; `api-keys` and `policy` are removed from
+it (the shared navigation test no longer lists `/admin/api-keys` as unsupported). Official source pin:
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Version `1.2.1181-beta.1` unchanged. Branch
+`t3/admin-signin-security`, merged with `origin/beta` (25 commits) before the final run.
+
+Review findings fixed with regression tests: the policy title/toggle/lifecycle labels now follow the adopted
+snapshot (`AdminPolicyPresentation`); the override list and the API key list are re-read from the server's
+canonical first page after a create; a numeric field the server holds as explicit `null` is sent back as `null`
+unless the administrator changed it. Also fixed from the first compile and native run: a missing namespace,
+unusable `StackPanel.IsEnabled`, anonymous request bodies replaced by dictionaries, multi-line text boxes losing
+everything after the first line break (assigned before `AcceptsReturn`), a refused local value permanently blocking
+later writes, the shared date/time preference formatter, clipboard history excluded for the one-time key.
+
+Second independent review (seven findings, all confirmed and fixed with regression tests): creates whose outcome is
+unknown or whose list re-read failed now block every create and row write on API Keys and Policy until the page-level
+reload (opening, cancelling or saving a single-row editor no longer lifts it); a definite policy-enable 409 shows its
+reason and is retryable; "All overrides" re-reads the list after editor-side writes; a revoke/tier change whose list
+re-read fails is still reported as done; the save-time "no provider" refusal uses the provider text; a non-string
+provider `display_name` no longer crashes the page; account pages beyond the first are read (cap 1,000) so API Keys
+owners and the break-glass check do not depend on the first page, and an incomplete list leaves the break-glass
+decision to the server as on the official page (a settings 409 is shown with the break-glass text).
+
+Observed on exact source after the fixes (lane `D:/SiloPlayer-build/admin-completion-lane-a`, label
+`signin-fix-final-r3`, source commit `70de5e745`): focused unit run 167 passed, full unit suite 9,835 passed/0
+failed, app build, publish, native host and the native selectors `admin-signin-security`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor` all passed, with source and payload seals verified. An earlier attempt
+(`signin-fix-final-r1`) failed one unrelated test in another family (`LibraryBackgroundRefreshTests.RetainedRefreshHandbackRestartsCanceledLettersAndCount(churn: False)`)
+that passed on rerun without change. Not observed: live SSO/LDAP servers, servers with more than 50 accounts, a real
+clipboard, other DPIs, screen-reader or IME behaviour, installer execution. Earlier run before the fixes: lane
+`admin-completion-lane-b`, `signin-final-r2`, 146 focused / 9,755 full. Scoped record and deviations:
+[admin-sign-in-security-20261117.md](parity/admin-sign-in-security-20261117.md).
+
+---
+
+# November 17 — Configure Integrations verified Beta increment
+
+AI, Recommendations and Compatibility are implemented in the registered native shell,
+including provider/model editors, Keep/Replace/Clear credentials, manual user-owned
+ChatGPT sign-in/account recovery, recommendation jobs/reset and guarded managed-web
+operations. Recommendations now also resolves through its ordinary canonical href.
+Branch t3/admin-integrations-leaves uses deliberately preserved Beta base
+248aafd62ed65b868c0e7356926e4d83204649cd; version 1.2.1181-beta.1 remains unchanged
+for pipeline stamping. Fresh origin/beta was 73f6f99d96910f88a6db8a471c966927350a1eba.
+
+Official contracts were reviewed at 217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb.
+Official GitHub main was fetched directly again at
+c58c0bb9394868f42d058cf8749de46921886420: scoped WebUI/wire contracts are unchanged;
+the intervening speech timestamp diagnostic is already displayed through the bounded,
+redacted server-message path. No claim is made for unrelated upstream changes.
+
+Coordinator review-green-r8 passed fresh nonincremental unit/app/native-host builds,
+87 focused and 8,084 full unit cases, zero failures/skips, publish and all seven scoped
+native groups. The tests include the acceptance-only physical source/Core PDB checksum
+proof. Real-shell regressions cover the confirmed review gaps, accepted-operation
+identity through both reload choices, malformed provider acknowledgements, ordinary
+Recommendations navigation and authority/secret/dialog retirement. Seven actual PNGs
+were inspected at wide/compact sizes and in the manual sign-in dialog.
+
+Single nonblocking SiloOct18Build lease: 2026-11-17T15:11:00.6772543Z–15:18:50.4920140Z,
+PID 21300; 17 contained commands passed and finally released. No owned runtime remains.
+Source seal: 2,326 files, SHA256
+1f7b7ded1b18a41e8a6d026921140044cc0fd553e3a1763fafd7073f12020c27.
+The same 582 published files were rehashed before/after all native groups; payload SHA256
+fc6fba7fefcbb081424da1655d92870336a5137ddd505e25ceb5f0404bb77919.
+Product/reference/host DLL, PDB and PRI bytes match. Receipts are retained under
+D:/SiloPlayer-build/admin-completion-integrations, label review-green-r8.
+
+Source-only reports are superseded by this evidence, not erased. Full scope, RED/GREEN
+history, review disposition and limits: docs/parity/admin-configure-integrations.md.
+External ChatGPT/provider login, live server/Jellyfin/Audiobookshelf interoperability,
+all-DPI/Narrator/IME behavior and complete live-WebUI visual parity remain unverified.
+Installed player PID 39668, preserved artifacts, version stamps and pipeline-owned PRs
+remain untouched. This increment is submitted only to the authorized Beta pipeline;
+no merge, installer execution, stable release or production action is authorized here.
+---
+
+# November 17 — Notifications verified Beta candidate
+
+Configure > Integrations > Notifications is implemented on
+`t3/admin-notification-settings`, based on exact Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`. Official GitHub main was rechecked
+at `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`; version remains
+`1.2.1181-beta.1` under pipeline control. This complete family includes seven
+delivery channels, relay/Discord setup, processing/policy settings, server-channel
+CRUD/tests/secret rotation, production registration and regression fixtures.
+
+Final nonincremental verification: **76 focused / 8,061 full unit cases pass**,
+zero failures/skips; app/publish/host build and source-root/Core PDB proof pass.
+Six native groups pass: Notifications, Manage foundation, General, Monitor,
+Email and Security. Seven actual Notifications wide/compact/page/dialog PNGs
+were inspected. The exact 582-file product remained byte-identical throughout.
+The additional unchanged Downloads selector times out on its retained-bandwidth
+fixture expectation; it is not claimed passing and was not changed here.
+
+The four independent review findings and full-suite URL/date policy failures
+are corrected. Actual RED/GREEN, ACQ/REL, source/payload hashes, captures and
+limits are recorded in [Notifications](parity/admin-notifications.md).
+Live delivery, all-DPI/accessibility and complete visual parity remain unverified.
+No direct merge, stable release, installer or installed-player action is included.
+
+---
+
+# November 17 - Ebook/comic protected-install startup follow-up
+
+On fresh Beta `248aafd62ed65b868c0e7356926e4d83204649cd` (version
+`1.2.1181-beta.1`, numeric `1.2.1180.1` unchanged), ebook/comic reader startup
+now explicitly creates its WebView2 environment in writable per-user storage
+instead of relying on the unpackaged default beside the protected executable.
+The previous native fixture's SDK folder override masked this installation
+failure. Normal ebook Read and comic chapter-row Read both reproduce the exact
+generic error with installed bytes under equivalent protected-directory rights;
+both pass with the corrected source and those same rights.
+
+Release publish and native host build pass. The final two native runs assert
+default-folder E_ACCESSDENIED, the actual selected writable directory, visible
+text/images, sandboxing, progress, reconnect/access refresh and profile
+retirement. Publish/host bytes match and changed production/fixture documents
+are checksum-bound to their PDBs. A subsequent full-unit launch was held by a
+failed finite mutex acquisition; no units ran and no retry followed. Synthetic
+books/protected host only; private-book live interoperability is not certified.
+
+Evidence and hashes: [reader startup handoff](parity/2026-11-17-reader-protected-install.md)
+and `D:/SiloPlayer-build/books-reader-followup-20261117`. Last owned lease
+released `2026-11-17T10:55:49.7653626Z`. Installed player/settings/files remain
+untouched. This is a new Beta follow-up; earlier submitted PRs are not revisited.
+After this source is submitted, the Beta pipeline owns all further work.
+
+---
+
+# November 16 — Configure Backups verification and Beta handoff
+
+Configure > Server > Backups is implemented as one route family: `/admin/backups`,
+`/admin/backups/:id/restore` and `/admin/backups/uploads/:uploadId/restore`, through the
+production Configure registration. Tested base: Beta
+`542dec13c7d45c7520116c559166023ecb4ee987`, version `1.2.1168-beta.1` unchanged.
+The pipeline owns reconciliation, version assignment, QA, fixes, merge and packaging.
+
+Contracts were implemented against official Server/WebUI
+`92ee051878c2a791940ec9598e2bdd0f04890b3e` and checked against the Go handlers/OpenAPI.
+Direct official-main recheck at `94797c3e2e39ef12bf2796fa08df12e3b3525b3e` found no
+subsequent Backups contract changes. Desktop Beta was rechecked at
+`3d9b642242b0539684fcb055b00690dbd242a93e`; the tested candidate base is retained.
+
+Independent review corrections cover expired-token GET refresh, durable per-source/epoch
+restore uncertainty across page departure, a fresh-preview gate, foreign-source conflict
+jobs, coalesced capabilities/uploads reads and visibility resume, and discard-before-dispose
+for known uploads under the same authority epoch. Native testing also found and fixed
+late download progress overwriting the verified terminal result.
+
+Verification (November 17 UTC): source proof 1/1, focused 226/226 and full 7852/7852;
+nonincremental app/host builds, Release publish, PDB/source, payload/engine and XBF binding;
+Backups native 30 PASS records and foundation 36, both including completion. Review/preview
+regressions and native download completion have retained RED/GREEN evidence. Every runtime
+used one nonblocking shared lease, with actual ACQ/REL relayed; final REL
+`2026-11-17T01:25:12.2338806Z`. Original feature implementation was not test-first.
+
+Limit: unchanged Downloads native fixture line 316 timed out expecting empty after unchecking
+Unlimited with finite 250 remembered. That group is not passing and no clean runtime baseline
+was established. Live-server, visual, DPI, IME, Narrator and real OS-picker verification remain
+unperformed. Closing during unidentified upload creation may leave an upload for the server
+sweep; no create replay or guessed deletion. Checklist stays In progress, not Done.
+
+Evidence: `.codex-tmp/admin-backups-verification` in the task worktree; reusable output
+`D:/SiloPlayer-build/admin-backups-active`. Measured generated output 16.658 GiB under the
+owner-approved 50 GiB cap, with C/D free 169.91/461.815 GiB. No installed player/updater,
+installer, release publication, cleanup or production action occurred. See the
+[parity record](parity/admin-backups.md) and [contract plan](plans/2026-11-16-admin-backups.md).
+
+---
+
+# November 16 - Configure Maintenance bounded verification for Beta submission
+
+Configure › Server › Maintenance (`/admin/maintenance`) implements Catalog Import & Export
+and read-only Job History through the real Admin registration. Only the Maintenance unsupported
+route gate changes; Backups and other Admin candidates are separate. Base Beta is
+`19a66e547a78bad9fdc88925c3deae308e05d4ba`; version `1.2.1168-beta.1` stays pipeline-owned.
+Official Server/WebUI was freshly fetched at `94797c3e2e39ef12bf2796fa08df12e3b3525b3e`: no
+Maintenance contract changes since implementation reference `92ee051878c2a791940ec9598e2bdd0f04890b3e`.
+
+Bounded verification: nonincremental units/app/host builds, Release publish, source/payload
+binding, source-root proof (1), focused units (323) and full units (7,949) passed. Native
+Maintenance (43), foundation (36), General (188), Email (297), Security (374) and Network (346)
+passed. Downloads timed out at its unchanged fixture line 316; Libraries failed unchanged
+active-scans/Show-all checks and timed out at line 368. These neighbors are not certified.
+A foundation GC/COM finalizer access violation after its completed marker did not recur on
+the unchanged rerun; its cause is unconfirmed. Evidence is retained under
+`.codex-tmp/admin-maintenance-verification` (r4, r6-r8); every run kept source unchanged.
+The only post-r4 runtime source change was Maintenance fixture readiness waits before editing.
+
+Two page-departure regression cases were observed RED then GREEN. Three incomplete synchronous
+import acknowledgements were also observed RED then GREEN; required result fields prevent a
+malformed success clearing the per-authority/epoch unknown-outcome block. Commands never replay.
+No polling timer, installed-player changes, installer execution or release publication. Visual
+parity, live server, real browser/clipboard/OS dialogs, IME, Narrator and DPI remain unverified.
+See `docs/parity/admin-maintenance.md` for exact evidence and intentional differences.
+
+---
+
+# November 16 — Configure Storage verified scoped Beta handoff
+
+Configure > Server > Storage (C5) is ready for its separate Beta PR on deliberate base `522007cf7e20d8dbce7f72234c2f2af382d1c921` (1.2.1165; pipeline-owned). It covers local/public-private S3 storage, write-only keys and checks, asset links, transition review/queue/cancel, recovery and active-only polling. Source review repairs retain coalesced post-command refreshes and last-good capabilities, and permit review retirement while queuing.
+
+`storage-full-r5`: proof **1**, focused **332**, full **7583** units passed; app/publish/host/source binding passed. Storage/General/Email/Security/Network native groups passed (**50/188/297/374/346** markers). Actual release **2026-11-16T21:50:35.6731539Z**; receipt SHA256 `B8F5C56E285CDA48C6FFB042C24977DA9330CC808730F9AE10ED5335DD41DCED`. Released audit verified **2582** source entries, **666** payload files and **15** exact contained captures.
+
+The sixth Downloads selector remains failed at unchanged fixture316 (`uncheck download.server_bandwidth_mbps`). It fails identically on the non-Storage Beta212 baseline with only the independent Dashboard diff; its fixture/page/controller/rules are byte-identical. Baseline receipt `6A64DD3B1CE60CC235A9999680DBC3AC432C4C132707239A51FE79CC84652BE0`, release **21:57:42.7757669Z**. The original Storage receipt stays failed: this is scoped acceptance with a documented baseline limit, not an all-green native suite.
+
+Only delivery docs changed afterward. Fresh official main is `92ee051878c2a791940ec9598e2bdd0f04890b3e`; Storage contracts reviewed at `8f93594c` are unchanged. No live S3/migration, installer, physical input, every-DPI, Narrator or full visual parity claim; English-only copy. Installed player/settings and Requests payload untouched. See [scope and evidence](parity/admin-storage.md).
+
+---
+
+# November 16 — Admin Scheduled Tasks (C8) verified Beta handoff
+
+Configure > Server > Scheduled Tasks (`/admin/tasks`, `/admin/tasks/:key`) is verified for its separate Beta PR on deliberate base `6936ae5c956360358c454cb8af478f47e2dbd0ba` (pipeline-owned `1.2.1168-beta.1`). Official main was fetched directly unchanged at `92ee051878c2a791940ec9598e2bdd0f04890b3e`. Scope includes list/on-demand groups, run/cancel, detail and queue metrics, ETag-guarded schedules with explicit review/adoption, cursor history, hidden Search tasks and active-only realtime/clock work.
+
+Acceptance: `tasks-full-r5` proof **1**, focused **250**, full **7724** units and app/publish pass. Final fixture-only `tasks-native-r8` retains those exact unit/product inputs and all **667** app files, rebuilds/binds the host, and passes all six native groups (**45/113/36/76/64/346** markers). Actual release **2026-11-16T23:06:18.3669255Z**; receipt SHA256 `714164EA15DC5253378D2754D3E08FC68C32C7CAA67965909D5C2B91DC3D8260`. Released audit verifies **2614** source entries and **9** final captures plus the retained successful stages. Earlier failed receipts stay failed.
+
+The source review's sole P2 (Retry while fetching) was reproduced and corrected. Legacy task-route blocklist entries were removed, and compile/actual-button-readiness fixture repairs retain all44 Check lines. Only delivery docs changed after acceptance. No Scheduled Tasks screenshots, live-server/WebUI, installer, every-DPI, physical-input, Narrator or comprehensive visual certification; new copy is English-only. [Scope and evidence](parity/admin-tasks.md).
+
+Libraries181, Users194, Search198, Storage199 and Dashboard200 remain separate pipeline-owned PRs. Search's preserved task destinations activate through the new registration; Search code is not changed. Installed player/settings and Requests payload remain untouched.
+
+---
+
+# November 16 — Admin Dashboard Now Playing row parity verified
+
+Official #4401 (`5b3dcaa2fdfec6de2a537a2e10897352a1078689`) removes the +N more link, uses the full card viewport and clips tag rows to one 18px line. This separate two-source-file Dashboard change matches those rules on deliberate Beta base `21233391575c09c2dfd2c39a96211b5ecc10f4f7` (pipeline-owned `1.2.1168-beta.1`). Fresh official main `92ee051878c2a791940ec9598e2bdd0f04890b3e` leaves the widget unchanged.
+
+`dashboard-full-r1`: proof **1**, focused **26**, app/publish/host and source binding pass; `admin-dashboard` passes **207** markers with one completion, numeric0. Actual release **2026-11-16T21:56:06.3893368Z**, receipt SHA256 `061933A0BA15EBB90ED0B2BA688BE5EC1BE5E2A5379511E7068A18F533008586`; released audit verifies **2574** source entries, **665** payload files and **9** contained captures. Only documentation changed after acceptance.
+
+No full-unit repeat, live-server/installer/every-DPI/Narrator or comprehensive visual-parity claim. Installed player/settings untouched. Scope and the separate Downloads baseline limit are recorded in [Dashboard parity evidence](parity/admin-dashboard-even-rows.md).
+
+---
+
+# November 16 — Admin Manage Users Beta handoff
+
+One scoped Users increment adds Users/Invitations/Invite Codes and the account
+Overview, Profiles, Access, Sign-in, Activity, Downloads and Preferences surfaces,
+including nested profile/PIN/avatar, policy/quota, invitation and invite-code
+workflows. It is separate from Libraries PR181, Search, Storage and viewer work.
+
+Deliberate tested base: `bdd033c1cab7cd601d6771bb853f4b0af044d67e`. Official
+Users contracts were read at `17d5376c` and rechecked at `8f93594c`; the later
+`5b3dcaa2f` Dashboard-only change is a separate increment. Version stamps remain
+1.2.1165 / 1.2.1165.0 under pipeline control.
+
+Actual evidence: focused Users/architecture 157/157 PASS; R6 full 7,625/7,625
+PASS before the final UI-only fixes; R7 full 7,624 PASS / 1 FAIL, with the
+unchanged Network Access case subsequently PASS 1/1 alone in R8. Do not present
+that as an all-green final full suite. R10 nonincremental app/publish/host and
+source/PDB binding pass; five complete native groups pass: Users147, foundation36,
+General188, Monitor113, Dashboard184 (counts include completion/teardown markers).
+Actual R10 release: `2026-11-16T20:32:48.1897021Z`. Root released audit confirms
+2,613 source entries, 666 published files and ten contained numeric-zero captures.
+Only documentation changes after the tested source. See `docs/parity/admin-users.md`.
+
+Known temporary view-as sessions use one independent bounded logout on retirement;
+unknown/unreceived impersonation receipts cannot guarantee remote revocation.
+English localization, complete keyboard/Narrator/all-DPI/live visual parity,
+full-app view-as playback/Downloads, ten authored semantic controls and live
+account/server/installer acceptance remain unverified. No installed-player,
+settings, installer execution, release or direct merge. The owner-authorized
+feature commit/non-draft Beta PR hands subsequent review/QA/fixes to the pipeline.
+
+---
+
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
@@ -101,6 +536,16 @@ Version stamping stays under pipeline control. Remaining parity gaps include
 distinct true-empty versus filtered-no-match states, Clear Filters and failed
 browse Retry, plus full live-WebUI visual comparison. This is not comprehensive
 all-books parity certification. See docs/parity/2026-11-16-books-library.md.
+
+---
+
+# November 16 — Admin Configure Search verified Beta handoff
+
+Configure > Server > Search is verified on deliberate Beta base `bdd033c1cab7cd601d6771bb853f4b0af044d67e`, without editing pipeline-owned version stamps (1.2.1165). Official main `5b3dcaa2fdfec6de2a537a2e10897352a1078689` retains the Search contracts inspected at `17d5376c`. The independent Search PR covers engine/connection, write-only credentials, matching/semantic controls, Advanced tuning and bounded active-only status. Provider diagnostics are strictly allowlisted; foreground invalidations coalesce. Task controls preserve official destinations and stay disabled with accessible help until Scheduled Tasks is registered; Search executes no tasks.
+
+Acceptance: `search-full-r2` passed source proof **1**, focused **187**, full **7537** units, plus app build/publish. Final fixture-only `search-native-r6` retained the exact tested unit/product source and all **666** app payload files, rebuilt/bound the native host and passed **all eight** groups (Search/General/Email/Security/Network/Manage foundation/Monitor/Dashboard). Final release **2026-11-16T21:25:39.0469867Z**; receipt SHA256 `54E551A535135E7D4F038637D39DD0A7B0EB1E2BBBD574C777E112AB4572BAC7`. The released audit qualified **2576** source entries and **11** contained numeric captures. Earlier fixture failures remain preserved, not green evidence.
+
+Only documentation changed after acceptance. No screenshots, live Meilisearch, installer, physical input, Narrator, every-DPI or full visual-parity claim; new copy is English-only. Health dots and Scheduled Tasks are separate. Installed player/settings and Requests payload stay untouched. See [scope and evidence](parity/admin-search.md).
 
 ---
 
@@ -1591,7 +2036,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1607,7 +2052,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1623,7 +2068,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1641,7 +2086,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1657,7 +2102,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1675,7 +2120,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -1875,7 +2320,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -1883,7 +2328,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -1891,7 +2336,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -1921,7 +2366,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1181-beta.1`; numeric version: `1.2.1180.1`.
+Source version: `1.2.1194`; numeric version: `1.2.1194.0`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

@@ -1,0 +1,1075 @@
+using System.Net;
+using System.Reflection;
+using System.Text.Json;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
+
+namespace SiloPlayer.Tests;
+
+/// <summary>Behavioral wire regressions. Reflection keeps the test-only checkpoint runnable on Beta before implementation.</summary>
+public sealed class AdminAccessSecurityTests
+{
+    private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = true };
+    private const string Key = """{"id":"7","user_id":"1","label":"Fixture","key_prefix":"synthetic","rate_tier":"standard","scopes":[],"created_at":"2026-11-17T00:00:00Z"}""";
+    private const string Document = """{"id":"9","domain":"permission","name":"Fixture","enabled":false,"active_version_id":null,"created_at":"2026-11-17T00:00:00Z","updated_at":"2026-11-17T00:00:00Z"}""";
+
+    private static Type Required(string name) => Assert.IsAssignableFrom<Type>(typeof(SiloApiClient).Assembly.GetType(name));
+    private static object Api(string name, SiloApiClient client) => Activator.CreateInstance(Required("SiloPlayer.Core.Api." + name), client)!;
+    private static object Model(string name, string json) => JsonSerializer.Deserialize(json, Required("SiloPlayer.Core.Models.Admin." + name), Json)!;
+    internal static async Task<object?> Call(object target, string name, params object?[] supplied)
+    {
+        var method = Assert.Single(target.GetType().GetMethods().Where(m => m.Name == name));
+        var args = method.GetParameters().Select((p, i) => i < supplied.Length ? supplied[i] : p.DefaultValue).ToArray();
+        Task task;
+        try { task = (Task)method.Invoke(target, args)!; }
+        catch (TargetInvocationException e) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException!).Throw(); throw; }
+        await task;
+        return task.GetType().GetProperty("Result")?.GetValue(task);
+    }
+    private static object Property(object value, string name) => value.GetType().GetProperty(name)!.GetValue(value)!;
+    private static HttpResponseMessage Reply(string body, string? tag = "\"fixture-1\"", HttpStatusCode code = HttpStatusCode.OK)
+    {
+        var response = AdminMonitorKit.Json(body, code);
+        if (tag != null) response.Headers.TryAddWithoutValidation("ETag", tag);
+        return response;
+    }
+
+    [Theory]
+    [InlineData("/admin/api-keys", SiloPlayer.Core.Services.Admin.AdminRoute.ApiKeys)]
+    [InlineData("/admin/policy", SiloPlayer.Core.Services.Admin.AdminRoute.Policy)]
+    [InlineData("/admin/policy?tab=decisions", SiloPlayer.Core.Services.Admin.AdminRoute.Policy)]
+    [InlineData("/admin/settings/sign-in", SiloPlayer.Core.Services.Admin.AdminRoute.SignInSettings)]
+    public void AccessPagesAreReachableThroughTheRouteCatalog(string href, SiloPlayer.Core.Services.Admin.AdminRoute route)
+    {
+        Assert.True(SiloPlayer.Core.Services.Admin.AdminRouteCatalog.TryResolve(href, out var resolution));
+        Assert.Equal(SiloPlayer.Core.Services.Admin.AdminRouteResolutionKind.Route, resolution.Kind);
+        Assert.Equal(route, resolution.Request!.Route);
+        Assert.False(resolution.IsCatchAll);
+        var registry = new SiloPlayer.Core.Services.Admin.AdminPageRegistry([new(route, typeof(object))]);
+        Assert.True(registry.CanOpen(resolution.Request));
+        Assert.Empty(SiloPlayer.Core.Services.Admin.AdminRouteCatalog.MissingTextKeys(route));
+    }
+
+    [Theory]
+    [InlineData("AdminApiKeysApi")]
+    [InlineData("AdminSignInApi")]
+    [InlineData("AdminPolicyApi")]
+    public void SecuritySubfamiliesHaveActualApis(string name) => Required("SiloPlayer.Core.Api." + name);
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("W/\"weak\"")]
+    [InlineData("*")]
+    public async Task KeyCanonicalReadRejectsMissingWeakOrWildcardValidator(string? tag)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply(Key, tag));
+        await Assert.ThrowsAnyAsync<Exception>(() => Call(Api("AdminApiKeysApi", kit.Client), "GetAsync", owner, "7"));
+        Assert.Single(kit.Http.Requests);
+    }
+
+    [Fact]
+    public async Task KeyTierUsesReviewedCanonicalTagAndExactTierBody()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        string? guard = null, body = null;
+        kit.Http.Respond = async (request, ct) =>
+        {
+            if (request.Method == HttpMethod.Put) { guard = request.Headers.GetValues("If-Match").Single(); body = await request.Content!.ReadAsStringAsync(ct); }
+            return Reply(request.Method == HttpMethod.Put ? Key.Replace("standard", "elevated") : Key);
+        };
+        var api = Api("AdminApiKeysApi", kit.Client);
+        var editor = await Call(api, "GetAsync", owner, "7");
+        await Call(api, "UpdateTierAsync", owner, editor, "elevated");
+        Assert.Equal("\"fixture-1\"", guard);
+        Assert.Equal("{\"rate_tier\":\"elevated\"}", body);
+        Assert.Equal(["GET /api/v2/admin/api-keys/7", "PUT /api/v2/admin/api-keys/7/tier"], kit.Http.Requests);
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(412)]
+    [InlineData(500)]
+    public async Task CredentialCreationNeverRefreshesOrResends(int code)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"type":"https://siloserver.org/docs/api/v2/problems/permission_denied","status":403,"title":"Refused"}""", code: (HttpStatusCode)code));
+        await Assert.ThrowsAnyAsync<Exception>(() => Call(Api("AdminApiKeysApi", kit.Client), "CreateAsync", owner, "Fixture", "1", Array.Empty<string>()));
+        Assert.Single(kit.Http.Requests);
+        Assert.Equal("POST /api/v2/admin/api-keys", kit.Http.Requests.Single());
+    }
+
+    [Fact]
+    public async Task CreateCarriesOnlyLabelOwnerAndScopesAndDisclosesOnlyTheCreatedResponse()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply(Key.Replace("\"key_prefix\":\"synthetic\"", "\"key\":\"sa_SYNTHETIC_ONLY\""), code: HttpStatusCode.Created));
+        var result = await Call(Api("AdminApiKeysApi", kit.Client), "CreateAsync", owner, "Fixture", "1", new[] { "catalog:read" });
+        using var body = JsonDocument.Parse(kit.Http.Bodies.Single());
+        Assert.Equal(["label", "user_id", "scopes"], body.RootElement.EnumerateObject().Select(p => p.Name));
+        Assert.Equal("catalog:read", body.RootElement.GetProperty("scopes")[0].GetString());
+        Assert.DoesNotContain("sa_SYNTHETIC_ONLY", result!.ToString());
+    }
+
+    [Theory]
+    [InlineData("{\"items\":[],\"page\":{\"has_more\":true,\"next_cursor\":\"same\"}}")]
+    [InlineData("{\"items\":[],\"page\":{\"has_more\":false,\"next_cursor\":\"stray\"}}")]
+    [InlineData("{\"items\":[]}")]
+    public async Task KeyPagesRejectInvalidContinuation(string reply)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply(reply));
+        await Assert.ThrowsAnyAsync<Exception>(() => Call(Api("AdminApiKeysApi", kit.Client), "ListAsync", owner, "same"));
+        Assert.Single(kit.Http.Requests);
+        Assert.Contains("limit=50", kit.Http.Requests.Single());
+    }
+
+    [Fact]
+    public async Task RetiredAuthorityCannotSendOrPublishAKeyRead()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        kit.Http.Respond = async (_, _) => { await gate.Task; return Reply(Key); };
+        var api = Api("AdminApiKeysApi", kit.Client);
+        var pending = Call(api, "GetAsync", owner, "7");
+        authority.Retire(); gate.SetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Call(api, "GetAsync", owner, "7"));
+        Assert.Single(kit.Http.Requests);
+    }
+
+    [Fact]
+    public async Task PolicyActivationUsesReviewedTagAndNeverReplaysConflict()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        string? guard = null;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get) return Task.FromResult(Reply(Document));
+            guard = request.Headers.GetValues("If-Match").Single();
+            return Task.FromResult(Reply("{}", code: HttpStatusCode.PreconditionFailed));
+        };
+        var api = Api("AdminPolicyApi", kit.Client); var snapshot = await Call(api, "GetAsync", owner, "9");
+        await Assert.ThrowsAnyAsync<Exception>(() => Call(api, "ActivateAsync", owner, snapshot, "11"));
+        Assert.Equal("\"fixture-1\"", guard);
+        Assert.Equal(2, kit.Http.Requests.Count);
+        Assert.Equal("{\"version_id\":\"11\"}", kit.Http.Bodies.Last());
+    }
+
+    [Fact]
+    public async Task InvalidPolicyDraftRemainsAStoredDraftWithoutActivation()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"id":"11","document_id":"9","version_number":1,"source_sha256":"synthetic","compiled_ok":false,"compile_error":"synthetic syntax error","source":"bad rego"}""", code: HttpStatusCode.Created));
+        var result = await Call(Api("AdminPolicyApi", kit.Client), "SaveVersionAsync", owner, "9", "bad rego", "fixture");
+        Assert.False((bool)Property(result!, "CompiledOk"));
+        Assert.Equal(["POST /api/v2/admin/policy/documents/9/versions"], kit.Http.Requests);
+    }
+
+    [Fact]
+    public async Task PolicySimulationPreservesJsonNullAndUsesExactDomain()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"decision":null,"eval_time_ns":10,"generation":2}"""));
+        await Call(Api("AdminPolicyApi", kit.Client), "SimulateAsync", owner, "permission", "", "null");
+        using var body = JsonDocument.Parse(kit.Http.Bodies.Single());
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("input").ValueKind);
+        Assert.Equal("permission", body.RootElement.GetProperty("domain").GetString());
+        Assert.False(body.RootElement.TryGetProperty("source", out _));
+    }
+
+    [Fact]
+    public async Task ConnectionTestIsStagedAndNeverWritesConfiguration()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"ok":false,"steps":[{"id":"groups","label":"Allowed groups","ok":false,"message":"synthetic refusal"}]}"""));
+        var staged = Model("AdminSignInConfigWrite", """{"key":"ldap","value":{"allowed_groups":["fixture-readers"],"admin_groups":["fixture-admins"]},"clear_secrets":["bind_password"]}""");
+        var array = Array.CreateInstance(staged.GetType(), 1); array.SetValue(staged, 0);
+        var result = await Call(Api("AdminSignInApi", kit.Client), "TestAsync", owner, "3", "ldap", array);
+        Assert.False((bool)Property(result!, "Ok"));
+        Assert.Equal(["POST /api/v2/admin/plugins/installations/3/auth-binding/test"], kit.Http.Requests);
+        using var body = JsonDocument.Parse(kit.Http.Bodies.Single());
+        Assert.Equal("fixture-admins", body.RootElement.GetProperty("config")[0].GetProperty("value").GetProperty("admin_groups")[0].GetString());
+        Assert.Equal("bind_password", body.RootElement.GetProperty("config")[0].GetProperty("clear_secrets")[0].GetString());
+    }
+
+    [Theory]
+    [InlineData("AdminApiKeysController")]
+    [InlineData("AdminPolicyController")]
+    [InlineData("AdminSignInController")]
+    public void ControllersOwnPageLifetimeAndDispose(string name)
+    {
+        var type = Required("SiloPlayer.Core.Services.Admin." + name);
+        Assert.True(typeof(IDisposable).IsAssignableFrom(type));
+        Assert.NotNull(type.GetMethod("Suspend"));
+    }
+
+    private sealed class ControllerHarness : IDisposable
+    {
+        internal readonly AdminMonitorKit Kit = AdminMonitorKit.Create();
+        internal readonly AdminMonitorAuthority Authority;
+        internal readonly object Controller;
+        internal readonly List<string> Writes = [];
+        internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
+        internal bool OtherIsOwner, FailList;
+        internal int AccountPages = 1;
+        internal string ExtraKey = "";
+        internal ControllerHarness()
+        {
+            Authority = new(Kit.Client, Kit.Auth);
+            Controller = Activator.CreateInstance(Required("SiloPlayer.Core.Services.Admin.AdminApiKeysController"), Api("AdminApiKeysApi", Kit.Client), Authority)!;
+            Kit.Http.Respond = async (request, _) =>
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (request.Method != HttpMethod.Get)
+                {
+                    Writes.Add(request.Method + " " + path);
+                    return Write != null ? await Write(request) : Reply(Key.Replace("\"key_prefix\":\"synthetic\"", "\"key\":\"sa_SYNTHETIC_ONLY\""), code: HttpStatusCode.Created);
+                }
+                return path switch
+                {
+                    "/api/v2/admin/api-keys/capabilities" => Reply("""{"available":true,"guarded_configuration":true,"scopes":[{"name":"catalog:read","description":"Fixture","audience":"user"}],"rate_tiers":["standard","elevated"]}"""),
+                    "/api/v2/admin/api-keys" when FailList => throw new HttpRequestException("synthetic list failure"),
+                    "/api/v2/admin/api-keys" => Reply("{\"items\":[" + Key + ExtraKey + "],\"page\":{\"has_more\":false}}"),
+                    "/api/v2/admin/api-keys/7" => Reply(Key),
+                    "/api/v2/admin/users" => Reply(UsersPage(request)),
+                    "/api/v2/admin/users/1" => Reply(Account("1", false)),
+                    "/api/v2/admin/users/2" => Reply(Account("2", OtherIsOwner)),
+                    _ => Reply("{}"),
+                };
+            };
+        }
+        private static string Account(string id, bool owner) => JsonSerializer.Serialize(new { id, username = "fixture", role = id == "1" || owner ? "admin" : "user", enabled = true, is_owner = owner });
+        /// <summary>Synthetic account pages of 50: page p holds ids (p-1)*50+1 .. p*50, the cursor of page p+1 is "p{p+1}".</summary>
+        private string UsersPage(HttpRequestMessage request)
+        {
+            var query = request.RequestUri!.Query; var page = query.Contains("cursor=p") ? int.Parse(query[(query.IndexOf("cursor=p", StringComparison.Ordinal) + 8)..].Split('&')[0]) : 1;
+            var items = Enumerable.Range((page - 1) * 50 + 1, 50).Select(n => Account(n.ToString(), n == 2 && OtherIsOwner));
+            if (AccountPages == 1) items = [Account("1", false), Account("2", OtherIsOwner)];
+            return "{\"items\":[" + string.Join(",", items) + "],\"page\":{\"has_more\":" + (page < AccountPages ? "true,\"next_cursor\":\"p" + (page + 1) + "\"" : "false") + "}}";
+        }
+        internal Task Open() => Call(Controller, "OpenAsync");
+        internal Task<object?> Create(string user = "1", bool scoped = false, string[]? scopes = null, bool confirmed = true) =>
+            Call(Controller, "CreateAsync", "Fixture", user, scopes ?? Array.Empty<string>(), scoped, confirmed);
+        public void Dispose() { ((IDisposable)Controller).Dispose(); Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    [Fact]
+    public async Task CreateConfirmationAndExplicitScopedSelectionCannotBecomeFullAccess()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        Assert.Null(await h.Create(confirmed: false)); Assert.Empty(h.Writes);
+        Assert.Null(await h.Create(scoped: true)); Assert.Empty(h.Writes);
+    }
+
+    [Fact]
+    public async Task CurrentAccountOwnershipIsRecheckedImmediatelyBeforeCreating()
+    {
+        using var h = new ControllerHarness(); await h.Open(); h.OtherIsOwner = true;
+        Assert.Null(await h.Create(user: "2")); Assert.Empty(h.Writes);
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+    }
+
+    [Fact]
+    public async Task ConcurrentCreateClicksProduceOnlyOneCredentialAndSecretNeverEntersControllerState()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Write = async _ => { await gate.Task; return Reply(Key.Replace("\"key_prefix\":\"synthetic\"", "\"key\":\"sa_SYNTHETIC_ONLY\""), code: HttpStatusCode.Created); };
+        var first = h.Create(); await WaitUntil(() => h.Writes.Count == 1);
+        Assert.Null(await h.Create()); gate.SetResult(); Assert.Equal("sa_SYNTHETIC_ONLY", await first);
+        Assert.Single(h.Writes);
+        Assert.Null(h.Controller.GetType().GetProperty("Secret"));
+        Assert.DoesNotContain("sa_SYNTHETIC_ONLY", Property(h.Controller, "Rows").ToString());
+    }
+
+    [Fact]
+    public async Task UnknownCreateBlocksResendUntilExplicitReload()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        h.Write = _ => throw new HttpRequestException("synthetic credential transport failure");
+        Assert.Null(await h.Create()); Assert.Null(await h.Create()); Assert.Single(h.Writes);
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+        await h.Open(); Assert.False((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.Single(h.Writes);
+    }
+
+    [Fact]
+    public async Task LocallyRejectedLabelNeverReachesTheServerAndDoesNotBlockALaterCreate()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        Assert.Null(await Call(h.Controller, "CreateAsync", "", "1", Array.Empty<string>(), false, true));
+        Assert.Empty(h.Writes); Assert.False((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create()); Assert.Single(h.Writes);
+    }
+
+    [Fact]
+    public async Task CreatedKeyListIsReconciledWithTheServerCanonicalFirstPage()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        Assert.Single((System.Collections.IEnumerable)Property(h.Controller, "Rows"));
+        h.ExtraKey = "," + Key.Replace("\"id\":\"7\"", "\"id\":\"8\"").Replace("Fixture", "Created elsewhere");
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create());
+        var ids = ((System.Collections.IEnumerable)Property(h.Controller, "Rows")).Cast<object>().Select(row => (string)Property(row, "Id")).ToArray();
+        Assert.Equal(["7", "8"], ids);
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r.StartsWith("GET /api/v2/admin/api-keys?", StringComparison.Ordinal) || r == "GET /api/v2/admin/api-keys"));
+        Assert.Single(h.Writes);
+        Assert.False((bool)Property(h.Controller, "ReviewRequired"));
+    }
+
+    [Fact]
+    public async Task FailedListRefreshAfterCreateKeepsTheOneTimeSecretAndBlocksFurtherWrites()
+    {
+        using var h = new ControllerHarness(); await h.Open(); h.FailList = true;
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create());
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.Null(await h.Create()); Assert.Single(h.Writes);
+        Assert.DoesNotContain("sa_SYNTHETIC_ONLY", (string)Property(h.Controller, "Message"));
+        h.FailList = false; await h.Open();
+        Assert.False((bool)Property(h.Controller, "ReviewRequired"));
+    }
+
+    [Fact]
+    public async Task SuspendDropsLateCreationSecretAndClearsAllPageState()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Write = async _ => { await gate.Task; return Reply(Key.Replace("\"key_prefix\":\"synthetic\"", "\"key\":\"sa_SYNTHETIC_ONLY\""), code: HttpStatusCode.Created); };
+        var first = h.Create(); await WaitUntil(() => h.Writes.Count == 1);
+        h.Controller.GetType().GetMethod("Suspend")!.Invoke(h.Controller, null); gate.SetResult();
+        Assert.Null(await first); Assert.False((bool)Property(h.Controller, "Current"));
+        Assert.Empty((System.Collections.IEnumerable)Property(h.Controller, "Rows"));
+    }
+
+    [Fact]
+    public void SchemaPreservesNumericStringsClearsOnlyExplicitSecretsAndExcludesHiddenFields()
+    {
+        var schema = Model("AdminSignInSchema", """{"key":"oidc","json_schema":"{\"properties\":{\"client_id\":{\"type\":\"string\"},\"enabled\":{\"type\":\"boolean\"}}}","admin_form":{"fields":[{"key":"client_id","control":"TEXT"},{"key":"client_secret","control":"PASSWORD","secret":true},{"key":"enabled","control":"SWITCH"},{"key":"hidden","control":"TEXT","show_when":[{"field":"enabled","equals":["true"]}]}]}}""");
+        var provider = Model("AdminSignInProvider", """{"id":"3","capabilities":[],"global_configs":[]}""");
+        var rules = Required("SiloPlayer.Core.Api.AdminSignInSchemaRules");
+        var form = Property(schema, "AdminForm"); var field = ((System.Collections.IEnumerable)Property(form, "Fields")).Cast<object>().First();
+        var converted = rules.GetMethod("Convert")!.Invoke(null, [schema, field, "00123"]);
+        Assert.Equal("\"00123\"", ((System.Text.Json.Nodes.JsonNode)converted!).ToJsonString());
+        var values = System.Text.Json.Nodes.JsonNode.Parse("""{"client_id":"00123","client_secret":"","enabled":false,"hidden":"must not save"}""")!;
+        var result = rules.GetMethod("Build")!.Invoke(null, [provider, schema, values, new[] { "client_secret" }])!;
+        var body = JsonSerializer.SerializeToElement(result, Json);
+        Assert.Equal("00123", body.GetProperty("value").GetProperty("client_id").GetString());
+        Assert.False(body.GetProperty("value").TryGetProperty("client_secret", out _));
+        Assert.False(body.GetProperty("value").TryGetProperty("hidden", out _));
+        Assert.Equal("client_secret", body.GetProperty("clear_secrets")[0].GetString());
+    }
+
+    [Theory]
+    [InlineData("{}", "45")]
+    [InlineData("{\"timeout\":null}", "null")]
+    public void OptionalNumericDefaultsDoNotReplaceExplicitClears(string draft, string expected)
+    {
+        var schema = Model("AdminSignInSchema", """{"key":"oidc","json_schema":"{\"properties\":{\"timeout\":{\"type\":\"number\"}}}","admin_form":{"fields":[{"key":"timeout","control":"NUMBER","default_value":45}]}}""");
+        var provider = Model("AdminSignInProvider", """{"id":"3","capabilities":[],"global_configs":[]}""");
+        var values = System.Text.Json.Nodes.JsonNode.Parse(draft)!;
+        var result = Required("SiloPlayer.Core.Api.AdminSignInSchemaRules").GetMethod("Build")!.Invoke(null, [provider, schema, values, Array.Empty<string>()])!;
+        var body = JsonSerializer.SerializeToElement(result, Json);
+        Assert.Equal(expected, body.GetProperty("value").GetProperty("timeout").GetRawText());
+    }
+
+    [Theory]
+    [InlineData("groups", "admins", "admins\r", true)]
+    [InlineData("groups", "Silo", "Silo ", true)]
+    [InlineData("groups", "admins", "admins\rSilo", false)]
+    [InlineData("timeout", "1", "1.", true)]
+    [InlineData("timeout", "1", "1.5", false)]
+    [InlineData("timeout", "1", "-", null)]
+    public void TextBeingTypedIsRecognisedWhileItStillMeansTheStagedValue(string key, string staged, string typed, bool? expected)
+    {
+        var schema = Model("AdminSignInSchema", """{"key":"ldap","json_schema":"{\"properties\":{\"groups\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"timeout\":{\"type\":\"number\"}}}","admin_form":{"fields":[{"key":"groups","control":"TEXTAREA"},{"key":"timeout","control":"NUMBER"}]}}""");
+        var rules = Required("SiloPlayer.Core.Api.AdminSignInSchemaRules");
+        var field = ((System.Collections.IEnumerable)Property(Property(schema, "AdminForm"), "Fields")).Cast<object>().Single(f => (string)Property(f, "Key") == key);
+        // The staged value is what the same conversion stored for the text typed so far; the page rewrites a box only when its text stops meaning that value.
+        var value = rules.GetMethod("Convert")!.Invoke(null, [schema, field, staged]);
+        Assert.Equal(expected, (bool?)rules.GetMethod("Means")!.Invoke(null, [schema, field, typed, value]));
+    }
+
+    private static async Task WaitUntil(Func<bool> predicate)
+    {
+        for (var i = 0; i < 200 && !predicate(); i++) await Task.Delay(10);
+        Assert.True(predicate());
+    }
+
+    [Fact]
+    public void DiagnosticPolicySamplesRedactNestedCredentialsAndSignedUrls()
+    {
+        using var json = JsonDocument.Parse("""{"headers":{"authorization":"Bearer synthetic-token"},"rows":[{"api_key":"sa_SYNTHETIC_ONLY"},"https://fixture:synthetic-password@example.test/media?token=synthetic-signed#secret"],"allowed":false}""");
+        var safe = (string)Required("SiloPlayer.Core.Api.AdminAccessRedaction").GetMethod("Json")!.Invoke(null, [json.RootElement])!;
+        Assert.DoesNotContain("synthetic-token", safe); Assert.DoesNotContain("sa_SYNTHETIC_ONLY", safe);
+        Assert.DoesNotContain("synthetic-password", safe); Assert.DoesNotContain("synthetic-signed", safe);
+        Assert.Contains("\"allowed\": false", safe);
+    }
+
+    [Fact]
+    public async Task DocumentWithActiveVersionCannotBeDeletedEvenWhenDisabled()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply(Document.Replace("\"active_version_id\":null", "\"active_version_id\":\"11\"")));
+        var api = Api("AdminPolicyApi", kit.Client); var reviewed = await Call(api, "GetAsync", owner, "9");
+        await Assert.ThrowsAnyAsync<Exception>(() => Call(api, "DeleteAsync", owner, reviewed));
+        Assert.Equal(["GET /api/v2/admin/policy/documents/9"], kit.Http.Requests);
+    }
+
+    private sealed class PolicyHarness : IDisposable
+    {
+        internal readonly AdminMonitorKit Kit = AdminMonitorKit.Create();
+        internal readonly AdminMonitorAuthority Authority;
+        internal readonly object Controller;
+        internal bool Available = true, FailSave;
+        internal readonly List<string> Writes = [];
+        internal PolicyHarness()
+        {
+            Authority = new(Kit.Client, Kit.Auth);
+            Controller = Activator.CreateInstance(Required("SiloPlayer.Core.Services.Admin.AdminPolicyController"), Api("AdminPolicyApi", Kit.Client), Authority)!;
+            Kit.Http.Respond = async (request, ct) =>
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (request.Method != HttpMethod.Get) Writes.Add(request.Method + " " + path);
+                if (path == "/api/v2/policy/capability") return Reply(JsonSerializer.Serialize(new { enabled = Available, editor_available = Available, decision_types = new[] { "permission" }, generation = 1 }));
+                if (path == "/api/v2/admin/policy/documents") return Reply("{\"items\":[" + Document + "],\"page\":{\"has_more\":false}}");
+                if (path == "/api/v2/admin/policy/documents/9") return Reply(Document);
+                if (path.EndsWith("/validate")) return Reply("""{"compiled_ok":true,"errors":[]}""");
+                if (path.EndsWith("/versions") && request.Method == HttpMethod.Post)
+                {
+                    if (FailSave) throw new HttpRequestException("synthetic reset");
+                    using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                    return Reply(JsonSerializer.Serialize(new { id = "11", document_id = "9", version_number = 1, source_sha256 = "synthetic", compiled_ok = true, source = body.RootElement.GetProperty("source").GetString() }), code: HttpStatusCode.Created);
+                }
+                if (path.EndsWith("/versions")) return Reply("""{"items":[],"page":{"has_more":false}}""");
+                return Reply("{}");
+            };
+        }
+        internal Task Open() => Call(Controller, "OpenAsync", "documents", "9");
+        internal void Draft(string source) => Controller.GetType().GetMethod("SetDraft")!.Invoke(Controller, [source]);
+        public void Dispose() { ((IDisposable)Controller).Dispose(); Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    [Fact]
+    public async Task CreatedPolicyRemainsInTheCollectionAfterReturningFromItsEditor()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var created = Document.Replace("\"id\":\"9\"", "\"id\":\"10\"");
+        h.Kit.Http.Respond = (request, _) => Task.FromResult(request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v2/policy/capability" => Reply("""{"enabled":true,"editor_available":true,"decision_types":["permission"],"generation":1}"""),
+            "/api/v2/admin/policy/documents" when request.Method == HttpMethod.Post => Reply(created, code: HttpStatusCode.Created),
+            "/api/v2/admin/policy/documents" => Reply("{\"items\":[" + Document + "," + created + "],\"page\":{\"has_more\":false}}"),
+            "/api/v2/admin/policy/documents/10" => Reply(created),
+            _ => Reply("""{"items":[],"page":{"has_more":false}}"""),
+        });
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.Equal("10", Property(Property(Property(h.Controller, "Snapshot"), "Value"), "Id"));
+        await Call(h.Controller, "SelectAsync", (object?)null);
+        Assert.Contains(((System.Collections.IEnumerable)Property(h.Controller, "Documents")).Cast<object>(), document => (string)Property(document, "Id") == "10");
+        Assert.Single(h.Kit.Http.Requests.Where(request => request == "POST /api/v2/admin/policy/documents"));
+    }
+
+    [Fact]
+    public async Task UnavailablePolicyDoesNotProbeEditorStorageOrDecisionLog()
+    {
+        using var h = new PolicyHarness { Available = false }; await h.Open();
+        Assert.Equal(["GET /api/v2/policy/capability"], h.Kit.Http.Requests);
+        Assert.False((bool)Property(h.Controller, "Available"));
+    }
+
+    [Fact]
+    public async Task EditingSourceInvalidatesValidationAndCannotSaveAnUnvalidatedDraft()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        await Call(h.Controller, "ValidateAsync"); Assert.True((bool)Property(h.Controller, "Validated"));
+        h.Draft("package silo_custom.permission\nimport rego.v1\n# changed");
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.False((bool)Property(h.Controller, "Validated"));
+        Assert.DoesNotContain(h.Writes, w => w.EndsWith("/versions"));
+    }
+
+    [Fact]
+    public async Task VersionSaveRequiresExplicitReviewAndAdoptionPreservesDraft()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var draft = (string)Property(h.Controller, "Draft"); await Call(h.Controller, "ValidateAsync");
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.DoesNotContain(h.Writes, w => w.Contains("active-version"));
+        await Call(h.Controller, "ReviewAsync");
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+        h.Controller.GetType().GetMethod("AdoptReview")!.Invoke(h.Controller, null);
+        Assert.False((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.Equal(draft, Property(h.Controller, "Draft"));
+        Assert.Equal("11", Property(Property(h.Controller, "SavedVersion"), "Id"));
+    }
+
+    [Fact]
+    public async Task SimulationOfTheDefaultSampleInputPublishesTheDecision()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.RequestUri!.AbsolutePath == "/api/v2/admin/policy/simulate"
+            ? Task.FromResult(Reply("""{"decision":{"allowed":false,"reason":"synthetic"},"eval_time_ns":12,"generation":1}""", null)) : original(request, ct);
+        await Call(h.Controller, "SimulateAsync", "{\r  \"schema_version\": 1,\r  \"request_time\": \"2026-07-02T16:00:00Z\"\r}");
+        Assert.Null(Property(h.Controller, "Message") is string { Length: > 0 } message ? message : null);
+        var simulation = Property(h.Controller, "Simulation");
+        Assert.Equal(1L, Property(simulation, "Generation"));
+        Assert.Equal(12L, Property(simulation, "EvalTimeNs"));
+    }
+
+    [Fact]
+    public async Task EditorLabelsAndTitleFollowTheAdoptedSnapshot()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var before = (SiloPlayer.Core.Models.Admin.AdminPolicySnapshot)Property(h.Controller, "Snapshot");
+        Assert.Equal("Fixture", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.Title(before));
+        Assert.Equal("Enable override", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.ToggleLabel(before));
+        var newer = Document.Replace("\"name\":\"Fixture\"", "\"name\":\"Renamed elsewhere\"").Replace("\"enabled\":false", "\"enabled\":true").Replace("\"active_version_id\":null", "\"active_version_id\":\"11\"");
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.RequestUri!.AbsolutePath == "/api/v2/admin/policy/documents/9" ? Task.FromResult(Reply(newer, "\"fixture-2\"")) : original(request, ct);
+        await Call(h.Controller, "ReviewAsync");
+        h.Controller.GetType().GetMethod("AdoptReview")!.Invoke(h.Controller, null);
+        var after = (SiloPlayer.Core.Models.Admin.AdminPolicySnapshot)Property(h.Controller, "Snapshot");
+        Assert.NotSame(before, after);
+        Assert.Equal("Renamed elsewhere", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.Title(after));
+        Assert.Equal("Disable override", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.ToggleLabel(after));
+        Assert.Equal("Active", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.Status(after.Value));
+        Assert.Equal("enabled", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.EnabledState(after));
+    }
+
+    [Fact]
+    public async Task UnknownVersionSaveCannotBeResentAndCapabilityIsRecheckedBeforeTheWrite()
+    {
+        using var h = new PolicyHarness(); await h.Open(); await Call(h.Controller, "ValidateAsync"); h.FailSave = true;
+        await Call(h.Controller, "SaveAsync", true); await Call(h.Controller, "SaveAsync", true);
+        Assert.Single(h.Writes.Where(w => w.EndsWith("/versions")));
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r.EndsWith("/policy/capability")));
+    }
+
+    [Theory]
+    [InlineData("SaveConfigAsync", "AdminSignInConfigWrite", "{\"key\":\"oidc\",\"value\":{\"client_id\":\"00123\"},\"clear_secrets\":[]}", "/config")]
+    [InlineData("SaveBindingAsync", "AdminSignInBinding", "{\"capability_id\":\"oidc\",\"enabled\":true,\"display_order\":1,\"auto_provision\":true,\"default_login\":false}", "/auth-binding")]
+    public async Task PluginSignInWritesRequireOfficial204WithoutTryingToDecodeJson(string method, string type, string body, string suffix)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        await Call(Api("AdminSignInApi", kit.Client), method, owner, "3", Model(type, body));
+        Assert.Equal(["PUT /api/v2/admin/plugins/installations/3" + suffix], kit.Http.Requests);
+        Assert.Equal(JsonDocument.Parse(body).RootElement.ToString(), JsonDocument.Parse(kit.Http.Bodies.Single()).RootElement.ToString());
+    }
+
+    private sealed class SignInHarness : IDisposable
+    {
+        internal const string Local = "auth.local_password_login";
+        internal readonly AdminMonitorKit Kit = AdminMonitorKit.Create();
+        internal readonly AdminMonitorAuthority Authority;
+        private readonly SiloPlayer.Core.Services.Admin.AdminServerSettingsStore _store;
+        internal readonly object Controller;
+        internal bool HasBreakGlass = true, ProviderOn = true, FailConfig, ConfiguredSecret = true, ServerRefusesBreakGlass;
+        internal int AccountPages = 1; internal string BreakGlassId = "1";
+        internal readonly List<string> Writes = [];
+        internal object Provider => ((System.Collections.IEnumerable)Property(Controller, "Providers")).Cast<object>().Single();
+        internal object Schema => ((System.Collections.IEnumerable)Property(Provider, "GlobalConfigSchema")).Cast<object>().Single();
+        internal object Field(string key) => ((System.Collections.IEnumerable)Property(Property(Schema, "AdminForm"), "Fields")).Cast<object>().Single(f => (string)Property(f, "Key") == key);
+        internal SignInHarness()
+        {
+            Authority = new(Kit.Client, Kit.Auth); var settings = new AdminServerSettingsApi(Kit.Client);
+            _store = new(settings, Authority, [Local], []);
+            Controller = Activator.CreateInstance(Required("SiloPlayer.Core.Services.Admin.AdminSignInController"), Api("AdminSignInApi", Kit.Client), settings, _store, Authority)!;
+            Kit.Http.Respond = async (request, ct) =>
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (request.Method != HttpMethod.Get)
+                {
+                    Writes.Add(request.Method + " " + path);
+                    if (path.EndsWith("/config")) return FailConfig ? Reply("{}", code: HttpStatusCode.ServiceUnavailable) : new(HttpStatusCode.NoContent);
+                    if (path.EndsWith("/test")) return Reply("""{"ok":true,"steps":[{"id":"connection","label":"Connection","ok":true,"message":"synthetic-secret must never appear"}]}""");
+                    if (path == "/api/v2/admin/settings")
+                    {
+                        if (ServerRefusesBreakGlass) return Reply("""{"type":"https://siloserver.org/docs/api/v2/problems/break_glass_required","status":409,"title":"Break-glass account required"}""", code: HttpStatusCode.Conflict);
+                        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                        return Reply("{\"values\":" + body.RootElement.GetProperty("values").GetRawText() + ",\"restart_required\":false}", "\"settings-2\"");
+                    }
+                    return new(HttpStatusCode.NoContent);
+                }
+                return path switch
+                {
+                    "/api/v2/admin/settings/effective" => Reply("""{"auth.local_password_login":"true","auth.email_auto_match":"false","auth.user_api_keys":"false","signup.enabled":"false","password_reset.self_service_enabled":"false","server.public_url":"https://fixture.invalid"}"""),
+                    "/api/v2/admin/settings/sensitive-status" => Reply("""{"configured":[],"managed_by_env":[]}"""),
+                    "/api/v2/admin/settings/restart-keys" => Reply("""{"keys":[],"prefixes":[]}"""),
+                    "/api/v2/auth/external-sign-in/capabilities" => Reply("""{"available":true,"break_glass":true,"connection_test":true,"live_provider_changes":true}"""),
+                    "/api/v2/admin/users" => Reply(UsersPage(request)),
+                    "/api/v2/admin/users/1" => Reply(AccountFor("1")),
+                    _ when path.StartsWith("/api/v2/admin/users/", StringComparison.Ordinal) => Reply(AccountFor(path[(path.LastIndexOf('/') + 1)..])),
+                    "/api/v2/admin/plugins/installations" => Reply(Inventory()),
+                    _ => Reply("{}"),
+                };
+            };
+        }
+        private string Account() => JsonSerializer.Serialize(new { id = "1", username = "fixture", role = "admin", enabled = true, is_owner = true, break_glass = HasBreakGlass, password_login = true });
+        /// <summary>One account, or with several pages a synthetic admin owner (id 1, no break-glass) plus ordinary users; only BreakGlassId holds break-glass.</summary>
+        private string AccountFor(string id) => AccountPages == 1 && id == "1" ? Account() : JsonSerializer.Serialize(new { id, username = "fixture" + id, role = id == "1" || id == BreakGlassId ? "admin" : "user", enabled = true, is_owner = id == "1", break_glass = id == BreakGlassId, password_login = true });
+        private string UsersPage(HttpRequestMessage request)
+        {
+            var query = request.RequestUri!.Query; var page = query.Contains("cursor=p") ? int.Parse(query[(query.IndexOf("cursor=p", StringComparison.Ordinal) + 8)..].Split('&')[0]) : 1;
+            if (AccountPages == 1) return "{\"items\":[" + Account() + "],\"page\":{\"has_more\":false}}";
+            return "{\"items\":[" + string.Join(",", Enumerable.Range((page - 1) * 50 + 1, 50).Select(n => AccountFor(n.ToString()))) + "],\"page\":{\"has_more\":" + (page < AccountPages ? "true,\"next_cursor\":\"p" + (page + 1) + "\"" : "false") + "}}";
+        }
+        private string Inventory() => JsonSerializer.Serialize(new { items = new[] { new
+        {
+            id = "3", plugin_id = "fixture-oidc", enabled = true,
+            capabilities = new[] { new { id = "oidc", type = "auth_provider.v1", sign_in_mode = "oauth", display_name = "Fixture", metadata = new { connection_test = true } } },
+            auth_bindings = new[] { new { capability_id = "oidc", enabled = ProviderOn, auto_provision = true, display_order = 1, default_login = false } },
+            global_config_schema = new[] { new { key = "oidc", title = "Provider", json_schema = "{\"properties\":{\"client_secret\":{\"type\":\"string\"},\"allowed_groups\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}}}", admin_form = new { fields = new object[] { new { key = "client_secret", label = "Client secret", control = "PASSWORD", secret = true }, new { key = "allowed_groups", label = "Allowed groups", control = "TEXTAREA" } }, sections = Array.Empty<object>() } } },
+            global_configs = new[] { new { key = "oidc", value = new { allowed_groups = new[] { "readers" } }, configured_secrets = ConfiguredSecret ? new[] { "client_secret" } : Array.Empty<string>() } },
+        } } });
+        internal Task Open() => Call(Controller, "OpenAsync");
+        internal void SetLocal(bool value) => Controller.GetType().GetMethod("Set")!.Invoke(Controller, [Local, value]);
+        internal void EditSecret() => Controller.GetType().GetMethod("SetField")!.Invoke(Controller, [Provider, Schema, Field("client_secret"), "synthetic-secret"]);
+        public void Dispose() { ((IDisposable)Controller).Dispose(); _store.Dispose(); Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task LocalPasswordDisableRequiresKnownBreakGlassAndAnEnabledPrimaryProvider(bool breakGlass, bool providerOn)
+    {
+        using var h = new SignInHarness { HasBreakGlass = breakGlass, ProviderOn = providerOn }; await h.Open(); h.SetLocal(false);
+        Assert.Equal("true", h.Controller.GetType().GetMethod("Value")!.Invoke(h.Controller, [SignInHarness.Local]));
+        await Call(h.Controller, "SaveAsync", true); Assert.Empty(h.Writes);
+    }
+
+    [Fact]
+    public async Task RemovingBreakGlassAfterConfirmationPreventsSettingsWrite()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.SetLocal(false); h.HasBreakGlass = false;
+        await Call(h.Controller, "SaveAsync", true); Assert.Empty(h.Writes); Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+    }
+
+    [Fact]
+    public async Task ProviderConfigurationSavesBeforeDisablingLocalPasswordsAndFailureStopsTheSequence()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.EditSecret(); h.SetLocal(false); h.FailConfig = true;
+        await Call(h.Controller, "SaveAsync", true); await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/plugins/installations/3/config"], h.Writes);
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+    }
+
+    [Fact]
+    public async Task ConfirmedCombinedSaveAcknowledgesProviderThenWritesOnlyDirtyLocalSettings()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.EditSecret(); h.SetLocal(false);
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/plugins/installations/3/config", "PUT /api/v2/admin/settings"], h.Writes);
+        Assert.Equal(0, Property(h.Controller, "DirtyCount"));
+        Assert.Equal("false", h.Controller.GetType().GetMethod("SavedValue")!.Invoke(h.Controller, [SignInHarness.Local]));
+    }
+
+    [Fact]
+    public async Task TestUsesStagedSecretRedactsItsEchoAndDoesNotPersistIt()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.EditSecret();
+        await Call(h.Controller, "TestAsync", h.Provider, null);
+        Assert.Equal(["POST /api/v2/admin/plugins/installations/3/auth-binding/test"], h.Writes);
+        var results = JsonSerializer.Serialize(Property(h.Controller, "TestResults"), Json);
+        Assert.DoesNotContain("synthetic-secret", results);
+        h.Controller.GetType().GetMethod("Suspend")!.Invoke(h.Controller, null);
+        Assert.Equal(0, Property(h.Controller, "DirtyCount"));
+        Assert.Empty((System.Collections.IEnumerable)Property(h.Controller, "Providers"));
+    }
+
+    [Fact]
+    public async Task TransportExceptionCannotLeakSubmittedCredentialIntoDiagnostics()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "SiloAdminAccessFixture", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
+        using var operation = LocalLog.BeginOperation("synthetic-admin-access", directory);
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => throw new HttpRequestException("synthetic-secret-echo");
+        await Assert.ThrowsAnyAsync<Exception>(() => Call(Api("AdminApiKeysApi", kit.Client), "CreateAsync", owner, "Fixture", "1", Array.Empty<string>()));
+        var logs = string.Join("\n", Directory.GetFiles(directory).Select(File.ReadAllText));
+        Assert.DoesNotContain("synthetic-secret-echo", logs);
+        Assert.Contains("admin_access_transport_failed", logs);
+    }
+
+    [Fact]
+    public async Task SchemaWriteOnlyOverridesExplicitFormAndReturnedSecretNeverBecomesABaseline()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"items":[{"id":"3","enabled":true,"capabilities":[{"id":"oidc","type":"auth_provider.v1"}],"global_config_schema":[{"key":"oidc","json_schema":"{\"type\":\"object\",\"properties\":{\"client_secret\":{\"type\":\"string\",\"writeOnly\":true}}}","admin_form":{"fields":[{"key":"client_secret","control":"TEXT","secret":false}]}}],"global_configs":[{"key":"oidc","value":{"client_secret":"SYNTHETIC_SERVER_SECRET"},"configured_secrets":["client_secret"]}]}]}"""));
+        var result = await Call(Api("AdminSignInApi", kit.Client), "GetInstallationsAsync", owner);
+        var provider = ((System.Collections.IEnumerable)result!).Cast<object>().Single();
+        Assert.DoesNotContain("SYNTHETIC_SERVER_SECRET", JsonSerializer.Serialize(provider, Json));
+        var schema = ((System.Collections.IEnumerable)Property(provider, "GlobalConfigSchema")).Cast<object>().Single();
+        var field = ((System.Collections.IEnumerable)Property(Property(schema, "AdminForm"), "Fields")).Cast<object>().Single();
+        Assert.True((bool)Property(field, "IsSecret"));
+    }
+
+    [Theory]
+    [InlineData(false, false, "could not reload")]
+    [InlineData(true, true, "notification failed")]
+    [InlineData(true, false, "Other servers apply changes independently")]
+    public async Task PersistedPolicyReceiptSeparatesLocalApplicationAndPublication(bool applied, bool publicationFailed, string expected)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (request, _) => Task.FromResult(request.Method == HttpMethod.Get ? Reply(Document) : Reply(JsonSerializer.Serialize(new
+        {
+            persisted = true,
+            document = JsonDocument.Parse(Document).RootElement,
+            persisted_generation = 2,
+            application = new { local_applied = applied, loaded_generation = applied ? 2 : 1, publication_failed = publicationFailed },
+        })));
+        var api = Api("AdminPolicyApi", kit.Client); var reviewed = await Call(api, "GetAsync", owner, "9");
+        var result = await Call(api, "EnableAsync", owner, reviewed, false);
+        Assert.Contains(expected, (string)Property(result!, "ApplicationMessage"));
+        Assert.Equal(2, kit.Http.Requests.Count);
+    }
+
+    // ---- Review findings D1-D7 (November 20 review of the Access family) ----
+
+    private static bool Flag(object controller, string name) => (bool)Property(controller, name);
+    private static string MessageOf(object controller) => Property(controller, "Message") as string ?? "";
+    private static void Invoke(object target, string name, params object?[] args) => target.GetType().GetMethod(name)!.Invoke(target, args);
+    private static bool CanManageKey(object controller, string id) => (bool)controller.GetType().GetMethod("CanManage")!.Invoke(controller, [id])!;
+    private static int Count(object controller, string name) => ((System.Collections.IEnumerable)Property(controller, name)).Cast<object>().Count();
+    private const string PolicyDocuments = "/api/v2/admin/policy/documents";
+    private static HttpResponseMessage Problem(string type, HttpStatusCode code) =>
+        Reply($$"""{"type":"https://siloserver.org/docs/api/v2/problems/{{type}}","status":{{(int)code}},"title":"Refused"}""", code: code);
+
+    [Fact]
+    public async Task UnknownKeyCreateKeepsCreateAndRowWritesBlockedWhileARowEditorIsOpenedChangedAndCancelled()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        h.Write = _ => throw new HttpRequestException("synthetic credential transport failure");
+        Assert.Null(await h.Create());
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "EditAsync", "7");
+        var editor = Property(h.Controller, "Editor");
+        // Reading one key clears only that editor's own review state, never the stale-list block.
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        h.Write = null;
+        await Call(h.Controller, "ChangeAsync", editor, "elevated", true);
+        Invoke(h.Controller, "CloseEditor");
+        Assert.Null(await h.Create());
+        Assert.Single(h.Writes); // neither the row write nor a second create reached the server
+        await h.Open();
+        Assert.False(Flag(h.Controller, "ListReviewRequired"));
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create()); Assert.Equal(2, h.Writes.Count);
+    }
+
+    [Fact]
+    public async Task KeyCreateWhoseListRefreshFailedStaysBlockedAfterARowEditorIsOpenedAndCancelled()
+    {
+        using var h = new ControllerHarness(); await h.Open(); h.FailList = true;
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create());
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "EditAsync", "7"); Invoke(h.Controller, "CloseEditor");
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        Assert.Null(await h.Create()); Assert.Single(h.Writes);
+        h.FailList = false; await h.Open();
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create()); Assert.Equal(2, h.Writes.Count);
+    }
+
+    [Theory]
+    [InlineData(true, "API key revoked.")]
+    [InlineData(false, "Rate limit updated.")]
+    public async Task PersistedKeyChangeIsStillReportedWhenTheFollowUpListReadFails(bool revoke, string expected)
+    {
+        using var h = new ControllerHarness(); await h.Open(); await Call(h.Controller, "EditAsync", "7");
+        var editor = Property(h.Controller, "Editor");
+        h.Write = request => Task.FromResult(request.Method == HttpMethod.Delete ? new HttpResponseMessage(HttpStatusCode.NoContent) : Reply(Key.Replace("standard", "elevated")));
+        h.FailList = true;
+        await Call(h.Controller, "ChangeAsync", editor, revoke ? null : "elevated", true);
+        Assert.Single(h.Writes);
+        Assert.StartsWith(expected, MessageOf(h.Controller)); Assert.DoesNotContain("could not be completed", MessageOf(h.Controller));
+        Assert.Null(Property2(h.Controller, "Editor")); // the dialog may close: the change is done
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        Assert.Null(await h.Create()); Assert.Single(h.Writes); // but the stale list blocks further writes until the page reload
+    }
+    private static object? Property2(object value, string name) => value.GetType().GetProperty(name)!.GetValue(value);
+
+    [Fact]
+    public async Task KeyOwnersOnLaterAccountPagesAreReadAndManageableWithoutLoadMore()
+    {
+        using var h = new ControllerHarness { AccountPages = 2, ExtraKey = "," + Key.Replace("\"id\":\"7\"", "\"id\":\"8\"").Replace("\"user_id\":\"1\"", "\"user_id\":\"75\"") };
+        await h.Open();
+        Assert.Equal(100, Count(h.Controller, "Accounts")); Assert.Null(Property2(h.Controller, "AccountCursor"));
+        Assert.True(CanManageKey(h.Controller, "75"));
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r.StartsWith("GET /api/v2/admin/users?", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task KeyOwnerBeyondTheAccountCapIsOfferedUnlessKnownUnmanageableAndEveryWriteStillRereadsTheOwner()
+    {
+        using var h = new ControllerHarness { AccountPages = 25, OtherIsOwner = true }; await h.Open();
+        Assert.Equal(1000, Count(h.Controller, "Accounts")); Assert.NotNull(Property2(h.Controller, "AccountCursor"));
+        Assert.Equal(20, h.Kit.Http.Requests.Count(r => r.StartsWith("GET /api/v2/admin/users?", StringComparison.Ordinal)));
+        Assert.True(CanManageKey(h.Controller, "1100"));  // not in the read list: offered, as the official page does
+        Assert.False(CanManageKey(h.Controller, "2"));    // known to be the server Owner: not offered
+        var before = h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/users/1");
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create("1"));
+        Assert.True(h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/users/1") > before); // the write re-read the owner before sending
+    }
+
+    [Fact]
+    public async Task UnknownPolicyCreateStaysBlockedAfterOpeningAnOverrideAndReturningToTheList()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        await Call(h.Controller, "SelectAsync", (object?)null);
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == PolicyDocuments
+            ? throw new HttpRequestException("synthetic transport failure") : original(request, ct);
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "SelectAsync", "9");                         // open any override
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "SelectAsync", (object?)null);               // back to "All overrides"
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.Single(h.Kit.Http.Requests.Where(r => r == "POST " + PolicyDocuments));
+        await Call(h.Controller, "ReviewToggleAsync", "9");
+        await Call(h.Controller, "ApplyToggleAsync", Property(h.Controller, "Toggle"), true, true);
+        Assert.DoesNotContain(h.Kit.Http.Requests, r => r.StartsWith("PATCH ", StringComparison.Ordinal)); // no row write either
+        await Call(h.Controller, "OpenAsync", "documents", (string?)null);   // the page-level reload re-reads the list
+        Assert.False(Flag(h.Controller, "ListReviewRequired"));
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r == "POST " + PolicyDocuments));
+    }
+
+    [Fact]
+    public async Task PolicyCreateWhoseListRefreshFailedIsReportedAsCreatedAndStaysBlockedAfterOpeningAnOverride()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        await Call(h.Controller, "SelectAsync", (object?)null);
+        var original = h.Kit.Http.Respond!; var created = false;
+        h.Kit.Http.Respond = (request, ct) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post && path == PolicyDocuments) { created = true; return Task.FromResult(Reply(Document.Replace("\"id\":\"9\"", "\"id\":\"10\""), code: HttpStatusCode.Created)); }
+            if (created && request.Method == HttpMethod.Get && path == PolicyDocuments) throw new HttpRequestException("synthetic list failure");
+            return original(request, ct);
+        };
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.True(Flag(h.Controller, "ListReviewRequired"));
+        Assert.StartsWith("Override created.", MessageOf(h.Controller)); Assert.DoesNotContain("could not be completed", MessageOf(h.Controller));
+        await Call(h.Controller, "SelectAsync", "9"); await Call(h.Controller, "SelectAsync", (object?)null);
+        await Call(h.Controller, "CreateAsync", "permission", "Fixture", true);
+        Assert.Single(h.Kit.Http.Requests.Where(r => r == "POST " + PolicyDocuments));
+    }
+
+    [Fact]
+    public async Task PolicyListShowsTheServerStateAfterAnEditorSideEnableAndTheRowTogglesWorkAgain()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var enabled = Document.Replace("\"enabled\":false", "\"enabled\":true"); var changed = false;
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Patch)
+            {
+                changed = true;
+                return Task.FromResult(Reply(JsonSerializer.Serialize(new { persisted = true, document = JsonDocument.Parse(enabled).RootElement, persisted_generation = 2, application = new { local_applied = true, loaded_generation = 2, publication_failed = false } })));
+            }
+            if (changed && request.Method == HttpMethod.Get && path == PolicyDocuments) return Task.FromResult(Reply("{\"items\":[" + enabled + "],\"page\":{\"has_more\":false}}"));
+            return original(request, ct);
+        };
+        await Call(h.Controller, "SetEnabledAsync", Property(h.Controller, "Snapshot"), true, true);
+        Assert.True(Flag(h.Controller, "ReviewRequired")); // the editor's revision needs review
+        await Call(h.Controller, "SelectAsync", (object?)null);
+        var row = ((System.Collections.IEnumerable)Property(h.Controller, "Documents")).Cast<object>().Single();
+        Assert.True((bool)Property(row, "Enabled"));       // the list shows what the server now says
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.False(Flag(h.Controller, "ListReviewRequired")); Assert.False(Flag(h.Controller, "WritesBlocked"));
+    }
+
+    [Fact]
+    public async Task DefiniteEnableConflictShowsItsReasonAndIsRetryableWithoutAReload()
+    {
+        using var h = new PolicyHarness(); await h.Open(); await Call(h.Controller, "SelectAsync", (object?)null);
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.Method == HttpMethod.Patch ? Task.FromResult(Problem("conflict", HttpStatusCode.Conflict)) : original(request, ct);
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await Call(h.Controller, "ReviewToggleAsync", "9");
+            await Call(h.Controller, "ApplyToggleAsync", Property(h.Controller, "Toggle"), true, true);
+            Assert.Equal("Another override is already enabled for this domain. Disable it first.", MessageOf(h.Controller));
+            Assert.False(Flag(h.Controller, "WritesBlocked"));
+            Assert.Equal(attempt, h.Kit.Http.Requests.Count(r => r.StartsWith("PATCH ", StringComparison.Ordinal)));
+        }
+    }
+
+    [Fact]
+    public async Task ProviderTurnedOffBeforeSavingReportsTheProviderRequirementNotTheOppositeReason()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.SetLocal(false); h.ProviderOn = false;
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Empty(h.Writes);
+        Assert.Contains("Turn on a sign-in provider first", MessageOf(h.Controller));
+        Assert.DoesNotContain("Another sign-in provider", MessageOf(h.Controller));
+    }
+
+    [Theory]
+    [InlineData("""{"value":123}""", "Capability name")]
+    [InlineData("""{"value":{"nested":true}}""", "Capability name")]
+    [InlineData("""{"value":["a"]}""", "Capability name")]
+    [InlineData("""{"value":null}""", "Capability name")]
+    [InlineData("""{"value":"   "}""", "Capability name")]
+    [InlineData("null", "Capability name")]
+    [InlineData("""{"value":" Saved name "}""", "Saved name")]
+    public void ProviderNameReadsOnlyANonBlankStringDisplayNameAndNullSchemaObjectsStayEmpty(string saved, string expected)
+    {
+        var provider = Model("AdminSignInProvider", $$"""{"id":"3","plugin_id":"fixture-plugin","capabilities":[{"id":"oidc","type":"auth_provider.v1","display_name":"Capability name","metadata":null}],"global_configs":[{"key":"display_name","value":{{saved}}}]}""");
+        Assert.Equal(expected, (string)Property(provider, "Name"));
+        Assert.Empty(((System.Collections.IEnumerable)Property(Property(provider, "Auth"), "Metadata")).Cast<object>());
+    }
+
+    [Fact]
+    public async Task BreakGlassAdminOnALaterAccountPageIsFoundSoPasswordsCanBeTurnedOff()
+    {
+        using var h = new SignInHarness { AccountPages = 2, BreakGlassId = "75" }; await h.Open();
+        Assert.True(Flag(h.Controller, "AccountsKnown")); Assert.Equal(100, Count(h.Controller, "Accounts"));
+        h.SetLocal(false);
+        Assert.Equal("false", h.Controller.GetType().GetMethod("Value")!.Invoke(h.Controller, [SignInHarness.Local]));
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);
+    }
+
+    [Fact]
+    public async Task CompleteAccountListWithoutABreakGlassAdminStillBlocksTurningPasswordsOff()
+    {
+        using var h = new SignInHarness { AccountPages = 2, BreakGlassId = "999" }; await h.Open();
+        Assert.True(Flag(h.Controller, "AccountsKnown"));
+        h.SetLocal(false);
+        Assert.Equal("true", h.Controller.GetType().GetMethod("Value")!.Invoke(h.Controller, [SignInHarness.Local]));
+        Assert.Contains("break-glass", MessageOf(h.Controller));
+        Assert.Empty(h.Writes);
+    }
+
+    [Fact]
+    public async Task AccountListBeyondTheCapLeavesTheBreakGlassDecisionToTheServerAndShowsItsRefusal()
+    {
+        // Official page: users that are not fully known do not gate the toggle; the server's transactional check (409 break_glass_required) decides.
+        using var h = new SignInHarness { AccountPages = 25, BreakGlassId = "1100", ServerRefusesBreakGlass = true }; await h.Open();
+        Assert.False(Flag(h.Controller, "AccountsKnown")); Assert.Equal(1000, Count(h.Controller, "Accounts"));
+        h.SetLocal(false);
+        Assert.Equal("false", h.Controller.GetType().GetMethod("Value")!.Invoke(h.Controller, [SignInHarness.Local]));
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);                  // the one write was sent once and refused by the server
+        Assert.Contains("break-glass administrator", MessageOf(h.Controller));  // with the break-glass explanation, not a generic failure
+    }
+
+    // ---- Follow-up review findings: bounded account walk, end-of-list cursor, persisted sign-in writes, LF provider fields ----
+
+    private const string TwoAccounts = """{"id":"1","username":"fixture","role":"admin","enabled":true,"is_owner":false},{"id":"2","username":"fixture","role":"user","enabled":true,"is_owner":false}""";
+    /// <summary>Answers every account page with the same two accounts and the cursor <paramref name="next"/> picks for that read; null ends the list with an empty cursor. Returns the read counter.</summary>
+    private static Func<int> RepeatAccounts(ControllerHarness h, Func<int, string?> next)
+    {
+        var original = h.Kit.Http.Respond!; var reads = 0;
+        h.Kit.Http.Respond = (request, ct) =>
+        {
+            if (request.RequestUri!.AbsolutePath != "/api/v2/admin/users") return original(request, ct);
+            var cursor = next(++reads);
+            return Task.FromResult(Reply("{\"items\":[" + TwoAccounts + "],\"page\":{\"has_more\":" + (cursor == null ? "false,\"next_cursor\":\"\"" : "true,\"next_cursor\":\"" + cursor + "\"") + "}}"));
+        };
+        return () => reads;
+    }
+
+    [Fact]
+    public async Task AccountCursorCycleFailsTheWalkAsAnInvalidListInsteadOfKeepingThePageBusy()
+    {
+        using var h = new ControllerHarness(); var reads = RepeatAccounts(h, read => read % 2 == 1 ? "b" : "a"); // first page -> b -> a -> b ...
+        await h.Open();
+        Assert.Equal(3, reads()); // the third answer names a cursor that was already used
+        Assert.False(Flag(h.Controller, "Busy")); Assert.False(Flag(h.Controller, "AccountsLoaded"));
+        Assert.Contains("invalid response", MessageOf(h.Controller));
+    }
+
+    [Fact]
+    public async Task AccountPagesRepeatedUnderFreshCursorsStopAtThePageCapWithTheListNotFullyKnown()
+    {
+        using var h = new ControllerHarness(); var reads = RepeatAccounts(h, read => "c" + read);
+        await h.Open();
+        Assert.Equal(20, reads());
+        Assert.True(Flag(h.Controller, "AccountsLoaded")); Assert.Equal(2, Count(h.Controller, "Accounts")); Assert.NotNull(Property2(h.Controller, "AccountCursor"));
+    }
+
+    [Fact]
+    public async Task EmptyCursorOnTheLastAccountPageEndsTheWalkSoKeyActionsAreOffered()
+    {
+        using var h = new ControllerHarness(); var reads = RepeatAccounts(h, _ => null);
+        await h.Open();
+        Assert.Equal(1, reads());
+        Assert.True(Flag(h.Controller, "AccountsLoaded")); Assert.Null(Property2(h.Controller, "AccountCursor")); Assert.True(CanManageKey(h.Controller, "1"));
+        Assert.Equal("", MessageOf(h.Controller));
+    }
+
+    [Fact]
+    public async Task EmptyCursorOnTheLastKeyPageIsReadAsTheEndOfTheList()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("{\"items\":[" + Key + "],\"page\":{\"has_more\":false,\"next_cursor\":\"\"}}"));
+        var page = await Call(Api("AdminApiKeysApi", kit.Client), "ListAsync", owner);
+        Assert.Null(Property2(Property(page!, "Page"), "NextCursor"));
+    }
+
+    /// <summary>Fails every provider read once a write was sent, as a follow-up refresh that times out would.</summary>
+    private static void FailProviderReadsAfterAWrite(SignInHarness h)
+    {
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => h.Writes.Count > 0 && request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/api/v2/admin/plugins/installations"
+            ? throw new HttpRequestException("synthetic provider list failure") : original(request, ct);
+    }
+
+    [Fact]
+    public async Task PersistedSignInSaveIsStillReportedWhenTheFollowUpProviderReadFails()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.EditSecret(); FailProviderReadsAfterAWrite(h);
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/plugins/installations/3/config"], h.Writes);
+        Assert.StartsWith("Sign-in settings saved.", MessageOf(h.Controller)); Assert.Contains("reload", MessageOf(h.Controller));
+        Assert.False(Flag(h.Controller, "ReviewRequired"));
+        // The pre-save provider values are not shown as the saved configuration; only provider-dependent settings wait for the reload.
+        Assert.False(Flag(h.Controller, "ProvidersKnown")); Assert.Equal(0, Count(h.Controller, "Providers")); Assert.Equal(0, Property(h.Controller, "DirtyCount"));
+    }
+
+    [Fact]
+    public async Task SettingsOnlySaveKeepsTheProviderListItDidNotChangeWhenTheFollowUpReadFails()
+    {
+        using var h = new SignInHarness(); await h.Open(); h.SetLocal(false); FailProviderReadsAfterAWrite(h);
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Equal(["PUT /api/v2/admin/settings"], h.Writes);
+        Assert.Equal("Sign-in settings saved.", MessageOf(h.Controller));
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.True(Flag(h.Controller, "ProvidersKnown")); Assert.Equal(1, Count(h.Controller, "Providers"));
+    }
+
+    [Fact]
+    public async Task PersistedProviderTurnOffIsStillReportedWhenTheFollowUpProviderReadFails()
+    {
+        using var h = new SignInHarness(); await h.Open(); FailProviderReadsAfterAWrite(h);
+        await Call(h.Controller, "SetBindingAsync", h.Provider, false, null, true);
+        Assert.Equal(["PUT /api/v2/admin/plugins/installations/3/auth-binding"], h.Writes);
+        Assert.StartsWith("Sign-in provider turned off.", MessageOf(h.Controller)); Assert.DoesNotContain("could not be completed", MessageOf(h.Controller));
+        Assert.False(Flag(h.Controller, "ReviewRequired")); Assert.False(Flag(h.Controller, "ProvidersKnown"));
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task RefusedLocalPasswordDisableWritesNoProviderConfigurationFirst(bool breakGlass, bool providerOn)
+    {
+        using var h = new SignInHarness(); await h.Open(); h.EditSecret(); h.SetLocal(false); h.HasBreakGlass = breakGlass; h.ProviderOn = providerOn;
+        await Call(h.Controller, "SaveAsync", true);
+        Assert.Empty(h.Writes);
+        Assert.Equal(2, Property(h.Controller, "DirtyCount")); // a refusal changes nothing: both staged changes are still there
+    }
+
+    [Fact]
+    public void ProviderTextFieldsAreStagedWithLfLineBreaks()
+    {
+        // TextBox reports line breaks as CR: a multi-line string field (a certificate, a template) is normalized before it is staged, compared or sent.
+        var page = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminSignInSettingsPage.cs"));
+        Assert.Contains("Controller.SetField(provider, schema, field, AdminAccessPageUi.Lines(text.Text))", page);
+        Assert.DoesNotContain("Controller.SetField(provider, schema, field, text.Text)", page);
+    }
+}

@@ -313,7 +313,7 @@ public partial class App : Application
         services.AddSingleton<SiloApiClient>(sp =>
         {
             var http = sp.GetRequiredService<HttpClient>();
-            var client = new SiloApiClient(http);
+            var client = new SiloApiClient(http, SiloHttpClientFactory.CreateBackupsClient());
 
             // Pre-set base URL from saved server if available
             var settingsService = sp.GetRequiredService<SettingsService>();
@@ -382,9 +382,13 @@ public partial class App : Application
         services.AddSingleton<AdminMonitorApi>();
         services.AddSingleton<AdminMonitorAuthority>();
         AdminConfigureServices.Add(services);
+        services.AddAdminSignInSecurity();
         services.AddAdminPlaybackAudit();
         services.AddAdminSubtitleFiles();
+        services.AddAdminUsers();
         services.AddAdminLibraries();
+        services.AddAdminCollections();
+        services.AddAdminRequests();
 
         services.AddSingleton<LogsStreamClient>();
         services.AddSingleton(sp => new ServerActivityStore(

@@ -252,7 +252,7 @@ public static class MediaItemMenu
             }
         }
 
-        if (canCurateMetadata && item.Type != "manga")
+        if (ItemMaintenanceActionPolicy.CanEditCard(canCurateMetadata, item.Type))
             flyout.Items.Add(BuildItem(() => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.editMetadata", fallback: "Edit Metadata"), "\uE70F", async () =>
             {
                 var root = DialogRoot();
@@ -377,15 +377,45 @@ public static class MediaItemMenu
 
         var dialog = new RefreshMetadataDialog(async mode =>
         {
-            await maintenanceApi.RefreshMetadataAsync(item.ContentId, mode);
-            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
-            toast.Success(mode == "complete" ? "Complete refresh queued" : "Metadata refresh queued");
+            if (await MetadataRefreshFlow.StartAsync(maintenanceApi, toast, item.ContentId, mode) is not { } start) return;
+            // The dialog closes now; the follow is bounded and ends quietly on sign-out.
+            _ = FollowMetadataRefreshAsync(item, mode, start, maintenanceApi, toast);
         })
         {
             XamlRoot = root,
         };
         await dialog.ShowAsync();
+    }
+
+    /// <summary>
+    /// A card has no page to reload (official shared <c>useRefreshItemMetadata</c>): once the job
+    /// finishes, the shared detail cache is already dropped, so tell the surfaces that show the
+    /// item and any open detail page of it to reread in place. Runs on the UI thread; the wait does not hold it.
+    /// </summary>
+    private static async Task FollowMetadataRefreshAsync(
+        MediaItem item,
+        string mode,
+        MetadataRefreshStart start,
+        MediaMaintenanceApi maintenanceApi,
+        ToastService toast)
+    {
+        var result = await MetadataRefreshFlow.FollowAsync(
+            maintenanceApi, toast, App.Services.GetService<ItemDetailPrefetchCache>(),
+            start, item.ContentId, item.Type, item.SeriesId, mode);
+        // A server-reported failure or cancellation changed nothing. A finished job and an unknown
+        // completion (a wait that ran out, an unreadable job) reread, as the detail page's Decide does.
+        if (result == null || MetadataRefreshFollow.IsDefiniteFailure(result)) return;
+
+        var hub = App.Services.GetService<DetailMetadataChangeHub>();
+        foreach (var change in MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId))
+        {
+            // Retire /watch snapshots for replacement destinations too, before
+            // their detail watches can start a structural reread.
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId, item.SeriesId,
+                context: maintenanceApi.CaptureContext()));
+            hub?.NotifyItemChanged(change.ContentId, change.Structural);
+        }
     }
 
     private static async Task ShowMatchItemDialogAsync(
@@ -432,7 +462,7 @@ public static class MediaItemMenu
                 detail.Title,
                 detail.Year > 0 ? detail.Year : null,
                 detail.Type,
-                libraryId: null,
+                libraryId: library,
                 versions: detail.Versions,
                 folderPaths: detail.FolderPaths,
                 seriesId: detail.SeriesId)

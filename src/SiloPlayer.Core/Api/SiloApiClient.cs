@@ -62,6 +62,7 @@ public partial class SiloApiClient
     };
 
     private readonly HttpClient _http;
+    private readonly HttpClient _backupsHttp;
     private readonly object _authStateGate = new();
     private string? _accessToken;
     private string? _profileId;
@@ -82,7 +83,7 @@ public partial class SiloApiClient
     private Action<ProfileVerificationContext>? _profileVerificationRequired;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
-    public SiloApiClient(HttpClient http) { _http = http; }
+    public SiloApiClient(HttpClient http, HttpClient? backupsHttp = null) { _http = http; _backupsHttp = backupsHttp ?? http; }
 
     public ApiRequestContext CaptureContext()
     {
@@ -910,13 +911,15 @@ public partial class SiloApiClient
     private async Task<HttpResponseMessage> SendWithRetryAsync(
         HttpRequestMessage request,
         CancellationToken ct,
-        bool allowTokenRefresh = true)
+        bool allowTokenRefresh = true,
+        HttpClient? transport = null)
     {
+        transport ??= _http;
         // HttpClient defaults apply to its convenience methods, not to the
         // explicit messages constructed by this API client. Carry the policy
         // onto each message so HTTP/2 is actually offered to the server.
-        request.Version = _http.DefaultRequestVersion;
-        request.VersionPolicy = _http.DefaultVersionPolicy;
+        request.Version = transport.DefaultRequestVersion;
+        request.VersionPolicy = transport.DefaultVersionPolicy;
         // Pre-buffer content — after SendAsync the content stream is consumed
         byte[]? contentBytes = null;
         System.Net.Http.Headers.MediaTypeHeaderValue? contentType = null;
@@ -938,7 +941,7 @@ public partial class SiloApiClient
                 ? requestContextGeneration
                 : GetRequestContextSnapshot().RequestContextGeneration;
         var diagnosticId = Services.LocalLog.CurrentOperationId ?? Guid.NewGuid().ToString("N");
-        var response = await SendHttpAttemptAsync(request, diagnosticId, 1, ct).ConfigureAwait(false);
+        var response = await SendHttpAttemptAsync(request, diagnosticId, 1, ct, transport).ConfigureAwait(false);
 
         // On 401, try refreshing the token and retry once
         if (allowTokenRefresh &&
@@ -995,6 +998,7 @@ public partial class SiloApiClient
                     VersionPolicy = request.VersionPolicy,
                 };
                 AddHeaders(retry);
+                if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var sensitiveRequests)) retry.Options.Set(AdminRequestsSensitiveOption, sensitiveRequests);
                 // A token refresh must replay the same conditional mutation.
                 foreach (var validator in request.Headers.IfMatch) retry.Headers.IfMatch.Add(validator);
                 foreach (var validator in request.Headers.IfNoneMatch) retry.Headers.IfNoneMatch.Add(validator);
@@ -1014,7 +1018,7 @@ public partial class SiloApiClient
                     retry.Content.Headers.ContentType = contentType;
                 }
                 response.Dispose();
-                response = await SendHttpAttemptAsync(retry, diagnosticId, 2, ct).ConfigureAwait(false);
+                response = await SendHttpAttemptAsync(retry, diagnosticId, 2, ct, transport).ConfigureAwait(false);
             }
         }
 
@@ -1022,7 +1026,7 @@ public partial class SiloApiClient
     }
 
     private async Task<HttpResponseMessage> SendHttpAttemptAsync(
-        HttpRequestMessage request, string actionId, int attempt, CancellationToken ct)
+        HttpRequestMessage request, string actionId, int attempt, CancellationToken ct, HttpClient transport)
     {
         // Only fixed route categories are persisted: never hosts, item/profile
         // identifiers, query strings, headers or request/response bodies.
@@ -1038,7 +1042,7 @@ public partial class SiloApiClient
         if (isDismissal) Services.LocalLog.AppendLine("api_diagnostics.txt", summary + " stage=request");
         try
         {
-            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            var response = await transport.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (isDismissal || !response.IsSuccessStatusCode)
                 Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=response status={(int)response.StatusCode} elapsedMs={elapsed.ElapsedMilliseconds}");
             return response;
@@ -1051,8 +1055,15 @@ public partial class SiloApiClient
                 // Keep the diagnostic boundary, but never record a binding secret.
                 if (request.Options.TryGetValue(DeviceBootstrapOption, out var bootstrap) && bootstrap)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=device_bootstrap_transport_failed");
-                else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal))
+                else if (path.StartsWith("/api/v2/admin/storage-transitions", StringComparison.Ordinal))
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=storage_transition_transport_failed");
+                else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal) ||
+                    path.StartsWith("/api/v2/admin/notifications", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
+                else if (request.Options.TryGetValue(AdminAccessSensitiveOption, out var adminAccess) && adminAccess)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_access_transport_failed");
+                else if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var requestsSensitive) && requestsSensitive)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=request_administration_transport_failed");
                 else
                     Services.LocalLog.AppendException("api_diagnostics.txt", ex,
                         summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds}", actionId);
@@ -1124,6 +1135,8 @@ public partial class SiloApiClient
         {
             using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false), cancellationToken: ct).ConfigureAwait(false);
             var root = body.RootElement;
+            // Error bodies are best-effort: a non-object must not hide the HTTP status.
+            if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Expected a problem object.");
             string? Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             code = Text("error") ?? Text("code");
             detail = Text("detail") ?? Text("message") ?? Text("title");
