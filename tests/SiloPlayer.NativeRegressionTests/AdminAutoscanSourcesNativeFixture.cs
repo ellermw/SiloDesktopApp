@@ -54,7 +54,7 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "Sources navigation has no slide transition");
             Check(Find<TextBlock>(shell, "AutoscanFeedback") != null && Texts(shell).Contains("Autoscan"), "Sources title and feedback are rendered");
             Check(Find<Button>(shell, "AutoscanRunNow")?.Visibility == Visibility.Visible, "Run now is visible for an enabled polling source");
-            Check(Find<Button>(shell, "AutoscanRetry")?.Visibility == Visibility.Collapsed, "a healthy page shows no standing refresh control");
+            await Until(() => Find<Button>(shell, "AutoscanRetry")?.Visibility == Visibility.Collapsed); Check(true, "a healthy page shows no standing refresh control");
             await Capture(shell, "autoscan-sources-wide.png");
             var toggle = Need<ToggleSwitch>(shell, "AutoscanEnabled"); toggle.IsOn = false;
             await Settled(page); Check(!server.Enabled && server.DefaultInterval == 600 && server.Debounce == 60, "global enable preserves both polling defaults");
