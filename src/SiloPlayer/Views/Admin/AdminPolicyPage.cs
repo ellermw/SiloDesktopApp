@@ -20,7 +20,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
     private readonly StackPanel _view = new() { Spacing = 16 }, _versions = new() { Spacing = 8 }, _review = new() { Spacing = 8 };
     private readonly TextBlock _validation = U.Text("", 12), _simulation = U.Text("", 12), _health = U.Text("", 12);
     private TextBox? _source, _comment, _input;
-    private TextBlock? _name, _overrideCan;
+    private TextBlock? _name, _overrideCan, _rail;
     private string? _viewKey;
     private IReadOnlyList<AdminPolicyVersion>? _shownVersions;
     private bool _sync;
@@ -138,7 +138,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
     {
         _view.Children.Add(Command(T("allOverrides"), "PolicyAllOverrides", async () => { if (await CanLeaveAsync()) await Controller.SelectAsync(null); }));
         _name = U.Text(AdminPolicyPresentation.Title(Controller.Snapshot!), 22); _overrideCan = U.Text(AdminPolicyPresentation.OverrideCan(Controller.Snapshot!), 13, true); _view.Children.Add(_name); _view.Children.Add(_overrideCan);
-        _view.Children.Add(U.Text("Draft → Validated → Saved → Active", 12, true));
+        _rail = U.Text("", 12, true); AutomationProperties.SetName(_rail, T("editor.lifecycleLabel")); _view.Children.Add(_rail);
         _source = AdminAccessPageUi.Multiline("Rego source", "PolicySource", Controller.Draft, 360); _source.MaxLength = 262144; _source.FontFamily = new("Consolas");
         _source.TextChanging += (_, _) => { if (!_sync) Controller.SetDraft(_source.Text); }; _view.Children.Add(_source);
         _comment = U.Input(T("editor.commentLabel"), "PolicyComment", T("editor.commentPlaceholder")); _comment.Width = double.NaN; _comment.HorizontalAlignment = HorizontalAlignment.Stretch; _comment.MaxLength = 10000;
@@ -183,6 +183,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
         {
             if (_name != null) _name.Text = AdminPolicyPresentation.Title(current);
             if (_overrideCan != null) _overrideCan.Text = AdminPolicyPresentation.OverrideCan(current);
+            if (_rail != null) { var reached = AdminPolicyPresentation.LifecycleProgress(current, Controller.SavedVersion, Controller.Draft, Controller.Validated); _rail.Text = AdminPolicyPresentation.LifecycleRail(reached, reached >= 4 ? Controller.SavedVersion?.VersionNumber : null); }
             if (_commands.TryGetValue("PolicyEnabled", out var label)) { var text = AdminPolicyPresentation.ToggleLabel(current); label.Content = text; AutomationProperties.SetName(label, text); }
         }
         if (_commands.TryGetValue("PolicyEnabled", out var enable)) enable.IsEnabled = editable && !Controller.ReviewRequired;
