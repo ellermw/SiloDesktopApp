@@ -50,6 +50,53 @@ were previously listed in `AdminRouteCatalog.UnsupportedPatterns`, so they could
 3. Explicit numeric `null` round-trips as `null` unless edited; a missing key still takes the declared default
    (`OptionalNumericDefaultsDoNotReplaceExplicitClears`; native run saves `{timeout:null,page_size:40}`).
 
+## Second independent review (November 20): seven findings, all confirmed and fixed
+
+Checked against the pinned official source (`SignInSettings.tsx`, `AdminApiKeys.tsx`, `externalSignInAdmin.ts`,
+`users.ts`/`adminUsers.ts`, `admin_policy.go`, `local_login_policy.go`, `admin_settings_write.go`). Tests are in
+`AdminAccessSecurityTests`; the native step names are in `AdminSignInSecurityNativeFixture`.
+
+- **D1 (P1) stale-list block.** `AdminAccessController` has a separate `ListReviewRequired` flag (`WritesBlocked` =
+  it or `ReviewRequired`). It is set when a create's outcome is unknown or its follow-up list read fails, and only the
+  page-level reload (`OpenPageAsync`) clears it; `EditAsync`, `LoadEditorAsync`, `SelectAsync`, cancel and save of a
+  single-row editor clear only `ReviewRequired`. `RunAsync` refuses every write while it is set (create, key
+  change/revoke, override enable/disable/activate/save/delete, row toggles); the pages disable the controls and the
+  shared feedback line explains it. Policy create also requires the first documents page to have been read
+  (`DocumentsLoaded`). Tests: `UnknownKeyCreateKeepsCreateAndRowWritesBlocked…`,
+  `KeyCreateWhoseListRefreshFailedStaysBlocked…`, `UnknownPolicyCreateStaysBlockedAfterOpeningAnOverride…`,
+  `PolicyCreateWhoseListRefreshFailedIsReportedAsCreated…`; native steps for API Keys and Policy.
+- **D2 (P2) 409 conflict.** The Policy enable request maps a definite 409 `conflict` to "Another override is already
+  enabled for this domain. Disable it first." (other conflicts get a generic state-conflict text); such a refusal
+  (`AdminAccessException.Refusal`) does not lock writes, so the administrator can fix the cause and retry. Test:
+  `DefiniteEnableConflictShowsItsReasonAndIsRetryableWithoutAReload`.
+- **D3 (P2) list after editor writes.** "All overrides" (`SelectAsync(null)`) re-reads the first documents page and
+  closes the editor's review state; list re-reads after create/toggle/delete no longer turn a persisted change into a
+  reported failure (they keep the success message and mark the list stale). Test:
+  `PolicyListShowsTheServerStateAfterAnEditorSideEnable…`; native step.
+- **D4 (P2) revoke/tier success.** A failed follow-up list read keeps "API key revoked." / "Rate limit updated.",
+  closes the dialog and marks the list stale. Test: `PersistedKeyChangeIsStillReportedWhenTheFollowUpListReadFails`.
+- **D5 (P2) wrong message.** The save-time "no provider on" check throws `provider_required`, shown with the
+  official `noProviderError` text. Test: `ProviderTurnedOffBeforeSavingReportsTheProviderRequirement…`.
+- **D6 (P2) display_name crash.** `AdminSignInProvider.Name` reads the saved `display_name` only when it is a
+  non-blank string (official `authProviderLabel` does the same), else the capability name, else the plugin id;
+  `AdminSignInCapability.Metadata` and `AdminSignInConfig.Value` turn a server `null` into an empty object. The other
+  schema-value reads use `ToString()`/`TryGetValue` and do not throw. Test:
+  `ProviderNameReadsOnlyANonBlankStringDisplayName…` (7 shapes).
+- **D7 (P2) accounts beyond the first page.** Official `listAdminUsers` walks every page (200 per page) and treats a
+  failed or incomplete list as unknown. Here both controllers walk the account pages up to 1,000 accounts
+  (`AccountCap`, 50 per page). API Keys: actions are offered unless the owner is known unmanageable (official
+  `ownerLocked`), after the accounts were read; every write still re-reads viewer and owner. Sign-in: the
+  break-glass refusal needs the whole list (`AccountsKnown`); with a longer or unread list the toggle is not gated and
+  the server decides, as on the official page. The server is authoritative (`admin_settings_write.go` /
+  `local_login_policy.go`: 409 `break_glass_required` counted over all users), and a 409 on a settings write that
+  carries the password setting is now shown with the break-glass text. A complete list without a break-glass admin still
+  blocks (`CompleteAccountListWithoutABreakGlassAdminStillBlocks…`). The "no provider" gate is unchanged (a provider list
+  that failed to load still blocks; official allows when unknown but the server has no such check). Tests:
+  `KeyOwnersOnLaterAccountPages…`, `KeyOwnerBeyondTheAccountCap…`, `BreakGlassAdminOnALaterAccountPage…`,
+  `AccountListBeyondTheCapLeavesTheBreakGlassDecisionToTheServer…`; native sign-in step.
+
+No existing assertion was changed.
+
 ## Credential and write rules (checked in code, covered by tests)
 
 - The created key is shown once, only in the create dialog; it never enters list/editor/controller state, logs,
@@ -67,7 +114,20 @@ were previously listed in `AdminRouteCatalog.UnsupportedPatterns`, so they could
 
 ## Observed verification
 
-Lane `D:/SiloPlayer-build/admin-completion-lane-b`, label `signin-final-r2`, exact committed source: focused
+**After the November 20 review fixes** (lane `D:/SiloPlayer-build/admin-completion-lane-a`, label
+`signin-fix-final-r3`, source commit `70de5e745`, one `-Stage final` run): focused
+(`AdminAccessSecurityTests`, `AdminManageNavigationTests`) 167 passed; full unit suite 9,835 passed, 0 failed; app
+build, publish, native host and the native selectors `admin-signin-security`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor` all passed; source and payload seals verified. Without the source fixes, 20
+of the 21 new focused tests fail (the 21st guards that a complete list without a break-glass admin still blocks).
+Earlier attempts in the same session: `signin-fix-final-r1` failed one unrelated test in another family
+(`LibraryBackgroundRefreshTests.RetainedRefreshHandbackRestartsCanceledLettersAndCount(churn: False)`), which passed
+on the rerun `signin-fix-final-r2` without any change; r2's `admin-signin-security` native run failed in my own new
+step (the reload had not finished before the next step edited the page; fixture race, fixed in the fixture only), and
+`signin-fix-host-r1` re-ran that selector alone before r3. Capture PNGs from r3 were produced but not re-viewed.
+Not observed: live servers with more than 50 accounts, a real clipboard, other DPIs, screen readers/IME.
+
+**Earlier run, before these fixes:** lane `D:/SiloPlayer-build/admin-completion-lane-b`, label `signin-final-r2`, exact committed source: focused
 (`AdminAccessSecurityTests`, `AdminManageNavigationTests`) 146 passed; full unit suite 9,755 passed, 0 failed;
 app build, publish, native host, native selectors `admin-signin-security` (loading, empty, unavailable, error,
 populated, every dialog, create/tier/revoke/save/activate/enable/delete, failed, refused-412 and unknown-outcome

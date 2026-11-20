@@ -35,12 +35,24 @@ unusable `StackPanel.IsEnabled`, anonymous request bodies replaced by dictionari
 everything after the first line break (assigned before `AcceptsReturn`), a refused local value permanently blocking
 later writes, the shared date/time preference formatter, clipboard history excluded for the one-time key.
 
-Observed on exact source (lane `D:/SiloPlayer-build/admin-completion-lane-b`, label `signin-final-r2`):
-focused unit run 146 passed, full unit suite 9,755 passed/0 failed, app build, publish, native host and the
-native selectors `admin-signin-security`, `admin-manage-foundation`, `admin-configure-general`, `admin-monitor`
-all passed, with source and payload seals verified. Four captures were viewed. Not observed: live SSO/LDAP
-servers, a real clipboard, other DPIs, screen-reader or IME behaviour, installer execution. Scoped record and
-deviations: [admin-sign-in-security-20261117.md](parity/admin-sign-in-security-20261117.md).
+Second independent review (seven findings, all confirmed and fixed with regression tests): creates whose outcome is
+unknown or whose list re-read failed now block every create and row write on API Keys and Policy until the page-level
+reload (opening, cancelling or saving a single-row editor no longer lifts it); a definite policy-enable 409 shows its
+reason and is retryable; "All overrides" re-reads the list after editor-side writes; a revoke/tier change whose list
+re-read fails is still reported as done; the save-time "no provider" refusal uses the provider text; a non-string
+provider `display_name` no longer crashes the page; account pages beyond the first are read (cap 1,000) so API Keys
+owners and the break-glass check do not depend on the first page, and an incomplete list leaves the break-glass
+decision to the server as on the official page (a settings 409 is shown with the break-glass text).
+
+Observed on exact source after the fixes (lane `D:/SiloPlayer-build/admin-completion-lane-a`, label
+`signin-fix-final-r3`, source commit `70de5e745`): focused unit run 167 passed, full unit suite 9,835 passed/0
+failed, app build, publish, native host and the native selectors `admin-signin-security`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor` all passed, with source and payload seals verified. An earlier attempt
+(`signin-fix-final-r1`) failed one unrelated test in another family (`LibraryBackgroundRefreshTests.RetainedRefreshHandbackRestartsCanceledLettersAndCount(churn: False)`)
+that passed on rerun without change. Not observed: live SSO/LDAP servers, servers with more than 50 accounts, a real
+clipboard, other DPIs, screen-reader or IME behaviour, installer execution. Earlier run before the fixes: lane
+`admin-completion-lane-b`, `signin-final-r2`, 146 focused / 9,755 full. Scoped record and deviations:
+[admin-sign-in-security-20261117.md](parity/admin-sign-in-security-20261117.md).
 
 ---
 
