@@ -366,7 +366,8 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
                 item.IsEnabled = !state.NodesKnown || state.TranscodeNodeAvailable || item.Tag?.ToString() == execution || !R.IsNodeBackedExecution(item.Tag?.ToString() ?? "");
 
         _restoreDefaults.Visibility = current && R.HasWorkerOverrides(key => state.Values.GetValueOrDefault(key, "")) ? Visibility.Visible : Visibility.Collapsed;
-        _restoreDefaults.IsEnabled = editable && R.WorkerDefaults.Keys.All(key => !Managed(key));
+        // The controller skips environment-managed keys, so one managed worker does not block restoring the others.
+        _restoreDefaults.IsEnabled = editable && R.WorkerDefaults.Keys.Any(key => !Managed(key));
         _scanningAdvanced.Update(R.ScannerAdvancedKeys.Any(Dirty), R.ScannerAdvancedKeys.Count);
         _subtitleAdvanced.Update(R.SubtitleAdvancedKeys.Any(Dirty) || noNodes && execution == "transcode_nodes_only", capacityVisible ? 2 : 1);
         _subtitleAdvanced.RefreshRules();
@@ -424,9 +425,18 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
         var groups = R.GroupRatingSources(state.RatingSources);
         var signature = string.Join('|', groups.SelectMany(group => group.Sources.Select(source => group.Provider + ":" + source.Source + ":" + source.Label))) +
             "#" + string.Join(',', undeclared) + "#" + state.RatingSourcesLoading + ":" + state.RatingSourcesError;
+        // The list has no row of its own, so a value the server would refuse is explained on the group.
+        var invalid = state.Errors.TryGetValue(R.ExtraRatingSources, out var listError) ? R.Describe(listError) : "";
+        signature += "#" + invalid;
         if (_ratingLayout != signature)
         {
             _ratingLayout = signature; _ratingToggles.Clear(); _ratings.Fields.Children.Clear();
+            if (invalid.Length > 0)
+            {
+                var problem = U.Warning(invalid, "LibrarySettingsRatingsInvalid");
+                problem.Visibility = Visibility.Visible;
+                _ratings.Fields.Children.Add(problem);
+            }
             if (state.RatingSourcesError)
             {
                 var warning = U.Warning(T("web.admin.settings.libraryMetadata.ratings.loadError"), "LibrarySettingsRatingsError");

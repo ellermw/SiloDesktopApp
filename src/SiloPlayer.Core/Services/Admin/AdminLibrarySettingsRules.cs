@@ -132,7 +132,8 @@ public static partial class AdminLibrarySettingsRules
     private static partial Regex RatingSourcePattern();
 
     private static AdminLibrarySettingError? RatingSourcesValue(string value) =>
-        ParseRatingSources(value).All(source => RatingSourcePattern().IsMatch(source))
+        // The server lowercases each name before it checks the grammar (splitRatingSourceList).
+        ParseRatingSources(value).All(source => RatingSourcePattern().IsMatch(source.ToLowerInvariant()))
             ? null : new(AdminLibrarySettingProblem.InvalidChoice);
 
     public static IReadOnlyList<string> ParseRatingSources(string? value) => (value ?? "").Split(',')
@@ -140,7 +141,7 @@ public static partial class AdminLibrarySettingsRules
 
     public static string ToggleRatingSource(string? value, string source, bool on)
     {
-        if (!RatingSourcePattern().IsMatch(source)) throw new ArgumentException("Invalid rating source.", nameof(source));
+        // Like the official toggle this never rejects a name: a malformed saved entry must stay removable.
         var rest = ParseRatingSources(value).Where(entry => entry != source).ToList();
         if (on) rest.Add(source);
         return string.Join(',', rest);

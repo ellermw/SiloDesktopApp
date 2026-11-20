@@ -73,7 +73,8 @@ public sealed class AdminLibrarySettingsRulesTests
     [InlineData("rt_critic", true)]
     [InlineData("rt_critic,kinopoisk", true)]
     [InlineData("rt_critic, letterboxd", true)]
-    [InlineData("RT", false)]
+    [InlineData("RT", true)]
+    [InlineData("RT_Critic,letterboxd", true)]
     [InlineData("bad-source", false)]
     [InlineData("_bad", false)]
     [InlineData("abcdefghijklmnopqrstuvwxyz1234567", false)]
@@ -87,6 +88,9 @@ public sealed class AdminLibrarySettingsRulesTests
         Assert.Equal("rt_critic,letterboxd,kinopoisk", R.ToggleRatingSource("rt_critic,letterboxd", "kinopoisk", true));
         Assert.Equal("letterboxd,rt_critic", R.ToggleRatingSource("rt_critic,letterboxd,rt_critic", "rt_critic", true));
         Assert.Equal("letterboxd", R.ToggleRatingSource("rt_critic,letterboxd", "rt_critic", false));
+        // A malformed saved entry is listed with a toggle; turning it off must remove it, not throw on the UI thread.
+        Assert.Equal("letterboxd", R.ToggleRatingSource("bad-source,letterboxd", "bad-source", false));
+        Assert.Empty(R.Validate(Values((R.ExtraRatingSources, R.ToggleRatingSource("bad-source,letterboxd", "bad-source", false))), [R.ExtraRatingSources]));
         var listed = new[]
         {
             new AdminRatingSource("imdb", "IMDb", "IMDb", true, null),

@@ -306,11 +306,12 @@ internal static class AdminLibrarySettingsNativeFixture
             await Until(() => controller.State.DirtyKeys.Count == 0 && Input(page, R.ScannerWorkers).Text == "8", "discard restores the saved value");
             Check(!IsEffectivelyVisible(Button(page, "LibrarySettingsSave")) || !Button(page, "LibrarySettingsSave").IsEnabled, "Discard leaves nothing to save");
 
-            // Environment-managed keys are read-only with the reason shown, and a managed worker blocks the restore action.
+            // Environment-managed keys are read-only with the reason shown; the restore action stays available for the others.
             server.Managed = [R.ScannerWorkers]; await controller.ReloadAsync(true);
             await Until(() => controller.State.ManagedByEnv.Contains(R.ScannerWorkers) && !Input(page, R.ScannerWorkers).IsEnabled, "managed worker locked");
-            Check(Input(page, R.MatcherWorkers).IsEnabled && !Button(page, "LibrarySettingsRestoreDefaults").IsEnabled,
-                "a managed worker count is read-only, other fields stay editable and Restore defaults is unavailable");
+            // The official button has no managed-key condition; the controller leaves managed keys untouched.
+            Check(Input(page, R.MatcherWorkers).IsEnabled && Button(page, "LibrarySettingsRestoreDefaults").IsEnabled,
+                "a managed worker count is read-only, other fields stay editable and Restore defaults stays available for them");
             Check(Descendants(page).OfType<TextBlock>().Any(block => block.Text.Contains("Managed by a server environment variable.", StringComparison.Ordinal) && IsEffectivelyVisible(block)),
                 "the managed row says why it is disabled");
             server.Managed = []; await controller.ReloadAsync(false);
