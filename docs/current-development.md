@@ -7,17 +7,27 @@ version `1.2.1181-beta.1` is untouched. Official contracts: `217ff25abc5b9d0d3dc
 
 Seven review findings were fixed with regression tests, and running the code exposed more (JsonObject
 request bodies serialized as node members, an editor re-render exception, Click-only checkbox handlers).
-Details, deviations and limits: [docs/parity/admin-collections.md](parity/admin-collections.md).
+A second independent review of the final diff (November 20) found eight more defects; all eight were confirmed
+against the code and the official source and fixed, each with a unit and/or native test: starter-job poll failure
+and cap left the job id behind, job id stored for a retired authority, new member position colliding after a removal,
+validation reasons hidden, a failed hide after import dropped, pasted list links not cleaned, template poster not
+sent, and the unknown-outcome list check reading only the filtered library. Details, deviations and limits:
+[docs/parity/admin-collections.md](parity/admin-collections.md).
 
-Acceptance: label collections-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-b, task admin-families-nov20),
-stage final, build lease 2026-11-20T15:20:53Z–15:26:46Z. Focused unit run 31/31 and full unit suite
-9,728/9,728 passed (0 failures, 0 skipped); app build, publish and native host built; native selectors
-admin-collections (149 checks), admin-manage-foundation, admin-configure-general and admin-monitor all
-passed; source and payload seals verified. Eight synthetic PNGs from admin-collections were captured and the
-list and smart-editor captures were inspected (other captures were not individually reviewed).
+Acceptance (after the second review): label collections-fix-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a,
+task admin-families-nov20), stage final on commit 016ea09ac, build lease 2026-11-20T16:09:43Z–16:15:58Z. Focused unit
+run 57/57 (filter FullyQualifiedName~AdminCollections) and full unit suite 9,754/9,754 passed (0 failures, 0 skipped);
+app build, publish and native host built; native selectors admin-collections (191 PASS lines, 0 FAIL),
+admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) all passed; source and payload
+seals verified. The earlier acceptance run (collections-final-r1, lane B, 31 focused, 9,728 full, 149 admin-collections
+checks) predates these fixes. Before the final run, the page-level native checks for the starter-job poll failure,
+member position and list check were shown to fail with those fixes temporarily reverted
+(collections-fix-negative-r1; source restored from Git afterwards).
 
 Not observed: live-server compatibility, all-DPI/IME/Narrator, physical drag-and-drop, artwork file
-picker, complete visual parity. Home Sections is a separate family and not registered here.
+picker, complete visual parity. The authority-retirement race between a queued starter-pack answer and the dialog
+continuation is covered by a controller unit test only, not by the real page. The final run's synthetic captures were not
+reviewed again. Home Sections is a separate family and not registered here.
 No push, PR, installer or installed-player action occurred.
 
 ---

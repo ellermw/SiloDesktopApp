@@ -47,6 +47,40 @@ navigation (Manage > Libraries > Collections) and the shell search, with the des
 7. MDBList search (`GET /api/v2/collections/import/mdblist/search`) is offered in a new synced list editor when
    capabilities report `mdblist_search`; otherwise the official "needs an API key" explanation is shown.
 
+## Second independent review (November 20): eight more findings, all confirmed and fixed
+
+Each was checked in the code and against the official source at `217ff25a` before changing anything. Tests are in
+`AdminCollectionsReviewTests` (unit) and `AdminCollectionsNativeFixture` (real page). Native checks for 1, 3 and 8 were
+shown to fail with those three fixes temporarily reverted (run label `collections-fix-negative-r1`, then restored).
+
+1. **Starter job stuck.** A failed poll read or the 120-read cap left `StarterJobId` set with no timer, so Refresh
+   (`ResumeJobAsync` returns while an id is set) could not rediscover the job and delete, batch delete and starter
+   packs stayed blocked. Both ends now call `EndStarterJob()` (the failed read only when the id is still the one
+   being polled). Native step: a failing poll, then the cap, each end observation with the timer stopped and Refresh
+   rediscovers the running job and polls it again.
+2. **Job id stored for a retired authority.** `BeginStarterJob(owner, id)` stores the id only while that lease is
+   current and is still the controller's owner (checked under the state lock); the dialog passes the authority it was
+   opened under and treats `false` as not accepted. Unit test covers retired, replaced and null owners. The window
+   between the command's last retirement check and the UI continuation cannot be produced deterministically in the
+   fixture, so the native run covers only the accepted path through the dialog's new call (existing starter-pack steps).
+3. **New member position collision.** A title added to a saved manual collection goes after the last position
+   (`NextMemberPosition`, official `ManualContentsPanel`): max(position)+1 when the first items page is the whole list,
+   otherwise the larger of `item_count` and the items read. Like the official panel, a collection of more than 50
+   titles falls back to that larger value rather than walking every page.
+4. **Validation errors hidden.** Any 4xx other than 401/403/409/412 now shows the server's own sentence
+   (`ApiProblemText.Display`, redacted, limited to 300 characters); an empty problem or a 5xx stays generic.
+5. **Failed hide after import.** The follow-up hide is caught on its own: the confirmed create (`CreatedId`) is kept,
+   the unknown-outcome flag it may have set is cleared because the canonical read of that collection follows, and
+   `SaveWarning` ("It still shows on Collections tabs: …", the official wording) is shown after the reload.
+6. **List link not cleaned.** A typed MDBList link loses surrounding spaces, `?query`, `#fragment` and trailing slashes
+   (`/json` stays), for new and saved lists alike. TMDB list links and bare ids are stored as the canonical list page
+   (the official `tmdbListSource`), or only trimmed when they name no list. Only typed text is cleaned, as in the
+   official editor; a stored link is left alone, and the "Saved source" JSON editor stays raw by design.
+7. **Template poster not sent.** The template's `poster_path` is carried into the draft and sent as `poster_url` with
+   the import unless a poster is staged; no other kind of save carries it.
+8. **Duplicate create after an unknown outcome.** "Check the collections list" reads the unfiltered list, so a create
+   that went to another library than the page's filter is found instead of offered again.
+
 ## Other defects found by running the code
 
 - `JsonObject` request bodies were serialized by the generic body path as the node's own public members
@@ -69,5 +103,5 @@ navigation (Manage > Libraries > Collections) and the shell search, with the des
 
 ## Not verified
 
-Live-server compatibility, all-DPI/IME/Narrator behavior, physical drag-and-drop, external artwork storage and
+The retirement race in second-review item 2 is covered by a controller unit test, not by the real page. Live-server compatibility, all-DPI/IME/Narrator behavior, physical drag-and-drop, external artwork storage and
 complete visual parity were not observed. Native captures are synthetic-data, one DPI.
