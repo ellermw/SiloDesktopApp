@@ -354,13 +354,22 @@ internal static class AutoscanUi
     internal static void RestoreFocusById(Microsoft.UI.Dispatching.DispatcherQueue? queue, DependencyObject region, string? id, Func<bool>? alive = null)
     {
         if (id == null || queue == null) return;
+        // Where focus is right after the rebuild (the framework may already have moved it off the removed control). If it is somewhere else by
+        // the time this runs, the admin or the app moved it on purpose and it is left alone.
+        var afterRebuild = (region as UIElement)?.XamlRoot is { } rootNow ? Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(rootNow) : null;
         queue.TryEnqueue(() =>
         {
             if (alive != null && !alive()) return;
+            if ((region as UIElement)?.XamlRoot is { } rootLater && !ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(rootLater), afterRebuild)) return;
             var target = FindControl(region, id) is { IsEnabled: true } exact ? exact
                 : FallbackFocusId(id) is { } other && FindControl(region, other) is { IsEnabled: true } fallback ? fallback : null;
             if (target?.XamlRoot == null || ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(target.XamlRoot), target)) return;
             target.Focus(FocusState.Programmatic);
+            // Removing the control that had focus can make the framework move focus on a later turn; if that left nothing focused, try once more.
+            queue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (target.XamlRoot is { } root && Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root) is not Control && (alive == null || alive())) target.Focus(FocusState.Programmatic);
+            });
         });
     }
 

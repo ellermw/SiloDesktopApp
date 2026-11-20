@@ -214,8 +214,10 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
         var live = state.Polls.Items.FirstOrDefault(poll => poll.Id == inspector.Id);
         var snapshot = live ?? inspector.Event;
         if (live == null && ReferenceEquals(state.Labels, _renderedLabels) || ReferenceEquals(live, inspector.Event) && ReferenceEquals(state.Labels, _renderedLabels)) return;
-        inspector.SetEvent(snapshot, state.Labels);
+        // The sheet notes which control has focus before the data is replaced; replacing first would let it see the focus the framework moved
+        // when the old chip or button was removed, and restore that instead of the control the admin used.
         _sheet.Update(A.Safe(PollName(snapshot, state.Labels)), InspectorMeta(snapshot), inspector.Root);
+        inspector.SetEvent(snapshot, state.Labels);
     }
 
     private static string PollName(AdminAutoscanActivityEvent poll, AdminAutoscanActivityLabels labels) => A.Source(poll.SourceId, poll.PluginId, poll.CapabilityId, labels, true);

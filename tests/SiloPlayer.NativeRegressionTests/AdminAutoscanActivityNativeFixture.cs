@@ -257,7 +257,7 @@ internal static class AdminAutoscanActivityNativeFixture
             Check(FocusedId(page) == "AutoscanActivityPagerNext", "keyboard focus stays on Next while the next page loads");
             wire.HoldHistory.TrySetResult(); wire.HoldHistory = null;
             await Until(() => page.RenderedIds.FirstOrDefault() == "scan-25" && !page.Controller!.State.Scans.Fetching, "the next page replaces the rows");
-            await Until(() => FocusedId(page) == "AutoscanActivityPagerNext", "keyboard focus is still on Next after the page arrives");
+            await UntilFocused(page, "AutoscanActivityPagerNext", "keyboard focus is still on Next after the page arrives");
             Invoke(Find<Button>(page, "AutoscanActivityPagerFirst")); await Until(() => page.RenderedIds.FirstOrDefault() == "scan-0" && !page.Controller!.State.Scans.Fetching, "back to the first page");
 
             // Numbered pages walk the signed cursors; the last page and the size selector.
@@ -300,13 +300,13 @@ internal static class AdminAutoscanActivityNativeFixture
             await Capture(shell, "admin-autoscan-activity-inspector-1440.png");
             var pathsNext = Find<Button>(inspector.Root, "AutoscanInspectorPathsNext"); pathsNext.Focus(FocusState.Keyboard);
             Invoke(pathsNext); await Until(() => TextShown(inspector.Root, "Showing 16–30 of 50 items"), "paths next page");
-            await Until(() => FocusedId(page) == "AutoscanInspectorPathsNext", "keyboard focus stays on the paths pager Next");
+            await UntilFocused(page, "AutoscanInspectorPathsNext", "keyboard focus stays on the paths pager Next");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorPathsLast")); await Until(() => TextShown(inspector.Root, "Showing 46–50 of 50 items"), "paths last page");
             Check(TextShown(inspector.Root, "future_outcome") && TextShown(inspector.Root, "Synthetic newer-server detail"), "an unknown outcome shows its raw value and detail");
             SelectByTag(Find<ComboBox>(inspector.Root, "AutoscanInspectorPathsSize"), "25"); await Until(() => TextShown(inspector.Root, "Showing 1–25 of 50 items"), "paths page size");
             var unresolvedChip = Find<Button>(inspector.Root, "AutoscanInspectorOutcome_unresolved"); unresolvedChip.Focus(FocusState.Keyboard);
             Invoke(unresolvedChip); await Until(() => TextShown(inspector.Root, "Showing 1–5 of 5 items"), "outcome chip filters the paths");
-            await Until(() => FocusedId(page) == "AutoscanInspectorOutcome_unresolved", "keyboard focus stays on the outcome chip");
+            await UntilFocused(page, "AutoscanInspectorOutcome_unresolved", "keyboard focus stays on the outcome chip");
             Check(TextShown(inspector.Root, "No Silo library folder contains this path. Add a path mapping for this source or check the library folders."), "official unresolved reason text");
             Find<TextBox>(inspector.Root, "AutoscanInspectorPathsSearch").Text = "orphan-3"; await Until(() => TextShown(inspector.Root, "Showing 1–1 of 1 item"), "paths search");
             Find<TextBox>(inspector.Root, "AutoscanInspectorPathsSearch").Text = "no such path"; await Until(() => TextShown(inspector.Root, "No matches"), "paths search with no match");
@@ -315,15 +315,17 @@ internal static class AdminAutoscanActivityNativeFixture
             // Jump from a path's scan id to that scan, then the scans' own pages and filters.
             var jump = Find<Button>(inspector.Root, "AutoscanInspectorJump_0"); jump.Focus(FocusState.Keyboard);
             Invoke(jump); await Until(() => inspector.Tab == "scans" && TextShown(inspector.Root, "Showing 1–1 of 1 scan"), "scan id pill jumps to that scan");
-            await Until(() => FocusedId(page) == "AutoscanInspectorTab_scans", "after the jump keyboard focus is on the Scans tab (the pill is hidden with the Paths tab)");
+            await UntilFocused(page, "AutoscanInspectorTab_scans", "after the jump keyboard focus is on the Scans tab (the pill is hidden with the Paths tab)");
             Check(Find<TextBox>(inspector.Root, "AutoscanInspectorScansSearch").Text == "01RUN001", "the jump searches for the scan id");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorScansSearchReset")); await Until(() => TextShown(inspector.Root, "Showing 1–20 of 55 scans"), "scans reset shows every run");
             var scansLast = Find<Button>(inspector.Root, "AutoscanInspectorScansLast"); scansLast.Focus(FocusState.Keyboard);
             Invoke(scansLast); await Until(() => TextShown(inspector.Root, "Showing 41–55 of 55 scans") && TextShown(inspector.Root, "synthetic storage root offline"), "last scans page with the failed run's error");
-            await Until(() => FocusedId(page) == "AutoscanInspectorScansPrevious", "Last is disabled on the last page, so keyboard focus moves to Previous");
+            await UntilFocused(page, "AutoscanInspectorScansPrevious", "Last is disabled on the last page, so keyboard focus moves to Previous");
+            await Task.Delay(400);
+            Check(TextShown(inspector.Root, "Showing 41–55 of 55 scans") && FocusedId(page) == "AutoscanInspectorScansPrevious", "a programmatic search reset does not later send the pager back to the first page");
             var failedChip = Find<Button>(inspector.Root, "AutoscanInspectorStatus_failed"); failedChip.Focus(FocusState.Keyboard);
             Invoke(failedChip); await Until(() => TextShown(inspector.Root, "Showing 1–1 of 1 scan"), "scan status chip");
-            await Until(() => FocusedId(page) == "AutoscanInspectorStatus_failed", "keyboard focus stays on the status chip");
+            await UntilFocused(page, "AutoscanInspectorStatus_failed", "keyboard focus stays on the status chip");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorStatus_all")); await Until(() => TextShown(inspector.Root, "Showing 1–20 of 55 scans"), "all statuses chip");
             Check(TextShown(inspector.Root, "running") || TextShown(inspector.Root, "Running"), "the running scan shows its status");
             var pathsTab = Find<Button>(inspector.Root, "AutoscanInspectorTab_paths"); pathsTab.Focus(FocusState.Keyboard);
@@ -338,11 +340,12 @@ internal static class AdminAutoscanActivityNativeFixture
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorStatus_running")); await Until(() => TextShown(inspector.Root, "Showing 1–1 of 1 scan"), "the running status chip filters the scans");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorTab_paths")); await Until(() => inspector.Tab == "paths", "paths tab again");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorOutcome_unresolved")); await Until(() => TextShown(inspector.Root, "Showing 1–5 of 5 items"), "the unresolved chip filters the paths");
-            Find<Button>(inspector.Root, "AutoscanInspectorOutcome_all").Focus(FocusState.Keyboard);
+            // The chips were just rebuilt, so they take focus only once laid out; keep asking until the framework agrees.
+            await Until(() => { Find<Button>(inspector.Root, "AutoscanInspectorOutcome_all").Focus(FocusState.Keyboard); return FocusedId(page) == "AutoscanInspectorOutcome_all"; }, "the All chip takes keyboard focus");
             wire.FirstRunStatus = "completed"; wire.DropUnresolved = true; await page.Controller!.RefreshAsync();
             await Until(() => inspector.Event.ScanRuns![0].Status == "completed" && Has(inspector.Root, "AutoscanInspectorPathsEmptyReset"), "the newer snapshot leaves the paths filter without rows");
             Check(TextShown(inspector.Root, "No matches") && !Has(inspector.Root, "AutoscanInspectorOutcome_unresolved"), "the paths outcome filter stays applied and shows No matches");
-            await Until(() => FocusedId(page) == "AutoscanInspectorOutcome_all", "the refresh keeps keyboard focus on the chip");
+            await UntilFocused(page, "AutoscanInspectorOutcome_all", "the refresh keeps keyboard focus on the chip");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorPathsEmptyReset")); await Until(() => TextShown(inspector.Root, "Showing 1–25 of 45 items"), "Reset restores the remaining paths");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorTab_scans")); await Until(() => inspector.Tab == "scans" && Has(inspector.Root, "AutoscanInspectorScansEmptyReset"), "the running scan filter stays applied with Reset");
             Invoke(Find<Button>(inspector.Root, "AutoscanInspectorScansEmptyReset")); await Until(() => TextShown(inspector.Root, "Showing 1–20 of 55 scans"), "Reset restores every scan");
@@ -417,6 +420,7 @@ internal static class AdminAutoscanActivityNativeFixture
             Check(wire.Writes == 3, "the further cancellation is a new request");
             channel.Empty(); wire.ActiveScans = 0; await Until(() => page.Controller!.State.Queue.Count == 0, "the scan is gone from the live queue");
             Check(page.Controller!.State.CancelReview.ContainsKey("7"), "a snapshot alone does not lift the block");
+            await Until(() => Has(page, "AutoscanReconcile_7") && Find<Button>(page, "AutoscanReconcile_7").IsEnabled, "the review notice offers its Reconcile button");
             Invoke(Find<Button>(page, "AutoscanReconcile_7"));
             await Until(() => page.Controller!.State.CancelReview.Count == 0 && TextShown(page, AdminAutoscanActivityText.T("native.cancelReviewed")), "an explicit status read lifts the block once the scan is gone");
             Check(wire.Writes == 3, "reconciliation never replays a write when the scan is gone");
@@ -471,6 +475,11 @@ internal static class AdminAutoscanActivityNativeFixture
     }
     private static ControlType Find<ControlType>(object root, string id) where ControlType : FrameworkElement =>
         Descendants((DependencyObject)root).OfType<ControlType>().Single(control => AutomationProperties.GetAutomationId(control) == id);
+    private static async Task UntilFocused(FrameworkElement page, string id, string message)
+    {
+        for (var attempt = 0; attempt < 240; attempt++) { if (FocusedId(page) == id) return; await Task.Delay(25); }
+        throw new TimeoutException("Autoscan Activity: " + message + " (focused element: " + FocusedId(page) + ")");
+    }
     private static bool Has(DependencyObject root, string id) => Descendants(root).OfType<FrameworkElement>().Any(control => AutomationProperties.GetAutomationId(control) == id);
     /// <summary>The library, source, connection and plugin name lookups (not the history or the status).</summary>
     private static int NameReads(Wire wire) => wire.Reads.Count(path => !path.StartsWith("/api/v2/admin/autoscan/scans") && !path.StartsWith("/api/v2/admin/autoscan/events") && !path.StartsWith("/api/v2/admin/autoscan/status"));

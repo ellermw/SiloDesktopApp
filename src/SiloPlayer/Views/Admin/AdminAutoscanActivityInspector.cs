@@ -27,7 +27,8 @@ public sealed class AutoscanInspector
     private readonly Button _pathsClear, _scansClear, _pathsReset, _scansReset;
     private string _tab, _outcome = "all", _scanStatus = "all";
     private int _pathsPage, _pathsSize = D.DefaultPathsPageSize, _scansPage, _scansSize = D.DefaultScansPageSize;
-    private bool _syncing;
+    /// <summary>The text each search box last had from the admin or from this class; a TextChanged raised later for the same text is not a new search.</summary>
+    private readonly Dictionary<TextBox, string> _applied = [];
     private int _rebuilding;
     public StackPanel Root { get; } = Stack(16);
     public string Id => _event.Id;
@@ -52,11 +53,19 @@ public sealed class AutoscanInspector
     private (TextBox Search, Button Clear, Button Reset) SearchControls(string id, Action changed, Action reset)
     {
         var search = Input(A.T("web.ui.select.searchPlaceholder"), id, double.NaN); search.MaxLength = 1024;
-        search.TextChanged += (_, _) => { if (!_syncing) changed(); UpdateClearButtons(); };
+        // TextChanged is raised after the layout pass, so a flag around a programmatic change cannot tell it from typing; the text itself can.
+        search.TextChanged += (_, _) =>
+        {
+            UpdateClearButtons();
+            if (_applied.GetValueOrDefault(search, "") == search.Text) return;
+            _applied[search] = search.Text; changed();
+        };
         var clear = IconButton("x", A.T("history.clearSearch"), id + "Clear", () => { search.Text = ""; }, ghost: true, size: 32);
         var resetButton = Button(A.T("history.reset"), id + "Reset"); resetButton.Height = 32; resetButton.MinHeight = 32; resetButton.FontSize = 12; resetButton.Click += (_, _) => reset();
         return (search, clear, resetButton);
     }
+
+    private void SetSearchText(TextBox box, string value) { _applied[box] = value; box.Text = value; }
 
     private void UpdateClearButtons()
     {
@@ -167,13 +176,13 @@ public sealed class AutoscanInspector
 
     private void ResetPaths()
     {
-        _syncing = true; _pathsSearch.Text = ""; _syncing = false;
+        SetSearchText(_pathsSearch, "");
         _outcome = "all"; _pathsPage = 0; RefreshPaths();
     }
 
     private void ResetScans()
     {
-        _syncing = true; _scansSearch.Text = ""; _syncing = false;
+        SetSearchText(_scansSearch, "");
         _scanStatus = "all"; _scansPage = 0; RefreshScans();
     }
 
@@ -281,7 +290,7 @@ public sealed class AutoscanInspector
 
     private void JumpToRun(string runId)
     {
-        _syncing = true; _scansSearch.Text = runId; _syncing = false;
+        SetSearchText(_scansSearch, runId);
         _scanStatus = "all"; _scansPage = 0; _tab = "scans";
         Rebuild(RefreshAll, "AutoscanInspectorTab_scans");
     }
