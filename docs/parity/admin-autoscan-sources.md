@@ -2,7 +2,8 @@
 
 Source candidate: branch `t3/admin-autoscan-sources`, merged with fresh `origin/beta` on November 20, 2026; version stamps unchanged.
 
-Official reference: Silo Server/WebUI `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`
+Official reference: Silo Server/WebUI `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`, re-checked in review against official main
+`66b836f82a32de2fb3e5dfae6c285c19eea1096d` (no change in behavior for this page between the two)
 (`web/src/pages/AdminAutoscan.tsx`, `web/src/pages/admin/autoscan/{SourcesPanel,SourceList,SourceDialog,SourceConfigForm,InlineConnectionPicker,PathMappingEditor,RewriteSuggestions,WebhookEndpoint,WebhookSetupStep}.tsx`,
 `runNow.ts`, `sourceDescriptor.ts`, `sourceForm.ts`, `sourceDisplay.ts`, `sourceTargets.ts`, `webhookSetup.ts`, `useWebhookEndpoint.ts`,
 `web/src/hooks/queries/useAutoscan.ts`, `internal/apiv2/admin_autoscan_*.go`, `internal/autoscan/adminform.go`).
@@ -40,7 +41,10 @@ Reads are bounded (100 rows x 10 pages, 1,000 retained rows, 45 second reload de
 
 - `src/SiloPlayer/Controls/ProviderSchemaForm.cs`: adds an overload `(form, values, validate, nameControls = true)`. `validate` lets the owner validate only fields that are visible (including fields hidden by a section condition); `nameControls` adds accessible names and `ProviderField_<key>` ids. The existing two-argument constructor delegates with `nameControls: false` and its default validator, so existing callers (Settings provider forms) are unchanged.
 - `src/SiloPlayer.Core/Models/Plugins/PluginCapability.cs`: adds the optional `FillFrom` property on `PluginAdminFormField`.
-- `src/SiloPlayer.Core/Api/SiloApiClient.cs`: a transport-failure branch for Autoscan requests logs only a fixed failure category.
+- `src/SiloPlayer.Core/Api/SiloApiClient.cs`: a transport-failure branch for Autoscan requests logs only a fixed failure category, and the
+  Autoscan sensitivity option is carried onto the request retried after a token refresh.
+- `ProviderSchemaForm` callers of the new overload: a value equal to the one already held is not reported as a change (WinUI reports a text
+  box's starting text as one), and `TrySetText(key, value)` sets one text field in place. The two-argument form has neither behavior.
 
 ## Verification
 
