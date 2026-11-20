@@ -56,7 +56,8 @@ public abstract class AdminAccessController : IDisposable
                     ArgumentException => "Review the entered values before continuing.",
                     _ => "The request could not be completed. Reload and review before continuing.",
                 };
-                if (write) ReviewRequired = true;
+                // A rejected local value never reached the server, so it leaves no unknown state to review.
+                if (write && error is not ArgumentException) ReviewRequired = true;
             });
         }
         finally { Publish(owner, () => _busy = false); }

@@ -286,6 +286,15 @@ public sealed class AdminAccessSecurityTests
     }
 
     [Fact]
+    public async Task LocallyRejectedLabelNeverReachesTheServerAndDoesNotBlockALaterCreate()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        Assert.Null(await Call(h.Controller, "CreateAsync", "", "1", Array.Empty<string>(), false, true));
+        Assert.Empty(h.Writes); Assert.False((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create()); Assert.Single(h.Writes);
+    }
+
+    [Fact]
     public async Task CreatedKeyListIsReconciledWithTheServerCanonicalFirstPage()
     {
         using var h = new ControllerHarness(); await h.Open();
