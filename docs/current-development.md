@@ -1,15 +1,15 @@
-# November 17 - Admin Nodes and Playback Settings source-only candidate
+# November 20 - Admin Manage Playback: Nodes and Playback Settings
 
-Uncommitted candidate in `t3/admin-playback-nodes-settings`, prepared checkout
-`C:/Users/Michael/.t3/worktrees/SiloPlayer/t3-bb1c70bd-8bdb7288eeb60a12`, exact Beta base
-`248aafd62ed65b868c0e7356926e4d83204649cd`, unchanged version `1.2.1181-beta.1`.
-Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Production Nodes and Playback Settings,
-nested workflows, API/controllers, registrations, resources and synthetic tests are authored.
-The test-only checkpoint and production patch allow coordinator RED then acceptance.
-All .NET/build/test/native/browser runtime, rendered captures and live/visual parity remain unobserved;
-this slot acquired no mutex and changed no generated outputs. Installed/player/libmpv behavior and
-Playback History/Skip Markers #170 are preserved. No commit, push, PR or publication occurred.
-See [scope, official contracts and exact acceptance commands](parity/2026-11-17-admin-playback-administration.md).
+Branch `t3/admin-playback-nodes-settings`, merged with Beta `f35bb7e59` (`1.2.1194-beta.1`, version unchanged).
+Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. `/admin/nodes` and `/admin/settings/playback` are registered
+and reachable through the real Admin navigation. Two review findings were fixed: a rejected, conflicting or
+unconfirmed enabled update returns the Nodes switch to its saved value, and the last marker task execution status
+is rendered as the official badge and result line. Observed: one `-Stage final` run (`playback-final-r1`, lane
+`D:/SiloPlayer-build/admin-completion-lane-a`): focused unit tests 254/0 failed, full unit suite 9,767/0 failed, native
+selectors `admin-playback-administration`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` passed.
+Not observed: a live server, real phone/GPU/transcode node, network enrollment, all-DPI or assistive-technology runs, and
+side-by-side visual parity beyond the fixture captures. No push, pull request or release was made.
+See [scope, official contracts, findings and limits](parity/admin-playback.md).
 
 ---
 

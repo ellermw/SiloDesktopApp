@@ -1,9 +1,9 @@
 # Manage > Playback: Nodes and Playback Settings
 
-Source-only candidate, November 17, 2026. Branch `t3/admin-playback-nodes-settings`, sole checkout
-`C:/Users/Michael/.t3/worktrees/SiloPlayer/t3-bb1c70bd-8bdb7288eeb60a12`, exact base
-`248aafd62ed65b868c0e7356926e4d83204649cd`. Version `1.2.1181-beta.1` is unchanged.
-No commit, push, PR, installer, publication, mutex acquisition or runtime execution occurred.
+November 20, 2026. Branch `t3/admin-playback-nodes-settings`, merged with Beta `f35bb7e59` (version
+`1.2.1194-beta.1`, unchanged here). Official pin `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+Scope: `/admin/nodes` and `/admin/settings/playback` only. History and Skip Markers (#170), the installed
+player, updater, local playback preferences and libmpv code are untouched.
 
 ## Official reference
 
@@ -98,81 +98,42 @@ loading. It is serialized with writes. Marker task observations use a separate b
 30-second task read, without repeating hardware probes or node enumeration. Support reads cancel when superseded or retired. No catalog walk,
 installed-player restart, decoder modification or shared/generated output is part of this candidate.
 
-## Tests authored; runtime entirely unobserved
+## Review findings fixed (November 20)
 
-The source-only slot ran no .NET restore/build/test, app, native host or browser. It acquired no mutex
-and changed no generated outputs. No RED, GREEN, native capture or visual parity result is claimed.
-Observed checks are limited to source inspection, manifest/key/count checks, `git diff --check` and
-patch applicability checks.
+1. **Enabled switch after a rejected update.** The official Nodes switch is controlled
+   (`checked={node.enabled}`), so a rejected change shows the server value again. The native card now returns the
+   switch to the saved value whenever `UpdateAsync` does not save (4xx rejection, conflict, unknown outcome, stale
+   target). Playback Settings toggles also resynchronise to the staged value if the controller refused the change.
+2. **Last marker task execution status.** `MarkerTasksCard`/`TaskStatusBadge` show the last execution as a badge
+   (`completed`, `failed`, `cancelled`, `Completed with errors` for a `contribute_markers` run that failed items;
+   unknown statuses as sent; the server's error text as tooltip). The rules live in
+   `AdminPlaybackMarkerTaskStatus`, which also owns the official result line (never run / last run date / contribute
+   result summary / rate-limit note).
 
-- `AdminPlaybackAdministrationTests`: baseline-compilable reflection-backed RED cases for missing
-  page registration/resources and actual rules/API/controller behavior. The coordinator can run these
-  before applying production changes; missing types fail assertions, not type resolution at compilation.
-- `AdminPlaybackNodesTests`: typed editor/transport/controller cases, including null versus omission,
-  numeric units, address validation, cursor bounds, wrong-node receipts, no auth replay, late key
-  retirement, unknown outcomes, defaults, width validation and disclosure preferences.
-- `AdminPlaybackAdministrationNativeFixture`, selector `admin-playback-administration`: real production
-  DI registration, shell and nested Frame. Synthetic health/reprobe/drain/resume, editor save, key
-  rotation and erasure, proxy create/delete, routing preset save, conditional playback controls,
-  preview regeneration confirmation, ETag saves and retirement. Dialogs/pages close/unload before
-  restoring globals. The fixture requests five PNGs, including the dialog visual roots; none exists yet.
+## Tests
 
-The coordinator must inspect those rendered captures against the pinned WebUI. Source tests alone
-do not establish layout parity. Live server compatibility, complete all-DPI behavior, Narrator/IME,
-physical pointer behavior, real network enrollment and real GPU/transcode behavior are unverified.
+Observed on this source (`playback-final-r1`, lane `D:/SiloPlayer-build/admin-completion-lane-a`, one `-Stage final`
+run): focused unit filter 254 passed / 0 failed; full unit suite 9,767 passed / 0 failed; native selectors
+`admin-playback-administration` (73 PASS, 0 FAIL), `admin-manage-foundation`, `admin-configure-general` and
+`admin-monitor` all passed.
 
-## Coordinator acceptance commands
+- `AdminPlaybackAdministrationTests`, `AdminPlaybackNodesTests`: registration/resource approval, key counts,
+  rules, editor null/omission semantics, transport bounds, unknown outcomes and no replay.
+- `AdminPlaybackReviewFixTests`: rejected update keeps the saved node enabled and reports no review state;
+  badge label/tone/tooltip, never-run, completed-with-errors, rate-limited and result text.
+- `AdminPlaybackAdministrationNativeFixture` (`admin-playback-administration`): real DI registration, Admin shell and nested
+  Frame. Nodes: populated, edit, key rotation and erasure, proxy create, delete, health/reprobe/drain/resume,
+  routing preset save, **rejected enabled switch restored, lost-acknowledgement switch restored and blocked until reload (no replay)**,
+  list failure with reload, empty state. Playback Settings: conditional rows, **marker-task badges, result lines and tooltip**,
+  run-now once, lost task acknowledgement not replayed, preview-regeneration confirmation, strong-ETag save, conflict
+  keeping the draft, reload and review, authority retirement clearing inputs. Seven PNG captures were written.
 
-Use the coordinator's existing deadline/containment and exact-source receipt harness for **every**
-external command below, after storage inventory and the single nonblocking `SiloOct18Build` acquisition
-required by the execution contract. Use one coordinator-owned output root, releasing the mutex in
-finally. Do not run these commands in a source-only worker or use the old unbounded `run.ps1` wrapper.
+## Not verified / limits
 
-1. Apply `.codex-tmp/playback-administration-20261117/tests-only.patch` to the exact base in the
-   coordinator's prepared acceptance checkout. Before production, run:
-
-   ```powershell
-   dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --artifacts-path D:/SiloPlayer-build/artifacts --filter FullyQualifiedName~AdminPlaybackAdministrationTests --logger "trx;LogFileName=playback-admin-red.trx" --results-directory D:/SiloPlayer-build/playback-admin-results
-   ```
-
-   Expected RED includes absent production type assertions and absent page registrations. This is an
-   expectation, not an observed result. The initial pre-production patch is preserved separately;
-   the current tests-only patch includes subsequent fixture/import corrections, still baseline compilable.
-
-2. Apply adjacent `production.patch` on top of the test checkpoint (it includes the typed additional
-   tests and docs). Run focused and preserved foundations:
-
-   ```powershell
-   dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --artifacts-path D:/SiloPlayer-build/artifacts --filter "FullyQualifiedName~AdminPlaybackAdministrationTests|FullyQualifiedName~AdminPlaybackNodesTests|FullyQualifiedName~AdminPlaybackAuditTests|FullyQualifiedName~AdminManageNavigationTests|FullyQualifiedName~AdminSettingsFormTests|FullyQualifiedName~AdminServerSettingsStoreTests|FullyQualifiedName~UserOnlyClientArchitectureTests" --logger "trx;LogFileName=playback-admin-green.trx" --results-directory D:/SiloPlayer-build/playback-admin-results
-   dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --artifacts-path D:/SiloPlayer-build/artifacts --logger "trx;LogFileName=playback-admin-full.trx" --results-directory D:/SiloPlayer-build/playback-admin-results
-   dotnet publish src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --artifacts-path D:/SiloPlayer-build/artifacts -o D:/SiloPlayer-build/publish
-   ```
-
-3. Bind that exact publish and PDB/source inventory to the native reference using the coordinator's
-   existing receipt procedure. Stage `SiloPlayer.*`, source `Assets` and published `Updates` into
-   `D:/SiloPlayer-build/native-reference`, as the repository native wrapper does. Build the host:
-
-   ```powershell
-   dotnet build tests/SiloPlayer.NativeRegressionTests/SiloPlayer.NativeRegressionTests.csproj -c Release --artifacts-path D:/SiloPlayer-build/artifacts -p:SiloPlayerAssemblyDirectory=D:/SiloPlayer-build/native-reference -o D:/SiloPlayer-build/playback-admin-host
-   ```
-
-   Under task-owned containment and a 180-second native deadline, launch the built host with:
-
-   ```powershell
-   $env:SILO_NATIVE_TEST_APP_DIRECTORY = 'D:/SiloPlayer-build/publish'
-   $env:SILO_NATIVE_TEST_RESULT_DIRECTORY = 'D:/SiloPlayer-build/playback-admin-results/native'
-   $env:SILO_NATIVE_TEST_THEME_PATH = Join-Path (Get-Location) 'src/SiloPlayer/Themes/DarkTheme.xaml'
-   $env:SILO_NATIVE_TEST_READER_FIXTURES = Join-Path (Get-Location) 'tests/reader-fixtures'
-   $env:SILO_NATIVE_TEST_ONLY = 'admin-playback-administration'
-   # The coordinator's contained process runner executes:
-   # D:/SiloPlayer-build/playback-admin-host/SiloPlayer.NativeRegressionTests.exe
-   ```
-
-   Ensure the result directory exists. Require numeric exit 0, the final completion marker, zero FAIL
-   lines, inspected PNGs and matching source/publish/host receipts. Repeat the existing
-   `admin-playback-audit` and `admin-manage-foundation` selectors on the same bound payload. Restore
-   environment variables after execution. Any failure requires fixing and re-verifying final source.
-
-4. Review the uncommitted candidate and current file count before accepting. This family is below
-   200 files and needs no split. No runtime success or visual/live compatibility claim may be inferred
-   from the source-only handoff. The coordinator owns acceptance and any subsequent submission.
+- No live Silo server, real phone, real GPU/transcode node, real network enrollment or all-DPI/Narrator/IME run.
+- Captures of single elements (the marker-task list) render light text on a transparent background, so their
+  text looks faint in the PNG; this is a capture artefact of the fixture, not an on-screen defect. Visual parity
+  against the official page was not compared side by side beyond the shell captures.
+- Cross-links to Providers (`/admin/settings/providers`), Libraries and task history are real registered routes;
+  a link stays disabled with an unavailable tooltip while that page is absent in a build.
+- `MarkerProviderTiles` belongs to the Providers page and is not part of this family.
