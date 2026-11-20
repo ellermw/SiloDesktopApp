@@ -195,7 +195,8 @@ public sealed class AdminAccessSecurityTests
         internal readonly object Controller;
         internal readonly List<string> Writes = [];
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
-        internal bool OtherIsOwner;
+        internal bool OtherIsOwner, FailList;
+        internal string ExtraKey = "";
         internal ControllerHarness()
         {
             Authority = new(Kit.Client, Kit.Auth);
@@ -211,7 +212,8 @@ public sealed class AdminAccessSecurityTests
                 return path switch
                 {
                     "/api/v2/admin/api-keys/capabilities" => Reply("""{"available":true,"guarded_configuration":true,"scopes":[{"name":"catalog:read","description":"Fixture","audience":"user"}],"rate_tiers":["standard","elevated"]}"""),
-                    "/api/v2/admin/api-keys" => Reply("{\"items\":[" + Key + "],\"page\":{\"has_more\":false}}"),
+                    "/api/v2/admin/api-keys" when FailList => throw new HttpRequestException("synthetic list failure"),
+                    "/api/v2/admin/api-keys" => Reply("{\"items\":[" + Key + ExtraKey + "],\"page\":{\"has_more\":false}}"),
                     "/api/v2/admin/api-keys/7" => Reply(Key),
                     "/api/v2/admin/users" => Reply("{\"items\":[" + Account("1", false) + "," + Account("2", OtherIsOwner) + "],\"page\":{\"has_more\":false}}"),
                     "/api/v2/admin/users/1" => Reply(Account("1", false)),
@@ -265,6 +267,32 @@ public sealed class AdminAccessSecurityTests
         Assert.True((bool)Property(h.Controller, "ReviewRequired"));
         await h.Open(); Assert.False((bool)Property(h.Controller, "ReviewRequired"));
         Assert.Single(h.Writes);
+    }
+
+    [Fact]
+    public async Task CreatedKeyListIsReconciledWithTheServerCanonicalFirstPage()
+    {
+        using var h = new ControllerHarness(); await h.Open();
+        Assert.Single((System.Collections.IEnumerable)Property(h.Controller, "Rows"));
+        h.ExtraKey = "," + Key.Replace("\"id\":\"7\"", "\"id\":\"8\"").Replace("Fixture", "Created elsewhere");
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create());
+        var ids = ((System.Collections.IEnumerable)Property(h.Controller, "Rows")).Cast<object>().Select(row => (string)Property(row, "Id")).ToArray();
+        Assert.Equal(["7", "8"], ids);
+        Assert.Equal(2, h.Kit.Http.Requests.Count(r => r == "GET /api/v2/admin/api-keys"));
+        Assert.Single(h.Writes);
+        Assert.False((bool)Property(h.Controller, "ReviewRequired"));
+    }
+
+    [Fact]
+    public async Task FailedListRefreshAfterCreateKeepsTheOneTimeSecretAndBlocksFurtherWrites()
+    {
+        using var h = new ControllerHarness(); await h.Open(); h.FailList = true;
+        Assert.Equal("sa_SYNTHETIC_ONLY", await h.Create());
+        Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+        Assert.Null(await h.Create()); Assert.Single(h.Writes);
+        Assert.DoesNotContain("sa_SYNTHETIC_ONLY", (string)Property(h.Controller, "Message"));
+        h.FailList = false; await h.Open();
+        Assert.False((bool)Property(h.Controller, "ReviewRequired"));
     }
 
     [Fact]
@@ -423,6 +451,26 @@ public sealed class AdminAccessSecurityTests
         Assert.False((bool)Property(h.Controller, "ReviewRequired"));
         Assert.Equal(draft, Property(h.Controller, "Draft"));
         Assert.Equal("11", Property(Property(h.Controller, "SavedVersion"), "Id"));
+    }
+
+    [Fact]
+    public async Task EditorLabelsAndTitleFollowTheAdoptedSnapshot()
+    {
+        using var h = new PolicyHarness(); await h.Open();
+        var before = (SiloPlayer.Core.Models.Admin.AdminPolicySnapshot)Property(h.Controller, "Snapshot");
+        Assert.Equal("Fixture", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.Title(before));
+        Assert.Equal("Enable override", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.ToggleLabel(before));
+        var newer = Document.Replace("\"name\":\"Fixture\"", "\"name\":\"Renamed elsewhere\"").Replace("\"enabled\":false", "\"enabled\":true").Replace("\"active_version_id\":null", "\"active_version_id\":\"11\"");
+        var original = h.Kit.Http.Respond!;
+        h.Kit.Http.Respond = (request, ct) => request.RequestUri!.AbsolutePath == "/api/v2/admin/policy/documents/9" ? Task.FromResult(Reply(newer, "\"fixture-2\"")) : original(request, ct);
+        await Call(h.Controller, "ReviewAsync");
+        h.Controller.GetType().GetMethod("AdoptReview")!.Invoke(h.Controller, null);
+        var after = (SiloPlayer.Core.Models.Admin.AdminPolicySnapshot)Property(h.Controller, "Snapshot");
+        Assert.NotSame(before, after);
+        Assert.Equal("Renamed elsewhere", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.Title(after));
+        Assert.Equal("Disable override", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.ToggleLabel(after));
+        Assert.Equal("Active", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.Status(after.Value));
+        Assert.Equal("enabled", SiloPlayer.Core.Services.Admin.AdminPolicyPresentation.EnabledState(after));
     }
 
     [Fact]

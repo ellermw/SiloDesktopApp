@@ -88,7 +88,8 @@ public static class AdminSignInSchemaRules
         var result = new AdminSignInConfigWrite { Key = schema.Key, ClearSecrets = clears.ToList() }; var form = schema.AdminForm ?? throw new ArgumentException("Unsupported schema.");
         foreach (var field in form.Fields.Where(f => Visible(form, f, values)))
         {
-            var value = values[field.Key] ?? field.DefaultValue; var empty = value == null || value is JsonArray a && a.Count == 0 || value is JsonValue j && j.TryGetValue<string>(out var s) && string.IsNullOrWhiteSpace(s);
+            // An explicit JSON null is a saved value: it round-trips as null (numeric) and never falls back to the declared default.
+            var value = values.ContainsKey(field.Key) ? values[field.Key] : field.DefaultValue; var empty = value == null || value is JsonArray a && a.Count == 0 || value is JsonValue j && j.TryGetValue<string>(out var s) && string.IsNullOrWhiteSpace(s);
             if (field.IsSecret && empty) continue; // blank keeps the stored secret; clear_secrets is the only clear.
             if (!empty && field.Validation is { } validation)
             {
@@ -102,7 +103,7 @@ public static class AdminSignInSchemaRules
                 if (field.Control == "NUMBER" && double.TryParse(text, CultureInfo.InvariantCulture, out var n) && (validation.HasMin && n < validation.Min || validation.HasMax && n > validation.Max)) throw new ArgumentException("Field range.");
             }
             var type = FieldType(schema, field);
-            result.Value[field.Key] = value is JsonArray ? value.DeepClone() : empty ? (type is "number" or "integer" or "boolean" ? null : JsonValue.Create("")) : value?.DeepClone();
+            result.Value[field.Key] = value is JsonArray ? value.DeepClone() : empty ? (type is "number" or "integer" ? null : type == "boolean" ? JsonValue.Create(false) : JsonValue.Create("")) : value?.DeepClone();
         }
         return result;
     }

@@ -63,6 +63,15 @@ public sealed class AdminApiKeysController(AdminApiKeysApi api, AdminMonitorAuth
             // Never place a full key in list/editor state. Only the active create dialog consumes it.
             Publish(owner, () => { secret = created.TakeSecret(); Message = "API key created. Save it now; it will not be shown again."; });
             created.Key = "";
+            // Reconcile with the server's canonical first page. The secret is already held by the caller, so a
+            // failed refresh never discards it; it only blocks further writes until the list is re-read.
+            try
+            {
+                var page = await api.ListAsync(owner).ConfigureAwait(false);
+                Publish(owner, () => { Rows = page.Items; NextCursor = page.Page!.NextCursor; });
+            }
+            catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
+            catch { Publish(owner, () => { Message = "API key created. Save it now; it will not be shown again. The key list could not be refreshed: reload keys."; ReviewRequired = true; }); }
         }, write: true).ConfigureAwait(false);
         return Current ? secret : null;
     }

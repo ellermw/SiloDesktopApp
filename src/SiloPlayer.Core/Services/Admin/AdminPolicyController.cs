@@ -100,6 +100,8 @@ public sealed class AdminPolicyController(AdminPolicyApi api, AdminMonitorAuthor
         if (!confirmed || Capability?.DecisionTypes.Contains(domain) != true) return;
         await EnsureCapabilityAsync(owner).ConfigureAwait(false);
         var document = await api.CreateAsync(owner, domain, name).ConfigureAwait(false);
+        // The server owns the canonical override list: re-read its first page after the create instead of splicing the row in locally.
+        await LoadTabAsync(owner, "documents").ConfigureAwait(false);
         await LoadEditorAsync(owner, document.Id).ConfigureAwait(false);
     }, write: true);
     public void SetDraft(string source)

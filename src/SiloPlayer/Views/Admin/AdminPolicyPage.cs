@@ -20,6 +20,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
     private readonly StackPanel _view = new() { Spacing = 16 }, _versions = new() { Spacing = 8 }, _review = new() { Spacing = 8 };
     private readonly TextBlock _validation = U.Text("", 12), _simulation = U.Text("", 12), _health = U.Text("", 12);
     private TextBox? _source, _comment, _input;
+    private TextBlock? _name, _overrideCan;
     private string? _viewKey;
     private IReadOnlyList<AdminPolicyVersion>? _shownVersions;
     private bool _sync;
@@ -122,9 +123,8 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
     }
     private void BuildEditor()
     {
-        var document = Controller.Snapshot!.Value;
         _view.Children.Add(Command(T("allOverrides"), "PolicyAllOverrides", async () => { if (await CanLeaveAsync()) await Controller.SelectAsync(null); }));
-        _view.Children.Add(U.Text(document.Name, 22)); _view.Children.Add(U.Text(T("domain." + document.Domain + ".overrideCan"), 13, true));
+        _name = U.Text(AdminPolicyPresentation.Title(Controller.Snapshot!), 22); _overrideCan = U.Text(AdminPolicyPresentation.OverrideCan(Controller.Snapshot!), 13, true); _view.Children.Add(_name); _view.Children.Add(_overrideCan);
         _view.Children.Add(U.Text("Draft → Validated → Saved → Active", 12, true));
         _source = AdminAccessPageUi.Multiline("Rego source", "PolicySource", Controller.Draft, 360); _source.MaxLength = 262144; _source.FontFamily = new("Consolas");
         _source.TextChanging += (_, _) => { if (!_sync) Controller.SetDraft(_source.Text); }; _view.Children.Add(_source);
@@ -141,11 +141,11 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
         _view.Children.Add(_review);
         _view.Children.Add(Command(T("review.button"), "PolicyReview", Controller.ReviewAsync));
         _view.Children.Add(Command(T("editor.loadSaved"), "PolicyLoadSaved", async () => { if (await _ui.ConfirmAsync(T("editor.loadSaved"), T("editor.newerRevision"), T("editor.loadSaved"))) await Controller.LoadSavedSourceAsync(true); }));
-        _view.Children.Add(Command(document.Enabled ? T("enabled.disable") : T("enabled.enable"), "PolicyEnabled", async () =>
+        _view.Children.Add(Command(AdminPolicyPresentation.ToggleLabel(Controller.Snapshot!), "PolicyEnabled", async () =>
         {
             var reviewed = Controller.Snapshot; var owner = Controller.Owner; if (reviewed == null) return;
             var enabled = !reviewed.Value.Enabled;
-            if (await _ui.ConfirmAsync(document.Enabled ? T("enabled.disable") : T("enabled.enable"), T("enabled.confirmText", new { name = reviewed.Value.Name, state = reviewed.Value.Enabled ? "enabled" : "disabled", target = enabled ? "enabled" : "disabled" }), "Confirm") && ReferenceEquals(owner, Controller.Owner)) await Controller.SetEnabledAsync(reviewed, enabled, true);
+            if (await _ui.ConfirmAsync(AdminPolicyPresentation.ToggleLabel(reviewed), T("enabled.confirmText", new { name = reviewed.Value.Name, state = reviewed.Value.Enabled ? "enabled" : "disabled", target = enabled ? "enabled" : "disabled" }), "Confirm") && ReferenceEquals(owner, Controller.Owner)) await Controller.SetEnabledAsync(reviewed, enabled, true);
         }));
         _view.Children.Add(Command("Delete override", "PolicyDelete", async () =>
         {
@@ -165,6 +165,13 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
         finally { _sync = false; }
         foreach (var command in _commands.Values) command.IsEnabled = editable;
         if (_commands.TryGetValue("PolicySave", out var save)) save.IsEnabled = editable && Controller.Validated && !Controller.ReviewRequired;
+        // Labels and titles are re-derived from the current snapshot on every render so an adopted revision never leaves the previous one on screen.
+        if (Controller.Snapshot is { } current)
+        {
+            if (_name != null) _name.Text = AdminPolicyPresentation.Title(current);
+            if (_overrideCan != null) _overrideCan.Text = AdminPolicyPresentation.OverrideCan(current);
+            if (_commands.TryGetValue("PolicyEnabled", out var label)) { var text = AdminPolicyPresentation.ToggleLabel(current); label.Content = text; AutomationProperties.SetName(label, text); }
+        }
         if (_commands.TryGetValue("PolicyEnabled", out var enable)) enable.IsEnabled = editable && !Controller.ReviewRequired;
         if (_commands.TryGetValue("PolicyDelete", out var delete)) delete.IsEnabled = editable && !Controller.ReviewRequired && Controller.Snapshot?.Value is { ActiveVersionId: null };
         _validation.Text = Controller.Validation == null ? "" : (Controller.Validated ? T("editor.validationPassed") : T("editor.validationStale")) + "\n" + string.Join("\n", Controller.Validation.Errors.Select(e => $"{e.Row}:{e.Col} " + LocalLog.RedactDiagnosticText(e.Message)));
@@ -299,7 +306,7 @@ public sealed partial class AdminPolicyPage : Page, IAdminGutterScrollPage, IAdm
     }
     private static string Pretty(JsonElement value) => AdminAccessRedaction.Json(value);
     private static string Domain(string domain) => T("domain." + domain + ".title");
-    private static string Status(AdminPolicyDocument document) => T(document.Enabled && document.ActiveVersionId != null ? "status.active" : document.Enabled ? "status.draft" : "status.disabled");
+    private static string Status(AdminPolicyDocument document) => AdminPolicyPresentation.Status(document);
     private static string T(string suffix, object? values = null) => AdminText.T("web.admin.access.policy." + suffix, values);
 }
 
