@@ -11,7 +11,8 @@ internal static class AdminConfigureServices
 {
     /// <summary>Keys and protected keys read by the one shared settings snapshot store.</summary>
     internal static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Keys.Concat(AdminEmailSettingsController.Keys).Concat(AdminSecuritySettingsController.Keys)
-        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminStorageSettingsController.Keys).Concat(AdminSearchSettingsController.Keys).Concat(AdminBackupsController.Keys).Concat(AdminNotificationSettingsController.Keys).Distinct(StringComparer.Ordinal).ToArray());
+        .Concat(AdminDownloadSettingsController.Keys).Concat(AdminDownloadSettingsController.ReadOnlyKeys).Concat(AdminStorageSettingsController.Keys).Concat(AdminSearchSettingsController.Keys).Concat(AdminBackupsController.Keys).Concat(AdminNotificationSettingsController.Keys)
+        .Concat(AdminIntegrationsSettings.AllKeys).Distinct(StringComparer.Ordinal).ToArray());
     internal static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(AdminGeneralSettingsController.Secrets.Concat(AdminEmailSettingsController.Secrets).Concat(AdminSecuritySettingsController.Secrets)
         .Concat(AdminDownloadSettingsController.Secrets).Concat(AdminStorageSettingsController.Secrets).Concat(AdminSearchSettingsController.Secrets).Concat(AdminBackupsController.Secrets).Concat(AdminNotificationSettingsController.Secrets).Distinct(StringComparer.Ordinal).ToArray());
 
@@ -26,6 +27,8 @@ internal static class AdminConfigureServices
         services.AddTransient<AdminSecuritySettingsController>();
         // Network access is a tool page with its own domain API; the page owns its controller and polling.
         services.AddSingleton<AdminNetworkAccessApi>();
+        services.AddSingleton<AdminIntegrationsApi>();
+        services.AddSingleton<IAdminChatGptBrowser, AdminChatGptBrowser>();
         services.AddSingleton(new AdminPageRegistration(AdminRoute.GeneralSettings, typeof(AdminGeneralSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.EmailSettings, typeof(AdminEmailSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.SecuritySettings, typeof(AdminSecuritySettingsPage)));
@@ -38,6 +41,9 @@ internal static class AdminConfigureServices
             deferBackground: () => sp.GetService<PlayerService>()?.IsLoading == true));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.SearchSettings, typeof(AdminSearchSettingsPage)));
         services.AddSingleton(new AdminPageRegistration(AdminRoute.DownloadSettings, typeof(AdminDownloadSettingsPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.AiSettings, typeof(AdminIntegrationsPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.Recommendations, typeof(AdminIntegrationsPage)));
+        services.AddSingleton(new AdminPageRegistration(AdminRoute.CompatibilitySettings, typeof(AdminIntegrationsPage)));
         // Maintenance is a tool page (catalog seed export/import and read-only job history) with its own domain API.
         services.AddSingleton<AdminMaintenanceApi>();
         services.AddTransient<AdminMaintenanceController>();

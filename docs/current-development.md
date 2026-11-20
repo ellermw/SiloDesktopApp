@@ -1,3 +1,45 @@
+# November 17 — Configure Integrations verified Beta increment
+
+AI, Recommendations and Compatibility are implemented in the registered native shell,
+including provider/model editors, Keep/Replace/Clear credentials, manual user-owned
+ChatGPT sign-in/account recovery, recommendation jobs/reset and guarded managed-web
+operations. Recommendations now also resolves through its ordinary canonical href.
+Branch t3/admin-integrations-leaves uses deliberately preserved Beta base
+248aafd62ed65b868c0e7356926e4d83204649cd; version 1.2.1181-beta.1 remains unchanged
+for pipeline stamping. Fresh origin/beta was 73f6f99d96910f88a6db8a471c966927350a1eba.
+
+Official contracts were reviewed at 217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb.
+Official GitHub main was fetched directly again at
+c58c0bb9394868f42d058cf8749de46921886420: scoped WebUI/wire contracts are unchanged;
+the intervening speech timestamp diagnostic is already displayed through the bounded,
+redacted server-message path. No claim is made for unrelated upstream changes.
+
+Coordinator review-green-r8 passed fresh nonincremental unit/app/native-host builds,
+87 focused and 8,084 full unit cases, zero failures/skips, publish and all seven scoped
+native groups. The tests include the acceptance-only physical source/Core PDB checksum
+proof. Real-shell regressions cover the confirmed review gaps, accepted-operation
+identity through both reload choices, malformed provider acknowledgements, ordinary
+Recommendations navigation and authority/secret/dialog retirement. Seven actual PNGs
+were inspected at wide/compact sizes and in the manual sign-in dialog.
+
+Single nonblocking SiloOct18Build lease: 2026-11-17T15:11:00.6772543Z–15:18:50.4920140Z,
+PID 21300; 17 contained commands passed and finally released. No owned runtime remains.
+Source seal: 2,326 files, SHA256
+1f7b7ded1b18a41e8a6d026921140044cc0fd553e3a1763fafd7073f12020c27.
+The same 582 published files were rehashed before/after all native groups; payload SHA256
+fc6fba7fefcbb081424da1655d92870336a5137ddd505e25ceb5f0404bb77919.
+Product/reference/host DLL, PDB and PRI bytes match. Receipts are retained under
+D:/SiloPlayer-build/admin-completion-integrations, label review-green-r8.
+
+Source-only reports are superseded by this evidence, not erased. Full scope, RED/GREEN
+history, review disposition and limits: docs/parity/admin-configure-integrations.md.
+External ChatGPT/provider login, live server/Jellyfin/Audiobookshelf interoperability,
+all-DPI/Narrator/IME behavior and complete live-WebUI visual parity remain unverified.
+Installed player PID 39668, preserved artifacts, version stamps and pipeline-owned PRs
+remain untouched. This increment is submitted only to the authorized Beta pipeline;
+no merge, installer execution, stable release or production action is authorized here.
+---
+
 # November 17 — Notifications verified Beta candidate
 
 Configure > Integrations > Notifications is implemented on

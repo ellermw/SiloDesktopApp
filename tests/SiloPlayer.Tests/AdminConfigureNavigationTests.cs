@@ -122,6 +122,17 @@ public sealed class AdminConfigureNavigationTests
     }
 
     [Fact]
+    public void ProductionConfigureRegistrationIncludesTheThreeIntegrationLeaves()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "AdminConfigureServices.cs"));
+        foreach (var route in new[] { "AiSettings", "Recommendations", "CompatibilitySettings" })
+            Assert.Contains("new AdminPageRegistration(AdminRoute." + route + ", typeof(AdminIntegrationsPage))", source);
+        Assert.Contains("AddSingleton<AdminIntegrationsApi>", source);
+        Assert.True(File.Exists(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminIntegrationsPage.xaml")));
+        Assert.Contains("'Views/Admin/AdminIntegrationsPage.xbf'", File.ReadAllText(Path.Combine(TestRepository.Root, "installer", "build.ps1")));
+    }
+
+    [Fact]
     public void NetworkAccessCatalogCarriesEveryOfficialPageMessage()
     {
         foreach (var key in new[]

@@ -1067,6 +1067,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdminNetworkAccessNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-integrations")
+            {
+                await AdminIntegrationsNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-manage-download-settings")
             {
                 await AdminDownloadSettingsNativeFixture.RunAsync(_window);
