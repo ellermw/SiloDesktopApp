@@ -351,7 +351,7 @@ internal static class AdminSignInSecurityNativeFixture
             Click(policy, "AccessReload"); await Until(() => Descendants(policy).OfType<TextBox>().Any(t => Id(t) == "PolicySource") && Buttons(policy).Any(b => Id(b) == "PolicyValidate" && b.IsEnabled));
             Click(policy, "PolicyValidate"); await Until(() => Buttons(policy).Any(b => Id(b) == "PolicySave" && b.IsEnabled));
             Click(policy, "PolicySave"); var saveOk = await Dialog(policy); Primary(saveOk);
-            await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyActivate"));
+            await Until(() => server.Count("POST /api/v2/admin/policy/documents/9/versions") == 2 && !saveOk.IsLoaded && HasTextContaining(policy, "Saved v1"));
             Check(server.Count("POST /api/v2/admin/policy/documents/9/versions") == 2, "a re-read allows exactly one new save");
             Click(policy, "PolicyReview"); await Until(() => Buttons(policy).Any(b => Id(b) == "PolicyAdopt")); Click(policy, "PolicyAdopt");
             await ClickWhenReady(policy, "PolicyActivate"); var activate = await Dialog(policy); Primary(activate);
