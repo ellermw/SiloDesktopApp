@@ -16,6 +16,7 @@ public sealed partial class AdminIntegrationsPage
     private Button? _completeLogin;
     private TextBlock? _callbackError;
     private bool _callbackSubmitted;
+    private const string LoginReadFailed = "Could not check this sign-in with the server. Still retrying.";
 
     private void BuildChatGptAccounts()
     {

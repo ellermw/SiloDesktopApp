@@ -21,7 +21,9 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     private AdminRouteRequest? _location;
     private AdminRoute _route;
     private readonly Dictionary<string, FrameworkElement> _fields = new(StringComparer.Ordinal);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
     private readonly StackPanel _alerts = new() { Spacing = 8 };
+    private readonly StackPanel _recovery = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly StackPanel _domain = new() { Spacing = 16 };
     private readonly StackPanel _providerEditorHost = new() { Spacing = 12 };
     private readonly TextBlock _domainStatus = AdminSettingsUi.Text("", 13, true);
@@ -51,7 +53,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         InitializeComponent(); NavigationCacheMode = NavigationCacheMode.Disabled;
         _api = App.Services.GetRequiredService<AdminIntegrationsApi>();
         _authority = App.Services.GetRequiredService<AdminMonitorAuthority>();
-        _poll = DispatcherQueue.CreateTimer(); _poll.Interval = TimeSpan.FromSeconds(5); _poll.IsRepeating = false;
+        _poll = DispatcherQueue.CreateTimer(); _poll.Interval = PollInterval; _poll.IsRepeating = false;
         _poll.Tick += async (_, _) => await ReadDomainAsync(quiet: true);
         _modelDebounce = DispatcherQueue.CreateTimer(); _modelDebounce.Interval = TimeSpan.FromMilliseconds(300); _modelDebounce.IsRepeating = false;
         _modelDebounce.Tick += (_, _) => RequestModelRefresh();
@@ -81,7 +83,8 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         _controller = ActivatorUtilities.CreateInstance<AdminIntegrationSettingsController>(App.Services, keys);
         _leave = new(() => _controller?.State.Owner, () => _controller?.State.DirtyKeys.Count > 0 || _providerDirty, () => { _controller?.Discard(); ClearProviderEditor(); });
         _controller.Changed += QueueRender;
-        _controller.Saved += changedKeys => { DispatcherQueue.TryEnqueue(async () => { _models.Clear(); await RefreshDomainAsync(); }); };
+        // Recommendations saves a field as focus leaves it, so its follow-up read is quiet: a foreground read would disable the control focus has just moved to.
+        _controller.Saved += changedKeys => { DispatcherQueue.TryEnqueue(async () => { _models.Clear(); await ReadDomainAsync(quiet: _route == AdminRoute.Recommendations); }); };
         Build(); _openTask = OpenAsync(_controller);
     }
     private async Task OpenAsync(AdminIntegrationSettingsController controller)
@@ -97,7 +100,12 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     private bool Ready => _active && _domainLoaded && !_busy && !DomainHeld && !_commandUnknown && _controller?.State is { Loaded: true, Loading: false, Saving: false, Conflict: false, OutcomeUnknown: false, Owner.IsCurrent: true };
     private void Build()
     {
-        _fields.Clear(); ContentRoot.Children.Clear(); _alerts.Children.Clear(); _domain.Children.Clear(); _domainShape = ""; _providerEditorHost.Children.Clear();
+        _fields.Clear(); ContentRoot.Children.Clear(); _alerts.Children.Clear(); _recovery.Children.Clear(); _domain.Children.Clear(); _domainShape = ""; _providerEditorHost.Children.Clear();
+        // Render runs on every poll and keystroke, so the recovery actions are built once: a focused or pressed one must survive it.
+        AddAction(_recovery, "Retry", "AdminIntegrationsRetry", false, async () => { if (_controller?.State.Loaded != true) await ReloadAsync(false); else await RefreshDomainAsync(); });
+        AddAction(_recovery, "Reload, keep changes", "AdminIntegrationsReloadKeep", false, () => ReloadAsync(true));
+        AddAction(_recovery, "Reload, discard changes", "AdminIntegrationsReloadDiscard", false, () => ReloadAsync(false));
+        _alerts.Children.Add(_recovery);
         ContentRoot.Children.Add(AdminSettingsUi.Title(_route switch { AdminRoute.AiSettings => "AI", AdminRoute.Recommendations => "Recommendations", _ => "Compatibility proxies" }));
         ContentRoot.Children.Add(_alerts); ContentRoot.Children.Add(_domain); ContentRoot.Children.Add(_providerEditorHost); ContentRoot.Children.Add(_domainStatus);
         ContentRoot.Children.Add(BuildSettings());
@@ -192,10 +200,23 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
                 // An operation the server showed and then stopped reporting gets the same wait as one it never showed.
                 else if (_acceptedWebOperation != null && _webReceiptDeadline == null) _webReceiptDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
             }
-            if (Current(controller)) { _domainLoaded = true; if (!_commandUnknown) _domainError = loginFailure; }
+            if (Current(controller))
+            {
+                _domainLoaded = true; _poll.Interval = PollInterval; if (!_commandUnknown) _domainError = loginFailure;
+                if (_callbackError is { Text: LoginReadFailed } settled) settled.Text = "";
+            }
         }
         catch (OperationCanceledException) when (!Current(controller)) { }
-        catch (Exception) { if (Current(controller)) { _domainLoaded = false; _domainError = "Could not refresh this page. Try again."; } }
+        catch (Exception)
+        {
+            // The page alert and Retry sit behind the sign-in dialog: keep the last good read so the callback can still be completed, say so in the dialog, and keep polling more slowly.
+            if (Current(controller) && _login != null && _domainLoaded)
+            {
+                if (_callbackError is { Text: "" } notice) notice.Text = LoginReadFailed;
+                _poll.Interval = TimeSpan.FromSeconds(Math.Min(_poll.Interval.TotalSeconds * 2, 30));
+            }
+            else if (Current(controller)) { _domainLoaded = false; _domainError = "Could not refresh this page. Try again."; }
+        }
         finally
         {
             _domainReading = false; _quietRead = false;
@@ -304,16 +325,17 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
     private void Render(AdminIntegrationSettingsState state)
     {
         if (!_active) return;
-        _alerts.Children.Clear();
-        if (state.Error != null) _alerts.Children.Add(AdminSettingsUi.Alert(state.Error));
-        if (_domainError != null) _alerts.Children.Add(AdminSettingsUi.Alert(_domainError));
-        else if (_commandUnknown) _alerts.Children.Add(AdminSettingsUi.Alert("The earlier command outcome is still unknown. Reload and review before trying again."));
-        if (state.RestartRequired || _jellyfinWeb?.RestartRequired == true) _alerts.Children.Add(AdminSettingsUi.Alert("A server restart is required for some saved settings."));
-        var recovery = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        AddAction(recovery, "Retry", "AdminIntegrationsRetry", !_busy && !DomainHeld && !state.Loading && !state.Saving, async () => { if (!state.Loaded) await ReloadAsync(false); else await RefreshDomainAsync(); });
-        AddAction(recovery, "Reload, keep changes", "AdminIntegrationsReloadKeep", !_busy && !DomainHeld && !state.Loading && !state.Saving, () => ReloadAsync(true));
-        AddAction(recovery, "Reload, discard changes", "AdminIntegrationsReloadDiscard", !_busy && !DomainHeld && !state.Loading && !state.Saving, () => ReloadAsync(false));
-        _alerts.Children.Add(recovery);
+        // Only the alerts above the recovery row are replaced; the row itself stays the last child.
+        while (_alerts.Children.Count > 1) _alerts.Children.RemoveAt(0);
+        var alerts = new List<string>();
+        if (state.Error != null) alerts.Add(state.Error);
+        if (_domainError != null) alerts.Add(_domainError);
+        else if (_commandUnknown) alerts.Add("The earlier command outcome is still unknown. Reload and review before trying again.");
+        if (state.RestartRequired || _jellyfinWeb?.RestartRequired == true) alerts.Add("A server restart is required for some saved settings.");
+        for (var index = 0; index < alerts.Count; index++) _alerts.Children.Insert(index, AdminSettingsUi.Alert(alerts[index]));
+        foreach (var action in _recovery.Children.OfType<Button>()) action.IsEnabled = !_busy && !DomainHeld && !state.Loading && !state.Saving;
+        // Recommendations saves a field as focus leaves it. Holding the inputs for that save would disable the one focus has just moved to.
+        var committing = state.Saving && _route == AdminRoute.Recommendations;
         _syncing = true;
         UpdateChoices();
         foreach (var (key, element) in _fields)
@@ -331,7 +353,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             }
             if (element is Control control)
             {
-                control.IsEnabled = state.Loaded && !state.Loading && !state.Saving && !_busy && !_commandUnknown && !state.Conflict && !state.OutcomeUnknown && !state.ManagedByEnvironment.Contains(key);
+                control.IsEnabled = state.Loaded && !state.Loading && (!state.Saving || committing) && !_busy && !_commandUnknown && !state.Conflict && !state.OutcomeUnknown && !state.ManagedByEnvironment.Contains(key);
                 if (control is ToggleSwitch feature && !feature.IsOn && !FeatureReady(key)) control.IsEnabled = false;
                 if (key.EndsWith("provider_id", StringComparison.Ordinal)) control.IsEnabled &= _domainLoaded && !DomainHeld;
             }
@@ -339,7 +361,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         _syncing = false;
         foreach (var (key, picker) in _modelPickers)
         {
-            picker.IsEnabled = Ready && !state.ManagedByEnvironment.Contains(key) && picker.Items.Count > 0;
+            picker.IsEnabled = (Ready || (committing && _domainLoaded && !_busy && !DomainHeld && !_commandUnknown)) && !state.ManagedByEnvironment.Contains(key) && picker.Items.Count > 0;
             if (_fields.GetValueOrDefault(key) is TextBox input) input.IsReadOnly = key == "ai.chat_model" && Value("ai.auth_mode") == "chatgpt";
         }
         if (_fields.GetValueOrDefault("ai.service_tier") is ComboBox tier && tier.Parent is FrameworkElement tierRow)
@@ -412,7 +434,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         if (controller != null) { controller.Changed -= QueueRender; controller.Dispose(); }
         _providers = []; _providerTypes = []; _models.Clear(); _accountModels = []; _capabilities = null; _connection = null;
         _recommendations = null; _jellyfinWeb = null; _acceptedWebOperation = null; _webReceiptDeadline = null; _domainLoaded = false; _domainError = null; _accountModelsError = null; _commandUnknown = false; _busy = false;
-        _fields.Clear(); _fieldCommits.Clear(); _alerts.Children.Clear(); _domain.Children.Clear(); _domainShape = ""; _providerEditorHost.Children.Clear();
+        _fields.Clear(); _fieldCommits.Clear(); _alerts.Children.Clear(); _recovery.Children.Clear(); _domain.Children.Clear(); _domainShape = ""; _providerEditorHost.Children.Clear();
         _domainStatus.Text = ""; ContentRoot.Children.Clear(); _save = null; _discard = null;
         _modelChecks.Clear();
         _modelPickers.Clear();

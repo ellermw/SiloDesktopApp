@@ -27,7 +27,7 @@ internal static class AdminIntegrationsNativeFixture
     {
         internal readonly Dictionary<string, string> Values = AdminIntegrationsSettings.AllKeys.ToDictionary(key => key, _ => "");
         internal readonly List<string> Writes = [];
-        internal TaskCompletionSource? ReadGate;
+        internal TaskCompletionSource? ReadGate, WriteGate;
         internal bool Conflict, FailRead, FailProviderAction, EnvironmentOwnedWeb, StaleWebRead, LostWebOperation, FailedWebInstallation;
         internal bool ChatConnected = true, LoginPending, WebOperationRunning, CreatedProvider, UsagePaused;
         internal string ActiveAccount = "account-1", LoginResult = "idle";
@@ -51,6 +51,7 @@ internal static class AdminIntegrationsNativeFixture
             if (request.Method != HttpMethod.Get)
             {
                 Writes.Add(request.Method + " " + path);
+                if (WriteGate is { } held) await held.Task;
                 if (Conflict) return Json(new { }, HttpStatusCode.PreconditionFailed);
                 if (path.StartsWith("/api/v2/admin/ai/chatgpt", StringComparison.Ordinal))
                 {
@@ -190,6 +191,11 @@ internal static class AdminIntegrationsNativeFixture
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "ChatGPT manual sign-in dialog");
             var loginDialog = (ContentDialog)Field(page, "_dialog")!;
             await Capture(loginDialog, "integrations-chatgpt-dialog.png");
+            // The first poll may join a read that began before the failure was armed; the second cannot.
+            handler.FailRead = true; await Poll(page); await Poll(page);
+            ReviewCheck(Find<Button>(loginDialog, "AdminChatGptComplete").IsEnabled && Field(page, "_login") != null && Field(page, "_domainLoaded") is true && Field(page, "_callbackError") is TextBlock { Text.Length: > 0 }, "a failed read during sign-in keeps the attempt completable and explains itself inside the dialog");
+            handler.FailRead = false; await Poll(page);
+            ReviewCheck(Field(page, "_login") != null && Field(page, "_callbackError") is TextBlock { Text: "" }, "the next good read keeps the sign-in attempt and clears its read notice");
             Invoke(Find<Button>(loginDialog, "AdminChatGptOpenBrowser"));
             await Until(() => browser.Opens == 1, "user-owned browser seam");
             var callback = Find<PasswordBox>(loginDialog, "AdminChatGptCallback"); callback.Password = "http://127.0.0.1:51121/auth/callback?state=synthetic-state&code=synthetic-code";
@@ -249,8 +255,10 @@ internal static class AdminIntegrationsNativeFixture
             await Until(() => Enabled(page, "AdminRecommendationRun-Embeddings"), "recommendations ready");
             await CaptureBoth(window, outer, "integrations-recommendations");
             Find<Button>(page, "AdminRecommendationRun-Embeddings").Tag = "held";
+            Find<Button>(page, "AdminIntegrationsRetry").Tag = "held"; Find<Button>(page, "AdminIntegrationsReloadKeep").Tag = "held";
             await (Task)page.GetType().GetMethod("ReadDomainAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [true])!;
             ReviewCheck(Find<Button>(page, "AdminRecommendationRun-Embeddings") is { IsEnabled: true, Tag: "held" }, "an unchanged background poll keeps the live job controls");
+            ReviewCheck(Find<Button>(page, "AdminIntegrationsRetry") is { IsEnabled: true, Tag: "held" } && Find<Button>(page, "AdminIntegrationsReloadKeep") is { IsEnabled: true, Tag: "held" }, "a background poll keeps the live recovery controls");
             Invoke(Find<Button>(page, "AdminRecommendationRun-Embeddings")); await Idle(page);
             Check(handler.Writes.Count(entry => entry.EndsWith("/trigger/embeddings", StringComparison.Ordinal)) == 1, "real recommendation command");
             handler.ReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -263,6 +271,17 @@ internal static class AdminIntegrationsNativeFixture
             Check(Find<Button>(page, "AdminIntegrationsRetry").IsEnabled, "visible domain retry");
             handler.FailRead = false; Invoke(Find<Button>(page, "AdminIntegrationsRetry")); await Idle(page);
             var controller = (AdminIntegrationSettingsController)Field(page, "_controller")!;
+            var nextCron = Find<TextBox>(page, "AdminIntegration-recommendations.taste_profiles_cron"); var modelPicker = Find<ComboBox>(page, "AdminIntegration-recommendations.embedding_model-Models");
+            var pickerReady = modelPicker.IsEnabled;
+            // Focus is only asserted where the fixture window can take it; enablement is asserted everywhere.
+            var focusHeld = nextCron.Focus(FocusState.Keyboard) && ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), nextCron);
+            handler.WriteGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            controller.Set("recommendations.embeddings_cron", "15 3 * * *");
+            var commit = (Task)page.GetType().GetMethod("CommitFieldAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, ["recommendations.embeddings_cron"])!;
+            await Until(() => controller.State.Saving && !Enabled(page, "AdminRecommendationRun-Embeddings"), "held field commit");
+            ReviewCheck(nextCron.IsEnabled && Find<TextBox>(page, "AdminIntegration-recommendations.embeddings_cron").IsEnabled && Find<ComboBox>(page, "AdminIntegration-recommendations.embedding_provider_id").IsEnabled && (!pickerReady || modelPicker.IsEnabled), "a field commit leaves the other Recommendations inputs enabled");
+            handler.WriteGate.SetResult(); handler.WriteGate = null; await commit; await Idle(page);
+            ReviewCheck(nextCron.IsEnabled && (!focusHeld || ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(page.XamlRoot), nextCron)), "the field focus moved to keeps it through the commit and its follow-up read");
             handler.Conflict = true; controller.Set("recommendations.diversity_lambda", "0.8"); await controller.SaveFieldsAsync(["recommendations.diversity_lambda"]);
             await Until(() => Enabled(page, "AdminIntegrationsReloadKeep"), "conflict recovery UI");
             handler.Conflict = false; Invoke(Find<Button>(page, "AdminIntegrationsReloadKeep")); await Idle(page);
@@ -334,6 +353,7 @@ internal static class AdminIntegrationsNativeFixture
         finally
         {
             handler.ReadGate?.TrySetResult(); handler.ReadGate = null;
+            handler.WriteGate?.TrySetResult(); handler.WriteGate = null;
             if (page != null) { page.SuspendAdminPage(); await Idle(page); }
             if (outer.Content is FrameworkElement content)
             {
@@ -397,6 +417,7 @@ internal static class AdminIntegrationsNativeFixture
     }
     private static Task Idle(object page) => (Task)page.GetType().GetMethod("WhenSettledAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
     private static Task Refresh(object page) => (Task)page.GetType().GetMethod("RefreshDomainAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
+    private static Task Poll(object page) => (Task)page.GetType().GetMethod("ReadDomainAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [true])!;
     private static object? Field(object value, string name) => value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value);
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => Descendants(root).OfType<T>().First(element => AutomationProperties.GetAutomationId(element) == id);
     private static bool Enabled(DependencyObject root, string id) => Descendants(root).OfType<Button>().Any(element => AutomationProperties.GetAutomationId(element) == id && element.IsEnabled);
