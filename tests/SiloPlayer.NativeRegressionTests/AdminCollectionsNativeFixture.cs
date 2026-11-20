@@ -79,7 +79,7 @@ internal static class AdminCollectionsNativeFixture
         /// <summary>Returns a response to answer a request itself (a failure, a lost reply, a malformed body), or null to let the server answer.</summary>
         public Func<string, string, Task<HttpResponseMessage?>>? Intercept;
         public TaskCompletionSource? Hold;
-        public bool EmptyList, MdbListSearch = true, JobTerminal;
+        public bool EmptyList, MdbListSearch = true, JobTerminal, ServeActiveJob;
         public int JobPolls;
         private int _revision = 1, _created;
         public static Dictionary<string, JsonObject> Fresh() => new()
@@ -122,10 +122,20 @@ internal static class AdminCollectionsNativeFixture
                 item["id"] = id; item["title"] = body["title"]?.ToString() ?? ""; item["source_config"] = new JsonObject { ["mode"] = "mdblist_json", ["url"] = body["url"]?.ToString() ?? "" };
                 Collections[id] = item; _revision++; return Reply(new() { ["collection"] = item.DeepClone() }, HttpStatusCode.Created);
             }
+            if (path == "/api/v2/admin/collections/import/tmdb")
+            {
+                var id = "imp" + ++_created;
+                var item = JsonNode.Parse("""{"collection_type":"tmdb","library_id":"1","library_ids":["1"],"visibility":"visible","item_count":0,"group_id":null,"sort_order":9,"featured":false,"description":"","query_definition":{},"sort_config":{},"source_config":{"mode":"tmdb_preset","preset":"popular","media_type":"movie"}}""")!.AsObject();
+                item["id"] = id; item["title"] = body["title"]?.ToString() ?? "";
+                Collections[id] = item; _revision++; return Reply(new() { ["collection"] = item.DeepClone() }, HttpStatusCode.Created);
+            }
+            // Recent starter-pack jobs: answered only while a step wants a still-running job to be rediscovered.
+            if (path == "/api/v2/admin/jobs" && ServeActiveJob)
+                return Reply(new() { ["items"] = new JsonArray(new JsonObject { ["id"] = "job1", ["state"] = JobTerminal ? "succeeded" : "running", ["terminal"] = JobTerminal }) });
             if (path == "/api/v2/collections/import/mdblist/search")
                 return Reply(JsonNode.Parse("""{"configured":true,"items":[{"id":"12","user_id":"3","user_name":"someone","name":"Top watched fixture","slug":"top","description":"Synthetic list","media_type":"movie","items":100,"likes":9,"url":"https://mdblist.com/lists/someone/top"}],"page":{"has_more":false}}""")!.AsObject());
             if (path == "/api/v2/admin/collections/templates")
-                return Reply(JsonNode.Parse("""{"categories":[{"id":"movies","title":"Movies","templates":[{"id":"t1","title":"Fixture template","description":"Synthetic template","source":"tmdb","tmdb":{"preset":"popular","media_type":"movie"},"default_limit":40,"default_sync_schedule":"0 3 * * *"}]}]}""")!.AsObject());
+                return Reply(JsonNode.Parse("""{"categories":[{"id":"movies","title":"Movies","templates":[{"id":"t1","title":"Fixture template","description":"Synthetic template","source":"tmdb","poster_path":"/images/collection-templates/fixture.jpg","tmdb":{"preset":"popular","media_type":"movie"},"default_limit":40,"default_sync_schedule":"0 3 * * *"}]}]}""")!.AsObject());
             if (path == "/api/v2/admin/collections/template-bundles")
                 return Reply(JsonNode.Parse("""{"bundles":[{"id":"pack1","title":"Fixture pack","templates":[{"id":"t1","title":"Fixture template"}]}]}""")!.AsObject());
             if (path.StartsWith("/api/v2/admin/collections/template-bundles/"))
@@ -587,6 +597,150 @@ internal static class AdminCollectionsNativeFixture
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(800, 600)); await Task.Delay(150);
                 await CaptureAsync(shell, "admin-collections-list-800.png");
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            });
+
+            // ── Second review (November 20): starter-job observation, create and save paths ─
+            async Task OpenAsync(AdminRouteRequest request, string readyId)
+            {
+                var previous = page;
+                Check(AdminShellPage.Open(request), "editor descendant opens: " + request.Href);
+                await Until(() => inner.Content is AdminCollectionsPage p && p != previous && Find<TextBox>(p, readyId) != null, "editor " + readyId);
+                page = Current();
+            }
+            async Task BackToListAsync()
+            {
+                var previous = page;
+                await Click(Find<Button>(page, "CollectionEditorBack"));
+                await Until(() => inner.Content is AdminCollectionsPage p && p != previous && Find<Button>(p, "CollectionsNew") != null, "back to list");
+                page = Current();
+            }
+            await Step("starter job: a failed read and the bounded cap end observation, Refresh rediscovers it", async () =>
+            {
+                server.JobTerminal = false; server.JobPolls = 0; server.ServeActiveJob = false;
+                await Click(Find<Button>(page, "CollectionsStarterPacks")); await Until(() => Dialog(page) != null, "starter pack dialog");
+                var dialog = Dialog(page)!; await Until(() => Find<CheckBox>(dialog, "CollectionPackLibrary_1") is { IsLoaded: true }, "pack library loaded"); { var pack = Find<CheckBox>(dialog, "CollectionPackLibrary_1")!; if (pack.IsChecked != true) Toggle(pack); }
+                await Click(Find<Button>(dialog, "CollectionPackPreview")); await Until(() => dialog.IsPrimaryButtonEnabled, "preview ready");
+                // The next poll's read fails.
+                server.Intercept = (method, target) => Task.FromResult<HttpResponseMessage?>(method == "GET" && target == "/api/v2/admin/collection-jobs/job1" ? Server.Plain(new() { ["status"] = 500 }, HttpStatusCode.InternalServerError) : null);
+                await Click(Tree(dialog).OfType<Button>().First(b => b.Content?.ToString() == "Add starter pack"));
+                await Until(() => Dialog(page) == null && (page.Controller.StarterJobId == "job1" || Texts(page).Any(t => t.Contains("not queued again"))), "job accepted");
+                await Until(() => page.Controller.StarterJobId == null, "a failed poll ends the observation instead of leaving the id behind", 9000);
+                var timer = (DispatcherTimer)Field(page, "_jobTimer")!;
+                Check(!timer.IsEnabled, "no poll timer runs after a failed read");
+                Check(Texts(page).Any(t => t.Contains("The starter pack was not queued again")), "a failed poll says the pack was not queued again");
+                // Refresh rediscovers the still-running job and polls it again.
+                server.Intercept = null; server.ServeActiveJob = true; server.JobPolls = 0;
+                await Click(Find<Button>(page, "CollectionsRefresh"));
+                await Until(() => page.Controller.StarterJobId == "job1", "Refresh rediscovers the running job");
+                await Until(() => server.JobPolls >= 1, "the rediscovered job is polled again", 8000);
+                // The 120-read cap ends observation the same way.
+                while (page.Controller.StarterJobReads < 119) page.Controller.CountStarterJobRead();
+                await Until(() => page.Controller.StarterJobId == null, "the read cap ends the observation instead of leaving the id behind", 9000);
+                Check(!timer.IsEnabled, "no poll timer runs after the cap");
+                Check(Texts(page).Any(t => t.Contains("still running")), "the cap says the pack is still running");
+                server.JobPolls = 0;
+                await Click(Find<Button>(page, "CollectionsRefresh"));
+                await Until(() => page.Controller.StarterJobId == "job1", "Refresh rediscovers the job after the cap");
+                await Until(() => server.JobPolls >= 1, "the job after the cap is polled again", 8000);
+                server.JobTerminal = true;
+                await Until(() => page.Controller.StarterJobId == null, "the finished job is observed", 9000);
+                server.ServeActiveJob = false;
+                await Until(() => Find<Button>(page, "CollectionEdit_c2") != null, "list is back");
+            });
+            await Step("template poster travels with the import", async () =>
+            {
+                await Click(Find<Button>(page, "CollectionsNew")); await Until(() => Dialog(page) != null, "new picker");
+                await Click(Find<Button>(Dialog(page)!, "CollectionsTemplates"));
+                await Until(() => Dialog(page) != null && Find<Button>(Dialog(page)!, "CollectionTemplate_t1") != null, "template catalog dialog", 12000);
+                await Click(Find<Button>(Dialog(page)!, "CollectionTemplate_t1"));
+                await Until(() => Dialog(page) == null && Find<TextBox>(page, "CollectionName") != null, "template seeds a real editor");
+                Check(page.Controller.Draft!["poster_url"]?.ToString() == "/images/collection-templates/fixture.jpg", "the template's poster is carried into the draft");
+                var library = Find<CheckBox>(page, "CollectionLibrary_1")!; if (library.IsChecked != true) Toggle(library);
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => server.Sent("POST", "/api/v2/admin/collections/import/tmdb").Any(), "template import posted");
+                var import = JsonNode.Parse(server.Sent("POST", "/api/v2/admin/collections/import/tmdb").Last().Body)!;
+                Check(import["poster_url"]?.ToString() == "/images/collection-templates/fixture.jpg", "the template import sends the template's poster as poster_url");
+                await Until(() => page.Controller.Editor?.Value["id"]?.ToString().StartsWith("imp") == true, "template import saved");
+                await BackToListAsync();
+            });
+            await Step("manual title add goes after the last position", async () =>
+            {
+                await OpenAsync(AdminRouteRequest.CollectionNew().WithQuery("libraryId", "1").WithQuery("type", "manual").WithQuery("view", "list"), "CollectionName");
+                await SetText(Find<TextBox>(page, "CollectionName")!, "Positioned fixture");
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => page.Controller.Editor?.Value["id"]?.ToString().StartsWith("new") == true && Find<Button>(page, "CollectionAddTitles") != null, "manual collection created");
+                var id = page.Controller.Editor!.Value["id"]!.ToString();
+                await Click(Find<Button>(page, "CollectionAddTitles")); await Until(() => Dialog(page) != null, "title picker");
+                var picker = Dialog(page)!; await SetText(Find<TextBox>(picker, "CollectionTitleSearch")!, "Fixture");
+                await Click(Find<Button>(picker, "CollectionTitlesSearchButton")); await Until(() => Find<CheckBox>(picker, "CollectionTitlePick_m1") != null, "title result");
+                Toggle(Find<CheckBox>(picker, "CollectionTitlePick_m1")!);
+                // The collection already holds m1 at position 0 (item_count 0 in this fixture): the new title goes after it.
+                await Click(Tree(picker).OfType<Button>().First(b => b.Content?.ToString() == "Add titles"));
+                await Until(() => server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Any(), "title added");
+                var added = JsonNode.Parse(server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Last().Body)!;
+                Check(added["position"]!.GetValue<int>() == 1, "a new title is placed after the last existing position, not at the item count");
+                await Until(() => Dialog(page) == null, "picker closed");
+                await BackToListAsync();
+            });
+            await Step("rejected create shows the reason; the list check reads every library", async () =>
+            {
+                await OpenAsync(AdminRouteRequest.CollectionNew().WithQuery("libraryId", "1").WithQuery("type", "manual").WithQuery("view", "list"), "CollectionName");
+                await SetText(Find<TextBox>(page, "CollectionName")!, "Lost create");
+                server.Intercept = (method, target) => Task.FromResult<HttpResponseMessage?>(method == "POST" && target == "/api/v2/admin/collections"
+                    ? Server.Plain(new() { ["type"] = "https://fixture.invalid/docs/api/v2/problems/validation", ["title"] = "Invalid", ["status"] = 422, ["detail"] = "A collection named Lost create already exists." }, HttpStatusCode.UnprocessableEntity) : null);
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => Texts(page).Any(t => t.Contains("A collection named Lost create already exists.")), "the server's reason is shown");
+                Check(Find<Button>(page, "CollectionEditorSave")!.IsEnabled && !page.Controller.OutcomeUnknown, "a rejected create is not an unknown outcome");
+                // The reply to a create is lost while the page filters by library 1; the collection went to library 2 only.
+                server.Intercept = (method, target) =>
+                {
+                    if (method == "POST" && target == "/api/v2/admin/collections")
+                    {
+                        server.Collections["lost1"] = JsonNode.Parse("""{"id":"lost1","title":"Lost create","collection_type":"manual","library_id":"2","library_ids":["2"],"visibility":"visible","item_count":0,"group_id":null,"sort_order":9,"featured":false,"description":"","query_definition":{},"sort_config":{},"source_config":{}}""")!.AsObject();
+                        throw new HttpRequestException("Synthetic lost reply");
+                    }
+                    if (method == "GET" && target.StartsWith("/api/v2/admin/collections?library_id=1", StringComparison.Ordinal))
+                        return Task.FromResult<HttpResponseMessage?>(server.Reply(new() { ["items"] = new JsonArray(server.Collections.Values.Where(v => v["library_id"]?.ToString() == "1").Select(v => v.DeepClone()).ToArray()), ["groups"] = new JsonArray(), ["page"] = new JsonObject { ["has_more"] = false } }));
+                    return Task.FromResult<HttpResponseMessage?>(null);
+                };
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => Find<Button>(page, "CollectionEditorCheckList") != null, "unknown-outcome recovery");
+                await Click(Find<Button>(page, "CollectionEditorCheckList"));
+                await Until(() => Find<Button>(page, "CollectionEditorSave")?.IsEnabled == true, "list re-read re-enables Save");
+                Check(Texts(Current()).Any(t => t.Contains("already exists in the list")), "a create that went to another library is found by the list check, so it is not created twice");
+                var lists = server.Requests.Where(r => r == "GET /api/v2/admin/collections" || r.StartsWith("GET /api/v2/admin/collections?", StringComparison.Ordinal)).ToArray();
+                Check(lists.Length > 0 && lists[^1] == "GET /api/v2/admin/collections", "the list check reads the unfiltered list");
+                server.Intercept = null; server.Collections.Remove("lost1");
+                page.Controller.Discard(); await BackToListAsync();
+            });
+            await Step("hide after import: a failure keeps the create and warns; links are cleaned", async () =>
+            {
+                await OpenAsync(AdminRouteRequest.CollectionNew().WithQuery("libraryId", "1").WithQuery("type", "synced").WithQuery("source", "mdblist"), "CollectionListUrl");
+                await SetText(Find<TextBox>(page, "CollectionListUrl")!, " https://mdblist.com/lists/clean/me/json/?x=1#y ");
+                await SetText(Find<TextBox>(page, "CollectionName")!, "Hidden import");
+                Find<ToggleSwitch>(page, "CollectionEditorVisibility")!.IsOn = false;
+                await Until(() => page.Controller.Draft!["visibility"]?.ToString() == "hidden", "the draft is hidden");
+                var imports = server.Requests.Count(r => r == "POST /api/v2/admin/collections/import/mdblist");
+                server.Intercept = (method, target) => Task.FromResult<HttpResponseMessage?>(method == "PATCH" && target.StartsWith("/api/v2/admin/collections/imp", StringComparison.Ordinal) ? Server.Plain(new() { ["status"] = 500 }, HttpStatusCode.InternalServerError) : null);
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => Texts(page).Any(t => t.Contains("still shows on Collections tabs")), "the failed hide is a warning that it still shows");
+                Check(server.Requests.Count(r => r == "POST /api/v2/admin/collections/import/mdblist") == imports + 1, "the import was sent once");
+                var body = JsonNode.Parse(server.Sent("POST", "/api/v2/admin/collections/import/mdblist").Last().Body)!;
+                Check(body["url"]?.ToString() == "https://mdblist.com/lists/clean/me/json", "a new list's link is sent without spaces, query, fragment or trailing slash");
+                Check(page.Controller.CreatedId != null && page.Controller.Editor != null && !page.Controller.OutcomeUnknown, "the created list is loaded by its identity");
+                Check(server.Collections.Values.Any(c => c["title"]?.ToString() == "Hidden import" && c["visibility"]?.ToString() == "visible"), "the list exists and still shows");
+                server.Intercept = null;
+                await BackToListAsync();
+                // A saved list's pasted link is cleaned the same way.
+                await OpenAsync(AdminRouteRequest.CollectionEditor("c3").WithQuery("libraryId", "1"), "CollectionListUrl");
+                await SetText(Find<TextBox>(page, "CollectionListUrl")!, "  https://mdblist.com/lists/a/other/json/?sort=rank#top  ");
+                var patches = server.Sent("PATCH", "/api/v2/admin/collections/c3").Count();
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => server.Sent("PATCH", "/api/v2/admin/collections/c3").Count() > patches, "saved list patched");
+                var patch = JsonNode.Parse(server.Sent("PATCH", "/api/v2/admin/collections/c3").Last().Body)!;
+                Check(patch["source_url"]?.ToString() == "https://mdblist.com/lists/a/other/json" && patch["source_config"]!["url"]!.ToString() == "https://mdblist.com/lists/a/other/json", "a saved list's pasted link is stored without spaces, query, fragment or trailing slash");
+                await Until(() => Texts(page).Any(t => t.StartsWith("Collection saved")), "saved");
+                await BackToListAsync();
             });
 
             // ── Authority retirement removes private data ───────────────────────

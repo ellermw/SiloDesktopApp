@@ -151,6 +151,46 @@ public sealed partial class AdminCollectionsApi(SiloApiClient client)
         (await ReadAsync(lease, Root + "/" + Id(id) + "/items?limit=" + PageSize + (cursor == null ? "" : "&cursor=" + Uri.EscapeDataString(cursor))).ConfigureAwait(false)).Value;
     public Task<AdminCollectionSnapshot> MembershipAsync(MonitorAuthorityLease lease, string id, string item, bool add, int position = 0) =>
         WriteAsync(lease, add ? HttpMethod.Put : HttpMethod.Delete, Root + "/" + Id(id) + "/items/" + Id(item), add ? new JsonObject { ["position"] = position } : null);
+    /// <summary>
+    /// Where a title added to a saved manual collection goes (official ManualContentsPanel): after the last one when the whole list was read in one page,
+    /// otherwise the larger of the collection's item count and what was read. The server stores the position it is given, so a count that ties with an
+    /// existing position (after a removal left a gap) would put the new title before the last one.
+    /// </summary>
+    public static int NextMemberPosition(JsonObject itemsPage, int itemCount)
+    {
+        var items = itemsPage["items"] as JsonArray ?? [];
+        var fullyLoaded = itemsPage["page"]?["has_more"] is JsonValue more && more.TryGetValue<bool>(out var hasMore) && !hasMore;
+        var positions = new List<int>();
+        foreach (var node in items)
+        {
+            if (node?["position"] is not JsonValue value || !value.TryGetValue<int>(out var position) || position < 0) { fullyLoaded = false; continue; }
+            positions.Add(position);
+        }
+        return fullyLoaded && positions.Count > 0 ? positions.Max() + 1 : Math.Max(itemCount, items.Count);
+    }
+    /// <summary>
+    /// The list link as it is stored and sent (official cleanMDBListLink and tmdbListSource): an MDBList link loses its surrounding spaces, ?query, #fragment and trailing
+    /// slash, a /json ending stays; a TMDB list link or bare id becomes the list's canonical page, or is only trimmed when it names no list.
+    /// </summary>
+    public static string CleanListLink(string source, string raw)
+    {
+        var text = raw.Trim();
+        if (source == "tmdb_list") return TmdbListId(text) is { } id ? "https://www.themoviedb.org/list/" + id : text;
+        var fragment = text.IndexOf('#'); if (fragment >= 0) text = text[..fragment];
+        var query = text.IndexOf('?'); if (query >= 0) text = text[..query];
+        return text.TrimEnd('/');
+    }
+    /// <summary>The list id a TMDB list page URL, the same URL without a scheme, or a bare numeric id names (official parseTMDBListID).</summary>
+    private static long? TmdbListId(string text)
+    {
+        static long? Digits(string value) => value.Length > 0 && value.All(c => c is >= '0' and <= '9') && long.TryParse(value, out var id) && id > 0 && id <= 9007199254740991 ? id : null;
+        if (text.Length == 0) return null;
+        if (Digits(text) is { } bare) return bare;
+        if (!Uri.TryCreate(text.Contains("://") ? text : "https://" + text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return null;
+        if (uri.IdnHost.TrimEnd('.').ToLowerInvariant() is not ("themoviedb.org" or "www.themoviedb.org")) return null;
+        var parts = uri.AbsolutePath.Trim('/').Split('/');
+        return parts.Length == 2 && parts[0] == "list" ? Digits(parts[1].Split('-')[0]) : null;
+    }
     public const int PreviewLimit = 24;
     /// <summary>The admin preview answers { items: [{ content_id, title, type, poster_url? }], page?, total }. Anything else is rejected, never shown as an empty match.</summary>
     public static AdminCollectionPreview ParsePreview(JsonObject body)

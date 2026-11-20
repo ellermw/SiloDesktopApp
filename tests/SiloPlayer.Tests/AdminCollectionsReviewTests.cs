@@ -199,4 +199,157 @@ public sealed class AdminCollectionsReviewTests
         await Assert.ThrowsAsync<ArgumentException>(() => api.MdbListSearchAsync(owner, "  ", default));
         Assert.Throws<InvalidDataException>(() => AdminCollectionsApi.ParseMdbListSearch(JsonNode.Parse("{\"lists\":[]}")!.AsObject()));
     }
+
+    // ── Second review (November 20) ────────────────────────────────────────
+
+    // 2 - A job id belongs to the authority that queued it. An answer that arrives after that authority retired or was replaced stores nothing.
+    [Fact]
+    public async Task StarterJobIsNotStoredForARetiredOrReplacedAuthority()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var controller = new AdminCollectionsController(new(kit.Client), new(kit.Client), authority); controller.Open();
+        var queuedUnder = controller.Owner!;
+        Assert.True(controller.BeginStarterJob(queuedUnder, "job-a")); Assert.Equal("job-a", controller.StarterJobId);
+        controller.EndStarterJob();
+        controller.Open();
+        Assert.False(controller.BeginStarterJob(queuedUnder, "job-b"));
+        Assert.Null(controller.StarterJobId);
+        var current = controller.Owner!;
+        kit.SetRole("user");
+        for (var i = 0; i < 100 && current.IsCurrent; i++) await Task.Delay(10);
+        Assert.False(controller.BeginStarterJob(current, "job-c"));
+        Assert.Null(controller.StarterJobId); Assert.Equal(0, controller.StarterJobReads);
+        Assert.False(controller.BeginStarterJob(null, "job-d")); Assert.Null(controller.StarterJobId);
+    }
+
+    // 3 - A title added after a removal must go after the last one. The item count ties with the last position once a position was removed.
+    [Theory]
+    [InlineData("{\"items\":[{\"position\":0},{\"position\":2},{\"position\":3}],\"page\":{\"has_more\":false}}", 3, 4)]
+    [InlineData("{\"items\":[{\"position\":0},{\"position\":1}],\"page\":{\"has_more\":false}}", 2, 2)]
+    [InlineData("{\"items\":[],\"page\":{\"has_more\":false}}", 0, 0)]
+    [InlineData("{\"items\":[],\"page\":{\"has_more\":false}}", 7, 7)]
+    // Not fully read: the larger of the collection's count and what was read.
+    [InlineData("{\"items\":[{\"position\":0},{\"position\":2}],\"page\":{\"has_more\":true}}", 90, 90)]
+    [InlineData("{\"items\":[{\"position\":0},{\"position\":2}],\"page\":{\"has_more\":true}}", 1, 2)]
+    // A title with no usable position means the list was not read completely.
+    [InlineData("{\"items\":[{\"position\":0},{\"title\":\"x\"}],\"page\":{\"has_more\":false}}", 5, 5)]
+    [InlineData("{\"items\":[{\"position\":0}]}", 5, 5)]
+    public void NewMemberPositionGoesAfterTheLastOne(string page, int itemCount, int expected) =>
+        Assert.Equal(expected, AdminCollectionsApi.NextMemberPosition(JsonNode.Parse(page)!.AsObject(), itemCount));
+
+    // 4 - A rejected request says why. A server fault and an empty problem stay generic.
+    [Fact]
+    public void RejectedRequestShowsTheServersReasonAndServerFaultsStayGeneric()
+    {
+        var duplicate = new ApiException("validation", "A collection named Movies already exists.", 422) { ProblemType = "validation", ProblemDetail = "A collection named Movies already exists." };
+        Assert.Equal("A collection named Movies already exists.", AdminCollectionsController.Message(duplicate));
+        Assert.Equal("The cron schedule is not valid.", AdminCollectionsController.Message(new ApiException("bad", "The cron schedule is not valid.", 400) { ProblemDetail = "The cron schedule is not valid." }));
+        Assert.Equal("The server could not complete the collection request.", AdminCollectionsController.Message(new ApiException("unknown", "HTTP 400", 400)));
+        Assert.Equal("The server could not complete the collection request.", AdminCollectionsController.Message(new ApiException("boom", "database exploded at 10.0.0.5", 500) { ProblemDetail = "database exploded at 10.0.0.5" }));
+        Assert.StartsWith("It changed since you opened this.", AdminCollectionsController.Message(new ApiException("x", "precondition", 412) { ProblemDetail = "precondition" }));
+        Assert.StartsWith("Administrator access is required.", AdminCollectionsController.Message(new ApiException("x", "nope", 403) { ProblemDetail = "nope" }));
+        var sentence = string.Join(" ", Enumerable.Repeat("again", 200));
+        var long422 = AdminCollectionsController.Message(new ApiException("x", sentence, 422) { ProblemDetail = sentence });
+        Assert.True(long422.Length <= 301); Assert.EndsWith("…", long422);
+    }
+
+    [Fact]
+    public async Task ValidationRejectionOfACreateReachesTheEditorAndIsNotAnUnknownOutcome()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var controller = new AdminCollectionsController(new(kit.Client), new(kit.Client), authority); controller.Open();
+        await controller.EditAsync(null, "manual", "1"); controller.Draft!["title"] = "Movies";
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("{\"type\":\"https://x.invalid/docs/api/v2/problems/validation\",\"title\":\"Invalid\",\"status\":422,\"detail\":\"A collection named Movies already exists.\"}", HttpStatusCode.UnprocessableEntity));
+        var rejected = await Assert.ThrowsAsync<ApiException>(() => controller.SaveAsync());
+        Assert.Equal("A collection named Movies already exists.", AdminCollectionsController.Message(rejected));
+        Assert.Equal("A collection named Movies already exists.", controller.Error);
+        Assert.False(controller.OutcomeUnknown);
+    }
+
+    private static Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> ImportReplies(bool hideFails) => (r, _) =>
+    {
+        var path = r.RequestUri!.AbsolutePath;
+        if (r.Method == HttpMethod.Post && path.EndsWith("/import/mdblist")) return Task.FromResult(Tagged("{\"collection\":{\"id\":\"imp1\",\"title\":\"Imported\"}}"));
+        if (r.Method == HttpMethod.Patch) return Task.FromResult(hideFails ? AdminMonitorKit.Json("{\"status\":500}", HttpStatusCode.InternalServerError) : Tagged("{\"id\":\"imp1\",\"title\":\"Imported\",\"visibility\":\"hidden\"}", "\"r2\""));
+        if (path == "/api/v2/admin/collections/imp1") return Task.FromResult(Tagged("{\"id\":\"imp1\",\"title\":\"Imported\",\"library_ids\":[\"1\"],\"collection_type\":\"mdblist\",\"visibility\":\"visible\",\"source_config\":{\"mode\":\"mdblist_json\",\"url\":\"https://mdblist.com/lists/a/b/json\"}}"));
+        return Task.FromResult(ListReply(r));
+    };
+
+    private static async Task<AdminCollectionsController> OpenImportDraftAsync(AdminMonitorKit kit, AdminMonitorAuthority authority)
+    {
+        var controller = new AdminCollectionsController(new(kit.Client), new(kit.Client), authority); controller.Open();
+        await controller.LoadAsync(null, false);
+        await controller.EditAsync(null, "synced", "1");
+        controller.Draft!["title"] = "Imported"; controller.Draft["source_config"] = new JsonObject { ["mode"] = "mdblist_json", ["url"] = "https://mdblist.com/lists/a/b/json" };
+        return controller;
+    }
+
+    // 5 - The import exists whether or not hiding it worked. A failed hide is a warning that it still shows, never a lost create.
+    [Fact]
+    public async Task FailedHideAfterImportKeepsTheCreateAndWarnsThatItStillShows()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = ImportReplies(hideFails: true);
+        using var controller = await OpenImportDraftAsync(kit, authority);
+        controller.Draft!["visibility"] = "hidden";
+        var id = await controller.SaveAsync();
+        Assert.Equal("imp1", id); Assert.Equal("imp1", controller.CreatedId);
+        Assert.Contains("still shows on Collections tabs", controller.SaveWarning);
+        Assert.Equal("imp1", controller.Editor!.Value["id"]!.ToString());
+        Assert.False(controller.OutcomeUnknown);
+        Assert.Single(kit.Http.Requests.Where(r => r.StartsWith("POST ")));
+        Assert.Single(kit.Http.Requests.Where(r => r.StartsWith("PATCH ")));
+    }
+
+    [Fact]
+    public async Task SuccessfulHideAfterImportLeavesNoWarning()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = ImportReplies(hideFails: false);
+        using var controller = await OpenImportDraftAsync(kit, authority);
+        controller.Draft!["visibility"] = "hidden";
+        await controller.SaveAsync();
+        Assert.Null(controller.SaveWarning); Assert.Contains(kit.Http.Requests, r => r.StartsWith("PATCH "));
+    }
+
+    // 6 - A list link is stored the way the official editor sends it.
+    [Theory]
+    [InlineData("mdblist", "  https://mdblist.com/lists/u/top?sort=rank#x  ", "https://mdblist.com/lists/u/top")]
+    [InlineData("mdblist", "https://mdblist.com/lists/u/top/json/", "https://mdblist.com/lists/u/top/json")]
+    [InlineData("mdblist", "https://mdblist.com/lists/u/top///", "https://mdblist.com/lists/u/top")]
+    [InlineData("mdblist", "https://mdblist.com/lists/u/top/json", "https://mdblist.com/lists/u/top/json")]
+    [InlineData("mdblist", "", "")]
+    [InlineData("tmdb_list", "  https://www.themoviedb.org/list/8649937-marvel?language=en#top ", "https://www.themoviedb.org/list/8649937")]
+    [InlineData("tmdb_list", "themoviedb.org/list/310/", "https://www.themoviedb.org/list/310")]
+    [InlineData("tmdb_list", " 310 ", "https://www.themoviedb.org/list/310")]
+    [InlineData("tmdb_list", " https://example.com/list/310 ", "https://example.com/list/310")]
+    [InlineData("tmdb_list", "0", "0")]
+    public void ListLinksAreCleanedLikeTheOfficialEditor(string source, string typed, string stored) =>
+        Assert.Equal(stored, AdminCollectionsApi.CleanListLink(source, typed));
+
+    // 7 - A template's poster goes with the import unless a poster is staged; no other kind of save carries it.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task TemplatePosterIsSentWithTheImportUnlessAPosterIsStaged(bool posterStaged, bool sent)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = ImportReplies(hideFails: false);
+        using var controller = await OpenImportDraftAsync(kit, authority);
+        controller.Draft!["poster_url"] = " /images/collection-templates/mdblist_imdb_top.jpg ";
+        await controller.SaveAsync(posterStaged);
+        var import = JsonNode.Parse(kit.Http.Bodies.First(b => b.Length > 0))!;
+        Assert.Equal(sent ? "/images/collection-templates/mdblist_imdb_top.jpg" : null, import["poster_url"]?.ToString());
+    }
+
+    [Fact]
+    public async Task PosterUrlNeverRidesOnAManualCreateOrASave()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var controller = new AdminCollectionsController(new(kit.Client), new(kit.Client), authority); controller.Open();
+        await controller.EditAsync(null, "manual", "1"); controller.Draft!["title"] = "Manual"; controller.Draft["poster_url"] = "/images/x.jpg";
+        kit.Http.Respond = (_, _) => Task.FromResult(Tagged("{\"id\":\"m1\",\"title\":\"Manual\",\"library_ids\":[\"1\"],\"collection_type\":\"manual\"}"));
+        await controller.SaveAsync();
+        Assert.DoesNotContain("poster_url", kit.Http.Bodies.First(b => b.Length > 0));
+    }
 }

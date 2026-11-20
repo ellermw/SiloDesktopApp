@@ -107,7 +107,8 @@ public sealed partial class AdminCollectionsPage
     private async Task CheckListAfterUnknownAsync()
     {
         var owner = Controller.Owner; var title = Controller.Draft?["title"]?.ToString()?.Trim() ?? "";
-        await Controller.LoadAsync(_library, false);
+        // The lost create may sit in any library, so the whole list answers it, whatever library filter the page shows.
+        await Controller.LoadAsync(null, false);
         if (!Current(owner)) return;
         var match = (Controller.List?.Items ?? []).FirstOrDefault(c => string.Equals(c.Title, title, StringComparison.CurrentCultureIgnoreCase));
         RenderEditor();
@@ -123,7 +124,7 @@ public sealed partial class AdminCollectionsPage
         try
         {
             IsHitTestVisible = false;
-            var id = await Controller.SaveAsync();
+            var id = await Controller.SaveAsync(posterStaged: _artwork.ContainsKey("poster"));
             if (!Current(owner)) return;
             // Replace /new immediately, even if a later membership or artwork operation fails.
             _route = _route with { Segments = [id, "edit"] }; AdminShellPage.TryReplace(this, _route);
@@ -139,16 +140,16 @@ public sealed partial class AdminCollectionsPage
                 _artwork.Remove(slot);
             }
             await Controller.EditAsync(id);
-            if (Current(owner)) { RenderEditor(); Notice("Collection saved"); }
+            if (Current(owner)) { RenderEditor(); Notice(Controller.SaveWarning is { } warning ? "Collection saved. " + warning : "Collection saved"); }
         }
         catch (ApiException error) when (error.StatusCode == 412)
         { if (Current(owner)) { Notice(AdminCollectionsController.Message(error)); await ReviewConflictAsync(); } }
         catch (Exception error)
         {
             if (!Current(owner)) return;
-            Notice(Controller.CreatedId != null && Controller.Editor == null
+            Notice((Controller.CreatedId != null && Controller.Editor == null
                 ? "The collection was created, but its saved copy could not be read. Press Save to load it; it will not be created again."
-                : AdminCollectionsController.Message(error));
+                : AdminCollectionsController.Message(error)) + (Controller.SaveWarning is { } warning ? " " + warning : ""));
             if (Controller.OutcomeUnknown) RenderEditor();
         }
         finally { IsHitTestVisible = true; }
@@ -295,7 +296,8 @@ public sealed partial class AdminCollectionsPage
         {
             if (source == "mdblist" && id == null) RenderMdbListSearch(draft, config);
             var url = config["url"]?.ToString() ?? draft["source_url"]?.ToString() ?? "";
-            Input(_contents, source == "mdblist" ? "MDBList URL" : "TMDB list URL or ID", "CollectionListUrl", url, value => { config["url"] = value; draft["source_url"] = value; config["mode"] = source == "mdblist" ? "mdblist_json" : "tmdb_list"; });
+            // What is typed is cleaned the way the official editor sends it, whether the list is new or saved; the box keeps the text as typed.
+            Input(_contents, source == "mdblist" ? "MDBList URL" : "TMDB list URL or ID", "CollectionListUrl", url, value => { var link = AdminCollectionsApi.CleanListLink(source, value); config["url"] = link; draft["source_url"] = link; config["mode"] = source == "mdblist" ? "mdblist_json" : "tmdb_list"; });
         }
         else if (source == "tmdb")
         {

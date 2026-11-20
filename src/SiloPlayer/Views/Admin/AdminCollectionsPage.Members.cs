@@ -126,7 +126,8 @@ public sealed partial class AdminCollectionsPage
             {
                 // Individual natural-membership changes, never replace the full set. Stop on the first uncertain result.
                 var canonical = await _api.GetAsync(lease, collectionId);
-                var position = canonical.Value["item_count"]?.GetValue<int>() ?? 0;
+                // After the last title, not at the item count: a removed title leaves a gap and the count would tie with the last position.
+                var position = AdminCollectionsApi.NextMemberPosition(await _api.ItemsAsync(lease, collectionId), canonical.Value["item_count"]?.GetValue<int>() ?? 0);
                 foreach (var (id, _) in selected) await _api.MembershipAsync(lease, collectionId, id, true, position++);
             }, false);
         }

@@ -29,9 +29,22 @@ public sealed class AdminCollectionsController : IDisposable
     /// <summary>The starter-pack job this page observes. It belongs to the current authority and is dropped with it.</summary>
     public string? StarterJobId { get; private set; }
     public int StarterJobReads { get; private set; }
-    public void BeginStarterJob(string id) { lock (_stateGate) { StarterJobId = id; StarterJobReads = 0; } }
+    /// <summary>Remembers a job only for the authority that queued it. False when that authority has retired or been replaced since: the id then belongs to nobody and must not block deletes or starter packs.</summary>
+    public bool BeginStarterJob(MonitorAuthorityLease? owner, string id)
+    {
+        var current = Owner;
+        lock (_stateGate)
+        {
+            // Retirement flips IsCurrent before it clears this state, so a lease that is current here is cleared with the page, never stranded.
+            if (owner is not { IsCurrent: true } || !ReferenceEquals(owner, current)) return false;
+            StarterJobId = id; StarterJobReads = 0; return true;
+        }
+    }
+    public bool BeginStarterJob(string id) => BeginStarterJob(Owner, id);
     public int CountStarterJobRead() { lock (_stateGate) return ++StarterJobReads; }
     public void EndStarterJob() { lock (_stateGate) { StarterJobId = null; StarterJobReads = 0; } }
+    /// <summary>A follow-up step of a confirmed save that failed (for example hiding an imported list). The collection exists; the page says what still holds.</summary>
+    public string? SaveWarning { get; private set; }
     public bool OutcomeUnknown { get; private set; }
     public bool Dirty => Owner?.IsCurrent == true && Draft != null && Draft.ToJsonString() != _savedDraft;
     public bool Busy { get; private set; }
@@ -44,7 +57,7 @@ public sealed class AdminCollectionsController : IDisposable
         _api = api; _libraries = libraries; Lifetime = new(authority);
         Lifetime.Retired += OnRetired;
     }
-    private void Clear() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; List = null; Board = null; Libraries = []; Capabilities = null; Editor = null; Draft = null; _savedDraft = null; _createdId = null; StarterJobId = null; StarterJobReads = 0; OutcomeUnknown = false; Error = null; Loading = false; } }
+    private void Clear() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; List = null; Board = null; Libraries = []; Capabilities = null; Editor = null; Draft = null; _savedDraft = null; _createdId = null; StarterJobId = null; StarterJobReads = 0; OutcomeUnknown = false; SaveWarning = null; Error = null; Loading = false; } }
     private (int Generation, CancellationTokenSource Reads) BeginRead(MonitorAuthorityLease owner)
     {
         lock (_stateGate)
@@ -123,7 +136,7 @@ public sealed class AdminCollectionsController : IDisposable
     /// <summary>Reload the open editor: the saved collection, or the confirmed create whose canonical read failed, or a fresh draft.</summary>
     public Task ReloadEditorAsync(string kind = "manual", string? library = null, string? importSource = null) =>
         EditAsync(Editor == null ? null : AdminCollectionsApi.CanonicalId(Editor.Value["id"]), kind, library, importSource);
-    public void CloseEditor() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; Editor = null; Draft = null; _savedDraft = null; _createdId = null; } }
+    public void CloseEditor() { lock (_stateGate) { ++_readGeneration; _reads?.Cancel(); _reads = null; Editor = null; Draft = null; _savedDraft = null; _createdId = null; SaveWarning = null; } }
     public JsonObject? StoredDefaultSort
     {
         get
@@ -208,19 +221,36 @@ public sealed class AdminCollectionsController : IDisposable
         ApiException { StatusCode: 412 } => "It changed since you opened this. Reload and review before trying again.",
         ApiException { StatusCode: 409 } => "The collection changed or is used by a section. Reload and review it.",
         ApiException { StatusCode: 401 or 403 } => "Administrator access is required. Sign in again.",
+        // A rejected request (duplicate name, bad schedule, bad link, bad rule) says why, as the official page does. A server fault stays generic.
+        ApiException { StatusCode: >= 400 and < 500 } rejected when RejectionText(rejected) is { } reason => reason,
         ApiException => "The server could not complete the collection request.",
         HttpRequestException or TaskCanceledException => "The outcome is unknown. Reload and review before making another change. The request was not replayed.",
         AdminCollectionChangedException or InvalidDataException or ArgumentException or InvalidOperationException => error.Message,
         _ => "The collection request failed. Reload and review before trying again."
     };
-    public async Task<string> SaveAsync()
+    private const int MaxRejectionText = 300;
+    /// <summary>The server's own sentence for a rejected request, bounded and redacted; null when it said nothing usable.</summary>
+    private static string? RejectionText(ApiException error)
+    {
+        var text = SiloPlayer.Core.Localization.ApiProblemText.Display(error).ReplaceLineEndings(" ").Trim();
+        if (text.Length == 0 || text.StartsWith("HTTP ", StringComparison.Ordinal)) return null;
+        text = SiloPlayer.Core.Services.LocalLog.RedactDiagnosticText(text);
+        return text.Length > MaxRejectionText ? text[..MaxRejectionText].TrimEnd() + "…" : text;
+    }
+    /// <param name="posterStaged">The poster slot replaces or removes a template's poster, so an import does not send it.</param>
+    public async Task<string> SaveAsync(bool posterStaged = false)
     {
         if (OutcomeUnknown) throw new InvalidOperationException("The outcome is unknown. Reload and review before saving again.");
+        // Reloading a confirmed create keeps what its save warned about: the list still shows until that is fixed.
         if (Editor == null && _createdId != null) { await EditAsync(_createdId).ConfigureAwait(false); return _createdId; }
+        lock (_stateGate) SaveWarning = null;
         var draft = Draft ?? throw new InvalidOperationException("Open a collection first.");
         if (string.IsNullOrWhiteSpace(draft["title"]?.GetValue<string>())) throw new ArgumentException("Name it, then create it.");
         if (draft["library_ids"] is not JsonArray { Count: > 0 }) throw new ArgumentException("Pick libraries first.");
         var body = (JsonObject)draft.DeepClone();
+        // A template's poster rides only on an import. Nothing else ever carries it.
+        var posterUrl = body["poster_url"] is JsonValue poster && poster.TryGetValue<string>(out var posterText) && !string.IsNullOrWhiteSpace(posterText) ? posterText.Trim() : null;
+        body.Remove("poster_url");
         if (body["collection_type"]?.GetValue<string>() == "smart")
         {
             var rules = body["query_definition"] as JsonObject ?? throw new ArgumentException("Add at least one rule.");
@@ -242,6 +272,7 @@ public sealed class AdminCollectionsController : IDisposable
                 if (body[key] != null) request[key] = body[key]!.DeepClone();
             foreach (var key in new[] { "url", "preset", "media_type", "time_window", "limit" })
                 if (source[key] != null) request[key] = source[key]!.DeepClone();
+            if (posterUrl != null && !posterStaged) request["poster_url"] = posterUrl;
             return _api.ImportAsync(lease, provider, request);
         }).ConfigureAwait(false);
         var id = AdminCollectionsApi.CanonicalId(imported ? result.Value["collection"]?["id"] : result.Value["id"]);
@@ -254,7 +285,17 @@ public sealed class AdminCollectionsController : IDisposable
         lock (_stateGate) { _createdId = id; }
         if (imported && body["visibility"]?.GetValue<string>() == "hidden")
         {
-            await CommandAsync(async lease => await _api.SaveAsync(lease, await _api.GetAsync(lease, id).ConfigureAwait(false), new() { ["visibility"] = "hidden" }).ConfigureAwait(false)).ConfigureAwait(false);
+            // The import takes no visibility, so hiding is a guarded follow-up. The list exists either way: a failure is a warning that it still shows, never a lost create.
+            var owner = Owner;
+            try
+            {
+                await CommandAsync(async lease => await _api.SaveAsync(lease, await _api.GetAsync(lease, id).ConfigureAwait(false), new() { ["visibility"] = "hidden" }).ConfigureAwait(false)).ConfigureAwait(false);
+            }
+            catch (Exception error) when (owner is { IsCurrent: true } && error is not MonitorAuthorityRetiredException)
+            {
+                // The confirmed collection is read next by its identity and that read answers what the hide did. A later Save only reloads it.
+                lock (_stateGate) { OutcomeUnknown = false; SaveWarning = "It still shows on Collections tabs: " + Message(error); }
+            }
         }
         // Persisted metadata may be normalized. Reload a strong canonical editor; no write is replayed if this read fails.
         await EditAsync(id).ConfigureAwait(false);

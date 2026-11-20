@@ -238,6 +238,8 @@ public sealed partial class AdminCollectionsPage
             draft["collection_type"] = source == "mdblist" ? "mdblist" : "tmdb";
             var config = (chosen[source] as JsonObject)?.DeepClone() as JsonObject ?? new(); config["mode"] = source == "mdblist" ? "mdblist_json" : source == "tmdb_list" ? "tmdb_list" : "tmdb_preset";
             draft["source_config"] = config;
+            // The template's poster is sent with the import unless a poster is staged.
+            if (chosen["poster_path"] is JsonValue poster && poster.TryGetValue<string>(out var posterPath) && !string.IsNullOrWhiteSpace(posterPath)) draft["poster_url"] = posterPath;
             if (chosen["default_limit"] is { } limit) config["limit"] = limit.DeepClone();
             if (chosen["default_sync_schedule"] is { } schedule) draft["sync_schedule"] = schedule.DeepClone();
             _route = _route with { Segments = ["new"] }; AdminShellPage.TryReplace(this, _route); RenderEditor();
@@ -312,8 +314,9 @@ public sealed partial class AdminCollectionsPage
             {
                 if (Signature() != resultSignature || libraries.Count == 0) { resultHost.Children.Add(Text("Preview these choices before adding the pack.")); return; }
                 var job = await Controller.CommandAsync(lease => _api.ApplyBundleAsync(lease, bundle, libraries.ToArray(), false, replace.IsChecked == true, Featured()));
-                Controller.BeginStarterJob(AdminCollectionsApi.CanonicalId(job.Value["id"]) ?? throw new InvalidDataException("The starter pack job was not identified."));
-                accepted = true; args.Cancel = false;
+                // Remembered only for the authority that queued it; a retirement between the answer and here leaves nothing behind to block deletes.
+                accepted = Controller.BeginStarterJob(owner, AdminCollectionsApi.CanonicalId(job.Value["id"]) ?? throw new InvalidDataException("The starter pack job was not identified."));
+                args.Cancel = false;
             }
             catch (Exception error) { if (Current(owner)) { resultHost.Children.Add(Text(AdminCollectionsController.Message(error))); dialog.IsPrimaryButtonEnabled = false; } }
             finally { deferral.Complete(); }
@@ -345,9 +348,20 @@ public sealed partial class AdminCollectionsPage
                 if (Current(owner)) { RenderList(); var result = Stack(); RenderTemplateResult(result, response.Value["template_result"] as JsonObject ?? new()); _surface.Children.Add(result); }
             }
             else if (Controller.CountStarterJobRead() < 120) _jobTimer.Start();
-            else Notice("The starter pack is still running. Refresh to review its collections; it was not queued again.");
+            else
+            {
+                // Observation ends here. Keeping the id would block deletes and starter packs while Refresh could never rediscover the job.
+                Controller.EndStarterJob();
+                Notice("The starter pack is still running. Refresh to review its collections; it was not queued again.");
+            }
         }
-        catch (Exception error) { if (Current(owner)) Notice(AdminCollectionsController.Message(error) + " The starter pack was not queued again."); }
+        catch (Exception error)
+        {
+            if (!Current(owner)) return;
+            // A failed read stops the observation; Refresh rediscovers the job instead of leaving its id blocking writes with no timer.
+            if (Controller.StarterJobId == id) Controller.EndStarterJob();
+            Notice(AdminCollectionsController.Message(error) + " The starter pack was not queued again.");
+        }
     }
     private async Task ResumeJobAsync()
     {
