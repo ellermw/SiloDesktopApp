@@ -1,17 +1,19 @@
-# November 17 — Autoscan Settings source candidate
+# November 20 — Autoscan Settings completed for Beta review
 
-The isolated `t3/admin-autoscan-settings` worker on Beta
-`248aafd62ed65b868c0e7356926e4d83204649cd` authors only
-`/admin/settings/autoscan`: polling defaults, complete saved server connection
-create/edit/delete/check/setup dialogs, dedicated API/controller, production registration,
-unit/native fixtures and XBF/source allowlists. Official pin
-`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Version remains
-`1.2.1181-beta.1`. No commit, push, PR, build, tests, native/browser launch,
-mutex acquisition, generated outputs, installer or installed-player change.
-All runtime and visual acceptance is pending the coordinator's serialized lane.
-Contract trace, intentional safeguards, concurrency limits and exact acceptance commands:
-`docs/parity/admin-autoscan-settings.md`. Sources/Activity remain separate writers;
-this page never exposes enable/Run now or writes generic server settings.
+Branch `t3/admin-autoscan-settings` (merged with current `origin/beta` `f36e3bd4a`, `1.2.1194`). Page
+`/admin/settings/autoscan` is rebuilt against official `66b836f82a32de2fb3e5dfae6c285c19eea1096d`; the first source used `217ff25abc`, and the
+settings page, connections panel, hooks, handlers and autoscan strings are identical between the two pins (only `SettingField` env-managed rows,
+which this page does not use, changed). Fixed from the never-compiled source: connection bodies were reflected as dictionary properties
+instead of JSON; 4xx answers were treated as unknown outcomes and a typed key was cleared on a refused save; a stored kind/URL that failed a
+client check was blanked; server problem details were replaced by generic text. Added: subtitle, loading skeleton, recoverable read failures,
+group-heading action, icons and badges, server check reason, redaction before truncation, official strings. Parity, safeguards and limits:
+[docs/parity/admin-autoscan-settings.md](parity/admin-autoscan-settings.md).
+
+Run `autoset-final-r2` (source and payload sealed): 119 focused and 9,956 full unit cases passed; app build, publish, host build and native
+selectors `admin-autoscan-settings`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` passed. An earlier identical run
+(`autoset-final-r1`) passed everything except an access violation in a COM finalizer after `admin-manage-foundation` had logged its own
+completion; the unchanged source passed on rerun. Wide, narrow and dialog captures of the Autoscan selector were produced and viewed.
+Not verified: a live Silo server, all DPIs, phone or keyboard-only walkthroughs, visual parity with the web page. The installed player was not touched.
 
 # November 20 — Admin Requests submitted for Beta review
 

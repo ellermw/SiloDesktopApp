@@ -1,61 +1,59 @@
-# Autoscan › Settings — source candidate, November 17, 2026
+# Autoscan › Settings — native parity note, November 20, 2026
 
 ## Source and scope
 
-- Desktop base: Beta `248aafd62ed65b868c0e7356926e4d83204649cd`; prepared branch `t3/admin-autoscan-settings`. Version remains `1.2.1181-beta.1`. All changes are uncommitted.
-- Official source: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`, read with `git show` from `D:/SiloPlayer-work/server-upstream-nov14`. No clone, checkout setup or unmerged Sources dependency.
-- Only `/admin/settings/autoscan`: polling defaults plus complete saved connections table, create/manual/reuse editor, edit, advisory check, Requests setup cross-link and delete confirmation. Global enable, Run now, Sources, Activity and webhook source setup remain with their separate writers.
-- The app registration, required installer XBF and administration source allowlist include this finished page. No other submitted PR is changed.
+- Native page: `/admin/settings/autoscan` (Manage › Autoscan › Settings), `AdminAutoscanSettingsPage`.
+- Official reference: `Silo-Server/silo-server` commit `66b836f82a32de2fb3e5dfae6c285c19eea1096d`, read with `git show` from
+  `D:/SiloPlayer-work/server-upstream-nov14`. The first native source was written against `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+- Diff between the two pins for this page: `AutoscanSettings.tsx`, `ConnectionsPanel.tsx`, `useAutoscan.ts`,
+  `adminAutoscanConnections.ts`, `adminAutoscanInspection.ts`, `SaveBar.tsx`, `SettingsPageHeader.tsx`, the autoscan keys of `en.json` and the
+  autoscan connection/settings handlers under `internal/apiv2` and `internal/api/handlers` are **unchanged**. What changed nearby and does not
+  affect this page: `SettingField` gained an environment-managed (`managedByEnv`) row state that Autoscan does not use (these are not
+  `server_settings` rows), `schema.ts` regenerated, and several unrelated test files were removed upstream.
+- Out of scope (other families): Autoscan Sources, Autoscan Activity, the global enable switch, Run now and webhook setup.
 
-## Exact reference trace
+## Official page, section by section
 
-All references below are at the official pin:
+| Official | Native |
+|---|---|
+| Title "Autoscan" and subtitle (`search.autoscan.description`) | Same text. |
+| Skeleton "Loading settings" while the settings read is pending | Skeleton with that accessible name; the connections list shows "Loading…" on its own. |
+| "Autoscan settings could not be loaded. Reload before editing." | Same text in an alert with a Reload button (native addition: the web page re-fetches on re-entry). Connections stay usable. |
+| Group "Polling defaults" (+ description), rows "Default check interval" and "Debounce" (+ description), unit "seconds", dirty dots | Same groups, rows, descriptions, units, per-row and group dirty dots. |
+| `Number(value) \|\| 300` and `\|\| 0` coercion on every keystroke; no range check | `AdminAutoscanNumber.Coerce` reproduces it (empty/NaN/0 interval reads 300, empty debounce 0, exponent and fractions kept). Native extra: values outside 1–2147483647 / 0–2147483647 are refused before sending with a message; the server enforces the same ranges. |
+| One SaveBar (count, Save, Discard), unsaved-changes guard | `AdminSettingsSaveBar` and `AdminLeaveGuard`. |
+| Save sends `{...saved, ...draft}` (`enabled` comes from the cached read) | Native re-reads the settings first, sends the newest `enabled` with the two defaults, and refuses to overwrite polling defaults that changed on the server since the page loaded them (the PUT has no revision precondition). |
+| Success toast, plus warning toasts for `reschedule_state` `failed` / `not_configured`; error toast "Settings persistence could not be confirmed…" for any failure | Status lines with the same texts. A 4xx is shown with the server's own detail and the draft stays editable; only a timeout, transport loss, 5xx or malformed answer shows the official unconfirmed text and blocks writes until Reload. |
+| Connections group "Connections" + description, "Add connection" action in the group heading | Same, `SetAction` in the heading. |
+| Table Name / Kind / Source / URL, Sonarr/Radarr labels, "Reused from Requests" / "Own" badges, "—" without a URL, edit and delete icon buttons | Same columns and badges, native icon buttons with names and tooltips. Saved URLs are displayed without embedded credentials, query or fragment; the editor keeps the raw stored value. |
+| "Loading…" and "No connections yet." | Same. A failed list read is shown as a failure with Reload, not as an empty list (native fix). |
+| Add dialog: "Connection type" (reuse disabled without Requests Sonarr/Radarr servers), Requests server select with `{name} ({kind})`, no-server text with link to Settings › Requests, name / kind / base URL / API key, inline Test result, Cancel, "Add connection" / "Save changes" / "Saving…" | Same, native `ContentDialog`. Reuse is the default when a Requests arr server exists. The Requests link opens the real `/admin/settings/requests` route. |
+| Edit: no mode picker, "(leave blank to keep existing)" with a masked placeholder when `has_api_key`; save needs name, URL and a key or a saved key | Same. Stored kind or URL that fail a client check stay in the fields and save unchanged. |
+| Test body branches (`connection_id` for saved records unless a new URL and key were typed; `request_integration_id` for new reuse; `base_url` plus optional `api_key_ref`) | Same four branches. The server's fixed failure text is shown (redacted, bounded); advisory only, never blocks Save. |
+| Delete AlertDialog "Delete connection?" with source-binding warning, "Delete" | Same text. A refusal keeps the row and may be retried; an unknown outcome locks until Reload. |
+| Create / update / delete success toasts and "…could not be confirmed…" toasts | Same texts as status lines. |
+| Settings search keys (`pollingDefaults`, `defaultCheckInterval`, `debounce`, `connections`, `addConnection`) | Already in `AdminRouteCatalog`; the page is registered so the route opens. |
 
-- `web/src/pages/admin-settings/AutoscanSettings.tsx`: two-field draft, number coercion defaults (300/0), seconds units, Debounce explanation, dirty row/group markers and save/discard bar. No enable switch here.
-- `web/src/pages/admin/autoscan/ConnectionsPanel.tsx`: Name/Kind/Source/URL columns; Own/Reused from Requests; default reuse when a Sonarr/Radarr Requests server exists; create-only mode choice; manual fields; saved-key mask and leave-blank hint; no-server setup link; test and save conditions; delete-source-binding warning.
-- `web/src/hooks/queries/useAutoscan.ts`: settings GET/PUT, connections GET/POST/PUT/DELETE and connection test POST, captured identity, no mutation or authentication replay.
-- `web/src/api/v2/adminAutoscanConnections.ts` and `adminAutoscanPagination.ts`: cursor-based connection reads.
-- `web/src/api/v2/adminRequests.ts`: Requests list followed by canonical per-ID descriptor reads. Service kind comes only from `plugin_config.service_kind`, not legacy top-level kind. This page projects only id/name/service kind and never keeps Requests credential properties.
-- `internal/api/handlers/autoscan.go`: name plus own URL or Requests link validation; normalized optional integration reference; blank API key retains a saved key on edit; `has_api_key` without credential disclosure; saved-ID/direct/integration check branches; polling interval 1–2147483647 and debounce 0–2147483647; persistence plus independent rescheduling result.
-- `contracts/api/v2/openapi.json`: dedicated non-retryable settings PUT has **no ETag precondition**; delete confirms with 204; mutation responses are canonical credential-free connection views.
-- `web/src/locales/en.json`: scoped English labels/descriptions copied into `AdminAutoscanSettingsText`. Native-only messages distinguish failed dependencies, explicit review and unknown outcomes. No raw server/plugin error text is displayed.
+Not in the official page and therefore not built: a global enable switch, Run now, source list. The official Settings page has no links to Sources or
+Activity, so no disabled links exist.
 
-## Writes and ownership
+## Requests, credentials and writes
 
-Settings send precisely enabled/default_poll_interval_seconds/debounce_seconds to `/api/v2/admin/autoscan/settings`. Before dispatch, a new owned GET verifies that polling defaults have not changed and copies the latest enabled value. Changed defaults block with explicit Reload/review; the page never assumes it owns enabled. An acknowledged save separately reports applied, failed or not_configured rescheduling.
+- Requests are `GET/PUT /autoscan/settings`, `GET/POST/PUT/DELETE /autoscan/connections[/{id}]`, `POST /autoscan/connections/test` and, for the reuse
+  list, `GET /request-integrations` plus one `GET` per integration (service kind from `plugin_config.service_kind` only; no credential field is read).
+- Bodies are `Dictionary<string, object?>` so they are serialized as JSON with exactly the official fields. Limits follow the server (name 1024,
+  kind 256, base URL 8192, key 8192, id 256).
+- A key the server did not return is never echoed or cached. An untouched key field sends nothing (there is no clear operation in this API). A typed
+  key survives a refused save so the corrected retry sends it; it is cleared on success, on an unknown outcome, on a changed target, when the
+  dialog closes and when the page, server or account is retired. Refusal and check texts are redacted (the typed key, then recognizable credentials
+  and URLs) before they are truncated to 500 characters.
+- Writes are sent once, without token-refresh replay. 4xx other than 408 is a refusal; timeout, 408, 5xx, transport loss, a 2xx without a usable
+  record, or a delete not answered with 204 is an unknown outcome that blocks writes until Reload re-reads the full list. Editing or deleting an
+  existing row first re-reads the list and refuses if that row changed.
+- Reads are bounded: 1 MiB per response, 100 connections per page and at most 10 pages, 50 Requests summaries per page and at most 4 pages.
 
-**Protocol limitation:** there is no server revision/If-Match contract here. A concurrent change between that GET and PUT cannot be made atomic by this client. Descriptor comparison likewise cannot detect an independent replacement of a write-only key that leaves all visible fields unchanged. This implementation does not invent a precondition or claim transactional protection.
+## Verification
 
-All mutations, including advisory check and delete, are sent once with authentication refresh/replay disabled. Serialization prevents double-submit. Lost transport, 408/5xx, malformed 2xx acknowledgements and ambiguous results are not success. Save/delete require explicit readback before another submission. Rejected and changed-target writes also require review. Reload closes the editor, clears secret drafts and discards the prior polling draft; it never replays a command. A check is advisory and tied to the exact editor revision; changing fields suppresses its old result. A failed check does not block Save.
-
-Own connection creation requires name, URL and key; own editing can omit a key only when has_api_key is true. Blank keys are omitted, never sent as an invented clear operation. Linked writes contain name/kind/request_integration_id only. Linked edits check the saved connection ID. Own edits check the saved ID unless both a URL and new key are present; then they check that explicit draft. New own checks may omit a key, matching the official advisory condition.
-
-The shared AdminMonitorAuthority owns page/read/action leases. Authority loss, profile/server/account replacement, navigation or outer-shell suspension cancels and clears reads, editors, results and secrets. Deferred UI publication checks controller, owner and current state again. Dialog completion is exposed for the native fixture; fixture restoration waits for both page and shell Unloaded plus dialog completion.
-
-## Bounds and intentional native safeguards
-
-- JSON: 1 MiB per response, including failures; individual GET deadline 20 seconds, write/check deadline 45 seconds.
-- Connections: 100 rows/page, at most 10 pages/1,000 rows and 45 seconds total. Requests: 50 summaries/page, at most four pages/200 canonical rows and 60 seconds including detail reads. Duplicate IDs, repeated/missing continuations, malformed metadata and excess pages fail closed without publishing a partial list. No catalog walk, polling or background scan is introduced.
-- Name 512 characters, base URL 4,096, typed key 8,192. Native safety restriction beyond the WebUI: only HTTP(S) base URLs without userinfo, query or fragment are editable/testable. Unsafe server-returned URLs are not displayed; this avoids credential/signed-URL disclosure. Raw plugin connection errors are replaced with the official generic failure text; safe version text is bounded.
-- Native WinUI adaptive settings rows, horizontal table overflow, stacked dialog fields and a vertically scrollable editor replace the HTML layout. Wide/narrow capture code is authored, not observed. Settings › Requests navigation truthfully reports unavailable if that independent page has not been registered yet.
-
-## Authored regressions and runtime limits
-
-Authored `AdminAutoscanSettingsTests` cover exact body/current enabled, validation, rejected/unknown single dispatch, malformed acknowledgements, connection descriptor changes, delete status semantics, omitted saved key, all credential conditions, canonical Requests kind projection, duplicate cursor refusal, oversized bodies, concurrent save, exact-revision test results and retired/late identity reads. `AdminAutoscanSettingsSourceTests` protect registration, XBF/approved sources, no generic settings or Sources dependency and native unload ordering.
-
-The `admin-autoscan-settings` native selector enters through the production registration, AdminShellPage and nested Frame. It exercises official groups/table, polling save plus reschedule warning, reuse create/check, manual create/check with lost acknowledgement and explicit reconciliation, blank-key edit, missing-key state, linked edit/check, source-bound delete rejection and explicit successful delete, dependency failure versus empty Requests setup, authority retirement, and wide/narrow capture. Dialog and real Unloaded barriers precede restoration of global App.Services.
-
-**No .NET, restore, build, unit tests, native host, browser, mutex acquisition, generated outputs or installer were run by this worker.** No runtime count, visual parity, accessibility, live-server or all-DPI claim is made. `git diff --check` is a source whitespace inspection only.
-
-## Coordinator acceptance commands
-
-Only the authorized serialized delivery lane may execute these after its required inventory/free-space checks, one nonblocking SiloOct18Build WaitOne(0), process containment/deadline and source/PDB binding. Use the lane's existing output root and QA signing policy; preserve all frozen artifacts and the installed player. These commands do not authorize installation or publication.
-
-~~~powershell
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj --filter 'FullyQualifiedName~AdminAutoscanSettings|FullyQualifiedName~UserOnlyClientArchitectureTests'
-pwsh -NoProfile -File installer/build.ps1 -Configuration Release -PublishDirectory $LanePublishRoot -InstallerOutputDirectory $LaneInstallerRoot
-pwsh -NoProfile -File tests/SiloPlayer.NativeRegressionTests/run.ps1 -AppDirectory $BoundVersionedAppDirectory -Only admin-autoscan-settings
-~~~
-
-The lane supplies approved signing flags/environment, absolute lane-owned output directories and the exact bound application directory inside its versioned publish. After selected coverage, run its broader existing Admin/navigation/native regressions, inspect both authored captures and the dialog at narrow/wide widths, then record actual receipts. There is no external source blocker; compilation and runtime observation are pending coordinator acceptance, not certified here.
-
+See the November 20 entry at the top of `docs/current-development.md` for exact runs, counts and limits. Wide and narrow captures plus four dialog
+captures are produced by the `admin-autoscan-settings` native selector and were viewed for layout; visual parity with the web page, all DPIs and
+a live Silo server were not verified.
