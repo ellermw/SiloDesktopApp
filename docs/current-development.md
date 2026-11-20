@@ -1,3 +1,16 @@
+# November 17 — Configure Sign-in & Security source candidate
+
+Uncommitted source on `t3/admin-signin-security`, exact Beta base
+`248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1`
+unchanged. Sign-in, API Keys and Policy have production pages, transports,
+controllers, registrations, XBF entries and authored unit/native regressions.
+Official source pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
+Security #175 is preserved. Source-only slot: no build/test/app/native/browser
+runtime or mutex; RED/GREEN, rendered parity and live interoperability remain
+unobserved. Test-only/production patches and exact coordinator acceptance steps:
+[scoped handoff](parity/admin-sign-in-security-20261117.md). No commit/push/PR,
+generated build outputs, installer or installed-player action.
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
