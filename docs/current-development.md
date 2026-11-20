@@ -10,6 +10,16 @@ Final run `autoact2-final-r1` on the committed source: 59 focused and 9,896 full
 native host build passed, and the `admin-autoscan-activity` (48 checks), `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` native
 selectors passed; captures at 1440/1024/800/560 DIPs and the inspector were inspected. Not observed: live-server/phone interoperability, all-DPI and
 screen-reader behaviour, and a fixture-driven row click (only the Details button path).
+That run predates an independent review (read-only, commit `0bc5eb4fc`, official `66b836f82a`), which found nine defects. All were confirmed and fixed: the pager gap was mis-encoded text; a page or
+filter change also re-read the status and the names; an older reconciliation read could overwrite a newer status; an unknown cancellation could stay blocked until the page was reopened (now
+lifted by the admin's own successful status read, with both outcomes shown and tested and the cancel still never replayed); finished scans re-ran the name lookups; a trailing space in the search
+rewrote the box and closed the inspector; keyboard focus was lost on inspector tabs, chips, the scan-id jump, both pagers and the 15-second refresh; inspector chip filters reset themselves; and every
+row of every walked history page was validated. Events with more than 5,000 runs now keep the page and say so. One extra defect was found natively and fixed (a delayed text-changed event after a
+programmatic search reset sent the inspector pager back to page one). One earlier assertion (blocking Cancel after a successful reconcile while the scan was still listed) was replaced because the rule changed.
+Final run `autoact3-final-r1` (stage final, committed source `24f5cc9df`, lane `D:/SiloPlayer-build/admin-completion-lane-b`): 73 focused and 10,023 full unit tests passed with no failures or skips, app build,
+publish and native host build passed, and the `admin-autoscan-activity` (62 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+native selectors passed; source and payload seals verified. Not observed: live-server/phone interoperability, all-DPI and screen-reader behaviour, a fixture-driven row click, and visual inspection of the
+new pager-gap and focus states beyond the fixture checks. Nothing was pushed.
 
 ---
 
