@@ -51,6 +51,47 @@ After this source is submitted, the Beta pipeline owns all further work.
 
 ---
 
+# November 16 — Configure Backups verification and Beta handoff
+
+Configure > Server > Backups is implemented as one route family: `/admin/backups`,
+`/admin/backups/:id/restore` and `/admin/backups/uploads/:uploadId/restore`, through the
+production Configure registration. Tested base: Beta
+`542dec13c7d45c7520116c559166023ecb4ee987`, version `1.2.1168-beta.1` unchanged.
+The pipeline owns reconciliation, version assignment, QA, fixes, merge and packaging.
+
+Contracts were implemented against official Server/WebUI
+`92ee051878c2a791940ec9598e2bdd0f04890b3e` and checked against the Go handlers/OpenAPI.
+Direct official-main recheck at `94797c3e2e39ef12bf2796fa08df12e3b3525b3e` found no
+subsequent Backups contract changes. Desktop Beta was rechecked at
+`3d9b642242b0539684fcb055b00690dbd242a93e`; the tested candidate base is retained.
+
+Independent review corrections cover expired-token GET refresh, durable per-source/epoch
+restore uncertainty across page departure, a fresh-preview gate, foreign-source conflict
+jobs, coalesced capabilities/uploads reads and visibility resume, and discard-before-dispose
+for known uploads under the same authority epoch. Native testing also found and fixed
+late download progress overwriting the verified terminal result.
+
+Verification (November 17 UTC): source proof 1/1, focused 226/226 and full 7852/7852;
+nonincremental app/host builds, Release publish, PDB/source, payload/engine and XBF binding;
+Backups native 30 PASS records and foundation 36, both including completion. Review/preview
+regressions and native download completion have retained RED/GREEN evidence. Every runtime
+used one nonblocking shared lease, with actual ACQ/REL relayed; final REL
+`2026-11-17T01:25:12.2338806Z`. Original feature implementation was not test-first.
+
+Limit: unchanged Downloads native fixture line 316 timed out expecting empty after unchecking
+Unlimited with finite 250 remembered. That group is not passing and no clean runtime baseline
+was established. Live-server, visual, DPI, IME, Narrator and real OS-picker verification remain
+unperformed. Closing during unidentified upload creation may leave an upload for the server
+sweep; no create replay or guessed deletion. Checklist stays In progress, not Done.
+
+Evidence: `.codex-tmp/admin-backups-verification` in the task worktree; reusable output
+`D:/SiloPlayer-build/admin-backups-active`. Measured generated output 16.658 GiB under the
+owner-approved 50 GiB cap, with C/D free 169.91/461.815 GiB. No installed player/updater,
+installer, release publication, cleanup or production action occurred. See the
+[parity record](parity/admin-backups.md) and [contract plan](plans/2026-11-16-admin-backups.md).
+
+---
+
 # November 16 - Configure Maintenance bounded verification for Beta submission
 
 Configure › Server › Maintenance (`/admin/maintenance`) implements Catalog Import & Export
@@ -1749,7 +1790,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1765,7 +1806,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1781,7 +1822,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1799,7 +1840,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1815,7 +1856,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -1833,7 +1874,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -2033,7 +2074,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -2041,7 +2082,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -2049,7 +2090,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -2079,7 +2120,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1189-beta.1`; numeric version: `1.2.1188.1`.
+Source version: `1.2.1192-beta.1`; numeric version: `1.2.1191.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

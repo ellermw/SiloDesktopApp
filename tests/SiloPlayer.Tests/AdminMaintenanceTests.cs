@@ -962,7 +962,8 @@ public sealed class AdminMaintenanceTests
         Assert.True(descendant.IsCatchAll);
         Assert.Equal(AdminRoute.Dashboard, descendant.Request!.Route);
         Assert.True(AdminRouteCatalog.TryResolve("/admin/backups", out var backups));
-        Assert.Equal(AdminRouteResolutionKind.Unsupported, backups.Kind);
+        Assert.Equal(AdminRouteResolutionKind.Route, backups.Kind);
+        Assert.Equal(AdminRoute.Backups, backups.Request!.Route);
     }
 
     [Fact]
