@@ -39,14 +39,15 @@ public sealed class AdminAutoscanEditorDraft : IDisposable
         Form.Fields.RemoveAll(field => unsupported.Contains(field.Key));
         var stored = new Dictionary<string, string>(source?.SourceConfig ?? []);
         foreach (var key in unsupported) if (stored.TryGetValue(key, out var kept)) _unmanaged[key] = kept;
-        // A source whose capability offers no form at all: the editor shows none of its keys, so a change to "Sent by" must not erase them.
-        if (descriptor.ConfigForm == null) foreach (var (key, value) in stored) if (key != "webhook_provider") _unmanaged[key] = value;
         if (source is { PluginId: "silo.autoscan.cephfs", CapabilityId: "cephfs" })
         {
             foreach (var (oldKey, key) in new[] { ("movie_nested_paths", "movie_flat_paths"), ("tv_nested_paths", "tv_flat_paths") })
                 if (stored.Remove(oldKey, out var old))
                 { stored[key] = string.Join("\n", (stored.GetValueOrDefault(key, "") + "\n" + old).Split('\n').Select(s => s.Trim()).Where(s => s.Length > 0).Distinct()); ConfigDirty = true; _migratedAliases = true; }
         }
+        // A source whose capability offers no form at all: the editor shows none of its keys, so a change to "Sent by" must not erase them
+        // (read after the alias migration above, so a migrated legacy key is not carried back).
+        if (descriptor.ConfigForm == null) foreach (var (key, value) in stored) if (key != "webhook_provider") _unmanaged[key] = value;
         foreach (var field in Form.Fields)
         {
             if (field.Validation is { } validation) { if (!validation.HasMin) validation.Min = null; if (!validation.HasMax) validation.Max = null; }
