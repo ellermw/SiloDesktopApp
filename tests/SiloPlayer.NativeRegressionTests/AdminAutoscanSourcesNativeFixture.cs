@@ -75,7 +75,7 @@ internal static partial class AdminAutoscanSourcesNativeFixture
             Need<TextBox>(shell, "AutoscanConnectionUrl").Text = "https://radarr.fixture.invalid";
             Need<PasswordBox>(shell, "AutoscanConnectionKey").Password = "synthetic-write-only-key";
             await Invoke(Need<Button>(shell, "AutoscanConnectionTest"));
-            await Until(() => Need<TextBlock>(shell, "AutoscanConnectionTestResult").Text == "Connected");
+            await Until(() => Need<TextBlock>(shell, "AutoscanConnectionTestResult").Text == "Connected (vsynthetic)");
             await Invoke(Need<Button>(shell, "AutoscanConnectionCreate")); await Settled(page);
             Check(server.ConnectionWrites == 1 && server.LastConnectionBody?.Contains("api_key_ref") == true, "inline server creation uses the write-only credential contract once");
             Need<ToggleSwitch>(shell, "ProviderField_flag").IsOn = true;
