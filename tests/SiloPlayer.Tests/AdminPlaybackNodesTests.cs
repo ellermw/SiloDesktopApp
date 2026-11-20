@@ -189,4 +189,55 @@ public sealed class AdminPlaybackNodesTests
         await api.CommandAsync(owner, Node(), "check", default); await api.CommandAsync(owner, Node(), "drain", default);
         Assert.Equal(2, kit.Shared.Requests.Count); Assert.Empty(kit.Unbounded.Requests);
     }
+
+    // A re-probe can take minutes. It is pending for its own node only; Busy for that long would stop every other action and the refresh, and keep the admin on the page.
+    private static Task<HttpResponseMessage> NodeReads(HttpRequestMessage request) => Task.FromResult(request.RequestUri!.AbsolutePath.EndsWith("capabilities") ? AdminMonitorKit.Json("{\"allowed\":true,\"state\":\"available\"}")
+        : request.RequestUri.AbsolutePath.EndsWith("/check") ? AdminMonitorKit.Json("{\"healthy\":true,\"active_jobs\":0,\"egress_kbps\":0,\"health_persisted\":true}")
+        : AdminMonitorKit.Json("{\"items\":[{\"id\":\"synthetic-node\",\"name\":\"Node\",\"type\":\"transcode\",\"url\":\"https://worker.invalid\",\"config_etag\":\"\\\"one\\\"\"}]}"));
+    [Fact]
+    public async Task PendingReprobeHoldsBackOnlyItsOwnNode()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var probe = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously); var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        kit.Http.Respond = (request, _) =>
+        {
+            if (!request.RequestUri!.AbsolutePath.EndsWith("/reprobe")) return NodeReads(request);
+            started.TrySetResult(); return probe.Task;
+        };
+        using var controller = new AdminPlaybackNodesController(new(kit.Client), authority); await controller.OpenAsync();
+        var node = Assert.Single(controller.State.Window.Items);
+        var reprobe = controller.CommandAsync(node, "reprobe"); await started.Task;
+        Assert.False(controller.State.Busy); Assert.Equal("synthetic-node", Assert.Single(controller.State.Reprobing));
+        // The same node is not probed twice, while the refresh and another action go on.
+        Assert.False(await controller.CommandAsync(node, "reprobe"));
+        var lists = kit.Http.Requests.Count(request => request.StartsWith("GET /api/v2/admin/nodes?"));
+        await controller.ReloadAsync(); Assert.True(kit.Http.Requests.Count(request => request.StartsWith("GET /api/v2/admin/nodes?")) > lists);
+        await controller.CommandAsync(Assert.Single(controller.State.Window.Items), "check");
+        Assert.Single(kit.Http.Requests.Where(request => request.EndsWith("/check"))); Assert.False(controller.State.ReviewRequired);
+        Assert.False(controller.State.Busy); Assert.Equal("synthetic-node", Assert.Single(controller.State.Reprobing));
+        probe.SetResult(AdminMonitorKit.Json("{\"node_id\":\"synthetic-node\",\"status\":\"ok\",\"capabilities_refreshed\":true}"));
+        Assert.True(await reprobe); Assert.Empty(controller.State.Reprobing); Assert.Contains("re-probed", controller.State.Feedback);
+        Assert.Single(kit.Http.Requests.Where(request => request.EndsWith("/reprobe")));
+    }
+    // No configuration changed, so an unconfirmed re-probe is reported for the next refresh to settle and does not block node writes.
+    [Fact]
+    public async Task UnconfirmedReprobeIsReportedWithoutBlockingNodeWrites()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (request, _) => request.Method == HttpMethod.Get ? NodeReads(request) : throw new HttpRequestException("synthetic lost acknowledgement");
+        using var controller = new AdminPlaybackNodesController(new(kit.Client), authority); await controller.OpenAsync();
+        Assert.False(await controller.CommandAsync(Assert.Single(controller.State.Window.Items), "reprobe"));
+        Assert.Empty(controller.State.Reprobing); Assert.False(controller.State.Busy); Assert.False(controller.State.ReviewRequired); Assert.Null(controller.State.Error);
+        Assert.Equal(AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.commandUnconfirmed"), controller.State.Feedback);
+        Assert.Single(kit.Http.Requests.Where(request => request.StartsWith("POST")));
+    }
+    [Fact]
+    public async Task RefusedReprobeIsAnErrorThatReleasesItsNode()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        kit.Http.Respond = (request, _) => request.Method == HttpMethod.Get ? NodeReads(request) : Task.FromResult(AdminMonitorKit.Json("{\"type\":\"conflict\",\"status\":409}", HttpStatusCode.Conflict));
+        using var controller = new AdminPlaybackNodesController(new(kit.Client), authority); await controller.OpenAsync();
+        Assert.False(await controller.CommandAsync(Assert.Single(controller.State.Window.Items), "reprobe"));
+        Assert.Empty(controller.State.Reprobing); Assert.False(controller.State.ReviewRequired); Assert.Contains("refused", controller.State.Error);
+    }
 }

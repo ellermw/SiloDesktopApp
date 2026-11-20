@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
@@ -10,6 +11,8 @@ public sealed record AdminPlaybackNodesState
     public bool Loading { get; init; }
     public bool Loaded { get; init; }
     public bool Busy { get; init; }
+    /// <summary>Ids of the nodes whose re-probe has not answered yet. Unlike <see cref="Busy"/>, it holds back nothing but another re-probe of the same node.</summary>
+    public ImmutableHashSet<string> Reprobing { get; init; } = ImmutableHashSet<string>.Empty;
     public bool ReviewRequired { get; init; }
     public string? Error { get; init; }
     public string? Feedback { get; init; }
@@ -25,6 +28,7 @@ public sealed class AdminPlaybackNodesController : IDisposable
     private readonly AdminPlaybackAdministrationApi _api;
     private readonly AdminAuthorityLifetime _lifetime;
     private readonly object _gate = new();
+    private const string Refused = "The server refused this node action. Review permissions, capabilities and values before trying again.";
     private AdminPlaybackNodesState _state = new();
     private bool _disposed;
     public AdminPlaybackNodesController(AdminPlaybackAdministrationApi api, AdminMonitorAuthority authority)
@@ -95,7 +99,7 @@ public sealed class AdminPlaybackNodesController : IDisposable
         await _api.DeleteNodeAsync(owner, node, owner.Token).ConfigureAwait(false);
         return AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.deleted");
     });
-    public Task<bool> CommandAsync(AdminPlaybackNode node, string command) => Execute(node, async owner =>
+    public Task<bool> CommandAsync(AdminPlaybackNode node, string command) => command == "reprobe" ? ReprobeAsync(node) : Execute(node, async owner =>
     {
         if (command is "drain" or "resume" && !(State.Capabilities.Available && State.Capabilities.Drain)) throw new InvalidOperationException();
         var result = await _api.CommandAsync(owner, node, command, owner.Token).ConfigureAwait(false);
@@ -103,10 +107,39 @@ public sealed class AdminPlaybackNodesController : IDisposable
         {
             "check" => result.HealthPersisted != true ? AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.health.notStored")
                 : AdminPlaybackAdministrationText.T(result.Healthy == true ? "web.admin.nodes.hooks.nodes.health.healthy" : "web.admin.nodes.hooks.nodes.health.unhealthy", new { name = node.Name }),
-            "reprobe" => result.Status == "ok" && result.CapabilitiesRefreshed == true ? "The node re-probed its hardware and the server refreshed its inventory." : "The node re-probe did not confirm a refreshed inventory. Review its current report.",
             _ => AdminPlaybackAdministrationText.T(result.DrainRequested == true ? "web.admin.nodes.hooks.nodes.drain.draining" : "web.admin.nodes.hooks.nodes.drain.resumed", new { name = node.Name }),
         };
     });
+    // A re-probe answers only after the node has probed its hardware, which can take minutes, and it changes no configuration. So it is pending for its own node only and never Busy:
+    // other actions, the refresh and leaving the page go on meanwhile. The page refreshes the rows when it ends, and an unconfirmed outcome is reported for that refresh to settle instead of blocking writes.
+    private async Task<bool> ReprobeAsync(AdminPlaybackNode node)
+    {
+        MonitorAuthorityLease owner;
+        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
+        using (owner)
+        {
+            lock (_gate)
+            {
+                if (_disposed || !_lifetime.IsCurrent(owner) || !_state.Loaded || _state.Loading || _state.Busy || _state.ReviewRequired || _state.Reprobing.Contains(node.Id)) return false;
+                if (!_state.Window.Items.Any(row => row.Id == node.Id && row.ConfigETag == node.ConfigETag)) return false;
+                _state = _state with { Reprobing = _state.Reprobing.Add(node.Id), Error = null, Feedback = null };
+            }
+            Changed?.Invoke();
+            string? feedback = null, refusal = null; var acknowledged = false;
+            try
+            {
+                var result = await _api.CommandAsync(owner, node, "reprobe", owner.Token).ConfigureAwait(false);
+                acknowledged = true;
+                feedback = result.Status == "ok" && result.CapabilitiesRefreshed == true ? "The node re-probed its hardware and the server refreshed its inventory." : "The node re-probe did not confirm a refreshed inventory. Review its current report.";
+            }
+            catch (OperationCanceledException) when (!owner.IsCurrent) { return false; }
+            catch (ApiException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode != 408) { refusal = Refused; }
+            catch { feedback = AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.commandUnconfirmed"); }
+            // Another action may have run meanwhile: a write whose outcome is unknown keeps its own message until the admin reloads.
+            Update(owner, () => _state = _state with { Reprobing = _state.Reprobing.Remove(node.Id), Error = refusal != null && !_state.ReviewRequired ? refusal : _state.Error, Feedback = feedback ?? _state.Feedback });
+            return acknowledged && _lifetime.IsCurrent(owner);
+        }
+    }
     public Task<bool> IssueKeyAsync(AdminPlaybackNode node, Action<string> reveal) => Execute(node, async owner =>
     {
         if (!(State.Capabilities.Available && State.Capabilities.NodeKeys)) throw new InvalidOperationException();
@@ -140,7 +173,7 @@ public sealed class AdminPlaybackNodesController : IDisposable
             }
             catch (ApiException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode != 408)
             {
-                Update(owner, () => _state = _state with { Busy = false, Error = "The server refused this node action. Review permissions, capabilities and values before trying again." });
+                Update(owner, () => _state = _state with { Busy = false, Error = Refused });
             }
             catch
             {

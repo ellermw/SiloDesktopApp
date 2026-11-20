@@ -37,7 +37,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
     {
         internal int Writes, TaskRuns; internal string? IfMatch, LastBody; internal bool Conflict;
         internal bool RejectNodePut, DropNodePutAck, FailNodesList, EmptyNodes, DropTaskRunAck, RefuseTaskRun, RunMarksRunning, HeldTasksStarted;
-        internal TaskCompletionSource? HoldTasks;
+        internal TaskCompletionSource? HoldTasks, HoldReprobe;
         internal string? AddedNode;
         internal string Tasks = """{"items":[{"key":"sync_markers","name":"Sync online markers","state":"idle","last_execution":{"task_key":"sync_markers","status":"failed","completed_at":"2026-11-01T10:00:00Z","error_message":"Synthetic provider unreachable"}},{"key":"detect_intro_markers","name":"Detect markers on this server","state":"idle","last_execution":{"task_key":"detect_intro_markers","status":"cancelled","completed_at":"2026-11-01T11:00:00Z"}},{"key":"contribute_markers","name":"Share detected markers","state":"idle","last_execution":{"task_key":"contribute_markers","status":"completed","completed_at":"2026-11-01T12:00:00Z","result_data":{"submitted":1200,"skipped":3,"invalid":0,"failed":2}}}]}""";
         internal readonly Dictionary<string, string> Values = new() { ["playback.hw_accel"] = "auto", ["playback.transcode_enabled"] = "true", ["allow_4k_transcode"] = "true", ["markers.mode"] = "both", ["markers.online_storage"] = "stored", ["playback.preview_image_width"] = "300", ["playback.trickplay_interval_seconds"] = "10" };
@@ -93,6 +93,8 @@ internal static class AdminPlaybackAdministrationNativeFixture
                 {
                     var changed = JsonNode.Parse(Node)!.AsObject(); changed["drain_requested"] = path.EndsWith("/drain"); changed["drain_state"] = path.EndsWith("/drain") ? "draining" : "none"; Node = changed.ToJsonString();
                 }
+                // A held re-probe is the node still probing its hardware: the request was received and has not answered.
+                if (path.EndsWith("/reprobe")) { var hold = HoldReprobe; HoldReprobe = null; if (hold != null) await hold.Task.WaitAsync(ct); }
                 body = path.EndsWith("/check") ? new { healthy = true, active_jobs = 2, egress_kbps = 0, health_persisted = false }
                     : path.EndsWith("/reprobe") ? (object)new { node_id = "fixture-node", node_name = "Synthetic GPU", status = "ok", capabilities_refreshed = true, capability_hash = "new" }
                     : new { node_id = "fixture-node", drain_requested = path.EndsWith("/drain"), drain_state = "draining", active_jobs = 2 };
@@ -157,7 +159,14 @@ internal static class AdminPlaybackAdministrationNativeFixture
             };
             Invoke(Find<Button>(nodes, "NodeCheck_fixture-node")); await Until(() => server.Writes == 1, "health check sent once");
             await Until(() => NodeIdle(nodes) && Find<Button>(nodes, "NodeEdit_fixture-node").IsEnabled, "health reconciliation finished");
-            var beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeReprobe_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes), "reprobe sent once and reconciled");
+            var beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeReprobe_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && !Reprobing(nodes), "reprobe sent once and reconciled");
+            // A re-probe that takes minutes is pending for its own node only: the page is not busy, the other actions stay usable and the admin can leave.
+            await Until(() => NodeIdle(nodes) && !Reprobing(nodes) && Find<Button>(nodes, "NodeReprobe_fixture-node").IsEnabled, "re-probe button ready again");
+            var heldProbe = new TaskCompletionSource(); server.HoldReprobe = heldProbe; beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeReprobe_fixture-node"));
+            await Until(() => server.Writes == beforeCommand + 1 && Reprobing(nodes) && !Find<Button>(nodes, "NodeReprobe_fixture-node").IsEnabled && Find<Button>(nodes, "NodeCheck_fixture-node").IsEnabled && Find<Button>(nodes, "NodeEdit_fixture-node").IsEnabled, "a pending re-probe holds back only its own button");
+            Check(!StateFlag(nodes, "Busy") && await ((IAdminNavigationGuard)nodes).CanLeaveAsync(), "a pending re-probe neither holds the page busy nor refuses navigation");
+            heldProbe.SetResult(); await Until(() => NodeIdle(nodes) && !Reprobing(nodes) && Find<Button>(nodes, "NodeReprobe_fixture-node").IsEnabled, "the re-probe answer releases its button");
+            Check(server.Writes == beforeCommand + 1, "the pending re-probe was sent once");
             await Until(() => DrainLabel(nodes) == "Drain Synthetic GPU", "drain action rendered"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && server.Node.Contains("draining"), "drain acknowledgement reconciled");
             await Until(() => DrainLabel(nodes) == "Resume Synthetic GPU", "resume action rendered after the drain reload"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && !server.Node.Contains("draining"), "resume acknowledgement reconciled");
             Invoke(Find<Button>(inner, "NodeEdit_fixture-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "edit dialog opened");
@@ -287,6 +296,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
         var state = controller.GetType().GetProperty("State")!.GetValue(controller)!;
         return !(bool)state.GetType().GetProperty("Busy")!.GetValue(state)! && !(bool)state.GetType().GetProperty("Loading")!.GetValue(state)!;
     }
+    private static bool Reprobing(object page) => Field(page, "_controller") is AdminPlaybackNodesController controller && controller.State.Reprobing.Count > 0;
     private static bool StateFlag(object page, string name)
     {
         var controller = Field(page, "_controller")!; var state = controller.GetType().GetProperty("State")!.GetValue(controller)!;

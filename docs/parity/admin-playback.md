@@ -91,10 +91,12 @@ pages belong to other workers/the submitted pipeline, and are not reimplemented 
 
 Every request is tied to captured account/server/profile authority, including post-response checks.
 Writes cannot refresh authentication or retry. Unknown node outcomes stop further mutations until
-an explicit reload; unknown settings outcomes retain the draft and require explicit reconciliation.
+an explicit reload (a re-probe changes no configuration, so its unknown outcome is only reported and
+the rows are refreshed); unknown settings outcomes retain the draft and require explicit reconciliation.
 Reads have cancellation and deadlines; re-probe allows 180 seconds, other domain calls at most 45.
 Node polling is 30 seconds, page/window activity gated, paused for dialogs and deferred during player
-loading. It is serialized with writes. Marker task observations use a separate bounded, foreground-only
+loading. It is serialized with writes; a re-probe is the one command that is pending for its own node only
+and holds back neither the poll, other actions nor leaving the page. Marker task observations use a separate bounded, foreground-only
 30-second task read, without repeating hardware probes or node enumeration. Support reads cancel when superseded or retired. No catalog walk,
 installed-player restart, decoder modification or shared/generated output is part of this candidate.
 
@@ -154,6 +156,22 @@ The shared `HttpClient` has the default 100-second timeout, so a re-probe that t
 deadline and was reported as an unconfirmed change. Re-probe now uses the client without an `HttpClient` timeout that
 Backups use; the 180-second deadline is its only limit. Every other node call stays on the shared client. Tests:
 `ReprobeOutlastsTheSharedClientTimeout` and `OnlyReprobeLeavesTheSharedClient` in `AdminPlaybackNodesTests`.
+
+## Fifth review (November 20), one finding fixed
+
+Not built or run when written; the pipeline run is the evidence.
+
+A re-probe went through the controller's `Busy` state, so for up to its 180-second deadline every node control
+was disabled, the poll and Reload did nothing and navigation away was refused without a message. It is now
+tracked per node in `AdminPlaybackNodesState.Reprobing` and never sets `Busy`: only that node's Re-probe button is
+disabled, the status line says a re-probe is running, the poll and every other action go on, and the page can be
+left (leaving cancels the wait; the next load shows the node's state). When the re-probe ends the page refreshes the
+rows in the background, like the poll. A 4xx answer is the usual refusal message. A lost or timed-out answer is
+reported with `hooks.nodes.commandUnconfirmed` and the rows are refreshed; it does not set `ReviewRequired`, because
+a re-probe changes no configuration and blocking would also refuse an edit dialog that was opened meanwhile.
+Tests: `PendingReprobeHoldsBackOnlyItsOwnNode`, `UnconfirmedReprobeIsReportedWithoutBlockingNodeWrites` and
+`RefusedReprobeIsAnErrorThatReleasesItsNode` in `AdminPlaybackNodesTests`; the native fixture holds a re-probe in
+flight and checks that only its button is disabled, the page is not busy and `CanLeaveAsync` allows leaving.
 
 ## Tests
 

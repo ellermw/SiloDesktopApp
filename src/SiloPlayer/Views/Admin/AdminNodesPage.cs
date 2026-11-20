@@ -53,16 +53,18 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         _scroll.Content = _body; _root.Children.Add(_scroll); Content = _root;
         _scroll.SizeChanged += (_, _) => Fit();
         _reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(); };
-        _poll.Tick += async (_, _) =>
-        {
-            if (_pollReload != null || !_active || !_focused || !_visible || _dialog != null || App.Services.GetService<PlayerService>()?.IsLoading == true || _controller is not { State.ReviewRequired: false } controller) return;
-            // Kept while in flight: Render leaves the cards usable during this background refresh and a card action waits for it in Settled.
-            var reload = _pollReload = controller.ReloadAsync();
-            try { await reload; } finally { if (ReferenceEquals(_pollReload, reload)) _pollReload = null; }
-        };
+        _poll.Tick += async (_, _) => { if (_active && _focused && _visible && App.Services.GetService<PlayerService>()?.IsLoading != true) await Refresh(); };
         Loaded += async (_, _) => { Fit(); await Activate(); }; Unloaded += (_, _) => SuspendAdminPage();
     }
     private void Fit() { var width = _scroll.ActualWidth - _body.Margin.Left - _body.Margin.Right; if (width > 0) _body.Width = width; }
+    // The refresh the admin did not ask for: the 30 s poll, and the rows after a re-probe has ended.
+    private async Task Refresh()
+    {
+        if (_pollReload != null || !_active || _dialog != null || _controller is not { State.ReviewRequired: false } controller) return;
+        // Kept while in flight: Render leaves the cards usable during this background refresh and a card action waits for it in Settled.
+        var reload = _pollReload = controller.ReloadAsync();
+        try { await reload; } finally { if (ReferenceEquals(_pollReload, reload)) _pollReload = null; }
+    }
     private async Task Activate()
     {
         if (_active) return; _active = true;
@@ -86,7 +88,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
     private void Render()
     {
         if (_controller == null) return; var state = _controller.State; var current = state.Owner?.IsCurrent == true;
-        U.UpdateLiveText(_status, !current ? "" : state.Error ?? state.Feedback ?? (state.Loading && !state.Loaded ? T("web.admin.nodes.page.loading") : ""));
+        U.UpdateLiveText(_status, !current ? "" : state.Error ?? state.Feedback ?? (state.Loading && !state.Loaded ? T("web.admin.nodes.page.loading") : state.Reprobing.Count > 0 ? "Re-probing hardware. This can take a couple of minutes." : ""));
         _reload.Visibility = current && state.Error != null ? Visibility.Visible : Visibility.Collapsed; _reload.IsEnabled = !state.Busy && !state.Loading;
         if (!current) { _cards.Children.Clear(); _groups.Children.Clear(); _rendered = null; _dialog?.Hide(); return; }
         _routingPanel?.SetNodeWindow(state.Loaded ? state.Window : null);
@@ -99,7 +101,8 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         }
         // Only a foreground load disables the cards. Disabling them for the 30 s background refresh would take focus away from the control in use.
         var loading = state.Loading && _pollReload == null;
-        foreach (var control in Descendants(_cards).OfType<Control>()) control.IsEnabled = state.Loaded && !state.Busy && !loading && !state.ReviewRequired && control.Tag is not false;
+        // A re-probe can take minutes, so it holds back only its own node's Re-probe button (the one whose Tag is the node id), never the page.
+        foreach (var control in Descendants(_cards).OfType<Control>()) control.IsEnabled = state.Loaded && !state.Busy && !loading && !state.ReviewRequired && control.Tag is not false && !(control.Tag is string reprobe && state.Reprobing.Contains(reprobe));
     }
     private Control? FocusedListControl()
     {
@@ -223,7 +226,16 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         return new Border { Child = content, Padding = new(20), CornerRadius = new(16), Background = U.Brush("SurfaceBrush"), BorderThickness = new(3, 0, 0, 0), BorderBrush = new SolidColorBrush(color), Opacity = node.Enabled ? 1 : .65 };
         void AddAction(string command, string id, string key)
         {
-            var button = IconAction(T(key, new { name = node.Name }), id + node.Id, command switch { "check" => "refresh-cw", "reprobe" => "scan-search", "resume" => "circle-play", _ => "circle-pause" }); button.Click += async (_, _) => { if (await Settled(node) is { } current && _controller is { } controller) await controller.CommandAsync(current, command); }; actions.Children.Add(button);
+            var button = IconAction(T(key, new { name = node.Name }), id + node.Id, command switch { "check" => "refresh-cw", "reprobe" => "scan-search", "resume" => "circle-play", _ => "circle-pause" }); if (command == "reprobe") button.Tag = node.Id;
+            button.Click += async (_, _) =>
+            {
+                if (await Settled(node) is not { } current || _controller is not { } controller) return;
+                await controller.CommandAsync(current, command);
+                // A re-probe does not hold the controller busy, so the rows are refreshed here once it has ended. A refusal changed nothing and keeps its message.
+                if (command != "reprobe" || !ReferenceEquals(controller, _controller) || controller.State.Error != null) return;
+                if (_pollReload is { } poll) await poll;
+                await Refresh();
+            }; actions.Children.Add(button);
         }
     }
     private static Button IconAction(string label, string id, string icon)
