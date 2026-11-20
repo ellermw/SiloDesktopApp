@@ -50,13 +50,20 @@ internal static class AdminLibrarySettingsNativeFixture
         };
         internal readonly List<string> Requests = [];
         internal int Saves, Version = 1;
-        internal bool FailRatingSources;
+        internal bool FailRatingSources, RejectPut, UnknownOutcome, Conflict, EffectiveFailure, RatingsUnsupported, OnlyAlwaysShownSources, NodeAvailable;
+        internal string[] Managed = [];
+        internal TaskCompletionSource? EffectiveGate;
         internal string? LastPut, LastIfMatch;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
             lock (Requests) Requests.Add(request.Method + " " + path);
+            if (path == "/api/v2/admin/settings/effective")
+            {
+                if (EffectiveGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
+                if (EffectiveFailure) return Json(new { type = "service_unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable);
+            }
             if (path == "/api/v2/admin/rating-sources" && FailRatingSources)
                 return Json(new { type = "service_unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable);
             object body;
@@ -64,6 +71,9 @@ internal static class AdminLibrarySettingsNativeFixture
             {
                 Saves++; LastIfMatch = request.Headers.IfMatch.SingleOrDefault()?.ToString();
                 LastPut = await request.Content!.ReadAsStringAsync(cancellationToken);
+                if (UnknownOutcome) throw new HttpRequestException("synthetic transport failure");
+                if (Conflict) return Json(new { type = "precondition_failed", title = "Settings changed", status = 412 }, HttpStatusCode.PreconditionFailed);
+                if (RejectPut) return Json(new { type = "validation_failed", title = "Rejected", status = 422 }, HttpStatusCode.UnprocessableEntity);
                 using var json = JsonDocument.Parse(LastPut);
                 var saved = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var property in json.RootElement.GetProperty("values").EnumerateObject())
@@ -74,24 +84,34 @@ internal static class AdminLibrarySettingsNativeFixture
             else body = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
-                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>() },
+                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = Managed },
                 "/api/v2/admin/settings/restart-keys" => new { keys = new[] { R.UnratedContent }, prefixes = Array.Empty<string>() },
-                "/api/v2/admin/rating-sources/capabilities" => new { revision = "r1", state = "available", allowed = true, plugin_declared_sources = true },
+                "/api/v2/admin/rating-sources/capabilities" => new { revision = "r1", state = "available", allowed = true, plugin_declared_sources = !RatingsUnsupported },
                 "/api/v2/admin/rating-sources" => new
                 {
-                    items = new object[]
-                    {
-                        new { source = "imdb", label = "IMDb", name = "IMDb", always_shown = true },
-                        new { source = "tmdb", label = "TMDB", name = "TMDB", always_shown = true },
-                        new { source = "rt_critic", label = "Rotten Tomatoes critics", name = "RT", always_shown = false, provider = "MDBList" },
-                    }
+                    items = OnlyAlwaysShownSources
+                        ? new object[]
+                        {
+                            new { source = "imdb", label = "IMDb", name = "IMDb", always_shown = true },
+                            new { source = "tmdb", label = "TMDB", name = "TMDB", always_shown = true },
+                        }
+                        : new object[]
+                        {
+                            new { source = "imdb", label = "IMDb", name = "IMDb", always_shown = true },
+                            new { source = "tmdb", label = "TMDB", name = "TMDB", always_shown = true },
+                            new { source = "rt_critic", label = "Rotten Tomatoes critics", name = "RT", always_shown = false, provider = "MDBList" },
+                        }
                 },
                 "/api/v2/capabilities/ratings" => new
                 {
                     state = "available",
                     sources = new[] { new { source = "imdb", name = "IMDb" }, new { source = "rt_critic", name = "RT" } },
                 },
-                "/api/v2/admin/nodes" => new { items = Array.Empty<object>(), page = new { has_more = false } },
+                "/api/v2/admin/nodes" => new
+                {
+                    items = NodeAvailable ? new object[] { new { id = "node-1", type = "transcode", enabled = true, healthy = true } } : Array.Empty<object>(),
+                    page = new { has_more = false },
+                },
                 _ => new { },
             };
             var response = Json(body);
@@ -233,7 +253,88 @@ internal static class AdminLibrarySettingsNativeFixture
                 await CaptureAsync(outer, $"library-settings-{width}x{height}.png");
             }
 
+            // A definite server rejection keeps the draft, explains itself, and is sent once; the user may then retry.
+            bool Shown(string text) => Descendants(page).OfType<TextBlock>().Any(block => block.Text == text && IsEffectivelyVisible(block));
             Input(page, R.MatcherWorkers).Text = "12";
+            await Until(() => controller.State.DirtyKeys.Contains(R.MatcherWorkers), "rejected draft");
+            server.RejectPut = true; var beforeRejected = server.Saves;
+            await Click(page, "LibrarySettingsSave");
+            await Until(() => controller.State.Error != null && !controller.State.Saving, "rejected save settled");
+            await Task.Delay(300);
+            Check(server.Saves == beforeRejected + 1 && !controller.State.Conflict && !controller.State.OutcomeUnknown &&
+                  controller.State.DirtyKeys.Contains(R.MatcherWorkers) && Input(page, R.MatcherWorkers).Text == "12" &&
+                  Shown("The server rejected one or more settings. Review the values and try again.") && Button(page, "LibrarySettingsSave").IsEnabled,
+                "a definite server rejection is sent once, explained, retains the draft and allows a retry");
+            await CaptureAsync(outer, "library-settings-rejected.png");
+            server.RejectPut = false; await Click(page, "LibrarySettingsSave");
+            await Until(() => server.Saves == beforeRejected + 2 && controller.State.DirtyKeys.Count == 0 && controller.State.Error == null, "retry after rejection");
+            Check(server.Values[R.MatcherWorkers] == "12", "the retry saved the retained draft");
+
+            // An unknown outcome is never replayed: Save is blocked until an explicit reload that keeps the draft.
+            Input(page, R.ScannerWorkers).Text = "9";
+            await Until(() => controller.State.DirtyKeys.Contains(R.ScannerWorkers), "unknown outcome draft");
+            server.UnknownOutcome = true; var beforeUnknown = server.Saves;
+            await Click(page, "LibrarySettingsSave");
+            await Until(() => controller.State.OutcomeUnknown, "unknown outcome shown"); await Task.Delay(300);
+            Check(server.Saves == beforeUnknown + 1 && !Button(page, "LibrarySettingsSave").IsEnabled && Input(page, R.ScannerWorkers).Text == "9" &&
+                  Descendants(page).OfType<TextBlock>().Any(block => block.Text.StartsWith("The save outcome is unknown", StringComparison.Ordinal) && IsEffectivelyVisible(block)),
+                "an unknown save outcome keeps the draft, blocks Save and is not replayed");
+            await CaptureAsync(outer, "library-settings-unknown-outcome.png");
+            server.UnknownOutcome = false; await Click(page, "LibrarySettingsReload");
+            await Until(() => !controller.State.OutcomeUnknown && !controller.State.Loading && controller.State.Loaded, "reload after unknown outcome");
+            Check(controller.State.DirtyKeys.Contains(R.ScannerWorkers) && Button(page, "LibrarySettingsSave").IsEnabled && server.Saves == beforeUnknown + 1,
+                "an explicit reload keeps the draft, re-enables Save and still has not replayed the write");
+
+            // A stale validator disables Save until the explicit reload; Discard then restores the saved value.
+            server.Conflict = true; await Click(page, "LibrarySettingsSave");
+            await Until(() => controller.State.Conflict, "conflict shown"); await Task.Delay(200);
+            Check(!Button(page, "LibrarySettingsSave").IsEnabled && Input(page, R.ScannerWorkers).Text == "9" &&
+                  Shown("Settings changed on the server. Reload and review your changes."), "a stale version disables Save, retains the draft and offers Reload");
+            await CaptureAsync(outer, "library-settings-conflict.png");
+            server.Conflict = false; await Click(page, "LibrarySettingsReload");
+            await Until(() => !controller.State.Conflict && !controller.State.Loading, "reload after conflict");
+            Check(controller.State.DirtyKeys.Contains(R.ScannerWorkers) && Button(page, "LibrarySettingsSave").IsEnabled, "reload after a conflict preserves the draft");
+            await Click(page, "LibrarySettingsDiscard");
+            await Until(() => controller.State.DirtyKeys.Count == 0 && Input(page, R.ScannerWorkers).Text == "8", "discard restores the saved value");
+            Check(!IsEffectivelyVisible(Button(page, "LibrarySettingsSave")) || !Button(page, "LibrarySettingsSave").IsEnabled, "Discard leaves nothing to save");
+
+            // Environment-managed keys are read-only with the reason shown, and a managed worker blocks the restore action.
+            server.Managed = [R.ScannerWorkers]; await controller.ReloadAsync(true);
+            await Until(() => controller.State.ManagedByEnv.Contains(R.ScannerWorkers) && !Input(page, R.ScannerWorkers).IsEnabled, "managed worker locked");
+            Check(Input(page, R.MatcherWorkers).IsEnabled && !Button(page, "LibrarySettingsRestoreDefaults").IsEnabled,
+                "a managed worker count is read-only, other fields stay editable and Restore defaults is unavailable");
+            Check(Descendants(page).OfType<TextBlock>().Any(block => block.Text.Contains("Managed by a server environment variable.", StringComparison.Ordinal) && IsEffectivelyVisible(block)),
+                "the managed row says why it is disabled");
+            server.Managed = []; await controller.ReloadAsync(false);
+            await Until(() => controller.State.ManagedByEnv.Count == 0 && Input(page, R.ScannerWorkers).IsEnabled, "managed lock released");
+
+            // Server capability and node evidence: an older server hides Ratings, an empty list says so, a node removes the warning.
+            server.RatingsUnsupported = true; await controller.ReloadAsync(false);
+            await Until(() => !controller.State.RatingSourcesSupported && !controller.State.RatingSourcesLoading && !controller.State.Loading, "ratings unsupported");
+            Check(!Shown("Ratings") && !Descendants(page).OfType<ToggleSwitch>().Any(toggle => AutomationProperties.GetAutomationId(toggle).StartsWith("LibrarySettingsRating_", StringComparison.Ordinal) && IsEffectivelyVisible(toggle)),
+                "a server without plugin rating sources hides the Ratings group");
+            server.RatingsUnsupported = false; server.OnlyAlwaysShownSources = true;
+            server.Values[R.ExtraRatingSources] = ""; await controller.ReloadAsync(false);
+            await Until(() => controller.State.RatingSourcesLoaded && !controller.State.Loading, "empty ratings");
+            await Until(() => Shown("No metadata plugin adds other ratings."), "empty ratings message");
+            Check(Shown("Ratings"), "an empty rating list keeps the Ratings group with its official empty message");
+            await CaptureAsync(outer, "library-settings-ratings-empty.png");
+            server.OnlyAlwaysShownSources = false; server.NodeAvailable = true; server.Values[R.ExtraRatingSources] = "rt_critic";
+            await controller.ReloadAsync(false);
+            await Until(() => controller.State.NodesKnown && controller.State.TranscodeNodeAvailable && !controller.State.Loading && ToggleById(page, "LibrarySettingsRating_rt_critic").IsOn, "transcode node known");
+            var nodeItems = Select(page, R.SubtitleSyncExecution).Items.OfType<ComboBoxItem>().ToDictionary(item => item.Tag!.ToString()!);
+            Check(!Shown("No transcode nodes are connected") && nodeItems.Values.All(item => item.IsEnabled), "a usable transcode node removes the warning and enables every execution mode");
+            Input(page, R.SubtitleSyncNodeCapacity).Text = "3";
+            Select(page, R.SubtitleSyncExecution).SelectedValue = "local";
+            await Until(() => controller.State.DirtyKeys.Contains(R.SubtitleSyncExecution) && controller.State.DirtyKeys.Contains(R.SubtitleSyncNodeCapacity), "local sync with staged capacity");
+            Check(IsEffectivelyVisible(Input(page, R.SubtitleSyncNodeCapacity)) && Input(page, R.SubtitleSyncNodeCapacity).Text == "3",
+                "an unsaved capacity stays visible after placement moves off the nodes");
+            controller.Discard(); await Until(() => controller.State.DirtyKeys.Count == 0, "capacity draft discarded");
+            await Until(() => Select(page, R.SubtitleSyncExecution).SelectedValue?.ToString() == "transcode_nodes_only", "execution restored");
+            server.NodeAvailable = false; await controller.ReloadAsync(false);
+            await Until(() => controller.State.NodesKnown && !controller.State.TranscodeNodeAvailable && !controller.State.Loading, "node absence known again");
+
+            Input(page, R.MatcherWorkers).Text = "14";
             await Until(() => controller.State.DirtyKeys.Contains(R.MatcherWorkers), "departure draft");
             shell.Navigate(new(AdminRoute.Activity));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "discard dialog");
@@ -242,8 +343,27 @@ internal static class AdminLibrarySettingsNativeFixture
             await Until(() => inner.Content is AdminActivityPage, "discard navigation");
             Check(controller.State.Values.Count == 0 && Input(page, R.MatcherWorkers).Text.Length == 0,
                 "departure retires the controller and clears native drafts");
-            inner.GoBack(); await Until(() => inner.Content is AdminLibrarySettingsPage { Controller.State.Loaded: true }, "Back reload");
+            // Back with a held first read shows the loading skeleton and no editable controls; the read then fails with Retry.
+            server.EffectiveGate = new(TaskCreationOptions.RunContinuationsAsynchronously); server.EffectiveFailure = true;
+            inner.GoBack(); await Until(() => inner.Content is AdminLibrarySettingsPage { Controller.State.Loading: true }, "Back held read");
             page = (AdminLibrarySettingsPage)inner.Content; controller = page.Controller!;
+            await Task.Delay(150);
+            var loadingPanel = (FrameworkElement)Field(page, "_loading")!;
+            Check(IsEffectivelyVisible(loadingPanel) && AutomationProperties.GetName(loadingPanel) == "Loading settings" &&
+                  !Descendants(page).OfType<Control>().Where(control => AutomationProperties.GetAutomationId(control).StartsWith("LibrarySettings_", StringComparison.Ordinal)).Any(IsEffectivelyVisible),
+                "the first read shows the loading skeleton and no editable controls");
+            await CaptureAsync(outer, "library-settings-loading.png");
+            server.EffectiveGate.SetResult(); server.EffectiveGate = null;
+            await Until(() => !controller.State.Loading && controller.State.Error != null, "failed first read"); await Task.Delay(150);
+            Check(!controller.State.Loaded && Shown("Library and metadata settings could not be loaded. Retry before editing.") &&
+                  IsEffectivelyVisible(Button(page, "LibrarySettingsRetry")) && Button(page, "LibrarySettingsRetry").IsEnabled &&
+                  !Descendants(page).OfType<Control>().Where(control => AutomationProperties.GetAutomationId(control).StartsWith("LibrarySettings_", StringComparison.Ordinal)).Any(IsEffectivelyVisible),
+                "a failed first read shows the official sentence and Retry with no editable defaults");
+            await CaptureAsync(outer, "library-settings-load-error.png");
+            controller.Set(R.ScannerWorkers, "2"); await controller.SaveAsync();
+            Check(controller.State.DirtyKeys.Count == 0, "a failed read stages and saves nothing");
+            server.EffectiveFailure = false; await Click(page, "LibrarySettingsRetry");
+            await Until(() => controller.State.Loaded && controller.State.Error == null && !controller.State.Loading, "retry recovers");
             await Until(() => Input(page, R.ScannerWorkers).Text.Length > 0, "Back fields rendered");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "former-admin", Role = "user" }); await Task.Delay(200);
             Check(controller.State.Values.Count == 0 && Input(page, R.ScannerWorkers).Text.Length == 0 && !Button(page, "LibrarySettingsSave").IsEnabled,
