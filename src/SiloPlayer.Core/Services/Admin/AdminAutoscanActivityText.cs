@@ -229,9 +229,25 @@ public static class AdminAutoscanActivityText
         var parts = new List<string>();
         void Add(string key, long count) { if (count > 0) parts.Add(Count("result." + key, count)); }
         Add("new", result.New); Add("updated", result.Updated); Add("missing", result.Missing);
-        Add("keptOffline", result.MissingSkippedProtected); Add("filesRemoved", result.FilesDeleted);
-        Add("itemsRemoved", result.ItemsDeleted); Add("titlesRemoved", result.MembershipsRemoved); Add("errors", result.Errors);
+        Add("filesRemoved", result.FilesDeleted); Add("itemsRemoved", result.ItemsDeleted); Add("titlesRemoved", result.MembershipsRemoved);
+        Add("keptOffline", result.MissingSkippedProtected); Add("errors", result.Errors);
         return parts.Count > 0 ? string.Join(" · ", parts) : result.Unchanged > 0 ? Count("result.noChangesUnchanged", result.Unchanged) : T("result.noChanges");
     }
+
+    /// <summary>A count printed without digit grouping, as the poll metric strip does.</summary>
+    public static string RawCount(string key, long count) => T(key, new Dictionary<string, object?> { ["count"] = count, ["count_text"] = count.ToString(AppStrings.FormatCulture) });
+    public static string Number(long value) => AdminText.FormatNumber(value);
+
+    private static readonly IReadOnlyDictionary<string, string> ReasonKeys = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["no_library_match"] = "reason.noLibraryMatch", ["subtree_outside_library"] = "reason.subtreeOutsideLibrary", ["path_outside_library"] = "reason.pathOutsideLibrary",
+        ["path_ambiguous"] = "reason.pathAmbiguous", ["library_disabled"] = "reason.libraryDisabled", ["library_root_offline"] = "reason.libraryRootOffline",
+        ["unsupported_extension"] = "reason.unsupportedExtension", ["path_permission_denied"] = "reason.pathPermissionDenied", ["path_not_inspectable"] = "reason.pathNotInspectable",
+        ["path_not_file_or_dir"] = "reason.pathNotFileOrDir", ["path_required"] = "reason.pathRequired", ["path_ignored"] = "reason.pathIgnored",
+        ["resolves_to_library"] = "reason.resolvesToLibrary", ["enqueue_failed"] = "reason.enqueueFailed",
+    };
+
+    /// <summary>The plain-language text for one of the resolver's reason codes, or null for a code this client does not know.</summary>
+    public static string? ReasonText(string? reason) => reason != null && ReasonKeys.TryGetValue(reason, out var key) ? T(key) : null;
 }
 

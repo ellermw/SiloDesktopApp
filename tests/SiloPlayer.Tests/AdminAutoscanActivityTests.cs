@@ -77,6 +77,17 @@ public sealed partial class AdminAutoscanActivityTests
         Assert.DoesNotContain("synthetic-secret", AdminAutoscanActivityText.Safe("request failed https://fixture.invalid/path?signature=synthetic-secret"));
     }
 
+    [Fact]
+    public void ResultPartsFollowTheOfficialOrderAndReasonsAreKnown()
+    {
+        var all = AdminAutoscanActivityText.Result(new() { New = 1, Updated = 2, Missing = 3, FilesDeleted = 4, ItemsDeleted = 5, MembershipsRemoved = 6, MissingSkippedProtected = 7, Errors = 8 });
+        string[] order = ["1 new", "2 updated", "3 missing", "4 files removed", "5 items removed", "6 titles removed from library", "7 kept (storage offline)", "8 errors"];
+        Assert.Equal(string.Join(" · ", order), all);
+        Assert.Equal("The library's ignore files exclude this file, so it was not scanned.", AdminAutoscanActivityText.ReasonText("path_ignored"));
+        Assert.Null(AdminAutoscanActivityText.ReasonText("future_reason"));
+        Assert.Equal("12 changes", AdminAutoscanActivityText.RawCount("metrics.changes", 12));
+    }
+
     [Theory]
     [InlineData("0")]
     [InlineData("-1")]
@@ -99,8 +110,8 @@ public sealed partial class AdminAutoscanActivityTests
     [Fact]
     public void HistoryRequestsUseOnlyOfficialFilterAndCursorParameters()
     {
-        var path = AdminAutoscanActivityApi.HistoryPath(AdminAutoscanHistory.Polls, new("scan-1", "success", 25, "source-1"), "signed-cursor");
-        Assert.Contains("q=scan-1", path); Assert.Contains("source_id=source-1", path);
+        var path = AdminAutoscanActivityApi.HistoryPath(AdminAutoscanHistory.Polls, new("scan-1", "success", 25), "signed-cursor");
+        Assert.Contains("q=scan-1", path); Assert.DoesNotContain("source_id", path);
         Assert.Contains("cursor=signed-cursor", path); Assert.Contains("status=success", path);
         Assert.DoesNotContain("sort=", path); Assert.DoesNotContain("offset=", path);
     }

@@ -4,7 +4,7 @@ namespace SiloPlayer.Core.Models.Admin;
 
 public enum AdminAutoscanHistory { Scans, Polls }
 
-public sealed record AdminAutoscanActivityFilter(string Query = "", string Status = "", int Limit = 25, string? SourceId = null);
+public sealed record AdminAutoscanActivityFilter(string Query = "", string Status = "", int Limit = 25);
 
 public sealed class AdminAutoscanActivityPageInfo
 {

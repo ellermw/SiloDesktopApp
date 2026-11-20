@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
@@ -111,16 +112,16 @@ public sealed class AdminAutoscanActivityController : IDisposable
         return RefreshAsync();
     }
 
-    public Task FilterAsync(string query, string status, int limit, string? sourceId = null)
+    public Task FilterAsync(string query, string status, int limit)
     {
         lock (_gate)
         {
             if (!Current) return Task.CompletedTask;
-            var filter = new AdminAutoscanActivityFilter(query.Trim(), status, limit, sourceId);
+            var filter = new AdminAutoscanActivityFilter(query.Trim(), status, limit);
             _ = AdminAutoscanActivityApi.HistoryPath(_state.Selected, filter);
             if (filter == Filter) return Task.CompletedTask;
             CancelHistoryLocked();
-            Pager.SetScope(AdminCursorPager.ScopeOf(_owner!, limit, _state.Selected.ToString(), filter.Query, status, sourceId));
+            Pager.SetScope(AdminCursorPager.ScopeOf(_owner!, limit, _state.Selected.ToString(), filter.Query, status));
             _continuations.Remove(Pager);
             _state = _state.Selected == AdminAutoscanHistory.Scans
                 ? _state with { Scans = new() { Filter = filter } }
@@ -182,7 +183,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
             if (_historyTask.IsCompleted)
             {
                 var filter = Filter; var history = _state.Selected; var pager = Pager;
-                if (pager.Scope == null) pager.SetScope(AdminCursorPager.ScopeOf(owner, filter.Limit, history.ToString(), filter.Query, filter.Status, filter.SourceId));
+                if (pager.Scope == null) pager.SetScope(AdminCursorPager.ScopeOf(owner, filter.Limit, history.ToString(), filter.Query, filter.Status));
                 var position = pager.Capture(); var seq = ++_sequence;
                 _historyRead = CancellationTokenSource.CreateLinkedTokenSource(_readLifetime!.Token);
                 _state = history == AdminAutoscanHistory.Scans ? _state with { Scans = _state.Scans with { Fetching = true } }
@@ -238,8 +239,8 @@ public sealed class AdminAutoscanActivityController : IDisposable
             {
                 if (!Owns(owner) || _sequence != seq) return;
                 var failure = AdminFailures.Classify(error, owner);
-                _state = history == AdminAutoscanHistory.Scans ? _state with { Scans = _state.Scans with { Items = [], Fetching = false, Failure = failure } }
-                    : _state with { Polls = _state.Polls with { Items = [], Fetching = false, Failure = failure } };
+                _state = history == AdminAutoscanHistory.Scans ? _state with { Scans = _state.Scans with { Fetching = false, Failure = failure } }
+                    : _state with { Polls = _state.Polls with { Fetching = false, Failure = failure } };
                 _state = _state with { Revision = _state.Revision + 1 };
             }
         }
@@ -277,7 +278,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
         }
         catch (Exception error)
         {
-            lock (_gate) { if (!Owns(owner) || token.IsCancellationRequested) return; _state = _state with { Status = null, StatusFailure = AdminFailures.Classify(error, owner), Revision = _state.Revision + 1 }; }
+            lock (_gate) { if (!Owns(owner) || token.IsCancellationRequested) return; _state = _state with { StatusFailure = AdminFailures.Classify(error, owner), Revision = _state.Revision + 1 }; }
         }
         Notify();
     }
@@ -356,6 +357,9 @@ public sealed class AdminAutoscanActivityController : IDisposable
         .ThenBy(scan => scan.Mode switch { "library" => 0, "file" => 1, "subtree" => 2, _ => 3 })
         .ThenBy(scan => scan.Mode, StringComparer.CurrentCulture).ThenBy(scan => scan.Path, StringComparer.CurrentCulture).ToArray();
 
+    /// <summary>A definite refusal: the server answered 4xx (other than 408), so the scan write was not applied.</summary>
+    internal static bool IsRefusal(Exception error) => error is ApiException { StatusCode: >= 400 and < 500 and not 408 };
+
     public async Task CancelAsync(string libraryId)
     {
         MonitorAuthorityLease owner;
@@ -379,13 +383,20 @@ public sealed class AdminAutoscanActivityController : IDisposable
             lock (_gate)
             {
                 if (!Owns(owner)) return;
-                var failure = AdminFailures.Classify(error, owner);
-                var reviews = _state.CancelReview.ToDictionary(entry => entry.Key, entry => entry.Value);
-                reviews[libraryId] = AdminAutoscanActivityText.T(failure is AdminFailureKind.Conflict or AdminFailureKind.PreconditionFailed
-                    ? "native.cancelConflict" : "native.cancelUnknown");
-                _state = _state with { CancelReview = reviews };
+                if (IsRefusal(error))
+                {
+                    // A definite 4xx answer: nothing was applied, so the admin can read the reason and try again.
+                    _uncertainAt.Remove(libraryId);
+                    message = error is ApiException api ? ApiProblemText.Display(api, null) : AdminAutoscanActivityText.T("web.common.scans.cancelFailed");
+                }
+                else
+                {
+                    var reviews = _state.CancelReview.ToDictionary(entry => entry.Key, entry => entry.Value);
+                    reviews[libraryId] = AdminAutoscanActivityText.T("native.cancelUnknown");
+                    _state = _state with { CancelReview = reviews };
+                    message = AdminAutoscanActivityText.T("web.common.scans.cancelFailed");
+                }
             }
-            message = AdminAutoscanActivityText.T("web.common.scans.cancelFailed");
         }
         lock (_gate) { if (!Owns(owner)) return; _state = _state with { Cancelling = null, Message = message, Revision = _state.Revision + 1 }; }
         Notify();

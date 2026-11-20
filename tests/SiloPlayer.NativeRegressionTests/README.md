@@ -1,14 +1,5 @@
 # Native UI regressions
 
-The source-only Autoscan Activity candidate adds selector
-`admin-autoscan-activity` through the real registered Admin shell and inner Frame.
-Its authored fixture covers both history cursors, related-poll search, details,
-live status/queue/progress, failure/retry, uncertain cancellation and actual
-page/shell unload barriers before restoring globals. Capture calls at 1440,
-1024 and 800 are authored, not observed results. See
-`docs/parity/2026-11-17-admin-autoscan-activity.md` for coordinator-only runtime
-acceptance requirements; this note does not authorize a source worker to run it.
-
 This Windows-only runner loads actual `ItemDetailPage` and `LandscapeCard` controls from a published
 build in a hidden WinUI window. It uses local fixture image responses, never
 starts the Silo application, and does not access the user's settings or player.

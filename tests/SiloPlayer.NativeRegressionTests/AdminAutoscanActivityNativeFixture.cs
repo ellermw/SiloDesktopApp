@@ -28,7 +28,7 @@ internal static class AdminAutoscanActivityNativeFixture
     {
         internal readonly System.Collections.Concurrent.ConcurrentQueue<string> Reads = new();
         internal int Writes;
-        internal bool FailHistory, FailStatus, EmptyHistory, UnknownCancel;
+        internal bool FailHistory, FailStatus, EmptyHistory, UnknownCancel, RefuseCancel;
         internal TaskCompletionSource? HoldHistory;
         internal long ActiveScans = 2;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
@@ -40,6 +40,7 @@ internal static class AdminAutoscanActivityNativeFixture
                 Writes++;
                 using var data = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
                 Check(path == "/api/v2/scan/cancel" && data.RootElement.GetProperty("library_id").GetString() == "7", "cancel uses the exact published body");
+                if (RefuseCancel) return Json("""{"title":"Synthetic refusal","status":403}""", HttpStatusCode.Forbidden);
                 if (UnknownCancel) throw new HttpRequestException("synthetic cancellation uncertainty");
                 return Json("""{"library_id":"7","cancelled":2}""");
             }
@@ -122,6 +123,7 @@ internal static class AdminAutoscanActivityNativeFixture
             channel.Snapshot(); await Until(() => TextShown(page, "Processing files · 4 / 10 (40%)"), "live progress");
             Check(page.Controller!.State.Queue[0].Id == "running", "live queue sorts running before queued");
             await Capture(page, "admin-autoscan-activity-scans-1440.png");
+            await CaptureBottom(page, "admin-autoscan-activity-scans-history-1440.png");
             Invoke(Find<Button>(page, "AutoscanActivityNext")); await Until(() => page.RenderedIds.FirstOrDefault() == "scan-two", "bounded next scan page");
             Invoke(Find<Button>(page, "AutoscanActivityPolls")); await Until(() => TextShown(page, "Webhook · Download"), "poll tab and webhook label");
             var details = Find<Expander>(page, "AutoscanActivityDetails_11"); details.IsExpanded = true;
@@ -129,14 +131,10 @@ internal static class AdminAutoscanActivityNativeFixture
             Check(TextShown(page, "Rewritten to /synthetic/movie.mkv"), "rewritten path is visible");
             Check(TextShown(page, "Showing the first 2 of 2 changes."), "truncated path receipt is visible");
             await Capture(page, "admin-autoscan-activity-polls-details-1440.png");
+            await CaptureBottom(page, "admin-autoscan-activity-polls-history-1440.png");
             Invoke(Find<Button>(page, "AutoscanActivityNext"));
             await Until(() => page.Controller!.State.Polls.PageIndex == 1 && !page.Controller.State.Polls.Fetching, "independent next poll cursor");
             Invoke(Find<Button>(page, "AutoscanActivityScans")); await Until(() => page.RenderedIds.FirstOrDefault() == "scan-two", "Scans keeps its own cursor chain");
-            Invoke(Find<Button>(page, "AutoscanActivityRelatedPoll_scan-two"));
-            await Until(() => page.Controller!.State.Polls.Filter.Query == "scan-two" && !page.Controller.State.Polls.Fetching, "related poll searches by the linked scan identity");
-            Check(page.Controller!.State.Polls.Filter.SourceId == "source-1" && page.Controller.State.Polls.PageIndex == 0, "related poll keeps the official source filter and restarts only Polls");
-            Check(wire.Reads.Last(path => path.StartsWith("/api/v2/admin/autoscan/events")).Contains("q=scan-two"), "related link does not invent event-id search support");
-            Invoke(Find<Button>(page, "AutoscanActivityScans")); await Until(() => page.RenderedIds.FirstOrDefault() == "scan-two", "related poll navigation retains Scans position");
             var search = Find<TextBox>(page, "AutoscanActivitySearch"); search.Text = "synthetic filter";
             await Until(() => page.Controller!.State.Scans.Filter.Query == "synthetic filter" && !page.Controller.State.Scans.Fetching, "debounced search");
             Check(page.Controller!.State.Scans.PageIndex == 0, "filter resets only its chain");
@@ -144,21 +142,32 @@ internal static class AdminAutoscanActivityNativeFixture
             Check(TextShown(page, "No autoscan activity matches those filters."), "official filtered empty label");
             wire.EmptyHistory = false; wire.FailHistory = true; Invoke(Find<Button>(page, "AutoscanActivityRefresh"));
             await Until(() => page.RenderedContent == "error", "history failure"); wire.FailHistory = false;
+            Check(TextShown(page, "Failed to load autoscan activity."), "failed first read shows the official message");
             Invoke(Find<Button>(page, "AutoscanActivityRetry")); await Until(() => page.RenderedContent == "table", "visible read-only retry");
+            wire.FailHistory = true; Invoke(Find<Button>(page, "AutoscanActivityRefresh"));
+            await Until(() => page.Controller!.State.Scans.Failure != null && TextShown(page, "Failed to load autoscan activity."), "failed background read is reported");
+            Check(page.RenderedContent == "table" && page.RenderedIds.Count > 0, "a failed background read keeps the rows on screen");
+            wire.FailHistory = false; Invoke(Find<Button>(page, "AutoscanActivityStaleRetry"));
+            await Until(() => page.Controller!.State.Scans.Failure == null && !page.Controller.State.Scans.Fetching, "retry beside the kept rows recovers");
             wire.FailStatus = true; Invoke(Find<Button>(page, "AutoscanActivityRefresh"));
             await Until(() => page.Controller!.State.StatusFailure != null && TextShown(page, "Autoscan status could not be loaded. Retry to refresh live counts."), "independent live status failure");
             wire.FailStatus = false; Invoke(Find<Button>(page, "AutoscanActivityStatusRetry"));
             await Until(() => page.Controller!.State.StatusFailure == null && page.Controller.State.Status != null, "visible status retry recovers without a write");
-            wire.UnknownCancel = true; channel.Snapshot(); await Task.Delay(80);
+            wire.RefuseCancel = true; channel.Snapshot(); await Task.Delay(80);
+            Invoke(Find<Button>(page, "AutoscanActivityCancel_running")); await Until(() => TextShown(page, "Synthetic refusal"), "refused cancellation shows the server reason");
+            Check(wire.Writes == 1 && page.Controller!.State.CancelReview.Count == 0 && Find<Button>(page, "AutoscanActivityCancel_running").IsEnabled, "a definite refusal leaves Cancel available to retry");
+            wire.RefuseCancel = false; wire.UnknownCancel = true;
             Invoke(Find<Button>(page, "AutoscanActivityCancel_running")); await Until(() => page.Controller!.State.CancelReview.ContainsKey("7"), "unknown cancellation review");
-            Check(wire.Writes == 1 && !Find<Button>(page, "AutoscanActivityCancel_running").IsEnabled, "ambiguous command is sent once and disabled");
-            Invoke(Find<Button>(page, "AutoscanReconcile_7")); await Task.Delay(80); Check(wire.Writes == 1, "reconciliation never replays a write");
+            await Until(() => !Find<Button>(page, "AutoscanActivityCancel_running").IsEnabled, "the page disables Cancel behind the review gate");
+            Check(wire.Writes == 2, "ambiguous command is sent once and disabled");
+            Invoke(Find<Button>(page, "AutoscanReconcile_7")); await Task.Delay(80); Check(wire.Writes == 2, "reconciliation never replays a write");
             channel.Snapshot(); wire.ActiveScans = 0; Invoke(Find<Button>(page, "AutoscanReconcile_7"));
             await Until(() => page.Controller!.State.CancelReview.Count == 0, "explicit authoritative reconciliation");
             foreach (var width in new[] { 1024, 800 })
             {
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 1000)); await Task.Delay(100);
                 await Capture(page, "admin-autoscan-activity-scans-" + width + ".png");
+                await CaptureBottom(page, "admin-autoscan-activity-scans-history-" + width + ".png");
             }
             Check(!Descendants(page).OfType<TextBlock>().Any(text => text.Text.StartsWith("web.", StringComparison.Ordinal)), "controls display resolved labels");
             wire.HoldHistory = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -200,6 +209,13 @@ internal static class AdminAutoscanActivityNativeFixture
         Descendants(root).OfType<ControlType>().Single(control => AutomationProperties.GetAutomationId(control) == id);
     private static bool TextShown(DependencyObject root, string value) => Descendants(root).OfType<TextBlock>().Any(text => text.Text == value);
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+    private static async Task CaptureBottom(FrameworkElement page, string name)
+    {
+        var viewer = Descendants(page).OfType<ScrollViewer>().First();
+        viewer.ChangeView(null, viewer.ScrollableHeight, null, true); await Task.Delay(250);
+        await Capture(page, name);
+        viewer.ChangeView(null, 0, null, true); await Task.Delay(100);
+    }
     private static async Task Capture(FrameworkElement page, string name)
     {
         page.UpdateLayout(); var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(page);

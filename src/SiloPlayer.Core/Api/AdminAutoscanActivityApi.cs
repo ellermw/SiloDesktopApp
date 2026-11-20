@@ -18,13 +18,12 @@ public sealed class AdminAutoscanActivityApi(SiloApiClient client)
 
     public static string HistoryPath(AdminAutoscanHistory history, AdminAutoscanActivityFilter filter, string? cursor = null)
     {
-        if (filter.Limit is < 1 or > 200 || filter.Query.Length > 1024 || filter.SourceId?.Length > 256 ||
+        if (filter.Limit is < 1 or > 200 || filter.Query.Length > 1024 ||
             filter.Status.Length > 0 && !(history == AdminAutoscanHistory.Scans ? ScanStatus(filter.Status) : EventStatus(filter.Status)))
             throw new ArgumentException("Scan history page is outside the supported range.");
         var path = AdminPaging.WithPage("/api/v2/admin/autoscan/" + (history == AdminAutoscanHistory.Scans ? "scans" : "events"), filter.Limit, cursor);
         if (filter.Status.Length > 0) path += "&status=" + Uri.EscapeDataString(filter.Status);
         if (filter.Query.Trim().Length > 0) path += "&q=" + Uri.EscapeDataString(filter.Query.Trim());
-        if (history == AdminAutoscanHistory.Polls && !string.IsNullOrEmpty(filter.SourceId)) path += "&source_id=" + Uri.EscapeDataString(filter.SourceId);
         return path;
     }
 

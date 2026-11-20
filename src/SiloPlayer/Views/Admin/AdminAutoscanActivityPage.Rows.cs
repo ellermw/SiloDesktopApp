@@ -75,7 +75,7 @@ public sealed partial class AdminAutoscanActivityPage
                 SafeText(A.T("column.progress"),12,true), SafeText(A.T("column.action"),12,true) }, [1, 1.2, 2.2, 2.2, 1]));
             foreach (var scan in state.Queue.Skip(_queuePage * 8).Take(8))
             {
-                var progress = Progress(scan);
+                var progress = AdminLibraryPresentation.ScanProgress(scan);
                 var cancel = Action(A.T("queue.cancelLabel"), "AutoscanActivityCancel_" + scan.Id, () => _controller?.CancelAsync(scan.LibraryId));
                 cancel.Style = (Style)Application.Current.Resources["GhostButtonStyle"];
                 cancel.Content = new Border { Width = 14, Height = 14, BorderThickness = new(1.5), CornerRadius = new(2),
@@ -83,19 +83,19 @@ public sealed partial class AdminAutoscanActivityPage
                 cancel.Width = cancel.Height = cancel.MinWidth = cancel.MinHeight = 32; cancel.Padding = new(0);
                 ToolTipService.SetToolTip(cancel, A.T("queue.cancelLabel"));
                 cancel.IsEnabled = state.Cancelling == null && !state.CancelReview.ContainsKey(scan.LibraryId);
-                var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13)); scope.Children.Add(SafeText(scan.Path ?? A.T("entireLibrary"), 12, true, true));
-                var progressView = Stack(4); progressView.Children.Add(SafeText(progress, 12, true));
-                if (scan.IsRunning && scan.TotalFiles is > 0 && scan.FilesProcessed is { } processed)
-                    progressView.Children.Add(new ProgressBar { Minimum = 0, Maximum = 100, Value = Math.Clamp(processed * 100d / scan.TotalFiles.Value, 0, 100) });
-                var cells = new UIElement[] { Badge(scan.Status), LibraryLink(scan.LibraryId, state.Labels), scope, progressView, cancel };
+                var started = SafeText(scan.IsRunning ? AdminLibraryPresentation.ScanStarted(scan.StartedAt, DateTimeOffset.UtcNow) : A.T("queue.waiting"), 12, true);
+                var library = Stack(4); library.Children.Add(SafeText(A.Library(scan.LibraryId, state.Labels), 14)); library.Children.Add(started);
+                var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13)); scope.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
+                var detail = SafeText(progress.Length > 0 ? progress : AdminLibraryPresentation.ScanTrigger(scan.Trigger ?? ""), 12, true);
+                var cells = new UIElement[] { Badge(scan.Status), library, scope, detail, cancel };
                 queue.Children.Add(Card(_compact ? CardStack(cells) : RowGrid(cells, [1, 1.2, 2.2, 2.2, 1])));
             }
             if (state.Queue.Count > 8)
             {
                 var paging = Inline();
-                var previous = Action(A.T("web.ui.pagination.previous"), "AutoscanQueuePrevious", () => { _queuePage--; RenderLive(state); return Task.CompletedTask; });
+                var previous = Action(A.T("web.ui.pagination.previous"), "AutoscanQueuePrevious", () => { _queuePage--; RerenderLive(); return Task.CompletedTask; });
                 previous.IsEnabled = _queuePage > 0;
-                var next = Action(A.T("web.ui.pagination.next"), "AutoscanQueueNext", () => { _queuePage++; RenderLive(state); return Task.CompletedTask; });
+                var next = Action(A.T("web.ui.pagination.next"), "AutoscanQueueNext", () => { _queuePage++; RerenderLive(); return Task.CompletedTask; });
                 next.IsEnabled = (_queuePage + 1) * 8 < state.Queue.Count;
                 paging.Children.Add(previous); paging.Children.Add(SafeText(A.T("native.page", new { page = _queuePage + 1 }), 12, true)); paging.Children.Add(next);
                 queue.Children.Add(paging);
@@ -103,16 +103,6 @@ public sealed partial class AdminAutoscanActivityPage
         }
         if (state.QueueCapped) queue.Children.Add(SafeText(A.T("native.livePartial"), 12, true));
         _live.Children.Add(queue);
-    }
-
-    private static string Progress(AdminLibraryScanRun scan)
-    {
-        if (!scan.IsRunning) return A.T("queue.waiting");
-        if (scan.TotalFiles is > 0 && scan.FilesProcessed is > 0)
-            return A.T("web.admin.common.scans.progress", new { message = scan.Message ?? A.T("web.admin.common.scans.processingFiles"),
-                processed = scan.FilesProcessed.Value.ToString("N0"), total = scan.TotalFiles.Value.ToString("N0"),
-                percent = Math.Clamp((long)Math.Round(scan.FilesProcessed.Value * 100d / scan.TotalFiles.Value, MidpointRounding.AwayFromZero), 0, 100) });
-        return scan.Message ?? A.T("web.admin.common.scans.trigger.autoscan");
     }
 
     private static FrameworkElement Badge(string status, bool poll = false)
@@ -140,34 +130,8 @@ public sealed partial class AdminAutoscanActivityPage
     {
         var text = SafeText(label, 12); text.Foreground = new SolidColorBrush(color);
         return new Border { Child = text, BorderThickness = new(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(77, color.R, color.G, color.B)),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(26, color.R, color.G, color.B)), Padding = new(8, 3),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(26, color.R, color.G, color.B)), Padding = new(8, 3, 8, 3),
             CornerRadius = new(8), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
-    }
-
-    private static FrameworkElement LibraryLink(string libraryId, AdminAutoscanActivityLabels labels)
-    {
-        var request = new AdminRouteRequest(AdminRoute.Libraries);
-        var label = A.Safe(A.Library(libraryId, labels));
-        var link = new HyperlinkButton { Content = SafeText(label, 13), Padding = new(0), HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetName(link, label);
-        link.IsEnabled = AdminShellPage.CreateRegistry().CanOpen(request);
-        link.Click += (_, _) => AdminShellPage.Open(request);
-        ToolTipService.SetToolTip(link, libraryId);
-        return link;
-    }
-
-    private static FrameworkElement SourceLabel(string? id, string? plugin, string? capability, AdminAutoscanActivityLabels labels, bool poll = false)
-    {
-        var label = A.Safe(A.Source(id, plugin, capability, labels, poll));
-        var request = new AdminRouteRequest(AdminRoute.AutoscanSources);
-        if (!AdminShellPage.CreateRegistry().CanOpen(request))
-        {
-            var text = SafeText(label, 13); ToolTipService.SetToolTip(text, A.Safe(id)); return text;
-        }
-        var link = new HyperlinkButton { Content = SafeText(label, 13), Padding = new(0), HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetName(link, label); link.Click += (_, _) => AdminShellPage.Open(request);
-        ToolTipService.SetToolTip(link, A.Safe(id));
-        return link;
     }
 
     private static StackPanel CardStack(IEnumerable<UIElement> children)
@@ -185,51 +149,44 @@ public sealed partial class AdminAutoscanActivityPage
 
     private static FrameworkElement HistoryHead(bool scans)
     {
-        string[] keys = scans ? ["status", "library", "scope", "source", "result", "poll", "time"] : ["status", "source", "counts", "details", "duration", "time"];
-        return Card(RowGrid(keys.Select(key => (UIElement)SafeText(A.T("column." + key), 12, true)).ToArray(), scans ? [0.8, 1, 1.6, 1, 1.6, 0.8, 1] : [0.8, 1.2, 1.4, 2, 0.7, 1]));
+        string[] keys = scans ? ["status", "library", "source", "scope", "result", "time", "poll"] : ["status", "source", "counts", "details", "duration", "time"];
+        return Card(RowGrid(keys.Select(key => (UIElement)SafeText(A.T("column." + key), 12, true)).ToArray(), scans ? ScanWidths : PollWidths));
     }
+
+    private static readonly double[] ScanWidths = [0.8, 1, 1, 1.6, 1.6, 1, 0.8];
+    private static readonly double[] PollWidths = [0.8, 1.2, 1.4, 2, 0.7, 1];
 
     private FrameworkElement ScanRow(AdminAutoscanActivityScan scan, AdminAutoscanActivityLabels labels)
     {
-        var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13)); scope.Children.Add(SafeText(scan.Path ?? A.T("entireLibrary"), 12, true, true));
-        var result = Stack(4); result.Children.Add(SafeText(A.Result(scan.Result), 12, true));
-        if (!string.IsNullOrEmpty(scan.ErrorMessage)) result.Children.Add(SafeText(scan.ErrorMessage, 12));
-        result.Children.Add(SafeText(scan.Id, 11, true, true));
-        var poll = Stack(4);
-        if (!string.IsNullOrEmpty(scan.EventStatus)) poll.Children.Add(Badge(scan.EventStatus, true));
-        poll.Children.Add(SafeText(Timestamp(scan.EventCompletedAt), 11, true));
-        if (scan.AutoscanEventId != null)
-        {
-            var events = Action(A.T("history.polls"), "AutoscanActivityRelatedPoll_" + scan.Id, async () =>
-            {
-                if (_controller == null) return;
-                await _controller.SelectAsync(AdminAutoscanHistory.Polls);
-                await _controller.FilterAsync(scan.Id, "", 25, scan.SourceId);
-            });
-            poll.Children.Add(events);
-        }
-        UIElement[] cells = [Badge(scan.Status), LibraryLink(scan.LibraryId, labels), scope,
-            SourceLabel(scan.SourceId, scan.PluginId, scan.CapabilityId, labels), result, poll,
-            SafeText(Timestamp(scan.CompletedAt ?? scan.StartedAt ?? scan.RequestedAt), 12, true)];
-        var card = Card(_compact ? CardStack(cells) : RowGrid(cells, [0.8, 1, 1.6, 1, 1.6, 0.8, 1]));
+        var library = Stack(4); library.Children.Add(SafeText(A.Library(scan.LibraryId, labels), 14)); library.Children.Add(SafeText(scan.Id, 11, true, true));
+        var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13)); scope.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
+        if (!string.IsNullOrEmpty(scan.ErrorMessage)) scope.Children.Add(Toned(SafeText(scan.ErrorMessage, 12), Danger));
+        var poll = string.IsNullOrEmpty(scan.EventStatus) ? SafeText("-", 12, true) : Badge(scan.EventStatus, true);
+        UIElement[] cells = [Badge(scan.Status), library, SafeText(A.Source(scan.SourceId, scan.PluginId, scan.CapabilityId, labels), 13), scope,
+            SafeText(A.Result(scan.Result), 12, true), SafeText(Timestamp(scan.CompletedAt ?? scan.StartedAt ?? scan.RequestedAt), 12, true), poll];
+        var card = Card(_compact ? CardStack(cells) : RowGrid(cells, ScanWidths));
         AutomationProperties.SetAutomationId(card, "AutoscanActivityScan_" + scan.Id); return card;
+    }
+
+    private static int JoinedRuns(AdminAutoscanActivityEvent poll)
+    {
+        var created = (poll.ScanRuns ?? []).Select(run => run.Id).ToHashSet(StringComparer.Ordinal);
+        return (poll.Changes ?? []).Where(change => change.Outcome == "joined" && !string.IsNullOrEmpty(change.ScanRunId) && !created.Contains(change.ScanRunId))
+            .Select(change => change.ScanRunId!).Distinct(StringComparer.Ordinal).Count();
     }
 
     private FrameworkElement PollRow(AdminAutoscanActivityEvent poll, AdminAutoscanActivityLabels labels)
     {
-        var source = Stack(4); source.Children.Add(SourceLabel(poll.SourceId, poll.PluginId, poll.CapabilityId, labels, true));
+        var source = Stack(4); source.Children.Add(SafeText(A.Source(poll.SourceId, poll.PluginId, poll.CapabilityId, labels, true), 14));
         if (poll.DeliveryMode == "webhook") source.Children.Add(SafeText(A.T(string.IsNullOrEmpty(poll.ProviderEventType) ? "delivery.webhook" : "delivery.webhookEvent", new { event_type = poll.ProviderEventType }), 12, true));
         var metrics = Stack(4);
         foreach (var entry in new (string Key, long Count)[] { ("changes", poll.ChangesReturned), ("targets", poll.TargetsClaimed),
             ("created", poll.ScansCreated), ("reused", poll.ScansReused), ("suppressed", poll.ScansSuppressed) })
-            if (entry.Key is "changes" or "targets" || entry.Count > 0) metrics.Children.Add(SafeText(A.Count("metrics." + entry.Key, entry.Count), 12, true));
-        if (!string.IsNullOrEmpty(poll.ErrorMessage)) metrics.Children.Add(SafeText(poll.ErrorMessage, 12));
-        var runs = poll.ScanRuns ?? [];
-        var joined = (poll.Changes ?? []).Where(change => change.Outcome == "joined" && change.ScanRunId != null && !runs.Any(run => run.Id == change.ScanRunId))
-            .Select(change => change.ScanRunId).Distinct().Count();
-        var linked = runs.Count + joined;
+            metrics.Children.Add(SafeText(A.RawCount("metrics." + entry.Key, entry.Count), 12, true));
+        if (!string.IsNullOrEmpty(poll.ErrorMessage)) metrics.Children.Add(Toned(SafeText(poll.ErrorMessage, 12), Danger));
+        var linked = (poll.ScanRuns?.Count ?? 0) + JoinedRuns(poll);
         var details = new Expander { Header = SafeText(A.Count("details.pathCount", poll.ChangesReturned) + " · " +
-            A.T("details.linkedCount", new { count = linked, count_text = linked.ToString("N0") + (poll.ChangesTruncated ? "+" : "") }), 12, true),
+            A.T("details.linkedCount", new { count = linked, count_text = A.Number(linked) + (poll.ChangesTruncated ? "+" : "") }), 12, true),
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetAutomationId(details, "AutoscanActivityDetails_" + poll.Id);
         details.Expanding += (_, _) => { _expanded.Add(poll.Id); details.Content ??= EventDetails(poll, labels); };
@@ -238,9 +195,13 @@ public sealed partial class AdminAutoscanActivityPage
         var elapsed = poll.Status == "running" ? Math.Max(0, (long)(DateTimeOffset.UtcNow - poll.StartedAt).TotalMilliseconds) : poll.DurationMs;
         UIElement[] cells = [Badge(poll.Status, true), source, metrics, details, SafeText(A.Duration(elapsed), 12, true),
             SafeText(Timestamp(poll.Status == "running" ? poll.StartedAt : poll.CompletedAt), 12, true)];
-        var card = Card(_compact ? CardStack(cells) : RowGrid(cells, [0.8, 1.2, 1.4, 2, 0.7, 1]));
+        var card = Card(_compact ? CardStack(cells) : RowGrid(cells, PollWidths));
         AutomationProperties.SetAutomationId(card, "AutoscanActivityPoll_" + poll.Id); return card;
     }
+
+    private static readonly Windows.UI.Color Danger = Windows.UI.Color.FromArgb(255, 248, 113, 113);
+    private static readonly Windows.UI.Color Amber = Windows.UI.Color.FromArgb(255, 251, 191, 36);
+    private static TextBlock Toned(TextBlock text, Windows.UI.Color color) { text.Foreground = new SolidColorBrush(color); return text; }
 
     private static FrameworkElement EventDetails(AdminAutoscanActivityEvent poll, AdminAutoscanActivityLabels labels)
     {
@@ -251,47 +212,50 @@ public sealed partial class AdminAutoscanActivityPage
         {
             var row = Stack(6);
             row.Children.Add(ChangeBadge(change.Outcome));
-            row.Children.Add(SafeText(change.SourcePath, 12, true, true));
+            row.Children.Add(SafeText(change.SourcePath, 12, false, true));
             if (!string.IsNullOrEmpty(change.RewrittenPath) && change.RewrittenPath != change.SourcePath)
                 row.Children.Add(SafeText(A.T("change.rewrittenTo", new { path = change.RewrittenPath }), 12, true, true));
-            row.Children.Add(SafeText(ChangeExplanation(change, labels), 12, true));
-            if (change.LibraryId != null) row.Children.Add(LibraryLink(change.LibraryId, labels));
-            if (!string.IsNullOrEmpty(change.ScanRunId)) row.Children.Add(SafeText(change.ScanRunId, 11, true, true));
+            var (text, tone) = ChangeExplanation(change, labels);
+            var explanation = SafeText(text, 12, tone == null); if (tone is { } color) Toned(explanation, color);
+            row.Children.Add(explanation);
+            if (change.Outcome is "queued" or "joined" && !string.IsNullOrEmpty(change.ScanRunId)) row.Children.Add(SafeText(change.ScanRunId, 11, true, true));
             panel.Children.Add(Card(row));
         }
-        if (poll.ChangesTruncated) panel.Children.Add(SafeText(A.T("changes.truncated", new { shown = changes.Count.ToString("N0"), count = poll.ChangesReturned, count_text = poll.ChangesReturned.ToString("N0") }), 12, true));
+        if (poll.ChangesTruncated) panel.Children.Add(SafeText(A.T("changes.truncated", new { shown = A.Number(changes.Count), count = poll.ChangesReturned, count_text = A.Number(poll.ChangesReturned) }), 12, true));
         panel.Children.Add(SafeText(A.T("details.scansCreated"), 12, true));
-        if (poll.ScanRuns is not { Count: > 0 }) panel.Children.Add(SafeText(A.T(changes.Any(change => change.Outcome == "joined" && change.ScanRunId != null) ? "runs.noneJoined" : "runs.none"), 12, true));
-        foreach (var run in poll.ScanRuns ?? [])
+        var runs = poll.ScanRuns ?? [];
+        if (runs.Count == 0) panel.Children.Add(SafeText(A.T(JoinedRuns(poll) > 0 ? "runs.noneJoined" : "runs.none"), 12, true));
+        foreach (var run in runs)
         {
-            var row = Stack(6); row.Children.Add(Badge(run.Status)); row.Children.Add(SafeText(A.Mode(run.Mode), 12));
-            row.Children.Add(SafeText(run.Path ?? A.T("entireLibrary"), 12, true, true));
-            row.Children.Add(SafeText(A.Result(run.Result), 12, true)); row.Children.Add(LibraryLink(run.LibraryId, labels));
-            row.Children.Add(SafeText(Timestamp(run.CompletedAt ?? run.StartedAt ?? run.RequestedAt), 12, true));
-            if (run.ErrorMessage != null) row.Children.Add(SafeText(run.ErrorMessage, 12));
+            var row = Stack(6); row.Children.Add(Badge(run.Status)); row.Children.Add(SafeText(run.Mode, 13));
+            row.Children.Add(SafeText(string.IsNullOrEmpty(run.Path) ? A.T("entireLibrary") : run.Path, 12, true, true));
+            if (run.Result != null) row.Children.Add(SafeText(A.Result(run.Result), 12, true));
+            row.Children.Add(SafeText(Time(run.CompletedAt ?? run.StartedAt ?? run.RequestedAt), 12, true));
             panel.Children.Add(Card(row));
         }
         return panel;
     }
 
-    private static string ChangeExplanation(AdminAutoscanActivityChange change, AdminAutoscanActivityLabels labels)
+    private static string Time(DateTimeOffset? value) => value == null ? "-" : SiloPlayer.Helpers.DateTimeDisplay.FormatTime(value.Value);
+
+    /// <summary>The official ChangeExplanation text and tone (error red, unresolved amber, otherwise muted).</summary>
+    private static (string Text, Windows.UI.Color? Tone) ChangeExplanation(AdminAutoscanActivityChange change, AdminAutoscanActivityLabels labels)
     {
         var library = change.LibraryId == null ? null : A.Library(change.LibraryId, labels);
         if (change.Outcome is "queued" or "joined")
         {
             var key = change.Outcome == "queued" ? "queued" : change.Reason == "follow_up_scan" ? "followUp" : "joined";
-            var scope = A.T("change.scope", new { mode = change.TargetMode == null ? A.T("change.scanFallback") : A.Mode(change.TargetMode), path = change.TargetPath ?? A.T("entireLibrary") });
-            return A.T("change." + key + (library == null ? "" : "InLibrary"), new { scope, library });
+            var scope = A.T("change.scope", new { mode = string.IsNullOrEmpty(change.TargetMode) ? A.T("change.scanFallback") : A.Mode(change.TargetMode), path = string.IsNullOrEmpty(change.TargetPath) ? A.T("entireLibrary") : change.TargetPath });
+            return (A.T("change." + key + (library == null ? "" : "InLibrary"), new { scope, library }), null);
         }
-        if (change.Outcome == "suppressed") return A.T(string.IsNullOrEmpty(change.TargetPath) ? "change.suppressed" : "change.suppressedPath", new { path = change.TargetPath });
-        if (change.Outcome == "error" && change.Reason == "resolve_failed") return A.T(string.IsNullOrEmpty(change.Detail) ? "change.resolveFailed" : "change.resolveFailedDetail", new { detail = change.Detail });
-        var reason = change.Reason switch {
-            "no_library_match" => "noLibraryMatch", "subtree_outside_library" => "subtreeOutsideLibrary", "path_outside_library" => "pathOutsideLibrary",
-            "path_ambiguous" => "pathAmbiguous", "path_required" => "pathRequired", "path_permission_denied" => "pathPermissionDenied",
-            "path_not_file_or_dir" => "pathNotFileOrDir", "path_not_inspectable" => "pathNotInspectable", "library_disabled" => "libraryDisabled",
-            "library_root_offline" => "libraryRootOffline", "unsupported_extension" => "unsupportedExtension", "path_ignored" => "pathIgnored",
-            "resolves_to_library" => "resolvesToLibrary", "enqueue_failed" => "enqueueFailed", _ => null };
-        var text = reason != null ? A.T("reason." + reason) : change.Detail ?? change.Reason ?? A.T(change.Outcome == "error" ? "change.processingFailed" : "change.notScanned");
-        return library == null ? text : A.T("change.withLibrary", new { text, library });
+        if (change.Outcome == "suppressed") return (A.T(string.IsNullOrEmpty(change.TargetPath) ? "change.suppressed" : "change.suppressedPath", new { path = change.TargetPath }), null);
+        var reason = A.ReasonText(change.Reason);
+        if (change.Outcome == "error")
+        {
+            if (change.Reason == "resolve_failed") return (A.T(string.IsNullOrEmpty(change.Detail) ? "change.resolveFailed" : "change.resolveFailedDetail", new { detail = change.Detail }), Danger);
+            return (reason ?? (string.IsNullOrEmpty(change.Detail) ? A.T("change.processingFailed") : change.Detail), Danger);
+        }
+        var text = reason ?? (!string.IsNullOrEmpty(change.Detail) ? change.Detail : !string.IsNullOrEmpty(change.Reason) ? change.Reason : A.T("change.notScanned"));
+        return (library == null ? text : A.T("change.withLibrary", new { text, library }), change.Outcome == "unresolved" ? Amber : null);
     }
 }

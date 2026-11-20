@@ -176,20 +176,61 @@ public sealed partial class AdminAutoscanActivityTests
         await controller.NextAsync(); Assert.Equal(100, count);
     }
 
-    [Fact]
-    public async Task ConflictRequiresReviewAndExplicitReconciliationDoesNotWrite()
+    [Theory]
+    [InlineData(HttpStatusCode.Conflict, "Scan state changed")]
+    [InlineData(HttpStatusCode.PreconditionFailed, "Scan state changed")]
+    [InlineData(HttpStatusCode.Forbidden, "Scan state changed")]
+    [InlineData(HttpStatusCode.UnprocessableEntity, "Scan state changed")]
+    public async Task DefiniteRefusalShowsTheServerReasonAndAllowsAnotherRequest(HttpStatusCode status, string title)
     {
         using var harness = new Harness(); var channel = new Channel();
         using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, channel, new Clock());
         await controller.OpenAsync();
         channel.Snapshot("""[{"id":"active","library_id":7,"mode":"file","trigger":"autoscan","status":"running"}]""");
         harness.Wire.Reply = request => Task.FromResult(request.Method == HttpMethod.Post
-            ? Json("""{"title":"Scan state changed","status":409}""", HttpStatusCode.Conflict)
+            ? Json("{\"title\":\"" + title + "\",\"status\":" + (int)status + "}", status)
+            : Json("""{"enabled":true,"active_scans":1,"accepted_scans":0,"running_scans":1,"sources":[],"running_polls":[]}"""));
+        await controller.CancelAsync("7");
+        Assert.Empty(controller.State.CancelReview);
+        Assert.Contains(title, controller.State.Message);
+        Assert.Null(controller.State.Cancelling);
+        await controller.CancelAsync("7"); Assert.Equal(2, harness.Wire.Writes);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    public async Task ServerFailureOrTimeoutAfterSendingIsAnUnknownOutcome(HttpStatusCode status)
+    {
+        using var harness = new Harness(); var channel = new Channel();
+        using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, channel, new Clock());
+        await controller.OpenAsync();
+        channel.Snapshot("""[{"id":"active","library_id":7,"mode":"file","trigger":"autoscan","status":"running"}]""");
+        harness.Wire.Reply = request => Task.FromResult(request.Method == HttpMethod.Post
+            ? Json("{\"title\":\"synthetic\",\"status\":" + (int)status + "}", status)
             : Json("""{"enabled":true,"active_scans":0,"accepted_scans":0,"running_scans":0,"sources":[],"running_polls":[]}"""));
         await controller.CancelAsync("7");
-        Assert.Contains("changed", controller.State.CancelReview["7"]);
+        Assert.True(controller.State.CancelReview.ContainsKey("7"));
         await controller.CancelAsync("7"); Assert.Equal(1, harness.Wire.Writes);
         await controller.ReconcileCancelAsync("7"); Assert.Empty(controller.State.CancelReview); Assert.Equal(1, harness.Wire.Writes);
+    }
+
+    [Fact]
+    public async Task FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling()
+    {
+        using var harness = new Harness(); var clock = new Clock();
+        using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), clock);
+        await controller.OpenAsync();
+        Assert.Single(controller.State.Scans.Items); Assert.NotNull(controller.State.Status);
+        harness.Wire.Reply = _ => Task.FromResult(Json("""{"title":"synthetic unavailable","status":503}""", HttpStatusCode.ServiceUnavailable));
+        await controller.RefreshAsync();
+        Assert.NotNull(controller.State.Scans.Failure); Assert.Single(controller.State.Scans.Items);
+        Assert.NotNull(controller.State.StatusFailure); Assert.NotNull(controller.State.Status);
+        Assert.Contains(clock.Pending, timer => !timer.Disposed && timer.Delay == TimeSpan.FromSeconds(15));
+        harness.Wire.Reply = null;
+        await controller.RefreshAsync();
+        Assert.Null(controller.State.Scans.Failure); Assert.Null(controller.State.StatusFailure);
     }
 
     [Fact]

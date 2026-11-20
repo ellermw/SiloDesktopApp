@@ -72,7 +72,7 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminPageSuspensi
         _size = Select("AutoscanActivityPageSize", AdminAutoscanActivityApi.PageSizes.Select(size => (size.ToString(), size.ToString())), 90);
         AutomationProperties.SetName(_size, A.T("web.ui.pagination.rows"));
         _size.SelectionChanged += (_, _) => { if (!_syncing) ApplyFilters(); };
-        _reset = Action(A.T("history.reset"), "AutoscanActivityReset", () => _controller?.FilterAsync("", "", int.Parse(Selected(_size))));
+        _reset = Action(A.T("history.reset"), "AutoscanActivityReset", () => _controller?.FilterAsync("", "", int.TryParse(Selected(_size), out var rows) ? rows : 25));
         selectors.Children.Add(_status); selectors.Children.Add(Text(A.T("web.ui.pagination.rows"), 12, true)); selectors.Children.Add(_size); selectors.Children.Add(_reset);
         Grid.SetRow(selectors, 1); Grid.SetColumnSpan(selectors, 2); filters.Children.Add(selectors);
         history.Children.Add(filters); history.Children.Add(_rows);
@@ -130,6 +130,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminPageSuspensi
         if (_active) _ = _controller?.SetVisibleAsync(args.Visible);
     }
 
+    private void RerenderLive() { if (_active && _controller?.State is { IsOpen: true } state) RenderLive(state); }
+
     private void QueueRender()
     {
         var controller = _controller;
@@ -140,8 +142,7 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminPageSuspensi
     {
         _debounce.Stop();
         if (_syncing || !_active || !int.TryParse(Selected(_size), out var size)) return;
-        var source = _controller?.State is { Selected: AdminAutoscanHistory.Polls } state ? state.Polls.Filter.SourceId : null;
-        _ = _controller?.FilterAsync(_search.Text, Selected(_status), size, source);
+        _ = _controller?.FilterAsync(_search.Text, Selected(_status), size);
     }
 
     private void Render()
@@ -173,9 +174,9 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminPageSuspensi
         finally { _syncing = false; }
         _scans.IsEnabled = !scans; _polls.IsEnabled = scans;
         _search.IsEnabled = _status.IsEnabled = _size.IsEnabled = true;
-        _refresh.IsEnabled = !fetching; _reset.IsEnabled = filter.Query.Length > 0 || filter.Status.Length > 0 || filter.SourceId != null;
+        _refresh.IsEnabled = !fetching; _reset.IsEnabled = filter.Query.Length > 0 || filter.Status.Length > 0;
         _previous.IsEnabled = !fetching && page > 0;
-        _next.IsEnabled = !fetching && failure == null && next != null && !capped;
+        _next.IsEnabled = !fetching && next != null && !capped;
         _restart.IsEnabled = !fetching;
         _historyTitle.Text = A.T(scans ? "history.scansTitle" : "history.pollsTitle");
         _description.Text = A.T(scans ? "history.scansDescription" : "history.pollsDescription");
@@ -194,8 +195,15 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminPageSuspensi
             notice.Children.Add(reconcile);
             _notices.Children.Add(Card(notice));
         }
+        if (failure != null && count > 0)
+        {
+            // A background refresh failed: the rows already shown stay, the notice says so, and polling continues.
+            var stale = Stack(8); stale.Children.Add(Text(A.T("history.loadFailed"), 13));
+            stale.Children.Add(Action(A.T("common.tryAgain"), "AutoscanActivityStaleRetry", () => _controller?.RefreshAsync(true)));
+            _notices.Children.Add(Card(stale));
+        }
         RenderLive(state);
-        var kind = failure != null ? "error" : !loaded ? "loading" : count == 0 ? "empty" : "table";
+        var kind = failure != null && count == 0 ? "error" : !loaded ? "loading" : count == 0 ? "empty" : "table";
         object items = scans ? state.Scans.Items : state.Polls.Items;
         if (RenderedContent == kind && ReferenceEquals(items, _renderedItems) && _renderedHistory == state.Selected && ReferenceEquals(state.Labels, _renderedLabels)) return;
         _rows.Children.Clear(); RenderedContent = kind; _renderedItems = items; _renderedHistory = state.Selected; _renderedLabels = state.Labels;
@@ -209,7 +217,7 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminPageSuspensi
             _rows.Children.Add(Action(A.T("common.tryAgain"), "AutoscanActivityRetry", () => _controller?.RefreshAsync(true)));
             _rows.Children.Add(Action(A.T("native.restart"), "AutoscanActivityErrorRestart", () => _controller?.ReloadHistoryAsync()));
         }
-        else if (kind == "empty") _rows.Children.Add(Text(A.T(filter.Query.Length > 0 || filter.Status.Length > 0 || filter.SourceId != null ? "history.emptyFiltered" : scans ? "history.emptyScans" : "history.emptyPolls"), 14, true));
+        else if (kind == "empty") _rows.Children.Add(Text(A.T(filter.Query.Length > 0 || filter.Status.Length > 0 ? "history.emptyFiltered" : scans ? "history.emptyScans" : "history.emptyPolls"), 14, true));
         else
         {
             if (!_compact) _rows.Children.Add(HistoryHead(scans));
