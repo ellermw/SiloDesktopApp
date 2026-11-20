@@ -36,10 +36,17 @@ public sealed partial class AdminCollectionsPage
         top.Children.Add(ActionButton("Reload and review", "CollectionEditorReload", async () =>
         {
             // A confirmed create whose canonical read failed reloads by its identity; it is never started again as a blank draft.
-            if (await CanLeaveAsync()) { ClearStaged(); await Controller.ReloadEditorAsync(type, _library);
+            if (!await CanLeaveAsync()) return;
+            var owner = Controller.Owner; ClearStaged();
+            try
+            {
+                await Controller.ReloadEditorAsync(type, _library);
                 // A reloaded confirmed create is a saved collection: /new gives way to its identity.
                 if (Controller.Editor?.Value["id"]?.ToString() is { } reloaded && _route.Segment(0) == "new") { _route = _route with { Segments = [reloaded, "edit"] }; AdminShellPage.TryReplace(this, _route); }
-                RenderEditor(); Notice(""); }
+            }
+            // Leaving may have discarded the draft these inputs write into, so a failed reload still renders the current one.
+            finally { if (Current(owner)) RenderEditor(); }
+            if (Current(owner)) Notice("");
         }));
         if (Controller.OutcomeUnknown) top.Children.Add(ActionButton("Check the collections list", "CollectionEditorCheckList", CheckListAfterUnknownAsync));
         if (id != null) top.Children.Add(ActionButton("Delete…", "CollectionEditorDelete", () => DeleteDialogAsync(id)));
@@ -119,7 +126,7 @@ public sealed partial class AdminCollectionsPage
     private async Task SaveEditorAsync()
     {
         if (Controller.Busy) return;
-        var owner = Controller.Owner;
+        var owner = Controller.Owner; var rendered = Controller.Draft;
         if (_invalidRules || _rules?.IsValid == false || _invalidFields.Count > 0) { Notice("Complete the rules and title limits before saving."); return; }
         try
         {
@@ -156,14 +163,16 @@ public sealed partial class AdminCollectionsPage
             if (Current(owner)) { RenderEditor(); Notice(Controller.SaveWarning is { } warning ? "Collection saved. " + warning : "Collection saved"); }
         }
         catch (ApiException error) when (error.StatusCode == 412)
-        { if (Current(owner)) { Notice(AdminCollectionsController.Message(error)); await ReviewConflictAsync(); } }
+        { if (Current(owner)) { if (!ReferenceEquals(rendered, Controller.Draft)) RenderEditor(); Notice(AdminCollectionsController.Message(error)); await ReviewConflictAsync(); } }
         catch (Exception error)
         {
             if (!Current(owner)) return;
             Notice((Controller.CreatedId != null && Controller.Editor == null
                 ? "The collection was created, but its saved copy could not be read. Press Save to load it; it will not be created again."
                 : AdminCollectionsController.Message(error)) + (Controller.SaveWarning is { } warning ? " " + warning : ""));
-            if (Controller.OutcomeUnknown) RenderEditor();
+            // A save that went through replaced the draft before a title, an image or the last read failed. The inputs still write into the old one,
+            // so the editor is rendered again on the saved copy; the titles and images still staged stay staged.
+            if (Controller.OutcomeUnknown || !ReferenceEquals(rendered, Controller.Draft)) RenderEditor();
         }
         finally { IsHitTestVisible = true; }
     }

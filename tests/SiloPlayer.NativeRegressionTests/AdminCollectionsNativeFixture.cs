@@ -749,6 +749,34 @@ internal static class AdminCollectionsNativeFixture
                 await Until(() => Texts(page).Any(t => t.StartsWith("Collection saved")), "saved");
                 await BackToListAsync();
             });
+            await Step("a rejected staged title leaves an editor whose later edits are saved", async () =>
+            {
+                await OpenAsync(AdminRouteRequest.CollectionNew().WithQuery("libraryId", "1").WithQuery("type", "manual").WithQuery("view", "list"), "CollectionName");
+                await SetText(Find<TextBox>(page, "CollectionName")!, "Staged fixture");
+                await Click(Find<Button>(page, "CollectionAddTitles")); await Until(() => Dialog(page) != null, "title picker");
+                var picker = Dialog(page)!; await SetText(Find<TextBox>(picker, "CollectionTitleSearch")!, "Fixture");
+                await Click(Find<Button>(picker, "CollectionTitlesSearchButton")); await Until(() => Find<CheckBox>(picker, "CollectionTitlePick_m1") != null, "title result");
+                Toggle(Find<CheckBox>(picker, "CollectionTitlePick_m1")!);
+                await Click(Tree(picker).OfType<Button>().First(b => b.Content?.ToString() == "Add titles"));
+                await Until(() => Dialog(page) == null && Texts(page).Any(t => t.EndsWith("titles ready to add")), "title staged");
+                // The collection is created, then the server rejects its staged title.
+                server.Intercept = (method, target) => Task.FromResult<HttpResponseMessage?>(method == "PUT" && target.EndsWith("/items/m1", StringComparison.Ordinal)
+                    ? Server.Plain(new() { ["type"] = "https://fixture.invalid/docs/api/v2/problems/validation", ["title"] = "Invalid", ["status"] = 422, ["detail"] = "This title cannot be added." }, HttpStatusCode.UnprocessableEntity) : null);
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => page.Controller.Editor?.Value["id"]?.ToString().StartsWith("new") == true && Find<Button>(page, "CollectionEditorSave")?.Content?.ToString() == "Save", "the editor is rendered again on the created collection");
+                var id = page.Controller.Editor!.Value["id"]!.ToString();
+                Check(Texts(page).Any(t => t.Contains("This title cannot be added.")), "the rejected title's reason stays shown");
+                Check(!page.Controller.OutcomeUnknown && page.RequiresLeaveConfirmation, "a rejected title is not an unknown outcome and stays staged");
+                server.Intercept = null; var staged = server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Count();
+                await SetText(Find<TextBox>(page, "CollectionDescription")!, "Edited after the rejected title");
+                Check(page.Controller.Dirty && page.Controller.Draft!["description"]?.ToString() == "Edited after the rejected title", "an edit after the rejected title reaches the current draft and counts as unsaved");
+                await Click(Find<Button>(page, "CollectionEditorSave"));
+                await Until(() => server.Sent("PATCH", "/api/v2/admin/collections/" + id).Any(), "the next Save patches the created collection");
+                Check(JsonNode.Parse(server.Sent("PATCH", "/api/v2/admin/collections/" + id).Last().Body)!["description"]?.ToString() == "Edited after the rejected title", "the next Save sends the edit made after the rejected title");
+                await Until(() => Texts(page).Any(t => t.StartsWith("Collection saved")), "saved");
+                Check(server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Count() == staged + 1, "the title left staged is sent once more with the next Save");
+                await BackToListAsync();
+            });
 
             // ── Authority retirement removes private data ───────────────────────
             await Step("authority retirement with a running starter-pack job", async () =>
