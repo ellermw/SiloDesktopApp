@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # November 17 — Collections source candidate, runtime unrun
 
 The isolated `t3/admin-collections-page` checkout on Beta
@@ -14,7 +13,9 @@ fixture are authored and unrun. Visual/live-server/all-DPI parity is unobserved.
 and viewer collection pages remain separate. Scope, exact upstream references, bounded-read
 and guarded-write trace, self-review and acceptance commands are in
 [the Collections handoff](parity/2026-11-17-admin-collections.md). No commit/push/PR occurred.
-=======
+
+---
+
 # November 17 — Configure Integrations verified Beta increment
 
 AI, Recommendations and Compatibility are implemented in the registered native shell,
@@ -245,7 +246,6 @@ feature commit/non-draft Beta PR hands subsequent review/QA/fixes to the pipelin
 
 ---
 
->>>>>>> origin/beta
 
 # November 16 - Admin Manage Libraries for separate Beta submission
 
