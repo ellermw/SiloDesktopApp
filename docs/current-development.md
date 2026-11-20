@@ -9,9 +9,9 @@ marker providers, with strong-ETag subtitle editors, single-send writes and no r
 outcomes. Four review findings (Disconnect after authority replacement, truncation before
 redaction, unreachable marker reload, edits lost during a pending marker save) are fixed with
 regression tests. Scope, deviations and limits: [Providers](parity/admin-configure-providers.md).
-Observed before the final run: focused `AdminProviders*` unit tests 26/26 and the
-`admin-configure-providers` native selector. The acceptance run (label `providers-final-r1`,
-lane `D:/SiloPlayer-build/admin-completion-lane-a`) is reported by the delivering worker.
+Final run `providers-final-r2`: 26 focused and 9,723 full unit tests pass with zero failures, and the
+`admin-configure-providers`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` native selectors pass (lane
+`D:/SiloPlayer-build/admin-completion-lane-a`).
 Live-server compatibility, rendered-capture inspection and all-DPI/accessibility remain unverified.
 
 ---
