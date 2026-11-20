@@ -17,8 +17,14 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
     }
     private async Task<ApiResponse<T>> Send<T>(MonitorAuthorityLease owner, HttpMethod method, string path, object? body, string? tag, CancellationToken ct)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, ct); timeout.CancelAfter(TimeSpan.FromSeconds(path.EndsWith("/reprobe", StringComparison.Ordinal) ? 180 : 45));
-        try { return await client.MonitorLogsSendAsync<T>(owner, method, path, body, tag, timeout.Token, 2 * 1024 * 1024).ConfigureAwait(false); }
+        var reprobe = path.EndsWith("/reprobe", StringComparison.Ordinal);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, ct); timeout.CancelAfter(TimeSpan.FromSeconds(reprobe ? 180 : 45));
+        try
+        {
+            // The shared client's own 100-second timeout would end a re-probe before this deadline, so it must be the only limit.
+            return await (reprobe ? client.AdminPlaybackLongSendAsync<T>(owner, method, path, body, tag, timeout.Token, 2 * 1024 * 1024)
+                : client.MonitorLogsSendAsync<T>(owner, method, path, body, tag, timeout.Token, 2 * 1024 * 1024)).ConfigureAwait(false);
+        }
         catch (LoggingSettingsConflictException) { throw new AdminSettingsConflictException(); }
         catch (ApiException error) { throw AdminServerSettingsApi.Sanitize(error); }
     }

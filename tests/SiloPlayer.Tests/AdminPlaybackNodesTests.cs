@@ -147,4 +147,46 @@ public sealed class AdminPlaybackNodesTests
         await controller.ReloadAsync(); Assert.False(controller.State.ReviewRequired);
         controller.Suspend(); Assert.Empty(controller.State.Window.Items);
     }
+
+    /// <summary>The production pairing: the shared client with its own timeout, and the client without one that Backups use.</summary>
+    private sealed class TwoTransports : IDisposable
+    {
+        internal readonly AdminMonitorHttp Shared = new(), Unbounded = new();
+        internal readonly SiloApiClient Client; internal readonly AuthService Auth;
+        private readonly HttpClient _shared, _unbounded;
+        internal TwoTransports(TimeSpan sharedTimeout)
+        {
+            _shared = new HttpClient(Shared) { Timeout = sharedTimeout }; _unbounded = new HttpClient(Unbounded) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+            Client = new SiloApiClient(_shared, _unbounded); Client.SetBaseUrl("https://silo.test");
+            Auth = new AuthService(Client, new AuthApi(Client)); Auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+            Auth.SetCurrentUser(new SiloPlayer.Core.Models.Auth.UserInfo { Id = "1", Username = "synthetic", Role = "admin" });
+            Auth.SelectProfile("p1", null, new SiloPlayer.Core.Models.Auth.Profile { Id = "p1", Name = "Primary", IsPrimary = true });
+        }
+        public void Dispose() { Auth.Dispose(); _shared.Dispose(); _unbounded.Dispose(); }
+    }
+    // Re-probe answers only after probing. The shared client's own timeout (100 seconds in production) must not end it before its 180-second deadline.
+    [Fact]
+    public async Task ReprobeOutlastsTheSharedClientTimeout()
+    {
+        using var kit = new TwoTransports(TimeSpan.FromMilliseconds(100)); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> slow = async (_, ct) =>
+        {
+            await Task.Delay(600, ct); return AdminMonitorKit.Json("{\"node_id\":\"synthetic-node\",\"status\":\"ok\",\"capabilities_refreshed\":true}");
+        };
+        kit.Shared.Respond = slow; kit.Unbounded.Respond = slow;
+        var result = await new AdminPlaybackAdministrationApi(kit.Client).CommandAsync(owner, Node(), "reprobe", default);
+        Assert.Equal("ok", result.Status); Assert.Empty(kit.Shared.Requests);
+        Assert.Equal("POST /api/v2/admin/nodes/synthetic-node/reprobe", Assert.Single(kit.Unbounded.Requests));
+    }
+    [Fact]
+    public async Task OnlyReprobeLeavesTheSharedClient()
+    {
+        using var kit = new TwoTransports(TimeSpan.FromSeconds(100)); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        kit.Shared.Respond = (request, _) => Task.FromResult(AdminMonitorKit.Json(request.RequestUri!.AbsolutePath.EndsWith("/check")
+            ? "{\"healthy\":true,\"active_jobs\":0,\"egress_kbps\":0,\"health_persisted\":true}"
+            : "{\"node_id\":\"synthetic-node\",\"drain_requested\":true,\"drain_state\":\"draining\",\"active_jobs\":0}"));
+        var api = new AdminPlaybackAdministrationApi(kit.Client);
+        await api.CommandAsync(owner, Node(), "check", default); await api.CommandAsync(owner, Node(), "drain", default);
+        Assert.Equal(2, kit.Shared.Requests.Count); Assert.Empty(kit.Unbounded.Requests);
+    }
 }

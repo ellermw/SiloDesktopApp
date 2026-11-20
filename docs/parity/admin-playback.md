@@ -146,6 +146,15 @@ Not built or run when written; the pipeline run is the evidence. `AdminPlaybackT
 | T4 | `physical_gpu_keys: null` threw in card rendering | `ListNodesAsync` normalises null to an empty list and the card guards the read |
 | T5 | A stored empty `hw_accel_override` left the editor without a choice and refused every edit | The editor treats an empty or blank stored override as inherit. An unknown stored value is still refused with the usual message, not silently replaced |
 
+## Fourth review (November 20), one finding fixed
+
+Not built or run when written; the pipeline run is the evidence.
+
+The shared `HttpClient` has the default 100-second timeout, so a re-probe that took longer ended before its 180-second
+deadline and was reported as an unconfirmed change. Re-probe now uses the client without an `HttpClient` timeout that
+Backups use; the 180-second deadline is its only limit. Every other node call stays on the shared client. Tests:
+`ReprobeOutlastsTheSharedClientTimeout` and `OnlyReprobeLeavesTheSharedClient` in `AdminPlaybackNodesTests`.
+
 ## Tests
 
 Observed on this source (`playback-fix-final-r1`, commit `cd39c93df`, lane `D:/SiloPlayer-build/admin-completion-lane-a`, one
