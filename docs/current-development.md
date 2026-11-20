@@ -9,9 +9,15 @@ marker providers, with strong-ETag subtitle editors, single-send writes and no r
 outcomes. Four review findings (Disconnect after authority replacement, truncation before
 redaction, unreachable marker reload, edits lost during a pending marker save) are fixed with
 regression tests. Scope, deviations and limits: [Providers](parity/admin-configure-providers.md).
-Final run `providers-final-r2`: 26 focused and 9,723 full unit tests pass with zero failures, and the
-`admin-configure-providers`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` native selectors pass (lane
-`D:/SiloPlayer-build/admin-completion-lane-a`).
+An independent read-only review of the final diff then confirmed those four fixes and reported one P1 and
+three P2 defects, all fixed with tests: Reload was unreachable after a failed credential-status or section
+read; an erased key or failed Disconnect made Test send an empty key; a non-submitter marker provider with
+stored sharing wrote contribute fields the admin never changed; and Save dropped a key typed while the
+credential status was unavailable.
+Final run `providers-lead-final-r1` on commit `07a7bc3c208ddbc40f14fd377194af746f114311`: 29 focused and
+9,726 full unit tests pass with zero failures or skips; the app build, self-contained publish and native host
+build pass; and the `admin-configure-providers` (89 checks), `admin-manage-foundation`,
+`admin-configure-general` and `admin-monitor` native selectors pass.
 Live-server compatibility, rendered-capture inspection and all-DPI/accessibility remain unverified.
 
 ---
