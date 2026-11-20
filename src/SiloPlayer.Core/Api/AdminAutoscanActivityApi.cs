@@ -9,6 +9,8 @@ public sealed class AdminAutoscanActivityApi(SiloApiClient client)
 {
     public const int MaxHistoryPages = 100;
     public const int MaxActiveScans = 500;
+    /// <summary>The server lists every run an event created; the inspector pages them client-side, so the bound is the 4 MiB transport cap plus this count.</summary>
+    public const int MaxEventRuns = 5000;
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(15);
     public static readonly IReadOnlyList<int> PageSizes = [25, 50, 100];
     public static bool EventStatus(string value) => value is "running" or "success" or "error" or "unresolved";
@@ -52,7 +54,7 @@ public sealed class AdminAutoscanActivityApi(SiloApiClient client)
         {
             if (!NumericId(poll.Id) || !EventStatus(poll.Status) ||
                 !string.IsNullOrEmpty(poll.DeliveryMode) && poll.DeliveryMode is not ("poll" or "webhook") ||
-                poll.ScanRuns == null || poll.ScanRuns.Count > MaxActiveScans || poll.Changes?.Count > 50 ||
+                poll.ScanRuns == null || poll.ScanRuns.Count > MaxEventRuns || poll.Changes?.Count > 50 ||
                 new[] { poll.DurationMs, poll.ChangesReturned, poll.ChangesResolved, poll.TargetsClaimed, poll.ScansCreated, poll.ScansReused, poll.ScansSuppressed }.Any(count => count < 0)) throw Invalid();
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (var run in poll.ScanRuns)

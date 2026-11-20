@@ -1,261 +1,300 @@
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
+using static SiloPlayer.Views.Admin.AutoscanUi;
 using static SiloPlayer.Views.Admin.LogsNativeUi;
 using A = SiloPlayer.Core.Services.Admin.AdminAutoscanActivityText;
+using D = SiloPlayer.Core.Services.Admin.AdminAutoscanActivityDisplay;
 
 namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminAutoscanActivityPage
 {
-    private static TextBlock SafeText(string text, double size = 14, bool muted = false, bool mono = false) => LogsNativeUi.Text(A.Safe(text), size, muted, mono);
-    private static string Timestamp(DateTimeOffset? value) => value == null ? "-" : SiloPlayer.Helpers.DateTimeDisplay.FormatShortDateTime(value.Value);
+    private static readonly double[] QueueWidths = [0.9, 1.6, 2.6, 2.2, 0.6];
+    private static readonly double[] ScanWidths = [0.9, 1.2, 1.1, 2.4, 1.5, 1.0, 0.9];
+    private static readonly double[] PollWidths = [0.9, 1.5, 2.0, 1.6, 0.8, 1.0];
 
     private void Closed()
     {
+        _debounce.Stop();
+        if (_sheet.Visibility == Visibility.Visible) _sheet.Close();
+        _inspector = null;
         _notices.Children.Clear(); _live.Children.Clear(); _rows.Children.Clear();
-        _renderedItems = null; _renderedHistory = null; _renderedLabels = null;
+        _renderedItems = null; _renderedHistory = null; _renderedLabels = null; _renderedSignature = null;
         RenderedIds = []; RenderedContent = "closed";
-        _refresh.IsEnabled = _next.IsEnabled = _previous.IsEnabled = _restart.IsEnabled = false;
-        _search.IsEnabled = _status.IsEnabled = _size.IsEnabled = false; _summary.Text = "";
+        _search.IsEnabled = _status.IsEnabled = _reset.IsEnabled = false;
+    }
+
+    private static TextBlock Dim(string text, double size = 12) => SafeText(text, size, true);
+
+    private static FrameworkElement Tile(string label, string value, string? icon, double valueSize = 24)
+    {
+        var tile = Stack(4);
+        var heading = Inline(8);
+        if (icon != null) heading.Children.Add(Glyph(icon, 14, Brush("SecondaryTextBrush")));
+        heading.Children.Add(Text(label, 12, true));
+        tile.Children.Add(heading);
+        var number = Text(value, valueSize); number.FontWeight = FontWeights.SemiBold; number.LineHeight = valueSize * 1.25; tile.Children.Add(number);
+        return tile;
     }
 
     private void RenderLive(AdminAutoscanActivityState state)
     {
+        var focus = CaptureFocus(_live);
         _live.Children.Clear();
         var status = state.Status;
+        // Stat tiles: Active, Queued, Running scans, Polling, Latest poll plus the refresh button.
         var tiles = new Grid { ColumnSpacing = 16, RowSpacing = 16 };
-        var columns = _compact ? 2 : 5;
+        var columns = _phone ? 1 : 5;
         for (var index = 0; index < columns; index++) tiles.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        for (var index = 0; index < (_compact ? 3 : 1); index++) tiles.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var values = new (string Label, string Value)[] {
-            ("active", status?.ActiveScans.ToString() ?? "-"), ("queued", status?.AcceptedScans.ToString() ?? "-"),
-            ("runningScans", status?.RunningScans.ToString() ?? "-"), ("polling", status?.RunningPolls?.Count.ToString() ?? "-"),
-            ("latestPoll", status?.LatestEventAt is { } latest ? SiloPlayer.Helpers.DateTimeDisplay.FormatTime(latest) : "-") };
-        for (var index = 0; index < values.Length; index++)
+        for (var index = 0; index < (_phone ? 5 : 1); index++) tiles.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var refresh = IconButton("refresh-cw", A.T("refreshLabel"), "AutoscanActivityRefresh", () => _ = _controller?.ReloadHistoryAsync(), !state.Refreshing);
+        var latest = Stack(8); latest.Children.Add(Tile(A.T("stats.latestPoll"), ClockTime(status?.LatestEventAt), "clock", 24)); refresh.HorizontalAlignment = HorizontalAlignment.Left; latest.Children.Add(refresh);
+        var values = new FrameworkElement[]
         {
-            var tile = Stack(4); tile.Children.Add(SafeText(A.T("stats." + values[index].Label), 12, true));
-            tile.Children.Add(SafeText(values[index].Value, index == 4 ? 16 : 24));
-            Grid.SetColumn(tile, index % columns); Grid.SetRow(tile, index / columns); tiles.Children.Add(tile);
-        }
+            Tile(A.T("stats.active"), (status?.ActiveScans ?? 0).ToString(), "scan-line"),
+            Tile(A.T("stats.queued"), (status?.AcceptedScans ?? 0).ToString(), null),
+            Tile(A.T("stats.runningScans"), (status?.RunningScans ?? 0).ToString(), null),
+            Tile(A.T("stats.polling"), (status?.RunningPolls?.Count ?? 0).ToString(), "refresh-cw"),
+            latest,
+        };
+        for (var index = 0; index < values.Length; index++) { Grid.SetColumn(values[index], index % columns); Grid.SetRow(values[index], index / columns); tiles.Children.Add(values[index]); }
         _live.Children.Add(Card(tiles));
         if (state.StatusFailure != null)
         {
-            _live.Children.Add(SafeText(A.T("native.statusFailed"), 13));
-            _live.Children.Add(Action(A.T("common.tryAgain"), "AutoscanActivityStatusRetry", () => _controller?.RefreshAsync()));
+            var failed = Stack(8); failed.Children.Add(SafeText(A.T("native.statusFailed"), 13));
+            var retry = Button(A.T("common.tryAgain"), "AutoscanActivityStatusRetry"); retry.Click += (_, _) => _ = _controller?.RefreshAsync();
+            failed.Children.Add(retry); _live.Children.Add(Card(failed));
         }
-        if (status?.RunningPolls is { Count: > 0 } polls)
-        {
-            var polling = Stack(12); polling.Children.Add(SafeText(A.T("polls.title"), 16));
-            polling.Children.Add(SafeText(A.T("polls.description"), 12, true));
-            polling.Children.Add(SafeText(A.Count("activeCount", polls.Count), 12));
-            foreach (var poll in polls)
-            {
-                var card = Stack(8);
-                card.Children.Add(SafeText(A.Source(poll.SourceId, poll.PluginId, poll.CapabilityId, state.Labels, true), 14));
-                card.Children.Add(SafeText(poll.PluginId + " · " + poll.CapabilityId, 12, true));
-                card.Children.Add(Badge("running", true));
-                card.Children.Add(SafeText(A.T("polls.started", new { time = Timestamp(poll.StartedAt) }) + " · " +
-                    A.T("polls.elapsed", new { duration = A.Duration(poll.ElapsedMs) }), 12, true));
-                polling.Children.Add(Card(card));
-            }
-            _live.Children.Add(polling);
-        }
-        var queue = Stack(12); queue.Children.Add(SafeText(A.T("queue.title"), 16));
-        queue.Children.Add(SafeText(A.T("queue.description"), 12, true));
-        if (state.Queue.Count == 0)
-            queue.Children.Add(SafeText(A.T(status?.ActiveScans > 0 ? "queue.pendingDetails" : "queue.empty"), 13, true));
-        else
-        {
-            _queuePage = Math.Clamp(_queuePage, 0, (state.Queue.Count - 1) / 8);
-            queue.Children.Add(SafeText(A.Count("activeCount", state.Queue.Count), 12));
-            if (!_compact) queue.Children.Add(RowGrid(new UIElement[] {
-                SafeText(A.T("column.status"),12,true), SafeText(A.T("column.library"),12,true), SafeText(A.T("column.scope"),12,true),
-                SafeText(A.T("column.progress"),12,true), SafeText(A.T("column.action"),12,true) }, [1, 1.2, 2.2, 2.2, 1]));
-            foreach (var scan in state.Queue.Skip(_queuePage * 8).Take(8))
-            {
-                var progress = AdminLibraryPresentation.ScanProgress(scan);
-                var cancel = Action(A.T("queue.cancelLabel"), "AutoscanActivityCancel_" + scan.Id, () => _controller?.CancelAsync(scan.LibraryId));
-                cancel.Style = (Style)Application.Current.Resources["GhostButtonStyle"];
-                cancel.Content = new Border { Width = 14, Height = 14, BorderThickness = new(1.5), CornerRadius = new(2),
-                    BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 248, 113, 113)), IsHitTestVisible = false };
-                cancel.Width = cancel.Height = cancel.MinWidth = cancel.MinHeight = 32; cancel.Padding = new(0);
-                ToolTipService.SetToolTip(cancel, A.T("queue.cancelLabel"));
-                cancel.IsEnabled = state.Cancelling == null && !state.CancelReview.ContainsKey(scan.LibraryId);
-                var started = SafeText(scan.IsRunning ? AdminLibraryPresentation.ScanStarted(scan.StartedAt, DateTimeOffset.UtcNow) : A.T("queue.waiting"), 12, true);
-                var library = Stack(4); library.Children.Add(SafeText(A.Library(scan.LibraryId, state.Labels), 14)); library.Children.Add(started);
-                var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13)); scope.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
-                var detail = SafeText(progress.Length > 0 ? progress : AdminLibraryPresentation.ScanTrigger(scan.Trigger ?? ""), 12, true);
-                var cells = new UIElement[] { Badge(scan.Status), library, scope, detail, cancel };
-                queue.Children.Add(Card(_compact ? CardStack(cells) : RowGrid(cells, [1, 1.2, 2.2, 2.2, 1])));
-            }
-            if (state.Queue.Count > 8)
-            {
-                var paging = Inline();
-                var previous = Action(A.T("web.ui.pagination.previous"), "AutoscanQueuePrevious", () => { _queuePage--; RerenderLive(); return Task.CompletedTask; });
-                previous.IsEnabled = _queuePage > 0;
-                var next = Action(A.T("web.ui.pagination.next"), "AutoscanQueueNext", () => { _queuePage++; RerenderLive(); return Task.CompletedTask; });
-                next.IsEnabled = (_queuePage + 1) * 8 < state.Queue.Count;
-                paging.Children.Add(previous); paging.Children.Add(SafeText(A.T("native.page", new { page = _queuePage + 1 }), 12, true)); paging.Children.Add(next);
-                queue.Children.Add(paging);
-            }
-        }
-        if (state.QueueCapped) queue.Children.Add(SafeText(A.T("native.livePartial"), 12, true));
-        _live.Children.Add(queue);
+        if (status?.RunningPolls is { Count: > 0 } polls) _live.Children.Add(RunningPolls(polls, state));
+        _live.Children.Add(Queue(state, status));
+        RestoreFocus(_live, focus);
     }
 
-    private static FrameworkElement Badge(string status, bool poll = false)
+    private FrameworkElement SectionTitle(string title, string description, string icon, string? badge, bool spin = false)
     {
-        var label = poll ? A.T("pollStatus." + status) : A.ScanStatus(status);
-        var color = status is "error" or "failed" ? Windows.UI.Color.FromArgb(255, 248, 113, 113)
-            : status is "unresolved" or "cancelled" ? Windows.UI.Color.FromArgb(255, 251, 191, 36)
-            : status is "success" or "completed" ? Windows.UI.Color.FromArgb(255, 52, 211, 153)
-            : status == "accepted" ? Windows.UI.Color.FromArgb(255, 156, 163, 175)
-            : status == "running" && !poll ? Windows.UI.Color.FromArgb(255, 56, 189, 248) : Windows.UI.Color.FromArgb(255, 167, 139, 250);
-        return ToneBadge(label, color);
-    }
-
-    private static FrameworkElement ChangeBadge(string outcome)
-    {
-        var label = outcome is "queued" or "joined" or "suppressed" or "unresolved" or "ignored" or "error" ? A.T("outcome." + outcome) : outcome;
-        var color = outcome switch {
-            "queued" => Windows.UI.Color.FromArgb(255, 52, 211, 153), "joined" => Windows.UI.Color.FromArgb(255, 56, 189, 248),
-            "unresolved" => Windows.UI.Color.FromArgb(255, 251, 191, 36), "error" => Windows.UI.Color.FromArgb(255, 248, 113, 113),
-            _ => Windows.UI.Color.FromArgb(255, 156, 163, 175) };
-        return ToneBadge(label, color);
-    }
-
-    private static FrameworkElement ToneBadge(string label, Windows.UI.Color color)
-    {
-        var text = SafeText(label, 12); text.Foreground = new SolidColorBrush(color);
-        return new Border { Child = text, BorderThickness = new(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(77, color.R, color.G, color.B)),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(26, color.R, color.G, color.B)), Padding = new(8, 3, 8, 3),
-            CornerRadius = new(8), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
-    }
-
-    private static StackPanel CardStack(IEnumerable<UIElement> children)
-    {
-        var stack = Stack(8); foreach (var child in children) stack.Children.Add(child); return stack;
-    }
-
-    private static Grid RowGrid(IReadOnlyList<UIElement> cells, double[] widths)
-    {
-        var grid = new Grid { ColumnSpacing = 12 };
-        foreach (var width in widths) grid.ColumnDefinitions.Add(new() { Width = new(width, GridUnitType.Star) });
-        for (var index = 0; index < cells.Count; index++) { Grid.SetColumn((FrameworkElement)cells[index], index); grid.Children.Add(cells[index]); }
+        var grid = new Grid { ColumnSpacing = 8 };
+        grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var heading = Stack(4); var line = Inline(8); line.Children.Add(Glyph(icon, 16, Brush("AccentBrush")));
+        var label = Text(title, 14); label.FontWeight = FontWeights.SemiBold; line.Children.Add(label); heading.Children.Add(line); heading.Children.Add(Dim(description));
+        grid.Children.Add(heading);
+        if (badge != null) { var chip = ToneBadge(badge, AutoscanUi.Muted, secondary: true); chip.VerticalAlignment = VerticalAlignment.Top; Grid.SetColumn(chip, 1); grid.Children.Add(chip); }
         return grid;
     }
 
-    private static FrameworkElement HistoryHead(bool scans)
+    private FrameworkElement RunningPolls(IReadOnlyList<AdminAutoscanActivityPoll> polls, AdminAutoscanActivityState state)
     {
-        string[] keys = scans ? ["status", "library", "source", "scope", "result", "time", "poll"] : ["status", "source", "counts", "details", "duration", "time"];
-        return Card(RowGrid(keys.Select(key => (UIElement)SafeText(A.T("column." + key), 12, true)).ToArray(), scans ? ScanWidths : PollWidths));
-    }
-
-    private static readonly double[] ScanWidths = [0.8, 1, 1, 1.6, 1.6, 1, 0.8];
-    private static readonly double[] PollWidths = [0.8, 1.2, 1.4, 2, 0.7, 1];
-
-    private FrameworkElement ScanRow(AdminAutoscanActivityScan scan, AdminAutoscanActivityLabels labels)
-    {
-        var library = Stack(4); library.Children.Add(SafeText(A.Library(scan.LibraryId, labels), 14)); library.Children.Add(SafeText(scan.Id, 11, true, true));
-        var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13)); scope.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
-        if (!string.IsNullOrEmpty(scan.ErrorMessage)) scope.Children.Add(Toned(SafeText(scan.ErrorMessage, 12), Danger));
-        var poll = string.IsNullOrEmpty(scan.EventStatus) ? SafeText("-", 12, true) : Badge(scan.EventStatus, true);
-        UIElement[] cells = [Badge(scan.Status), library, SafeText(A.Source(scan.SourceId, scan.PluginId, scan.CapabilityId, labels), 13), scope,
-            SafeText(A.Result(scan.Result), 12, true), SafeText(Timestamp(scan.CompletedAt ?? scan.StartedAt ?? scan.RequestedAt), 12, true), poll];
-        var card = Card(_compact ? CardStack(cells) : RowGrid(cells, ScanWidths));
-        AutomationProperties.SetAutomationId(card, "AutoscanActivityScan_" + scan.Id); return card;
-    }
-
-    private static int JoinedRuns(AdminAutoscanActivityEvent poll)
-    {
-        var created = (poll.ScanRuns ?? []).Select(run => run.Id).ToHashSet(StringComparer.Ordinal);
-        return (poll.Changes ?? []).Where(change => change.Outcome == "joined" && !string.IsNullOrEmpty(change.ScanRunId) && !created.Contains(change.ScanRunId))
-            .Select(change => change.ScanRunId!).Distinct(StringComparer.Ordinal).Count();
-    }
-
-    private FrameworkElement PollRow(AdminAutoscanActivityEvent poll, AdminAutoscanActivityLabels labels)
-    {
-        var source = Stack(4); source.Children.Add(SafeText(A.Source(poll.SourceId, poll.PluginId, poll.CapabilityId, labels, true), 14));
-        if (poll.DeliveryMode == "webhook") source.Children.Add(SafeText(A.T(string.IsNullOrEmpty(poll.ProviderEventType) ? "delivery.webhook" : "delivery.webhookEvent", new { event_type = poll.ProviderEventType }), 12, true));
-        var metrics = Stack(4);
-        foreach (var entry in new (string Key, long Count)[] { ("changes", poll.ChangesReturned), ("targets", poll.TargetsClaimed),
-            ("created", poll.ScansCreated), ("reused", poll.ScansReused), ("suppressed", poll.ScansSuppressed) })
-            metrics.Children.Add(SafeText(A.RawCount("metrics." + entry.Key, entry.Count), 12, true));
-        if (!string.IsNullOrEmpty(poll.ErrorMessage)) metrics.Children.Add(Toned(SafeText(poll.ErrorMessage, 12), Danger));
-        var linked = (poll.ScanRuns?.Count ?? 0) + JoinedRuns(poll);
-        var details = new Expander { Header = SafeText(A.Count("details.pathCount", poll.ChangesReturned) + " · " +
-            A.T("details.linkedCount", new { count = linked, count_text = A.Number(linked) + (poll.ChangesTruncated ? "+" : "") }), 12, true),
-            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetAutomationId(details, "AutoscanActivityDetails_" + poll.Id);
-        details.Expanding += (_, _) => { _expanded.Add(poll.Id); details.Content ??= EventDetails(poll, labels); };
-        details.Collapsed += (_, _) => _expanded.Remove(poll.Id);
-        if (_expanded.Contains(poll.Id)) { details.Content = EventDetails(poll, labels); details.IsExpanded = true; }
-        var elapsed = poll.Status == "running" ? Math.Max(0, (long)(DateTimeOffset.UtcNow - poll.StartedAt).TotalMilliseconds) : poll.DurationMs;
-        UIElement[] cells = [Badge(poll.Status, true), source, metrics, details, SafeText(A.Duration(elapsed), 12, true),
-            SafeText(Timestamp(poll.Status == "running" ? poll.StartedAt : poll.CompletedAt), 12, true)];
-        var card = Card(_compact ? CardStack(cells) : RowGrid(cells, PollWidths));
-        AutomationProperties.SetAutomationId(card, "AutoscanActivityPoll_" + poll.Id); return card;
-    }
-
-    private static readonly Windows.UI.Color Danger = Windows.UI.Color.FromArgb(255, 248, 113, 113);
-    private static readonly Windows.UI.Color Amber = Windows.UI.Color.FromArgb(255, 251, 191, 36);
-    private static TextBlock Toned(TextBlock text, Windows.UI.Color color) { text.Foreground = new SolidColorBrush(color); return text; }
-
-    private static FrameworkElement EventDetails(AdminAutoscanActivityEvent poll, AdminAutoscanActivityLabels labels)
-    {
-        var panel = Stack(12); panel.Children.Add(SafeText(A.T("details.paths"), 12, true));
-        var changes = poll.Changes ?? [];
-        if (changes.Count == 0) panel.Children.Add(SafeText(A.T(poll.ChangesReturned > 0 ? "changes.notRecorded" : "changes.none"), 12, true));
-        foreach (var change in changes)
+        var section = Stack(12);
+        section.Children.Add(SectionTitle(A.T("polls.title"), A.T("polls.description"), "refresh-cw", A.RawCount("activeCount", polls.Count)));
+        var grid = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
+        var columns = _compact ? 1 : 2;
+        for (var index = 0; index < columns; index++) grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        for (var index = 0; index < polls.Count; index++)
         {
-            var row = Stack(6);
-            row.Children.Add(ChangeBadge(change.Outcome));
-            row.Children.Add(SafeText(change.SourcePath, 12, false, true));
-            if (!string.IsNullOrEmpty(change.RewrittenPath) && change.RewrittenPath != change.SourcePath)
-                row.Children.Add(SafeText(A.T("change.rewrittenTo", new { path = change.RewrittenPath }), 12, true, true));
-            var (text, tone) = ChangeExplanation(change, labels);
-            var explanation = SafeText(text, 12, tone == null); if (tone is { } color) Toned(explanation, color);
-            row.Children.Add(explanation);
-            if (change.Outcome is "queued" or "joined" && !string.IsNullOrEmpty(change.ScanRunId)) row.Children.Add(SafeText(change.ScanRunId, 11, true, true));
-            panel.Children.Add(Card(row));
+            var poll = polls[index];
+            if (index % columns == 0) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            var card = Stack(12);
+            var top = new Grid { ColumnSpacing = 12 }; top.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            var names = Stack(4); var name = SafeText(A.Source(poll.SourceId, poll.PluginId, poll.CapabilityId, state.Labels, true), 14); name.FontWeight = FontWeights.Medium; names.Children.Add(name);
+            names.Children.Add(Dim(poll.PluginId + D.Separator + poll.CapabilityId)); top.Children.Add(names);
+            var badge = PollStatusBadge("running"); Grid.SetColumn(badge, 1); top.Children.Add(badge);
+            card.Children.Add(top);
+            var meta = new WrapPanel { HorizontalSpacing = 16, VerticalSpacing = 4 };
+            meta.Children.Add(Dim(A.T("polls.started", new { time = Timestamp(poll.StartedAt) })));
+            meta.Children.Add(Dim(A.T("polls.elapsed", new { duration = A.Duration(poll.ElapsedMs) })));
+            card.Children.Add(meta);
+            var frame = Card(card); AutomationProperties.SetAutomationId(frame, "AutoscanActivityRunningPoll_" + poll.Id);
+            Grid.SetColumn(frame, index % columns); Grid.SetRow(frame, index / columns); grid.Children.Add(frame);
         }
-        if (poll.ChangesTruncated) panel.Children.Add(SafeText(A.T("changes.truncated", new { shown = A.Number(changes.Count), count = poll.ChangesReturned, count_text = A.Number(poll.ChangesReturned) }), 12, true));
-        panel.Children.Add(SafeText(A.T("details.scansCreated"), 12, true));
-        var runs = poll.ScanRuns ?? [];
-        if (runs.Count == 0) panel.Children.Add(SafeText(A.T(JoinedRuns(poll) > 0 ? "runs.noneJoined" : "runs.none"), 12, true));
-        foreach (var run in runs)
-        {
-            var row = Stack(6); row.Children.Add(Badge(run.Status)); row.Children.Add(SafeText(run.Mode, 13));
-            row.Children.Add(SafeText(string.IsNullOrEmpty(run.Path) ? A.T("entireLibrary") : run.Path, 12, true, true));
-            if (run.Result != null) row.Children.Add(SafeText(A.Result(run.Result), 12, true));
-            row.Children.Add(SafeText(Time(run.CompletedAt ?? run.StartedAt ?? run.RequestedAt), 12, true));
-            panel.Children.Add(Card(row));
-        }
-        return panel;
+        section.Children.Add(grid);
+        AutomationProperties.SetLiveSetting(section, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        return section;
     }
 
-    private static string Time(DateTimeOffset? value) => value == null ? "-" : SiloPlayer.Helpers.DateTimeDisplay.FormatTime(value.Value);
-
-    /// <summary>The official ChangeExplanation text and tone (error red, unresolved amber, otherwise muted).</summary>
-    private static (string Text, Windows.UI.Color? Tone) ChangeExplanation(AdminAutoscanActivityChange change, AdminAutoscanActivityLabels labels)
+    private FrameworkElement Queue(AdminAutoscanActivityState state, AdminAutoscanActivityStatus? status)
     {
-        var library = change.LibraryId == null ? null : A.Library(change.LibraryId, labels);
-        if (change.Outcome is "queued" or "joined")
+        var scans = state.Queue;
+        if (scans.Count == 0)
         {
-            var key = change.Outcome == "queued" ? "queued" : change.Reason == "follow_up_scan" ? "followUp" : "joined";
-            var scope = A.T("change.scope", new { mode = string.IsNullOrEmpty(change.TargetMode) ? A.T("change.scanFallback") : A.Mode(change.TargetMode), path = string.IsNullOrEmpty(change.TargetPath) ? A.T("entireLibrary") : change.TargetPath });
-            return (A.T("change." + key + (library == null ? "" : "InLibrary"), new { scope, library }), null);
+            var empty = Stack(8); var title = Inline(8); title.Children.Add(Glyph("scan-line", 16, Brush("SecondaryTextBrush")));
+            var label = Text(A.T("queue.title"), 14); label.FontWeight = FontWeights.Medium; title.Children.Add(label); empty.Children.Add(title);
+            empty.Children.Add(Dim(A.T((status?.ActiveScans ?? 0) > 0 ? "queue.pendingDetails" : "queue.empty"), 14));
+            return Dashed(empty);
         }
-        if (change.Outcome == "suppressed") return (A.T(string.IsNullOrEmpty(change.TargetPath) ? "change.suppressed" : "change.suppressedPath", new { path = change.TargetPath }), null);
-        var reason = A.ReasonText(change.Reason);
-        if (change.Outcome == "error")
+        var section = Stack(12);
+        section.Children.Add(SectionTitle(A.T("queue.title"), A.T("queue.description"), "scan-line", A.RawCount("activeCount", scans.Count)));
+        var slice = D.Slice(scans, _queuePage, D.QueuePageSize); _queuePage = slice.Page;
+        if (_compact) foreach (var scan in slice.Rows) section.Children.Add(QueueCard(scan, state));
+        else
         {
-            if (change.Reason == "resolve_failed") return (A.T(string.IsNullOrEmpty(change.Detail) ? "change.resolveFailed" : "change.resolveFailedDetail", new { detail = change.Detail }), Danger);
-            return (reason ?? (string.IsNullOrEmpty(change.Detail) ? A.T("change.processingFailed") : change.Detail), Danger);
+            var table = new DataTable([A.T("column.status"), A.T("column.library"), A.T("column.scope"), A.T("column.progress"), A.T("column.action")], QueueWidths);
+            foreach (var scan in slice.Rows)
+            {
+                var progress = AdminLibraryPresentation.ScanProgress(scan);
+                var library = Stack(4); var name = SafeText(A.Library(scan.LibraryId, state.Labels), 14); name.FontWeight = FontWeights.Medium; library.Children.Add(name); library.Children.Add(Dim(QueueStarted(scan)));
+                var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13)); scope.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
+                var detail = Dim(progress.Length > 0 ? progress : AdminLibraryPresentation.ScanTrigger(scan.Trigger ?? ""));
+                var cancel = CancelButton(scan, state); cancel.HorizontalAlignment = HorizontalAlignment.Right;
+                var row = table.AddRow([ScanStatusBadge(scan.Status), library, scope, detail, cancel]);
+                AutomationProperties.SetAutomationId(row, "AutoscanActivityQueue_" + scan.Id);
+            }
+            section.Children.Add(table.Root);
         }
-        var text = reason ?? (!string.IsNullOrEmpty(change.Detail) ? change.Detail : !string.IsNullOrEmpty(change.Reason) ? change.Reason : A.T("change.notScanned"));
-        return (library == null ? text : A.T("change.withLibrary", new { text, library }), change.Outcome == "unresolved" ? Amber : null);
+        if (scans.Count > D.QueuePageSize)
+            section.Children.Add(Pagination("AutoscanQueuePager", scans.Count, _queuePage, D.QueuePageSize, page => { _queuePage = page; RerenderLive(); }, null, [],
+                "web.admin.common.pagination.scans", phone: _phone));
+        if (state.QueueCapped) section.Children.Add(Dim(A.T("native.livePartial")));
+        return section;
+    }
+
+    private static string QueueStarted(AdminLibraryScanRun scan) =>
+        scan.IsRunning ? AdminLibraryPresentation.ScanStarted(scan.StartedAt, DateTimeOffset.UtcNow) : A.T("queue.waiting");
+
+    private Button CancelButton(AdminLibraryScanRun scan, AdminAutoscanActivityState state)
+    {
+        var libraryId = scan.LibraryId;
+        return IconButton("square", A.T("queue.cancelLabel"), "AutoscanActivityCancel_" + scan.Id, () => _ = _controller?.CancelAsync(libraryId),
+            state.Cancelling == null && !state.CancelReview.ContainsKey(scan.LibraryId), ghost: true, size: 32, tint: Destructive);
+    }
+
+    private FrameworkElement QueueCard(AdminLibraryScanRun scan, AdminAutoscanActivityState state)
+    {
+        var card = Stack(8);
+        var top = new Grid { ColumnSpacing = 12 }; top.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var identity = Stack(4); var line = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 }; line.Children.Add(ScanStatusBadge(scan.Status));
+        var name = SafeText(A.Library(scan.LibraryId, state.Labels), 14); name.FontWeight = FontWeights.Medium; line.Children.Add(name); identity.Children.Add(line);
+        var meta = new WrapPanel { HorizontalSpacing = 12, VerticalSpacing = 2 };
+        meta.Children.Add(Dim(A.Mode(scan.Mode))); meta.Children.Add(Dim(AdminLibraryPresentation.ScanTrigger(scan.Trigger ?? ""))); meta.Children.Add(Dim(QueueStarted(scan)));
+        identity.Children.Add(meta); top.Children.Add(identity);
+        var cancel = CancelButton(scan, state); Grid.SetColumn(cancel, 1); top.Children.Add(cancel);
+        card.Children.Add(top);
+        card.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
+        var progress = AdminLibraryPresentation.ScanProgress(scan);
+        if (progress.Length > 0) card.Children.Add(Dim(progress));
+        var frame = Card(card); AutomationProperties.SetAutomationId(frame, "AutoscanActivityQueue_" + scan.Id); return frame;
+    }
+
+    // ---- Scan history -------------------------------------------------------------------------------------------------
+
+    private void AddScanRows(AdminAutoscanActivityState state)
+    {
+        if (_compact)
+        {
+            foreach (var scan in state.Scans.Items) _rows.Children.Add(ScanCard(scan, state.Labels));
+            return;
+        }
+        var table = new DataTable([A.T("column.status"), A.T("column.library"), A.T("column.source"), A.T("column.scope"), A.T("column.result"), A.T("column.time"), A.T("column.poll")], ScanWidths);
+        foreach (var scan in state.Scans.Items)
+        {
+            var library = Stack(4); var name = SafeText(A.Library(scan.LibraryId, state.Labels), 14); name.FontWeight = FontWeights.Medium; library.Children.Add(name);
+            library.Children.Add(SafeText(scan.Id, 11, true, true));
+            var scope = Stack(4); scope.Children.Add(SafeText(A.Mode(scan.Mode), 13));
+            scope.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
+            if (!string.IsNullOrEmpty(scan.ErrorMessage)) scope.Children.Add(Toned(SafeText(scan.ErrorMessage, 12), AdminAutoscanTone.Danger));
+            FrameworkElement result = scan.Result != null ? ResultText(scan.Result) : Dim(D.NoValue, 14);
+            FrameworkElement poll = string.IsNullOrEmpty(scan.EventStatus) ? Dim(D.NoValue, 14) : PollStatusBadge(scan.EventStatus);
+            var row = table.AddRow([ScanStatusBadge(scan.Status), library, SafeText(A.Source(scan.SourceId, scan.PluginId, scan.CapabilityId, state.Labels), 13), scope, result,
+                Dim(Timestamp(scan.CompletedAt ?? scan.StartedAt ?? scan.RequestedAt)), poll]);
+            AutomationProperties.SetAutomationId(row, "AutoscanActivityScan_" + scan.Id);
+        }
+        _rows.Children.Add(table.Root);
+    }
+
+    private FrameworkElement ScanCard(AdminAutoscanActivityScan scan, AdminAutoscanActivityLabels labels)
+    {
+        var card = Stack(8);
+        var top = new Grid { ColumnSpacing = 12 }; top.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var identity = Stack(4); var line = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 }; line.Children.Add(ScanStatusBadge(scan.Status));
+        var name = SafeText(A.Library(scan.LibraryId, labels), 14); name.FontWeight = FontWeights.Medium; line.Children.Add(name); identity.Children.Add(line);
+        var meta = new WrapPanel { HorizontalSpacing = 12, VerticalSpacing = 2 };
+        meta.Children.Add(Dim(A.Mode(scan.Mode))); meta.Children.Add(Dim(A.Source(scan.SourceId, scan.PluginId, scan.CapabilityId, labels)));
+        meta.Children.Add(Dim(Timestamp(scan.CompletedAt ?? scan.StartedAt ?? scan.RequestedAt))); identity.Children.Add(meta); top.Children.Add(identity);
+        if (!string.IsNullOrEmpty(scan.EventStatus)) { var badge = PollStatusBadge(scan.EventStatus); Grid.SetColumn(badge, 1); top.Children.Add(badge); }
+        card.Children.Add(top);
+        card.Children.Add(SafeText(string.IsNullOrEmpty(scan.Path) ? A.T("entireLibrary") : scan.Path, 12, true, true));
+        if (scan.Result != null) card.Children.Add(ResultText(scan.Result));
+        if (!string.IsNullOrEmpty(scan.ErrorMessage)) card.Children.Add(Toned(SafeText(scan.ErrorMessage, 12), AdminAutoscanTone.Danger));
+        card.Children.Add(SafeText(scan.Id, 11, true, true));
+        var frame = Card(card); AutomationProperties.SetAutomationId(frame, "AutoscanActivityScan_" + scan.Id); return frame;
+    }
+
+    // ---- Poll log -----------------------------------------------------------------------------------------------------
+
+    private Button DetailsButton(AdminAutoscanActivityEvent poll)
+    {
+        var summary = D.DetailsSummary(poll); var active = D.HasActivity(poll);
+        var content = new Grid { ColumnSpacing = 8 }; content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var label = Text(summary, 12, !active); label.FontWeight = active ? FontWeights.Medium : FontWeights.Normal; label.TextWrapping = TextWrapping.NoWrap; label.TextTrimming = TextTrimming.CharacterEllipsis; content.Children.Add(label);
+        var chevron = (FrameworkElement)Glyph("chevron-right", 14, Brush("SecondaryTextBrush")); Grid.SetColumn(chevron, 1); content.Children.Add(chevron);
+        var button = Button("", "AutoscanActivityDetails_" + poll.Id, "GhostButtonStyle");
+        button.Content = content; button.Padding = new(8, 4, 8, 4); button.MinHeight = 28; button.HorizontalAlignment = HorizontalAlignment.Left; button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        AutomationProperties.SetName(button, summary);
+        button.Click += (_, _) => OpenInspector(poll, button);
+        return button;
+    }
+
+    private void AddPollRows(AdminAutoscanActivityState state)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_compact)
+        {
+            foreach (var poll in state.Polls.Items) _rows.Children.Add(PollCard(poll, state.Labels, now));
+            return;
+        }
+        var table = new DataTable([A.T("column.status"), A.T("column.source"), A.T("column.counts"), A.T("column.details"), A.T("column.duration"), A.T("column.time")], PollWidths);
+        foreach (var poll in state.Polls.Items)
+        {
+            var source = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 4 };
+            var name = SafeText(PollName(poll, state.Labels), 14); name.FontWeight = FontWeights.Medium; source.Children.Add(name);
+            if (DeliveryBadge(poll) is { } delivery) source.Children.Add(delivery);
+            var counts = Stack(4); counts.Children.Add(MetricStrip(poll, pills: false));
+            if (!string.IsNullOrEmpty(poll.ErrorMessage))
+            {
+                var error = Toned(SafeText(poll.ErrorMessage, 12), AdminAutoscanTone.Danger); error.TextWrapping = TextWrapping.NoWrap; error.TextTrimming = TextTrimming.CharacterEllipsis; error.MaxWidth = 448;
+                ToolTipService.SetToolTip(error, A.Safe(poll.ErrorMessage)); counts.Children.Add(error);
+            }
+            var details = DetailsButton(poll);
+            var row = table.AddRow([PollStatusBadge(poll.Status), source, counts, details, Dim(D.EventDuration(poll, now), 13), Dim(Timestamp(D.EventTime(poll)), 13)]);
+            AutomationProperties.SetAutomationId(row, "AutoscanActivityPoll_" + poll.Id);
+            var selected = _inspector?.Id == poll.Id; var baseBrush = selected ? Tint("MutedBrush", 0.4) : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            row.Background = baseBrush;
+            row.PointerEntered += (_, _) => row.Background = Brush("SurfaceHoverBrush");
+            row.PointerExited += (_, _) => row.Background = baseBrush;
+            // A row click opens the inspector like its Details button; clicks on a button, link or field act on that control instead.
+            row.Tapped += (_, args) =>
+            {
+                if (HasAncestor<ButtonBase>(args.OriginalSource as DependencyObject)) return;
+                OpenInspector(poll, details);
+            };
+        }
+        _rows.Children.Add(table.Root);
+    }
+
+    private FrameworkElement PollCard(AdminAutoscanActivityEvent poll, AdminAutoscanActivityLabels labels, DateTimeOffset now)
+    {
+        var selected = _inspector?.Id == poll.Id;
+        var card = Stack(12);
+        var top = new Grid { ColumnSpacing = 12 }; top.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var identity = Stack(6); var line = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 }; line.Children.Add(PollStatusBadge(poll.Status));
+        var name = SafeText(PollName(poll, labels), 14); name.FontWeight = FontWeights.Medium; line.Children.Add(name);
+        if (DeliveryBadge(poll) is { } delivery) line.Children.Add(delivery);
+        identity.Children.Add(line); identity.Children.Add(MetricStrip(poll, pills: false)); top.Children.Add(identity);
+        var when = Stack(0); when.HorizontalAlignment = HorizontalAlignment.Right;
+        when.Children.Add(Dim(Timestamp(D.EventTime(poll)))); when.Children.Add(Dim(D.EventDuration(poll, now)));
+        Grid.SetColumn(when, 1); top.Children.Add(when);
+        card.Children.Add(top);
+        if (!string.IsNullOrEmpty(poll.ErrorMessage))
+        {
+            var error = Toned(SafeText(poll.ErrorMessage, 12), AdminAutoscanTone.Danger); error.MaxLines = 2; error.TextTrimming = TextTrimming.CharacterEllipsis; card.Children.Add(error);
+        }
+        var details = DetailsButton(poll); details.HorizontalAlignment = HorizontalAlignment.Stretch;
+        details.BorderBrush = Tint("BorderBrush", 0.7); details.BorderThickness = new(1); details.CornerRadius = new(6); details.Padding = new(12, 8, 12, 8);
+        card.Children.Add(details);
+        var frame = Card(card); AutomationProperties.SetAutomationId(frame, "AutoscanActivityPoll_" + poll.Id);
+        if (selected) { frame.Background = Tint("MutedBrush", 0.4); frame.BorderBrush = Tint("PrimaryTextBrush", 0.25); }
+        return frame;
     }
 }

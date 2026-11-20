@@ -159,20 +159,16 @@ public static class AdminAutoscanActivityText
         ["web.admin.common.scans.trigger.updated"] = "Updated",
         ["web.common.scans.cancelFailed"] = "Failed to cancel scans",
         ["web.common.scans.cancelRequested"] = "Scan cancellation requested",
-        ["native.cancelConflict"] = "Scan state changed. Reload and review before requesting cancellation again.",
         ["native.cancelUnknown"] = "Cancellation outcome is unknown. Reconcile live scan state; this request will not be replayed.",
         ["native.cancelReviewed"] = "Live state reviewed. Any further cancellation requires a new explicit request.",
         ["native.waitSnapshot"] = "Waiting for a newer live scan snapshot. No cancellation was replayed.",
         ["native.reconcile"] = "Reconcile cancellation",
         ["native.reconcileFailed"] = "Live scan state could not be reloaded. Cancellation remains unresolved; no request was replayed.",
-        ["native.restart"] = "Reload from first page",
         ["native.capped"] = "The 100-page history limit was reached. Narrow the search or reload from the first page.",
         ["native.labelsPartial"] = "Some names could not be loaded within the bounded lookup. Identities remain visible.",
         ["native.livePartial"] = "Live scan details exceed the display bound. Counts may include additional scans.",
-        ["native.loading"] = "Loading…",
         ["native.readDenied"] = "Access is unavailable. Sign in with an administrator profile and reload.",
         ["native.statusFailed"] = "Autoscan status could not be loaded. Retry to refresh live counts.",
-        ["native.page"] = "Page {page}",
     };
 
     public static string T(string key, object? values = null)
@@ -222,17 +218,8 @@ public static class AdminAutoscanActivityText
         return string.IsNullOrEmpty(connection) ? title : title + " · " + T("web.admin.autoscan.sources.subtitle.via", new { connection });
     }
 
-    public static string Result(AdminAutoscanActivityResult? result)
-    {
-        if (result == null) return "-";
-        if (result.Skipped > 0) return T("result.skipped");
-        var parts = new List<string>();
-        void Add(string key, long count) { if (count > 0) parts.Add(Count("result." + key, count)); }
-        Add("new", result.New); Add("updated", result.Updated); Add("missing", result.Missing);
-        Add("filesRemoved", result.FilesDeleted); Add("itemsRemoved", result.ItemsDeleted); Add("titlesRemoved", result.MembershipsRemoved);
-        Add("keptOffline", result.MissingSkippedProtected); Add("errors", result.Errors);
-        return parts.Count > 0 ? string.Join(" · ", parts) : result.Unchanged > 0 ? Count("result.noChangesUnchanged", result.Unchanged) : T("result.noChanges");
-    }
+    /// <summary>The result counters as the official table shows them (a dash when the run has no result yet).</summary>
+    public static string Result(AdminAutoscanActivityResult? result) => AdminAutoscanActivityDisplay.SummarizeResult(result)?.Text ?? "-";
 
     /// <summary>A count printed without digit grouping, as the poll metric strip does.</summary>
     public static string RawCount(string key, long count) => T(key, new Dictionary<string, object?> { ["count"] = count, ["count_text"] = count.ToString(AppStrings.FormatCulture) });

@@ -18,8 +18,8 @@ public sealed partial class AdminAutoscanActivityTests
     public async Task ExactSchemasPreserveStringIdentitiesAndAdditiveChangeOutcomes()
     {
         using var harness = new Harness(); using var lease = harness.Authority.Capture();
-        var scans = await harness.Api.ReadScansAsync(lease, new());
-        var polls = await harness.Api.ReadEventsAsync(lease, new());
+        var scans = await harness.Api.ReadScansAsync(lease, new(Limit: 1));
+        var polls = await harness.Api.ReadEventsAsync(lease, new(Limit: 1));
         Assert.Equal("7", Assert.Single(scans.Items).LibraryId);
         var change = Assert.Single(Assert.Single(polls.Items).Changes!);
         Assert.Equal("future_outcome", change.Outcome); Assert.Equal("future_reason", change.Reason);

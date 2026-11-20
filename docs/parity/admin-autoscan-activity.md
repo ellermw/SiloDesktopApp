@@ -1,65 +1,59 @@
-# Autoscan Activity — source-only implementation candidate
+# Autoscan Activity — scoped parity note
 
 ## Identity and scope
 
-- Prepared checkout: C:/Users/Michael/.t3/worktrees/SiloPlayer/t3-1a1ebc57-1f3df4c36cc2df20.
-- Branch: t3/admin-autoscan-activity; unchanged Beta base: 248aafd62ed65b868c0e7356926e4d83204649cd.
-- App version remains 1.2.1181-beta.1. No version, release, installed-player, pipeline PR, or publication changes.
-- Official Server/WebUI reference: 217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb, read as pinned Git objects from D:/SiloPlayer-work/server-upstream-nov14, not that checkout's current HEAD.
-- Ownership is exclusively /admin/autoscan/activity. Sources and Settings remain independent; this candidate neither imports nor registers their unmerged pages.
+- Branch `t3/admin-autoscan-activity`; app version stays `1.2.1181-beta.1` (no version, release or installed-player change).
+- Official Server/WebUI reference: `88b825d57e4b2296050fda69eaf619eefbf208d1`, read as pinned Git objects from `D:/SiloPlayer-work/server-upstream-nov14`.
+  Earlier work on this branch was written against `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`; upstream commit `e3887af09`
+  ("show autoscan poll details in a paginated inspector sheet (#4631)") then rewrote the Activity page, so the page was brought to the new design.
+- Scope is exactly `/admin/autoscan/activity`. Autoscan Sources and Autoscan Settings are separate families and are not implemented or imported here.
+  The official Activity page has no link to either, so none is rendered.
 
-This candidate includes the actual WinUI page, its independent API/models/controller/text, production registration, native XBF/source allowlists, and authored unit/native fixtures. It is not a helper-only or research-only handoff.
+## Official references (at 88b825d57)
 
-## Official references
+- `web/src/pages/AdminAutoscanActivity.tsx`, `web/src/pages/admin/autoscan/ActivityPanel.tsx`, `PollActivityBadges.tsx`, `PollEventInspectorSheet.tsx`,
+  `pollEventDisplay.ts`, `PollEventTable.test.tsx`, `sourceDisplay.ts`; `web/src/components/ui/pagination.tsx`, `pagination.utils.ts`.
+- `web/src/hooks/queries/useAutoscan.ts` (15-second refresh), `web/src/api/v2/adminAutoscanEvents.ts`, `adminAutoscanScans.ts`, `web/src/lib/scanRuns.ts`, `autoscanLabels.ts`.
+- `internal/apiv2/admin_autoscan_events.go`, `admin_autoscan_scans.go`, `scan_controls.go` (response shapes, 50-change cap, signed continuation, `POST /api/v2/scan/cancel`).
+- `web/src/locales/en.json` — every `web.admin.autoscan.activity.*` key the page uses matches the current text (checked by script against the compiled catalog).
+  The server's autoscan handlers and `types.ts` shapes did not change between the two pins.
 
-Read the following paths at the exact official pin:
+## What the page does
 
-- web/src/pages/admin/autoscan/ActivityPanel.tsx; web/src/pages/AdminAutoscanActivity.tsx.
-- web/src/api/v2/adminAutoscanEvents.ts; adminAutoscanScans.ts; adminAutoscanInspection.ts; adminAutoscanSources.ts; adminAutoscanConnections.ts; adminAutoscanAvailableSources.ts.
-- internal/apiv2/admin_autoscan_events.go; admin_autoscan_scans.go; admin_autoscan_inspection.go; admin_autoscan_available_sources.go; internal/autoscan/repository.go.
-- web/src/hooks/queries/useAutoscan.ts; web/src/hooks/queries/admin/scans.ts; web/src/components/RealtimeEventsProvider.tsx.
-- web/src/lib/scanRuns.ts; web/src/lib/autoscanLabels.ts; web/src/pages/admin/autoscan/sourceDisplay.ts; sourceForm.ts; web/src/locales/en.json.
+- Header, a stat card (Active, Queued, Running scans, Polling, Latest poll) with the refresh button, a "Polling now" section, and the Autoscan queue
+  (live scans from the shared `scans` realtime channel, autoscan trigger only, eight per page, per-library Cancel).
+- History with a Scans/Polls switch, search (300 ms debounce, shared by both views), a status filter per view, Reset, loading rows, filtered and unfiltered empty
+  states, and a failed state with **Try again**.
+- Scan history columns: status, library (with scan id), source, scope (mode, path, error), result, time, poll badge. Poll log columns: status, source (+ webhook badge),
+  counts (metric strip + truncated error), Details button, duration, time. Below 1024 content DIPs rows become cards; below 640 the stats and pager compact.
+- Numbered pagination exactly as `TablePagination`: summary, rows selector (25/50/100), first, previous, numbered window with ellipses, next, last.
+  The server pages by signed continuation, so reaching page N walks the earlier cursors (as the WebUI does), reusing cursors already seen; an explicit refresh or
+  Try again re-walks from the first page. The WebUI refuses an offset of 100 pages or more, so at most 100 pages are offered and a note says so when more rows match.
+- Poll inspector sheet (opened by the Details button, or a click on the row): status/delivery badges, a bounded scrolling error box that takes keyboard focus, metric pills,
+  **Paths** and **Scans created** tabs (opening on Scans created only when no paths were recorded), each with search, outcome/status chips with counts, reset, empty and
+  no-match states and its own pagination (paths 15/25/50, scans 20/50/100). A path's scan-id pill jumps to that scan. All 14 official reason texts, the follow-up scan
+  wording, unknown outcomes (raw value) and unknown reasons (server detail) are shown as the official page shows them. Closing returns focus to the row's Details button.
+- The inspector keeps the **latest snapshot** of the inspected poll: newer reads replace its data without resetting its tab, filters or pages, and it stays open with the
+  last data if the poll leaves the current page. View, filter and page changes close it (the official table unmounts then).
+- Live updates: status and the shown history refresh every 15 seconds through a bounded one-shot timer that stops when the page is left, the window is hidden or the
+  server/account changes; a refresh failure keeps the rows and offers Try again. Every response is applied only if it is still the newest request.
 
-## Implemented surface and contracts
+## Writes
 
-Scans is the initial history tab; Polls has its own retained query/status/page-size/cursor scope. Both include search with a 300 ms debounce, exact status choices, 25/50/100 row sizes, clear/reset, page summaries, previous/next, explicit restart, initial loading, filtered/unfiltered empty states, failure and retry. Wide rows become stacked cards below 1024 content DIPs. There is no slide transition added to the existing shell/Frame.
+The only write is the official per-library cancel (`POST /api/v2/scan/cancel`, body `{"library_id":"<decimal string>"}`), sent once. A 4xx (not 408) answer is a refusal: the server
+reason is shown and Cancel stays available. A timeout/transport failure/5xx is an unknown outcome: Cancel for that library is blocked until an explicit read-only
+reconcile finds newer live state; it is never replayed.
 
-History GETs use /api/v2/admin/autoscan/scans or /events with limit, cursor, status and q; only events also accept source_id. No offset or sort parameter is invented. Scans preserve the official lifecycle-timestamp/id descending order, events completed-timestamp/id descending. The official page has no interactive history sort control. Live queue rows follow its running/accepted, mode and path ordering, with eight rows per queue page.
+## Native adaptations and limits
 
-Scan rows expose scope/path, source/library navigation, results including skipped/protected-offline counters, error, identity, linked poll and timestamps. The linked-poll control searches by scan ID, which the official repository supports; it does not assume event IDs are searchable. Polls expose webhook delivery, counters, errors, duration/time, lazy path details, rewrites, all known reasons, opaque future outcome/reason values, linked-run counts, truncation and created run results. Source links are enabled only when that separately owned route is registered. Library links open the released Libraries route, not an invented editor route.
+- Names, paths and errors pass the credential/signed-URL redactor before display; dates use the shared date/time preference formatter.
+- The WebUI's inline `<details>` of the earlier page is gone; the older per-row source/library links, the "linked poll" jump and the Previous/Next-only pager were removed.
+- Event runs are bounded at 5,000 per event (plus the 4 MiB transport cap); an over-limit response fails visibly. Changes keep the server's 50-entry cap.
+- The sheet is the shared Admin detail sheet (slide-over, Escape and close button, page disabled behind it).
+- Not verified: live-server and phone/plugin interoperability, all-DPI and screen-reader behaviour, and visual parity beyond the captures reviewed below. A row click that
+  opens the inspector (as opposed to its Details button) is implemented but not driven by the fixture.
 
-Live status comes from /api/v2/admin/autoscan/status. Active autoscan details come only from the released shared scans realtime channel and its cached snapshot. Status and the selected history refresh at the official 15-second interval; the inactive history is not polled. The one-shot scheduler waits for the current work, skips superseded generations and stops on hidden-window/unload/authority retirement. Terminal scan events update the queue and invalidate bounded label lookups, without directly refetching histories. Label invalidations coalesce during an in-flight read; remaining dirty work is picked up on the next normal refresh.
+## Verification
 
-Cancellation POSTs /api/v2/scan/cancel with the exact string library_id. It is library-scoped, not falsely presented as a run-only cancellation. The existing authority-bound transport sends the write once without authentication replay. Unknown answers and 409/412 conflicts retain a per-library review gate across ordinary refresh and visibility changes. Explicit reconciliation is a single-flight status read, never a write. A newer complete shared snapshot, authoritative global zero, or a terminal target event with no remaining target-library rows allows the user to review and explicitly request another cancellation. Failed reconciliation stays unresolved with visible feedback; no success/completion is inferred from a request receipt.
-
-## Bounds and native adaptations
-
-- Reuses AdminMonitorAuthority/MonitorAuthorityLease, AdminCursorPager, AdminCollectionWalk and SiloApiClient.AdminLibrarySendAsync. Identity/server/profile retirement cancels and rejects late results; the page owns and releases its scans subscription.
-- Existing transport bounds: 4 MiB response and 30-second deadline. Each history retains one current page and at most 100 signed cursor positions; duplicate identities, invalid states, unsafe numeric-string identities, malformed envelopes and repeated continuations are rejected. Live total counts are not represented as snapshots; a shrinking last page moves back and rereads a valid position.
-- Source/connection/plugin lookups use limit 100, at most five pages/500 rows each. Libraries reuse the released one-response/1,000-library bound. Partial/failed names remain explicit and IDs remain available. No media-catalog enumeration occurs.
-- The active queue retains at most 500 distinct autoscan rows after filtering other triggers; overflow remains visibly partial until a complete snapshot. Each event's run list is limited to 500 for native rendering safety; an over-limit response fails visibly rather than silently omitting runs. Change logs enforce the official maximum of 50, preserving changes_truncated and the original count.
-- English admin ICU strings are isolated fallbacks for keys not in the released generated catalog; existing translations win when present. This source-only candidate does not rewrite generated localization output. New bound/access/reconciliation notices are explicitly native text. Paths, errors, labels and dynamic messages pass the existing credential/signed-URL redactors before display.
-- The separate native status/source labels models contain only fields needed by this page. Running-poll/event/library IDs remain the published positive decimal string identities within the official JavaScript-safe boundary; run IDs are opaque strings.
-
-## Authored versus observed verification
-
-Authored, NOT EXECUTED:
-
-- AdminAutoscanActivityTests and AdminAutoscanActivityLifecycleTests: exact envelopes and wire parameters, additive outcomes, unsafe IDs/states, duplicate/oversized/self-continuing pages, independent cursors/filters, 100-page depth, retired/hidden reads, 15-second scheduling, bounded/deduplicated realtime queue, source labels, result/plural/redaction behavior, uncertain/conflicting cancellation, terminal-target review and single-flight failed reconciliation.
-- AdminAutoscanActivityNativeFixture, selector admin-autoscan-activity: real production registration through outer Frame, AdminShellPage and inner Frame; live queue/progress; both cursor chains; lazy rewrite/future-value/truncation details; related-poll filtering; debounced search; empty/history/status failure and retries; uncertain cancel/reconcile; authored 1440/1024/800 captures; held read released only after actual page and shell Unloaded barriers, before restoring services/title/window content.
-
-Observed here: read-only pinned source inspection and Git diff/identity/whitespace inspection only. No .NET invocation, restore/build/test/native/browser/app launch, mutex acquisition, generated output, screenshot, installer, commit, push or PR occurred. The authored assertions and capture calls are not runtime evidence. Compilation, native rendering, full visual parity, all-DPI and live-server compatibility remain for the coordinator's authorized serialized lane.
-
-## Coordinator acceptance — do not run in a source-only lane
-
-Recheck the integrated source/version and bind the publish and fixture to those exact bytes first. Remeasure the inclusive generated-output budget (maximum 50 GiB, at least 50 GiB free on C and D). Use the approved containment/deadline harness and one nonblocking SiloOct18Build WaitOne(0) acquisition per authorized attempt, record actual ACQ/REL, release in finally, and do not wait/retry if held. Preserve prior payloads and the installed player.
-
-From the final integrated checkout, the focused authored checks are:
-
-```powershell
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj --filter "FullyQualifiedName~AdminAutoscanActivityTests" -nologo
-powershell -NoProfile -ExecutionPolicy Bypass -File installer/build.ps1 -Configuration Release -PublishDirectory <fresh-approved-install-layout-root> -InstallerOutputDirectory <fresh-approved-installer-root>
-powershell -NoProfile -ExecutionPolicy Bypass -File tests/SiloPlayer.NativeRegressionTests/run.ps1 -AppDirectory <exact-source-bound-published-version-directory> -Only admin-autoscan-activity
-```
-
-The installer command requires the existing signing prerequisites and does not authorize installing or publishing. The native runner itself builds its fixture host and generates captures: only the runtime coordinator may execute it. Review every capture, verify unload barriers and source/XBF acceptance, then run broader regression acceptance as appropriate. Integrate the eight production source allowlist additions and the single XBF addition without dropping other workers' entries. Do not infer a qualifying delivery or runtime pass from this source handoff.
+See the dated entry in `docs/current-development.md` for the exact runs. Unit tests: `AdminAutoscanActivityTests`, `AdminAutoscanActivityLifecycleTests`,
+`AdminAutoscanActivityDisplayTests`. Native selector: `admin-autoscan-activity`.

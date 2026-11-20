@@ -15,15 +15,34 @@ public sealed partial class AdminAutoscanActivityTests
     {
         internal System.Collections.Concurrent.ConcurrentQueue<string> Reads { get; } = new();
         internal int Writes;
+        /// <summary>The live total the history endpoints report.</summary>
+        internal int Total = 75;
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Reply;
+
+        /// <summary>
+        /// A history page as the server serves it: the cursor "o&lt;offset&gt;" is the signed continuation, every page holds
+        /// <c>limit</c> rows with unique identities, and only a full page carries the next cursor.
+        /// </summary>
+        internal static string Rows(Uri uri, string template, int total)
+        {
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var limit = int.Parse(query["limit"] ?? "50"); var cursor = query["cursor"];
+            var offset = cursor == null ? 0 : int.Parse(cursor[1..]);
+            var count = Math.Max(0, Math.Min(limit, total - offset));
+            var items = Enumerable.Range(0, count).Select(index => uri.AbsolutePath.EndsWith("/scans")
+                ? template.Replace("scan-1", "scan-" + (offset + index))
+                : template.Replace("\"id\":\"11\"", "\"id\":\"" + (1000 + offset + index) + "\""));
+            var more = offset + count < total;
+            return "{\"items\":[" + string.Join(',', items) + "],\"total\":" + total + ",\"page\":{\"has_more\":" + (more ? "true" : "false") + (more ? ",\"next_cursor\":\"o" + (offset + count) + "\"" : "") + "}}";
+        }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Reads.Enqueue(request.RequestUri!.PathAndQuery);
             if (request.Method != HttpMethod.Get) Writes++;
             return Reply?.Invoke(request) ?? Task.FromResult(Json(request.RequestUri!.AbsolutePath switch
             {
-                "/api/v2/admin/autoscan/scans" => Page(Scan, request.RequestUri.Query.Contains("cursor=") ? null : "scan-next"),
-                "/api/v2/admin/autoscan/events" => Page(Poll, request.RequestUri.Query.Contains("cursor=") ? null : "poll-next"),
+                "/api/v2/admin/autoscan/scans" => Rows(request.RequestUri, Scan, Total),
+                "/api/v2/admin/autoscan/events" => Rows(request.RequestUri, Poll, Total),
                 "/api/v2/admin/autoscan/status" => """{"enabled":true,"active_scans":1,"accepted_scans":1,"running_scans":0,"sources":[],"running_polls":[]}""",
                 _ => """{"items":[],"page":{"has_more":false}}"""
             }));
@@ -80,22 +99,94 @@ public sealed partial class AdminAutoscanActivityTests
         public void Dispose() { Authority.Dispose(); Auth.Dispose(); _http.Dispose(); }
     }
 
+    private static int ScanReads(Harness harness) => harness.Wire.Reads.Count(path => path.StartsWith("/api/v2/admin/autoscan/scans"));
+
     [Fact]
-    public async Task CursorChainsAreIndependentAndFiltersResetBeforeSending()
+    public async Task NumberedPagesWalkTheEarlierContinuationsOnceAndReuseThem()
     {
-        using var harness = new Harness(); var clock = new Clock(); var channel = new Channel();
-        using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, channel, clock);
-        await controller.OpenAsync(); await controller.NextAsync();
-        Assert.Equal(1, controller.State.Scans.PageIndex);
-        await controller.SelectAsync(AdminAutoscanHistory.Polls); await controller.NextAsync();
-        Assert.Equal(1, controller.State.Polls.PageIndex);
-        await controller.SelectAsync(AdminAutoscanHistory.Scans);
-        Assert.Equal(1, controller.State.Scans.PageIndex);
+        using var harness = new Harness(); using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), new Clock());
+        await controller.OpenAsync(); Assert.Equal(1, ScanReads(harness)); Assert.Equal(3, controller.State.Scans.PageCount);
+        await controller.GoToPageAsync(2);
+        // The official view offsets by walking the signed continuations: page 1's cursor comes from page 0, page 2's from page 1.
+        Assert.Equal(3, ScanReads(harness)); Assert.Equal(2, controller.State.Scans.PageIndex);
+        Assert.Equal("scan-50", controller.State.Scans.Items[0].Id); Assert.Equal(25, controller.State.Scans.Items.Count);
+        await controller.GoToPageAsync(1); Assert.Equal(4, ScanReads(harness)); Assert.Equal("scan-25", controller.State.Scans.Items[0].Id);
+        await controller.GoToPageAsync(0); Assert.Equal(5, ScanReads(harness)); Assert.Equal("scan-0", controller.State.Scans.Items[0].Id);
+        await controller.GoToPageAsync(2); Assert.Equal(6, ScanReads(harness)); Assert.Equal(2, controller.State.Scans.PageIndex);
+        Assert.Contains("cursor=o50", harness.Wire.Reads.Last(path => path.StartsWith("/api/v2/admin/autoscan/scans")));
+        await controller.GoToPageAsync(99); Assert.Equal(2, controller.State.Scans.PageIndex); Assert.Equal(6, ScanReads(harness));
+    }
+
+    [Fact]
+    public async Task ExplicitReloadWalksFromTheFirstPageRatherThanTrustingCachedContinuations()
+    {
+        using var harness = new Harness(); using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), new Clock());
+        await controller.OpenAsync(); await controller.GoToPageAsync(2); var before = ScanReads(harness);
+        await controller.RefreshAsync(); Assert.Equal(before + 1, ScanReads(harness));
+        await controller.ReloadHistoryAsync(); Assert.Equal(before + 4, ScanReads(harness));
+        Assert.Equal(2, controller.State.Scans.PageIndex);
+    }
+
+    [Fact]
+    public async Task FilterAndViewChangesReturnToTheFirstPageAndShareTheSearch()
+    {
+        using var harness = new Harness(); using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), new Clock());
+        await controller.OpenAsync(); await controller.GoToPageAsync(1);
         await controller.FilterAsync("/new path", "failed", 50);
         var request = harness.Wire.Reads.Last(path => path.StartsWith("/api/v2/admin/autoscan/scans"));
         Assert.Contains("limit=50", request); Assert.Contains("q=%2Fnew%20path", request);
         Assert.Contains("status=failed", request); Assert.DoesNotContain("cursor=", request);
-        Assert.Equal(0, controller.State.Scans.PageIndex); Assert.Equal(1, controller.State.Polls.PageIndex);
+        Assert.Equal(0, controller.State.Scans.PageIndex);
+        await controller.GoToPageAsync(1);
+        await controller.SelectAsync(AdminAutoscanHistory.Polls);
+        var poll = harness.Wire.Reads.Last(path => path.StartsWith("/api/v2/admin/autoscan/events"));
+        // The search and page size are shared; the failed status belongs to Scans only; a view change returns to its first page.
+        Assert.Contains("q=%2Fnew%20path", poll); Assert.Contains("limit=50", poll); Assert.DoesNotContain("status=", poll); Assert.DoesNotContain("cursor=", poll);
+        Assert.Equal("/new path", controller.State.Query); Assert.Equal("failed", controller.State.ScanStatus); Assert.Equal("", controller.State.PollStatus);
+        Assert.Equal(0, controller.State.Polls.PageIndex);
+        await controller.ResetFiltersAsync();
+        Assert.Equal("", controller.State.Query); Assert.Equal("", controller.State.ScanStatus); Assert.Equal(50, controller.State.PageSize);
+        Assert.False(controller.State.HasHistoryFilters);
+    }
+
+    [Fact]
+    public async Task ALateReadForAnEarlierPageNeverOverwritesTheNewerSelection()
+    {
+        using var harness = new Harness(); using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), new Clock());
+        await controller.OpenAsync();
+        var held = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Only the read of page 1 is held; every other request is answered by the default wire (a null reply falls through to it).
+        harness.Wire.Reply = request => request.RequestUri!.AbsolutePath.EndsWith("/scans") && request.RequestUri.Query.Contains("cursor=o25") ? held.Task : null!;
+        var slow = controller.GoToPageAsync(1);
+        harness.Wire.Reply = null; await controller.GoToPageAsync(0);
+        held.SetResult(Json(Wire.Rows(new Uri("https://fixture.invalid/api/v2/admin/autoscan/scans?limit=25&cursor=o25"), Scan, 75))); await slow;
+        Assert.Equal(0, controller.State.Scans.PageIndex); Assert.Equal("scan-0", controller.State.Scans.Items[0].Id); Assert.Null(controller.State.Scans.Failure);
+    }
+
+    [Fact]
+    public async Task ARepeatedContinuationFailsTheReadInsteadOfLooping()
+    {
+        using var harness = new Harness();
+        harness.Wire.Reply = request => Task.FromResult(Json(request.RequestUri!.AbsolutePath.EndsWith("/scans")
+            ? Page(Scan, "same").Replace("\"total\":75", "\"total\":1000")
+            : request.RequestUri.AbsolutePath.EndsWith("/status") ? """{"enabled":true,"active_scans":0,"accepted_scans":0,"running_scans":0,"sources":[],"running_polls":[]}"""
+            : """{"items":[],"page":{"has_more":false}}"""));
+        using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), new Clock());
+        await controller.OpenAsync(); Assert.Equal(1, controller.State.Scans.Items.Count);
+        await controller.GoToPageAsync(3);
+        Assert.NotNull(controller.State.Scans.Failure); Assert.Empty(controller.State.Scans.Items); Assert.False(controller.State.Scans.Loaded);
+        Assert.True(ScanReads(harness) <= 4);
+    }
+
+    [Fact]
+    public async Task AShrinkingResultMovesBackToTheLastPageThatStillHasRows()
+    {
+        using var harness = new Harness(); using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), new Clock());
+        await controller.OpenAsync(); await controller.GoToPageAsync(2); Assert.Equal(2, controller.State.Scans.PageIndex);
+        harness.Wire.Total = 30; await controller.RefreshAsync();
+        Assert.Equal(1, controller.State.Scans.PageIndex); Assert.Equal(5, controller.State.Scans.Items.Count); Assert.Equal(2, controller.State.Scans.PageCount);
+        harness.Wire.Total = 0; await controller.RefreshAsync();
+        Assert.Equal(0, controller.State.Scans.PageIndex); Assert.Empty(controller.State.Scans.Items); Assert.True(controller.State.Scans.Loaded);
     }
 
     [Fact]
@@ -162,18 +253,18 @@ public sealed partial class AdminAutoscanActivityTests
     }
 
     [Fact]
-    public async Task HistoryDepthStopsAtOneHundredPagesWithoutWalkingAhead()
+    public async Task HistoryDepthStopsAtOneHundredPagesWithoutWalkingPastThem()
     {
-        using var harness = new Harness(); var clock = new Clock(); var count = 0;
-        harness.Wire.Reply = request => Task.FromResult(Json(request.RequestUri!.AbsolutePath.EndsWith("/scans")
-            ? Page(Scan, "cursor-" + Interlocked.Increment(ref count)).Replace("\"total\":75", "\"total\":10000")
-            : request.RequestUri.AbsolutePath.EndsWith("/status") ? """{"enabled":true,"active_scans":0,"accepted_scans":0,"running_scans":0,"sources":[],"running_polls":[]}"""
-            : """{"items":[],"page":{"has_more":false}}"""));
-        using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), clock);
-        await controller.OpenAsync(); Assert.Equal(1, count);
-        for (var page = 1; page < 100; page++) await controller.NextAsync();
-        Assert.Equal(99, controller.State.Scans.PageIndex); Assert.True(controller.State.Scans.Capped);
-        await controller.NextAsync(); Assert.Equal(100, count);
+        using var harness = new Harness(); harness.Wire.Total = 10000;
+        using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), new Clock());
+        await controller.OpenAsync(); Assert.Equal(1, ScanReads(harness));
+        // 10,000 rows at 25 per page is 400 pages; the official view refuses an offset of 100 pages or more, so 100 are offered.
+        Assert.Equal(100, controller.State.Scans.PageCount); Assert.True(controller.State.Scans.Capped);
+        await controller.GoToPageAsync(500);
+        Assert.Equal(99, controller.State.Scans.PageIndex); Assert.Equal("scan-2475", controller.State.Scans.Items[0].Id);
+        var offsets = harness.Wire.Reads.Where(path => path.StartsWith("/api/v2/admin/autoscan/scans")).Select(path => path.Contains("cursor=o") ? int.Parse(path[(path.IndexOf("cursor=o") + 8)..].Split('&')[0]) : 0).ToArray();
+        Assert.Equal(2475, offsets.Max()); Assert.Equal(100, offsets.Distinct().Count());
+        await controller.GoToPageAsync(99); Assert.Equal(100, ScanReads(harness));
     }
 
     [Theory]
@@ -222,10 +313,10 @@ public sealed partial class AdminAutoscanActivityTests
         using var harness = new Harness(); var clock = new Clock();
         using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), clock);
         await controller.OpenAsync();
-        Assert.Single(controller.State.Scans.Items); Assert.NotNull(controller.State.Status);
+        Assert.Equal(25, controller.State.Scans.Items.Count); Assert.NotNull(controller.State.Status);
         harness.Wire.Reply = _ => Task.FromResult(Json("""{"title":"synthetic unavailable","status":503}""", HttpStatusCode.ServiceUnavailable));
         await controller.RefreshAsync();
-        Assert.NotNull(controller.State.Scans.Failure); Assert.Single(controller.State.Scans.Items);
+        Assert.NotNull(controller.State.Scans.Failure); Assert.Equal(25, controller.State.Scans.Items.Count);
         Assert.NotNull(controller.State.StatusFailure); Assert.NotNull(controller.State.Status);
         Assert.Contains(clock.Pending, timer => !timer.Disposed && timer.Delay == TimeSpan.FromSeconds(15));
         harness.Wire.Reply = null;

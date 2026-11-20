@@ -5,27 +5,39 @@ using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
 
+/// <summary>
+/// One history view's rows for the page the admin is on (88b825d57 <c>ActivityPanel</c> offset pages). The server
+/// pages by signed continuation, so a page is reached by walking the earlier pages' cursors, as the WebUI does.
+/// </summary>
 public sealed record AdminAutoscanHistoryState<T>
 {
     public AdminAutoscanActivityFilter Filter { get; init; } = new();
     public IReadOnlyList<T> Items { get; init; } = [];
     public long Total { get; init; }
-    public string? NextCursor { get; init; }
     public int PageIndex { get; init; }
     public bool Loaded { get; init; }
     public bool Fetching { get; init; }
     public AdminFailureKind? Failure { get; init; }
-    public bool Capped { get; init; }
+    /// <summary>Pages the page offers: the WebUI refuses an offset of 100 pages or more, so the native list stops there too.</summary>
+    public int PageCount => (int)Math.Min(AdminAutoscanActivityApi.MaxHistoryPages, Math.Max(1, (Total + Filter.Limit - 1) / Filter.Limit));
+    /// <summary>More matching rows exist than the 100 reachable pages hold.</summary>
+    public bool Capped => Total > (long)Filter.Limit * AdminAutoscanActivityApi.MaxHistoryPages;
 }
 
 public sealed record AdminAutoscanActivityState
 {
     public bool IsOpen { get; init; }
     public AdminAutoscanHistory Selected { get; init; }
+    /// <summary>The search text shared by both views, as sent (trimmed).</summary>
+    public string Query { get; init; } = "";
+    public int PageSize { get; init; } = AdminAutoscanActivityDisplay.DefaultHistoryPageSize;
+    public string ScanStatus { get; init; } = "";
+    public string PollStatus { get; init; } = "";
     public AdminAutoscanHistoryState<AdminAutoscanActivityScan> Scans { get; init; } = new();
     public AdminAutoscanHistoryState<AdminAutoscanActivityEvent> Polls { get; init; } = new();
     public AdminAutoscanActivityStatus? Status { get; init; }
     public AdminFailureKind? StatusFailure { get; init; }
+    public bool StatusFetching { get; init; }
     public AdminAutoscanActivityLabels Labels { get; init; } = AdminAutoscanActivityLabels.Empty;
     public bool LabelsFailed { get; init; }
     public IReadOnlyList<AdminLibraryScanRun> Queue { get; init; } = [];
@@ -35,6 +47,10 @@ public sealed record AdminAutoscanActivityState
     public IReadOnlyDictionary<string, string> CancelReview { get; init; } = new Dictionary<string, string>();
     public string? Message { get; init; }
     public long Revision { get; init; }
+    /// <summary>The official refresh button is disabled while the status or the shown history is being read.</summary>
+    public bool Refreshing => StatusFetching || Scans.Fetching || Polls.Fetching;
+    public string SelectedStatus => Selected == AdminAutoscanHistory.Scans ? ScanStatus : PollStatus;
+    public bool HasHistoryFilters => Query.Length > 0 || SelectedStatus.Length > 0;
 }
 
 public sealed class AdminAutoscanActivityController : IDisposable
@@ -46,14 +62,14 @@ public sealed class AdminAutoscanActivityController : IDisposable
     private readonly object _gate = new();
     private AdminAutoscanActivityState _state = new();
     private MonitorAuthorityLease? _owner;
-    private AdminCursorPager _scans = new(99), _polls = new(99);
+    private HistoryCursors _scanCursors = new(""), _pollCursors = new("");
     private CancellationTokenSource? _historyRead;
     private CancellationTokenSource? _readLifetime;
     private Task _historyTask = Task.CompletedTask, _statusTask = Task.CompletedTask, _labelsTask = Task.CompletedTask;
     private IDisposable? _timer, _subscription;
     private Action<string, JsonElement>? _snapshot;
     private Action<string, string, JsonElement>? _event;
-    private long _sequence, _scanObservation, _refreshEpoch, _reviewSequence;
+    private long _sequence, _statusSequence, _scanObservation, _refreshEpoch, _reviewSequence;
     private bool _disposed;
     private bool _visible = true;
     private bool _labelsDirty;
@@ -61,6 +77,36 @@ public sealed class AdminAutoscanActivityController : IDisposable
     private readonly HashSet<string> _terminalReviewEvidence = new(StringComparer.Ordinal);
     public event Action? Changed;
     public event Action? AuthorityRetired;
+
+    /// <summary>
+    /// The signed continuations seen for one query scope: the cursor that requests each page. A walk to a page starts at the
+    /// nearest known cursor, never repeats one, and never goes past the 100-page bound.
+    /// </summary>
+    private sealed class HistoryCursors(string scope)
+    {
+        private readonly Dictionary<int, string> _byPage = [];
+        public string Scope { get; } = scope;
+        public void Clear() { lock (_byPage) _byPage.Clear(); }
+        public int KnownAtOrBefore(int page)
+        {
+            lock (_byPage) { for (var index = page; index > 0; index--) if (_byPage.ContainsKey(index)) return index; return 0; }
+        }
+        public string? CursorFor(int page)
+        {
+            lock (_byPage) return page == 0 ? null : _byPage.GetValueOrDefault(page);
+        }
+        /// <summary>Records the cursor that requests <paramref name="page"/>; false for an unusable or repeated continuation.</summary>
+        public bool Record(int page, string? cursor)
+        {
+            if (!AdminPaging.IsValidCursor(cursor) || page < 1 || page >= AdminAutoscanActivityApi.MaxHistoryPages) return false;
+            lock (_byPage)
+            {
+                if (_byPage.Any(entry => entry.Key != page && entry.Value == cursor)) return false;
+                _byPage[page] = cursor!;
+                return true;
+            }
+        }
+    }
 
     public AdminAutoscanActivityController(AdminAutoscanActivityApi api, AdminMonitorAuthority authority,
         IAdminRealtimeChannel? channel = null, IAdminScheduler? scheduler = null)
@@ -73,9 +119,32 @@ public sealed class AdminAutoscanActivityController : IDisposable
     public bool HasOwner { get { lock (_gate) return _owner != null; } }
     private bool Current => !_disposed && _owner is { IsCurrent: true } && _state.IsOpen;
     private bool Owns(MonitorAuthorityLease owner) => Current && ReferenceEquals(owner, _owner);
-    private AdminCursorPager Pager => _state.Selected == AdminAutoscanHistory.Scans ? _scans : _polls;
-    private AdminAutoscanActivityFilter Filter => _state.Selected == AdminAutoscanHistory.Scans ? _state.Scans.Filter : _state.Polls.Filter;
     private void Notify() => Changed?.Invoke();
+    private AdminAutoscanActivityFilter FilterOf(AdminAutoscanHistory history) =>
+        new(_state.Query, history == AdminAutoscanHistory.Scans ? _state.ScanStatus : _state.PollStatus, _state.PageSize);
+    private HistoryCursors CursorsOf(AdminAutoscanHistory history) => history == AdminAutoscanHistory.Scans ? _scanCursors : _pollCursors;
+    private int PageIndexOf(AdminAutoscanHistory history) => history == AdminAutoscanHistory.Scans ? _state.Scans.PageIndex : _state.Polls.PageIndex;
+
+    private string ScopeOf(AdminAutoscanHistory history)
+    {
+        var filter = FilterOf(history);
+        return AdminCursorPager.ScopeOf(_owner!, filter.Limit, history.ToString(), filter.Query, filter.Status);
+    }
+
+    /// <summary>Both views start again from their first page with the filters as they now stand; caller holds the gate.</summary>
+    private void ResetViewsLocked(AdminAutoscanHistory? only = null)
+    {
+        if (only is null or AdminAutoscanHistory.Scans)
+        {
+            _state = _state with { Scans = new() { Filter = FilterOf(AdminAutoscanHistory.Scans) } };
+            _scanCursors = new(ScopeOf(AdminAutoscanHistory.Scans));
+        }
+        if (only is null or AdminAutoscanHistory.Polls)
+        {
+            _state = _state with { Polls = new() { Filter = FilterOf(AdminAutoscanHistory.Polls) } };
+            _pollCursors = new(ScopeOf(AdminAutoscanHistory.Polls));
+        }
+    }
 
     public Task OpenAsync()
     {
@@ -86,6 +155,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
             try { _owner = _authority.Capture(); }
             catch (MonitorAuthorityRetiredException) { return Task.CompletedTask; }
             _state = new() { IsOpen = true, Revision = _state.Revision + 1 };
+            ResetViewsLocked();
             var owner = _owner;
             _readLifetime = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
             if (_channel != null)
@@ -101,17 +171,20 @@ public sealed class AdminAutoscanActivityController : IDisposable
         return RefreshAsync();
     }
 
+    /// <summary>Scans or Polls. The official view change returns to the first page and keeps the search.</summary>
     public Task SelectAsync(AdminAutoscanHistory history)
     {
         lock (_gate)
         {
             if (!Current) return Task.CompletedTask;
             CancelHistoryLocked();
-            _state = _state with { Selected = history, Scans = _state.Scans with { Fetching = false }, Polls = _state.Polls with { Fetching = false } };
+            _state = _state with { Selected = history };
+            ResetViewsLocked(history);
         }
         return RefreshAsync();
     }
 
+    /// <summary>Applies the search text, the shown view's status and the page size; any change returns to the first page.</summary>
     public Task FilterAsync(string query, string status, int limit)
     {
         lock (_gate)
@@ -119,60 +192,57 @@ public sealed class AdminAutoscanActivityController : IDisposable
             if (!Current) return Task.CompletedTask;
             var filter = new AdminAutoscanActivityFilter(query.Trim(), status, limit);
             _ = AdminAutoscanActivityApi.HistoryPath(_state.Selected, filter);
-            if (filter == Filter) return Task.CompletedTask;
+            if (filter == FilterOf(_state.Selected)) return Task.CompletedTask;
             CancelHistoryLocked();
-            Pager.SetScope(AdminCursorPager.ScopeOf(_owner!, limit, _state.Selected.ToString(), filter.Query, status));
-            _continuations.Remove(Pager);
-            _state = _state.Selected == AdminAutoscanHistory.Scans
-                ? _state with { Scans = new() { Filter = filter } }
-                : _state with { Polls = new() { Filter = filter } };
+            _state = _state with { Query = filter.Query, PageSize = limit };
+            _state = _state.Selected == AdminAutoscanHistory.Scans ? _state with { ScanStatus = status } : _state with { PollStatus = status };
+            ResetViewsLocked();
         }
         return RefreshAsync();
     }
 
-    public Task NextAsync()
-    {
-        lock (_gate)
-        {
-            if (!Current || !_historyTask.IsCompleted) return Task.CompletedTask;
-            var next = _state.Selected == AdminAutoscanHistory.Scans ? _state.Scans.NextCursor : _state.Polls.NextCursor;
-            if (!Pager.TryAdvance(Pager.Capture(), next)) return Task.CompletedTask;
-            ClearRowsLocked();
-        }
-        return RefreshAsync();
-    }
-
-    public Task PreviousAsync()
-    {
-        lock (_gate)
-        {
-            if (!Current || !_historyTask.IsCompleted || !Pager.Back()) return Task.CompletedTask;
-            ClearRowsLocked();
-        }
-        return RefreshAsync();
-    }
-
-    public Task ReloadHistoryAsync()
+    /// <summary>The official Reset: clears the search and both views' status filters (page size stays).</summary>
+    public Task ResetFiltersAsync()
     {
         lock (_gate)
         {
             if (!Current) return Task.CompletedTask;
             CancelHistoryLocked();
-            Pager.SetScope(Guid.NewGuid().ToString("N"));
-            _continuations.Remove(Pager);
-            ClearRowsLocked();
+            _state = _state with { Query = "", ScanStatus = "", PollStatus = "" };
+            ResetViewsLocked();
         }
         return RefreshAsync();
     }
 
-    private void ClearRowsLocked()
+    /// <summary>Moves to a page of the shown view; an out-of-range index is clamped into the reachable pages.</summary>
+    public Task GoToPageAsync(int page)
     {
-        _state = _state.Selected == AdminAutoscanHistory.Scans
-            ? _state with { Scans = new() { Filter = _state.Scans.Filter, PageIndex = Pager.PageIndex } }
-            : _state with { Polls = new() { Filter = _state.Polls.Filter, PageIndex = Pager.PageIndex } };
+        lock (_gate)
+        {
+            if (!Current || !_visible) return Task.CompletedTask;
+            var scans = _state.Selected == AdminAutoscanHistory.Scans;
+            var count = scans ? _state.Scans.PageCount : _state.Polls.PageCount;
+            var target = Math.Min(Math.Max(page, 0), count - 1);
+            if (target == PageIndexOf(_state.Selected) && (scans ? _state.Scans.Loaded : _state.Polls.Loaded) &&
+                (scans ? _state.Scans.Failure : _state.Polls.Failure) == null) return Task.CompletedTask;
+            CancelHistoryLocked();
+            var filter = FilterOf(_state.Selected);
+            _state = scans ? _state with { Scans = new() { Filter = filter, PageIndex = target, Total = _state.Scans.Total } }
+                : _state with { Polls = new() { Filter = filter, PageIndex = target, Total = _state.Polls.Total } };
+        }
+        return RefreshAsync();
     }
 
-    public Task RefreshAsync(bool labels = false)
+    public Task NextAsync() => GoToPageAsync(PageIndexOf(State.Selected) + 1);
+    public Task PreviousAsync() => GoToPageAsync(PageIndexOf(State.Selected) - 1);
+
+    /// <summary>
+    /// The official refresh and "Try again": reads the status and the shown page again, walking the earlier pages'
+    /// continuations from the first page rather than trusting the cached ones.
+    /// </summary>
+    public Task ReloadHistoryAsync() => RefreshAsync(explicitReload: true);
+
+    public Task RefreshAsync(bool explicitReload = false)
     {
         Task work;
         lock (_gate)
@@ -180,18 +250,28 @@ public sealed class AdminAutoscanActivityController : IDisposable
             if (!Current || !_visible) return Task.CompletedTask;
             _timer?.Dispose(); _timer = null;
             var owner = _owner!;
+            if (explicitReload) { CancelHistoryLocked(); CancelStatusLocked(); }
             if (_historyTask.IsCompleted)
             {
-                var filter = Filter; var history = _state.Selected; var pager = Pager;
-                if (pager.Scope == null) pager.SetScope(AdminCursorPager.ScopeOf(owner, filter.Limit, history.ToString(), filter.Query, filter.Status));
-                var position = pager.Capture(); var seq = ++_sequence;
+                var history = _state.Selected; var filter = FilterOf(history); var seq = ++_sequence;
+                var target = PageIndexOf(history); var cursors = CursorsOf(history);
                 _historyRead = CancellationTokenSource.CreateLinkedTokenSource(_readLifetime!.Token);
                 _state = history == AdminAutoscanHistory.Scans ? _state with { Scans = _state.Scans with { Fetching = true } }
                     : _state with { Polls = _state.Polls with { Fetching = true } };
-                _historyTask = ReadHistoryAsync(owner, history, filter, pager, position, seq, _historyRead);
+                _historyTask = history == AdminAutoscanHistory.Scans
+                    ? ReadHistoryAsync(owner, history, cursors, filter, target, explicitReload, seq, _historyRead, (cursor, token) => _api.ReadScansAsync(owner, filter, cursor, token),
+                        (window, index, total) => _state with { Scans = _state.Scans with { Items = window, Total = total, PageIndex = index, Loaded = true, Fetching = false, Failure = null } },
+                        failure => _state with { Scans = _state.Scans with { Fetching = false, Failure = failure } })
+                    : ReadHistoryAsync(owner, history, cursors, filter, target, explicitReload, seq, _historyRead, (cursor, token) => _api.ReadEventsAsync(owner, filter, cursor, token),
+                        (window, index, total) => _state with { Polls = _state.Polls with { Items = window, Total = total, PageIndex = index, Loaded = true, Fetching = false, Failure = null } },
+                        failure => _state with { Polls = _state.Polls with { Fetching = false, Failure = failure } });
             }
-            if (_statusTask.IsCompleted) _statusTask = ReadStatusAsync(owner, _readLifetime!.Token);
-            if (_labelsTask.IsCompleted && (labels || _labelsDirty || _state.Labels == AdminAutoscanActivityLabels.Empty || _state.LabelsFailed))
+            if (_statusTask.IsCompleted)
+            {
+                _state = _state with { StatusFetching = true };
+                _statusTask = ReadStatusAsync(owner, _readLifetime!.Token, ++_statusSequence);
+            }
+            if (_labelsTask.IsCompleted && (explicitReload || _labelsDirty || _state.Labels == AdminAutoscanActivityLabels.Empty || _state.LabelsFailed))
             {
                 _labelsDirty = false;
                 _labelsTask = ReadLabelsAsync(owner, _readLifetime!.Token);
@@ -204,33 +284,44 @@ public sealed class AdminAutoscanActivityController : IDisposable
         return work;
     }
 
-    private async Task ReadHistoryAsync(MonitorAuthorityLease owner, AdminAutoscanHistory history, AdminAutoscanActivityFilter filter,
-        AdminCursorPager pager, AdminCursorPosition position, long seq, CancellationTokenSource read)
+    private async Task ReadHistoryAsync<T>(MonitorAuthorityLease owner, AdminAutoscanHistory history, HistoryCursors cursors, AdminAutoscanActivityFilter filter,
+        int target, bool rewalk, long seq, CancellationTokenSource read,
+        Func<string?, CancellationToken, Task<AdminAutoscanActivityWindow<T>>> readPage,
+        Func<IReadOnlyList<T>, int, long, AdminAutoscanActivityState> apply, Func<AdminFailureKind, AdminAutoscanActivityState> fail)
     {
         await Task.Yield();
-        var shrink = false;
         try
         {
-            var scans = history == AdminAutoscanHistory.Scans ? await _api.ReadScansAsync(owner, filter, position.Cursor, read.Token).ConfigureAwait(false) : null;
-            var polls = history == AdminAutoscanHistory.Polls ? await _api.ReadEventsAsync(owner, filter, position.Cursor, read.Token).ConfigureAwait(false) : null;
+            if (rewalk) cursors.Clear();
+            IReadOnlyList<T> items = []; long total = 0;
+            // A shrinking result set can leave the page past the end; the official view then moves to the last page that has rows.
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var index = cursors.KnownAtOrBefore(target); var reached = false;
+                while (true)
+                {
+                    var window = await readPage(cursors.CursorFor(index), read.Token).ConfigureAwait(false);
+                    total = window.Total;
+                    if (index == target)
+                    {
+                        items = window.Items; reached = true;
+                        if (window.NextCursor != null && target + 1 < AdminAutoscanActivityApi.MaxHistoryPages && !cursors.Record(target + 1, window.NextCursor))
+                            throw new InvalidDataException("Repeated autoscan continuation.");
+                        break;
+                    }
+                    if (window.NextCursor == null) break;
+                    if (!cursors.Record(index + 1, window.NextCursor)) throw new InvalidDataException("Repeated autoscan continuation.");
+                    index++;
+                }
+                if (!reached) items = [];
+                var last = (int)Math.Min(AdminAutoscanActivityApi.MaxHistoryPages - 1, Math.Max(0, (total - 1) / filter.Limit));
+                if (target <= last) break;
+                target = last;
+            }
             lock (_gate)
             {
-                if (!Owns(owner) || _sequence != seq || pager.Capture() != position) return;
-                var next = scans?.NextCursor ?? polls?.NextCursor;
-                if (next != null && SeenEarlier(pager, next)) throw new InvalidDataException("Repeated autoscan continuation.");
-                if (scans != null) _state = _state with { Scans = _state.Scans with { Items = scans.Items, Total = scans.Total, NextCursor = next,
-                    Loaded = true, Fetching = false, Failure = null, PageIndex = pager.PageIndex, Capped = next != null && pager.PageIndex >= 99 } };
-                if (polls != null) _state = _state with { Polls = _state.Polls with { Items = polls.Items, Total = polls.Total, NextCursor = next,
-                    Loaded = true, Fetching = false, Failure = null, PageIndex = pager.PageIndex, Capped = next != null && pager.PageIndex >= 99 } };
-                var total = scans?.Total ?? polls!.Total;
-                var lastPage = (int)Math.Min(99, Math.Max(0, (total - 1) / filter.Limit));
-                if (pager.PageIndex > lastPage)
-                {
-                    while (pager.PageIndex > lastPage) pager.Back();
-                    ClearRowsLocked();
-                    shrink = true;
-                }
-                _state = _state with { Revision = _state.Revision + 1 };
+                if (!Owns(owner) || _sequence != seq) return;
+                _state = apply(items, target, total) with { Revision = _state.Revision + 1 };
             }
         }
         catch (Exception error)
@@ -238,10 +329,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
             lock (_gate)
             {
                 if (!Owns(owner) || _sequence != seq) return;
-                var failure = AdminFailures.Classify(error, owner);
-                _state = history == AdminAutoscanHistory.Scans ? _state with { Scans = _state.Scans with { Fetching = false, Failure = failure } }
-                    : _state with { Polls = _state.Polls with { Fetching = false, Failure = failure } };
-                _state = _state with { Revision = _state.Revision + 1 };
+                _state = fail(AdminFailures.Classify(error, owner)) with { Revision = _state.Revision + 1 };
             }
         }
         finally
@@ -249,36 +337,19 @@ public sealed class AdminAutoscanActivityController : IDisposable
             lock (_gate) { if (ReferenceEquals(_historyRead, read)) _historyRead = null; read.Dispose(); }
         }
         Notify();
-        if (shrink) _ = RefreshAfterShrinkAsync(owner, _historyTask);
     }
 
-    private async Task RefreshAfterShrinkAsync(MonitorAuthorityLease owner, Task previous)
-    {
-        await previous.ConfigureAwait(false);
-        lock (_gate) { if (!Owns(owner) || !_visible) return; }
-        await RefreshAsync().ConfigureAwait(false);
-    }
-
-    private readonly Dictionary<AdminCursorPager, Dictionary<int, string>> _continuations = new();
-    private bool SeenEarlier(AdminCursorPager pager, string next)
-    {
-        if (!_continuations.TryGetValue(pager, out var seen)) _continuations[pager] = seen = new();
-        if (seen.Any(entry => entry.Key < pager.PageIndex && entry.Value == next)) return true;
-        foreach (var index in seen.Keys.Where(index => index > pager.PageIndex).ToArray()) seen.Remove(index);
-        seen[pager.PageIndex] = next; return false;
-    }
-
-    private async Task ReadStatusAsync(MonitorAuthorityLease owner, CancellationToken token)
+    private async Task ReadStatusAsync(MonitorAuthorityLease owner, CancellationToken token, long seq)
     {
         await Task.Yield();
         try
         {
             var status = await _api.ReadStatusAsync(owner, token).ConfigureAwait(false);
-            lock (_gate) { if (!Owns(owner) || token.IsCancellationRequested) return; _state = _state with { Status = status, StatusFailure = null, Revision = _state.Revision + 1 }; }
+            lock (_gate) { if (!Owns(owner) || token.IsCancellationRequested || _statusSequence != seq) return; _state = _state with { Status = status, StatusFailure = null, StatusFetching = false, Revision = _state.Revision + 1 }; }
         }
         catch (Exception error)
         {
-            lock (_gate) { if (!Owns(owner) || token.IsCancellationRequested) return; _state = _state with { StatusFailure = AdminFailures.Classify(error, owner), Revision = _state.Revision + 1 }; }
+            lock (_gate) { if (!Owns(owner) || token.IsCancellationRequested || _statusSequence != seq) return; _state = _state with { StatusFailure = AdminFailures.Classify(error, owner), StatusFetching = false, Revision = _state.Revision + 1 }; }
         }
         Notify();
     }
@@ -354,7 +425,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
     }
 
     private static AdminLibraryScanRun[] SortQueue(IEnumerable<AdminLibraryScanRun> scans) => scans.OrderBy(scan => scan.IsRunning ? 0 : 1)
-        .ThenBy(scan => scan.Mode switch { "library" => 0, "file" => 1, "subtree" => 2, _ => 3 })
+        .ThenBy(scan => AdminAutoscanActivityDisplay.ModeRank(scan.Mode))
         .ThenBy(scan => scan.Mode, StringComparer.CurrentCulture).ThenBy(scan => scan.Path, StringComparer.CurrentCulture).ToArray();
 
     /// <summary>A definite refusal: the server answered 4xx (other than 408), so the scan write was not applied.</summary>
@@ -447,6 +518,13 @@ public sealed class AdminAutoscanActivityController : IDisposable
     private void CancelHistoryLocked()
     {
         _sequence++; _historyRead?.Cancel(); _historyRead = null; _historyTask = Task.CompletedTask;
+        _state = _state with { Scans = _state.Scans with { Fetching = false }, Polls = _state.Polls with { Fetching = false } };
+    }
+
+    /// <summary>A superseded status read must not reappear as the newest state; it is cancelled and never applied.</summary>
+    private void CancelStatusLocked()
+    {
+        _statusSequence++; _statusTask = Task.CompletedTask; _state = _state with { StatusFetching = false };
     }
 
     public Task SetVisibleAsync(bool visible)
@@ -458,7 +536,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
             _refreshEpoch++; _reviewSequence++;
             _timer?.Dispose(); _timer = null;
             CancelHistoryLocked(); _readLifetime?.Cancel(); _readLifetime?.Dispose();
-            _state = _state with { Reconciling = null, Scans = _state.Scans with { Fetching = false }, Polls = _state.Polls with { Fetching = false } };
+            _state = _state with { Reconciling = null, StatusFetching = false };
             _statusTask = _labelsTask = Task.CompletedTask;
             _readLifetime = visible ? CancellationTokenSource.CreateLinkedTokenSource(_owner!.Token) : null;
         }
@@ -474,7 +552,7 @@ public sealed class AdminAutoscanActivityController : IDisposable
         if (_channel != null) { _channel.SnapshotReceived -= _snapshot; _channel.EventReceived -= _event; }
         _subscription?.Dispose(); _subscription = null;
         _owner?.Dispose(); _owner = null; _statusTask = _labelsTask = Task.CompletedTask;
-        _scans = new(99); _polls = new(99); _continuations.Clear(); _uncertainAt.Clear(); _terminalReviewEvidence.Clear();
+        _scanCursors = new(""); _pollCursors = new(""); _uncertainAt.Clear(); _terminalReviewEvidence.Clear();
         _scanObservation = 0; _refreshEpoch++; _reviewSequence++; _visible = true; _labelsDirty = false;
     }
 
