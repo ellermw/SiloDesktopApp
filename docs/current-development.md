@@ -1,3 +1,28 @@
+# November 17 - Admin Manage Prepared Files source-only candidate
+
+Manage > Downloads > Prepared Files (`/admin/downloads`) is implemented as one registered native
+page with Storage, Preparation, Prepared files, Device copies and History tabs. It includes the
+official filters/sorts and bounded paging, storage/node/server/device/artifact status, strong-ETag
+node location/budget edits, cleanup, confirmed untracked and prepared-file deletion,
+pause/resume/cancel, and device/entry revocation confirmations. Every destructive operation uses
+the official server endpoint and is single-send; no local prepared-file path is read or deleted.
+Viewer Downloads and the existing Download Settings page are unchanged except that server-location
+information can open the latter.
+
+This uncommitted source candidate is based exactly on Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`; version `1.2.1181-beta.1` is unchanged and
+pipeline-owned. Official Server/WebUI source is exactly
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. Unit and actual-control native regressions were
+authored test-first, with the tests-only checkpoint preserved at
+`.codex-tmp/admin-prepared-files/tests-only.patch`, but the source-only slot ran no .NET, build,
+test, app, native, browser, mutex, or generated-output command. Every runtime result is therefore
+unobserved and awaits the coordinator's serialized acceptance lane. No commit, push or PR occurred.
+
+Scope, contracts, coordinator-run commands, integration details, and remaining live/visual limits:
+`docs/parity/admin-manage-prepared-files.md`.
+
+---
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through
