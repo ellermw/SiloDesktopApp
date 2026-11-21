@@ -1,3 +1,22 @@
+# November 21 — Providers: review corrections to the subtitle tile's failed-save recovery
+
+Corrections on branch `t3/admin-providers-webui-recovery` (commit `42cc0a11a`, on top of `ab69ec190`) after an independent review. The P1: the Save
+path still read the page-wide flags, so after a 412 or unknown outcome on one provider, another provider's Save and Disconnect (drawn enabled) did
+nothing; it now reads that provider's state only and every refused click says why. Also: a failed tile Reload drops the editor and the tile reads the
+official "Unable to load saved configuration. Reload before editing." (typed values kept, as official); a successful save leaves the tile open on the
+official success line, off until Reload; reading shows "Loading saved configuration..." instead of "Saving…"; the test result is cleared only by a
+successful save; the marker Reload is marker-scoped again; the page Reload keeps the first failed read visible; a read finishing across an
+authority change returns no editor. Finding 9a (controller state surviving an authority change) is not reachable. Remaining difference: the page-level
+Reload and its alert are native additions. Record: [Providers failed-save recovery](parity/admin-providers-webui-recovery.md) section 9.
+
+Observed under the SiloOct18Build lease: mutation run `providersfix-mutation-r1` (Save guard reverted) failed the new native check as intended; final run
+`providersfix-final-r1` on `42cc0a11a80ba27ebd69187bd1feadba2d531055`: 79 focused and 10,868 full unit tests passed, no failures; native
+`admin-configure-providers` (251 checks), `admin-configure-integrations` (101), `admin-configure-general` (188), `admin-manage-foundation` (36) and
+`admin-monitor` (113) passed; `admin-configure-providers` passed twice more on the same build (`providersfix-native-r1`, `-r2`, 251 checks each).
+Not verified: a live server, real accounts, rendered capture, Narrator, contrast theme.
+
+---
+
 # November 21 — Providers: the subtitle tile's failed-save recovery follows the official WebUI
 
 The owner asked how the WebUI behaves after a failed subtitle-provider save and decided "that's how our app should work in that situation."
