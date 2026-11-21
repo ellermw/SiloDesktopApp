@@ -50,6 +50,8 @@ internal static partial class AdminUserResourcesNativeFixture
     private static async Task OpenDialogAsync(Context c, Func<Button> button, string label)
     {
         await Until(() => Dialog(c.Frame) == null, label + ": the previous dialog is gone");
+        // A button that is drawn disabled while something is pending (the subtitle editor still finishing its last save) is pressed once it is usable, never while it is not.
+        await Until(() => button().IsEnabled, label + ": the button is usable");
         Click(button()); DialogClicks++;
         for (var waited = 0; waited < 6000; waited += 25)
         {
