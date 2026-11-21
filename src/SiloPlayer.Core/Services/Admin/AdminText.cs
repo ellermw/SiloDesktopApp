@@ -283,6 +283,7 @@ public static class AdminText
         ["web.admin.common.policy.savedNotifyFailed"] = "Policy change saved at generation {generation}. This server reloaded generation {loaded}, but notification failed. Other servers may still use an earlier policy.",
         ["web.admin.common.policy.unsupportedDomain"] = "Unsupported policy domain",
         ["signIn.native.apply"] = "Apply",
+        ["signIn.native.changedElsewhere"] = "This setting was changed from somewhere else while this page was open, so nothing was saved. The page now shows the current state.",
         ["signIn.native.examples.credentials"] = "Active Directory, lldap, FreeIPA, OpenLDAP…",
         ["signIn.native.examples.oauth"] = "authentik, Authelia, Keycloak, Pocket ID, Zitadel, Entra ID…",
         ["signIn.native.link.catalog"] = "plugin catalog",

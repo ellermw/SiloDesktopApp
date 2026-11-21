@@ -23,6 +23,9 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public bool Loaded { get; private set; }
     public bool ProvidersKnown { get; private set; }
     private bool _accountsRead;
+    // What the current write learned about the page's picture of the server (see RequiresReview). Reset when a write begins; read and written under Gate.
+    private bool _applied, _secretErased;
+    private string? _why, _note;
     /// <summary>The whole account list was read (every page, within the hard cap). Like the official page, a list that is not fully known does not gate the break-glass check here: the server refuses with 409 break_glass_required.</summary>
     public bool AccountsKnown => _accountsRead && AccountCursor == null;
     public string PublicUrl { get; private set; } = "";
@@ -53,6 +56,60 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         foreach (var draft in _drafts.Values) draft.Value.Clear(); _drafts.Clear(); _auto.Clear(); _form?.Discard(); _form = null;
         Providers = []; Accounts = []; AccountCursor = null; Capabilities = null; Managed = []; PublicUrl = ""; Loaded = ProvidersKnown = _accountsRead = false;
         ProviderError = null; TestResults = new Dictionary<string, AdminSignInTestResult>(); TestFailures = new Dictionary<string, string>(); LastChange = null; RestartKeys = new();
+        _applied = _secretErased = false; _why = _note = null;
+    }
+    private void BeginWrite() { lock (Gate) { _applied = _secretErased = false; _why = _note = null; } }
+    /// <summary>The page's own check refused before anything was sent and a fresh read showed that the page's list is out of date: the refusal is definite and the page stays editable, but the message says so.</summary>
+    private void Note(string note) { lock (Gate) _note = note; }
+    private void Applied() { lock (Gate) _applied = true; }
+    private void Stale(string why) { lock (Gate) _why = why; }
+    /// <summary>A read that a write depends on: when it fails, the page's picture of the server could not be confirmed, so the page waits for a reload.</summary>
+    private async Task<T> ReadAsync<T>(Func<Task<T>> read)
+    {
+        try { return await read().ConfigureAwait(false); }
+        catch (Exception error) when (error is not OperationCanceledException) { Stale("The current state could not be read before writing."); throw; }
+    }
+    private static AdminSignInSchema? SchemaOf(AdminSignInProvider provider, string key) => provider.GlobalConfigSchema.FirstOrDefault(s => s.Key == key);
+    /// <summary>
+    /// Whether the failure of a write leaves the page unable to trust its picture of the server, so that it waits for a reload (and erases a typed secret, which can no longer be used).
+    /// Decided from what actually happened. Nothing was applied and the draft is still valid for: a value rejected locally; a definite refusal by the server (422 validation_failed,
+    /// 409 provider_already_enabled, 409 break_glass_required, 429); the page's own break-glass and provider checks when they sent nothing (even when a fresh read showed the page's
+    /// list is out of date: the message says so, and every save reads it again). The page waits for a reload when something was already applied (it shows the older values),
+    /// when a read the write relied on failed, when the deployment now owns what the page offered to change (managed_by_environment), on a conflict, and on an unknown outcome or
+    /// any other failure. Only this page decides this; the other access pages keep the shared rule.
+    /// </summary>
+    protected override bool RequiresReview(Exception error)
+    {
+        lock (Gate)
+        {
+            if (_applied || _why != null) return true;
+            return error switch
+            {
+                ArgumentException => false,
+                AdminAccessException { Uncertain: false } refused when refused.Code is "validation_failed" or "provider_already_enabled" or "break_glass_required" or "provider_required" or "rate_limited" || refused.Status == 429 => false,
+                // The settings write refused its values (nothing was applied, the form is intact).
+                ApiException { StatusCode: 422 } => false,
+                _ => true,
+            };
+        }
+    }
+    protected override string ReviewMessage(Exception error, string message, bool review)
+    {
+        if (!review) { lock (Gate) return _note == null ? message : message + " " + _note; }
+        lock (Gate)
+        {
+            // An unknown outcome and a settings conflict already say that the page must be reloaded and why.
+            if (error is AdminAccessException { Uncertain: true } or AdminSettingsOutcomeUnknownException || error is AdminSettingsConflictException && !_applied) return message;
+            var why = _applied ? "Part of this change was already saved, so this page shows older values."
+                : _why ?? (error as AdminAccessException)?.Code switch
+                {
+                    "managed_by_environment" => "The environment now manages something this page showed as editable.",
+                    "conflict" => "The resource changed on the server.",
+                    _ => null,
+                };
+            if (why == null) return message;
+            return message + " " + why + " Reload the page to read the current state." + (_secretErased ? " A typed secret was cleared: type it again afterwards." : "");
+        }
     }
     public Task OpenAsync() => OpenPageAsync(async owner =>
     {
@@ -146,26 +203,42 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public Task SaveAsync(bool confirmed) => RunAsync(async owner =>
     {
         try { await SaveCoreAsync(owner, confirmed).ConfigureAwait(false); }
-        // An unknown outcome (a timeout or transport failure after sending, or an answer that cannot be read) blocks further writes until the state is read again; nothing typed
-        // stays staged for it. A definite refusal keeps the draft so the admin can correct it.
-        catch (Exception error) when (error is not OperationCanceledException && error is not ArgumentException && error is not AdminAccessException { Uncertain: false })
-        { Publish(owner, EraseTypedSecrets); throw; }
+        // When the page must be read again (RequiresReview: an unknown outcome, a conflict, a managed field, a write that already landed, a read that failed) it blocks further writes
+        // until the reload, and a typed SECRET is erased because it can no longer be used; the visible draft stays on screen until the admin reloads or discards. A definite refusal
+        // that applied nothing (validation, provider already enabled, break glass, rate limit) leaves the page editable: the draft and the typed secret stay, so the admin can
+        // correct a value and save again.
+        catch (Exception error) when (error is not OperationCanceledException)
+        { Publish(owner, () => { if (RequiresReview(error) && EraseTypedSecrets()) _secretErased = true; }); throw; }
     }, write: true);
     /// <summary>Drops every typed secret value from the staged drafts (a staged "clear" is not a typed value and stays). Called under the controller's publish.</summary>
-    private void EraseTypedSecrets()
+    private bool EraseTypedSecrets()
     {
+        var erased = false;
         foreach (var key in _drafts.Keys.ToArray())
         {
             var schema = Providers.FirstOrDefault(p => p.Id == key.Provider)?.GlobalConfigSchema.FirstOrDefault(s => s.Key == key.Schema); var draft = _drafts[key];
-            foreach (var field in schema?.AdminForm?.Fields.Where(f => f.IsSecret) ?? []) draft.Value.Remove(field.Key);
+            foreach (var field in schema?.AdminForm?.Fields.Where(f => f.IsSecret) ?? []) erased |= draft.Value.Remove(field.Key);
             if (draft.Value.Count == 0 && draft.ClearSecrets.Count == 0) _drafts.Remove(key);
         }
+        return erased;
     }
     private async Task SaveCoreAsync(MonitorAuthorityLease owner, bool confirmed)
     {
         if (!confirmed || _form == null || DirtyCount == 0) return;
-        // Freeze the full intent before awaiting. Inputs are disabled until completion.
-        var configs = _drafts.Select(pair => (pair.Key.Provider, Schema: pair.Key.Schema, Write: AdminSignInSchemaRules.Build(Providers.Single(p => p.Id == pair.Key.Provider), Providers.Single(p => p.Id == pair.Key.Provider).GlobalConfigSchema.Single(s => s.Key == pair.Key.Schema), Values(Providers.Single(p => p.Id == pair.Key.Provider), Providers.Single(p => p.Id == pair.Key.Provider).GlobalConfigSchema.Single(s => s.Key == pair.Key.Schema)), pair.Value.ClearSecrets))).ToArray();
+        BeginWrite();
+        // Freeze the full intent before awaiting. Inputs are disabled until completion. An entry the plugin no longer lists has nothing to send (a refresh drops such drafts).
+        var frozen = new List<(string Provider, string Schema, AdminSignInConfigWrite Write)>();
+        try
+        {
+            foreach (var pair in _drafts.ToArray())
+            {
+                var provider = Providers.FirstOrDefault(p => p.Id == pair.Key.Provider); var schema = provider == null ? null : SchemaOf(provider, pair.Key.Schema);
+                if (provider == null || schema == null) continue;
+                frozen.Add((pair.Key.Provider, pair.Key.Schema, AdminSignInSchemaRules.Build(provider, schema, Values(provider, schema), pair.Value.ClearSecrets)));
+            }
+        }
+        catch { foreach (var item in frozen) item.Write.Value.Clear(); throw; }
+        var configs = frozen.ToArray();
         var autos = _auto.Where(pair => Providers.FirstOrDefault(p => p.Id == pair.Key)?.BindingFieldManaged("auto_provision") != true).ToArray();
         try
         {
@@ -175,26 +248,30 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
                 // break-glass admin, or a candidate that no longer qualifies, refuse. With a list that is not fully known (longer than the cap, or unread)
                 // the server's own transactional check decides, as it does for the official page.
                 var candidate = Accounts.FirstOrDefault(BreakGlass);
+                // The page's own check, from what it shows: nothing was sent and nothing is stale, so the page stays editable (turn Silo passwords back on, or add the account).
                 if (candidate == null && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
                 if (candidate != null)
                 {
-                    var account = await api.AccountAsync(owner, candidate.Id).ConfigureAwait(false);
-                    if (!BreakGlass(account) && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
+                    var account = await ReadAsync(() => api.AccountAsync(owner, candidate.Id)).ConfigureAwait(false);
+                    // The account the page lists no longer qualifies. Nothing was sent, the refusal is definite and the draft is still valid: the page stays editable and says its list is out of date.
+                    if (!BreakGlass(account) && AccountsKnown) { Note("The account list on this page is out of date: reload the page to see the current one."); throw new AdminAccessException("break_glass_required", 409); }
                 }
-                var providers = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
-                if (!providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)) throw new AdminAccessException("provider_required", 409);
+                var providers = await ReadAsync(() => api.GetInstallationsAsync(owner)).ConfigureAwait(false);
+                if (!providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)) { Note("The provider list on this page is out of date: reload the page to see the current one."); throw new AdminAccessException("provider_required", 409); }
             }
             foreach (var item in configs)
             {
                 await api.SaveConfigAsync(owner, item.Provider, item.Write).ConfigureAwait(false);
+                Applied();
                 Publish(owner, () => { if (_drafts.Remove((item.Provider, item.Schema), out var draft)) draft.Value.Clear(); });
             }
         }
         finally { foreach (var item in configs) item.Write.Value.Clear(); }
         foreach (var (id, value) in autos)
         {
-            var fresh = (await api.GetInstallationsAsync(owner).ConfigureAwait(false)).SingleOrDefault(p => p.Id == id) ?? throw new AdminAccessException("not_found", 404);
+            var fresh = (await ReadAsync(() => api.GetInstallationsAsync(owner)).ConfigureAwait(false)).FirstOrDefault(p => p.Id == id) ?? throw new AdminAccessException("not_found", 404);
             await api.SaveBindingAsync(owner, id, Binding(fresh, auto: value)).ConfigureAwait(false);
+            Applied();
             Publish(owner, () => _auto.Remove(id));
         }
         if (_form.DirtyKeys.Count > 0)
@@ -205,6 +282,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
                 if (intent.Values.Count > 0)
                 {
                     var result = await settings.PutAsync(owner, intent.Values, intent.ETag, Keys, []).ConfigureAwait(false);
+                    Applied();
                     Publish(owner, () => _form?.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired)); store.Invalidate();
                 }
             }
@@ -223,6 +301,8 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             if (provider.BindingFieldManaged("auto_provision")) _auto.Remove(provider.Id);
             foreach (var key in _drafts.Keys.Where(k => k.Provider == provider.Id).ToArray())
             {
+                // An entry the plugin no longer lists has nothing left to save.
+                if (SchemaOf(provider, key.Schema) == null) { _drafts.Remove(key, out var gone); gone?.Value.Clear(); continue; }
                 var managed = provider.ManagedConfigFields(key.Schema); var draft = _drafts[key];
                 foreach (var field in managed) { draft.Value.Remove(field); draft.ClearSecrets.Remove(field); }
                 if (draft.Value.Count == 0 && draft.ClearSecrets.Count == 0) _drafts.Remove(key);
@@ -259,30 +339,51 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             });
         }
     }
+    /// <summary>The four binding fields a write restates, as a read shows them (a missing row or field reads as the server's defaults).</summary>
+    private static (bool Enabled, bool Auto, bool DefaultLogin, int Order) RowOf(AdminSignInProvider p) => (p.Binding?.Enabled == true, p.Binding?.AutoProvision ?? true, p.Binding?.DefaultLogin ?? false, p.Binding?.DisplayOrder ?? 1);
+    /// <summary>
+    /// Changes ONE field of a provider's binding. With <paramref name="autoProvision"/> null the admin is turning the binding on or off (<paramref name="enabled"/> is the new value);
+    /// otherwise the admin is changing only "Create accounts on first sign-in" and <paramref name="enabled"/> is ignored. The binding is read again first and the write restates every field
+    /// the admin did not touch from that fresh read, as the official page does. If another session changed one of those fields since this page drew the provider, nothing is written:
+    /// the admin is told it changed elsewhere and the page shows the fresh state, so a switch can never put back a value that someone else changed.
+    /// </summary>
     public Task SetBindingAsync(AdminSignInProvider captured, bool enabled, bool? autoProvision, bool confirmed) => RunAsync(async owner =>
     {
         if (!confirmed || Capabilities is not { Available: true, LiveProviderChanges: true } || !Providers.Contains(captured)) return;
+        BeginWrite();
         Publish(owner, () => LastChange = null);
-        var providers = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
-        var provider = providers.SingleOrDefault(p => p.Id == captured.Id && p.Auth?.Id == captured.Auth?.Id) ?? throw new AdminAccessException("not_found", 404);
+        var providers = await ReadAsync(() => api.GetInstallationsAsync(owner)).ConfigureAwait(false);
+        var provider = providers.FirstOrDefault(p => p.Id == captured.Id && p.Auth?.Id == captured.Auth?.Id) ?? throw new AdminAccessException("not_found", 404);
+        var touchesAuto = autoProvision != null; var shown = RowOf(captured); var now = RowOf(provider);
+        if (touchesAuto && now.Enabled != shown.Enabled || !touchesAuto && now.Auto != shown.Auto || now.DefaultLogin != shown.DefaultLogin || now.Order != shown.Order)
+        {
+            Publish(owner, () => { Providers = providers; PruneManagedDrafts(); Message = AdminText.T("signIn.native.changedElsewhere"); });
+            return;
+        }
+        var wantEnabled = touchesAuto ? now.Enabled : enabled;
         // The deployment owns this field: nothing is sent (the server would refuse a changed value with 422 managed_by_environment). Judged on the fresh read, not the page's older copy.
-        var changesAuto = autoProvision is { } wanted && wanted != (provider.Binding?.AutoProvision ?? true);
-        if (changesAuto && provider.BindingFieldManaged("auto_provision") || !changesAuto && enabled != (provider.Binding?.Enabled == true) && provider.BindingFieldManaged("enabled"))
+        if (touchesAuto ? autoProvision != now.Auto && provider.BindingFieldManaged("auto_provision") : wantEnabled != now.Enabled && provider.BindingFieldManaged("enabled"))
             throw new AdminAccessException("managed_by_environment", 422);
-        if (enabled && (!provider.Enabled || ProviderDirty(captured) || !provider.Network && (AdminSignInSchemaRules.Missing(provider).Count > 0 || providers.Any(p => !p.Network && p.Id != provider.Id && p.Enabled && p.Binding?.Enabled == true)))) throw new ArgumentException("Save setup and turn off the other provider first.");
-        await api.SaveBindingAsync(owner, provider.Id, Binding(provider, enabled, autoProvision)).ConfigureAwait(false);
-        Publish(owner, () => LastChange = new(provider.Id, enabled, autoProvision));
-        await RefreshProvidersAsync(owner, enabled ? "Sign-in provider turned on." : "Sign-in provider turned off.", providersChanged: true).ConfigureAwait(false);
+        if (!touchesAuto && enabled && (!provider.Enabled || ProviderDirty(captured) || !provider.Network && (AdminSignInSchemaRules.Missing(provider).Count > 0 || providers.Any(p => !p.Network && p.Id != provider.Id && p.Enabled && p.Binding?.Enabled == true)))) throw new ArgumentException("Save setup and turn off the other provider first.");
+        await api.SaveBindingAsync(owner, provider.Id, Binding(provider, wantEnabled, autoProvision)).ConfigureAwait(false);
+        Applied();
+        Publish(owner, () => LastChange = new(provider.Id, wantEnabled, autoProvision));
+        await RefreshProvidersAsync(owner, wantEnabled ? "Sign-in provider turned on." : "Sign-in provider turned off.", providersChanged: true).ConfigureAwait(false);
     }, write: true);
     public Task TestAsync(AdminSignInProvider captured, string? username = null) => RunAsync(async owner =>
     {
         if (!Providers.Contains(captured) || !captured.Enabled || Capabilities?.ConnectionTest != true || captured.Auth?.Metadata["connection_test"]?.ToString() != "true") return;
-        var staged = _drafts.Where(d => d.Key.Provider == captured.Id).Select(d => AdminSignInSchemaRules.Build(captured, captured.GlobalConfigSchema.Single(s => s.Key == d.Key.Schema), Values(captured, captured.GlobalConfigSchema.Single(s => s.Key == d.Key.Schema)), d.Value.ClearSecrets)).ToList();
+        var staged = new List<AdminSignInConfigWrite>();
+        try
+        {
+            foreach (var draft in _drafts.Where(d => d.Key.Provider == captured.Id).ToArray())
+                if (SchemaOf(captured, draft.Key.Schema) is { } draftSchema) staged.Add(AdminSignInSchemaRules.Build(captured, draftSchema, Values(captured, draftSchema), draft.Value.ClearSecrets));
+        }
+        catch { foreach (var entry in staged) entry.Value.Clear(); throw; }
         var testRef = captured.Auth.Metadata["connection_test_username_field"]?.ToString()?.Split('.', 2);
         // A test-only look-up user the deployment owns is the saved one: the page shows it read-only and sends nothing for it.
-        if (testRef is { Length: 2 } && username != null && !captured.ConfigFieldManaged(testRef[0], testRef[1]))
+        if (testRef is { Length: 2 } && username != null && !captured.ConfigFieldManaged(testRef[0], testRef[1]) && SchemaOf(captured, testRef[0]) is { } schema)
         {
-            var schema = captured.GlobalConfigSchema.Single(s => s.Key == testRef[0]);
             var entry = staged.FirstOrDefault(s => s.Key == schema.Key);
             if (entry == null) { entry = AdminSignInSchemaRules.Build(captured, schema, Values(captured, schema), []); staged.Add(entry); }
             entry.Value[testRef[1]] = username; // test-only lookup is never part of a save draft.
