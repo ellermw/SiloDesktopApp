@@ -6,8 +6,10 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -28,7 +30,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
     {
         internal readonly List<(string Method, string Path, string Body, string? IfMatch)> Requests = [];
         internal readonly Dictionary<string, JsonObject> Rows = new(StringComparer.Ordinal);
-        internal bool RefusePut, DropPut, RefuseDelete, DropDelete, RefuseKey, DropKey, FailList, EmptyList; internal int Keys, Versions = 1; internal TaskCompletionSource? HoldCheck;
+        internal bool RefusePut, DropPut, RefuseDelete, DropDelete, RefuseKey, DropKey, FailList, EmptyList; internal int Keys, Versions = 1; internal TaskCompletionSource? HoldCheck, HoldEffective, HoldKey; internal string KeySuffix = "";
         internal int Count(string method, string suffix) => Requests.Count(request => request.Method == method && request.Path.EndsWith(suffix, StringComparison.Ordinal));
         internal string BodyOf(string method, string suffix) => Requests.Last(request => request.Method == method && request.Path.EndsWith(suffix, StringComparison.Ordinal)).Body;
         internal static JsonObject Row(string id, string name, string type, string extra = "") => JsonNode.Parse($$"""
@@ -51,7 +53,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             var path = request.RequestUri!.AbsolutePath; var body = request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct);
             var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries); var id = segments.Length >= 5 && segments[3] == "nodes" ? segments[4] : null;
             if (request.Method != HttpMethod.Get) Requests.Add((request.Method.Method, path, body, request.Headers.IfMatch.SingleOrDefault()?.ToString()));
-            if (path.EndsWith("/effective")) return Text("{\"playback.hw_accel\":\"auto\"}");
+            if (path.EndsWith("/effective")) { var hold = HoldEffective; if (hold != null) await hold.Task.WaitAsync(ct); return Text("{\"playback.hw_accel\":\"auto\",\"server.public_url\":\"https://core.invalid:8443\"}"); }
             if (path.EndsWith("/sensitive-status")) return Text("{\"configured\":[],\"managed_by_env\":[]}");
             if (path.EndsWith("/restart-keys")) return Text("{\"keys\":[],\"prefixes\":[]}");
             if (path.EndsWith("/nodes/capabilities")) return Text("{\"allowed\":true,\"state\":\"available\",\"revision\":\"1\",\"drain\":true,\"node_keys\":true,\"source_access\":true,\"summary\":true,\"env_declarations\":true,\"deployment_nodes\":true}");
@@ -81,9 +83,9 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             }
             if (path.EndsWith("/key"))
             {
-                Keys++; if (DropKey) throw new HttpRequestException("synthetic lost acknowledgement");
+                Keys++; var holdKey = HoldKey; if (holdKey != null) await holdKey.Task.WaitAsync(ct); if (DropKey) throw new HttpRequestException("synthetic lost acknowledgement");
                 if (RefuseKey) return Text("{\"type\":\"https://silo.invalid/problems/conflict\",\"status\":409,\"title\":\"Conflict\",\"detail\":\"Only transcode nodes take a node key.\"}", HttpStatusCode.Conflict);
-                row["key_issued"] = true; return Text("{\"node_key\":\"" + NodeKey + Keys + "\"}", HttpStatusCode.Created);
+                row["key_issued"] = true; return Text("{\"node_key\":\"" + NodeKey + Keys + KeySuffix + "\"}", HttpStatusCode.Created);
             }
             if (path.EndsWith("/check")) { var hold = HoldCheck; if (hold != null) await hold.Task.WaitAsync(ct); }
             if (path.EndsWith("/check")) return Text("{\"healthy\":true,\"active_jobs\":1,\"egress_kbps\":0,\"health_persisted\":true}");
@@ -96,8 +98,42 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
         }
     }
 
+    // A check whose failure must not hide the others: it logs FAIL and the run is ended after the block (used for the erasure checks, so each can be shown to fail on its own).
+    private static readonly List<string> SoftFailures = [];
+    private static void SoftCheck(bool value, string label) { Program.Log((value ? "PASS: " : "FAIL: ") + label); if (!value) SoftFailures.Add(label); }
+    private static void ThrowSoftFailures() { if (SoftFailures.Count > 0) throw new InvalidOperationException("Failed: " + string.Join("; ", SoftFailures)); }
+    private sealed class WithoutService(IServiceProvider inner, Type hidden) : IServiceProvider { public object? GetService(Type serviceType) => serviceType == hidden ? null : inner.GetService(serviceType); }
+    private static IEnumerable<DependencyObject> AllExceptPasswordInput(DependencyObject root) { yield return root; if (root is PasswordBox) yield break; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var child in AllExceptPasswordInput(VisualTreeHelper.GetChild(root, i))) yield return child; }
+    /// <summary>True when any text, text box, button label, dialog title, tooltip or automation property under <paramref name="root"/> holds the secret. The masked field itself is the one place the key may be.</summary>
+    private static bool HoldsText(DependencyObject root, string secret)
+    {
+        foreach (var element in AllExceptPasswordInput(root))
+        {
+            var texts = new List<string?>();
+            if (element is TextBlock block) texts.Add(block.Text);
+            if (element is TextBox box) texts.Add(box.Text);
+            if (element is ContentControl { Content: string content }) texts.Add(content);
+            if (element is ContentDialog dialog) { texts.Add(dialog.Title as string); texts.Add(dialog.PrimaryButtonText); texts.Add(dialog.CloseButtonText); }
+            if (element is FrameworkElement fe) { texts.Add(ToolTipService.GetToolTip(fe) as string); texts.Add(AutomationProperties.GetName(fe)); texts.Add(AutomationProperties.GetHelpText(fe)); texts.Add(AutomationProperties.GetFullDescription(fe)); texts.Add(AutomationProperties.GetItemStatus(fe)); texts.Add(AutomationProperties.GetLocalizedControlType(fe)); }
+            if (texts.Any(text => text?.Contains(secret, StringComparison.Ordinal) == true)) return true;
+        }
+        return false;
+    }
+    /// <summary>The clipboard text, read back for a copy action (null when there is none or it cannot be read within about two seconds).</summary>
+    private static async Task<string?> ReadClipboard()
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try { var view = Clipboard.GetContent(); if (view.Contains(StandardDataFormats.Text)) return (await view.GetTextAsync()).Replace("\r\n", "\n"); return null; }
+            catch (Exception) { await Task.Delay(100); }
+        }
+        return null;
+    }
+    private static async Task ClearClipboard() { for (var attempt = 0; attempt < 20; attempt++) { try { Clipboard.Clear(); return; } catch (Exception) { await Task.Delay(100); } } }
+
     private static async Task NodesRefreshAsync(Window window)
     {
+        SoftFailures.Clear();
         using var server = new NodesServer(); using var http = new HttpClient(server); var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
@@ -135,6 +171,10 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Check(!Has("NodeKey_n-deploy") && Has("NodeKey_n-plain") && Has("NodeKey_n-env"), "[nodes refresh] Issue/Rotate is hidden only for the deployment-managed node");
             var delete = Btn("NodeDelete_n-deploy"); Check(delete.IsEnabled && delete.Opacity < 1 && ToolTipService.GetToolTip(delete) as string == AdminPlaybackNodesController.DeploymentManagedNote, "[nodes refresh] its delete stays focusable, looks inactive and carries the official note");
             Check(AutomationProperties.GetHelpText(delete) == AdminPlaybackNodesController.DeploymentManagedNote, "[nodes refresh] the note is also its automation help text");
+            // What UI Automation reports (a screen reader announces the item status after the name) says the delete is unavailable and why, while the button stays focusable.
+            var deletePeer = new ButtonAutomationPeer(delete);
+            Check(deletePeer.GetItemStatus() == AdminPlaybackNodesController.DeploymentManagedNote && deletePeer.GetFullDescription() == AdminPlaybackNodesController.DeploymentManagedNote && deletePeer.GetHelpText() == AdminPlaybackNodesController.DeploymentManagedNote && deletePeer.GetName().StartsWith("Delete ") && delete.IsTabStop, "[nodes refresh] the managed delete reports the note as item status and full description, keeps its name and stays focusable");
+            Check(AutomationProperties.GetItemStatus(Btn("NodeDelete_n-plain")).Length == 0, "[nodes refresh] an ordinary delete reports no such status");
             var requests = server.Requests.Count; Invoke(delete); await Until(() => texts().Contains(AdminPlaybackNodesController.DeploymentManagedNote), "[nodes refresh] pressing delete shows the reason");
             Check(Field(nodes, "_dialog") == null && server.Requests.Count == requests, "[nodes refresh] no confirmation opens and nothing is sent for a deployment-managed delete");
 
@@ -181,24 +221,62 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Find<TextBox>(dialog, "Node_name").Text = "Created GPU"; Find<TextBox>(dialog, "Node_url").Text = "http://10.0.0.5:8082"; await Task.Delay(300);
             before = server.Count("POST", "/nodes"); Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded && server.Count("POST", "/nodes") == before + 1, "[nodes refresh] node created");
             await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true } && All((ContentDialog)Field(nodes, "_dialog")!).OfType<Button>().Any(b => b.Content?.ToString() == "Issue key"), "[nodes refresh] the key dialog is offered for the new node");
-            dialog = (ContentDialog)Field(nodes, "_dialog")!; var keys0 = server.Keys; var keyButton = DialogButton(dialog, "Issue key"); Invoke(keyButton); TryInvoke(keyButton);
-            await Until(() => All(dialog).OfType<PasswordBox>().Any(), "[nodes refresh] the key arrives in the dialog"); await Task.Delay(300);
-            Check(server.Keys == keys0 + 1 && Find<PasswordBox>(dialog, "NodeIssuedKey").Password == NodeKey + server.Keys, "[nodes refresh] a doubled activation sends one key request and the key is shown once");
+            dialog = (ContentDialog)Field(nodes, "_dialog")!; var keys0 = server.Keys; var keyButton = DialogButton(dialog, "Issue key");
+            bool DialogHas(string text) => All(dialog).OfType<TextBlock>().Any(t => t.Text == text); bool DialogStarts(string text) => All(dialog).OfType<TextBlock>().Any(t => t.Text.StartsWith(text, StringComparison.Ordinal));
+            Check(!DialogHas(AdminPlaybackAdministrationText.T("web.admin.nodes.key.rotateDrainHint")), "[nodes refresh] an issue offer has no drain hint");
+            // The server-address read is held so the dialog is observed while it is still being built: the key is already on screen then.
+            services.GetRequiredService<AdminServerSettingsStore>().Invalidate(); var holdEffective = new TaskCompletionSource(); server.HoldEffective = holdEffective;
+            Invoke(keyButton); TryInvoke(keyButton);
+            await Until(() => All(dialog).OfType<PasswordBox>().Any(), "[nodes refresh] the key arrives in the dialog");
+            var keyBox = Find<PasswordBox>(dialog, "NodeIssuedKey"); var shownKey = keyBox.Password;
+            Check(dialog.CloseButtonText == "I saved the key" && dialog.PrimaryButtonText.Length == 0 && (dialog.Title as string) == AdminPlaybackAdministrationText.T("web.admin.nodes.key.dialogTitle", new { name = "Created GPU" }), "[nodes refresh] while the dialog is still being built its close button already reads I saved the key");
+            dialog.Hide(); await Task.Delay(300);
+            Check(dialog.IsLoaded && keyBox.Password == shownKey && Field(nodes, "_dialog") == dialog, "[nodes refresh] a close while the dialog is still being built is refused and keeps the shown key");
+            holdEffective.SetResult(); server.HoldEffective = null;
+            await Until(() => All(dialog).OfType<TextBox>().Any(box => AutomationProperties.GetAutomationId(box) == "NodeStartSettings"), "[nodes refresh] the key dialog finishes building"); await Task.Delay(300);
+            var coreBox = Find<TextBox>(dialog, "NodeCoreUrl"); var startBox = Find<TextBox>(dialog, "NodeStartSettings"); var copySettings = Find<Button>(dialog, "NodeCopySettings");
+            Check(server.Keys == keys0 + 1 && shownKey == NodeKey + server.Keys, "[nodes refresh] a doubled activation sends one key request and the key is shown once");
+            Check(coreBox.Text == "https://core.invalid:8443", "[nodes refresh] the server address is prefilled from the server's public URL");
             await Capture(dialog, "nodes-refresh-key.png");
-            var copySettings = Find<Button>(dialog, "NodeCopySettings"); Check(Find<TextBox>(dialog, "NodeStartSettings").Text.Contains("\u2022\u2022\u2022\u2022") && !Find<TextBox>(dialog, "NodeStartSettings").Text.Contains(NodeKey), "[nodes refresh] the startup settings show the key masked");
-            var shownKey = Find<PasswordBox>(dialog, "NodeIssuedKey").Password;
-            Check(!All(nodes).Any(element => element is TextBlock { Text: var text } && text.Contains(shownKey)) && !All(nodes).OfType<FrameworkElement>().Any(element => (ToolTipService.GetToolTip(element) as string)?.Contains(shownKey) == true || AutomationProperties.GetName(element)?.Contains(shownKey) == true || AutomationProperties.GetHelpText(element)?.Contains(shownKey) == true), "[nodes refresh] the key is in no text, tooltip or automation property");
-            Invoke(DialogButton(dialog, "I saved the key")); await Until(() => !dialog.IsLoaded, "[nodes refresh] key dialog closed");
-            Check(All(dialog).OfType<PasswordBox>().All(box => box.Password.Length == 0) && !All(nodes).OfType<PasswordBox>().Any(box => box.Password.Length > 0), "[nodes refresh] no key is kept after the dialog closes");
+            Check(startBox.Text.Contains("••••") && !startBox.Text.Contains(shownKey), "[nodes refresh] the startup settings show the key masked");
+            // The key is in no text, text box, tooltip, button or automation property of the open dialog (outside the masked field), nor anywhere in the page.
+            Check(HoldsText(dialog, "SILO_CORE_URL=") && !HoldsText(dialog, shownKey) && !HoldsText(nodes, shownKey), "[nodes refresh] the key is in no text, tooltip or automation property of the open dialog or the page");
+            // Copy settings and Copy key put exactly the visible values on the clipboard (the fixture reads each back and clears it).
+            coreBox.Text = "http://10.0.0.2:8080/"; await Task.Delay(200);
+            Check(copySettings.IsEnabled && DialogHas(AdminPlaybackAdministrationText.T("web.admin.nodes.key.settingsHelp")), "[nodes refresh] a plain address enables Copy settings");
+            await ClearClipboard(); Invoke(copySettings);
+            Check(await ReadClipboard() == "SILO_CORE_URL=http://10.0.0.2:8080\nSILO_NODE_KEY=" + shownKey, "[nodes refresh] Copy settings puts exactly the two visible lines on the clipboard");
+            await ClearClipboard(); Invoke(Find<Button>(dialog, "NodeCopyKey"));
+            Check(await ReadClipboard() == shownKey, "[nodes refresh] Copy key puts exactly the shown key on the clipboard"); await ClearClipboard();
+            // A refused copy says why.
+            coreBox.Text = "http://10.0.0.2:8080‎"; await Task.Delay(200);
+            Check(!copySettings.IsEnabled && DialogStarts("The server address holds an invisible character"), "[nodes refresh] an address with an invisible character disables Copy settings and says why");
+            coreBox.Text = "ftp://10.0.0.2"; await Task.Delay(200);
+            Check(!copySettings.IsEnabled && DialogStarts("Enter a plain http or https address"), "[nodes refresh] an address that is not plain http or https disables Copy settings and says why");
+            coreBox.Text = ""; await Task.Delay(200);
+            Check(!copySettings.IsEnabled && DialogHas(AdminPlaybackAdministrationText.T("web.admin.nodes.key.coreUrlMissing")), "[nodes refresh] no address disables Copy settings with the official line");
+            coreBox.Text = "http://10.0.0.2:8080"; await Task.Delay(200);
+            Invoke(DialogButton(dialog, "I saved the key")); await Until(() => !dialog.IsLoaded, "[nodes refresh] key dialog closed"); await Task.Delay(500);
+            // The objects are kept from before the close, because the dialog's own tree is emptied when it closes: these assert on the controls that held the key.
+            SoftCheck(keyBox.Password.Length == 0, "[nodes refresh] the masked key box is empty after the dialog closes");
+            SoftCheck(startBox.Text.Length == 0, "[nodes refresh] the startup settings box is empty after the dialog closes");
+            SoftCheck(coreBox.Text.Length == 0, "[nodes refresh] the server address box is empty after the dialog closes");
+            Check(!All(nodes).OfType<PasswordBox>().Any(box => box.Password.Length > 0) && !HoldsText(nodes, shownKey), "[nodes refresh] no key is kept in the page after the dialog closes");
             await Until(() => NodeIdle(nodes) && Has("NodeKey_n-created"), "[nodes refresh] the created node lists with its key");
 
             // ---- rotate: destructive, one request, refused and unknown outcomes ----
             await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] rotate confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             var rotate = DialogButton(dialog, "Rotate key"); Check(rotate.Background is SolidColorBrush { Color: var red } && red == Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26), "[nodes refresh] Rotate key uses the official destructive fill #dc2626");
             await Capture(dialog, "nodes-refresh-rotate.png");
-            server.RefuseKey = true; keys0 = server.Keys; Invoke(rotate); await Until(() => server.Keys == keys0 + 1 && NodeIdle(nodes), "[nodes refresh] refused rotation sent once");
+            bool DialogShows(string text) => All(dialog).OfType<TextBlock>().Any(x => x.Text == text && Shown(x));
+            Check(DialogShows(AdminPlaybackAdministrationText.T("web.admin.nodes.key.rotateDrainHint")) && (dialog.Title as string) == AdminPlaybackAdministrationText.T("web.admin.nodes.key.rotateTitle", new { name = "Plain GPU" }), "[nodes refresh] a rotation confirmation shows the rotate title and the drain hint");
+            var heldKey = new TaskCompletionSource(); server.HoldKey = heldKey; server.RefuseKey = true; keys0 = server.Keys; Invoke(rotate); await Until(() => server.Keys == keys0 + 1, "[nodes refresh] the rotation request is in flight");
+            Check(!DialogShows(AdminPlaybackAdministrationText.T("web.admin.nodes.key.rotateDrainHint")) && DialogShows(AdminPlaybackAdministrationText.T("web.admin.nodes.key.issuing")) && (dialog.Title as string) == AdminPlaybackAdministrationText.T("web.admin.nodes.key.rotateTitle", new { name = "Plain GPU" }), "[nodes refresh] while the request runs the drain hint is hidden and the issuing text is shown");
+            heldKey.SetResult(); server.HoldKey = null;
+            await Until(() => server.Keys == keys0 + 1 && NodeIdle(nodes), "[nodes refresh] refused rotation sent once");
             await Until(() => All(dialog).OfType<TextBlock>().Any(t => t.Text == "Only transcode nodes take a node key."), "[nodes refresh] a refused key shows the server's reason");
             Check(!StateFlag(nodes, "ReviewRequired") && !All(dialog).OfType<PasswordBox>().Any() && DialogButton(dialog, "Close") != null && server.Keys == keys0 + 1, "[nodes refresh] a refusal needs no review, shows no key and is not replayed");
+            Check((dialog.Title as string) == AdminPlaybackAdministrationText.T("web.admin.nodes.key.dialogTitle", new { name = "Plain GPU" }), "[nodes refresh] after a refusal the title is the plain key title");
             Invoke(DialogButton(dialog, "Close")); await Until(() => !dialog.IsLoaded, "[nodes refresh] refused key dialog closed"); server.RefuseKey = false;
             await Until(() => NodeIdle(nodes) && Btn("NodeKey_n-plain").IsEnabled, "[nodes refresh] ready to rotate again");
             await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] second rotate confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
@@ -207,6 +285,25 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Invoke(DialogButton(dialog, "Close")); await Until(() => !dialog.IsLoaded, "[nodes refresh] unknown key dialog closed"); server.DropKey = false;
             Check(!Btn("NodeKey_n-plain").IsEnabled && server.Keys == keys0 + 1, "[nodes refresh] the key action stays blocked and nothing was replayed");
             Invoke(Btn("NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes) && Btn("NodeKey_n-plain").IsEnabled, "[nodes refresh] reading the nodes again releases the block"); Check(server.Keys == keys0 + 1, "[nodes refresh] the reload sent no key request");
+
+            // ---- a key that holds an invisible character is shown but refused for both copies, with the reason ----
+            server.KeySuffix = "\u200E"; await Until(() => NodeIdle(nodes) && Btn("NodeKey_n-plain").IsEnabled, "[nodes refresh] ready for an invisible-character key");
+            await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] rotate confirmation before an invisible-character key"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            Invoke(DialogButton(dialog, "Rotate key")); await Until(() => All(dialog).OfType<TextBox>().Any(box => AutomationProperties.GetAutomationId(box) == "NodeStartSettings"), "[nodes refresh] the invisible-character key dialog finishes building"); await Task.Delay(300);
+            Check(Find<PasswordBox>(dialog, "NodeIssuedKey").Password.EndsWith("\u200E") && !Find<Button>(dialog, "NodeCopySettings").IsEnabled && DialogStarts("This key holds an invisible character"), "[nodes refresh] Copy settings is off and says the key holds an invisible character");
+            await ClearClipboard(); Invoke(Find<Button>(dialog, "NodeCopyKey")); await Task.Delay(300);
+            Check(DialogHas("This key holds an invisible character, so it cannot be copied exactly.") && string.IsNullOrEmpty(await ReadClipboard()), "[nodes refresh] Copy key refuses the key, says why and puts nothing on the clipboard");
+            Invoke(DialogButton(dialog, "I saved the key")); await Until(() => !dialog.IsLoaded, "[nodes refresh] invisible-character key dialog closed"); server.KeySuffix = "";
+
+            // ---- the row changed under the open confirmation: nothing is sent, the dialog says so and offers to read again ----
+            await Until(() => NodeIdle(nodes) && Btn("NodeKey_n-plain").IsEnabled, "[nodes refresh] ready for a changed row");
+            await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] rotate confirmation before the row changes"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            server.Rows["n-plain"]["config_etag"] = "\"n-plain-v9\""; await ((AdminPlaybackNodesController)Field(nodes, "_controller")!).ReloadAsync(); await Until(() => NodeIdle(nodes), "[nodes refresh] the changed row is read");
+            keys0 = server.Keys; Invoke(DialogButton(dialog, "Rotate key"));
+            await Until(() => DialogStarts("This node changed or another action was running"), "[nodes refresh] a rotation of a changed row says nothing was sent");
+            Check(server.Keys == keys0 && !StateFlag(nodes, "ReviewRequired") && !DialogStarts("Could not confirm") && DialogButton(dialog, AdminPlaybackAdministrationText.T("common.retry")).IsEnabled && (dialog.Title as string) == AdminPlaybackAdministrationText.T("web.admin.nodes.key.dialogTitle", new { name = "Plain GPU" }), "[nodes refresh] nothing was sent, nothing needs review, and the dialog offers to read the nodes again");
+            Invoke(DialogButton(dialog, AdminPlaybackAdministrationText.T("common.retry"))); await Until(() => !dialog.IsLoaded, "[nodes refresh] reading again closes the dialog");
+            await Until(() => NodeIdle(nodes) && Btn("NodeKey_n-plain").IsEnabled, "[nodes refresh] the page is usable again after reading again"); Check(server.Keys == keys0, "[nodes refresh] reading again sent no key request");
 
             // ---- delete: neutralized name, destructive confirmation, one request on exactly that node; refused and unknown outcomes ----
             await OpenDialog(nodes, () => Btn("NodeDelete_n-legacy"), "[nodes refresh] delete confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
@@ -238,14 +335,36 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             await Capture(outer, "nodes-refresh-failed-1440.png"); window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 1000)); await Task.Delay(400); await Capture(outer, "nodes-refresh-failed-560.png"); window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 1000));
             server.FailList = false; Invoke(Btn("NodesReload")); await Until(() => !Shown(Btn("NodesReload")) && NodeIdle(nodes) && Has("NodeEdit_n-plain"), "[nodes refresh] Retry reads the nodes again");
 
+            // ---- a card that cannot be drawn: the page is not left half built, the reason stays with Reload, and Reload recovers ----
+            // Only n-plain keeps a parsable health-check time, so only its card reaches the date formatter; taking the settings service away makes that one card throw (after the proxy section is already drawn).
+            var checkedAt = server.Rows.Where(r => r.Key != "n-plain").ToDictionary(r => r.Key, r => r.Value["last_health_check"]?.GetValue<string>());
+            foreach (var pair in server.Rows.Where(r => r.Key != "n-plain")) pair.Value["last_health_check"] = null;
+            var fullServices = field.GetValue(null); field.SetValue(null, new WithoutService(services, typeof(SettingsService)));
+            try
+            {
+                await ((AdminPlaybackNodesController)Field(nodes, "_controller")!).ReloadAsync();
+                await Until(() => texts().Any(t => t.Contains("could not be displayed")) && Shown(Btn("NodesReload")), "[nodes refresh] a card that cannot be drawn shows the error with Reload");
+                Check(!All(nodes).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b).StartsWith("NodeEdit_") || AutomationProperties.GetAutomationId(b).StartsWith("NodeDelete_")) && Field(nodes, "_rendered") == null, "[nodes refresh] no stale card or action remains and the window will be drawn again");
+                await ((AdminPlaybackNodesController)Field(nodes, "_controller")!).ReloadAsync(); await Task.Delay(300);
+                Check(texts().Any(t => t.Contains("could not be displayed")) && Shown(Btn("NodesReload")) && !Has("NodeEdit_n-plain"), "[nodes refresh] a later refresh does not erase the render error while the card still cannot be drawn");
+            }
+            finally { field.SetValue(null, fullServices); foreach (var (id, value) in checkedAt) server.Rows[id]["last_health_check"] = value; }
+            Invoke(Btn("NodesReload")); await Until(() => !texts().Any(t => t.Contains("could not be displayed")) && !Shown(Btn("NodesReload")) && NodeIdle(nodes) && Has("NodeEdit_n-plain") && Has("NodeEdit_n-proxy"), "[nodes refresh] Reload draws the page again and clears the error");
+
             // ---- teardown: sign-out drops an open key dialog and every key and draft ----
             await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] key dialog before sign-out"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
-            Invoke(DialogButton(dialog, "Rotate key")); await Until(() => All(dialog).OfType<PasswordBox>().Any(), "[nodes refresh] key shown before sign-out");
+            Invoke(DialogButton(dialog, "Rotate key")); await Until(() => All(dialog).OfType<TextBox>().Any(box => AutomationProperties.GetAutomationId(box) == "NodeStartSettings"), "[nodes refresh] key shown before sign-out"); await Task.Delay(300);
+            // The controls that hold the key are kept, because the dialog's own tree is emptied when it closes.
+            var outKey = Find<PasswordBox>(dialog, "NodeIssuedKey"); var outSettings = Find<TextBox>(dialog, "NodeStartSettings"); var outCore = Find<TextBox>(dialog, "NodeCoreUrl");
+            Check(outKey.Password.Length > 0 && outSettings.Text.Length > 0 && outCore.Text.Length > 0, "[nodes refresh] the key, the settings and the address are in the dialog before sign-out");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
-            await Until(() => !dialog.IsLoaded && All(dialog).OfType<PasswordBox>().All(box => box.Password.Length == 0), "[nodes refresh] sign-out closes the key dialog and erases the key");
+            await Until(() => !dialog.IsLoaded, "[nodes refresh] sign-out closes the key dialog"); await Task.Delay(500);
+            SoftCheck(outKey.Password.Length == 0, "[nodes refresh] sign-out erases the masked key box");
+            SoftCheck(outSettings.Text.Length == 0 && outCore.Text.Length == 0, "[nodes refresh] sign-out erases the settings and address boxes");
             await Until(() => !All(nodes).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b).StartsWith("NodeEdit_")), "[nodes refresh] sign-out clears the node list");
             ((IAdminPageSuspension)nodes).SuspendAdminPage();
             Check(Field(nodes, "_controller") == null && Field(nodes, "_dialog") == null && !All(nodes).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b).StartsWith("NodeEdit_")), "[nodes refresh] leaving the page drops the controller, dialogs and cards");
+            await ClearClipboard(); ThrowSoftFailures();
         }
         finally
         {
