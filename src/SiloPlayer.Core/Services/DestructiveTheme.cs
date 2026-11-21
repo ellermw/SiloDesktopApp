@@ -40,21 +40,19 @@ public static class DestructiveTheme
     /// <summary>
     /// Resolves the roles for a theme. <paramref name="text"/> is the theme's <c>--destructive-base</c>.
     /// A token the theme does not define (null, empty or not a hex color) inherits the default.
-    /// <paramref name="overrides"/> are server-provided values keyed by the WebUI token name
-    /// (<c>destructive</c>, <c>destructive-fill</c>, <c>destructive-foreground</c>); they replace the theme's.
+    /// The server never supplies a red (it sends only the branding accent keys), so there is no override
+    /// input: a theme's own tokens are the only source, and no fill/foreground pair can arrive unchecked.
     /// </summary>
     public static Tokens Resolve(string? text, string? fill, string? foreground, bool highContrast,
-        IReadOnlyDictionary<string, string>? overrides = null, string contrastBoost = ContrastBoost)
+        string contrastBoost = ContrastBoost)
     {
-        string? Pick(string key, string? themeValue)
-            => overrides is not null && overrides.TryGetValue(key, out var value) && Normalize(value) is { } valid ? valid : themeValue;
-        var baseText = Normalize(Pick("destructive", text)) ?? DefaultText;
+        var baseText = Normalize(text) ?? DefaultText;
         var boost = Normalize(contrastBoost) ?? ContrastBoost;
         var resolvedText = highContrast ? Mix(boost, HighContrastTextMix, baseText) : baseText;
         var label = highContrast ? resolvedText : Mix(boost, LabelMix, baseText);
         return new Tokens(resolvedText,
-            Normalize(Pick("destructive-fill", fill)) ?? DefaultFill,
-            Normalize(Pick("destructive-foreground", foreground)) ?? DefaultForeground,
+            Normalize(fill) ?? DefaultFill,
+            Normalize(foreground) ?? DefaultForeground,
             label);
     }
 

@@ -284,13 +284,13 @@ public class ThemeService
     // borders (--destructive; high contrast lightens it), DestructiveFillBrush is the solid fill under
     // DestructiveForegroundBrush (--destructive-fill), ErrorLabelBrush is a red label on its own
     // tint (--destructive-label) and ErrorTintBrush is that tint (bg-destructive/10). The button hover
-    // and pressed fills follow DestructiveFillBrush in RefreshDerivedControlResources. Server
-    // overrides and the in-app high contrast setting go through the same resolution, so every theme
-    // change rewrites all of them in place. A Windows contrast theme does not repaint them (it never has).
+    // and pressed fills follow DestructiveFillBrush in RefreshDerivedControlResources. The in-app
+    // high contrast setting goes through the same resolution, so every theme
+    // change rewrites all of them in place. A Windows contrast theme repaints them with system colors in
+    // ApplySystemPalette (official forced-colors shows no red), and leaving it brings these values back.
     private void ApplyDestructive(ResourceDictionary res, ThemeColors colors, bool highContrast)
     {
-        var red = DestructiveTheme.Resolve(colors.Destructive, colors.DestructiveFill, colors.DestructiveForeground,
-            highContrast, _sharedAppearance.Colors);
+        var red = DestructiveTheme.Resolve(colors.Destructive, colors.DestructiveFill, colors.DestructiveForeground, highContrast);
         UpdateBrush(res, "ErrorBrush", red.Text);
         UpdateColor(res, "ErrorColor", red.Text);
         UpdateBrush(res, "ErrorTintBrush", red.Text);
@@ -316,22 +316,23 @@ public class ThemeService
     private Windows.UI.ViewManagement.UISettings? _systemColors;
     private bool _systemContrastApplied;
     private bool _systemContrastWatched;
-    // Set by the native regression host only: stands in for a Windows contrast theme's five colors.
-    private (Color Window, Color WindowText, Color Highlight, Color HighlightText, Color GrayText)? _simulatedSystemPalette;
 
     private static readonly string[] SystemWindowTokens =
     [
         "AppBackground", "SidebarBackground", "CardBackground", "Surface", "SurfaceHover", "SurfaceRaised",
         "Popover", "Input", "SecondaryBackground", "Muted", "AccentBackground", "SidebarAccent",
+        "ErrorTint", // bg-destructive/10 on Window: no tint, as forced colors
     ];
     private static readonly string[] SystemWindowTextTokens =
     [
         "PrimaryText", "SecondaryText", "TertiaryText", "SecondaryForeground", "CardForeground",
         "PopoverForeground", "ThemeAccentForeground", "SidebarForeground", "SidebarAccentForeground",
         "Border", "InputBorder", "SidebarBorder",
+        "Error", "ErrorLabel", // red text, icons, borders and labels read as text
     ];
-    private static readonly string[] SystemHighlightTokens = ["Accent", "Ring", "SidebarPrimary", "SidebarRing"];
-    private static readonly string[] SystemHighlightTextTokens = ["AccentForeground", "SidebarPrimaryForeground"];
+    // The destructive fill is a solid button or badge fill: Highlight with HighlightText on it, like the accent.
+    private static readonly string[] SystemHighlightTokens = ["Accent", "Ring", "SidebarPrimary", "SidebarRing", "DestructiveFill"];
+    private static readonly string[] SystemHighlightTextTokens = ["AccentForeground", "SidebarPrimaryForeground", "DestructiveForeground"];
 
     /// <summary>Whether a Windows contrast theme is on now.</summary>
     public bool IsSystemHighContrast
@@ -344,29 +345,34 @@ public class ThemeService
         EnsureSystemContrastWatch();
         _systemContrastApplied = false;
 
-        Color window, windowText, highlight, highlightText, grayText;
-        if (_simulatedSystemPalette is { } simulated)
+        var system = _systemColors;
+        if (system is null || !IsSystemHighContrast) return;
+        SystemPalette palette;
+        try
         {
-            (window, windowText, highlight, highlightText, grayText) = simulated;
+            palette = new SystemPalette(
+                system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Window),
+                system.UIElementColor(Windows.UI.ViewManagement.UIElementType.WindowText),
+                system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Highlight),
+                system.UIElementColor(Windows.UI.ViewManagement.UIElementType.HighlightText),
+                system.UIElementColor(Windows.UI.ViewManagement.UIElementType.GrayText));
         }
-        else
+        catch
         {
-            var system = _systemColors;
-            if (system is null || !IsSystemHighContrast) return;
-            try
-            {
-                window = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Window);
-                windowText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.WindowText);
-                highlight = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Highlight);
-                highlightText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.HighlightText);
-                grayText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.GrayText);
-            }
-            catch
-            {
-                return;
-            }
+            return;
         }
+        ApplySystemPalette(res, palette);
+    }
 
+    /// <summary>
+    /// Paints the app with the five colors of a Windows contrast theme, over the palette ApplyTheme just wrote.
+    /// Production calls it with the real system colors; the native host calls it with a dark and a light
+    /// palette, because its machine has no contrast theme on. Calling ApplyTheme again while the system is
+    /// not in a contrast theme brings the app palette (and the red roles) back.
+    /// </summary>
+    public void ApplySystemPalette(ResourceDictionary res, SystemPalette palette)
+    {
+        var (window, windowText, highlight, highlightText, grayText) = palette;
         _systemContrastApplied = true;
         foreach (var token in SystemWindowTokens) SetToken(res, token, window);
         foreach (var token in SystemWindowTextTokens) SetToken(res, token, windowText);
@@ -387,6 +393,9 @@ public class ThemeService
         // Page backdrops read the background tokens; refresh them with the system ones.
         Helpers.PageBackdrop.RefreshAll();
     }
+
+    /// <summary>The five system colors a Windows contrast theme defines.</summary>
+    public readonly record struct SystemPalette(Color Window, Color WindowText, Color Highlight, Color HighlightText, Color GrayText);
 
     private void EnsureSystemContrastWatch()
     {

@@ -59,7 +59,7 @@ internal sealed partial class AdminAppearanceOverlayEditor
         };
         _uploadRow.Children.Add(_choose); _uploadRow.Children.Add(_pendingName); _uploadRow.Children.Add(_upload);
         _uploadArea.Children.Add(_uploadRow);
-        _libraryError.Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xEF, 0x44, 0x44));
+        _libraryError.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
         AutomationProperties.SetAutomationId(_libraryError, "AppearanceOverlayLibraryError");
         AutomationProperties.SetLiveSetting(_libraryError, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         _uploadArea.Children.Add(_libraryError);

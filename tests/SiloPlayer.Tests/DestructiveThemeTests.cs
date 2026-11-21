@@ -66,34 +66,28 @@ public sealed class DestructiveThemeTests
     }
 
     [Fact]
-    public void A_server_theme_sets_what_it_defines_and_inherits_the_rest()
+    public void A_theme_supplies_each_red_token_and_nothing_else_can()
     {
-        var both = DestructiveTheme.Resolve("#EF4444", "#DC2626", "#FFFFFF", false,
-            new Dictionary<string, string> { ["destructive"] = "#f87171", ["destructive-fill"] = "#b91c1c" });
-        Assert.Equal("#F87171", both.Text);
-        Assert.Equal("#B91C1C", both.Fill);
-        Assert.Equal("#FFFFFF", both.Foreground);
-        Assert.Equal("#FA9595", both.Label); // 25% white over #F87171
+        // The theme's own tokens are used as written (normalized to upper case).
+        var themed = DestructiveTheme.Resolve("#f87171", "#b91c1c", "#fafafa", false);
+        Assert.Equal("#F87171", themed.Text);
+        Assert.Equal("#B91C1C", themed.Fill);
+        Assert.Equal("#FAFAFA", themed.Foreground);
+        Assert.Equal("#FA9595", themed.Label); // 25% white over #F87171
 
-        var fillOnly = DestructiveTheme.Resolve("#EF4444", "#DC2626", "#FFFFFF", false,
-            new Dictionary<string, string> { ["destructive-fill"] = "#991B1B" });
-        Assert.Equal("#EF4444", fillOnly.Text);
-        Assert.Equal("#991B1B", fillOnly.Fill);
-        Assert.Equal("#F37373", fillOnly.Label);
+        // The server sends only branding accent keys, so Resolve has no override input at all: no
+        // destructive fill/foreground pair can arrive from outside the theme without a contrast check.
+        var parameters = typeof(DestructiveTheme).GetMethod(nameof(DestructiveTheme.Resolve))!.GetParameters();
+        Assert.DoesNotContain(parameters, parameter => parameter.ParameterType.IsGenericType
+            && parameter.ParameterType.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>));
 
-        var foreground = DestructiveTheme.Resolve("#EF4444", "#DC2626", "#FFFFFF", false,
-            new Dictionary<string, string> { ["destructive-foreground"] = "#FAFAFA" });
-        Assert.Equal("#FAFAFA", foreground.Foreground);
-
-        // The branding accent is the only appearance the server sends today; it must not move a red.
-        var accent = DestructiveTheme.Resolve("#EF4444", "#DC2626", "#FFFFFF", false,
-            new Dictionary<string, string> { ["primary"] = "#4F46E5", ["ring"] = "#4F46E5", ["primary-foreground"] = "#FFFFFF" });
-        Assert.Equal(DestructiveTheme.Resolve(null, null, null, false), accent);
-
-        // A value that is not a hex color is ignored instead of blanking the role.
-        var invalid = DestructiveTheme.Resolve("#EF4444", "#DC2626", "#FFFFFF", false,
-            new Dictionary<string, string> { ["destructive"] = "var(--primary)", ["destructive-fill"] = "" });
-        Assert.Equal(DestructiveTheme.Resolve(null, null, null, false), invalid);
+        // ThemeService passes the theme's tokens only and the server override map has no red key.
+        var service = Read("src", "SiloPlayer", "Services", "ThemeService.cs");
+        Assert.Contains("DestructiveTheme.Resolve(colors.Destructive, colors.DestructiveFill, colors.DestructiveForeground, highContrast);", service);
+        var map = service[service.IndexOf("OverrideResourceMap = new", StringComparison.Ordinal)..];
+        map = map[..map.IndexOf("};", StringComparison.Ordinal)];
+        Assert.DoesNotContain("destructive", map, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Error", map);
     }
 
     [Fact]
@@ -106,8 +100,8 @@ public sealed class DestructiveThemeTests
         Assert.Equal("#DC2626", tokens.Fill);
         Assert.Equal("#FFFFFF", tokens.Foreground);
 
-        var server = DestructiveTheme.Resolve(null, null, null, true, new Dictionary<string, string> { ["destructive"] = "#B91C1C" });
-        Assert.Equal(DestructiveTheme.Mix(White, 0.65, "#B91C1C"), server.Text);
+        var themed = DestructiveTheme.Resolve("#B91C1C", null, null, true);
+        Assert.Equal(DestructiveTheme.Mix(White, 0.65, "#B91C1C"), themed.Text);
     }
 
     [Fact]
@@ -229,12 +223,95 @@ public sealed class DestructiveThemeTests
         Assert.Contains("CopyBrushColor(resources, \"DestructiveFillBrush\", \"WebUiDestructiveHoverBrush\", \"WebUiDestructivePressedBrush\");", derivedBody);
         Assert.DoesNotContain("\"ErrorBrush\"", derivedBody);
 
-        // A Windows contrast theme still paints no red role (system colors win on surfaces and text as before).
-        var system2 = Body(service, "private void ApplySystemContrast(");
-        Assert.DoesNotContain("Error", system2);
-        Assert.DoesNotContain("Destructive", system2);
-        foreach (Match list in Regex.Matches(service, @"private static readonly string\[\] System\w+Tokens\s*=\s*\[(?<l>[^\]]*)\]"))
-            Assert.DoesNotMatch(@"Error|Destructive", list.Groups["l"].Value);
+    }
+
+    [Fact]
+    public void A_windows_contrast_theme_repaints_every_red_role_with_a_system_color()
+    {
+        // Official app.css (forced-colors: active) lets the system replace author colors, so no red survives:
+        // text and labels read as WindowText, the tint disappears into Window, the solid fill is Highlight
+        // under HighlightText, like the accent.
+        var service = Read("src", "SiloPlayer", "Services", "ThemeService.cs");
+        string List(string name) => Regex.Match(service, @"private static readonly string\[\] " + name + @"\s*=\s*\[(?<l>[^\]]*)\]").Groups["l"].Value;
+        Assert.Matches(@"""Error""", List("SystemWindowTextTokens"));
+        Assert.Matches(@"""ErrorLabel""", List("SystemWindowTextTokens"));
+        Assert.Matches(@"""ErrorTint""", List("SystemWindowTokens"));
+        Assert.Matches(@"""DestructiveFill""", List("SystemHighlightTokens"));
+        Assert.Matches(@"""DestructiveForeground""", List("SystemHighlightTextTokens"));
+
+        // The palette is applied by one public method; production calls it with the real system colors and
+        // no field exists only for tests. The hover and pressed fills are copied from the fill afterwards.
+        var apply = Body(service, "public void ApplySystemPalette(");
+        Assert.Contains("RefreshDerivedControlResources(res);", apply);
+        Assert.True(apply.IndexOf("SystemHighlightTokens", StringComparison.Ordinal) < apply.IndexOf("RefreshDerivedControlResources(res);", StringComparison.Ordinal));
+        Assert.Contains("ApplySystemPalette(res, palette);", Body(service, "private void ApplySystemContrast("));
+        Assert.DoesNotContain("_simulatedSystemPalette", service);
+        Assert.DoesNotContain("_simulatedSystemPalette", Read("tests", "SiloPlayer.NativeRegressionTests", "SharedDestructiveThemeNativeFixture.cs"));
+        // Every key the palette writes is one ApplyTheme writes (ApplyDestructive for the reds), so leaving the theme restores it.
+        var roles = Body(service, "private void ApplyDestructive(");
+        foreach (var key in new[] { "Error", "ErrorLabel", "ErrorTint", "DestructiveFill", "DestructiveForeground" })
+            Assert.Contains($"\"{key}Brush\"", roles);
+    }
+
+    public static TheoryData<string, string, string, string, string> ContrastPalettes => new()
+    {
+        // Window, WindowText, Highlight, HighlightText: Windows "Night sky"/black style and "Desert"/white style themes.
+        { "dark", "#000000", "#FFFFFF", "#1AEBFF", "#000000" },
+        { "light", "#FFFFFF", "#000000", "#37006E", "#FFFFFF" },
+    };
+
+    [Theory]
+    [MemberData(nameof(ContrastPalettes))]
+    public void In_a_contrast_theme_every_red_pairing_is_the_system_pairing_at_4_5_or_more(string name, string window, string windowText, string highlight, string highlightText)
+    {
+        // Text and label are WindowText on Window; the tint is Window over Window (no tint).
+        Assert.True(DestructiveTheme.Contrast(windowText, window) >= 4.5, name);
+        Assert.Equal(window, DestructiveTheme.Over(window, DestructiveTheme.TintOpacity, window));
+        Assert.True(DestructiveTheme.Contrast(windowText, DestructiveTheme.Over(window, DestructiveTheme.TintOpacity, window)) >= 4.5, name);
+        // The fill is Highlight under HighlightText, and the hover and pressed fills (the fill at 90% and 80%
+        // over the window behind) keep 4.5:1 for the label.
+        Assert.True(DestructiveTheme.Contrast(highlightText, highlight) >= 4.5, name);
+        foreach (var opacity in new[] { DestructiveTheme.HoverOpacity, DestructiveTheme.PressedOpacity })
+            Assert.True(DestructiveTheme.Contrast(highlightText, DestructiveTheme.Over(highlight, opacity, window)) >= 4.5,
+                $"{name}: {opacity} {DestructiveTheme.Contrast(highlightText, DestructiveTheme.Over(highlight, opacity, window)):0.00}");
+        // The fixed reds the system replaces would not have: the text red on a white contrast window is 3.76:1.
+        Assert.True(name != "light" || DestructiveTheme.Contrast("#EF4444", window) < 4.5);
+    }
+
+    [Fact]
+    public void The_remaining_literal_reds_use_the_shared_roles()
+    {
+        string Src(params string[] parts) => Read(["src", "SiloPlayer", .. parts]);
+        // The error toast uses the label red (5.24:1 on the raised surface; ErrorBrush is 3.89:1 there) as the live brush.
+        var toast = Src("Controls", "ToastContainer.xaml.cs");
+        Assert.DoesNotContain("0xEF, 0x6B, 0x73", toast);
+        Assert.Contains("ToastKind.Error => (\"\\uEA39\", (Brush)Application.Current.Resources[\"ErrorLabelBrush\"])", toast);
+        Assert.Equal(5.24, DestructiveTheme.Contrast(DestructiveTheme.Resolve(null, null, null, false).Label, "#28282E"), 2);
+        Assert.Equal(3.89, DestructiveTheme.Contrast(DestructiveTheme.DefaultText, "#28282E"), 2);
+        // The Downloads failed badge: label on the tint, both live brushes (was the plain red on a 15% copy, 4.21/3.85/3.55).
+        var downloads = Src("Views", "DownloadsPage.xaml.cs");
+        Assert.Contains("\"failed\" => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[\"ErrorLabelBrush\"]", downloads);
+        Assert.Contains("Application.Current.Resources[\"ErrorTintBrush\"]", downloads);
+        Assert.DoesNotContain("\"failed\" => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[\"ErrorBrush\"]", downloads);
+        // The rest of the literal reds.
+        Assert.DoesNotContain("IndianRed", Src("Controls", "EpisodeCardCaption.cs"));
+        Assert.Contains("Foreground = (Brush)Application.Current.Resources[\"ErrorBrush\"]", Src("Controls", "EpisodeCardCaption.cs"));
+        Assert.Contains("Background=\"{StaticResource ErrorTintBrush}\"", Src("Controls", "SubtitleSearchDialog.xaml"));
+        Assert.DoesNotContain("#1AEF4444", Src("Controls", "SubtitleSearchDialog.xaml"));
+        Assert.DoesNotContain("IndianRed", Src("Views", "Admin", "AdminRequestsPage.cs"));
+        Assert.Contains("Application.Current.Resources[\"ErrorBrush\"]", Src("Views", "Admin", "AdminRequestsPage.cs"));
+        var overlay = Src("Controls", "AdminAppearanceOverlayEditor.Images.cs");
+        Assert.DoesNotContain("0xEF, 0x44, 0x44", overlay);
+        Assert.Contains("_libraryError.Foreground = (Brush)Application.Current.Resources[\"ErrorBrush\"];", overlay);
+        var prepared = Src("Views", "Admin", "AdminPreparedFilesPage.cs");
+        Assert.DoesNotContain("Tint(\"ErrorBrush\"", prepared);
+        Assert.Contains("\"danger\" => (Brush(\"ErrorLabelBrush\"), Brush(\"ErrorTintBrush\"))", prepared);
+        // The profile editor validation text uses ErrorBrush, which a contrast theme now repaints (it left SystemFillColorCriticalBrush, which also followed the system).
+        Assert.Contains("_validationText.Foreground = Brush(\"ErrorBrush\", \"SecondaryTextBrush\");", Src("Views", "Dialogs", "ProfileEditorDialog.cs"));
+        var settings = Src("Views", "SettingsPage.xaml.cs");
+        Assert.DoesNotContain("\"#F87171\", \"#3A1313\"", settings);
+        Assert.Contains("(string?)null, (string?)null", settings);
+        Assert.Contains("Application.Current.Resources[\"ErrorLabelBrush\"]", settings);
     }
 
     [Fact]
