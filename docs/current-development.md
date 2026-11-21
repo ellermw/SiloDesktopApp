@@ -1,4 +1,8 @@
-# November 21 — Home sections refresh against official 1a93371
+# November 21 — Home sections refresh against official 1a93371 (review fixes)
+
+Review fixes on the same branch after an independent review (no P1): a test that a recycled row's switch and checkbox still act on their own row, and a restore of a control whose report is rejected; official text for the rule builder's operators, Yes / No and RT scores and a text-table home for the rest, with a unit scan that fails on a display literal in the page files; a note when the collection list was cut short; the stale-save Reload row button moved under the fixed notice (and the notice keeps its sentence); header buttons rebuilt only when a breakpoint changes; keyboard focus kept through library and rail rebuilds; collection picker marks updated in place; names in confirmations as one plain bounded line; no item transitions on the page's lists. Corrected: the parity record had said the stale-save notice scrolls away; the notice is fixed and only the button scrolled. Source commits `573534d3a`, `254ce22a4`; final run `homerowsfix-final-r2` under the SiloOct18Build lease: focused 198 and full 10,514 unit cases passed; `admin-home-sections` 256, `admin-manage-foundation` 36, `admin-manage-library-settings` 84, `admin-configure-general` 188, `admin-monitor` 113 native checks passed, none failing. The mutation run for the recycled-switch guard and the details are in the record (`docs/parity/admin-home-rows-parity-refresh.md`). Not observed: a real server, pixel parity, pointer and touch, Narrator, high contrast, right to left.
+
+## The refresh itself (November 21)
 
 Manage > Libraries > Home sections (`/admin/sections`) was brought closer to the current official Sections admin page, on branch
 `t3/admin-home-rows-parity-refresh` (from `origin/beta`, five source commits, no version change). Official source: Silo Server
