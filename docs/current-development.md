@@ -1,3 +1,24 @@
+# November 21 — Manage › Libraries: review fixes
+
+An independent read-only review of the Libraries refresh found no behavior regression and eleven items, fixed on the same branch. Destructive badges and
+buttons now use the official fixed `--destructive-fill` #dc2626 (a Core constant, `AdminLibrariesPalette`) with the page's own button style, so rest,
+hover and pressed (90%) all keep at least 4.5:1 under white; the shared `DestructiveButtonStyle` is unchanged. The scan queue popover is 16 px. The touch
+Stop button draws its states on a 20 px square inside its 44 px hit area. The phone editor footer has no gap without an error. The table header is 44 px
+(official `h-10` is a minimum under `border-box`) and the editor close icon is centred 25 px from the dialog's top and right edges. `FlexWrapStretchPanel`
+caches natural widths and counts gaps for unbounded width; `CardActionRow` keeps every child. The native fake channel now sends the scans snapshot only
+when the channel's ref-count rises from 0 to 1, and a fresh page opened while the activity store holds `scans` shows its scan rows and queue from the
+store (no product defect found); the visual matrix restores the server list in a `finally`. Findings, outcomes and guards are in `docs/parity/admin-manage-libraries.md`.
+
+Observed, under the SiloOct18Build lease, in final run librariesfix-final-r4 on commit d7ecf34ac (source and payload seals verified by the script): 168
+focused (filter `FullyQualifiedName~AdminLibraries`) and 10,282 full unit cases passed with no failures or skips; app build, publish and native host build
+passed; native admin-libraries (611 PASS lines), admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and
+admin-monitor (113) passed with no FAIL lines. Earlier runs of this label were repeated for fixture defects only: final-r1 (the new fixture file lacked a using for
+`LayoutInformation`), final-r2 (the seed scenario re-opened the controller in place without re-opening the diagnostics as the page does, so the Unmatched
+section never loaded), final-r3 (one check asserted the stop button's own unused Background instead of its transparent hit-area grid); no product change
+was made between them. Captures opened: 1440 × 900 list, editor General and delete-confirm (the popup layer is not rasterized by this host, so the dialog itself
+is not in that capture); 800 × 600 list; 560 × 800 editor (Advanced). Not seen in any capture: the scan queue popover and card menu (popup layer) and the hover
+and pressed looks (verified through the resolved colours of the real visual states, not pictures). Not established: pixel or visual parity, a live server, real pointer input.
+
 # November 20 — Manage › Libraries refreshed against official e130f262d
 
 The Libraries page (`/admin/libraries`: list, editor, scan queue, diagnostics, dialogs) on branch `t3/admin-libraries-parity-refresh`
