@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
@@ -42,8 +43,10 @@ public sealed partial class AdminNodesPage
             """);
         var style = new Style(typeof(Button));
         style.Setters.Add(new Setter(Control.TemplateProperty, template));
-        style.Setters.Add(new Setter(Control.BackgroundProperty, XamlReader.Load($"<SolidColorBrush xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Color='{(highContrast ? "#00000000" : rest)}'/>") is SolidColorBrush brush ? brush : new SolidColorBrush()));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255))));
+        Brush System(string key, Brush fallback) => Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush ? brush : fallback;
+        style.Setters.Add(new Setter(Control.BackgroundProperty, highContrast ? System("SystemColorButtonFaceColorBrush", new SolidColorBrush(Microsoft.UI.Colors.Black)) : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26))));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, highContrast ? System("SystemColorButtonTextColorBrush", new SolidColorBrush(Microsoft.UI.Colors.White)) : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255))));
+        if (highContrast) style.Setters.Add(new Setter(Control.BorderBrushProperty, System("SystemColorButtonTextColorBrush", new SolidColorBrush(Microsoft.UI.Colors.White))));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(16, 8, 16, 8)));
         style.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(10)));
         style.Setters.Add(new Setter(Control.FontWeightProperty, Microsoft.UI.Text.FontWeights.Medium));
@@ -250,13 +253,13 @@ public sealed partial class AdminNodesPage
             settings = U.Input(T("web.admin.nodes.key.settingsLabel"), "NodeStartSettings"); settings.Width = double.NaN; settings.IsReadOnly = true; settings.AcceptsReturn = true; settings.Height = 90; settings.FlowDirection = FlowDirection.LeftToRight;
             // The key is shown masked and joins the copied settings only on an explicit Copy settings action, never in page state.
             var copySettings = U.Action(T("web.admin.nodes.key.copySettings"), "NodeCopySettings"); var settingsHelp = U.Text("", 13, true);
-            void Refresh()
+            void UpdateSettings()
             {
                 var empty = coreUrl.Text.Trim().TrimEnd('/').Length == 0;
                 settings.Text = "SILO_CORE_URL=" + coreUrl.Text.Trim().TrimEnd('/') + "\nSILO_NODE_KEY=••••••••";
                 copySettings.IsEnabled = AdminPlaybackNodeText.KeySettings(coreUrl.Text, "x") != null; settingsHelp.Text = T(empty ? "web.admin.nodes.key.coreUrlMissing" : "web.admin.nodes.key.settingsHelp");
             }
-            Refresh(); coreUrl.TextChanged += (_, _) => Refresh();
+            UpdateSettings(); coreUrl.TextChanged += (_, _) => UpdateSettings();
             copySettings.Click += (_, _) => Copy(AdminPlaybackNodeText.KeySettings(coreUrl.Text, issued ?? ""));
             body.Children.Add(U.Text(T("web.admin.nodes.key.settingsLabel"))); body.Children.Add(settings); body.Children.Add(settingsHelp); body.Children.Add(copySettings); body.Children.Add(error);
             dialog.PrimaryButtonText = ""; dialog.CloseButtonText = T("web.admin.nodes.key.saved");
