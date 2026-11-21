@@ -1,15 +1,23 @@
-# November 17 — Admin Plugin Apps source candidate
+# November 20 — Admin Plugin Apps (navigation group and isolated plugin page)
 
-The dynamic Admin Plugin Apps group, desktop/drawer/search integration and an
-installation-scoped admin mode of the existing plugin host are authored on Beta
-`248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1` unchanged.
-Official pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. The candidate remains
-uncommitted in `t3/admin-plugin-apps`. Unit/native regressions and capture steps
-are authored but **unrun**; this source-only lane launched no runtime and holds
-no build mutex. No release, installed-player/settings or pipeline PR action.
-See [scope, host boundary, limits and acceptance commands](parity/admin-plugin-apps.md).
-Plugins management and Providers are separate; named third-party plugin
-compatibility and visual parity are not certified.
+Branch `t3/admin-plugin-apps`, merged with Beta `32f95df8d` (version unchanged). Official pin
+`df37bfc6d57b1680c0f7a59e51e15c8d0cfa6065`. The Admin sidebar and search list "Plugin Apps" exactly as
+`buildAdminPluginNavItems`; an entry launches the plugin like `navigateToPluginRoute` (`POST
+/api/v2/auth/plugin-launch`) and opens the plugin page in an InPrivate WebView2 profile that holds only the
+issued `silo_plugin_access` cookie (HttpOnly, plugin-content parent path) and may load only that installation's
+pages and assets. No host objects, web messages, account headers, popups, downloads, permissions or external
+protocols; native states with Reload for not available, 401, 403, 5xx, load failure and timeout; teardown on
+leaving, removal and any authority change. The previous source-only draft (bearer proxy on a virtual origin)
+was replaced. Security fix in the viewer plugin page: account headers are now attached only inside
+`/api/v2/plugin-content/` instead of on every same-origin request. Details, decision table and limits:
+[parity/admin-plugin-apps.md](parity/admin-plugin-apps.md).
+
+Observed: `-Stage final` run `pluginapps-final-r1` on source `fa25ccc7c` passed: focused unit 91/91, full
+unit 10351/10351, native `admin-plugin-apps` (89 checks, including a request log proving the admin token
+reached only the launch request), `plugin-cutover`, `shell-localization`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor`. Not run: other native groups. Not verified: named third-party
+plugins, WebSocket/WebRTC from plugin script, printing and screen capture, a server behind a base path, visual
+parity of plugin content.
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
 Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import

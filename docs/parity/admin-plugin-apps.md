@@ -163,4 +163,21 @@ header rather than the launch cookie and still passes `theme=dark`, which differ
 
 ## Verification
 
-See the dated entry in `docs/current-development.md` for the acceptance run.
+`-Stage final` run `pluginapps-final-r1` (2026-11-21T02:06Z–02:12Z UTC) on source `fa25ccc7c` passed.
+
+- Unit: focused 91/91 (`AdminPluginAppsTests`, `PluginWebViewHardeningSourceTests`,
+  `UserOnlyClientArchitectureTests`), full suite 10351/10351.
+- Native `admin-plugin-apps` (real shell, sidebar, drawer, search, Frame and WebView2 against a synthetic
+  loopback server that records every request line and header): entries from the inventory; opening a page via
+  the launch; HttpOnly cookie on `/api/v2/plugin-content` only and empty storage; navigation to another origin,
+  another installation and a server API cancelled with no request; `window.open` suppressed; foreign frame,
+  fetch and image blocked; server-API and other-installation fetches blocked; an unknown-type message and a
+  wrong-origin message reach nothing native; the plugin form posts once; the request log shows the admin token
+  only on the launch request and only the launch cookie on plugin-content requests; removal and disable while
+  open; 401, 403, 404, 500, dropped connection, refused launch (403, 503) and a hanging page each with Reload;
+  role change while open closes the page with no later request; stale and detached shell entries; failed
+  inventory retry; leaving the page tears it down. Captures: `admin-plugin-apps-desktop.png`,
+  `admin-plugin-apps-drawer.png`, `admin-plugin-apps-state.png` (inspected).
+- Native `plugin-cutover` (viewer) including the new check that a plugin fetch outside the plugin-content mount
+  carries no bearer, profile or device header; `shell-localization`; `admin-manage-foundation`;
+  `admin-configure-general`; `admin-monitor`.
