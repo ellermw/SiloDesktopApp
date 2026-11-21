@@ -1063,6 +1063,8 @@ public partial class SiloApiClient
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
                 else if (request.Options.TryGetValue(AdminAutoscanSensitiveOption, out var sensitiveAutoscan) && sensitiveAutoscan)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=autoscan_transport_failed");
+                else if (request.Options.TryGetValue(AdminAccessSensitiveOption, out var adminAccess) && adminAccess)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_access_transport_failed");
                 else if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var requestsSensitive) && requestsSensitive)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=request_administration_transport_failed");
                 else
