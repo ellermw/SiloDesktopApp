@@ -129,7 +129,7 @@ internal static class AdminNotificationSettingsNativeFixture
             // f42b93271: the Processing section, its retired settings and the paused banner are gone from the page.
             Check(!Desc(page).OfType<FrameworkElement>().Any(e => AutomationProperties.GetAutomationId(e) is { } id && (id.Contains("Processing") || id.Contains("fanout") || id.Contains("retention") || id.Contains("release_events"))), "no Processing section or retired setting control");
             Check(!Desc(page).OfType<TextBlock>().Any(t => t.Text is "Processing" or "Pipeline" or "Retention" or "Notice new content" or "Settle window" || t.Text.Contains("under Processing")), "no Processing text and no paused banner");
-            Check(Desc(page).OfType<TextBlock>().Any(t => t.Text == "Summary at 08:00") && Desc(page).OfType<TextBlock>().Any(t => t.Text == "Mail server not set up"), "the email status pills are separate pills as officially");
+            await Until(() => Desc(page).OfType<TextBlock>().Any(t => t.Text == "Summary at 08:00" && t.Parent is Border) && Desc(page).OfType<TextBlock>().Any(t => t.Text == "Mail server not set up" && t.Parent is Border), "the email status pills are separate pills as officially");
             await Capture(outer, "notifications-channels.png");
             await Expand(page, "NotificationChannel_relay"); await Expand(page, "NotificationsRelayAdvanced");
             await Until(() => Find<TextBox>(page, "NotificationsRelayUrl").IsLoaded, "relay editor");
