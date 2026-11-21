@@ -162,6 +162,22 @@ internal static class AdminPluginAppsNativeFixture
             await Task.Delay(200);
             Check(messagesReachedNative == 0 && State(page) == "Ready" && ReferenceEquals(outer.Content, page),
                 "messages of unknown type or from a wrong origin are ignored (no message channel exists)");
+            // A page that is already shown survives its own later navigations: a fragment navigation completes without an
+            // HTTP status, and the plugin's own error response stays visible as it does in the browser tab.
+            await web.ExecuteScriptAsync("window.location.hash = 'section'");
+            await UntilScript(web, "window.location.hash === '#section'");
+            await Task.Delay(300);
+            Check(State(page) == "Ready" && web.Visibility == Visibility.Visible && await web.ExecuteScriptAsync("document.body.dataset.ready === 'yes'") == "true",
+                "a fragment navigation keeps the loaded plugin page");
+            await web.ExecuteScriptAsync("window.location.href = '/api/v2/plugin-content/plugins/7/custom/missing'");
+            await UntilScript(web, "Boolean(document.body) && document.body.innerText.indexOf('Outside fixture contract') >= 0");
+            await Task.Delay(300);
+            Check(State(page) == "Ready" && web.Visibility == Visibility.Visible &&
+                await web.ExecuteScriptAsync("document.body.innerText.indexOf('Outside fixture contract') >= 0") == "true",
+                "the plugin's own error response to a later navigation stays visible");
+            await web.ExecuteScriptAsync("window.location.href = '/api/v2/plugin-content/plugins/7/custom/'");
+            await UntilScript(web, "Boolean(document.body) && document.body.dataset.ready === 'yes'");
+            Check(State(page) == "Ready", "the plugin page continues after its own error response");
             await web.ExecuteScriptAsync("document.getElementById('submit').click()");
             await UntilScript(web, "document.body && document.body.dataset.submitted === 'yes'");
             Check(server.Writes == 1, "the plugin's own form posts once inside its page space");
@@ -227,6 +243,27 @@ internal static class AdminPluginAppsNativeFixture
             await UntilScript(web, "document.body.dataset.ready === 'yes'");
             await CheckCredentialsAsync(server, external);
             Program.Log("PASS: 401, 403, 404, 5xx, dropped connection, refused launch and a hanging page each show a native state with Reload, and Reload recovers.");
+
+            // ---- The web view's browser process exits: nothing of it can be used again, and Reload builds a new hardened web view.
+            using (var browser = System.Diagnostics.Process.GetProcessById((int)core.BrowserProcessId))
+            {
+                browser.Kill();
+                browser.WaitForExit(10000);
+            }
+            await Until(() => State(page) == "LoadFailed" && Field<object?>(page, "_adminCore") == null);
+            CheckStateText(page, "Unable to open the plugin. Please try again.");
+            await ClickReload(page);
+            await UntilState(page, "Ready");
+            web = Field<WebView2>(page, "PluginWebView");
+            core = web.CoreWebView2;
+            await UntilScript(web, "document.body.dataset.ready === 'yes'");
+            Check(core.Profile.IsInPrivateModeEnabled && core.Profile.ProfileName == "SiloAdminPluginApps" && !core.Settings.AreHostObjectsAllowed &&
+                !core.Settings.IsWebMessageEnabled && !core.Settings.AreDevToolsEnabled, "the new web view is the same InPrivate, hardened host");
+            cookies = await core.CookieManager.GetCookiesAsync(server.Origin + "/api/v2/plugin-content/plugins/7/");
+            Check(cookies.Count == 1 && cookies[0].Name == "silo_plugin_access" && cookies[0].IsHttpOnly && cookies[0].Path == "/api/v2/plugin-content",
+                "the new web view holds exactly the newly issued launch cookie");
+            await CheckCredentialsAsync(server, external);
+            Program.Log("PASS: after the web view's browser process exits, Reload opens the plugin page in a new web view.");
 
             // ---- Authority change while open tears down and never reopens under the new authority.
             var before = server.Snapshot().Length;

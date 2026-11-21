@@ -127,6 +127,20 @@ Every state has Reload (which re-reads the inventory and launches again) and nev
 | Connection failure, invalid receipt or cookie | (official title) | could not be loaded |
 | No completion within 30 seconds, or an inventory/launch timeout | (official title) | took too long |
 
+The page status in this table decides the page being opened. Once a page is shown, its own later top-level
+navigations inside the space keep it, as the browser tab does: a same-document navigation (fragment, history;
+it completes without an HTTP status), a cancelled navigation, and any HTTP response, the plugin's own 4xx/5xx
+page included. Only a 401 (the launch cookie is no longer accepted, so only a new launch continues) or a
+navigation that got no response from the server (connection failure, timeout) shows the native state. A
+same-document navigation made while the page is still opening (a plugin setting its fragment at startup) does
+not decide the state; the navigation that opens the page still does.
+
+Web view processes: when the browser process exits, or the page's render process exits or stops responding,
+the session is dropped and the load-failed state is shown. After a browser process exit nothing of the old web
+view can be used, so Reload replaces the control and builds a new web view with the same InPrivate profile and
+hardening. GPU, utility and frame process failures, which the browser recovers from by itself, leave the page
+as it is.
+
 ## Navigation entries
 
 `AdminPluginAppsApi.GetAppsAsync` drains `GET /api/v2/admin/plugins/installations` (limit 100, cursor
@@ -178,6 +192,9 @@ header rather than the launch cookie and still passes `theme=dark`, which differ
   role change while open closes the page with no later request; stale and detached shell entries; failed
   inventory retry; leaving the page tears it down. Captures: `admin-plugin-apps-desktop.png`,
   `admin-plugin-apps-drawer.png`, `admin-plugin-apps-state.png` (inspected).
+- Added after the runs recorded here and not yet run: `admin-plugin-apps` steps for a fragment navigation, the
+  plugin's own 404 on a later navigation, and a killed browser process followed by Reload (new web view, same
+  profile and hardening, credential log re-checked). A render process exit has no step.
 - Native `plugin-cutover` (viewer) including the new check that a plugin fetch outside the plugin-content mount
   carries no bearer, profile or device header; `shell-localization`; `admin-manage-foundation`;
   `admin-configure-general`; `admin-monitor`.

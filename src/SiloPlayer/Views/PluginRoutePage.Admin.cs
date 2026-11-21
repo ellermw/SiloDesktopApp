@@ -33,6 +33,7 @@ public sealed partial class PluginRoutePage
     private CancellationTokenSource? _adminAttempt;
     private AdminPluginContentScope? _adminScope;
     private CoreWebView2? _adminCore;
+    private bool _adminCoreLost;
     private DispatcherTimer? _adminDeadline;
     private DispatcherTimer? _adminAvailability;
     private bool _adminTornDown;
@@ -40,6 +41,7 @@ public sealed partial class PluginRoutePage
     private bool _adminLoaded;
     private bool _adminChecking;
     private ulong? _adminPendingNavigation;
+    private ulong? _adminOpeningNavigation;
     private readonly HashSet<ulong> _adminRefused = [];
     private Grid? _adminStateHost;
     private TextBlock? _adminStateTitle;
@@ -144,6 +146,7 @@ public sealed partial class PluginRoutePage
     private async Task<CoreWebView2?> EnsureAdminCoreAsync(MonitorAuthorityLease lease)
     {
         if (_adminCore != null) return _adminCore;
+        if (_adminCoreLost) ReplaceAdminWebView();
         // The default environment is shared with the viewer's plugin host, but this profile is
         // its own and InPrivate: no cookies, storage or cache survive it, and nothing from the
         // viewer profile or the desktop app's account stores is reachable from it.
@@ -173,7 +176,7 @@ public sealed partial class PluginRoutePage
         core.BasicAuthenticationRequested += (_, e) => e.Cancel = true;
         core.ClientCertificateRequested += (_, e) => { e.Cancel = true; e.Handled = true; };
         // A crashed or unresponsive web view process shows nothing: drop the plugin session and offer Reload.
-        core.ProcessFailed += (_, _) => { if (_adminTornDown) return; BlankAdminContent(); ShowAdminState(AdminContentState.LoadFailed); };
+        core.ProcessFailed += OnAdminProcessFailed;
         core.NavigationStarting += OnAdminNavigationStarting;
         core.FrameNavigationStarting += OnAdminFrameNavigationStarting;
         core.NavigationCompleted += OnAdminNavigationCompleted;
@@ -181,6 +184,50 @@ public sealed partial class PluginRoutePage
         core.WebResourceRequested += OnAdminWebResourceRequested;
         _adminCore = core;
         return core;
+    }
+
+    private void OnAdminProcessFailed(CoreWebView2 sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        if (_adminTornDown) return;
+        switch (e.ProcessFailedKind)
+        {
+            case CoreWebView2ProcessFailedKind.BrowserProcessExited:
+                // Nothing of the exited browser process can be used again: the next load builds a new web view.
+                _adminCore = null;
+                _adminCoreLost = true;
+                break;
+            case CoreWebView2ProcessFailedKind.RenderProcessExited:
+            case CoreWebView2ProcessFailedKind.RenderProcessUnresponsive:
+                // The page's own process: the web view itself still works and loads again on Reload.
+                break;
+            default:
+                // GPU, utility and frame processes: the browser recovers by itself and the page is still shown.
+                return;
+        }
+        BlankAdminContent();
+        ShowAdminState(AdminContentState.LoadFailed);
+    }
+
+    /// <summary>The control whose browser process exited is closed for good; a new one takes its place for the next load.</summary>
+    private void ReplaceAdminWebView()
+    {
+        _adminCoreLost = false;
+        if (_webViewClosed || Content is not Grid root) return;
+        var lost = PluginWebView;
+        var index = root.Children.IndexOf(lost);
+        if (index < 0) return;
+        var fresh = new Microsoft.UI.Xaml.Controls.WebView2
+        {
+            FlowDirection = lost.FlowDirection,
+            HorizontalAlignment = lost.HorizontalAlignment,
+            VerticalAlignment = lost.VerticalAlignment,
+            Visibility = Visibility.Collapsed,
+        };
+        try { lost.Close(); }
+        catch (Exception) { }
+        root.Children.RemoveAt(index);
+        root.Children.Insert(index, fresh);
+        PluginWebView = fresh;
     }
 
     private void OnAdminNavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs e)
@@ -195,6 +242,9 @@ public sealed partial class PluginRoutePage
             _adminRefused.Add(e.NavigationId);
             return;
         }
+        // While the page is still opening, remember the navigation a newer one takes over from: a same-document navigation
+        // (a plugin setting its fragment at startup) hands the decision back to it when it completes.
+        if (!_adminLoaded && _adminPendingNavigation is { } opening && opening != e.NavigationId) _adminOpeningNavigation = opening;
         _adminPendingNavigation = e.NavigationId;
         StartAdminDeadline();
     }
@@ -232,6 +282,14 @@ public sealed partial class PluginRoutePage
         // Only the navigation this page started or allowed decides its state; a late completion of
         // an earlier blank or superseded navigation never reports the new load as finished.
         if (_adminAllowBlank || _adminPendingNavigation != e.NavigationId) return;
+        var opening = _adminOpeningNavigation;
+        _adminOpeningNavigation = null;
+        if (!_adminLoaded && opening != null && e.IsSuccess && e.HttpStatusCode == 0)
+        {
+            // A same-document navigation made while the page is still opening: the navigation it took over from decides.
+            _adminPendingNavigation = opening;
+            return;
+        }
         _adminPendingNavigation = null;
         StopAdminDeadline();
         if (e.IsSuccess && e.HttpStatusCode is >= 200 and < 400)
@@ -240,6 +298,8 @@ public sealed partial class PluginRoutePage
             ShowAdminState(AdminContentState.Ready);
             return;
         }
+        // The status decides the page being opened. A page that is already shown ends only as KeepsAdminPage says.
+        if (_adminLoaded && KeepsAdminPage(e)) return;
         BlankAdminContent();
         ShowAdminState(e.HttpStatusCode switch
         {
@@ -250,6 +310,18 @@ public sealed partial class PluginRoutePage
             _ => e.WebErrorStatus == CoreWebView2WebErrorStatus.Timeout ? AdminContentState.TimedOut : AdminContentState.LoadFailed,
         });
     }
+
+    /// <summary>Whether a later navigation of a page that is already shown leaves it shown, as the browser tab does.</summary>
+    private static bool KeepsAdminPage(CoreWebView2NavigationCompletedEventArgs e) => e.HttpStatusCode switch
+    {
+        // No HTTP exchange: a same-document navigation (fragment, history) succeeds, and a cancelled one never replaced the page.
+        // Anything else is a connection failure with nothing to show.
+        0 => e.IsSuccess || e.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled,
+        // The launch cookie is no longer accepted: only a new launch (Reload) continues.
+        401 => false,
+        // Every other response is the plugin's to show, its own error pages included.
+        _ => true,
+    };
 
     /// <summary>The WebUI drops the entry once the installation is disabled, removed or loses the route; an open page follows.</summary>
     private async Task CheckAdminAvailabilityAsync()
@@ -277,6 +349,7 @@ public sealed partial class PluginRoutePage
     {
         StopAdminDeadline();
         _adminPendingNavigation = null;
+        _adminOpeningNavigation = null;
         _adminLoaded = false;
         _adminScope = null;
         if (_adminCore is not { } core || _webViewClosed) return;

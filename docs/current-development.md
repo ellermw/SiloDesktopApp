@@ -40,6 +40,12 @@ The run before it, `pluginapps-lead-final-r1`, stopped on one new unit case writ
 stays inside the plugin-content path after normalization is inside it); the case was corrected, no product code changed. Beta was
 stamped `1.2.1277-beta.1` (`d51eb2d85`) after this branch's last merge and is not merged again.
 
+Review fixes after that run, not yet run: Reload after the web view's browser process exits now replaces the web view (the old one
+could not load again), and GPU, utility and frame process failures no longer close a working page; a shown page keeps its own later
+navigations (fragment or history navigation, the plugin's own 4xx/5xx response) instead of being replaced by a failure state, except
+for a 401 or a navigation with no server response. Three native `admin-plugin-apps` steps were added (fragment navigation, plugin 404
+on a later navigation, killed browser process then Reload).
+
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
 Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import
