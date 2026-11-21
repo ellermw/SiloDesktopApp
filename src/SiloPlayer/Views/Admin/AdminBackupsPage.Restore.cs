@@ -132,6 +132,8 @@ public sealed partial class AdminBackupsPage
             {
                 var holder = new ContentControl { Content = step, IsTabStop = false, UseSystemFocusVisuals = true, VerticalContentAlignment = VerticalAlignment.Center };
                 holder.LostFocus += (_, _) => holder.IsTabStop = false;
+                // Named so a rebuild of the page (every state change draws it again) puts focus back on the new holder.
+                AutomationProperties.SetAutomationId(holder, "RestoreCurrentStep");
                 _currentStepHolder = holder;
                 steps.Children.Add(holder);
             }

@@ -313,6 +313,19 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
     {
         if (string.IsNullOrEmpty(id)) return;
         var target = Find(_body, id);
+        // The current restore step is a tab stop only while it holds focus.
+        if (target is ContentControl { IsEnabled: true } step && id == "RestoreCurrentStep")
+        {
+            step.IsTabStop = true;
+            // The rebuilt step list is in the tree one layout pass later.
+            if (!step.IsLoaded)
+            {
+                RoutedEventHandler? loaded = null;
+                loaded = (_, _) => { step.Loaded -= loaded; if (_active) step.Focus(FocusState.Programmatic); };
+                step.Loaded += loaded;
+                return;
+            }
+        }
         if (target is Control control && control.IsEnabled) control.Focus(FocusState.Programmatic);
     }
 
