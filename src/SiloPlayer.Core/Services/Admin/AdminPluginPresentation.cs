@@ -374,7 +374,8 @@ public static class AdminPluginPresentation
 
     private static readonly Regex UserInfo = new(@"(?i)(https?://)[^\s/@]+@", RegexOptions.None, TimeSpan.FromMilliseconds(100));
     private static readonly Regex SecretQuery = new(@"(?i)([?&](?:token|key|api[_-]?key|secret|password|passwd|sig|signature|auth|authorization|credential|access[_-]?token|x-amz-[a-z-]+)=)[^\s&#]*", RegexOptions.None, TimeSpan.FromMilliseconds(100));
-    private static readonly Regex SecretPair = new(@"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|bearer|client[_-]?secret)\b(\s*[:=]\s*|\s+)[^\s,;]+", RegexOptions.None, TimeSpan.FromMilliseconds(100));
+    // An auth scheme word (Authorization: Bearer x) or a filler word (password is x) after the key is not the value: it is skipped, and the text after it is what gets removed.
+    private static readonly Regex SecretPair = new(@"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|bearer|client[_-]?secret)\b(\s*[:=]\s*|\s+)(?:(?:bearer|basic|digest|negotiate|token|is|was)(?:\s*[:=]\s*|\s+)){0,2}[^\s,;]+", RegexOptions.None, TimeSpan.FromMilliseconds(100));
 
     /// <summary>
     /// Text a server, plugin or log returned that the page shows: secret values the admin typed and credential-looking

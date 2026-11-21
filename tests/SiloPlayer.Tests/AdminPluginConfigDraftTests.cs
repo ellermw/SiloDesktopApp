@@ -206,6 +206,29 @@ public sealed class AdminPluginConfigDraftTests
         Assert.DoesNotContain("synthetic", typed); Assert.DoesNotContain("typed-secret", typed); Assert.DoesNotContain("u:p@", typed);
     }
 
+    [Theory]
+    [InlineData("Authorization: Bearer synthetic-credential")]
+    [InlineData("Authorization: Basic synthetic-credential==")]
+    [InlineData("authorization=token synthetic-credential")]
+    [InlineData("Proxy-Authorization: Digest synthetic-credential")]
+    [InlineData("Authorization: Bearer token=synthetic-credential")]
+    [InlineData("password is synthetic-credential")]
+    [InlineData("the secret was synthetic-credential, try again")]
+    [InlineData("password: basic-synthetic-credential")]
+    public void ACredentialAfterAnAuthSchemeOrAFillerWordIsRemovedNotJustTheWordBeforeIt(string text)
+    {
+        var shown = AdminPluginPresentation.Redact("Upstream refused: " + text);
+        Assert.DoesNotContain("synthetic-credential", shown); Assert.Contains("[redacted]", shown);
+    }
+
+    [Fact]
+    public void ASchemeOrFillerWordWithNothingAfterItIsItselfTreatedAsTheValue()
+    {
+        Assert.Equal("Authorization: [redacted]", AdminPluginPresentation.Redact("Authorization: Bearer synthetic-credential"));
+        Assert.Equal("Authorization: [redacted]", AdminPluginPresentation.Redact("Authorization: Bearer"));
+        Assert.Equal("password [redacted]", AdminPluginPresentation.Redact("password is"));
+    }
+
     [Fact]
     public void MarkdownIsPlainDataNeverMarkup()
     {
