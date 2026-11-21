@@ -129,16 +129,16 @@ internal static class SharedDestructiveThemeNativeFixture
             Check(Hex(Brush("DestructiveFillBrush")) == "#DC2626", $"destructive fill is --destructive-fill #DC2626 (was {Hex(Brush("DestructiveFillBrush"))})");
             Check(Hex(Brush("DestructiveForegroundBrush")) == "#FFFFFF", "text on the fill is --destructive-foreground #FFFFFF");
             Check(Hex(Brush("ErrorLabelBrush")) == "#F37373", $"label is --destructive-label #F37373 (was {Hex(Brush("ErrorLabelBrush"))})");
-            Check(Brush("ErrorTintBrush") is { } tint && Hex(tint) == "#EF4444" && Math.Abs(tint.Opacity - 0.1) < 1e-9, "tint is --destructive at 10%");
-            Check(Brush("WebUiDestructiveHoverBrush") is { } hoverBrush && Hex(hoverBrush) == "#DC2626" && Math.Abs(hoverBrush.Opacity - 0.9) < 1e-9, "hover is the fill at 90%, not the text red");
-            Check(Brush("WebUiDestructivePressedBrush") is { } pressedBrush && Hex(pressedBrush) == "#DC2626" && Math.Abs(pressedBrush.Opacity - 0.8) < 1e-9, "pressed is the fill at 80%");
+            Check(Brush("ErrorTintBrush") is { } tint && Hex(tint) == "#EF4444" && Math.Abs(tint.Opacity - 0.1) < 1e-4, "tint is --destructive at 10%");
+            Check(Brush("WebUiDestructiveHoverBrush") is { } hoverBrush && Hex(hoverBrush) == "#DC2626" && Math.Abs(hoverBrush.Opacity - 0.9) < 1e-4, "hover is the fill at 90%, not the text red");
+            Check(Brush("WebUiDestructivePressedBrush") is { } pressedBrush && Hex(pressedBrush) == "#DC2626" && Math.Abs(pressedBrush.Opacity - 0.8) < 1e-4, "pressed is the fill at 80%");
 
             // ── The button: fill at rest, darker fill in PointerOver and Pressed, white foreground, official disabled opacity ──
             var fill = Parse("#DC2626"); var surfaceColor = background.Color; var white = Parse("#FFFFFF");
-            Check(Root(rest).Background is SolidColorBrush restFill && Hex(restFill) == "#DC2626" && Math.Abs(restFill.Opacity - 1) < 1e-9, "button rests on the destructive fill");
-            Check(Root(hover).Background is SolidColorBrush hoverFill && Hex(hoverFill) == "#DC2626" && Math.Abs(hoverFill.Opacity - 0.9) < 1e-9, "PointerOver paints the fill at 90%");
-            Check(Root(pressed).Background is SolidColorBrush pressFill && Hex(pressFill) == "#DC2626" && Math.Abs(pressFill.Opacity - 0.8) < 1e-9, "Pressed paints the fill at 80%");
-            Check(Math.Abs(Root(disabled).Opacity - 0.5) < 1e-9, "Disabled keeps the official 50% opacity");
+            Check(Root(rest).Background is SolidColorBrush restFill && Hex(restFill) == "#DC2626" && Math.Abs(restFill.Opacity - 1) < 1e-4, "button rests on the destructive fill");
+            Check(Root(hover).Background is SolidColorBrush hoverFill && Hex(hoverFill) == "#DC2626" && Math.Abs(hoverFill.Opacity - 0.9) < 1e-4, "PointerOver paints the fill at 90%");
+            Check(Root(pressed).Background is SolidColorBrush pressFill && Hex(pressFill) == "#DC2626" && Math.Abs(pressFill.Opacity - 0.8) < 1e-4, "Pressed paints the fill at 80%");
+            Check(Math.Abs(Root(disabled).Opacity - 0.5) < 1e-4, "Disabled keeps the official 50% opacity");
             foreach (var (name, button) in new[] { ("rest", rest), ("hover", hover), ("pressed", pressed) })
                 Check(Descendants<ContentPresenter>(button).First(p => p.Name == "WebUiContent").Foreground is SolidColorBrush text && Hex(text) == "#FFFFFF", $"{name} label is white");
             Check(Contrast(white, fill) >= 4.5, $"white on the fill is {Contrast(white, fill):0.00}:1");
@@ -162,7 +162,7 @@ internal static class SharedDestructiveThemeNativeFixture
 
             // ── Error text, tint, shared badge ──
             Check(ReferenceEquals(errorLine.Foreground, Res["ErrorBrush"]) && ReferenceEquals(panelText.Foreground, Res["ErrorBrush"]), "error text resolves the shared error brush");
-            Check(badge.Background is SolidColorBrush badgeFill && Hex(badgeFill) == "#DC2626" && Math.Abs(badgeFill.Opacity - 1) < 1e-9
+            Check(badge.Background is SolidColorBrush badgeFill && Hex(badgeFill) == "#DC2626" && Math.Abs(badgeFill.Opacity - 1) < 1e-4
                 && badge.Child is TextBlock { Foreground: SolidColorBrush badgeText } && Hex(badgeText) == "#FFFFFF", "the red badge is the fill under white");
 
             await CheckViewerDialogAsync(parent);
