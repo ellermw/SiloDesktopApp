@@ -258,7 +258,11 @@ internal static class AdminStorageSettingsNativeFixture
                 input.SelectedText = "";
                 await RenderQueuedAsync(page);
                 Check(backend.Focus(FocusState.Programmatic), key + " ends editing");
+                // LostFocus is raised after Focus() returns; the render it queues follows it. Wait for the box to be unfocused and
+                // showing its default (a real condition) rather than assuming one dispatcher fence is enough.
+                await Until(() => input.FocusState == FocusState.Unfocused, key + " lost focus");
                 await RenderQueuedAsync(page);
+                await Until(() => input.Text == fallback, key + " shows its default after blur");
                 Check(input.Text == fallback && controller.State.Get(key) == "",
                     key + " restores its displayed default only after blur without staging it");
                 controller.Discard();
@@ -544,6 +548,8 @@ internal static class AdminStorageSettingsNativeFixture
 
             Input(page, "Storage_artwork.local_path").Text = "/mnt/retiring-art";
             await Until(() => controller.State.IsDirty("artwork.local_path"), "retirement draft");
+            // Save is enabled by a queued render once the reload's reads settle; Invoke on a disabled button throws.
+            await Until(() => Button(page, "StorageSave") is { IsLoaded: true, IsEnabled: true }, "retirement Save enabled");
             Invoke(Button(page, "StorageSave"));
             await Until(() => page.ReviewDialog is { IsLoaded: true }, "retirement review");
             var retiringReview = page.ReviewDialog!;
@@ -582,7 +588,25 @@ internal static class AdminStorageSettingsNativeFixture
                 if (page != null && Field(page, "_dialog") is ContentDialog { } leaving) { var closed = Closed(leaving); leaving.Hide(); await closed.WaitAsync(TimeSpan.FromSeconds(6)); }
                 var pageUnloaded = page is { IsLoaded: true } ? Unloaded(page) : Task.CompletedTask;
                 var shellUnloaded = shell is { IsLoaded: true } ? Unloaded(shell) : Task.CompletedTask;
-                if (outer != null) { outer.BackStack.Clear(); outer.ForwardStack.Clear(); outer.Content = null; }
+                if (outer != null)
+                {
+                    // A Frame refuses stack changes (0x800710DD) while it reports a navigation in progress. After the cancelled
+                    // outer-frame departure above it can stay in that state; the Frame is then dropped with the window content below.
+                    var cleared = false;
+                    try
+                    {
+                        await Until(() =>
+                        {
+                            try { outer.BackStack.Clear(); outer.ForwardStack.Clear(); return true; }
+                            catch (System.Runtime.InteropServices.COMException failure) when (failure.HResult == unchecked((int)0x800710DD)) { return false; }
+                        }, "the outer Frame finished navigating", 1500);
+                        cleared = true;
+                    }
+                    catch (InvalidOperationException) { }
+                    Program.Log(cleared ? "NOTE: outer Frame stacks cleared" : "NOTE: outer Frame still reports navigating after the cancelled departure; its stacks were not cleared");
+                    try { outer.Content = null; }
+                    catch (System.Runtime.InteropServices.COMException failure) when (failure.HResult == unchecked((int)0x800710DD)) { }
+                }
                 window.Content = previousContent;
                 await Task.WhenAll(pageUnloaded, shellUnloaded).WaitAsync(TimeSpan.FromSeconds(6));
                 // Close runs on the dispatcher after Unloaded; wait for it before the provider goes away.

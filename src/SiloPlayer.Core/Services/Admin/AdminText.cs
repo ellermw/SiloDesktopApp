@@ -19,6 +19,23 @@ public static class AdminText
 {
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["web.admin.shell.nav.group.pluginApps"] = "Plugin Apps",
+        ["web.admin.shell.sidebar.pluginApps"] = "Plugin Apps",
+        ["web.admin.shell.nav.pluginApp.description"] = "{plugin} plugin app.",
+        // Plugin Apps: official df37bfc6d57b1680c0f7a59e51e15c8d0cfa6065 (buildPluginHref toast) plus native host states.
+        ["web.common.shell.pluginOpenFailed"] = "Unable to open the plugin. Please try again.",
+        ["admin.native.pluginApps.reload"] = "Reload",
+        ["admin.native.pluginApps.returnToAdmin"] = "Return to Admin",
+        ["admin.native.pluginApps.inventoryFailed"] = "Plugin Apps could not be loaded.",
+        ["admin.native.pluginApps.unavailable.title"] = "This plugin app is not available",
+        ["admin.native.pluginApps.unavailable.detail"] = "The plugin may have been disabled or removed, or it no longer offers this page.",
+        ["admin.native.pluginApps.signIn.detail"] = "The server did not accept this session for the plugin. Reload, or sign in again if it keeps happening.",
+        ["admin.native.pluginApps.forbidden.detail"] = "This account is not allowed to open this plugin page.",
+        ["admin.native.pluginApps.server.detail"] = "The server could not provide this plugin page right now.",
+        ["admin.native.pluginApps.loadFailed.detail"] = "The plugin page could not be loaded. Check the connection to the server.",
+        ["admin.native.pluginApps.timedOut.detail"] = "The plugin page took too long to load.",
+        ["admin.native.pluginApps.authority.title"] = "Admin access changed",
+        ["admin.native.pluginApps.authority.detail"] = "This plugin page was closed because the signed-in account, profile or server changed.",
         ["web.admin.activity.bitrate.limit"] = "limit {rate}",
         ["web.admin.activity.bitrate.limitAndSource"] = "limit {limit} · source {source}",
         ["web.admin.activity.bitrate.source"] = "source {rate}",

@@ -6731,9 +6731,8 @@ _webhookPlexAuthCts?.Cancel();
         content.Children.Add(badgeRow);
 
         var title = SessionDisplayText.GetTitle(session);
-        if (!string.IsNullOrWhiteSpace(session.ContentId) && session.MediaFileId > 0)
+        if (SessionDisplayText.GetItemId(session) is { } contentId && session.MediaFileId > 0)
         {
-            var contentId = session.ContentId;
             var fileId = session.MediaFileId;
             var titleLink = new HyperlinkButton
             {

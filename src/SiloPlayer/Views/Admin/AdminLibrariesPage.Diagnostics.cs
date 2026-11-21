@@ -70,6 +70,7 @@ public sealed partial class AdminLibrariesPage
 
     private void RenderDiagnosticsLayout()
     {
+        foreach (var section in new[] { _unmatchedView?.Section, _matcherView?.Section, _ambiguousView?.Section, _skippedView?.Section, _staleView?.Section }) section?.SetWide(_wide);
         _unmatchedView?.Render(); _matcherView?.Render(); _ambiguousView?.Render(); _skippedView?.Render(); _staleView?.Render();
     }
 
@@ -103,8 +104,12 @@ public sealed partial class AdminLibrariesPage
         {
             Page = page; _panel = panel; UiOwner = page.RenderOwner(page._controller!.State);
             Section = new DiagnosticsSection(key, title, description);
-            Section.Background = Tint("SurfaceBrush", 0.55);
-            Section.CornerRadius = new(16);
+            // WebUI surface-panel-subtle overflow-hidden rounded-2xl: surface 72%, 1px border 62%, 20 px radius.
+            Section.Background = Tint("SurfaceBrush", 0.72);
+            Section.BorderBrush = Tint("BorderBrush", 0.62);
+            Section.BorderThickness = new(1);
+            Section.CornerRadius = new(Radius2Xl);
+            Section.SetWide(page._wide);
             _changed = () => page.EnqueueUi(() => { if (!Detached) Render(); });
             panel.Changed += _changed;
         }
@@ -117,7 +122,7 @@ public sealed partial class AdminLibrariesPage
 
         protected static TextBox SearchBox(string placeholder, string automationId, Action<string> changed)
         {
-            var box = new TextBox { PlaceholderText = placeholder, Height = 32, FontSize = 12, Padding = new(32, 6, 12, 6), CornerRadius = new(8) };
+            var box = new TextBox { PlaceholderText = placeholder, Height = 32, FontSize = 12, Padding = new(32, 6, 12, 6), CornerRadius = new(RadiusMd) };
             AutomationProperties.SetName(box, placeholder);
             AutomationProperties.SetAutomationId(box, automationId);
             var timer = new DispatcherTimer { Interval = SearchDebounce };
@@ -142,7 +147,7 @@ public sealed partial class AdminLibrariesPage
         protected static Border TableFrame(UIElement child) => new()
         {
             Child = new ScrollViewer { Content = child, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Enabled },
-            CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Tint("BorderBrush", 0.4), Background = Tint("AppBackgroundBrush", 0.4),
+            CornerRadius = new(RadiusXl), BorderThickness = new(1), BorderBrush = Tint("BorderBrush", 0.4), Background = Tint("AppBackgroundBrush", 0.4),
         };
 
         /// <summary>A grid table: header row then the rows; a message spans every column when there are none.</summary>
@@ -204,10 +209,10 @@ public sealed partial class AdminLibrariesPage
         {
             var text = Text(message, 14, !error); text.TextAlignment = TextAlignment.Center; text.HorizontalAlignment = HorizontalAlignment.Center;
             if (error) text.Foreground = Solid(Destructive);
-            return new Border { Child = text, Padding = new(16, 24, 16, 24), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Tint("BorderBrush", 0.4), Background = Tint("AppBackgroundBrush", 0.4) };
+            return new Border { Child = text, Padding = new(16, 24, 16, 24), CornerRadius = new(RadiusXl), BorderThickness = new(1), BorderBrush = Tint("BorderBrush", 0.4), Background = Tint("AppBackgroundBrush", 0.4) };
         }
 
-        protected static Border Card(UIElement content) => Surface(content, 16, 16);
+        protected static Border Card(UIElement content) => Surface(content, Radius2Xl, 16);
 
         /// <summary>WebUI <c>CardFields</c>: label/value lines.</summary>
         protected static Grid Fields(params (string Label, UIElement Value)[] fields)
@@ -298,7 +303,7 @@ public sealed partial class AdminLibrariesPage
             _panel = panel;
             Section.SetIcon("search", Amber);
             Section.Toggled += open => _ = _panel.SetOpenAsync(open);
-            _view = new ComboBox { Width = 180, Height = 32, FontSize = 12, CornerRadius = new(8) };
+            _view = new ComboBox { Width = 180, Height = 32, FontSize = 12, CornerRadius = new(RadiusMd) };
             _view.Items.Add(new ComboBoxItem { Content = T("web.admin.libraries.unmatched.viewAwaiting"), Tag = "unmatched" });
             _view.Items.Add(new ComboBoxItem { Content = T("web.admin.libraries.unmatched.viewIgnored"), Tag = "ignored" });
             _view.SelectedIndex = 0;
@@ -414,11 +419,10 @@ public sealed partial class AdminLibrariesPage
             return row;
         }
 
-        private StackPanel Actions(AdminUnmatchedItem item, AdminUnmatchedState state, bool card)
+        private FrameworkElement Actions(AdminUnmatchedItem item, AdminUnmatchedState state, bool card)
         {
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = card ? 8 : 4 };
-            var match = Action(T("web.admin.libraries.match"), "UnmatchedMatch_" + item.ContentId, "search");
-            if (card) { match.Height = match.MinHeight = 44; match.MinWidth = 120; } else { match.Height = match.MinHeight = 28; match.FontSize = 12; }
+            var match = Action(T("web.admin.libraries.match"), "UnmatchedMatch_" + item.ContentId, "search", iconSize: 12, gap: 4, fontSize: card ? 14 : 12, height: card ? 44 : 28);
             match.Click += async (_, _) =>
             {
                 await Page.ShowMatchAsync(item.ContentId, item.Title, item.Year, item.ContentType, item.LibraryId, UiOwner);
@@ -427,15 +431,14 @@ public sealed partial class AdminLibrariesPage
             if (state.Ignored || P.CanIgnore(item))
             {
                 var ignore = Action(T(state.Ignored ? "web.admin.libraries.unmatched.restore" : "web.admin.libraries.unmatched.ignore"), "UnmatchedIgnore_" + item.ContentId,
-                    state.Ignored ? "undo-2" : "eye-off", "GhostButtonStyle");
-                if (card) { ignore.Height = ignore.MinHeight = 44; } else { ignore.Height = ignore.MinHeight = 28; ignore.FontSize = 12; }
+                    state.Ignored ? "undo-2" : "eye-off", "GhostButtonStyle", iconSize: 12, gap: 4, fontSize: card ? 14 : 12, height: card ? 44 : 28);
                 AutomationProperties.SetName(ignore, T(state.Ignored ? "web.admin.libraries.unmatched.restoreLabel" : "web.admin.libraries.unmatched.ignoreLabel", ("title", item.Title)));
                 ToolTipService.SetToolTip(ignore, T(state.Ignored ? "web.admin.libraries.unmatched.restoreTitle" : "web.admin.libraries.unmatched.ignoreTitle"));
                 ignore.IsEnabled = !state.Pending.Contains(item.ContentId);
                 ignore.Click += (_, _) => _ = _panel.SetIgnoredAsync(item, !state.Ignored);
                 actions.Children.Add(ignore);
             }
-            return actions;
+            return card ? CardActionRow(actions) : actions;
         }
 
         /// <summary>The ignore/restore toast's description and Undo action, kept inline under the list.</summary>
@@ -453,7 +456,7 @@ public sealed partial class AdminLibrariesPage
             var dismiss = IconButton("x", Core.Localization.AppStrings.Get("web.ui.close", fallback: "Close"), "UnmatchedUndoDismiss", 28, 14);
             dismiss.Click += (_, _) => _panel.DismissChange();
             Grid.SetColumn(dismiss, 2); grid.Children.Add(dismiss);
-            var bar = new Border { Child = grid, Padding = new(12), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Brush("SurfaceRaisedBrush") };
+            var bar = new Border { Child = grid, Padding = new(12), CornerRadius = new(RadiusLg), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Brush("SurfaceRaisedBrush") };
             AutomationProperties.SetLiveSetting(bar, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
             return bar;
         }
@@ -538,7 +541,7 @@ public sealed partial class AdminLibrariesPage
                             row++;
                         }
                     }
-                    _rows.Content = new Border { Child = grid, CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") };
+                    _rows.Content = new Border { Child = grid, CornerRadius = new(RadiusXl), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") };
                 }
                 else
                 {
@@ -560,14 +563,14 @@ public sealed partial class AdminLibrariesPage
                         text.Children.Add(counts);
                         head.Children.Add(text);
                         var chevron = Icon(selected ? "chevron-down" : "chevron-right", 16, Brush("SecondaryTextBrush")); Grid.SetColumn(chevron, 1); head.Children.Add(chevron);
-                        var toggle = new Button { Content = head, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinHeight = 44, Padding = new(8), CornerRadius = new(12), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+                        var toggle = new Button { Content = head, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinHeight = 44, Padding = new(8), CornerRadius = new(RadiusXl), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
                         AutomationProperties.SetName(toggle, LibraryName(queue.LibraryId));
                         AutomationProperties.SetAutomationId(toggle, "MatcherLibrary_" + queue.LibraryId);
                         AutomationProperties.SetItemStatus(toggle, selected ? "expanded" : "collapsed");
                         var id = queue.LibraryId;
                         toggle.Click += (_, _) => _ = _panel.ToggleLibraryAsync(id);
                         card.Children.Add(toggle);
-                        if (selected) card.Children.Add(new Border { Child = Detail(state, true), Padding = new(12), CornerRadius = new(12), Background = Tint("MutedBrush", 0.3) });
+                        if (selected) card.Children.Add(new Border { Child = Detail(state, true), Padding = new(12), CornerRadius = new(RadiusXl), Background = Tint("MutedBrush", 0.3) });
                         var retry = RetryNow(queue.LibraryId, state, true); retry.HorizontalAlignment = HorizontalAlignment.Stretch;
                         card.Children.Add(retry);
                         list.Children.Add(Card(card));
@@ -623,7 +626,7 @@ public sealed partial class AdminLibrariesPage
                     }
                     box.Children.Add(candidates);
                 }
-                stack.Children.Add(new Border { Child = box, Padding = new(8), CornerRadius = new(8), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("AppBackgroundBrush", 0.7) });
+                stack.Children.Add(new Border { Child = box, Padding = new(8), CornerRadius = new(RadiusLg), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("AppBackgroundBrush", 0.7) });
             }
             if (state.Detail != null && entries.Count == 0)
             {

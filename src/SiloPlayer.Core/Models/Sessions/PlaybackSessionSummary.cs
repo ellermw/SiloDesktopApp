@@ -10,6 +10,11 @@ public sealed class PlaybackSessionSummary
     public int MediaFileId { get; set; }
     public string MediaTitle { get; set; } = "";
     public string MediaType { get; set; } = "";
+    /// <summary>Series title of an episode. Official name since Silo Server c7c155927 (#4561); <see cref="MediaTitle"/> is then the episode title.</summary>
+    public string? SeriesTitle { get; set; }
+    /// <summary>Catalog id of what is playing (the episode for an episode). Official name since c7c155927 (#4561).</summary>
+    public string? MediaItemId { get; set; }
+    /// <summary>Names from before the rename (series_name, episode_name, content_id), still read so an older server keeps working.</summary>
     public string? SeriesName { get; set; }
     public string? EpisodeName { get; set; }
     public int? SeasonNumber { get; set; }
