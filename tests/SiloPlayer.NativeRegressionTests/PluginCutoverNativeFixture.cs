@@ -61,6 +61,17 @@ internal static class PluginCutoverNativeFixture
                 "Public-resource isolation destroyed the same-origin plugin session cookie");
             Program.Log("PASS: actual WebView v2 page, directory-relative JS/CSS/fetch, static asset and form succeed with v1 tombstones enabled.");
 
+            // The official launch cookie reaches only the plugin-content parent path; plugin script
+            // calling any other server API must not borrow the account's bearer/profile/device headers.
+            await web.ExecuteScriptAsync("fetch('/api/v2/admin/users').then(r => document.body.dataset.adminProbe = String(r.status))");
+            await UntilScript(web, "document.body.dataset.adminProbe === '403'");
+            var adminProbe = server.Requests.Where(r => r.Path == "/api/v2/admin/users").ToArray();
+            Check(adminProbe.Length == 1 && !adminProbe[0].OwnerMatches && !adminProbe[0].CredentialHeaders.Any(name =>
+                name.Equals("Authorization", StringComparison.OrdinalIgnoreCase) || name.StartsWith("X-Profile-", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("X-Silo-Device-", StringComparison.OrdinalIgnoreCase)),
+                "A plugin fetch outside the plugin-content mount carried account credentials: " + string.Join(", ", adminProbe.SelectMany(r => r.CredentialHeaders)));
+            Program.Log("PASS: plugin script fetching a server API outside the plugin-content mount carries no bearer, profile or device headers.");
+
             await web.ExecuteScriptAsync("fetch('/api/v1/plugins/7/stale').then(r => document.body.dataset.legacyStatus = String(r.status))");
             await UntilScript(web, "document.body.dataset.legacyStatus === '410'");
             Check(server.LegacyReads == 0, "A plugin-owned absolute v1 fetch reached the retired server route");

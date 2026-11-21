@@ -1260,7 +1260,7 @@ public sealed partial class AdminShellPage : Page
                     var labels = new StackPanel { Spacing = 2 };
                     labels.Children.Add(A.Text(app.Label, 14, A.Foreground, FontWeights.Medium));
                     labels.Children.Add(A.Text(AdminText.T("web.admin.shell.nav.pluginApp.description", new { plugin = app.PluginId }), 12, A.Muted, trim: false));
-                    var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { A.Icon(app.Icon, 16, A.Muted), labels } };
+                    var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { PluginIcon(PuzzleIconPath, 16, A.Solid(A.Muted)), labels } };
                     var item = A.Plain(row, app.Label, new Thickness(12, 8, 12, 8));
                     item.Tag = app;
                     item.HorizontalAlignment = HorizontalAlignment.Stretch; item.HorizontalContentAlignment = HorizontalAlignment.Stretch; item.CornerRadius = new CornerRadius(6);

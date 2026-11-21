@@ -10,7 +10,7 @@ namespace SiloPlayer.Views;
 
 public sealed partial class PluginRoutePage : Page
 {
-    public sealed record NavigationArgs(int InstallationId, string RoutePath, string Label, long? AdminEpoch = null);
+    public sealed record NavigationArgs(int InstallationId, string RoutePath, string Label);
     private bool _active = true;
     private readonly PluginPublicResources _publicResources = new();
     private readonly CancellationTokenSource _resourceStop = new();
@@ -20,21 +20,21 @@ public sealed partial class PluginRoutePage : Page
     {
         InitializeComponent();
         Unloaded += (_, _) =>
-        { _active = false; RetireAdminContent(); _resourceStop.Cancel(); _publicResources.Dispose(); ClosePluginWebView(); };
+        { _active = false; TeardownAdminContent(); _resourceStop.Cancel(); _publicResources.Dispose(); ClosePluginWebView(); };
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        // Admin "Plugin Apps" entries have their own argument type and isolated host (PluginRoutePage.Admin.cs).
+        if (e.Parameter is AdminNavigationArgs admin)
+        {
+            await OpenAdminContentAsync(admin);
+            return;
+        }
         if (e.Parameter is not NavigationArgs args) return;
         if (App.MainWindowInstance is MainWindow window)
             window.SetDynamicTitle(args.Label);
-
-        if (args.AdminEpoch != null)
-        {
-            await OpenAdminContentAsync(args);
-            return;
-        }
 
         try
         {
@@ -106,6 +106,11 @@ public sealed partial class PluginRoutePage : Page
                     RefuseResource(eventArgs, 410, "This plugin requested a retired API resource. Update the plugin and reopen this page.");
                     return;
                 }
+                // Security: the WebUI authorizes plugin documents only with a launch cookie scoped
+                // to the plugin-content parent path. Account credentials are therefore attached
+                // only there; plugin script calling any other server API gets no authority.
+                if (!PluginContentPaths.IsWithinContentParent(origin, target))
+                    return;
                 try
                 {
                     // Atomically validate the captured owner and snapshot its headers.
@@ -160,10 +165,10 @@ public sealed partial class PluginRoutePage : Page
     {
         // A Frame can retain a page in its Back stack without unloading it.
         // Admin content cannot keep privileged work alive after departure.
-        if (_adminContent != null || _adminLease != null)
+        if (_adminArgs != null)
         {
             _active = false;
-            RetireAdminContent();
+            TeardownAdminContent();
             ClosePluginWebView();
         }
         base.OnNavigatedFrom(e);
