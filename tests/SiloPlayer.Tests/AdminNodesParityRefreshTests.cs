@@ -147,7 +147,7 @@ public sealed class AdminNodesParityRefreshTests
         using var controller = new AdminPlaybackNodesController(new(kit.Client), authority); await controller.OpenAsync();
         var node = Assert.Single(controller.State.Window.Items); var before = kit.Http.Requests.Count;
         Assert.False(await controller.DeleteAsync(node));
-        Assert.Equal(before, kit.Http.Requests.Count); Assert.Equal("Set by the server’s deployment configuration. Remove it there and restart the API servers to delete it here.", controller.State.Feedback);
+        Assert.Equal(before, kit.Http.Requests.Count); Assert.Equal("Set by the server\u2019s deployment configuration. Remove it there and restart the API servers to delete it here.", controller.State.Feedback);
         Assert.False(controller.State.Busy); Assert.False(controller.State.ReviewRequired); Assert.Null(controller.State.Error);
         Assert.False(await controller.IssueKeyAsync(node, _ => throw new InvalidOperationException())); Assert.Equal(before, kit.Http.Requests.Count);
     }
@@ -184,7 +184,7 @@ public sealed class AdminNodesParityRefreshTests
             : Reads(request, Row());
         using var controller = new AdminPlaybackNodesController(new(kit.Client), authority); await controller.OpenAsync();
         Assert.False(await controller.UpdateAsync(Assert.Single(controller.State.Window.Items), new Dictionary<string, object?> { ["group"] = "x" }));
-        Assert.Equal("Set by the node’s environment. Change it there and restart the node.", controller.State.Error); Assert.False(controller.State.ReviewRequired);
+        Assert.Equal("Set by the node\u2019s environment. Change it there and restart the node.", controller.State.Error); Assert.False(controller.State.ReviewRequired);
     }
     [Fact]
     public async Task ARefusalWithoutAReasonFallsBackToTheGenericLine()
@@ -212,12 +212,12 @@ public sealed class AdminNodesParityRefreshTests
     [Fact]
     public void PlainTextNeutralizesControlSeparatorAndDirectionCharactersAndBoundsLength()
     {
-        Assert.Equal("a b c d e", AdminPlaybackNodeText.Plain("a\nb\r\nc d e"));
-        Assert.Equal("ab", AdminPlaybackNodeText.Plain("‮a⁦b⁩‏"));
+        Assert.Equal("a b c d e", AdminPlaybackNodeText.Plain("a\nb\r\nc\u2028d\u2029e"));
+        Assert.Equal("ab", AdminPlaybackNodeText.Plain("\u202Ea\u2066b\u2069\u200F"));
         Assert.Equal("x y", AdminPlaybackNodeText.Plain("  x \t\u0000 y  "));
-        var bounded = AdminPlaybackNodeText.Plain(new string('n', 500), 40); Assert.Equal(41, bounded.Length); Assert.EndsWith("…", bounded);
+        var bounded = AdminPlaybackNodeText.Plain(new string('n', 500), 40); Assert.Equal(41, bounded.Length); Assert.EndsWith("\u2026", bounded);
         Assert.Equal("", AdminPlaybackNodeText.Plain(null));
-        Assert.Equal("😀😀", AdminPlaybackNodeText.Plain("😀😀"));
+        Assert.Equal("\uD83D\uDE00\uD83D\uDE00", AdminPlaybackNodeText.Plain("\uD83D\uDE00\uD83D\uDE00"));
     }
     [Fact]
     public void KeySettingsAreExactlyTheVisibleValuesWithNoInvisibleCharacters()
@@ -227,8 +227,8 @@ public sealed class AdminNodesParityRefreshTests
         Assert.All(settings!, character => Assert.False(AdminPlaybackNodeText.IsDirectionCharacter(character) || char.IsControl(character) && character != '\n'));
     }
     [Theory]
-    [InlineData("⁨https://core.invalid⁩", "snk1_x")]
-    [InlineData("https://core.invalid", "snk1_‎x")]
+    [InlineData("\u2068https://core.invalid\u2069", "snk1_x")]
+    [InlineData("https://core.invalid", "snk1_\u200Ex")]
     [InlineData("https://user:pw@core.invalid", "snk1_x")]
     [InlineData("https://core.invalid?token=x", "snk1_x")]
     [InlineData("", "snk1_x")]
@@ -238,8 +238,8 @@ public sealed class AdminNodesParityRefreshTests
     [Fact]
     public void ReasonIsBoundedPlainAndRedacted()
     {
-        var error = new ApiException("x", "m", 422) { ProblemDetail = new string('d', 900) + "‮" };
-        var text = AdminPlaybackNodeText.Reason(error, "fallback"); Assert.True(text.Length <= 301); Assert.DoesNotContain('‮', text);
+        var error = new ApiException("x", "m", 422) { ProblemDetail = new string('d', 900) + "\u202E" };
+        var text = AdminPlaybackNodeText.Reason(error, "fallback"); Assert.True(text.Length <= 301); Assert.DoesNotContain('\u202E', text);
         Assert.Equal("fallback", AdminPlaybackNodeText.Reason(new ApiException("x", "m", 422), "fallback"));
         Assert.Equal("field detail", AdminPlaybackNodeText.Reason(new ApiException("x", "m", 422) { ProblemDetail = "summary", FieldErrors = [new("body.group", "managed_by_environment", "field detail")] }, "fallback"));
     }
@@ -300,7 +300,7 @@ public sealed class AdminNodesParityRefreshTests
     {
         var node = Node(); node.LastHealthCheck = Now.AddSeconds(-5).ToString("O");
         node.LastStats = new() { SampledAt = Now.AddSeconds(-6).ToString("O"), System = new() { CpuPct = 40, MemUsedMb = 100, MemTotalMb = 200, NetRxBps = 2_000_000, NetTxBps = 500 } };
-        var live = AdminPlaybackNodePresentation.Host(node, Now); Assert.True(live.Reported); Assert.Contains(live.Rows, row => row.Label == "Network" && row.Value.Contains('↓'));
+        var live = AdminPlaybackNodePresentation.Host(node, Now); Assert.True(live.Reported); Assert.Contains(live.Rows, row => row.Label == "Network" && row.Value.Contains('\u2193'));
         node.LastHealthCheck = Now.AddMinutes(-5).ToString("O"); Assert.False(AdminPlaybackNodePresentation.Host(node, Now).Reported);
         node.LastHealthCheck = Now.AddSeconds(-5).ToString("O"); node.Healthy = false; Assert.False(AdminPlaybackNodePresentation.Host(node, Now).Reported);
     }
