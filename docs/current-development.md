@@ -1,3 +1,34 @@
+# November 20 — Three merged Admin native groups brought back in line (test-only)
+
+On Beta `fb8cb17cf` four native regression groups of already merged Admin pages failed: `admin-collections`, `admin-configure-providers`,
+`admin-requests-corrections` and `admin-signin-security` (each run on its own on a pure Beta build, labels `beta-check-r1-*`). Each page had
+been changed after submission by review-repair commits that were not built or run. Branch `t3/beta-native-fixture-repairs` changes three
+fixtures and no product code:
+
+- `AdminCollectionsNativeFixture.cs`: the page drops a title the server rejects (400, 404 or 422) and names it in a "Not added:" notice,
+  the rule its last repair introduced; the step still asserted the earlier rule (the title stays staged and is sent again). It now checks
+  the notice and that the rejected title is not sent again.
+- `AdminProvidersNativeFixture.cs`: reading one subtitle provider's editor no longer clears an unknown outcome or a conflict; only a
+  page-level re-read of the provider list does. The step still expected the tile Reload alone to re-arm Save. For 503 and 412 it now
+  presses the page Reload, then the tile Reload. Recovery after an unknown outcome or conflict on a subtitle provider therefore takes two
+  Reload presses; that is the merged behavior and is not changed here.
+- `AdminRequestsCorrectionsNativeFixture.cs`: two timing faults. After a failed Load more the row actions sit inside a re-created
+  ScrollViewer and enter the visual tree one layout pass after the notice, so the step now waits for them. The "failed download poll"
+  case leaves the poll at 50 ms and sampled "notice collapsed, rows shown and timer running" at one instant while rows are redrawn and
+  the timer is stopped during each read; each fact is now waited for and reported on its own.
+
+Observed, under the SiloOct18Build lease, in final run `repair-lead-final-r1` on merge commit `ce2b1102a70c9852a8185a3e4bb26b73d5319d8b` (Beta
+`ce9ec928d` merged normally, no conflict): 139 focused and 10,141 full unit cases passed with no failures or skips; the app build, publish and
+native host build passed; native selectors `admin-collections` (203 checks), `admin-configure-providers` (89), `admin-requests-corrections`
+(135), `admin-requests-management` (37), `admin-playback-administration` (99), `admin-manage-library-settings` (84),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified. Before
+that, `admin-requests-corrections` passed three times in a row on the same fixture (`repair-check-r2-reqcorr-a/b/c`).
+
+Not covered here: `admin-signin-security` still fails on Beta at "typed group list is kept as typed". That one is a page defect (the Sign-in
+form is rebuilt when the account list is re-read, replacing the box being typed in) and is being fixed in its own change. The viewer group
+`advanced-overlays` was reported to end on a missing `RequestsApi` service in its fixture; that was not checked on pure Beta and is not
+addressed here.
+
 # November 20 — Playing Next and finished screens centred on ultrawide windows
 
 Owner report: on a 21:9 monitor the "You've finished ..." screen (and Playing Next) sat against the left edge with the
