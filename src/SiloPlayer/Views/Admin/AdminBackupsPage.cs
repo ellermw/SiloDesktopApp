@@ -61,11 +61,11 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
         _scroller.Content = _scrollContent;
         _root.Children.Add(_scroller);
         Content = _root;
-        // The content is as wide as the part of the scroller the page can use: with the vertical scroll bar showing that is the viewport,
-        // not the scroller, or the right edge of the content would sit under the bar on a narrow page.
+        // The content is as wide as the part of the scroller the page can use: the viewport (the scroll bar takes its own width) less the gutters
+        // the shell gives the content, or its right edge would sit past the edge of the page on a narrow window.
         void FitContent()
         {
-            var available = _scroller.ViewportWidth > 0 ? _scroller.ViewportWidth : _scroller.ActualWidth;
+            var available = (_scroller.ViewportWidth > 0 ? _scroller.ViewportWidth : _scroller.ActualWidth) - _scrollContent.Margin.Left - _scrollContent.Margin.Right;
             if (available <= 0) return;
             var target = Math.Min(_scrollContent.MaxWidth, available);
             if (double.IsNaN(_scrollContent.Width) || Math.Abs(_scrollContent.Width - target) > .5) _scrollContent.Width = target;
