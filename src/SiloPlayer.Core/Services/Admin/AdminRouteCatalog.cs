@@ -374,7 +374,13 @@ public static class AdminRouteCatalog
     {
         if (request == null || !Index.TryGetValue(request.Route, out var entry)) return false;
         var segments = request.Segments;
-        if (segments.Any(segment => !IsValidSegment(segment))) return false;
+        // Manifest plugin IDs are opaque (pluginPagePath percent-encodes the entire ID).
+        // An encoded slash remains one management descendant, never a plugin-app route.
+        if (request.Route == AdminRoute.Plugins)
+        {
+            if (segments.Any(segment => string.IsNullOrWhiteSpace(segment) || segment.Length > MaxSegmentLength || segment.Any(char.IsControl))) return false;
+        }
+        else if (segments.Any(segment => !IsValidSegment(segment))) return false;
         return entry.Leaf.Descendants switch
         {
             AdminRouteDescendants.CollectionEditor => segments.Count == 0 || (segments.Count == 1 && segments[0] == "new")
@@ -425,7 +431,6 @@ public static class AdminRouteCatalog
     /// <summary>Admin pages that exist in the WebUI but are outside this native scope (route pattern segments; "*" is a parameter).</summary>
     private static readonly string[][] UnsupportedPatterns =
     [
-        ["plugins"], ["plugins", "*"],
     ];
 
     /// <summary>
