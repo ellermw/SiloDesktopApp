@@ -152,7 +152,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         Grid.SetColumn(_summary, phone ? 0 : 1); Grid.SetRow(_summary, phone ? 1 : 0); Grid.SetColumnSpan(_summary, phone ? 2 : 1);
         _dock.Visibility = narrow && !_selectMode ? Visibility.Visible : Visibility.Collapsed;
         _body.Padding = new(0, 0, 0, narrow || _selectMode ? 96 : 24);
-        if (changed && _active) Render();
+        if (changed && _active) { Render(); if (_editor != null && _editorStep == 1) RenderPicker(); }
     }
 
     private void Fit()

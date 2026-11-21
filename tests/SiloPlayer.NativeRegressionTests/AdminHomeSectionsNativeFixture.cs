@@ -325,6 +325,11 @@ internal static class AdminHomeSectionsNativeFixture
             await Click(page, "HomeSectionBack"); await Until(() => Find<Button>(page, "HomeSectionKind_recently_added") != null);
             await Click(page, "HomeSectionKind_recently_added"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null);
             await Until(() => Texts(page).Contains("Synthetic preview title") || Tree(page).OfType<TextBlock>().Any(text => TextOf(text).Contains("titles match") || TextOf(text).Contains("title matches")));
+            await Until(() => Find<CheckBox>(page, "HomeSectionLibraryAll") is { IsLoaded: true }, "library filter");
+            Check(Find<CheckBox>(page, "HomeSectionLibraryAll")!.IsChecked == true && Find<CheckBox>(page, "HomeSectionLibrary_2") is { IsChecked: false }, "the From filter starts on all libraries and lists each library");
+            Toggle(Find<CheckBox>(page, "HomeSectionLibrary_2")!); await Until(() => Find<CheckBox>(page, "HomeSectionLibraryAll") is { IsChecked: false } && Find<CheckBox>(page, "HomeSectionLibrary_2") is { IsChecked: true, IsLoaded: true }, "library picked");
+            Check(Find<Button>(page, "HomeSectionSave")!.IsEnabled, "picking a library keeps the row savable");
+            Toggle(Find<CheckBox>(page, "HomeSectionLibrary_2")!); await Until(() => Find<CheckBox>(page, "HomeSectionLibraryAll") is { IsChecked: true }, "back to all libraries");
             await SetTitle(page, "Synthetic new row"); await CaptureAll(window, "home-sections-add-form");
             server.RefuseNextCreate = true; await Click(page, "HomeSectionSave");
             await Until(() => Texts(page).Any(text => text.Contains("That row name is not allowed.")));

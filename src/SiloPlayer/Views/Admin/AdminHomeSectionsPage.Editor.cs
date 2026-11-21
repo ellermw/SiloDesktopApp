@@ -82,7 +82,7 @@ public sealed partial class AdminHomeSectionsPage
         _editorDelete.BorderThickness = new(0); _editorDelete.Content = AdminHomeSectionsUi.ActionContent(T("web.home.addRow.deleteRow"), "trash-2", 14, AdminHomeSectionsUi.Solid(AdminMonitorUi.Destructive)); _editorDelete.Margin = new(-12, 0, 0, 0);
         _editorHeaderExtra = new StackPanel(); _editorFooterStart = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         _editorReads = CancellationTokenSource.CreateLinkedTokenSource(_editorOwner!.Token);
-        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear(); _collectionOptions = null; _collectionOptionsFailed = false; _editorStep = 1;
+        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear(); _collectionOptions = null; _collectionOptionsFailed = false; _editorStep = 1; _kindQuery = "";
         foreach (var pair in _collectionNames) if (pair.Value.Title != null) _choiceLabels[pair.Key] = pair.Value.Title;
         _editorOverlay = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(185, 0, 0, 0)), TabFocusNavigation = KeyboardNavigationMode.Cycle };
         _editorOverlay.KeyDown += async (_, args) =>
@@ -135,6 +135,7 @@ public sealed partial class AdminHomeSectionsPage
         if (_kindPane != null) _kindPane.Height = _paneHeight;
     }
     private double _paneHeight = 480;
+    private string _kindQuery = "";
     private ScrollViewer? _kindPane;
 
     private void SetBack(string label) { _editorBack.Content = AdminHomeSectionsUi.ActionContent(label, "chevron-left", 13, U.Brush("SecondaryTextBrush")); AutomationProperties.SetName(_editorBack, label); }
@@ -367,13 +368,13 @@ public sealed partial class AdminHomeSectionsPage
                     line.Children.Add(tile);
                     var name = U.Text(AdminHomeSectionsKinds.GroupLabel(group), 14, !isActive); Grid.SetColumn(name, 1); line.Children.Add(name);
                     var number = U.Text(count.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture), 12, true); Grid.SetColumn(number, 2); line.Children.Add(number);
-                    entry.Height = 40; entry.CornerRadius = new(10); entry.Padding = new(12, 0, 12, 0); entry.HorizontalAlignment = HorizontalAlignment.Stretch; entry.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    line.Width = 184; entry.Height = 40; entry.CornerRadius = new(10); entry.Padding = new(12, 0, 12, 0); entry.HorizontalAlignment = HorizontalAlignment.Stretch; entry.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                     entry.Background = isActive ? U.Brush("AccentBackgroundBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent); entry.BorderBrush = U.Brush("BorderBrush"); entry.Content = line;
                     AutomationProperties.SetName(entry, AdminHomeSectionsKinds.GroupLabel(group)); rail.Children.Add(entry);
                 }
             }
         }
-        search.TextChanged += (_, _) => Refresh();
+        search.Text = _kindQuery; search.TextChanged += (_, _) => { _kindQuery = search.Text; Refresh(); };
         Refresh();
         if (_narrow)
         {
@@ -658,7 +659,7 @@ public sealed partial class AdminHomeSectionsPage
 
     private static TextBox Input(string label, string id, string value, Action<string> changed, int max = 500)
     {
-        var input = U.Input(label, id); input.MaxLength = max; input.Text = value;
+        var input = U.Input(label, id); input.MaxLength = max; input.Text = value; input.Width = double.NaN; input.HorizontalAlignment = HorizontalAlignment.Stretch;
         input.TextChanged += (_, _) => changed(input.Text); return input;
     }
     private static ToggleSwitch Toggle(string id, bool value, Action<bool> changed)
@@ -718,7 +719,7 @@ public sealed partial class AdminHomeSectionsPage
         var panel = new StackPanel { Spacing = 8 };
         var cards = result.Collections.Count > 0 ? result.Collections : result.Items; var shown = Math.Min(12, cards.Count);
         panel.Children.Add(U.Text(cards.Count == 0 ? T("web.home.addRow.preview.empty")
-            : T("web.home.addRow.preview.count", new { refreshing = "no", count = (long)result.TotalCount, total = result.TotalCount.ToString("N0"), shown = shown.ToString() }), 13, true));
+            : System.Text.RegularExpressions.Regex.Replace(T("web.home.addRow.preview.count", new { refreshing = "no", count = (long)result.TotalCount, total = result.TotalCount.ToString("N0"), shown = shown.ToString() }), @"\s*·\s*", " · "), 13, true));
         var rail = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         var owner = _editorOwner ?? _controller?.State.Owner;
         var token = _editorReads?.Token ?? owner?.Token ?? CancellationToken.None;

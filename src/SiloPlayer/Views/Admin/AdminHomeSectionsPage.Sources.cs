@@ -203,8 +203,42 @@ public sealed partial class AdminHomeSectionsPage
         Dirty();
     }
 
-    /// <summary>"From": the libraries a row takes titles from (official LibraryFilterField), read and written with the backend's precedence.</summary>
+    /// <summary>"From": the libraries a row takes titles from (official LibraryFilterField): every library, or a pick of them, read and written with the backend's precedence.</summary>
     private void LibrarySelector(StackPanel panel)
+    {
+        if (_libraries.Count == 0) { LibrarySelectorSearch(panel); return; }
+        var draft = _draft!; var list = new StackPanel { Spacing = 2 }; var updating = false;
+        void Build()
+        {
+            updating = true;
+            try
+            {
+                list.Children.Clear(); var chosen = AdminHomeSectionsRules.LibraryFilterIds(draft.Config);
+                var all = new CheckBox { Content = T("web.home.addRow.params.allLibraries"), IsChecked = chosen.Count == 0, MinWidth = 0 }; AutomationProperties.SetAutomationId(all, "HomeSectionLibraryAll");
+                // Every library is the absence of a pick: unchecking it does nothing until a library is checked.
+                all.Checked += (_, _) => { if (updating) return; ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, [])); Build(); RenderAfterLibraryChange(); };
+                all.Unchecked += (_, _) => { if (updating) return; Build(); };
+                list.Children.Add(all);
+                var entries = _libraries.Select(library => (Id: long.TryParse(library.Id, out var id) ? id : 0L, library.Label)).Where(entry => entry.Id > 0).ToList();
+                foreach (var id in chosen) if (entries.All(entry => entry.Id != id)) entries.Add((id, _choiceLabels.GetValueOrDefault("library:" + id) ?? AdminHomeSectionsText.T("web.admin.homeRows.restore.libraryFallback", new { id })));
+                foreach (var (id, label) in entries)
+                {
+                    var box = new CheckBox { Content = label, IsChecked = chosen.Contains(id), MinWidth = 0 }; AutomationProperties.SetAutomationId(box, "HomeSectionLibrary_" + id);
+                    var libraryId = id;
+                    box.Checked += (_, _) => { if (updating) return; var next = AdminHomeSectionsRules.LibraryFilterIds(draft.Config).ToList(); if (!next.Contains(libraryId) && next.Count < 1000) next.Add(libraryId); ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, next)); Build(); RenderAfterLibraryChange(); };
+                    box.Unchecked += (_, _) => { if (updating) return; ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, AdminHomeSectionsRules.LibraryFilterIds(draft.Config).Where(other => other != libraryId))); Build(); RenderAfterLibraryChange(); };
+                    list.Children.Add(box);
+                }
+            }
+            finally { updating = false; }
+        }
+        Build();
+        var field = new StackPanel { Spacing = 6 }; field.Children.Add(list); field.Children.Add(U.Text(T("web.home.addRow.params.fromHint"), 12, true));
+        Field(panel, T("web.home.addRow.params.from"), field);
+    }
+
+    /// <summary>The earlier search over the libraries, used only when the page could not read the library list.</summary>
+    private void LibrarySelectorSearch(StackPanel panel)
     {
         var draft = _draft!; var selection = new StackPanel { Spacing = 6 };
         void Refresh()
