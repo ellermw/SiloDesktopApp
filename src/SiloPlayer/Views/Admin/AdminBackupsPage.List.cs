@@ -292,29 +292,41 @@ public sealed partial class AdminBackupsPage
         var showAll = _showAll || linkedIndex >= Present.RowsShown;
         var rows = showAll ? items : items.Take(Present.RowsShown).ToArray();
         var table = new StackPanel { Spacing = 0 };
-        var narrow = ActualWidth > 0 && ActualWidth < 640;
+        // Below sm (640 px) each row stacks into a small grid, date and status on one line, size under the date, actions under both, and the header
+        // is gone; the version column shows from md (768 px) on (official BackupTable).
+        var phone = ActualWidth is > 0 and < 640;
+        var showVersion = ActualWidth is 0 or >= 768;
         Grid Row()
         {
             var grid = new Grid { ColumnSpacing = 12, Padding = new(12, 10, 12, 10) };
             grid.ColumnDefinitions.Add(new() { Width = new(2, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new() { Width = narrow ? new(0) : new(1, GridUnitType.Star) });
+            if (showVersion) grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new() { Width = new(1.4, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             return grid;
         }
         void Cell(Grid grid, UIElement element, int column) { Grid.SetColumn((FrameworkElement)element, column); grid.Children.Add(element); }
-        var header = Row();
-        foreach (var (key, column) in new[] { ("taken", 0), ("size", 1), ("siloVersion", 2), ("status", 3), ("actions", 4) })
+        if (!phone)
         {
-            var label = Text(T("web.admin.backups.table." + key), 12, true); label.FontWeight = FontWeights.Medium;
-            if (key == "actions") AutomationProperties.SetAccessibilityView(label, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
-            Cell(header, label, column);
+            var header = Row();
+            var headings = showVersion ? new[] { ("taken", 0), ("size", 1), ("siloVersion", 2), ("status", 3), ("actions", 4) } : new[] { ("taken", 0), ("size", 1), ("status", 2), ("actions", 3) };
+            foreach (var (key, column) in headings)
+            {
+                var label = Text(T("web.admin.backups.table." + key), 12, true); label.FontWeight = FontWeights.Medium;
+                if (key == "actions") AutomationProperties.SetAccessibilityView(label, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+                Cell(header, label, column);
+            }
+            table.Children.Add(header);
         }
-        table.Children.Add(header);
         foreach (var backup in rows)
         {
-            var row = Row();
+            var row = phone ? new Grid { ColumnSpacing = 12, RowSpacing = 4, Padding = new(12, 12, 12, 12) } : Row();
+            if (phone)
+            {
+                row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                for (var phoneRow = 0; phoneRow < 3; phoneRow++) row.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            }
             AutomationProperties.SetAutomationId(row, "BackupRow-" + backup.Id);
             if (backup.Id == _selectedId) row.Background = AdminMonitorUi.Solid(AdminMonitorUi.ColorOf("AccentColor", Windows.UI.Color.FromArgb(255, 167, 139, 250)), .08);
             var taken = new StackPanel { Spacing = 2 };
@@ -326,12 +338,28 @@ public sealed partial class AdminBackupsPage
                 taken.Children.Add(Text(Present.OtherKeyNote(backup), 12));
                 taken.Children.Add(Text(Present.OtherKeyReason(), 12, true));
             }
-            Cell(row, taken, 0);
-            var size = Text(DashboardFormat.FileSize(backup.SizeBytes, Present.NoValue)); size.TextAlignment = TextAlignment.Right;
-            Cell(row, size, 1);
-            Cell(row, Text(Present.KnownSiloVersion(backup.SiloVersion) ?? Present.NoValue, 14, true), 2);
-            Cell(row, StatusCell(backup, list.Active?.BackupId == backup.Id ? list.Active : null), 3);
-            Cell(row, RowActions(state, backup, selective, otherKey, lockReason), 4);
+            var size = Text(DashboardFormat.FileSize(backup.SizeBytes, Present.NoValue), phone ? 12 : 14, phone);
+            var status = StatusCell(backup, list.Active?.BackupId == backup.Id ? list.Active : null);
+            var actions = RowActions(state, backup, selective, otherKey, lockReason);
+            if (phone)
+            {
+                Grid.SetRow((FrameworkElement)taken, 0); Grid.SetColumn(taken, 0); row.Children.Add(taken);
+                var statusCell = (FrameworkElement)status; statusCell.HorizontalAlignment = HorizontalAlignment.Right;
+                Grid.SetRow(statusCell, 0); Grid.SetColumn(statusCell, 1); row.Children.Add(statusCell);
+                Grid.SetRow(size, 1); Grid.SetColumn(size, 0); row.Children.Add(size);
+                ((FrameworkElement)actions).HorizontalAlignment = HorizontalAlignment.Left;
+                Grid.SetRow((FrameworkElement)actions, 2); Grid.SetColumn((FrameworkElement)actions, 0); Grid.SetColumnSpan((FrameworkElement)actions, 2); row.Children.Add(actions);
+            }
+            else
+            {
+                size.TextAlignment = TextAlignment.Right;
+                var column = 0;
+                Cell(row, taken, column++);
+                Cell(row, size, column++);
+                if (showVersion) Cell(row, Text(Present.KnownSiloVersion(backup.SiloVersion) ?? Present.NoValue, 14, true), column++);
+                Cell(row, status, column++);
+                Cell(row, actions, column);
+            }
             table.Children.Add(new Border { Child = row, BorderThickness = new(0, 1, 0, 0), BorderBrush = UiKit.Brush("BorderBrush") });
             if (_expandedRows.Contains(backup.Id!)) table.Children.Add(new Border { Child = WarningDetails(backup), Padding = new(12, 0, 12, 12) });
         }

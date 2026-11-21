@@ -257,8 +257,9 @@ public sealed partial class AdminBackupsPage
     {
         var controller = RestoreController!;
         var names = Model.LibraryNames(set, state.Libraries);
-        var layout = new Grid { ColumnSpacing = 32, RowSpacing = 24 };
         var wide = ActualWidth >= 1024;
+        // The summary sits beside the sections from 1024 px; narrower it follows them, and there is no gap for a column that is not there.
+        var layout = new Grid { ColumnSpacing = wide ? 32 : 0, RowSpacing = 24 };
         layout.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         layout.ColumnDefinitions.Add(new() { Width = wide ? new(320) : new(0) });
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -749,7 +750,7 @@ public sealed partial class AdminBackupsPage
     private FrameworkElement ReviewView(AdminBackupRestoreState state, AdminBackupRestoreSet set, IReadOnlySet<string> selection)
     {
         var controller = RestoreController!;
-        var view = new StackPanel { Spacing = 20, MaxWidth = 800, HorizontalAlignment = HorizontalAlignment.Left };
+        var view = new StackPanel { Spacing = 20, MaxWidth = 1120, HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (var group in Model.Plan(set, selection, state.DataTypes))
         {
             var box = new AdminSettingsGroup(group.Title);
@@ -819,7 +820,7 @@ public sealed partial class AdminBackupsPage
         var controller = RestoreController!;
         var report = job.BackupRestoreResult;
         var items = report?.Items ?? [];
-        var view = new StackPanel { Spacing = 20, MaxWidth = 800, HorizontalAlignment = HorizontalAlignment.Left };
+        var view = new StackPanel { Spacing = 20, MaxWidth = 1120, HorizontalAlignment = HorizontalAlignment.Stretch };
         if (job.Terminal != true)
         {
             var progress = job.Progress;
