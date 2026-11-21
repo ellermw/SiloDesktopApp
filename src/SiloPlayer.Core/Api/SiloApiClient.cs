@@ -1000,6 +1000,7 @@ public partial class SiloApiClient
                 AddHeaders(retry);
                 if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var sensitiveRequests)) retry.Options.Set(AdminRequestsSensitiveOption, sensitiveRequests);
                 if (request.Options.TryGetValue(AdminAutoscanSensitiveOption, out var sensitiveAutoscanRetry)) retry.Options.Set(AdminAutoscanSensitiveOption, sensitiveAutoscanRetry);
+                if (request.Options.TryGetValue(AdminResourceSensitiveOption, out var sensitiveResource)) retry.Options.Set(AdminResourceSensitiveOption, sensitiveResource);
                 // A token refresh must replay the same conditional mutation.
                 foreach (var validator in request.Headers.IfMatch) retry.Headers.IfMatch.Add(validator);
                 foreach (var validator in request.Headers.IfNoneMatch) retry.Headers.IfNoneMatch.Add(validator);
@@ -1065,6 +1066,8 @@ public partial class SiloApiClient
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=autoscan_transport_failed");
                 else if (request.Options.TryGetValue(AdminAccessSensitiveOption, out var adminAccess) && adminAccess)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_access_transport_failed");
+                else if (request.Options.TryGetValue(AdminResourceSensitiveOption, out var sensitiveAdminResource) && sensitiveAdminResource)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_resource_transport_failed");
                 else if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var requestsSensitive) && requestsSensitive)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=request_administration_transport_failed");
                 else

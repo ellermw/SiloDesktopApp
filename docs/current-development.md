@@ -33,6 +33,38 @@ failures (`LibraryBackgroundRefreshTests.ContentRefreshRejectsPreMutationViewpor
 Captures were inspected at current DPI before the review corrections. Not verified: a live server, other DPI scales, screen readers, pixel parity.
 Scope, write semantics and limits: [Autoscan Sources](parity/admin-autoscan-sources.md).
 
+# November 20 — Manage › Users resource pages (Access groups, Devices, History import)
+
+Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import
+(`/admin/history-import`) are implemented in the registered native shell on branch
+`t3/admin-access-groups-devices-history-import`, rebuilt from an earlier uncompiled draft against official
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` and merged with Beta `f36e3bd4a`. Versions are unchanged.
+
+Fixed from review of the draft: refusals (4xx other than 408) now show the server's safe problem detail and keep the draft, while only a
+timeout, 5xx or lost transport after a write is an unknown outcome; a failed second request of a two-request save is reported as such and is
+not repeated; read failures and later successes are tracked per section; device rows follow the official admin rules (all device-scoped keys
+except the retired `ui.theme`, manifest order, platform tags, per-row anomalies, inherited sources); bitrates use Unlimited / preset / custom
+Mbps; turning "All libraries" off selects every library; the 556-message catalog and the 42 device definitions were verified against the pin
+by script; the app project now embeds both catalogs; a cancel answered 200 without a Location is no longer treated as unknown.
+
+An independent read-only review of the built branch found no exposure of secrets or personal data and confirmed the refusal-text filter, the
+shared edits, the group request body and the unknown-outcome handling. It reported two P1 and two P2 defects, all fixed: a refused Add server
+save cleared the typed API key, so the corrected retry would have created the source without it (the key now stays until the save is accepted
+or the dialog closes); a number setting could write a value the admin did not choose (number controls now write only a real change, at the
+step's precision, and a fractional setting always shows its fraction); changing the list scope while another device was loading left the old
+device in the detail pane (no regression test); and one device id that cannot be a URL segment failed the whole device list.
+
+Observed, under the SiloOct18Build lease, in final run userres-lead-final-r1 on merge commit 2bf4f578e945eddb270fb0bb8995de4bad980957: 116
+focused and 9,953 full unit cases passed with no failures or skips; the app build, self-contained publish and native host build passed; native
+selectors admin-user-resources (230 checks), admin-requests-management (37), admin-manage-foundation (36), admin-configure-general (188) and
+admin-monitor (113) passed with no failures. Before the review corrections and the merge of Beta f36e3bd4a the branch passed as userres-final-r4
+on e85ed386e (114 focused, 9,870 full, 216 native checks). An earlier run, userres-final-r1, had five full-suite failures: one was this branch's
+(a History import date that bypassed the shared formatter, fixed) and four were existing tests of other pages that formatted numbers with an
+Arabic decimal separator in that run only; they were not changed and passed in every later run.
+
+Scope, contracts, deliberate differences and limits: `docs/parity/admin-user-resources-2026-11-17.md`. Not verified: live-server
+interoperability, all-DPI / Narrator / IME behavior, locale digit shaping and complete visual parity.
+
 # November 20 — Playing Next and finished screens centred on ultrawide windows
 
 Owner report: on a 21:9 monitor the "You've finished ..." screen (and Playing Next) sat against the left edge with the
