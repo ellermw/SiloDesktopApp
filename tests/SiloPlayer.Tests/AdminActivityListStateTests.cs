@@ -8,7 +8,7 @@ public sealed class AdminActivityListStateTests
     private static readonly IReadOnlyList<SiloPlayer.Core.Models.Admin.AdminActivitySession> Sessions =
     [
         AdminActivityPresentationTests.Session(x => { x.SessionId = "a"; x.Username = "zoe"; x.MediaTitle = "Alien"; x.StartedAt = "2026-11-14T10:00:00Z"; x.PlayMethod = "direct"; x.VideoDecision = "direct"; x.AudioDecision = "direct"; x.ClientIp = "10.0.0.5"; }),
-        AdminActivityPresentationTests.Session(x => { x.SessionId = "b"; x.Username = "amy"; x.MediaTitle = "Brazil"; x.StartedAt = "2026-11-14T11:00:00Z"; x.MediaType = "series"; x.SeriesName = "Show"; x.SeasonNumber = 1; x.EpisodeNumber = 2; x.EpisodeName = "Pilot"; x.RoutingExecution = "transcode"; x.RoutingExecutionNodeName = "gpu-1"; x.RoutingWorkload = "video_transcode"; }),
+        AdminActivityPresentationTests.Session(x => { x.SessionId = "b"; x.Username = "amy"; x.MediaTitle = "Pilot"; x.StartedAt = "2026-11-14T11:00:00Z"; x.MediaType = "episode"; x.SeriesTitle = "Show"; x.SeasonNumber = 1; x.EpisodeNumber = 2; x.RoutingExecution = "transcode"; x.RoutingExecutionNodeName = "gpu-1"; x.RoutingWorkload = "video_transcode"; }),
         AdminActivityPresentationTests.Session(x => { x.SessionId = "c"; x.Username = "max"; x.MediaTitle = "Cars"; x.StartedAt = "2026-11-14T09:00:00Z"; x.ClientLabelFull = "Silo iOS 2.1 (build 5)"; }),
     ];
 
@@ -51,7 +51,7 @@ public sealed class AdminActivityListStateTests
         Assert.Null(state.MethodFilter);
         state.ToggleNode("transcode:gpu-1");
         Assert.Equal("b", Assert.Single(state.Apply(Sessions)).SessionId);
-        state.ToggleType("series");
+        state.ToggleType("episode");
         Assert.Equal(2, state.ActiveFilterCount);
         state.Search = "x";
         state.ClearFilters();

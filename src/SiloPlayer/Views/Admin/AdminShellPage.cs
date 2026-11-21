@@ -141,6 +141,13 @@ public sealed partial class AdminShellPage : Page
         App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell
             ? shell._registry.CanOpen(request) : CreateRegistry().CanOpen(request);
 
+    /// <summary>
+    /// Whether a WebUI admin href has a native page here (the catalog resolves it to a route whose page is registered). Rows that link to
+    /// another admin page (Activity usernames, Server Activity tasks) render as links only then, and as the same text otherwise.
+    /// </summary>
+    public static bool CanOpenHref(string href) =>
+        AdminRouteCatalog.TryResolve(href, out var resolution) && resolution is { Kind: AdminRouteResolutionKind.Route, Request: { } request } && CanOpen(request);
+
     /// <summary>Opens an admin location: in the shell when it is showing, otherwise enters Admin. False when it has no native page.</summary>
     public static bool Open(AdminRouteRequest request)
     {

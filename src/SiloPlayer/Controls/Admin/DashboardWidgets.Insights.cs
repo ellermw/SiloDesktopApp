@@ -46,11 +46,14 @@ internal abstract class TimeseriesWidget(DashboardWidgetContext c) : DashboardWi
 
 internal sealed class ConcurrentStreamsWidget(DashboardWidgetContext c) : TimeseriesWidget(c)
 {
+    /// <summary>The capability read is a key too, so Stacked appears (or stays away) once it lands.</summary>
+    protected override IEnumerable<string> Keys => [SeriesKey, DashboardDataStore.Capabilities];
+
     protected override FrameworkElement Render()
     {
         var state = Store.Get(SeriesKey);
         var series = state.As<DashboardTimeseries>();
-        var canStack = series == null || DashboardChartMath.HasMethodSplit(series);
+        var canStack = DashboardChartMath.CanStackConcurrent(Store.Get(DashboardDataStore.Capabilities).Data as DashboardCapabilities, series);
         var view = View == "total" || View == "stacked" && canStack ? View : "lines";
         var points = DashboardChartMath.TimeseriesPoints(series, point => point.Streams);
         var peak = points.Select(point => point.Value ?? 0).DefaultIfEmpty(0).Max();

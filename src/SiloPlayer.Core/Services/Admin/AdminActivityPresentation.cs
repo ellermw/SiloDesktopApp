@@ -405,12 +405,12 @@ public static class AdminActivityPresentation
     }
 
     private static bool IsEpisode(AdminActivitySession s) =>
-        !string.IsNullOrEmpty(s.SeriesName) && s.SeasonNumber != null && s.EpisodeNumber != null;
+        !string.IsNullOrEmpty(s.SeriesTitle) && s.SeasonNumber != null && s.EpisodeNumber != null;
 
     public static string GetPlaybackSessionTitle(AdminActivitySession s, TextFormat? format = null)
     {
         format ??= DefaultFormat;
-        if (IsEpisode(s)) return Or(s.EpisodeName, FormatEpisodeCode(s.SeasonNumber!.Value, s.EpisodeNumber!.Value, format));
+        if (IsEpisode(s)) return Or(s.MediaTitle, FormatEpisodeCode(s.SeasonNumber!.Value, s.EpisodeNumber!.Value, format));
         return Or(s.MediaTitle, format("web.common.activity.title.file", new { id = s.MediaFileId }));
     }
 
@@ -437,11 +437,11 @@ public static class AdminActivityPresentation
 
     /// <summary>WebUI <c>getPlaybackSessionSubtitle</c>: the episode line, else Movie/Series by media type, else nothing.</summary>
     public static string? GetPlaybackSessionSubtitle(AdminActivitySession s)
-        => PlaybackSessionSubtitle(s.SeriesName, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
 
     /// <summary>The same rule for a dashboard session, so Now Playing reads exactly as Activity.</summary>
     public static string? GetPlaybackSessionSubtitle(DashboardSession s)
-        => PlaybackSessionSubtitle(s.SeriesName, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
 
     private static string? PlaybackSessionSubtitle(string? series, long? season, long? episode, string? mediaType)
     {
@@ -449,7 +449,7 @@ public static class AdminActivityPresentation
         return mediaType switch
         {
             "movie" => AdminText.T("web.common.activity.subtitle.movie"),
-            "series" => AdminText.T("web.common.activity.subtitle.series"),
+            "series" or "episode" => AdminText.T("web.common.activity.subtitle.series"),
             _ => null,
         };
     }

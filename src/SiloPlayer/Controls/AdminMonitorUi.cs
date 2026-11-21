@@ -44,7 +44,8 @@ internal static class AdminMonitorUi
     public static readonly Color Amber500 = Color.FromArgb(255, 0xF5, 0x9E, 0x0B);
     public static readonly Color Jellyfin = Color.FromArgb(255, 0xAA, 0x5C, 0xC3);
     public static readonly Color LiveRed = Color.FromArgb(255, 0xFF, 0x3C, 0x3C);
-    public static readonly Color LiveText = Color.FromArgb(255, 0xF8, 0x71, 0x71);
+    /// <summary>e130f262d (#4729): the .live-badge label is #fca5a5 (was #f87171, which lost contrast on the lightened selected-row surface) and no longer pulses.</summary>
+    public static readonly Color LiveText = Color.FromArgb(255, 0xFC, 0xA5, 0xA5);
 
     /// <summary>Tailwind tone: success/info/warning/destructive/muted-foreground.</summary>
     public static Color ToneColor(ActivityTone tone) => tone switch
@@ -63,6 +64,16 @@ internal static class AdminMonitorUi
     public static Color Surface => ColorOf("SurfaceColor", Color.FromArgb(255, 0x15, 0x1E, 0x2B));
     public static Color Destructive => ColorOf("ErrorColor", Color.FromArgb(255, 0xEF, 0x6B, 0x73));
     public static Color Warning => ColorOf("WarningColor", Color.FromArgb(255, 0xD2, 0x99, 0x22));
+
+    /// <summary>Linear blend of <paramref name="from"/> toward <paramref name="to"/> by <paramref name="share"/> (CSS <c>color-mix(in srgb, to share%, from)</c>).</summary>
+    public static Color Mix(Color from, Color to, double share) => Color.FromArgb(255,
+        (byte)Math.Round(from.R + (to.R - from.R) * share), (byte)Math.Round(from.G + (to.G - from.G) * share), (byte)Math.Round(from.B + (to.B - from.B) * share));
+
+    /// <summary>
+    /// e130f262d (#4768): the play-method tags use <c>text-*-label</c>, not the plain tone. Success, warning and info labels equal
+    /// their tone; red text falls below 4.5:1 on its own 10% tint (3.8:1 on a hovered row), so the destructive label mixes 25% toward white.
+    /// </summary>
+    public static Color LabelColor(ActivityTone tone) => tone == ActivityTone.Destructive ? Mix(ToneColor(tone), Colors.White, 0.25) : ToneColor(tone);
 
     /// <summary>Lucide icon path data (24-unit grid, stroke 2, round caps).</summary>
     private static string IconPath(string name) => name switch
@@ -247,6 +258,27 @@ internal static class AdminMonitorUi
             button.MinHeight = 0;
         }
         if (automationName != null) Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, automationName);
+        return button;
+    }
+
+    /// <summary>
+    /// A text link as the Activity rows draw it (e130f262d ROW_LINK_CLASS, #4626): at rest the given colour; on pointer hover or keyboard
+    /// focus the accent colour (<c>hover:text-primary</c>) with an underline, because the default theme's primary equals its foreground
+    /// and colour alone shows nothing. The caller owns <paramref name="text"/>, so the same link can be restyled.
+    /// </summary>
+    public static Button LinkButton(TextBlock text, string name, Color rest)
+    {
+        var button = Plain(text, name);
+        button.HorizontalContentAlignment = HorizontalAlignment.Left;
+        void Apply(bool hot)
+        {
+            text.TextDecorations = hot ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None;
+            text.Foreground = Solid(hot ? Primary : rest);
+        }
+        button.PointerEntered += (_, _) => Apply(true);
+        button.PointerExited += (_, _) => Apply(button.FocusState == FocusState.Keyboard);
+        button.GotFocus += (_, _) => { if (button.FocusState == FocusState.Keyboard) Apply(true); };
+        button.LostFocus += (_, _) => Apply(false);
         return button;
     }
 

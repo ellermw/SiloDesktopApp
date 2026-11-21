@@ -160,6 +160,30 @@ public sealed class AdminDashboardStoreTests : IDisposable
         Assert.Equal(1, Count("/api/v2/admin/stats?refresh=true"));
     }
 
+    /// <summary>
+    /// Official e130f262d (#4629): during playback the realtime sessions channel refetches after every position sync, and restarting the page's interval on each
+    /// arrival kept the 60-second auto-refresh from ever firing. The native page loop reads the last refresh time on a one-second tick, so arrivals cannot postpone it.
+    /// </summary>
+    [Fact]
+    public async Task SessionRefetchesEveryFiveSecondsDoNotPostponeTheSixtySecondRefresh()
+    {
+        using var store = Store();
+        foreach (var key in new[] { DashboardDataStore.Stats, DashboardDataStore.Sessions, DashboardDataStore.Libraries, DashboardDataStore.Users })
+            store.Mount(key);
+        _feed.Publish(new(true, null, [], true, []));
+        await Settle(store, DashboardDataStore.Stats);
+        _time.Advance(TimeSpan.FromSeconds(1));
+        Assert.NotNull(store.LastUpdatedAt);
+        _kit.Http.Requests.Clear();
+        for (var elapsed = 0; elapsed < 65; elapsed += 5)
+        {
+            await store.FetchAsync(DashboardDataStore.Sessions, force: true);
+            for (var second = 0; second < 5; second++) _time.Advance(TimeSpan.FromSeconds(1));
+        }
+        await Task.Delay(50);
+        Assert.True(Count("/api/v2/admin/stats?refresh=true") >= 1, "the page refresh still fires on its fixed cadence while sessions keep arriving");
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -408,7 +432,7 @@ public sealed class AdminDashboardPresentationTests
     {
         var mapped = ServerActivityDashboardFeed.MapSession(new AdminActivitySession
         {
-            SessionId = "9007199254740993", StartedAt = "2026-11-14T11:59:00Z", SeasonNumber = 2, EpisodeNumber = 3, SeriesName = "S",
+            SessionId = "9007199254740993", StartedAt = "2026-11-14T11:59:00Z", SeasonNumber = 2, EpisodeNumber = 3, SeriesTitle = "S",
             RoutingNetworkProvider = "", EffectivePlayMethod = "transcode",
         });
         Assert.Equal("9007199254740993", mapped.SessionId);
