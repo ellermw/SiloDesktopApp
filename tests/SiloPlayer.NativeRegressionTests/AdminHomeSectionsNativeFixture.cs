@@ -295,7 +295,7 @@ internal static class AdminHomeSectionsNativeFixture
             server.RefusePatchDetail = null; var before = server.Requests.Count;
             await Click(page, "HomeSectionsSelectTurnOff"); await Until(() => page.Controller!.CanWrite && server.Requests.Skip(before).Count(item => item.Method == "PATCH") == 2);
             Check(server.Requests.Skip(before).Where(item => item.Method == "PATCH").All(item => item.Body == "{\"enabled\":false}"), "turning rows off sends only enabled for each row");
-            await Click(page, "HomeSectionsSelectDone"); await Until(() => Find<CheckBox>(page, "HomeSectionsSelectAll") == null);
+            await Click(page, "HomeSectionsSelectDone"); await Until(() => Find<CheckBox>(page, "HomeSectionsSelectAll") == null && IsFocused(page, "HomeSectionsMore"), "select mode left, focus back on More");
 
             // ── Delete: stale then confirmed ──
             await Menu(page, "Synthetic collection row", "Delete row…"); var deleteDialog = await DialogTexts(window, "Delete Synthetic collection row?");
