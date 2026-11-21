@@ -18,6 +18,11 @@ public sealed record AdminNotificationSettingsState
     public string? ActiveTarget { get; init; }
     public bool OperationUnknown { get; init; }
     public bool SensitiveStatusError { get; init; }
+    /// <summary>An older server (before official f42b93271) still has the retired pipeline switches and reports one turned off: new content
+    /// is not recorded, or nothing is sent. Shown read-only; the switches are not form keys and are never written. A current server
+    /// never reports them, so both stay false there.</summary>
+    public bool RecordingPaused { get; init; }
+    public bool SendingPaused { get; init; }
     public bool ChannelsLoading { get; init; }
     public bool ChannelsLoaded { get; init; }
     public string? ChannelsError { get; init; }
@@ -67,6 +72,10 @@ public sealed class AdminNotificationSettingsController : IDisposable
     });
     public static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(new[] { "discord.client_secret", "discord.bot_token", "notifications.push_relay_api_key" });
     public static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(PageKeys.Concat(DiscordKeys).Concat(ReadOnlyKeys).ToArray());
+    /// <summary>The two retired pipeline switches (official f42b93271) an older server may still report: recording, then sending. The shared
+    /// settings store reads them for the paused notice only. They are deliberately not in <see cref="Keys"/>: never form keys, never staged
+    /// and refused by every write.</summary>
+    public static IReadOnlyList<string> RetiredPauseKeys { get; } = Array.AsReadOnly(new[] { "notifications.release_events_enabled", "notifications.fanout_enabled" });
     private readonly AdminServerSettingsApi _settings;
     private readonly AdminServerSettingsStore _store;
     private readonly AdminNotificationSettingsApi _api;
@@ -76,7 +85,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
     private AdminSettingsForm? _form;
     private AdminNotificationSettingsState _state = new();
     private string? _relayDraft, _signingSecret;
-    private bool _disposed;
+    private bool _disposed, _recordingPaused, _sendingPaused;
     public AdminNotificationSettingsController(AdminServerSettingsApi settings, AdminServerSettingsStore store, AdminNotificationSettingsApi api, AdminMonitorAuthority authority)
     {
         _settings = settings; _store = store; _api = api; _lifetime = new(authority); _lifetime.Retired += Clear;
@@ -117,6 +126,15 @@ public sealed class AdminNotificationSettingsController : IDisposable
         try
         {
             var snapshot = await effective.ConfigureAwait(false);
+            // Only whether an older server reports a retired pipeline switch as off is kept; the values never enter the form.
+            lock (_gate)
+            {
+                if (!_disposed && _lifetime.IsCurrent(owner))
+                {
+                    _recordingPaused = snapshot.Values.GetValueOrDefault(RetiredPauseKeys[0]) == "false";
+                    _sendingPaused = snapshot.Values.GetValueOrDefault(RetiredPauseKeys[1]) == "false";
+                }
+            }
             Update(owner, () =>
             {
                 if (_form == null) _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag); else _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
@@ -408,6 +426,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
             Values = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(k => k, _form.Get, StringComparer.Ordinal)),
             PersistedValues = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.Except(Secrets).ToDictionary(k => k, _form.GetPersisted, StringComparer.Ordinal)),
             DirtyKeys = _form.DirtyKeys, RelayUrl = _relayDraft ?? relay, RelayUrlDirty = _relayDraft != null && _relayDraft != relay,
+            RecordingPaused = _recordingPaused, SendingPaused = _sendingPaused,
         };
     }
     private void Update(MonitorAuthorityLease owner, Action action)

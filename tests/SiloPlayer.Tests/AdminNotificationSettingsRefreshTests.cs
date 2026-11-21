@@ -67,6 +67,44 @@ public sealed partial class AdminNotificationSettingsTests
     }
 
     [Fact]
+    public async Task AnOlderServerThatPausedItsPipelineIsReportedReadOnlyAndTheSwitchesAreStillNeverStagedOrSent()
+    {
+        // Production's shared store reads the two pipeline switches next to the page keys (AdminConfigureServices); they are still not form keys.
+        foreach (var key in AdminNotificationSettingsController.RetiredPauseKeys) { Assert.Contains(key, RetiredProcessingKeys); Assert.DoesNotContain(key, AdminNotificationSettingsController.Keys); }
+        var storeKeys = AdminNotificationSettingsController.Keys.Concat(AdminNotificationSettingsController.RetiredPauseKeys).ToArray();
+        using var h = new Harness(storeKeys);
+        var current = h.Effective;
+        h.Effective = current.TrimEnd('}') + ",\"notifications.release_events_enabled\":\"true\",\"notifications.fanout_enabled\":\"false\",\"notifications.fanout.settle_seconds\":\"45\"}";
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State is { Loaded: true, RecordingPaused: false, SendingPaused: true });
+        foreach (var key in RetiredProcessingKeys)
+        {
+            Assert.DoesNotContain(key, h.Controller.State.Values.Keys); Assert.DoesNotContain(key, h.Controller.State.PersistedValues.Keys);
+            Assert.Throws<ArgumentException>(() => h.Controller.Set(key, "true"));
+        }
+        // A save carries only what was edited, and an answer that echoes the switch changes neither the form nor what is reported.
+        h.Write = _ => Task.FromResult(Saved("""{"notifications.ui_enabled":"false","notifications.fanout_enabled":"false"}"""));
+        h.Controller.Set("notifications.ui_enabled", "false");
+        await h.Controller.SaveAsync();
+        using (var body = JsonDocument.Parse(h.Kit.Http.Bodies.Last()))
+            Assert.Equal(["notifications.ui_enabled"], body.RootElement.GetProperty("values").EnumerateObject().Select(p => p.Name));
+        foreach (var sent in h.Kit.Http.Bodies) foreach (var key in RetiredProcessingKeys) Assert.DoesNotContain(key, sent, StringComparison.Ordinal);
+        Assert.True(h.Controller.State is { SendingPaused: true, RecordingPaused: false }); Assert.Empty(h.Controller.State.DirtyKeys);
+        // Recording off as well (a JSON boolean reads the same as the string).
+        h.Effective = current.TrimEnd('}') + ",\"notifications.release_events_enabled\":false,\"notifications.fanout_enabled\":\"false\"}";
+        await h.Controller.ReloadAsync(false);
+        Assert.True(h.Controller.State is { Loaded: true, RecordingPaused: true, SendingPaused: true });
+        // Both on, and a current server that no longer has them: nothing is reported.
+        h.Effective = current.TrimEnd('}') + ",\"notifications.release_events_enabled\":\"true\",\"notifications.fanout_enabled\":\"true\"}";
+        await h.Controller.ReloadAsync(false);
+        Assert.True(h.Controller.State is { Loaded: true, RecordingPaused: false, SendingPaused: false });
+        h.Effective = current;
+        await h.Controller.ReloadAsync(false);
+        Assert.True(h.Controller.State is { Loaded: true, RecordingPaused: false, SendingPaused: false });
+        Assert.Single(h.Writes);
+    }
+
+    [Fact]
     public async Task ANewServersAnswerWithoutTheRetiredKeysLoadsAndEveryRemainingPageKeyHasADisplayValue()
     {
         using var h = new Harness(); await h.Controller.OpenAsync();

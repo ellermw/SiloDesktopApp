@@ -4,7 +4,7 @@ Configure > Integrations > Notifications (`/admin/settings/notifications`) is re
 `t3/admin-notifications-parity-refresh` (from Beta `2a4c135c8`, `1.2.1324-beta.1`) against official Silo Server/WebUI
 `4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0` (the page was last verified against `217ff25abc`). Upstream removed the Processing section,
 its paused banner and seven settings (`f42b93271`); they are gone from the page, its key list, text table and tests, no request can carry
-them, and an older server that still has them is read without them (stored values keep applying there). The relay-clear, Discord-clear and
+them, and an older server that still has them is read without them (stored values keep applying there; a pipeline it reports as paused is said in a read-only notice, added in the QA fix pass). The relay-clear, Discord-clear and
 channel-delete confirmations use the official destructive fill `#dc2626` (hover is the official 90 % fill, pressed is native-only, system colors in a Windows contrast theme; page-local, shared style untouched),
 the relay and channel URL fields read left to right, channel names in confirmations are neutralized and bounded, and test, rotate and delete
 send nothing when the listed channel changed since it was shown. Status pills, channel cards, editor rows, load-failure wording and success
@@ -15,6 +15,7 @@ instead of nothing), retry buttons return only when a repeat can be sent, refuse
 `Plain` keeps U+200C/U+200D, host and server text are neutralized, card buttons are named for their channel, and empty status pills are
 collapsed (the lookup through `TextBlock.Parent`, null inside an unrealized Expander header, was the real cause of the old pill fault);
 details and the table of findings are in `docs/parity/admin-notifications-parity-refresh.md`. Plugin destinations (`bd40bd9eb`) are the viewer's Settings page, not this one. Request bodies are unchanged; no shared file changed.
+QA fix pass (not built or run): the older-server paused notice above, which adds one line to the shared `AdminConfigureServices.Keys`, and the system keyboard focus rectangle on the destructive confirm buttons.
 
 Runs (lane `admin-completion-lane-a`): baseline `notifref-baseline-r1` on unchanged Beta passed (35 PASS lines). First-pass acceptance
 `notifref-final-r1` on source commit `2d6d65f48`: 127 focused and 10,767 full unit cases passed, native `admin-configure-notifications`

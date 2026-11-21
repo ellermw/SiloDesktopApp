@@ -20,11 +20,12 @@ public sealed partial class AdminNotificationSettingsTests
         internal string Channels = """{"items":[],"page":{"has_more":false}}""";
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Read;
-        internal Harness()
+        // storeKeys: what the settings store reads. Production's shared store reads more than this page's own keys.
+        internal Harness(IEnumerable<string>? storeKeys = null)
         {
             Authority = new(Kit.Client, Kit.Auth);
             var settings = new AdminServerSettingsApi(Kit.Client);
-            Store = new(settings, Authority, AdminNotificationSettingsController.Keys, AdminNotificationSettingsController.Secrets);
+            Store = new(settings, Authority, storeKeys ?? AdminNotificationSettingsController.Keys, AdminNotificationSettingsController.Secrets);
             Controller = new(settings, Store, new AdminNotificationSettingsApi(Kit.Client), Authority);
             Kit.Http.Respond = (request, _) =>
             {

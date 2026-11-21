@@ -15,7 +15,8 @@ namespace SiloPlayer.Views.Admin;
 
 /// <summary>Configure > Integrations > Notifications. Page-owned lifetime, existing gutter/leave
 /// guard and no navigation motion. Official NotificationsAdminSettings.tsx / ServerNotificationChannels.tsx at 4a1ee058e.
-/// The Processing section and the paused banner were removed upstream (f42b93271) and are not on this page.</summary>
+/// The Processing section and the paused banner were removed upstream (f42b93271) and are not on this page. This app is updated
+/// separately from the server, so an older server that still reports its pipeline as paused gets a read-only notice.</summary>
 public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private sealed class Position { internal double Offset; }
@@ -28,7 +29,10 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     private readonly StackPanel _fields = new() { Spacing = 20 };
     private readonly TextBlock _title = U.Title(N("title"));
     private readonly StackPanel _loading = new() { Spacing = 16 };
-    private readonly TextBlock _error = U.Text("", 13);
+    private readonly TextBlock _error = U.Text("", 13), _paused = U.Text("", 13);
+    // Native-only wording: the official banner sent the admin to a section this page no longer has.
+    private const string PausedRecording = "This server reports that new content is not being recorded, so nothing can be sent. That setting is no longer in this app; turn it back on in the server's own web interface.";
+    private const string PausedSending = "This server reports that sending is paused; new content waits in the queue. That setting is no longer in this app; turn it back on in the server's own web interface.";
     private readonly Border _errorAlert;
     private readonly Button _reload = U.Action(N("reload"), "NotificationsReload");
     private readonly AdminSettingsSaveBar _saveBar = new("Notifications");
@@ -74,6 +78,8 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         _body.Children.Add(_loading);
         AutomationProperties.SetAutomationId(_error, "NotificationsError"); _errorAlert = U.Alert(_error); _errorAlert.CornerRadius = new(20); _errorAlert.Visibility = Visibility.Collapsed; _body.Children.Add(_errorAlert);
         _reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(true); }; _reload.Visibility = Visibility.Collapsed; _body.Children.Add(_reload);
+        AutomationProperties.SetAutomationId(_paused, "NotificationsDeliveryPaused"); AutomationProperties.SetLiveSetting(_paused, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        _paused.Visibility = Visibility.Collapsed; _fields.Children.Add(_paused);
         _fields.Children.Add(_delivery); BuildDelivery();
         _fields.Visibility = Visibility.Collapsed; _body.Children.Add(_fields); _body.Children.Add(_spacer); _scrollContent.Children.Add(_body); _scroll.Content = _scrollContent;
         _root.Children.Add(_scroll); _root.Children.Add(_saveBar); Content = _root;
@@ -234,6 +240,9 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
             _relayUrl.IsEnabled = editable && !state.SensitiveStatusError && !state.ManagedByEnv.Contains("notifications.push_relay_url");
         }
         finally { _sync = false; }
+        // Only an older server reports these; the retired switches themselves are neither shown nor sent.
+        U.UpdateLiveText(_paused, state.RecordingPaused ? PausedRecording : state.SendingPaused ? PausedSending : "");
+        _paused.Visibility = _paused.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _delivery.State(state.DirtyKeys.Count > 0 || state.RelayUrlDirty, N("deliveryDescription"));
         foreach (var (id, expander) in _advanced)
         {

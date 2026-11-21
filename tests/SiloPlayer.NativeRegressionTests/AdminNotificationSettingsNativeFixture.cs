@@ -137,9 +137,13 @@ internal static class AdminNotificationSettingsNativeFixture
             Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "navigation has no slide");
             Check(Desc(page).OfType<FrameworkElement>().Count(e => AutomationProperties.GetAutomationId(e).StartsWith("NotificationChannel_")) == 7, "seven delivery channels");
             Check(!Desc(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("web.", StringComparison.Ordinal)), "official catalog labels resolved");
-            // f42b93271: the Processing section, its retired settings and the paused banner are gone from the page.
+            // f42b93271: the Processing section, its retired settings and the official paused banner (it pointed at that section) are gone from the page.
             Check(!Desc(page).OfType<FrameworkElement>().Any(e => AutomationProperties.GetAutomationId(e) is { } id && (id.Contains("Processing") || id.Contains("fanout") || id.Contains("retention") || id.Contains("release_events"))), "no Processing section or retired setting control");
-            Check(!Desc(page).OfType<TextBlock>().Any(t => t.Text is "Processing" or "Pipeline" or "Retention" or "Notice new content" or "Settle window" || t.Text.Contains("under Processing")), "no Processing text and no paused banner");
+            Check(!Desc(page).OfType<TextBlock>().Any(t => t.Text is "Processing" or "Pipeline" or "Retention" or "Notice new content" or "Settle window" || t.Text.Contains("under Processing")), "no Processing text and no official paused banner");
+            // This server answers like an older one with both pipeline switches off. The app is updated separately from the server, so a paused
+            // pipeline is still said: read-only, without pointing at the removed section, and with no control for the retired switches.
+            await Until(() => Desc(page).OfType<TextBlock>().Any(t => AutomationProperties.GetAutomationId(t) == "NotificationsDeliveryPaused" && t.Visibility == Visibility.Visible
+                && t.Text.StartsWith("This server reports that new content is not being recorded", StringComparison.Ordinal)), "an older server's paused pipeline is reported in a read-only notice");
             await Until(() => Desc(page).OfType<TextBlock>().Any(t => t.Text == "Summary at 08:00" && t.Parent is Border) && Desc(page).OfType<TextBlock>().Any(t => t.Text == "Mail server not set up" && t.Parent is Border), "the email status pills are separate pills as officially");
             // Pills must be drawn without a resize: visible, with a real size.
             foreach (var pillText in new[] { "Registers on first send", "Mail server not set up", "Summary at 08:00", "Discord app connected", "2 destinations" })
@@ -378,6 +382,7 @@ internal static class AdminNotificationSettingsNativeFixture
     {
         var primary = Desc(dialog).OfType<Button>().First(b => b.Content?.ToString() == dialog.PrimaryButtonText);
         Check(primary.Background is SolidColorBrush { Color: { R: 0xDC, G: 0x26, B: 0x26 } } && primary.Foreground is SolidColorBrush { Color: { R: 255, G: 255, B: 255 } }, what + " confirm is the official destructive fill #dc2626 under white text");
+        Check(primary.UseSystemFocusVisuals, what + " confirm keeps the system keyboard focus rectangle");
         var root = Desc(primary).OfType<Border>().First(b => b.Name == "DestructiveRoot");
         VisualStateManager.GoToState(primary, "PointerOver", false);
         await Until(() => root.Background is SolidColorBrush { Color: { A: 0xE6, R: 0xDC, G: 0x26, B: 0x26 } }, what + " confirm hover fill applied");

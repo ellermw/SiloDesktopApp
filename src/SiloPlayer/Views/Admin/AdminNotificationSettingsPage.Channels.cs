@@ -233,7 +233,8 @@ public sealed partial class AdminNotificationSettingsPage
     /// <summary>Official --destructive-fill #dc2626 under white text; hover is the official <c>hover:bg-destructive-fill/90</c> (the fill at 90%
     /// opacity). The official button has no separate pressed state: the darker pressed fill is a native-only affordance. Page-local so the
     /// shared style and theme stay untouched. In a Windows contrast theme there is no fixed red: null leaves the dialog's default button,
-    /// which uses the system colors.</summary>
+    /// which uses the system colors. A style that is not based on the default Button style loses its keyboard focus rectangle unless it
+    /// asks for the system one, so this one does (with the default button's focus margin).</summary>
     internal static Style? DestructiveConfirmStyle()
     {
         if (HighContrastProbe()) return null;
@@ -261,6 +262,8 @@ public sealed partial class AdminNotificationSettingsPage
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(16, 8, 16, 8)));
         style.Setters.Add(new Setter(Control.FontWeightProperty, Microsoft.UI.Text.FontWeights.Medium));
         style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 36d));
+        style.Setters.Add(new Setter(Control.UseSystemFocusVisualsProperty, true));
+        style.Setters.Add(new Setter(FrameworkElement.FocusVisualMarginProperty, new Thickness(-3)));
         return style;
     }
     /// <summary>A confirmation in the destructive style. The action returns false when nothing was sent (the page is busy, or the
