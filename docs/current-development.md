@@ -15,6 +15,25 @@ value, `Build` on a disposed draft, a type-name collision with Providers' `Admin
 keyword in property getters, in-page writes held behind the discard dialog while a form was merely dirty, and a launcher
 set after the page was drawn being ignored.
 
+Independent review of November 20 (commit 2bba737ad, official df37bfc6d57b1680c0f7a59e51e15c8d0cfa6065, no P0) found six
+defects, all confirmed and fixed with tests: typed secrets stayed in a form after an accepted or unknown save when the
+re-read returned the same values (the form is now erased and drawn again; refusals and unsent saves keep what was typed;
+the repository form follows the same rule); a multi-select tick deleted stored values the options do not list (one-value
+add/remove, and every untouched field goes back exactly as stored); text from plugins, publishers and repositories could
+forge a line or reorder text in the install, update and uninstall confirmations (one text gate for every third-party text;
+the plugin ID and version stand on their own lines); a managed field failing its own rule blocked Save; a task-binding
+failure used the sign-in binding message; a 10-minute deadline over a whole upload (each request now has its own limit).
+Details: [docs/parity/admin-plugins.md](parity/admin-plugins.md).
+
+Acceptance after the review: label plugins2-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-b, task
+admin-families-nov20), stage final on source commit e7081f338 (docs only changed afterwards), build lease
+2026-11-21T02:21:59Z-02:28:25Z. Focused unit run 249/249 (filter AdminPlugin, AdminManageNavigation, AdminBackupsNavigation)
+and full unit suite 10,417/10,417 passed (0 failures, 0 skipped); app build, publish and native host built; native
+selectors admin-plugins (365 PASS, 0 FAIL), admin-playback-administration (99), admin-requests-management (37),
+admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed; source seal and payload
+unchanged. Earlier acceptance before the review: plugins-final-r2 below. Not observed: a live server, a slow real link,
+all-DPI/RTL rendering, the OS file picker, screen readers, Plugin Apps.
+
 Acceptance: label plugins-final-r2 (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20), stage
 final on the family's source (committed unchanged right after the run; only docs changed afterwards), build lease
 2026-11-21T01:29:12Z-01:35:01Z. Focused unit run 213/213 (filter AdminPlugin, AdminManageNavigation, AdminBackupsNavigation)
