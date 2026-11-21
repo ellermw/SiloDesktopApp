@@ -221,7 +221,8 @@ internal abstract class DashboardWidgetView : Grid
     protected FrameworkElement? Poster(string? url, double width, double height, bool dim = false)
     {
         var resolved = C.ResolveImage(url);
-        if (resolved == null || !Uri.TryCreate(resolved, UriKind.Absolute, out var uri)) return null;
+        // poster_url is server data: only a web address is loaded, never a file, UNC or package URI.
+        if (resolved == null || !Uri.TryCreate(resolved, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return null;
         return new Image
         {
             Source = new BitmapImage(uri) { DecodePixelWidth = (int)Math.Ceiling(width * 2), DecodePixelType = DecodePixelType.Logical },

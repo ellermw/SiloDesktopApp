@@ -19,7 +19,7 @@ public class ImageService : IDisposable
     private readonly ConcurrentQueue<string> _evictionOrder = new();
     private long _currentMemoryBytes;
     private readonly SemaphoreSlim _downloadLock = new(16);
-    private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _inflightDownloads = new();
+    private readonly ConcurrentDictionary<string, InflightDownload> _inflightDownloads = new();
     private readonly ConcurrentDictionary<string, long> _negativeCache = new();
     private readonly HashSet<string> _missingImages = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> _negativeEvictionOrder = new();
@@ -78,8 +78,7 @@ public class ImageService : IDisposable
             if (IsNegativeCacheHit(negativeCacheKey))
                 return null;
 
-            var downloadedPath = await GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http)
-                .WaitAsync(ct)
+            var downloadedPath = await GetOrStartDownloadAsync(negativeCacheKey, diskPath, url, http, ct)
                 .ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(downloadedPath) || !File.Exists(downloadedPath))
                 return null;
@@ -136,13 +135,46 @@ public class ImageService : IDisposable
                 return null;
 
             ct.ThrowIfCancellationRequested();
-            var download = GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http);
-            return await (waitForSharedDownload ? download : download.WaitAsync(ct)).ConfigureAwait(false);
+            return await GetOrStartDownloadAsync(negativeCacheKey, diskPath, url, http, ct, waitForSharedDownload)
+                .ConfigureAwait(false);
         }, ct);
     }
 
-    private Task<string?> GetOrStartDownloadAsync(
-        string cacheKey,
+    /// <summary>
+    /// One shared download per exact URL. <see cref="Waiters"/> counts the callers still waiting for it;
+    /// the state is guarded by a lock on the instance.
+    /// </summary>
+    private sealed class InflightDownload(string key)
+    {
+        public readonly string Key = key;
+        public Task<string?>? Completion;
+        public CancellationTokenSource? SlotWait;
+        public int Waiters;
+        public bool SlotHeld;
+        // Abandoned or finished: later callers start their own download.
+        public bool Closed;
+    }
+
+    private async Task<string?> GetOrStartDownloadAsync(
+        string negativeCacheKey,
+        string diskPath,
+        string url,
+        HttpClient http,
+        CancellationToken ct,
+        bool waitForSharedDownload = false)
+    {
+        var download = JoinInflightDownload(negativeCacheKey, diskPath, url, http);
+        try
+        {
+            return await (waitForSharedDownload ? download.Completion! : download.Completion!.WaitAsync(ct)).ConfigureAwait(false);
+        }
+        finally
+        {
+            LeaveInflightDownload(download);
+        }
+    }
+
+    private InflightDownload JoinInflightDownload(
         string negativeCacheKey,
         string diskPath,
         string url,
@@ -154,52 +186,111 @@ public class ImageService : IDisposable
         // signature then waits on the common disk lock and either reuses the
         // old request's successful file or performs its own recovery request.
         var inflightKey = negativeCacheKey;
-        var candidateDownload = new Lazy<Task<string?>>(() =>
-            DownloadAndCacheToDiskAsync(
-                diskPath,
-                url,
-                http,
-                negativeCacheKey),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-        var winningDownload = _inflightDownloads.GetOrAdd(inflightKey, candidateDownload);
-        var task = winningDownload.Value;
-
-        if (ReferenceEquals(winningDownload, candidateDownload))
+        while (true)
         {
-            task.ContinueWith(
-                _ => RemoveInflightDownload(inflightKey, winningDownload),
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-        }
+            var download = _inflightDownloads.GetOrAdd(inflightKey, static key => new InflightDownload(key));
+            lock (download)
+            {
+                if (!download.Closed)
+                {
+                    download.Waiters++;
+                    if (download.Completion == null)
+                    {
+                        download.SlotWait = new CancellationTokenSource();
+                        download.Completion = DownloadAndCacheToDiskAsync(
+                            download,
+                            download.SlotWait.Token,
+                            diskPath,
+                            url,
+                            http,
+                            negativeCacheKey);
+                        download.Completion.ContinueWith(
+                            _ => CloseInflightDownload(download),
+                            CancellationToken.None,
+                            TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default);
+                    }
+                    return download;
+                }
+            }
 
-        return task;
+            // Closed, and its removal may not have run yet.
+            RemoveInflightDownload(download);
+        }
     }
 
-    private void RemoveInflightDownload(string inflightKey, Lazy<Task<string?>>? lazyDownload)
+    private void LeaveInflightDownload(InflightDownload download)
     {
-        if (lazyDownload == null)
-            return;
+        lock (download)
+        {
+            if (--download.Waiters > 0 || download.SlotHeld || download.Closed)
+                return;
 
-        ((ICollection<KeyValuePair<string, Lazy<Task<string?>>>>)_inflightDownloads)
-            .Remove(new KeyValuePair<string, Lazy<Task<string?>>>(inflightKey, lazyDownload));
+            // Nobody waits for it and its transfer has not started: take it out of
+            // the slot queue, so posters that scrolled away do not hold back the
+            // ones now on screen. A transfer that holds a slot runs to its deadline.
+            download.Closed = true;
+            RemoveInflightDownload(download);
+            download.SlotWait!.Cancel();
+            download.SlotWait.Dispose();
+        }
+    }
+
+    private void CloseInflightDownload(InflightDownload download)
+    {
+        bool abandoned;
+        lock (download)
+        {
+            abandoned = download.Closed;
+            download.Closed = true;
+        }
+
+        // An abandoned download's slot wait is cancelled and disposed by the caller that left it.
+        if (abandoned)
+            return;
+        RemoveInflightDownload(download);
+        download.SlotWait!.Dispose();
+    }
+
+    private void RemoveInflightDownload(InflightDownload download)
+    {
+        ((ICollection<KeyValuePair<string, InflightDownload>>)_inflightDownloads)
+            .Remove(new KeyValuePair<string, InflightDownload>(download.Key, download));
     }
 
     private async Task<string?> DownloadAndCacheToDiskAsync(
+        InflightDownload download,
+        CancellationToken slotWait,
         string diskPath,
         string url,
         HttpClient http,
         string negativeCacheKey)
     {
-        // The slot wait is unbounded here (a caller's own cancellation abandons its wait in GetImageDiskPathAsync, not this shared
-        // download): a download queued behind a full poster grid or a slow server must still run, so the deadline bounds only the
-        // transfer and starts once the slot is held.
-        await _downloadLock.WaitAsync().ConfigureAwait(false);
+        // The slot wait has no deadline: a download queued behind a full poster grid or a slow server must still run while a
+        // caller waits for it, so the deadline bounds only the transfer and starts once the slot is held. The wait ends early
+        // only when every caller has left (LeaveInflightDownload); one caller's cancellation abandons its own wait, not this
+        // shared download.
+        try
+        {
+            await _downloadLock.WaitAsync(slotWait).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (slotWait.IsCancellationRequested)
+        {
+            return null;
+        }
         using var deadline = new CancellationTokenSource(_downloadTimeout);
         var ct = deadline.Token;
         string? tempPath = null;
         try
         {
+            lock (download)
+            {
+                // Abandoned as the slot was granted.
+                if (download.Closed)
+                    return null;
+                download.SlotHeld = true;
+            }
+
             // Double-check after acquiring lock
             if (IsUsableDiskFile(diskPath))
             {
