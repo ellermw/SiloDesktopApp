@@ -34,6 +34,7 @@ public class PluginAdminFormField
     public List<PluginAdminFormCondition>? ShowWhen { get; set; }
     public PluginAdminFormValidation? Validation { get; set; }
     public string? ExclusiveGroupField { get; set; }
+    public string? FillFrom { get; set; }
 }
 
 public class PluginAdminFormFieldOption
