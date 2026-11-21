@@ -120,21 +120,18 @@ public sealed partial class ToastContainer : UserControl
 
     private Border BuildToast(string message, ToastKind kind, string? actionLabel, Func<Task>? action)
     {
-        // An error toast uses the shared label red (--destructive-label, 5.24:1 on the raised surface the
-        // toast sits on; the plain text red is 3.89:1 there). It is the live brush, so it follows the in-app
-        // high contrast setting and a Windows contrast theme.
         var (iconGlyph, accent) = kind switch
         {
-            ToastKind.Success => ("\uE73E", (Brush)new SolidColorBrush(Color.FromArgb(0xFF, 0x22, 0xC5, 0x5E))),
-            ToastKind.Error => ("\uEA39", (Brush)Application.Current.Resources["ErrorLabelBrush"]),
-            ToastKind.Warning => ("\uE7BA", (Brush)new SolidColorBrush(Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24))),
-            _ => ("\uE946", (Brush)new SolidColorBrush((Color)Application.Current.Resources["AccentColor"])),
+            ToastKind.Success => ("\uE73E", Color.FromArgb(0xFF, 0x22, 0xC5, 0x5E)),
+            ToastKind.Error => ("\uEA39", Color.FromArgb(0xFF, 0xEF, 0x6B, 0x73)),
+            ToastKind.Warning => ("\uE7BA", Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
+            _ => ("\uE946", (Color)Application.Current.Resources["AccentColor"]),
         };
 
         var root = new Border
         {
             Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
-            BorderBrush = accent,
+            BorderBrush = new SolidColorBrush(accent),
             BorderThickness = new Thickness(1, 1, 1, 1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(14, 10, 14, 10),
@@ -153,7 +150,7 @@ public sealed partial class ToastContainer : UserControl
         {
             Glyph = iconGlyph,
             FontSize = 16,
-            Foreground = accent,
+            Foreground = new SolidColorBrush(accent),
             VerticalAlignment = VerticalAlignment.Center,
         };
         Grid.SetColumn(icon, 0);
