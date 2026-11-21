@@ -118,8 +118,39 @@ An unchanged value is accepted, because the API replaces the whole row.
 
 ## Verification
 
-(filled in after the runs; see `docs/current-development.md`)
+Lane `D:/SiloPlayer-build/admin-completion-lane-b`; every run through the build-lease script.
+
+- **Baseline on unchanged beta** (`signinref-baseline-r1`, `-Stage publish-native`, selector `admin-signin-security`): 172 checks passed, 0 failed (source
+  `d1144b96f`).
+- **Final** `signinref-final-r2` (`-Stage final`, source commit `d2433b896`): focused unit tests (`AdminSignInProvisioningTests`, `AdminAccessSecurityTests`,
+  `NetworkSignInContractTests`, `AdminManageNavigationTests`) 226 passed, 0 failed; full unit suite 11,027 passed, 0 failed; native groups `admin-signin-security` 262 checks,
+  `admin-configure-security` 374, `admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all 0 failed; payload and source seals verified.
+  `signinref-final-r1` (source `256e6d9ee`, 223 focused, 11,024 full, `admin-signin-security` 254) also passed; the final run was repeated only because a safety fix (a typed
+  secret erased after an unknown save outcome) was added afterwards.
+- **Stability**: `signinref-native-r1` (263 checks) and `signinref-native-r2` (262) of `admin-signin-security` on the same build, both 0 failed. The one-check
+  difference is the shared `ClickForDialog` helper logging an "enabled" line on a retry path of an existing step; no assertion differs.
+- The #225 checks ("an idle page does not rebuild its form", "a typed list stays in the same box", "an account re-read updates the status line and the button in place",
+  the typed-group-list steps) are unchanged and passed in every run. Nothing existing was weakened.
+- Unit tests added (`AdminSignInProvisioningTests`): every ownership shape present and absent, the older-server and malformed-ownership answers, label order, a
+  managed field never staged or sent (config save, connection test, binding enabled, auto-provision), the binding body (saved row, no `callback_mode`, a network binding keeps its `default_login`),
+  the refusal sentence and one-shot send, a deployment claim dropping a staged edit, a secret that is also multiline is masked, secrets (untouched not sent; erased after an accepted save and after an unknown
+  outcome; kept after a definite refusal; a staged clear is kept), a doubled binding change sent once, a failed test shows no server or typed text, the layout split, third-party text neutralization and bounding, direction rules.
+- Native block `AdminSignInProvisioningNativeFixture` (about 90 checks, run after the existing block under the same selector): loading, the break-glass sentence as one text element, each provider state on its card, a provisioned binding
+  (note, Turn on disabled, managed fields read-only, masked secret, nothing sent for the binding, no owned field in a save or a test), pending, needs setup, plugin off, none, a hostile name neutralized in a dialog title, the destructive fill,
+  a doubled activation sending one write, a network sign-in with an owned switch, an unknown-outcome write blocking until reload, a refused save keeping the draft and showing the reason without server text, an unknown-outcome save erasing a typed
+  secret, copy putting exactly the visible address on the clipboard (read back, then cleared), no rebuild while idle or typing, and left-to-right values on a right-to-left page.
+- **Captures** (PNG, in the lane's `results/<label>-admin-signin-security`, produced by the fixture at 1440, 1024, 800 and 560 px): opened and compared with the official layout read from `SignInSettings.tsx` /
+  `SignInProviderSlot.tsx`: `provisioning-overview-1440`, `provisioning-provisioned-1440`, `provisioning-provisioned-test-1440`, `provisioning-provisioned-800`, `provisioning-provisioned-560`, `provisioning-top-1024`
+  (from `signinref-dev-r9`, `dev-r10` and `final-r1`; the page's layout code is the same in `final-r2`). Not opened: `provisioning-provisioned-1024`, `provisioning-top-800`, `provisioning-top-560`, and the captures of the other
+  Access pages (unchanged). Dialogs and the ComboBox popup layer cannot be captured by `RenderTargetBitmap`: the dialogs were checked through automation (title, button fill and text, one write).
 
 ## Not verified
 
-(filled in after the runs)
+- No official server or screenshot exists to compare with: nothing here claims visual or pixel parity. Layout was compared with the official component source only.
+- A real deployment-provisioned server (a live `env_managed` payload), a real clipboard on other desktops, a real contrast theme switched while a dialog is open (the code follows
+  `HighContrastChanged`; it was not exercised), a live OIDC/LDAP provider, Narrator and an input method editor were not exercised. The right-to-left check forces the frame's flow direction; no Arabic or Hebrew catalog
+  is shipped.
+- The web-only presentation details listed under "Cannot" (icons, skeleton, inline code styling) and the focus move after a binding change are not reproduced.
+- Environment-managed sign-in **settings** (#4498 and its follow-ups): **after #234**.
+- The groups named in the brief as failing on beta (`admin-libraries`, `admin-users`, `admin-configure-maintenance`, `admin-configure-scheduled-tasks`, `admin-configure-search`, `admin-configure-storage`,
+  `admin-manage-download-settings`, `admin-monitor-logs`, `artwork-first-mount`, `advanced-overlays`) were not run.

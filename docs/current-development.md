@@ -1,3 +1,16 @@
+# November 21 — Admin Sign-in settings refreshed to official `02a9d1d3e1` (provisioned providers and the rest of the page)
+
+`t3/admin-signin-parity-refresh` (from beta `d1144b96f`) brings Configure > Sign-in settings (`/admin/settings/sign-in`) from official `217ff25abc` to
+`02a9d1d3e1b48d86437ad10c0b66ed0e3645d098`. A sign-in provider the deployment provisions (`env_managed` on the capability, the binding and the installation, plus
+`callback_mode` and `callback_pending`) shows "Managed by the environment", cannot be turned on or off or edited where it is owned, shows "Pending" while it waits for the public
+URL, and never has an owned field in a configuration save, a connection test or a binding write; an older server that sends none of it behaves as before. The page also follows the official layout
+(provider cards, numbered setup steps, connection-test result, network section, copy boxes, Retry after a failed plugin read), shows the no-break-glass warning as one sentence, reads setup values and
+addresses left to right, puts the official destructive fill on the turn-off confirmations, neutralizes third-party names, and erases a typed secret after an unknown save outcome. A network binding now writes its
+own saved `default_login`. Final run `signinref-final-r2` (source `d2433b896`): focused 226, full 11,027, native `admin-signin-security` 262, `admin-configure-security` 374, `admin-configure-general` 188,
+`admin-manage-foundation` 36, `admin-monitor` 113, all passing; two stability runs of `admin-signin-security` passed. Environment-managed sign-in settings wait for #234. Shared files touched:
+`SiloApiClient.AdminAccess.cs` (also API Keys and Policy; reads one new problem code) and `AdminText.cs`. Record, contract table, difference table and limits:
+[docs/parity/admin-signin-parity-refresh.md](parity/admin-signin-parity-refresh.md).
+
 # November 20 — Admin Plugins (Configure > Integrations > Plugins) built and verified
 
 `t3/admin-plugin-management` completes `/admin/plugins` and `/admin/plugins/:pluginId` against official
