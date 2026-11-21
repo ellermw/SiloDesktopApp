@@ -3,8 +3,9 @@ using SiloPlayer.Core.Localization;
 namespace SiloPlayer.Core.Services.Admin;
 
 /// <summary>Official English for the Home sections page keys the generated interface catalog does not carry
-/// (217ff25 web/src/locales/en.json rendered to ICU; rich-text tags keep their inner text). Keys the
-/// catalog has are read from it so translations apply.</summary>
+/// (1a93371 web/src/locales/en.json rendered to ICU; rich-text tags keep their inner text). Keys the
+/// catalog has are read from it so translations apply, except the few whose English changed after the catalog
+/// was generated: <see cref="Newer"/> gives those their current English while the interface language is English.</summary>
 public static class AdminHomeSectionsText
 {
     internal static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -53,6 +54,8 @@ public static class AdminHomeSectionsText
         ["web.admin.homeRows.select.turnedOffPartial"] = "{count, plural, one {Turned off {done_text} of # row.} other {Turned off {done_text} of # rows.}}",
         ["web.admin.homeRows.select.turnedOn"] = "{count, plural, one {Turned on # row.} other {Turned on # rows.}}",
         ["web.admin.homeRows.select.turnedOnPartial"] = "{count, plural, one {Turned on {done_text} of # row.} other {Turned on {done_text} of # rows.}}",
+        ["web.home.addRow.collection.library"] = "Library",
+        ["web.home.addRow.collection.noneInLibrary"] = "No collections of this type in this library.",
         ["web.home.addRow.collections.add"] = "Add",
         ["web.home.addRow.collections.addLabel"] = "Add collections",
         ["web.home.addRow.collections.added"] = "Added",
@@ -81,6 +84,18 @@ public static class AdminHomeSectionsText
         ["web.home.rows.kinds.collectionPosters"] = "A row of collections",
     };
 
+    /// <summary>
+    /// Official English that changed after the generated catalog was built (1a93371 renamed rule rows "Smart row"). Other languages keep the
+    /// catalog's translation of the earlier sentence until the catalog is regenerated; English reads the current sentence.
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, string> Newer = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["web.home.rows.groups.collections"] = "Collections & smart rows",
+        ["web.home.rows.groups.collectionsBlurb"] = "Your collections, or smart rows built from rules",
+        ["web.home.rows.kindSentences.customFilter"] = "Like a smart collection, but only a row. Pick titles with rules like genre and decade.",
+        ["web.home.rows.kinds.customFilter"] = "Smart row",
+    };
+
     /// <summary>True when the key has text: from the pinned table or the interface catalog.</summary>
     public static bool Has(string key) => English.ContainsKey(key) || MessageCatalog.English.Contains(key);
 
@@ -88,6 +103,7 @@ public static class AdminHomeSectionsText
     public static string T(string key, object? values = null)
     {
         var map = Values(values);
+        if (Newer.TryGetValue(key, out var newer) && AppStrings.Language == "en") return AdminText.Format(newer, map);
         var pinned = English.TryGetValue(key, out var text) ? AdminText.Format(text, map) : key;
         return AppStrings.Get(key, map, pinned);
     }
