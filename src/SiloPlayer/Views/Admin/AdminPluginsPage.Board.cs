@@ -264,7 +264,7 @@ public sealed partial class AdminPluginsPage
         var presentation = PresentationFor(state, plugin); var name = P.Name(plugin.PluginId, presentation); var status = P.Status(plugin);
         var update = P.PendingUpdate(plugin); var signature = plugin.Signature;
         var content = Stack(10);
-        content.Children.Add(TileHead(name, T.T("web.admin.plugins.tile.installedSubline", new { version = plugin.Version, source = P.SourceLabel(P.Tier(plugin)) })));
+        content.Children.Add(TileHead(name, T.T("web.admin.plugins.tile.installedSubline", new { version = P.Version(plugin.Version), source = P.SourceLabel(P.Tier(plugin)) })));
         content.Children.Add(TileSummary(P.Summary(presentation, plugin.Capabilities)));
         var left = new LogsWrapPanel { Spacing = 8 }; left.Children.Add(Ui.StatusLabel(status));
         if (plugin.EnvManaged != null) left.Children.Add(Text(T.T("web.admin.plugins.provisioning.managed"), 12, true));
@@ -277,10 +277,10 @@ public sealed partial class AdminPluginsPage
         if (signature?.State == "invalid") { right = Text("⚠ " + T.T("web.admin.plugins.signature.tileInvalid"), 12); ((TextBlock)right).Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Warning); }
         else if (plugin.UpdateFailure is { } failure)
         {
-            var failed = Text("⚠ " + T.T("web.admin.plugins.tile.updateFailed", new { version = failure.Version }), 12); failed.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Warning);
+            var failed = Text("⚠ " + T.T("web.admin.plugins.tile.updateFailed", new { version = P.Version(failure.Version) }), 12); failed.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Warning);
             failed.TextTrimming = TextTrimming.CharacterEllipsis; failed.TextWrapping = TextWrapping.NoWrap; ToolTipService.SetToolTip(failed, P.Redact(failure.Reason, 400)); right = failed;
         }
-        else if (update != null) right = Panel(Text(T.T("web.admin.plugins.tile.updateAvailable", new { version = update }), 12), 6, 6);
+        else if (update != null) right = Panel(Text(T.T("web.admin.plugins.tile.updateAvailable", new { version = P.Version(update) }), 12), 6, 6);
         else if (plugin.UpdatesPaused) right = Text(T.T("web.admin.plugins.tile.updatesPaused"), 12, true);
         else right = Capabilities(plugin.Capabilities);
         content.Children.Add(TileFooter(left, right));
@@ -377,10 +377,10 @@ public sealed partial class AdminPluginsPage
 
     private FrameworkElement CatalogTile(AdminPluginsState state, AdminPlugin entry, bool installed)
     {
-        var name = P.Name(entry); var publisher = entry.Presentation?.PublisherName?.Trim();
+        var name = P.Name(entry); var publisher = P.Publisher(entry.Presentation);
         var content = Stack(10);
         // The group heading already names the tier.
-        content.Children.Add(TileHead(name, string.IsNullOrEmpty(publisher) ? entry.Version : T.T("web.admin.plugins.tile.catalogSubline", new { publisher, version = entry.Version }), () => OpenDetail(entry.PluginId, entry)));
+        content.Children.Add(TileHead(name, publisher.Length == 0 ? P.Version(entry.Version) : T.T("web.admin.plugins.tile.catalogSubline", new { publisher, version = P.Version(entry.Version) }), () => OpenDetail(entry.PluginId, entry)));
         content.Children.Add(TileSummary(P.Summary(entry.Presentation, entry.Capabilities)));
         FrameworkElement right;
         if (installed) right = Text("✓ " + T.T("web.admin.plugins.tile.installed"), 12, true);
@@ -407,11 +407,12 @@ public sealed partial class AdminPluginsPage
         var pin = AdminPluginPin.Of(entry); var name = P.Name(entry); var notice = P.TierNotice(entry.SourceKind);
         var content = Stack(10);
         content.Children.Add(Text(T.T("web.admin.plugins.tile.confirmDescription", new { source = P.SourceLabel(entry.SourceKind), notice = notice ?? "" }).Trim(), 14));
-        var facts = Stack(2);
-        if (entry.Presentation?.PublisherName?.Trim() is { Length: > 0 } publisher) facts.Children.Add(Text(T.T("web.admin.plugins.detail.byPublisher", new { publisher }), 13, true));
-        facts.Children.Add(Text(T.T("web.admin.plugins.detail.version", new { version = entry.Version }), 13, true));
-        if (!string.IsNullOrEmpty(entry.RepositoryName) && entry.SourceKind == "external") facts.Children.Add(Text(T.T("web.admin.plugins.rail.repository") + ": " + entry.RepositoryName, 13, true));
-        var kinds = P.CapabilityList(entry.Capabilities); if (kinds.Length > 0) facts.Children.Add(Text(kinds, 13, true));
+        // The plugin ID and version come first, each on its own line, from the app's own data; what the plugin, its publisher or its
+        // repository say about themselves follows, one single-line fact each (every such text passed P.Clean already).
+        var facts = ConfirmIdentity(entry.PluginId, T.T("web.admin.plugins.detail.version", new { version = P.Version(entry.Version) }));
+        if (P.Publisher(entry.Presentation) is { Length: > 0 } publisher) facts.Children.Add(ConfirmLine(T.T("web.admin.plugins.detail.byPublisher", new { publisher }), "PluginConfirmPublisher"));
+        if (P.RepositoryName(entry.RepositoryName) is { Length: > 0 } repository && entry.SourceKind == "external") facts.Children.Add(ConfirmLine(T.T("web.admin.plugins.rail.repository") + ": " + repository, "PluginConfirmRepository"));
+        var kinds = P.CapabilityList(entry.Capabilities); if (kinds.Length > 0) facts.Children.Add(ConfirmLine(kinds, "PluginConfirmKinds"));
         content.Children.Add(facts);
         if (!await ConfirmAsync(T.T("web.admin.plugins.tile.confirmTitle", new { name }), content, T.T("web.admin.plugins.tile.confirmInstall"), "PluginsInstallConfirmation")) return;
         var outcome = await controller.InstallAsync(pin);

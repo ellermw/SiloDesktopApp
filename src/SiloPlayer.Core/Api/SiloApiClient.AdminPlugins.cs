@@ -10,12 +10,12 @@ public partial class SiloApiClient
     // Single-send transport. Even naturally idempotent plugin writes deliberately disable auth replay.
     internal async Task<ApiResponse<T>> AdminPluginSendAsync<T>(MonitorAuthorityLease lease, HttpMethod method, string path,
         object? body = null, string? etag = null, HttpStatusCode expected = HttpStatusCode.OK,
-        HttpContent? content = null, CancellationToken ct = default)
+        HttpContent? content = null, CancellationToken ct = default, TimeSpan? requestLimit = null)
     {
         lease.ThrowIfRetired();
         if (etag != null) AdminValidators.RequireStrong(etag);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
-        deadline.CancelAfter(method == HttpMethod.Get ? TimeSpan.FromSeconds(45) : TimeSpan.FromMinutes(3));
+        deadline.CancelAfter(requestLimit ?? (method == HttpMethod.Get ? TimeSpan.FromSeconds(45) : TimeSpan.FromMinutes(3)));
         using var request = CreateContextBoundRequest(lease.Context, method, path, body,
             etag == null ? null : new Dictionary<string, string> { ["If-Match"] = etag });
         if (content != null) request.Content = content;

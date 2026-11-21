@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 
@@ -331,4 +332,230 @@ public sealed class AdminPluginConfigDraftTests
         Assert.Equal("Silo couldn't update Evil<b>Name</b><link> to 2.0. <link>click</link>", string.Concat(runs.Select(r => r.Text)));
         Assert.Single(runs, run => run.Bold); Assert.DoesNotContain(runs, run => run.Link);
     }
+
+    // ── D1: typed values after a save ──────────────────────────────────────
+
+    private static AdminPluginConfigDraft SecretDraft(out AdminPluginField secret, out AdminPluginField host)
+    {
+        var draft = new AdminPluginConfigDraft(Schema("connection", """{"type":"object","properties":{"host":{"type":"string"},"password":{"type":"string","writeOnly":true}}}"""),
+            new() { ConfiguredSecrets = ["password"], Value = new() { ["host"] = J("fixture-host") } });
+        secret = draft.Fields.Single(f => f.Key == "password"); host = draft.Fields.Single(f => f.Key == "host");
+        return draft;
+    }
+
+    [Theory]
+    [InlineData(AdminPluginWriteOutcome.Done, true)]
+    [InlineData(AdminPluginWriteOutcome.Unknown, true)]
+    [InlineData(AdminPluginWriteOutcome.Refused, false)]
+    [InlineData(AdminPluginWriteOutcome.NotSent, false)]
+    public void ASaveTheServerTookOrMayHaveTakenErasesWhatWasTypedAndOtherOutcomesKeepIt(AdminPluginWriteOutcome outcome, bool erased)
+    {
+        using var draft = SecretDraft(out var secret, out var host);
+        draft.Set(secret, "synthetic-typed-secret"); draft.Set(host, "edited-host"); Assert.True(draft.IsDirty);
+        // The page does exactly this with the outcome of the save.
+        if (outcome.SettlesTypedValues()) draft.Dispose();
+        if (erased)
+        {
+            Assert.False(draft.IsDirty); Assert.Empty(draft.Build().Value); Assert.Null(draft.Get(secret)); Assert.DoesNotContain("synthetic-typed-secret", string.Concat(draft.Build().Value.Values.Select(v => v.GetRawText())));
+        }
+        else
+        {
+            Assert.True(draft.IsDirty); Assert.Equal("synthetic-typed-secret", draft.Build().Value["password"].GetString()); Assert.Equal("edited-host", draft.Build().Value["host"].GetString());
+        }
+    }
+
+    [Fact]
+    public void ARereadThatReturnsTheSameSecretsAndValuesBuildsAFormThatEqualsTheOldOneSoItMustBeDiscardedNotReused()
+    {
+        // This is the case the page's reuse check cannot tell apart: the fingerprint is equal, but the old form still holds the typed secret.
+        using var before = SecretDraft(out var secret, out _); using var after = SecretDraft(out _, out _);
+        Assert.Equal(before.Fingerprint, after.Fingerprint);
+        before.Set(secret, "synthetic-typed-secret");
+        Assert.True(before.IsDirty); Assert.False(after.IsDirty); Assert.Empty(after.Build().Value.Where(p => p.Key == "password"));
+    }
+
+    // ── D2: stored values the form cannot show ─────────────────────────────
+
+    private const string ArrayProperty = """{"type":"object","properties":{"tags":{"type":"array"}}}""";
+
+    private static AdminPluginConfigDraft TagsDraft(string saved, string jsonSchema = ArrayProperty)
+    {
+        var schema = Schema("lists", jsonSchema, new() { Fields = [new() { Key = "tags", Control = "MULTI_SELECT", Options = [new() { Value = "a", Label = "A" }, new() { Value = "b", Label = "B" }] }] });
+        return new AdminPluginConfigDraft(schema, new() { Value = new() { ["tags"] = JsonSerializer.Deserialize<JsonElement>(saved) } });
+    }
+
+    private static string[] Items(AdminPluginConfigDraft draft) => draft.Build().Value["tags"].EnumerateArray().Select(e => e.GetRawText()).ToArray();
+
+    [Fact]
+    public void TickingAnOptionAddsOnlyThatValueAndKeepsStoredValuesTheOptionsDoNotListInTheirOrder()
+    {
+        using var draft = TagsDraft("""["a","legacy"]""");
+        var tags = draft.Fields[0];
+        draft.SetOption(tags, "b", true);
+        Assert.Equal(["\"a\"", "\"legacy\"", "\"b\""], Items(draft));
+        draft.SetOption(tags, "a", false);
+        Assert.Equal(["\"legacy\"", "\"b\""], Items(draft));
+        draft.SetOption(tags, "b", false); draft.SetOption(tags, "b", false);
+        Assert.Equal(["\"legacy\""], Items(draft));
+        draft.SetOption(tags, "a", true); draft.SetOption(tags, "a", true);
+        Assert.Equal(["\"legacy\"", "\"a\""], Items(draft));
+    }
+
+    [Fact]
+    public void StoredNumbersAndOddItemsOfAChangedListGoBackAsStoredAndANewItemIsCoerced()
+    {
+        using var draft = TagsDraft("""[1,"legacy",2.5,"007"]""", "{}"); // no declared type: a new numeric-looking item becomes an integer
+        draft.SetOption(draft.Fields[0], "2", true);
+        Assert.Equal(["1", "\"legacy\"", "2.5", "\"007\"", "2"], Items(draft));
+    }
+
+    [Fact]
+    public void ATypedListKeepsTheDeclaredItemTypeForNewItemsAndTheStoredTypeForOldOnes()
+    {
+        using var draft = TagsDraft("""["12","x"]""", """{"type":"object","properties":{"tags":{"type":"array","items":{"type":"integer"}}}}""");
+        draft.SetOption(draft.Fields[0], "3", true);
+        Assert.Equal(["\"12\"", "\"x\"", "3"], Items(draft));
+    }
+
+    [Fact]
+    public void AnUntouchedListWithValuesOutsideTheOptionsGoesBackExactly()
+    {
+        using var draft = TagsDraft("""["legacy",3,"a"]""");
+        Assert.False(draft.IsDirty); Assert.Equal(["\"legacy\"", "3", "\"a\""], Items(draft));
+    }
+
+    [Fact]
+    public void ManagedMultiSelectIgnoresTicks()
+    {
+        var schema = Schema("lists", """{"type":"object","properties":{"tags":{"type":"array"}}}""", new() { Fields = [new() { Key = "tags", Control = "MULTI_SELECT" }] });
+        using var draft = new AdminPluginConfigDraft(schema, new() { Value = new() { ["tags"] = J(new[] { "a" }) } }, ["tags"]);
+        draft.SetOption(draft.Fields[0], "b", true); Assert.False(draft.IsDirty); Assert.DoesNotContain("tags", draft.Build().Value.Keys);
+    }
+
+    [Fact]
+    public void EveryControlSendsBackAStoredValueItCannotShowUnlessTheAdminChangesThatField()
+    {
+        var form = new AdminPluginForm { Fields =
+        [
+            new() { Key = "kind", Label = "Kind", Control = "SELECT", Options = [new() { Value = "x", Label = "X" }] },
+            new() { Key = "level", Label = "Level", Control = "SELECT", Options = [new() { Value = "1", Label = "One" }] },
+            new() { Key = "port", Label = "Port", Control = "NUMBER", Validation = new() { HasMin = true, Min = 1, HasMax = true, Max = 10 } },
+            new() { Key = "big", Label = "Big", Control = "NUMBER" },
+            new() { Key = "name", Label = "Name", Control = "TEXT", Validation = new() { MaxLength = 5 } },
+            new() { Key = "color", Label = "Color", Control = "COLOR_PICKER" },
+            new() { Key = "rules", Label = "Rules", Control = "TEXT" },
+            new() { Key = "other", Label = "Other", Control = "TEXT" },
+        ] };
+        var saved = new Dictionary<string, JsonElement>
+        {
+            ["kind"] = J("legacy-kind"), ["level"] = J(5), ["port"] = J(100), ["big"] = JsonSerializer.Deserialize<JsonElement>("12345678901234567890"),
+            ["name"] = J("far too long for the limit"), ["color"] = JsonSerializer.Deserialize<JsonElement>("""{"r":1,"g":2}"""), ["rules"] = JsonSerializer.Deserialize<JsonElement>("""["one","two"]"""), ["other"] = J("o"),
+        };
+        using var draft = new AdminPluginConfigDraft(Schema("c", "{}", form), new() { Value = saved });
+        var body = draft.Build().Value;
+        foreach (var (key, raw) in saved) Assert.Equal(raw.GetRawText(), body[key].GetRawText());
+        // Changing one field changes only that field.
+        draft.Set(draft.Fields.Single(f => f.Key == "other"), "changed"); body = draft.Build().Value;
+        foreach (var (key, raw) in saved.Where(p => p.Key != "other")) Assert.Equal(raw.GetRawText(), body[key].GetRawText());
+        Assert.Equal("changed", body["other"].GetString());
+        draft.Set(draft.Fields.Single(f => f.Key == "kind"), "x"); Assert.Equal("x", draft.Build().Value["kind"].GetString());
+    }
+
+    // ── D4: managed fields never block Save ────────────────────────────────
+
+    [Fact]
+    public void AManagedFieldThatFailsItsOwnRuleNeverBlocksSaveAndIsNeverSent()
+    {
+        var form = new AdminPluginForm { Fields =
+        [
+            new() { Key = "locked", Label = "Locked", Control = "TEXT", Required = true, Validation = new() { Pattern = "^[A-Z]+$" } },
+            new() { Key = "port", Label = "Port", Control = "NUMBER", Validation = new() { HasMax = true, Max = 10 } },
+        ] };
+        using var draft = new AdminPluginConfigDraft(Schema("c", "{}", form), new() { Value = new() { ["locked"] = J(""), ["port"] = J(1) } }, ["locked"]);
+        Assert.Empty(draft.Errors());
+        draft.Set(draft.Fields[1], "50"); Assert.Equal(["port"], draft.Errors().Keys.ToArray());
+        draft.Set(draft.Fields[1], "5"); Assert.Empty(draft.Errors());
+        Assert.Equal(["port"], draft.Build().Value.Keys.ToArray());
+        // The value the deployment set that fails the rule is also not an error once it is non-empty.
+        using var lowercase = new AdminPluginConfigDraft(Schema("c", "{}", form), new() { Value = new() { ["locked"] = J("lowercase") } }, ["locked"]);
+        Assert.Empty(lowercase.Errors());
+    }
+
+    // ── D3: text from plugins, publishers and repositories ─────────────────
+
+    [Theory]
+    [InlineData("Acme\nVerified and signed by Silo. Requests no permissions.", "Acme Verified and signed by Silo. Requests no permissions.")]
+    [InlineData("Acme\r\nVerified", "Acme Verified")]
+    [InlineData("Update to 2.0\u202E1.0", "Update to 2.0 1.0")]
+    [InlineData("  a \t\t b\u2028c\u2029d   ", "a b c d")]
+    [InlineData("x\u200Ey\u200Fz\u202Aa\u202Bb\u202Cc\u202Dd\u202Ee\u2066f\u2067g\u2068h\u2069i", "x y z a b c d e f g h i")]
+    [InlineData("\u202E\u202E", "")]
+    [InlineData("bell\u0007and\u0000nul", "bell and nul")]
+    public void ThirdPartyTextBecomesOneLineWithoutControlOrDirectionCharacters(string raw, string expected) => Assert.Equal(expected, AdminPluginPresentation.Clean(raw));
+
+    [Fact]
+    public void ThirdPartyTextIsBoundedAndNeverCutInsideASurrogatePair()
+    {
+        Assert.Equal(40, AdminPluginPresentation.Clean(new string('x', 5000), 40).Length);
+        Assert.EndsWith("…", AdminPluginPresentation.Clean(new string('x', 5000), 40));
+        var emoji = string.Concat(Enumerable.Repeat("😀", 50));
+        foreach (var max in new[] { 9, 10, 11, 12 })
+        {
+            var cut = AdminPluginPresentation.Clean(emoji, max);
+            Assert.True(cut.Length <= max); Assert.False(char.IsHighSurrogate(cut[^2]));
+        }
+        Assert.Equal("", AdminPluginPresentation.Clean(null)); Assert.Equal("", AdminPluginPresentation.Clean("anything", 0));
+    }
+
+    [Fact]
+    public void EveryNameThePagesShowComesOutAsOneLine()
+    {
+        var hostile = new AdminPluginInfo { DisplayName = "Acme\nVerified and signed by Silo. Requests no permissions.\u202E", PublisherName = "Pub\u2028Lisher\u202E", Summary = "Sum\nmary", LicenseSpdx = "MIT\n" };
+        var name = AdminPluginPresentation.Name("acme.plugin", hostile);
+        Assert.Equal("Acme Verified and signed by Silo. Requests no permissions.", name);
+        Assert.Equal("Pub Lisher", AdminPluginPresentation.Publisher(hostile)); Assert.Equal("Sum mary", AdminPluginPresentation.Summary(hostile, []));
+        Assert.Equal("MIT", AdminPluginPresentation.License(hostile.LicenseSpdx));
+        Assert.Equal("1.0 Verified", AdminPluginPresentation.Version("1.0\nVerified")); Assert.Equal(AdminPluginPresentation.VersionLimit, AdminPluginPresentation.Version(new string('9', 500)).Length);
+        Assert.Equal("Name Two", AdminPluginPresentation.RepositoryName("Name\u202E\nTwo"));
+        Assert.Equal("Evil kind", AdminPluginPresentation.Kind("evil\nkind.v1").Label);
+        Assert.Equal("Api Key", AdminPluginPresentation.HumanizeConfigKey("api\n_key"));
+        Assert.Equal("Title Two", AdminPluginPresentation.ConfigTitle(new AdminPluginSchema { Key = "k", Title = "Title\n\u202ETwo" }));
+        Assert.Equal("owner /name", AdminPluginPresentation.SignatureRepositoryLabel("owner" + (char)0x202E + "/name\n"));
+        // A plugin with no display name derives it from an ID that is itself hostile.
+        Assert.DoesNotContain('\n', AdminPluginPresentation.Name("silo.x\ny", null));
+    }
+
+    [Fact]
+    public void ValuesInsertedIntoAMessageCarryNoLineBreakAndNoDirectionControl()
+    {
+        Assert.Equal("by Acme Verified", AdminPluginsText.T("web.admin.plugins.detail.byPublisher", new { publisher = "Acme\nVerified\u202E" }));
+        Assert.Equal("Version 1.0 2.0", AdminPluginsText.T("web.admin.plugins.detail.version", new { version = "1.0\u2028\u20292.0" }));
+        var runs = AdminPluginsText.Runs("web.admin.plugins.detail.updateFailed", new { name = "N\nX", b = "", version = "2.0\u202E", reason = "r\ns" });
+        var shown = string.Concat(runs.Select(r => r.Text)); Assert.DoesNotContain('\n', shown); Assert.DoesNotContain((char)0x202E, shown);
+    }
+
+    [Fact]
+    public void ServerAndPluginErrorTextIsOneLineAndADirectionControlCannotHideACredentialKeyword()
+    {
+        Assert.Equal("first second", AdminPluginPresentation.Redact("first\n\nsecond\u202E", 400));
+        Assert.DoesNotContain("hunter2", AdminPluginPresentation.Redact("pass\u202Eword=hunter2", 400));
+        Assert.DoesNotContain("hunter2", AdminPluginPresentation.Redact("api_\u200Ekey: hunter2", 400));
+    }
+
+    [Fact]
+    public void ReadmeTextKeepsItsLineBreaksButNeverADirectionControl()
+    {
+        var blocks = AdminPluginMarkdown.Parse("First\u202E paragraph\n\nSecond\u2066 paragraph\u2029Third");
+        Assert.True(blocks.Count >= 2);
+        var text = string.Concat(blocks.SelectMany(b => b.Items).SelectMany(i => i).Select(r => r.Text));
+        Assert.DoesNotContain((char)0x202E, text); Assert.DoesNotContain((char)0x2066, text); Assert.Contains("First", text);
+        Assert.Equal(AdminPluginPresentation.StripDirectionControls("a\u200Eb\nc"), "ab\nc");
+    }
+
+    [Theory]
+    [InlineData("plugin\u202Efdp.zip")]
+    [InlineData("plugin\nname.zip")]
+    [InlineData("plugin\u2028.zip")]
+    public void AnUploadNameThatCouldReorderOrBreakTheConfirmationIsNotAccepted(string name) =>
+        Assert.Equal(AdminPluginUploadCheck.InvalidName, AdminPluginsApi.CheckUpload(name, 10));
 }

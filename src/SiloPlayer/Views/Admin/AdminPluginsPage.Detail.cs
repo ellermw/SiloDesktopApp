@@ -103,10 +103,10 @@ public sealed partial class AdminPluginsPage
         var canRestart = runtime.Resident && installation.Enabled;
         var adminRoutes = installation.Routes.Where(route => route.Navigable && route.NavigationKind == "admin").ToArray();
         var idle = !state.Busy && !state.Loading;
-        var publisher = presentation?.PublisherName?.Trim();
+        var publisher = P.Publisher(presentation);
         var meta = new List<FrameworkElement>();
-        if (!string.IsNullOrEmpty(publisher)) meta.Add(Meta(T.T("web.admin.plugins.detail.byPublisher", new { publisher })));
-        meta.Add(Meta(T.T("web.admin.plugins.detail.version", new { version = installation.Version })));
+        if (publisher.Length > 0) meta.Add(Meta(T.T("web.admin.plugins.detail.byPublisher", new { publisher })));
+        meta.Add(Meta(T.T("web.admin.plugins.detail.version", new { version = P.Version(installation.Version) })));
         var jobs = P.CapabilityList(installation.Capabilities); if (jobs.Length > 0) meta.Add(Meta(jobs));
         meta.Add(Meta(P.SourceLabel(tier))); meta.Add(Ui.StatusLabel(status));
         var actions = new List<FrameworkElement>();
@@ -206,7 +206,7 @@ public sealed partial class AdminPluginsPage
         foreach (var route in routes)
         {
             // Plugin-contributed pages belong to Plugin Apps, which this build does not host: a real entry, disabled, with its reason.
-            var item = new MenuFlyoutItem { Text = string.IsNullOrEmpty(route.NavigationLabel) ? route.Path : route.NavigationLabel, IsEnabled = false };
+            var item = new MenuFlyoutItem { Text = P.Clean(string.IsNullOrEmpty(route.NavigationLabel) ? route.Path : route.NavigationLabel, P.NameLimit), IsEnabled = false };
             ToolTipService.SetToolTip(item, "Plugin pages are not available in this app yet."); AutomationProperties.SetAutomationId(item, "PluginRoute_" + route.Id); flyout.Items.Add(item);
         }
         if (flyout.Items.Count > 0) flyout.Items.Add(new MenuFlyoutSeparator());
@@ -223,21 +223,43 @@ public sealed partial class AdminPluginsPage
         if (await controller.CommandAsync(pin, AdminPluginCommand.Restart) != AdminPluginWriteOutcome.Done) RebuildNow();
     }
 
+    /// <summary>One fact on its own line. The text is already single-line, so it cannot carry a second line of its own.</summary>
+    private static TextBlock ConfirmLine(string text, string id)
+    {
+        var line = Text(text, 13, true); line.IsTextSelectionEnabled = true; AutomationProperties.SetAutomationId(line, id); return line;
+    }
+
+    /// <summary>
+    /// The lines every install, update and uninstall confirmation opens with: the plugin ID and the version, each on its own line,
+    /// from the app's own data. Text a plugin, publisher or repository supplied is added after them, never in their place.
+    /// </summary>
+    private static StackPanel ConfirmIdentity(string pluginId, string versionText)
+    {
+        var facts = Stack(2);
+        facts.Children.Add(ConfirmLine(T.T("web.admin.plugins.rail.pluginId") + ": " + P.Clean(pluginId, P.IdLimit), "PluginConfirmId"));
+        facts.Children.Add(ConfirmLine(versionText, "PluginConfirmVersion"));
+        return facts;
+    }
+
     /// <summary>Applies the recorded update. The confirmation names the version that was offered; a different recorded version sends nothing.</summary>
     private async Task UpdateAsync(AdminPlugin installation, AdminPluginPin pin, string version, string name)
     {
         var controller = _controller; if (controller == null) return;
         var tier = P.Tier(installation); var content = Stack(10);
         content.Children.Add(Text(T.T("web.admin.plugins.tile.confirmDescription", new { source = P.SourceLabel(tier), notice = P.TierNotice(tier) ?? "" }).Trim(), 14));
-        content.Children.Add(Text(name + ": " + T.T("web.admin.plugins.detail.version", new { version = installation.Version }) + " → " + T.T("web.admin.plugins.detail.version", new { version }), 13, true));
-        if (!await ConfirmAsync(T.T("web.admin.plugins.detail.updateTo", new { version }), content, T.T("web.admin.plugins.detail.updateTo", new { version }), "PluginsUpdateConfirmation")) return;
+        var facts = ConfirmIdentity(installation.PluginId, T.T("web.admin.plugins.detail.version", new { version = P.Version(installation.Version) }) + " → " + T.T("web.admin.plugins.detail.version", new { version = P.Version(version) }));
+        facts.Children.Add(ConfirmLine(name, "PluginConfirmName")); content.Children.Add(facts);
+        if (!await ConfirmAsync(T.T("web.admin.plugins.detail.updateTo", new { version = P.Version(version) }), content, T.T("web.admin.plugins.detail.updateTo", new { version = P.Version(version) }), "PluginsUpdateConfirmation")) return;
         if (await controller.CommandAsync(pin, AdminPluginCommand.Update) != AdminPluginWriteOutcome.Done) RebuildNow();
     }
 
     private async Task UninstallAsync(AdminPluginPin pin, string name)
     {
         var controller = _controller; if (controller == null) return;
-        if (!await ConfirmAsync(T.T("web.admin.plugins.detail.uninstallTitle", new { name }), Text(T.T("web.admin.plugins.detail.uninstallDescription"), 14), T.T("web.admin.plugins.detail.uninstallConfirm"), "PluginsUninstallConfirmation", destructive: true)) return;
+        var content = Stack(10);
+        content.Children.Add(Text(T.T("web.admin.plugins.detail.uninstallDescription"), 14));
+        content.Children.Add(ConfirmIdentity(pin.PluginId, T.T("web.admin.plugins.detail.version", new { version = P.Version(pin.Version) })));
+        if (!await ConfirmAsync(T.T("web.admin.plugins.detail.uninstallTitle", new { name }), content, T.T("web.admin.plugins.detail.uninstallConfirm"), "PluginsUninstallConfirmation", destructive: true)) return;
         var outcome = await controller.CommandAsync(pin, AdminPluginCommand.Uninstall);
         if (outcome == AdminPluginWriteOutcome.Done && _controller != null) { DiscardForms(); await GoAsync(new(AdminRoute.Plugins)); }
         else RebuildNow();
@@ -272,7 +294,7 @@ public sealed partial class AdminPluginsPage
     private FrameworkElement MissingConfig(string name, IReadOnlyList<AdminPluginSchema> missing)
     {
         // "Finish setting up {name}. Add {fields}. ..." where each field name jumps to its settings panel.
-        const string marker = "\u0001";
+        const string marker = "\uE010"; // a private-use mark: a control character would be replaced like any other by the text gate
         var runs = T.Runs("web.admin.plugins.detail.missingConfig", new { name, b = "", fields = marker });
         var block = Text("", 13); block.IsTextSelectionEnabled = true;
         foreach (var run in runs)
@@ -285,7 +307,7 @@ public sealed partial class AdminPluginsPage
             {
                 if (index > 0) Add(index == missing.Count - 1 ? " and " : ", ");
                 var schema = missing[index]; var link = new Microsoft.UI.Xaml.Documents.Hyperlink();
-                link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = string.IsNullOrWhiteSpace(schema.Title) ? schema.Key : schema.Title.Trim() });
+                link.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = P.ConfigTitle(schema) });
                 link.Click += (_, _) => { if (_forms.Values.FirstOrDefault(form => form.SchemaKey == schema.Key) is { } form) form.FocusFirst(); };
                 block.Inlines.Add(link);
             }
@@ -324,7 +346,7 @@ public sealed partial class AdminPluginsPage
         }
         foreach (var schema in installation.GlobalConfigSchema)
         {
-            var body = Ui.Card(main, P.ConfigTitle(schema), string.IsNullOrEmpty(schema.Description) ? null : schema.Description, missingKeys.Contains(schema.Key) ? T.T("web.admin.plugins.settings.required") : null, "config-" + schema.Key);
+            var body = Ui.Card(main, P.ConfigTitle(schema), P.Clean(schema.Description, 600) is { Length: > 0 } schemaText ? schemaText : null, missingKeys.Contains(schema.Key) ? T.T("web.admin.plugins.settings.required") : null, "config-" + schema.Key);
             body.Children.Add(ConfigForm(state, installation, pin, schema));
         }
         if (auth.Length > 0) BuildAuth(state, installation, pin, auth);
@@ -345,7 +367,11 @@ public sealed partial class AdminPluginsPage
         }
         Func<AdminPluginConfigWrite, Task<AdminPluginCheck?>>? test = null;
         if (installation.ConnectionCheckSupported) test = async write => await (_controller?.TestConfigAsync(pin, write) ?? Task.FromResult<AdminPluginCheck?>(null));
-        var view = new AdminPluginConfigView(draft, async write => await (_controller?.SaveConfigAsync(pin, write) ?? Task.FromResult(AdminPluginWriteOutcome.NotSent)), test);
+        // A save the server took, or may have taken, erases what was typed; the form is then drawn again from what the page reads back,
+        // even when those stored values equal the old ones (the fingerprint match above would otherwise keep a form that still holds
+        // the typed secret). After a refusal or a save that was never sent the form stays as it is.
+        var view = new AdminPluginConfigView(draft, async write => await (_controller?.SaveConfigAsync(pin, write) ?? Task.FromResult(AdminPluginWriteOutcome.NotSent)), test,
+            settled: settled => { if (_forms.TryGetValue(key, out var current) && ReferenceEquals(current, settled)) _forms.Remove(key); RebuildNow(); });
         _forms[key] = view; return view;
     }
 
@@ -355,11 +381,11 @@ public sealed partial class AdminPluginsPage
         for (var index = 0; index < capabilities.Length; index++)
         {
             var capability = capabilities[index]; var binding = installation.AuthBindings.FirstOrDefault(b => b.CapabilityId == capability.Id);
-            var label = string.IsNullOrEmpty(capability.DisplayName) ? capability.Id : capability.DisplayName; var locked = capability.EnvManaged?.Contains("enabled") == true; var order = index + 1;
+            var label = P.Clean(string.IsNullOrWhiteSpace(capability.DisplayName) ? capability.Id : capability.DisplayName, P.NameLimit); var locked = capability.EnvManaged?.Contains("enabled") == true; var order = index + 1;
             var row = new Grid { ColumnSpacing = 16 };
             row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             var texts = Stack(2); texts.Children.Add(Text(label, 14));
-            if (!string.IsNullOrEmpty(capability.Description)) texts.Children.Add(Text(capability.Description, 13, true));
+            if (P.Clean(capability.Description, 600) is { Length: > 0 } capabilityText) texts.Children.Add(Text(capabilityText, 13, true));
             if (binding?.CallbackPending == true) texts.Children.Add(Text(T.T("web.admin.plugins.provisioning.pending"), 12, true));
             if (locked) texts.Children.Add(Text(T.T("web.admin.plugins.provisioning.managed"), 12, true));
             row.Children.Add(texts);
@@ -381,13 +407,13 @@ public sealed partial class AdminPluginsPage
         foreach (var capability in capabilities)
         {
             var binding = installation.TaskBindings.FirstOrDefault(b => b.CapabilityId == capability.Id);
-            var label = string.IsNullOrEmpty(capability.DisplayName) ? capability.Id : capability.DisplayName;
+            var label = P.Clean(string.IsNullOrWhiteSpace(capability.DisplayName) ? capability.Id : capability.DisplayName, P.NameLimit);
             var trigger = P.TaskTrigger(binding?.Trigger, capability.DefaultSchedule); var enabled = binding?.Enabled ?? true;
             var registered = installation.Enabled && enabled;
             var row = new Grid { ColumnSpacing = 16 };
             row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             var texts = Stack(4); texts.Children.Add(Text(label, 14));
-            if (!string.IsNullOrEmpty(capability.Description)) texts.Children.Add(Text(capability.Description, 13, true));
+            if (P.Clean(capability.Description, 600) is { Length: > 0 } capabilityText) texts.Children.Add(Text(capabilityText, 13, true));
             texts.Children.Add(Text(T.T("web.admin.plugins.settings.defaultSchedule", new { schedule = AdminTasksText.DescribeTrigger(trigger) }), 13, true));
             if (registered)
             {
@@ -412,10 +438,10 @@ public sealed partial class AdminPluginsPage
 
     private void BuildPreview(AdminPluginsState state, AdminPlugin entry, AdminPluginProvisionStatus? provisioning)
     {
-        var name = P.Name(entry); var publisher = entry.Presentation?.PublisherName?.Trim();
+        var name = P.Name(entry); var publisher = P.Publisher(entry.Presentation);
         var meta = new List<FrameworkElement>();
-        if (!string.IsNullOrEmpty(publisher)) meta.Add(Meta(T.T("web.admin.plugins.detail.byPublisher", new { publisher })));
-        meta.Add(Meta(T.T("web.admin.plugins.detail.version", new { version = entry.Version })));
+        if (publisher.Length > 0) meta.Add(Meta(T.T("web.admin.plugins.detail.byPublisher", new { publisher })));
+        meta.Add(Meta(T.T("web.admin.plugins.detail.version", new { version = P.Version(entry.Version) })));
         var jobs = P.CapabilityList(entry.Capabilities); if (jobs.Length > 0) meta.Add(Meta(jobs));
         meta.Add(Meta(P.SourceLabel(entry.SourceKind))); meta.Add(Ui.StatusLabel(T.T("web.admin.plugins.detail.notInstalled"), AdminPluginTone.Muted));
         var installing = state.Busy && state.BusyKey == entry.PluginId;
@@ -434,7 +460,7 @@ public sealed partial class AdminPluginsPage
             {
                 var line = Stack(2); var title = new LogsWrapPanel { Spacing = 8 }; title.Children.Add(Text(P.ConfigTitle(schema), 14));
                 if (schema.Required) title.Children.Add(Panel(Text(T.T("web.admin.plugins.settings.required"), 11), 6, 4, border: true));
-                line.Children.Add(title); if (!string.IsNullOrEmpty(schema.Description)) line.Children.Add(Text(schema.Description, 13, true));
+                line.Children.Add(title); if (P.Clean(schema.Description, 600) is { Length: > 0 } previewText) line.Children.Add(Text(previewText, 13, true));
                 body.Children.Add(line);
             }
         }
@@ -458,7 +484,7 @@ public sealed partial class AdminPluginsPage
     private void BuildRail(string pluginId, AdminPluginInfo? presentation, AdminPlugin? installation, AdminPlugin? catalogEntry, string tier)
     {
         var rail = _detailRail!; AutomationProperties.SetName(rail, T.T("web.admin.plugins.rail.label"));
-        var repositoryName = !string.IsNullOrEmpty(installation?.RepositoryName) ? installation.RepositoryName : catalogEntry?.RepositoryName;
+        var repositoryName = P.RepositoryName(!string.IsNullOrEmpty(installation?.RepositoryName) ? installation.RepositoryName : catalogEntry?.RepositoryName);
         var repoUrl = !string.IsNullOrEmpty(installation?.RepoUrl) ? installation.RepoUrl : catalogEntry?.RepoUrl;
         if (!string.IsNullOrWhiteSpace(presentation?.SetupMarkdown)) RailCard(rail, T.T("web.admin.plugins.rail.setup")).Children.Add(Ui.Markdown(presentation.SetupMarkdown, OpenLink));
         if (!string.IsNullOrWhiteSpace(presentation?.DescriptionMarkdown)) RailCard(rail, T.T("web.admin.plugins.rail.about")).Children.Add(Ui.Markdown(presentation.DescriptionMarkdown, OpenLink));
@@ -471,8 +497,8 @@ public sealed partial class AdminPluginsPage
             RailCard(rail, T.T("web.admin.plugins.rail.process")).Children.Add(process);
         }
         var facts = Stack(8);
-        var id = Text(pluginId, 12.5, mono: true); id.IsTextSelectionEnabled = true; Fact(facts, T.T("web.admin.plugins.rail.pluginId"), id);
-        var publisher = presentation?.PublisherName?.Trim();
+        var id = Text(P.Clean(pluginId, P.IdLimit), 12.5, mono: true); id.IsTextSelectionEnabled = true; Fact(facts, T.T("web.admin.plugins.rail.pluginId"), id);
+        var publisher = P.Publisher(presentation);
         if (!string.IsNullOrEmpty(publisher))
             Fact(facts, T.T("web.admin.plugins.rail.publisher"), Ui.Link(publisher, presentation?.PublisherUrl, OpenLink, "PluginPublisher") ?? Text(publisher, 13));
         Fact(facts, T.T("web.admin.plugins.rail.source"), Text(P.SourceLabel(tier), 13));

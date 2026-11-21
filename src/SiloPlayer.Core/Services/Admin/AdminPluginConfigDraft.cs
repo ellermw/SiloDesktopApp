@@ -19,7 +19,11 @@ public sealed class AdminPluginConfigDraft : IDisposable
     private static readonly TimeSpan RegexLimit = TimeSpan.FromMilliseconds(100);
     private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
     private readonly Dictionary<string, object?> _initial = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, JsonElement> _rawArrays = new(StringComparer.Ordinal);
+    // What the server stored for each editable, non-secret field, exactly as sent: an untouched field goes back as it came,
+    // whatever the form could show of it (a value outside the options, a number outside its range, an unknown shape).
+    private readonly Dictionary<string, JsonElement> _rawValues = new(StringComparer.Ordinal);
+    // The stored items of an array field, each with the text the form shows for it, so a changed list keeps the items the admin did not touch.
+    private readonly Dictionary<string, List<(string Text, JsonElement Raw)>> _rawItems = new(StringComparer.Ordinal);
     private readonly HashSet<string> _clear = new(StringComparer.Ordinal);
     private readonly List<string> _clearOrder = [];
     private readonly Dictionary<string, AdminPluginFieldType> _types;
@@ -46,7 +50,11 @@ public sealed class AdminPluginConfigDraft : IDisposable
         {
             var value = StartingValue(field, saved?.Value);
             _values[field.Key] = value; _initial[field.Key] = Copy(value);
-            if (value is List<string> && saved != null && saved.Value.TryGetValue(field.Key, out var raw) && raw.ValueKind == JsonValueKind.Array) _rawArrays[field.Key] = raw.Clone();
+            if (!IsSecret(field) && saved != null && saved.Value.TryGetValue(field.Key, out var raw))
+            {
+                _rawValues[field.Key] = raw.Clone();
+                if (value is List<string> && raw.ValueKind == JsonValueKind.Array) _rawItems[field.Key] = raw.EnumerateArray().Select(item => (ItemText(item), item.Clone())).ToList();
+            }
         }
     }
 
@@ -204,6 +212,8 @@ public sealed class AdminPluginConfigDraft : IDisposable
 
     private static object? Copy(object? value) => value is List<string> list ? new List<string>(list) : value;
 
+    private static string ItemText(JsonElement item) => FromJson(item) switch { string s => s, bool b => b ? "true" : "false", double d => NumberText(d), null => "", _ => item.ToString() };
+
     private static object StartingValue(AdminPluginField field, IReadOnlyDictionary<string, JsonElement>? saved)
     {
         // A secret is only ever typed: nothing the server sent, and no default, ever fills it in.
@@ -213,7 +223,7 @@ public sealed class AdminPluginConfigDraft : IDisposable
             if (raw.ValueKind is JsonValueKind.True or JsonValueKind.False) return raw.GetBoolean();
             if (raw.ValueKind == JsonValueKind.String) return raw.GetString() ?? "";
             if (field.Control == "MULTI_SELECT" && raw.ValueKind == JsonValueKind.Array)
-                return raw.EnumerateArray().Select(item => FromJson(item) switch { string s => s, bool b => b ? "true" : "false", double d => NumberText(d), null => "", _ => item.ToString() }).ToList();
+                return raw.EnumerateArray().Select(ItemText).ToList();
             if (raw.ValueKind == JsonValueKind.Number) return NumberText(raw.GetDouble());
         }
         var def = field.DefaultValue;
@@ -251,6 +261,19 @@ public sealed class AdminPluginConfigDraft : IDisposable
         if (_clear.Contains(field.Key) && value is string text && text.Trim().Length > 0) { _clear.Remove(field.Key); _clearOrder.Remove(field.Key); }
     }
 
+    /// <summary>
+    /// Ticks or unticks one option of a multi-select (official SchemaForm: the clicked value is appended or removed and nothing else
+    /// changes). Stored values the options do not list stay, in their stored order.
+    /// </summary>
+    public void SetOption(AdminPluginField field, string optionValue, bool selected)
+    {
+        if (_disposed || _managed.Contains(field.Key) || !_values.TryGetValue(field.Key, out var value) || value is not List<string> current) return;
+        var next = new List<string>(current);
+        if (selected) { if (!next.Contains(optionValue, StringComparer.Ordinal)) next.Add(optionValue); }
+        else next.RemoveAll(item => string.Equals(item, optionValue, StringComparison.Ordinal));
+        Set(field, next);
+    }
+
     public bool IsClearing(string key) => !_managed.Contains(key) && _clear.Contains(key);
 
     /// <summary>Whether the saved-secret row offers Clear: not for a required field and not for a managed one.</summary>
@@ -273,12 +296,16 @@ public sealed class AdminPluginConfigDraft : IDisposable
             foreach (var item in Fields)
             {
                 if (_managed.Contains(item.Key)) continue;
-                var now = _values[item.Key]; var before = _initial[item.Key];
-                var same = now is List<string> a && before is List<string> b ? a.SequenceEqual(b) : Equals(now, before);
-                if (!same) return true;
+                if (!Unchanged(item.Key)) return true;
             }
             return false;
         }
+    }
+
+    private bool Unchanged(string key)
+    {
+        var now = _values[key]; var before = _initial[key];
+        return now is List<string> a && before is List<string> b ? a.SequenceEqual(b) : Equals(now, before);
     }
 
     // ── visibility (official evaluateShowWhen / fieldIsVisible) ────────────
@@ -306,13 +333,17 @@ public sealed class AdminPluginConfigDraft : IDisposable
     private static bool TryNumber(string text, out double number) =>
         double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out number) && double.IsFinite(number);
 
-    /// <summary>Errors of the fields the admin can currently see; a hidden field never blocks a save.</summary>
+    /// <summary>
+    /// Errors of the fields the admin can currently see and change. A hidden field never blocks a save, and neither does an
+    /// environment-managed one: it is locked, never sent, and the admin could not correct it.
+    /// </summary>
     public IReadOnlyDictionary<string, string> Errors()
     {
         var errors = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (_disposed) return errors;
         foreach (var field in Fields)
         {
-            if (!Visible(field)) continue;
+            if (!Visible(field) || _managed.Contains(field.Key)) continue;
             var raw = _values[field.Key];
             var label = string.IsNullOrEmpty(field.Label) ? field.Key : field.Label;
             if (field.Required && IsEmpty(raw) && !(IsSecret(field) && SavedSecrets.Contains(field.Key) && !_clear.Contains(field.Key))) { errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.required", new { label }); continue; }
@@ -370,19 +401,12 @@ public sealed class AdminPluginConfigDraft : IDisposable
                     if (raw is string text) return text.Trim().Length == 0 ? (false, null) : (true, text);
                     return (true, raw);
                 default:
-                    var list = raw is List<string> l ? l.Cast<object?>().ToList() : [];
-                    return type switch
-                    {
-                        AdminPluginFieldType.Array => (true, list),
-                        AdminPluginFieldType.ArrayBoolean => (true, list.Select(v => (object?)CoerceBoolean(v)).ToList()),
-                        AdminPluginFieldType.ArrayInteger => (true, list.Select(CoerceIntegerString).ToList()),
-                        _ => (true, list.Select(CoerceNumberString).ToList()),
-                    };
+                    return (true, (raw is List<string> l ? l : []).Select(v => CoerceItem(field, v)).ToList());
             }
         }
         // No declared type: the control decides.
         if (field.Control == "SWITCH") return (true, CoerceBoolean(raw));
-        if (field.Control == "MULTI_SELECT") return (true, (raw is List<string> items ? items : []).Select(v => CoerceIntegerString(v)).ToList());
+        if (field.Control == "MULTI_SELECT") return (true, (raw is List<string> items ? items : []).Select(v => CoerceItem(field, v)).ToList());
         if (field.Control == "SELECT" && field.DynamicOptions)
         {
             if (raw is string select && select.Trim().Length == 0) return (false, null);
@@ -395,6 +419,37 @@ public sealed class AdminPluginConfigDraft : IDisposable
         }
         if (raw is string plain) return plain.Trim().Length == 0 ? (false, null) : (true, plain);
         return (true, raw);
+    }
+
+    /// <summary>One list item as the field's declared item type wants it (a list with no declared type follows the control: numeric text becomes an integer).</summary>
+    private object? CoerceItem(AdminPluginField field, string item) =>
+        _types.TryGetValue(field.Key, out var type)
+            ? type switch
+            {
+                AdminPluginFieldType.ArrayBoolean => CoerceBoolean(item),
+                AdminPluginFieldType.ArrayInteger => CoerceIntegerString(item),
+                AdminPluginFieldType.ArrayNumber => CoerceNumberString(item),
+                _ => item,
+            }
+            : CoerceIntegerString(item);
+
+    private bool IsArrayField(AdminPluginField field) =>
+        _types.TryGetValue(field.Key, out var type) ? type is AdminPluginFieldType.Array or AdminPluginFieldType.ArrayBoolean or AdminPluginFieldType.ArrayInteger or AdminPluginFieldType.ArrayNumber
+            : field.Control == "MULTI_SELECT";
+
+    /// <summary>The list to send: an item that is still in the list and was stored goes back exactly as stored, a new one is coerced.</summary>
+    private List<JsonElement> Items(AdminPluginField field, List<string> current)
+    {
+        var stored = _rawItems.GetValueOrDefault(field.Key) ?? [];
+        var used = new bool[stored.Count]; var items = new List<JsonElement>(current.Count);
+        foreach (var text in current)
+        {
+            var at = -1;
+            for (var index = 0; index < stored.Count; index++) if (!used[index] && string.Equals(stored[index].Text, text, StringComparison.Ordinal)) { at = index; break; }
+            if (at >= 0) { used[at] = true; items.Add(stored[at].Raw.Clone()); }
+            else items.Add(JsonSerializer.SerializeToElement(CoerceItem(field, text)));
+        }
+        return items;
     }
 
     private object? Cleared(AdminPluginField field) =>
@@ -412,10 +467,12 @@ public sealed class AdminPluginConfigDraft : IDisposable
         foreach (var field in Fields)
         {
             if (!Visible(field) || _managed.Contains(field.Key)) continue;
+            // A field the admin never touched goes back exactly as it was stored, whatever the form could make of it: a value the
+            // options do not list, a number past its range, an unknown shape, an array of numbers, a precision a double cannot hold.
+            if (_rawValues.TryGetValue(field.Key, out var original) && Unchanged(field.Key)) { write.Value[field.Key] = original.Clone(); continue; }
             var raw = _values[field.Key];
-            // An array the admin never touched goes back exactly as it was saved (items of an untyped array may be numbers).
-            if (raw is List<string> current && _initial[field.Key] is List<string> start && current.SequenceEqual(start) && _rawArrays.TryGetValue(field.Key, out var original))
-            { write.Value[field.Key] = original.Clone(); continue; }
+            // A changed list keeps the stored items the admin did not touch as they were stored.
+            if (raw is List<string> list && IsArrayField(field)) { write.Value[field.Key] = JsonSerializer.SerializeToElement(Items(field, list)); continue; }
             var (defined, value) = Coerce(field, raw);
             if (!defined)
             {
@@ -432,7 +489,7 @@ public sealed class AdminPluginConfigDraft : IDisposable
         if (_disposed) return;
         _disposed = true;
         foreach (var key in _values.Keys.ToArray()) _values[key] = null;
-        _values.Clear(); _initial.Clear(); _rawArrays.Clear(); _clear.Clear(); _clearOrder.Clear();
+        _values.Clear(); _initial.Clear(); _rawValues.Clear(); _rawItems.Clear(); _clear.Clear(); _clearOrder.Clear();
     }
 }
 

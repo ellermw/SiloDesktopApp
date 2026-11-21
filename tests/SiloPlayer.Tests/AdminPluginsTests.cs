@@ -436,6 +436,62 @@ public sealed class AdminPluginsTests
     }
 
     [Fact]
+    public async Task EachSaveOutcomeSaysWhetherWhatWasTypedIsErasedAndEveryAttemptIsSentAtMostOnce()
+    {
+        var (kit, authority, controller, server) = Open(); using var _k = kit; using var _a = authority; using var _c = controller;
+        await controller.OpenAsync(); var pin = AdminPluginPin.Of(controller.State.Installations.Single());
+        const string typed = "synthetic-typed-secret";
+        AdminPluginConfigWrite Write() => new() { Key = "connection", Value = new() { ["api_key"] = JsonSerializer.SerializeToElement(typed) } };
+        // A definite refusal: the typed values stay for the corrected retry.
+        server.Write = _ => Task.FromResult(AdminMonitorKit.Json("{\"type\":\"urn:silo:problem:validation_failed\",\"title\":\"Unprocessable\",\"status\":422,\"detail\":\"Rejected.\"}", HttpStatusCode.UnprocessableEntity));
+        var refused = await controller.SaveConfigAsync(pin, Write()); Assert.Equal(AdminPluginWriteOutcome.Refused, refused); Assert.False(refused.SettlesTypedValues());
+        // Never sent (the row the form was drawn for is gone): nothing reached the server, so the typed values stay.
+        var notSent = await controller.SaveConfigAsync(pin with { Version = "9.9.9" }, Write()); Assert.Equal(AdminPluginWriteOutcome.NotSent, notSent); Assert.False(notSent.SettlesTypedValues());
+        Assert.Single(server.Writes);
+        // A lost answer: the server may have taken it, so the typed values are erased.
+        server.Write = _ => throw new HttpRequestException("synthetic lost answer");
+        var unknown = await controller.SaveConfigAsync(pin, Write()); Assert.Equal(AdminPluginWriteOutcome.Unknown, unknown); Assert.True(unknown.SettlesTypedValues());
+        Assert.Equal(2, server.Writes.Count); Assert.DoesNotContain(typed, controller.State.Notice);
+        // An accepted save, with the re-read returning exactly the same installation as before.
+        server.Write = _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        var done = await controller.SaveConfigAsync(pin, Write()); Assert.Equal(AdminPluginWriteOutcome.Done, done); Assert.True(done.SettlesTypedValues());
+        Assert.Equal(3, server.Writes.Count);
+    }
+
+    [Fact]
+    public async Task ASaveWhoseLastAttemptIsUnconfirmedIsNeverSentAndKeepsWhatWasTyped()
+    {
+        var (kit, authority, controller, server) = Open(); using var _k = kit; using var _a = authority; using var _c = controller;
+        await controller.OpenAsync(); var pin = AdminPluginPin.Of(controller.State.Installations.Single());
+        server.Write = _ => throw new HttpRequestException("synthetic lost answer");
+        server.Override = path => server.Writes.Count > 0 && path.EndsWith("/installations") ? Reply(HttpStatusCode.InternalServerError) : null; // the read-back fails: the block stays
+        var write = new AdminPluginConfigWrite { Key = "connection", Value = new() { ["api_key"] = JsonSerializer.SerializeToElement("synthetic-typed-secret") } };
+        Assert.Equal(AdminPluginWriteOutcome.Unknown, await controller.SaveConfigAsync(pin, write));
+        var blocked = await controller.SaveConfigAsync(pin, write);
+        Assert.Equal(AdminPluginWriteOutcome.NotSent, blocked); Assert.False(blocked.SettlesTypedValues()); Assert.Single(server.Writes);
+    }
+
+    [Fact]
+    public async Task ATaskBindingThatCannotBeConfirmedUsesTheTaskBindingMessageAndAnAuthBindingItsOwn()
+    {
+        var (kit, authority, controller, server) = Open(); using var _k = kit; using var _a = authority; using var _c = controller;
+        await controller.OpenAsync(); var pin = AdminPluginPin.Of(controller.State.Installations.Single());
+        server.Write = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.BadGateway));
+        Assert.Equal(AdminPluginWriteOutcome.Unknown, await controller.SaveTaskBindingAsync(pin, "refresh", true, new Dictionary<string, JsonElement>()));
+        Assert.Equal("Task binding could not be confirmed. Reload the plugin before saving again.", controller.State.Notice);
+        Assert.DoesNotContain("Auth binding", controller.State.Notice);
+        await controller.ReloadAsync(); Assert.Empty(controller.State.Unconfirmed);
+        Assert.Equal(AdminPluginWriteOutcome.Unknown, await controller.SaveAuthBindingAsync(pin, new AdminPluginAuthBindingWrite { CapabilityId = "oidc", Enabled = true, DisplayOrder = 1 }));
+        Assert.StartsWith("Auth binding could not be confirmed", controller.State.Notice);
+        // While the task binding is unconfirmed, the next attempt is refused with the same task-binding message.
+        await controller.ReloadAsync();
+        server.Override = path => server.Writes.Count > 1 && path.EndsWith("/installations") ? Reply(HttpStatusCode.InternalServerError) : null;
+        Assert.Equal(AdminPluginWriteOutcome.Unknown, await controller.SaveTaskBindingAsync(pin, "refresh", false, new Dictionary<string, JsonElement>()));
+        Assert.Equal(AdminPluginWriteOutcome.NotSent, await controller.SaveTaskBindingAsync(pin, "refresh", true, new Dictionary<string, JsonElement>()));
+        Assert.Equal("Task binding could not be confirmed. Reload the plugin before saving again.", controller.State.Notice);
+    }
+
+    [Fact]
     public void FiltersIncludeRuntimeFailureAndExcludePausedUpdates()
     {
         var failed = JsonSerializer.Deserialize<AdminPlugin>(Installation, AdminPluginsApi.WireOptions)!;

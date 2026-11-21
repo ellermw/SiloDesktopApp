@@ -31,20 +31,23 @@ public static class AdminPluginPresentation
 
     public static string Name(string pluginId, AdminPluginInfo? presentation)
     {
-        var display = presentation?.DisplayName?.Trim();
-        if (!string.IsNullOrEmpty(display)) return display;
-        var stripped = Regex.Replace(pluginId, "^silo[._-]?", "", RegexOptions.None, TimeSpan.FromMilliseconds(100));
+        var display = Clean(presentation?.DisplayName, NameLimit);
+        if (display.Length > 0) return display;
+        var stripped = Regex.Replace(Clean(pluginId, IdLimit), "^silo[._-]?", "", RegexOptions.None, TimeSpan.FromMilliseconds(100));
         var parts = Regex.Split(stripped, "[._-]+", RegexOptions.None, TimeSpan.FromMilliseconds(100)).Where(part => part.Length > 0)
             .Select(part => char.ToUpperInvariant(part[0]) + part[1..]);
         var derived = string.Join(' ', parts);
-        return derived.Length > 0 ? derived : pluginId;
+        return derived.Length > 0 ? derived : Clean(pluginId, IdLimit);
     }
+
+    /// <summary>The publisher's name as shown: one line, no direction controls, bounded. Empty when there is none.</summary>
+    public static string Publisher(AdminPluginInfo? presentation) => Clean(presentation?.PublisherName, NameLimit);
 
     public static string Summary(AdminPluginInfo? presentation, IEnumerable<AdminPluginCapabilityInfo> capabilities)
     {
-        var summary = presentation?.Summary?.Trim();
-        if (!string.IsNullOrEmpty(summary)) return summary;
-        var fallback = capabilities.Select(c => c.Description?.Trim()).FirstOrDefault(d => !string.IsNullOrEmpty(d));
+        var summary = Clean(presentation?.Summary, 600);
+        if (summary.Length > 0) return summary;
+        var fallback = capabilities.Select(c => Clean(c.Description, 600)).FirstOrDefault(d => d.Length > 0);
         return fallback ?? AdminPluginsText.T("web.admin.plugins.tile.noDescription");
     }
 
@@ -81,10 +84,16 @@ public static class AdminPluginPresentation
         if (Uri.TryCreate(sourceRepo, UriKind.Absolute, out var uri))
         {
             var path = uri.AbsolutePath.Trim('/');
-            return path.Length > 0 ? path : sourceRepo;
+            return Clean(path.Length > 0 ? path : sourceRepo, IdLimit);
         }
-        return sourceRepo;
+        return Clean(sourceRepo, IdLimit);
     }
+
+    /// <summary>A version as shown: one line, no direction controls, bounded.</summary>
+    public static string Version(string? version) => Clean(version, VersionLimit);
+
+    /// <summary>A repository's name as shown.</summary>
+    public static string RepositoryName(string? name) => Clean(name, NameLimit);
 
     /// <summary>The only way a plugin or repository supplied URL becomes openable: http or https, through the app's safe link policy.</summary>
     public static Uri? SafeLink(string? value) => ExternalBrowserUrlPolicy.TryGetSafeUri(value, out var uri) ? uri : null;
@@ -105,14 +114,14 @@ public static class AdminPluginPresentation
 
     public static string License(string? spdx)
     {
-        var value = spdx?.Trim();
-        return string.IsNullOrEmpty(value) || value == "NOASSERTION" ? AdminPluginsText.T("web.admin.plugins.rail.licenseNotSpecified") : value;
+        var value = Clean(spdx, NameLimit);
+        return value.Length == 0 || value == "NOASSERTION" ? AdminPluginsText.T("web.admin.plugins.rail.licenseNotSpecified") : value;
     }
 
     public static string HumanizeConfigKey(string value) =>
-        string.Join(' ', value.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+        Clean(string.Join(' ', Clean(value, IdLimit).Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..])), NameLimit);
 
-    public static string ConfigTitle(AdminPluginSchema schema) => string.IsNullOrWhiteSpace(schema.Title) ? HumanizeConfigKey(schema.Key) : schema.Title.Trim();
+    public static string ConfigTitle(AdminPluginSchema schema) => Clean(schema.Title, NameLimit) is { Length: > 0 } title ? title : HumanizeConfigKey(schema.Key);
 
     // ── capability kinds ───────────────────────────────────────────────────
 
@@ -139,10 +148,11 @@ public static class AdminPluginPresentation
         var index = Array.FindIndex(Kinds, kind => kind.Type == type);
         if (index >= 0) return new(Kinds[index].Job, AdminPluginsText.T(Kinds[index].Key), Kinds[index].Primary);
         // An unknown type shows its own prefix, humanized, not catalog text.
-        var prefix = type.Split('.')[0];
+        var shown = Clean(type, IdLimit);
+        var prefix = shown.Split('.')[0];
         var label = prefix.Replace('_', ' ');
-        label = label.Length > 0 ? char.ToUpperInvariant(label[0]) + label[1..] : type;
-        return new(prefix, label.Length > 0 ? label : type, false);
+        label = label.Length > 0 ? char.ToUpperInvariant(label[0]) + label[1..] : shown;
+        return new(prefix, label, false);
     }
 
     private static int KindOrder(string type)
@@ -321,6 +331,47 @@ public static class AdminPluginPresentation
 
     // ── untrusted text ─────────────────────────────────────────────────────
 
+    public const int NameLimit = 120;
+    public const int IdLimit = 200;
+    public const int VersionLimit = 64;
+    public const int LineLimit = 400;
+
+    /// <summary>Line and paragraph separators and the Unicode direction controls: invisible, and able to reorder or break text.</summary>
+    private static bool IsBreakOrDirection(char c) => c is '\u2028' or '\u2029' || IsDirection(c);
+
+    /// <summary>Whether the text holds a control character, a line or paragraph separator or a direction control.</summary>
+    public static bool HasHiddenControls(string? text) => text != null && text.Any(c => char.IsControl(c) || IsBreakOrDirection(c));
+
+    private static bool IsDirection(char c) => c is '\u061C' or '\u200E' or '\u200F' or (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069');
+
+    /// <summary>
+    /// The one gate every piece of text from a plugin, a publisher, a repository or the server passes before it is shown as a
+    /// single line: control characters, line and paragraph separators and direction controls become spaces, runs of spaces
+    /// collapse, and the result is trimmed and cut to <paramref name="max"/> characters (an ellipsis marks a cut).
+    /// A text that cannot contain a line break cannot forge a line of the page's own statements.
+    /// </summary>
+    public static string Clean(string? text, int max = LineLimit)
+    {
+        if (string.IsNullOrEmpty(text) || max <= 0) return "";
+        var clean = new StringBuilder(Math.Min(text.Length, max + 16)); var pendingSpace = false;
+        foreach (var c in text)
+        {
+            if (c == ' ' || char.IsControl(c) || IsBreakOrDirection(c)) { pendingSpace = clean.Length > 0; continue; }
+            if (pendingSpace) { clean.Append(' '); pendingSpace = false; }
+            clean.Append(c);
+            // Stop reading input well past the bound; only the first max + 1 characters can matter.
+            if (clean.Length > max) break;
+        }
+        if (clean.Length <= max) return clean.ToString();
+        var end = Math.Max(0, max - 1);
+        if (end > 0 && char.IsHighSurrogate(clean[end - 1])) end--;
+        return clean.ToString(0, end).TrimEnd() + "…";
+    }
+
+    /// <summary>Removes the direction controls from text that may keep its own line breaks (README, changelog and setup Markdown).</summary>
+    public static string StripDirectionControls(string? text) =>
+        string.IsNullOrEmpty(text) ? "" : text.Any(IsDirection) ? new string(text.Where(c => !IsDirection(c)).ToArray()) : text;
+
     private static readonly Regex UserInfo = new(@"(?i)(https?://)[^\s/@]+@", RegexOptions.None, TimeSpan.FromMilliseconds(100));
     private static readonly Regex SecretQuery = new(@"(?i)([?&](?:token|key|api[_-]?key|secret|password|passwd|sig|signature|auth|authorization|credential|access[_-]?token|x-amz-[a-z-]+)=)[^\s&#]*", RegexOptions.None, TimeSpan.FromMilliseconds(100));
     private static readonly Regex SecretPair = new(@"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|bearer|client[_-]?secret)\b(\s*[:=]\s*|\s+)[^\s,;]+", RegexOptions.None, TimeSpan.FromMilliseconds(100));
@@ -332,15 +383,14 @@ public static class AdminPluginPresentation
     public static string Redact(string? text, int max = 400, IEnumerable<string>? secrets = null)
     {
         if (string.IsNullOrEmpty(text)) return "";
-        var result = text;
+        // Invisible direction controls cannot be used to split a keyword the patterns below look for.
+        var result = StripDirectionControls(text);
         foreach (var secret in (secrets ?? []).Where(s => !string.IsNullOrEmpty(s)).OrderByDescending(s => s.Length))
             result = result.Replace(secret, "[redacted]", StringComparison.Ordinal);
         result = UserInfo.Replace(result, "$1[redacted]@");
         result = SecretQuery.Replace(result, "$1[redacted]");
         result = SecretPair.Replace(result, "$1$2[redacted]");
-        var clean = new StringBuilder(result.Length);
-        foreach (var c in result) clean.Append(char.IsControl(c) && c is not ('\n' or '\t') ? ' ' : c);
-        result = clean.ToString().Trim();
-        return result.Length <= max ? result : result[..Math.Max(0, max - 1)].TrimEnd() + "…";
+        // Secrets are gone; what remains goes through the same single-line gate as every other third-party text.
+        return Clean(result, max);
     }
 }

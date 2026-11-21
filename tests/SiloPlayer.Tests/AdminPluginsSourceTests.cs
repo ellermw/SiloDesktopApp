@@ -63,6 +63,30 @@ public sealed class AdminPluginsSourceTests
     }
 
     [Fact]
+    public void TheUploadHasNoDeadlineOverTheWholeFileAndEveryRequestOfItCarriesItsOwnLimit()
+    {
+        var upload = File.ReadAllText(FamilyFiles().Single(path => path.EndsWith("AdminPluginsApi.Uploads.cs", StringComparison.Ordinal)));
+        Assert.DoesNotContain("CancelAfter", upload);
+        Assert.DoesNotContain("FromMinutes", upload);
+        // Session, chunk, completion and the small single request each name the limit; the cleanup DELETE has its own short bound.
+        Assert.Equal(4, Regex.Matches(upload, "requestLimit: UploadRequestLimit").Count);
+        var transport = File.ReadAllText(FamilyFiles().Single(path => path.EndsWith("SiloApiClient.AdminPlugins.cs", StringComparison.Ordinal)));
+        Assert.Contains("deadline.CancelAfter(requestLimit ??", transport);
+    }
+
+    [Fact]
+    public void EveryPluginTextTheViewsShowGoesThroughTheOneTextGate()
+    {
+        // The raw fields that carry third-party text are read in the Core presentation helpers, not in a view.
+        foreach (var file in FamilyFiles().Where(path => path.Contains(Path.DirectorySeparatorChar + "Views" + Path.DirectorySeparatorChar)))
+        {
+            var source = File.ReadAllText(file);
+            Assert.DoesNotContain("PublisherName?.Trim()", source); Assert.DoesNotContain("presentation?.DisplayName", source);
+            Assert.DoesNotContain("Text(entry.Version", source); Assert.DoesNotContain("Text(repository.DisplayName", source);
+        }
+    }
+
+    [Fact]
     public void TheSharedSchemaFormIsUntouchedByThisFamily()
     {
         var shared = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Controls", "ProviderSchemaForm.cs"));

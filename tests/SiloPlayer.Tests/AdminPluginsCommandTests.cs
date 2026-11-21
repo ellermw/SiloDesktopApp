@@ -230,4 +230,68 @@ public sealed class AdminPluginsCommandTests
         await using var source = new MemoryStream(new byte[size]); await Assert.ThrowsAsync<HttpRequestException>(() => new AdminPluginsApi(kit.Client).UploadAsync(lease, source, "fixture.zip", size));
         Assert.Equal(1, completes); Assert.Equal(4, kit.Http.Requests.Count);
     }
+
+    // ── D6: a large upload on a slow link ──────────────────────────────────
+
+    private const int Chunk = 512 * 1024;
+
+    private static HttpResponseMessage UploadReceipt(HttpRequestMessage request, long size)
+    {
+        var path = request.RequestUri!.AbsolutePath; var total = (int)((size + Chunk - 1) / Chunk);
+        if (path.EndsWith("/complete")) return AdminMonitorKit.Json(AdminPluginsTests.Installation, HttpStatusCode.Created);
+        var received = request.Method == HttpMethod.Post ? 0 : int.Parse(path[(path.LastIndexOf('/') + 1)..]) + 1;
+        return AdminMonitorKit.Json(JsonSerializer.Serialize(new { upload_id = "synthetic-session", filename = "fixture.zip", size_bytes = size, chunk_size = Chunk, total_chunks = total, received_chunks = received, received_bytes = Math.Min((long)received * Chunk, size), complete = false }),
+            request.Method == HttpMethod.Post ? HttpStatusCode.Created : HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ASlowButSteadyUploadIsNotCutOffByAnOverallDeadline()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        const long size = Chunk * 6L;
+        // Every request answers within its own limit (1 s) while the whole upload takes longer than that limit: only a deadline over the whole upload could end it.
+        kit.Http.Respond = async (request, token) => { await Task.Delay(200, token); return UploadReceipt(request, size); };
+        var api = new AdminPluginsApi(kit.Client) { UploadRequestLimit = TimeSpan.FromSeconds(1) };
+        await using var source = new MemoryStream(new byte[size]); var watch = System.Diagnostics.Stopwatch.StartNew();
+        await api.UploadAsync(lease, source, "fixture.zip", size);
+        Assert.True(watch.Elapsed > TimeSpan.FromSeconds(1)); Assert.Equal(8, kit.Http.Requests.Count);
+        Assert.Equal(6, kit.Http.Requests.Count(r => r.Contains("/chunks/"))); Assert.EndsWith("/complete", kit.Http.Requests.Last());
+    }
+
+    [Fact]
+    public async Task AStalledChunkEndsByItsOwnLimitAndIsSentOnlyOnce()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        const long size = Chunk * 3L;
+        kit.Http.Respond = async (request, token) => { if (request.Method == HttpMethod.Put) await Task.Delay(Timeout.Infinite, token); return UploadReceipt(request, size); };
+        var api = new AdminPluginsApi(kit.Client) { UploadRequestLimit = TimeSpan.FromMilliseconds(300) };
+        await using var source = new MemoryStream(new byte[size]);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.UploadAsync(lease, source, "fixture.zip", size));
+        Assert.Equal(1, kit.Http.Requests.Count(r => r.Contains("/chunks/0"))); Assert.DoesNotContain(kit.Http.Requests, r => r.Contains("/chunks/1") || r.EndsWith("/complete"));
+    }
+
+    [Fact]
+    public async Task TheCallerCanCancelAnUploadInFlight()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        const long size = Chunk * 3L; using var cancel = new CancellationTokenSource(); var inChunk = new TaskCompletionSource();
+        kit.Http.Respond = async (request, token) => { if (request.Method == HttpMethod.Put) { inChunk.TrySetResult(); await Task.Delay(Timeout.Infinite, token); } return UploadReceipt(request, size); };
+        await using var source = new MemoryStream(new byte[size]);
+        var upload = new AdminPluginsApi(kit.Client).UploadAsync(lease, source, "fixture.zip", size, null, cancel.Token);
+        await inChunk.Task.WaitAsync(TimeSpan.FromSeconds(10)); cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => upload.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task AnUploadEndsWhenTheAuthorityIsRetiredWhateverTheLinkIsDoing()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        const long size = Chunk * 3L; var inChunk = new TaskCompletionSource();
+        kit.Http.Respond = async (request, token) => { if (request.Method == HttpMethod.Put) { inChunk.TrySetResult(); await Task.Delay(Timeout.Infinite, token); } return UploadReceipt(request, size); };
+        await using var source = new MemoryStream(new byte[size]);
+        var upload = new AdminPluginsApi(kit.Client).UploadAsync(lease, source, "fixture.zip", size);
+        await inChunk.Task.WaitAsync(TimeSpan.FromSeconds(10)); kit.SetRole("user");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => upload.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(1, kit.Http.Requests.Count(r => r.Contains("/chunks/0")));
+    }
 }

@@ -297,12 +297,12 @@ public sealed partial class AdminPluginsPage : Page, IAdminNavigationGuard, IAdm
             foreach (var item in items)
             {
                 var line = Stack(2); var head = new LogsWrapPanel { Spacing = 12 };
-                var name = Text(item.PluginId, 14); name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; head.Children.Add(name);
-                if (item.Version.Length > 0) head.Children.Add(Text(T.T("web.admin.plugins.detail.version", new { version = item.Version }), 13, true));
+                var name = Text(P.Clean(item.PluginId, P.IdLimit), 14); name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; head.Children.Add(name);
+                if (P.Version(item.Version) is { Length: > 0 } provisioned) head.Children.Add(Text(T.T("web.admin.plugins.detail.version", new { version = provisioned }), 13, true));
                 head.Children.Add(Text(item.State switch
                 {
                     "pending" => T.T("web.admin.plugins.provisioning.pending"), "refused" => T.T("web.admin.plugins.provisioning.refused"),
-                    "held" => T.T("web.admin.plugins.provisioning.held"), "applied" => T.T("web.admin.plugins.provisioning.applied"), _ => item.State,
+                    "held" => T.T("web.admin.plugins.provisioning.held"), "applied" => T.T("web.admin.plugins.provisioning.applied"), _ => P.Clean(item.State, P.NameLimit),
                 }, 13));
                 line.Children.Add(head);
                 if (item.Detail.Length > 0) line.Children.Add(Text(P.Redact(item.Detail, 600), 12, true));

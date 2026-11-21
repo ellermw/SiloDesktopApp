@@ -22,6 +22,7 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
     private readonly AdminPluginConfigDraft _draft;
     private readonly Func<AdminPluginConfigWrite, Task<AdminPluginWriteOutcome>> _save;
     private readonly Func<AdminPluginConfigWrite, Task<AdminPluginCheck?>>? _test;
+    private readonly Action<AdminPluginConfigView>? _settled;
     private readonly StackPanel _root = Stack(16);
     private readonly Dictionary<string, FieldRow> _rows = new(StringComparer.Ordinal);
     private readonly List<SectionRow> _sections = [];
@@ -42,9 +43,9 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
     public string Fingerprint => _draft.Fingerprint;
     public bool IsDirty => !_disposed && _draft.IsDirty;
 
-    internal AdminPluginConfigView(AdminPluginConfigDraft draft, Func<AdminPluginConfigWrite, Task<AdminPluginWriteOutcome>> save, Func<AdminPluginConfigWrite, Task<AdminPluginCheck?>>? test, bool saving = false)
+    internal AdminPluginConfigView(AdminPluginConfigDraft draft, Func<AdminPluginConfigWrite, Task<AdminPluginWriteOutcome>> save, Func<AdminPluginConfigWrite, Task<AdminPluginCheck?>>? test, bool saving = false, Action<AdminPluginConfigView>? settled = null)
     {
-        _draft = draft; _save = save; _test = test; Content = _root; IsTabStop = false;
+        _draft = draft; _save = save; _test = test; _settled = settled; Content = _root; IsTabStop = false;
         AutomationProperties.SetAutomationId(this, "PluginConfig_" + draft.Schema.Key);
         if (draft.Form is not { } form)
         {
@@ -60,8 +61,8 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
             var box = Stack(12);
             var head = new Grid { ColumnSpacing = 8 };
             head.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var titles = Stack(2); var title = Text(section.Title, 14); title.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; titles.Children.Add(title);
-            if (!string.IsNullOrEmpty(section.Description)) titles.Children.Add(Text(section.Description, 12, true));
+            var titles = Stack(2); var title = Text(Safe(section.Title, AdminPluginPresentation.NameLimit), 14); title.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; titles.Children.Add(title);
+            if (Safe(section.Description) is { Length: > 0 } sectionText) titles.Children.Add(Text(sectionText, 12, true));
             head.Children.Add(titles);
             Button? toggle = null;
             var fieldsHost = FieldList(fields);
@@ -113,14 +114,16 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
         return list;
     }
 
-    private static string LabelOf(AdminPluginField field) => string.IsNullOrEmpty(field.Label) ? field.Key : field.Label;
+    /// <summary>Text from the plugin (labels, descriptions, option names) goes through the same one-line gate as every other third-party text.</summary>
+    private static string Safe(string? text, int max = 600) => AdminPluginPresentation.Clean(text, max);
+    private static string LabelOf(AdminPluginField field) => Safe(string.IsNullOrWhiteSpace(field.Label) ? field.Key : field.Label, AdminPluginPresentation.NameLimit);
     private string Id(AdminPluginField field) => "PluginConfigField_" + _draft.Schema.Key + "_" + field.Key;
 
     private (StackPanel Head, TextBlock Error) Heading(AdminPluginField field, bool withLabel)
     {
         var head = Stack(4);
         if (withLabel) head.Children.Add(Text(LabelOf(field), 14));
-        if (!string.IsNullOrEmpty(field.Description)) head.Children.Add(Text(field.Description, 12, true));
+        if (Safe(field.Description) is { Length: > 0 } description) head.Children.Add(Text(description, 12, true));
         var error = Text("", 12); error.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive); error.Visibility = Visibility.Collapsed;
         return (head, error);
     }
@@ -159,14 +162,14 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
             ComboBoxItem? selected = null;
             foreach (var option in field.Options)
             {
-                var item = new ComboBoxItem { Content = option.Label, Tag = option.Value }; combo.Items.Add(item);
+                var item = new ComboBoxItem { Content = Safe(option.Label, AdminPluginPresentation.NameLimit), Tag = option.Value }; combo.Items.Add(item);
                 if (option.Value == current) selected = item;
             }
             // A saved value the list no longer offers stays visible and stays the value until the admin picks another.
-            if (selected == null && current.Length > 0) { selected = new ComboBoxItem { Content = current, Tag = current }; combo.Items.Add(selected); }
-            if (field.Options.Count == 0 && selected == null) combo.PlaceholderText = string.IsNullOrEmpty(field.Placeholder) ? AdminPluginsText.T("web.common.schemaForm.selectPlaceholder") : field.Placeholder;
+            if (selected == null && current.Length > 0) { selected = new ComboBoxItem { Content = Safe(current, AdminPluginPresentation.NameLimit), Tag = current }; combo.Items.Add(selected); }
+            if (field.Options.Count == 0 && selected == null) combo.PlaceholderText = Safe(field.Placeholder) is { Length: > 0 } hint ? hint : AdminPluginsText.T("web.common.schemaForm.selectPlaceholder");
             if (selected != null) combo.SelectedItem = selected;
-            else combo.PlaceholderText = string.IsNullOrEmpty(field.Placeholder) ? AdminPluginsText.T("web.common.schemaForm.selectPlaceholder") : field.Placeholder;
+            else combo.PlaceholderText = Safe(field.Placeholder) is { Length: > 0 } hint ? hint : AdminPluginsText.T("web.common.schemaForm.selectPlaceholder");
             combo.SelectionChanged += (_, _) => { if (!_syncing && combo.SelectedItem is ComboBoxItem { Tag: string value }) Set(field, value); };
             control = combo;
         }
@@ -177,9 +180,11 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
             if (field.Options.Count == 0) panel.Children.Add(Text(AdminPluginsText.T("web.common.schemaForm.noOptions"), 12, true));
             foreach (var option in field.Options)
             {
-                var check = new CheckBox { Content = option.Label, IsChecked = selected.Contains(option.Value), MinWidth = 0 };
-                AutomationProperties.SetName(check, option.Label);
-                void Changed() { if (_syncing) return; if (check.IsChecked == true) selected.Add(option.Value); else selected.Remove(option.Value); Set(field, field.Options.Where(o => selected.Contains(o.Value)).Select(o => o.Value).ToList()); }
+                var shown = Safe(option.Label, AdminPluginPresentation.NameLimit);
+                var check = new CheckBox { Content = shown, IsChecked = selected.Contains(option.Value), MinWidth = 0 };
+                AutomationProperties.SetName(check, shown);
+                // Only the clicked value is added or removed; stored values the options do not list stay, in their stored order.
+                void Changed() { if (_syncing) return; SetOption(field, option.Value, check.IsChecked == true); }
                 check.Checked += (_, _) => Changed(); check.Unchecked += (_, _) => Changed(); panel.Children.Add(check);
             }
             control = panel;
@@ -195,7 +200,7 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
             var secret = new PasswordBox
             {
                 PasswordRevealMode = PasswordRevealMode.Hidden, HorizontalAlignment = HorizontalAlignment.Stretch, MaxLength = 16384, MinWidth = 0,
-                PlaceholderText = saved ? AdminPluginsText.T("web.admin.plugins.configForm.savedSecretPlaceholder") : field.Placeholder ?? "",
+                PlaceholderText = saved ? AdminPluginsText.T("web.admin.plugins.configForm.savedSecretPlaceholder") : Safe(field.Placeholder),
             };
             secret.PasswordChanged += (_, _) => { if (!_syncing) Set(field, secret.Password); };
             _passwords.Add(secret); control = secret;
@@ -205,7 +210,7 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
             var multiline = field.Multiline || field.Control == "TEXTAREA";
             var box = new TextBox
             {
-                Text = _draft.Get(field) as string ?? "", PlaceholderText = field.Placeholder ?? "", HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0,
+                Text = _draft.Get(field) as string ?? "", PlaceholderText = Safe(field.Placeholder), HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0,
                 AcceptsReturn = multiline, TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
             };
             if (multiline) { box.MinHeight = (field.Rows > 0 ? Math.Min(field.Rows, 20) : 4) * 22; box.MaxHeight = 360; }
@@ -256,6 +261,12 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
     {
         if (_syncing || _disposed || _busy) return;
         _draft.Set(field, value); _result.Text = ""; _summary.Text = ""; _checkSerial++; Refresh();
+    }
+
+    private void SetOption(AdminPluginField field, string optionValue, bool selected)
+    {
+        if (_syncing || _disposed || _busy) return;
+        _draft.SetOption(field, optionValue, selected); _result.Text = ""; _summary.Text = ""; _checkSerial++; Refresh();
     }
 
     private bool SectionOpen(AdminPluginFormSection section, bool forceOpen) => forceOpen || (_opened.TryGetValue(section.Key, out var open) ? open : !section.CollapsedDefault);
@@ -316,8 +327,14 @@ internal sealed class AdminPluginConfigView : UserControl, IDisposable
         if (_disposed || _busy) return;
         var write = BuildWrite(); if (write == null) return;
         SetBusy(true); _result.Text = "";
-        try { await _save(write); }
+        // A save that never completed its await (an exception) is treated as not sent: what was typed stays.
+        var outcome = AdminPluginWriteOutcome.NotSent;
+        try { outcome = await _save(write); }
         finally { write.Value.Clear(); write.ClearSecrets.Clear(); if (!_disposed) SetBusy(false); }
+        // The server took the values, or may have: nothing typed stays anywhere, and the page draws the form again from what it read back
+        // (the same stored values as before are no reason to keep the old form). After a refusal or a save that was never sent, the
+        // typed values stay so the corrected retry carries them.
+        if (outcome.SettlesTypedValues() && !_disposed) { var settled = _settled; Dispose(); settled?.Invoke(this); }
     }
 
     private async Task TestAsync()

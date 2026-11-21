@@ -309,6 +309,8 @@ public static class AdminPluginsText
     // Markers stand in for the markup tags while a message is formatted, so a plugin-supplied name or reason that
     // contains angle brackets can never become bold text or a link.
     private const char BoldOn = '\uE000', BoldOff = '\uE001', LinkOn = '\uE002', LinkOff = '\uE003';
+    /// <summary>The longest single value a message takes; callers bound names, versions and reasons tighter before this.</summary>
+    private const int ValueLimit = 2000;
 
     /// <summary>A message with &lt;b&gt; and &lt;link&gt; markup as runs. Values are inserted as plain text.</summary>
     public static IReadOnlyList<AdminPluginsTextRun> Runs(string key, object? arguments = null)
@@ -349,6 +351,10 @@ public static class AdminPluginsText
         if (arguments is IReadOnlyDictionary<string, object?> ready) foreach (var pair in ready) values[pair.Key] = pair.Value;
         else if (arguments is IDictionary<string, object?> dictionary) foreach (var pair in dictionary) values[pair.Key] = pair.Value;
         else if (arguments != null) foreach (var property in arguments.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)) values[property.Name] = property.GetValue(arguments);
+        // Every value a message shows may come from a plugin, a publisher, a repository or the server. None of them can bring a
+        // line break or a direction control into the message, so no value can stand as a statement of the page's own.
+        foreach (var pair in values.ToArray())
+            if (pair.Value is string text) values[pair.Key] = AdminPluginPresentation.Clean(text, ValueLimit);
         return values;
     }
 }

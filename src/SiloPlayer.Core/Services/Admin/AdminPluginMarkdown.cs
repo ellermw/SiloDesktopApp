@@ -28,7 +28,10 @@ public static class AdminPluginMarkdown
     public static IReadOnlyList<AdminPluginBlock> Parse(string? source)
     {
         var raw = source ?? "";
-        var text = (raw.Length > MaxSourceLength ? raw[..MaxSourceLength] : raw).Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        // README text keeps its own line breaks, but never a direction control, which could reorder what follows it.
+        var text = AdminPluginPresentation.StripDirectionControls(raw.Length > MaxSourceLength ? raw[..MaxSourceLength] : raw)
+            .Replace("\r\n", "\n").Replace('\r', '\n').Replace('\u2028', '\n').Replace('\u2029', '\n');
+        text = new string(text.Select(c => char.IsControl(c) && c is not ('\n' or '\t') ? ' ' : c).ToArray()).Trim();
         var blocks = new List<AdminPluginBlock>();
         if (text.Length == 0) return blocks;
         try

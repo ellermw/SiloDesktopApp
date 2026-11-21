@@ -16,16 +16,22 @@ public sealed partial class AdminPluginsApi
     public static AdminPluginUploadCheck CheckUpload(string? filename, long size) =>
         size <= 0 ? AdminPluginUploadCheck.Empty
         : size > MaxUploadBytes ? AdminPluginUploadCheck.TooLarge
-        : string.IsNullOrWhiteSpace(filename) || filename.Length > 512 || filename.Any(char.IsControl) ? AdminPluginUploadCheck.InvalidName
+        : string.IsNullOrWhiteSpace(filename) || filename.Length > 512 || SiloPlayer.Core.Services.Admin.AdminPluginPresentation.HasHiddenControls(filename) ? AdminPluginUploadCheck.InvalidName
         : AdminPluginUploadCheck.Accepted;
+
+    /// <summary>The limit of each upload request (session, one chunk, completion); null is the transport's own bound for a write. Tests set it short.</summary>
+    internal TimeSpan? UploadRequestLimit { get; init; }
 
     /// <summary>Streams one selected file. Session creation, chunks and completion are each sent once; completion is never replayed.</summary>
     public async Task<AdminPlugin> UploadAsync(MonitorAuthorityLease lease, Stream source, string filename, long size,
         IProgress<int>? progress = null, CancellationToken ct = default)
     {
         lease.ThrowIfRetired();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
-        deadline.CancelAfter(TimeSpan.FromMinutes(10)); ct = deadline.Token;
+        // No overall deadline: how long a large file takes depends on the link, and the official upload has none either. The upload
+        // ends when it is done, when the caller cancels it, or when the authority is retired (the page left, the server or account
+        // changed). Every request below carries its own limit (AdminPluginSendAsync), and a chunk is at most 512 KiB, so a stalled
+        // request ends by itself while a slow but steady link finishes.
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct); ct = cancellation.Token;
         if (CheckUpload(filename, size) != AdminPluginUploadCheck.Accepted) throw new ArgumentException("Choose a plugin file of at most 256 MiB.");
         const int defaultChunk = 512 * 1024;
         if (size <= defaultChunk)
@@ -35,7 +41,7 @@ public sealed partial class AdminPluginsApi
             var part = new ByteArrayContent(buffer); part.Headers.ContentType = new("application/octet-stream"); form.Add(part, "archive", filename);
             try
             {
-                var row = (await client.AdminPluginSendAsync<AdminPlugin>(lease, HttpMethod.Post, Root + "uploads", expected: HttpStatusCode.Created, content: form, ct: ct).ConfigureAwait(false)).Body;
+                var row = (await client.AdminPluginSendAsync<AdminPlugin>(lease, HttpMethod.Post, Root + "uploads", expected: HttpStatusCode.Created, content: form, ct: ct, requestLimit: UploadRequestLimit).ConfigureAwait(false)).Body;
                 ValidatePlugin(row, true); progress?.Report(100); return row;
             }
             finally { Array.Clear(buffer); }
@@ -49,7 +55,7 @@ public sealed partial class AdminPluginsApi
             try
             {
                 var session = (await client.AdminPluginSendAsync<AdminPluginUploadSession>(lease, HttpMethod.Post, Root + "uploads/chunked",
-                    new { filename, size_bytes = size, chunk_size = chunkSize }, expected: HttpStatusCode.Created, ct: ct).ConfigureAwait(false)).Body;
+                    new { filename, size_bytes = size, chunk_size = chunkSize }, expected: HttpStatusCode.Created, ct: ct, requestLimit: UploadRequestLimit).ConfigureAwait(false)).Body;
                 uploadId = session.UploadId;
                 ValidateSession(session, size, chunkSize, 0, 0);
                 var buffer = new byte[chunkSize];
@@ -64,7 +70,7 @@ public sealed partial class AdminPluginsApi
                         lease.ThrowIfRetired();
                         using var chunk = new ByteArrayContent(buffer, 0, length); chunk.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
                         var received = (await client.AdminPluginSendAsync<AdminPluginUploadSession>(lease, HttpMethod.Put,
-                            Root + "uploads/chunked/" + Uri.EscapeDataString(uploadId) + "/chunks/" + index, content: chunk, ct: ct).ConfigureAwait(false)).Body;
+                            Root + "uploads/chunked/" + Uri.EscapeDataString(uploadId) + "/chunks/" + index, content: chunk, ct: ct, requestLimit: UploadRequestLimit).ConfigureAwait(false)).Body;
                         sent += length; ValidateSession(received, size, chunkSize, index + 1, sent);
                         if (received.UploadId != uploadId) throw Invalid();
                         completedChunks++; progress?.Report((int)(sent * 100 / size));
@@ -72,7 +78,7 @@ public sealed partial class AdminPluginsApi
                     // Once completion is sent, any failure is reconciled from installations; never reopen/replay this install.
                     var completing = uploadId; uploadId = null;
                     var row = (await client.AdminPluginSendAsync<AdminPlugin>(lease, HttpMethod.Post,
-                        Root + "uploads/chunked/" + Uri.EscapeDataString(completing) + "/complete", expected: HttpStatusCode.Created, ct: ct).ConfigureAwait(false)).Body;
+                        Root + "uploads/chunked/" + Uri.EscapeDataString(completing) + "/complete", expected: HttpStatusCode.Created, ct: ct, requestLimit: UploadRequestLimit).ConfigureAwait(false)).Body;
                     ValidatePlugin(row, true); return row;
                 }
                 finally { Array.Clear(buffer); }

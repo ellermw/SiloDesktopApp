@@ -107,7 +107,7 @@ public sealed partial class AdminPluginsPage
         if (controller == null || owner is not { IsCurrent: true } || choice == null || _uploading) return;
         var tier = "unverified"; var content = Stack(10);
         content.Children.Add(Text(T.T("web.admin.plugins.tile.confirmDescription", new { source = P.SourceLabel(tier), notice = P.TierNotice(tier) ?? "" }).Trim(), 14));
-        content.Children.Add(Text(choice.Name, 13, true));
+        content.Children.Add(ConfirmLine(P.Clean(choice.Name, P.IdLimit), "PluginsUploadFileName"));
         if (!await ConfirmAsync(T.T("web.admin.plugins.upload.heading"), content, T.T("web.admin.plugins.upload.submit"), "PluginsUploadConfirmation")) return;
         if (_closed || !ReferenceEquals(controller, _controller) || !ReferenceEquals(owner, controller.Owner) || !owner.IsCurrent || !ReferenceEquals(choice, _upload)) return;
         // Type and size are checked again immediately before anything is read.
@@ -161,21 +161,21 @@ public sealed partial class AdminPluginsPage
             row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             var texts = Stack(0);
             // The two managed repositories are a fixed set: show their label rather than whatever display name they carry.
-            var name = repository.Managed && repository.SourceKind != "external" ? P.SourceLabel(repository.SourceKind) : repository.DisplayName;
+            var name = repository.Managed && repository.SourceKind != "external" ? P.SourceLabel(repository.SourceKind) : P.RepositoryName(repository.DisplayName);
             var title = new LogsWrapPanel { Spacing = 8 };
             title.Children.Add(Ui.StatusLabel(name, repository.Enabled ? AdminPluginTone.Success : AdminPluginTone.Muted));
             texts.Children.Add(title);
-            var url = Text(repository.Managed ? T.T("web.admin.plugins.repositories.managed") : repository.Url, 12, true); url.TextTrimming = TextTrimming.CharacterEllipsis; url.TextWrapping = TextWrapping.NoWrap;
-            ToolTipService.SetToolTip(url, repository.Managed ? T.T("web.admin.plugins.repositories.managed") : repository.Url); texts.Children.Add(url);
+            var address = repository.Managed ? T.T("web.admin.plugins.repositories.managed") : P.Clean(repository.Url, 2000); var url = Text(address, 12, true); url.TextTrimming = TextTrimming.CharacterEllipsis; url.TextWrapping = TextWrapping.NoWrap;
+            ToolTipService.SetToolTip(url, address); texts.Children.Add(url);
             row.Children.Add(texts);
             if (!repository.Managed)
             {
                 var actions = new LogsWrapPanel { Spacing = 6 };
                 var toggle = Ui.Command(repository.Enabled ? T.T("web.admin.plugins.repositories.disable") : T.T("web.admin.plugins.repositories.enable"), "PluginRepositoryToggle_" + repository.Id,
                     () => _ = RunAsync(() => ChangeRepositoryAsync(repository, false)));
-                AutomationProperties.SetName(toggle, (repository.Enabled ? T.T("web.admin.plugins.repositories.disable") : T.T("web.admin.plugins.repositories.enable")) + ": " + repository.DisplayName); toggle.IsEnabled = idle;
+                AutomationProperties.SetName(toggle, (repository.Enabled ? T.T("web.admin.plugins.repositories.disable") : T.T("web.admin.plugins.repositories.enable")) + ": " + name); toggle.IsEnabled = idle;
                 var remove = Ui.Command("✕", "PluginRepositoryRemove_" + repository.Id, () => _ = RunAsync(() => ChangeRepositoryAsync(repository, true)));
-                AutomationProperties.SetName(remove, T.T("web.admin.plugins.repositories.remove", new { name = repository.DisplayName })); remove.IsEnabled = idle; remove.MinWidth = 32; remove.Padding = new(0);
+                AutomationProperties.SetName(remove, T.T("web.admin.plugins.repositories.remove", new { name })); remove.IsEnabled = idle; remove.MinWidth = 32; remove.Padding = new(0);
                 actions.Children.Add(toggle); actions.Children.Add(remove); Grid.SetColumn(actions, 1); row.Children.Add(actions);
             }
             body.Children.Add(row);
@@ -199,9 +199,10 @@ public sealed partial class AdminPluginsPage
         submit.Click += (_, _) => _ = RunAsync(async () =>
         {
             var controller = _controller; if (controller == null || name.Text.Trim().Length == 0 || url.Text.Trim().Length == 0) return;
-            // What was typed stays until the server accepts it, so a refused URL can be fixed.
+            // What was typed stays after a refusal or a request that was never sent, so a refused URL can be fixed. The address may carry a
+            // credential, so once the server took it, or may have, nothing typed stays.
             var outcome = await controller.AddRepositoryAsync(name.Text, url.Text);
-            if (outcome == AdminPluginWriteOutcome.Done) { _repoName = ""; _repoUrl = ""; _repoFormOpen = false; }
+            if (outcome.SettlesTypedValues()) { _repoName = ""; _repoUrl = ""; _repoFormOpen = false; }
             RebuildNow();
         });
         form.Children.Add(name); form.Children.Add(url); form.Children.Add(submit);

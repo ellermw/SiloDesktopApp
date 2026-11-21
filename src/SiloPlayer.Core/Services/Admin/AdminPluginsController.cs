@@ -10,6 +10,15 @@ public enum AdminPluginsSection { Installed, Catalog, Repositories, CatalogSetti
 /// <summary>How a write ended. NotSent means nothing reached the server; Refused is a definite answer; Unknown blocks the target until it is read back.</summary>
 public enum AdminPluginWriteOutcome { Done, NotSent, Refused, Unknown }
 
+public static class AdminPluginWriteOutcomes
+{
+    /// <summary>
+    /// Whether a save's typed values must be erased: the server took them, or may have. After a definite refusal or a save that was
+    /// never sent they stay, so the corrected retry carries them.
+    /// </summary>
+    public static bool SettlesTypedValues(this AdminPluginWriteOutcome outcome) => outcome is AdminPluginWriteOutcome.Done or AdminPluginWriteOutcome.Unknown;
+}
+
 /// <summary>
 /// The row a confirmation or control showed: a write is sent only while exactly this row is still on screen. Two rows are
 /// the same only when plugin, version, source, repository and recorded update all match.
@@ -205,7 +214,7 @@ public sealed class AdminPluginsController : IDisposable
 
     private static bool Definite(ApiException error) => error.StatusCode is >= 400 and < 500 && error.StatusCode != 408;
 
-    private enum Kind { Install, Installation, Repository, CatalogSettings, Config, ConfigTest, Binding, Upload, UpdateCheck }
+    private enum Kind { Install, Installation, Repository, CatalogSettings, Config, ConfigTest, Binding, TaskBinding, Upload, UpdateCheck }
 
     /// <summary>The official message for an outcome that could not be confirmed, by kind.</summary>
     private static string UnconfirmedText(Kind kind, AdminPluginCommand? command) => kind switch
@@ -217,6 +226,7 @@ public sealed class AdminPluginsController : IDisposable
         Kind.Config => AdminPluginsText.T("web.admin.plugins.hooks.plugins.config.unconfirmed"),
         Kind.ConfigTest => AdminPluginsText.T("web.admin.plugins.configForm.checkFailed"),
         Kind.Binding => AdminPluginsText.T("web.admin.plugins.hooks.plugins.authBinding.unconfirmed"),
+        Kind.TaskBinding => AdminPluginsText.T("web.admin.plugins.hooks.plugins.taskBinding.unconfirmed"),
         Kind.UpdateCheck => AdminPluginsText.T("web.admin.plugins.hooks.plugins.updateCheck.failed"),
         _ => command switch
         {
@@ -331,7 +341,7 @@ public sealed class AdminPluginsController : IDisposable
         Key = input.Key, ClearSecrets = [.. input.ClearSecrets], Value = input.Value.ToDictionary(pair => pair.Key, pair => pair.Value.Clone(), StringComparer.Ordinal),
     };
 
-    private static IReadOnlyCollection<string> SecretValues(AdminPluginConfigWrite input) =>
+    private static string[] SecretValues(AdminPluginConfigWrite input) =>
         input.Value.Values.Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString() ?? "").Where(s => s.Length > 0).ToArray();
 
     public async Task<AdminPluginWriteOutcome> SaveConfigAsync(AdminPluginPin pin, AdminPluginConfigWrite input)
@@ -345,7 +355,7 @@ public sealed class AdminPluginsController : IDisposable
                 return AdminPluginsText.T("web.admin.plugins.hooks.plugins.config.saved");
             }, secrets: secrets).ConfigureAwait(false);
         }
-        finally { copy.Value.Clear(); copy.ClearSecrets.Clear(); }
+        finally { copy.Value.Clear(); copy.ClearSecrets.Clear(); Array.Clear(secrets); }
     }
 
     /// <summary>
@@ -370,7 +380,7 @@ public sealed class AdminPluginsController : IDisposable
                 _ => null,
             };
         }
-        finally { copy.Value.Clear(); copy.ClearSecrets.Clear(); }
+        finally { copy.Value.Clear(); copy.ClearSecrets.Clear(); Array.Clear(secrets); }
     }
 
     public Task<AdminPluginWriteOutcome> SaveAuthBindingAsync(AdminPluginPin pin, AdminPluginAuthBindingWrite input)
@@ -387,7 +397,7 @@ public sealed class AdminPluginsController : IDisposable
     public Task<AdminPluginWriteOutcome> SaveTaskBindingAsync(AdminPluginPin pin, string capabilityId, bool enabled, IReadOnlyDictionary<string, JsonElement> trigger)
     {
         var copy = trigger.ToDictionary(pair => pair.Key, pair => pair.Value.Clone(), StringComparer.Ordinal);
-        return WriteAsync(Kind.Binding, pin.PluginId, () => IsInstalled(pin), async lease =>
+        return WriteAsync(Kind.TaskBinding, pin.PluginId, () => IsInstalled(pin), async lease =>
             await _api.TaskBindingAsync(lease, pin.Id, capabilityId, enabled, copy).ConfigureAwait(false)
                 ? AdminPluginsText.T("web.admin.plugins.hooks.plugins.taskBinding.savedRestart") : AdminPluginsText.T("web.admin.plugins.hooks.plugins.taskBinding.saved"));
     }

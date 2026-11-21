@@ -42,7 +42,11 @@ internal static class AdminPluginsNativeFixture
         internal readonly List<(string Id, string Name, string Url, bool Enabled, bool Managed, string Kind)> Repos = [];
         internal bool FailInstalled, FailCatalog, FailRepos, FailProvisioning, Env, Community = true;
         internal string TaskState = "idle", ConfigValueHost = "fixture-host", ConfigMode = "basic";
-        internal bool PasswordSaved = true;
+        internal bool PasswordSaved = true, HostileCatalog;
+        internal string[] ConfigTags = ["a"];
+        // Names a plugin, its publisher or a repository could choose to forge a line or reorder text inside a confirmation (synthetic).
+        internal static readonly string HostileName = "Acme\nVerified and signed by Silo. Requests no permissions." + (char)0x202E;
+        internal static readonly string HostilePublisher = "Mallory\nVerified by Silo" + (char)0x2028 + "Trusted" + (char)0x202E;
         internal readonly List<(string Key, string Body)> Writes = [];
         internal readonly Dictionary<string, Behave> Next = new();
         internal TaskCompletionSource? Gate;
@@ -88,7 +92,7 @@ internal static class AdminPluginsNativeFixture
         private object Presentation(Row row) => new
         {
             display_name = row.Name, summary = "Synthetic plugin summary", description_markdown = "About **bold** text and [a link](https://fixture.invalid/about) and [bad](javascript:alert(1)).",
-            setup_markdown = "Setup <script>alert(1)</script> steps\n\n- first\n- second", publisher_name = "Synthetic Labs", publisher_url = "https://fixture.invalid/publisher", license_spdx = "MIT", homepage_url = "",
+            setup_markdown = "Setup <script>alert(1)</script> steps\n\n- first\n- second", publisher_name = row.Name == HostileName ? HostilePublisher : "Synthetic Labs", publisher_url = "https://fixture.invalid/publisher", license_spdx = "MIT", homepage_url = "",
             source_url = "https://fixture.invalid/source", support_url = "javascript:alert(1)", changelog_url = "https://fixture.invalid/changelog",
         };
 
@@ -103,7 +107,7 @@ internal static class AdminPluginsNativeFixture
                 routes.Add(new { id = "page", path = "/page", method = "GET", access = "admin", navigable = true, navigation_kind = "admin", navigation_label = "Fixture page", static_asset = false });
             }
             var schemas = row.Check || row.Managed || row.Setup ? new[] { Schema(row.Setup) } : [];
-            var configs = row.Check || row.Managed ? new[] { new { key = "connection", value = new Dictionary<string, object> { ["host"] = ConfigValueHost, ["mode"] = ConfigMode, ["tags"] = new[] { "a" } }, configured_secrets = PasswordSaved ? new[] { "password" } : [] } } : [];
+            var configs = row.Check || row.Managed ? new[] { new { key = "connection", value = new Dictionary<string, object> { ["host"] = ConfigValueHost, ["mode"] = ConfigMode, ["tags"] = ConfigTags }, configured_secrets = PasswordSaved ? new[] { "password" } : [] } } : [];
             object? env = row.Managed ? new { version_pin = row.Pin ?? "", config_fields = new Dictionary<string, string[]> { ["connection"] = ["host"] }, binding_fields = new Dictionary<string, string[]>() } : null;
             return new
             {
@@ -141,7 +145,7 @@ internal static class AdminPluginsNativeFixture
                 return path switch
                 {
                     root + "/installations" => Reply(Page(Installed.Select(RowJson))),
-                    root + "/catalog" => Reply(Page(Catalog.Select(CatalogJson))),
+                    root + "/catalog" => Reply(Page((HostileCatalog ? Catalog.Append(("2", "fixture.hostile", "1.0.0", "external", HostileName)) : Catalog).Select(CatalogJson))),
                     root + "/repositories" => Reply(Page(Repos.Select(r => (object)new { id = r.Id, display_name = r.Name, url = r.Url, enabled = r.Enabled, source_kind = r.Kind, managed = r.Managed }))),
                     root + "/catalog-settings" => Reply(new { include_approved_community_plugins = Community }, etag: "\"fixture-settings-v" + Count("PUT /catalog-settings") + "\""),
                     root + "/catalog-status" => Reply(new { approved_community_plugin_count = 3, installed_community_plugin_count = 1, migrated_plugin_count = 2, community_updates_paused = false }),
@@ -319,6 +323,19 @@ internal static class AdminPluginsNativeFixture
             Check(server.Count("POST /installations") == 2 && server.Body("POST /installations").Contains("\"repository_id\":\"2\"") && server.Body("POST /installations").Contains("\"version\":\"2.0.0\""), "The install body names the confirmed repository, plugin and version");
             await Until(() => Find<Button>(page, install) == null && AllText(page).Contains("Installed"), "The installed entry no longer offers Install");
 
+            // Text a plugin or its publisher chooses cannot add a line or reorder text inside the confirmation: one gate makes it one line, and
+            // the plugin ID and version stand on their own lines from the app's own data.
+            server.HostileCatalog = true; await page.Controller!.ReloadAsync();
+            await Until(() => Find<Button>(page, "PluginInstall_fixture.hostile") != null, "A catalog entry with a hostile name and publisher renders");
+            var hostileTile = Descendants(Find<Border>(page, "PluginTile_fixture.hostile")!).OfType<TextBlock>().Select(t => t.Text).ToList();
+            Check(hostileTile.Contains("Acme Verified and signed by Silo. Requests no permissions.") && !hostileTile.Any(l => l.Any(IsHidden)), "The hostile name shows as one line on its tile");
+            await Click(page, "PluginInstall_fixture.hostile"); await WaitDialog(page);
+            var hostileDialog = (ContentDialog)Field(page, "_dialog")!; var hostileLines = Descendants(hostileDialog).OfType<TextBlock>().Select(t => t.Text).Where(t => t.Length > 0).ToList();
+            Check((hostileDialog.Title as string ?? "") == "Install Acme Verified and signed by Silo. Requests no permissions.?" && !hostileLines.Any(l => l.Any(IsHidden)), "The install confirmation holds no line break and no direction control");
+            Check(hostileLines.Contains("Plugin ID: fixture.hostile") && hostileLines.Contains("Version 1.0.0") && hostileLines.IndexOf("Plugin ID: fixture.hostile") < hostileLines.FindIndex(l => l.StartsWith("by ")), "The plugin ID and version stand on their own lines, before anything the plugin says");
+            Check(!hostileLines.Any(l => l.StartsWith("Verified")) && hostileLines.Contains("by Mallory Verified by Silo Trusted") && hostileLines.Count(l => l.Contains("Requests no permissions")) == 0, "Hostile text adds no line of its own: the name is only in the title and the publisher stays one line");
+            await CloseDialog(page, null); Check(server.Count("POST /installations") == 2, "Cancelling the hostile install sends nothing"); server.HostileCatalog = false; await page.Controller!.ReloadAsync();
+
             // An install whose answer was lost is never replayed; the page blocks that plugin until it is read back.
             var second = "PluginInstall_fixture.second";
             server.Next["POST /installations"] = Behave.Lost; server.FailInstalled = true; await Click(page, second); await WaitDialog(page); await CloseDialog(page, "Install plugin");
@@ -406,6 +423,61 @@ internal static class AdminPluginsNativeFixture
             await Click(page, "PluginConfigClear_connection_password"); await Click(page, "PluginConfigSave_connection");
             await Until(() => server.Count("PUT /installations/7/config") == 3 && !page.Controller.State.Busy, "Clearing a secret is an explicit save");
             using (var cleared = JsonDocument.Parse(server.Body("PUT /installations/7/config"))) Check(cleared.RootElement.GetProperty("clear_secrets")[0].GetString() == "password" && !cleared.RootElement.GetProperty("value").TryGetProperty("password", out _), "The clear is explicit and no secret is sent");
+
+            // Typed secrets after a save, four outcomes. The server never changes the stored values or the saved secret here, so the page reads back
+            // exactly what it showed before; the old form must not be kept just because nothing it was drawn from changed.
+            async Task<PasswordBox> PasswordField() { await Until(() => Find<PasswordBox>(page, "PluginConfigField_connection_password") != null, "The form is drawn"); return Find<PasswordBox>(page, "PluginConfigField_connection_password")!; }
+            async Task TypeSecret(string text) { var box = await PasswordField(); box.Password = text; await Until(() => page.RequiresLeaveConfirmation, "A typed secret marks the form as edited"); }
+            bool NoTypedSecret() => !Descendants(page).OfType<PasswordBox>().Any(p => p.Password.Length > 0);
+            int ConfigWrites() => server.Count("PUT /installations/7/config");
+            bool LastWriteSends(string text) => server.Body("PUT /installations/7/config").Contains(text);
+            // Accepted (204), re-read identical.
+            var sent = ConfigWrites(); await TypeSecret("typed-secret-accepted"); await Click(page, "PluginConfigSave_connection");
+            await Until(() => ConfigWrites() == sent + 1 && !page.Controller!.State.Busy, "The accepted save is sent once");
+            Check(LastWriteSends("typed-secret-accepted"), "The accepted save carried the typed secret");
+            await Until(() => NoTypedSecret() && !page.RequiresLeaveConfirmation, "After an accepted save the typed secret is gone from the password box and the form is not edited, though the stored values are the same");
+            await Click(page, "PluginConfigSave_connection"); await Until(() => ConfigWrites() == sent + 2 && !page.Controller!.State.Busy, "A later Save is sent");
+            Check(!LastWriteSends("typed-secret-accepted"), "A later Save does not send the secret again");
+            // Refused: what was typed stays, and the corrected retry carries it.
+            await TypeSecret("typed-secret-refused"); server.Next["PUT /installations/{id}/config"] = Behave.Refuse; await Click(page, "PluginConfigSave_connection");
+            await Until(() => ConfigWrites() == sent + 3 && page.Controller!.State.Notice.Contains("Synthetic refusal") && !page.Controller.State.Busy, "The refused save shows the server's reason");
+            Check((await PasswordField()).Password == "typed-secret-refused" && page.RequiresLeaveConfirmation, "After a definite refusal the typed secret stays");
+            await Click(page, "PluginConfigSave_connection"); await Until(() => ConfigWrites() == sent + 4 && !page.Controller!.State.Busy, "The corrected retry is sent");
+            Check(LastWriteSends("typed-secret-refused"), "The corrected retry carries the secret that stayed");
+            await Until(() => NoTypedSecret() && !page.RequiresLeaveConfirmation, "After the retry was accepted the typed secret is gone");
+            // Unknown (lost answer), re-read identical: the secret is gone, and a later Save does not send it.
+            await TypeSecret("typed-secret-unknown"); server.Next["PUT /installations/{id}/config"] = Behave.Lost; await Click(page, "PluginConfigSave_connection");
+            await Until(() => ConfigWrites() == sent + 5 && !page.Controller!.State.Busy, "The save whose answer was lost is sent once");
+            await Until(() => NoTypedSecret() && !page.RequiresLeaveConfirmation, "After an unknown outcome the typed secret is gone and the form is not edited");
+            await Until(() => page.Controller!.State.Unconfirmed.Count == 0, "The read-back after the unknown outcome cleared the block");
+            await Click(page, "PluginConfigSave_connection"); await Until(() => ConfigWrites() == sent + 6 && !page.Controller!.State.Busy, "A later Save is sent");
+            Check(!LastWriteSends("typed-secret-unknown"), "A later Save does not send the secret an unknown outcome erased");
+            // Unknown with the read-back failing, then a save that is never sent: the secret typed for it stays until the block is cleared.
+            await TypeSecret("typed-secret-lost-again"); server.Next["PUT /installations/{id}/config"] = Behave.Lost; server.FailInstalled = true; await Click(page, "PluginConfigSave_connection");
+            await Until(() => ConfigWrites() == sent + 7 && page.Controller!.State.Unconfirmed.Contains("fixture.plugin") && !page.Controller.State.Busy, "The second lost answer blocks the plugin");
+            await Until(() => NoTypedSecret() && !page.RequiresLeaveConfirmation, "After the second unknown outcome the typed secret is gone");
+            await TypeSecret("typed-secret-not-sent"); await Click(page, "PluginConfigSave_connection");
+            await Until(() => page.Controller!.State.Notice.Contains("could not be confirmed") && !page.Controller.State.Busy, "A save for an unconfirmed plugin is not sent");
+            Check(ConfigWrites() == sent + 7 && (await PasswordField()).Password == "typed-secret-not-sent" && page.RequiresLeaveConfirmation, "A save that was never sent keeps what was typed");
+            server.FailInstalled = false; await Until(() => Find<Button>(page, "PluginDetailReload") != null, "The page can be read back"); await Click(page, "PluginDetailReload");
+            await Until(() => page.Controller!.State.Unconfirmed.Count == 0, "Reading the plugin back unblocks it");
+            Check((await PasswordField()).Password == "typed-secret-not-sent", "The read-back keeps the form whose save was never sent");
+            await Click(page, "PluginConfigSave_connection"); await Until(() => ConfigWrites() == sent + 8 && !page.Controller!.State.Busy, "The retry is sent once");
+            Check(LastWriteSends("typed-secret-not-sent"), "The retry carries the secret that stayed");
+            await Until(() => NoTypedSecret() && !page.RequiresLeaveConfirmation, "After the accepted retry the typed secret is gone");
+
+            // A multi-select adds or removes only the clicked value; a stored value the options do not list stays, in its stored order.
+            server.ConfigTags = ["a", "legacy"]; await page.Controller!.ReloadAsync();
+            CheckBox Tag(string label) => Descendants(page).OfType<CheckBox>().First(c => AutomationProperties.GetName(c) == label);
+            await Until(() => Descendants(page).OfType<CheckBox>().Any(c => AutomationProperties.GetName(c) == "Beta") && Tag("Alpha").IsChecked == true, "The stored tags show ticked and the options render");
+            Tag("Beta").IsChecked = true; await Until(() => page.RequiresLeaveConfirmation, "Ticking an option edits the form");
+            sent = ConfigWrites(); await Click(page, "PluginConfigSave_connection"); await Until(() => ConfigWrites() == sent + 1 && !page.Controller!.State.Busy, "The tag change is sent once");
+            using (var tags = JsonDocument.Parse(server.Body("PUT /installations/7/config"))) Check(string.Join(",", tags.RootElement.GetProperty("value").GetProperty("tags").EnumerateArray().Select(t => t.GetString())) == "a,legacy,b", "Ticking Beta adds only Beta: the stored value the options do not list stays, in its order");
+            await Until(() => !page.RequiresLeaveConfirmation && Descendants(page).OfType<CheckBox>().Any(c => AutomationProperties.GetName(c) == "Alpha"), "The form is drawn again after the save");
+            Tag("Alpha").IsChecked = false; await Until(() => page.RequiresLeaveConfirmation, "Unticking an option edits the form");
+            sent = ConfigWrites(); await Click(page, "PluginConfigSave_connection"); await Until(() => ConfigWrites() == sent + 1 && !page.Controller!.State.Busy, "The second tag change is sent once");
+            using (var tags = JsonDocument.Parse(server.Body("PUT /installations/7/config"))) Check(string.Join(",", tags.RootElement.GetProperty("value").GetProperty("tags").EnumerateArray().Select(t => t.GetString())) == "legacy", "Unticking Alpha removes only Alpha");
+            server.ConfigTags = ["a"]; await page.Controller!.ReloadAsync(); await Until(() => Descendants(page).OfType<CheckBox>().Any(c => AutomationProperties.GetName(c) == "Alpha" && c.IsChecked == true), "The tags are back to the fixture's start");
             server.Next["PUT /installations/{id}/config"] = Behave.Lost; server.FailInstalled = true; Find<TextBox>(page, "PluginConfigField_connection_host")!.Text = "lost-host"; await Click(page, "PluginConfigSave_connection");
             await Until(() => page.Controller.State.Unconfirmed.Contains("fixture.plugin") && !page.Controller.State.Busy, "A lost save answer is an unknown outcome");
             server.FailInstalled = false; await Until(() => Find<Button>(page, "PluginDetailReload") != null, "The page can be read back"); await Click(page, "PluginDetailReload");
@@ -427,6 +499,18 @@ internal static class AdminPluginsNativeFixture
             await InvokeMenu(page, "PluginMore", "PluginUpdate"); await WaitDialog(page);
             Check(AllText((ContentDialog)Field(page, "_dialog")!).Contains("Version 1.0.0") && AllText((ContentDialog)Field(page, "_dialog")!).Contains("Version 2.0.0"), "Update names the version it will install");
             await CloseDialog(page, null); Check(server.Count("POST /installations/7/update") == 0, "Cancelling an update sends nothing");
+            // The same for the update and uninstall confirmations of a plugin whose name is hostile.
+            server.Find("7")!.Name = Server.HostileName; await page.Controller!.ReloadAsync();
+            await Until(() => AllText(page).Contains("Acme Verified and signed by Silo. Requests no permissions."), "The installed plugin shows its hostile name as one line");
+            await InvokeMenu(page, "PluginMore", "PluginUpdate"); await WaitDialog(page);
+            var updateLines = Descendants((ContentDialog)Field(page, "_dialog")!).OfType<TextBlock>().Select(t => t.Text).Where(t => t.Length > 0).ToList();
+            Check(!updateLines.Any(l => l.Any(IsHidden)) && updateLines.Contains("Plugin ID: fixture.plugin") && updateLines.Contains("Version 1.0.0 → Version 2.0.0") && !updateLines.Any(l => l.StartsWith("Verified")), "The update confirmation has the plugin ID and both versions on their own lines and no forged line");
+            await CloseDialog(page, null);
+            await InvokeMenu(page, "PluginMore", "PluginUninstall"); await WaitDialog(page);
+            var removeDialog = (ContentDialog)Field(page, "_dialog")!; var removeLines = Descendants(removeDialog).OfType<TextBlock>().Select(t => t.Text).Where(t => t.Length > 0).ToList();
+            Check(!(removeDialog.Title as string ?? "").Any(IsHidden) && !removeLines.Any(l => l.Any(IsHidden)) && removeLines.Contains("Plugin ID: fixture.plugin") && removeLines.Contains("Version 1.0.0") && !removeLines.Any(l => l.StartsWith("Verified")), "The uninstall confirmation has the plugin ID and version on their own lines and no forged line");
+            await CloseDialog(page, null); Check(server.Count("DELETE /installations/7") == 0, "Cancelling an uninstall sends nothing");
+            server.Find("7")!.Name = "Fixture Plugin"; await page.Controller!.ReloadAsync(); await Until(() => !AllText(page).Contains("Acme Verified"), "The name is back");
             server.Next["POST /installations/{id}/update"] = Behave.Lost; server.FailInstalled = true; await InvokeMenu(page, "PluginMore", "PluginUpdate"); await WaitDialog(page); await CloseDialog(page, "Update to 2.0.0");
             await Until(() => page.Controller.State.Unconfirmed.Contains("fixture.plugin") && !page.Controller.State.Busy, "A lost update answer is an unknown outcome");
             writes = server.Writes.Count; await InvokeMenu(page, "PluginMore", "PluginUpdate"); await WaitDialog(page); await CloseDialog(page, "Update to 2.0.0"); await Until(() => !page.Controller.State.Busy, "The blocked update ended");
@@ -454,9 +538,19 @@ internal static class AdminPluginsNativeFixture
             await Click(page, "PluginRestartNow"); await Until(() => server.Count("POST /installations/8/restart") == 1 && !page.Controller.State.Busy, "Restart is sent once");
             await Until(() => !AllText(page).Contains("stopped and won't restart"), "The failure banner goes once the plugin runs");
 
-            // Managed plugin: fields and uninstall are locked, the pin is shown.
+            // Managed plugin: fields and uninstall are locked, the pin is shown. The deployment's host value is empty, which the form's own
+            // rule (required) would reject: a locked field the admin cannot correct must not block Save of the fields they can edit.
+            server.ConfigValueHost = "";
             page = await Goto(shell, inner, new(AdminRoute.Plugins) { Segments = ["fixture.managed"] }, page);
             await Until(() => Find<TextBox>(page, "PluginConfigField_connection_host") != null, "A managed plugin renders its form");
+            Find<ComboBox>(page, "PluginConfigField_connection_mode")!.SelectedItem = Find<ComboBox>(page, "PluginConfigField_connection_mode")!.Items.Cast<ComboBoxItem>().First(i => (string)i.Tag == "advanced");
+            await Until(() => page.RequiresLeaveConfirmation, "Editing an unlocked field edits the form");
+            Check(Find<Button>(page, "PluginConfigSave_connection") is { IsEnabled: true } && !AllText(page).Contains("Host is required"), "A locked required field that is empty shows no error and does not block Save");
+            sent = server.Count("PUT /installations/12/config"); Find<TextBox>(page, "PluginConfigField_connection_endpoint")!.Text = "https://fixture.invalid/endpoint";
+            await Click(page, "PluginConfigSave_connection"); await Until(() => server.Count("PUT /installations/12/config") == sent + 1 && !page.Controller!.State.Busy, "Save is sent although a locked field fails its rule");
+            using (var managedSave = JsonDocument.Parse(server.Body("PUT /installations/12/config"))) Check(!managedSave.RootElement.GetProperty("value").TryGetProperty("host", out _) && managedSave.RootElement.GetProperty("value").GetProperty("mode").GetString() == "advanced", "The locked field is not sent and the edited one is");
+            server.ConfigValueHost = "fixture-host"; await page.Controller!.ReloadAsync();
+            await Until(() => Find<TextBox>(page, "PluginConfigField_connection_host") != null, "The managed form is drawn again");
             Check(Find<TextBox>(page, "PluginConfigField_connection_host") is { IsEnabled: false } && AllText(page).Contains("Managed by the environment") && AllText(page).Contains("The deployment pins this plugin to 1.0.0."), "Managed fields are locked and the pin is shown");
             await InvokeMenu(page, "PluginMore", null); Check(((MenuFlyout)Find<Button>(page, "PluginMore")!.Flyout).Items.OfType<MenuFlyoutItem>().First(i => AutomationProperties.GetAutomationId(i) == "PluginUninstall").IsEnabled == false, "Uninstall is disabled for a managed plugin");
             ((MenuFlyout)Find<Button>(page, "PluginMore")!.Flyout).Hide();
@@ -549,6 +643,9 @@ internal static class AdminPluginsNativeFixture
         var item = flyout.Items.OfType<MenuFlyoutItem>().First(i => AutomationProperties.GetAutomationId(i) == itemId);
         ((IInvokeProvider)new MenuFlyoutItemAutomationPeer(item).GetPattern(PatternInterface.Invoke)).Invoke();
     }
+
+    /// <summary>A line break, a control character or a direction control: none may appear inside one line the page shows from a plugin.</summary>
+    private static bool IsHidden(char c) => char.IsControl(c) || c is '\u2028' or '\u2029' or '\u200E' or '\u200F' or (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069');
 
     private static object? Field(object value, string name) => value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value);
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root) { yield return root; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child; }
