@@ -16,6 +16,16 @@ docs/parity/admin-monitor-surfaces.json) and the known intermittent AdminStorage
 (pull request 231): in envmanaged-native-r1/r3/r4 Search failed only its three Scheduled Tasks link checks, Storage only the two token-default blur checks and its teardown barrier,
 Downloads at "uncheck download.server_bandwidth_mbps"; the new environment checks in Search and Storage passed, the Downloads ones did not run. No installer, no real server and no phone was involved.
 
+Review follow-up (same branch, 2026-11-21): a status read that fails after one answered keeps the last managed list in every controller; a `managed_by_env_vars` that is not an object reads as no names;
+variable names must be plain identifiers; the General Redis switch follows the environment; the Jellyfin API switch cannot stage the web-off while managed; Search no longer guesses the API key's variable
+and keeps its hint; the Backups S3 dialog applies the environment; the Playback device switches are locked and carry the note; the Email retry stays reachable. Details and the review's findings: docs/parity/admin-env-managed-settings.md.
+Observed in final run envfix-final-r3 on commit bc903a47f (the later e1966bead changes only the Search native fixture): 848 focused and 10,548 full unit cases passed with no failures or skips; app build, publish and native host build passed;
+native selectors admin-configure-general (193 checks), admin-configure-email (300), admin-configure-backups (40), admin-configure-security (376), admin-configure-notifications (38), admin-configure-integrations (110),
+admin-manage-library-settings (87), admin-playback-administration (111), admin-manage-foundation (36) and admin-monitor (113) passed with no failed check. Earlier final runs: envfix-final-r1 failed the Email group (retry hidden, fixed),
+envfix-final-r2 failed the Playback group (the device list sits in a closed Advanced disclosure; fixture fixed). Known-failing groups, run once each after the final build: Search (envfix-known-search) failed its three Scheduled Tasks link checks and once
+"Meilisearch rows are shown while it is selected" (a timing race in the fixture, now a wait; a rerun, envfix-known-search-r2, failed only the three link checks); Storage failed the two token-default blur checks, its teardown barrier and the flow
+failure that accompanies it (also seen on Beta, betarepair2-hn-r1); Downloads stopped at "uncheck download.server_bandwidth_mbps". The new Downloads environment checks still did not run. Not run: a real server, a screen reader, an installer.
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
