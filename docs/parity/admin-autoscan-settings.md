@@ -51,6 +51,7 @@ Activity, so no disabled links exist.
   record, or a delete not answered with 204 is an unknown outcome that blocks writes until Reload re-reads the full list. Editing or deleting an
   existing row first re-reads the list and refuses if that row changed.
 - Reads are bounded: 1 MiB per response, 100 connections per page and at most 10 pages, 50 Requests summaries per page and at most 4 pages.
+  A read answered with 401 refreshes the access token once and is replayed, so an expired token does not leave the page unloadable.
 
 ## Verification
 

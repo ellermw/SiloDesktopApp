@@ -487,6 +487,26 @@ public sealed class AdminAutoscanSettingsTests
     }
 
     [Fact]
+    public async Task AnExpiredAccessTokenIsRefreshedOnceForReadsAndNeverForWrites()
+    {
+        using var harness = new Harness();
+        var refreshes = 0;
+        harness.Kit.Client.SetTokenRefresher(_ => { refreshes++; harness.Kit.Client.SetAccessToken("synthetic-renewed"); return Task.FromResult(true); });
+        static HttpResponseMessage Unauthorized() =>
+            AdminMonitorKit.Json("""{"type":"https://silo.test/docs/api/v2/problems/unauthorized","title":"Unauthorized","status":401}""", HttpStatusCode.Unauthorized);
+        harness.Respond = request => Task.FromResult(request.Headers.Authorization?.Parameter == "synthetic-renewed" ? harness.Default(request) : Unauthorized());
+        await harness.Controller.OpenAsync();
+        var state = harness.Controller.State;
+        Assert.Equal(1, refreshes); Assert.NotNull(state.Owner); Assert.NotNull(state.Saved); Assert.Null(state.SettingsError);
+        Assert.True(state.ConnectionsLoaded); Assert.Null(state.ConnectionsError); Assert.Single(state.Connections);
+        harness.Controller.EditDefaults("600", "30");
+        harness.Respond = request => Task.FromResult(request.Method == HttpMethod.Get ? harness.Default(request) : Unauthorized());
+        await harness.Controller.SaveDefaultsAsync();
+        Assert.Equal(1, refreshes); Assert.Single(harness.Kit.Http.Requests.Where(request => request.StartsWith("PUT")));
+        Assert.False(harness.Controller.State.OutcomeUnknown); Assert.True(harness.Controller.State.Dirty);
+    }
+
+    [Fact]
     public async Task LateReadFromRetiredOwnerCannotPublish()
     {
         using var harness = new Harness();

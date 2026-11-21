@@ -113,7 +113,8 @@ public sealed class AdminAutoscanSettingsApi(SiloApiClient client)
     private async Task<JsonElement> Read(MonitorAuthorityLease owner, string requestPath, CancellationToken cancellationToken = default)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, cancellationToken); timeout.CancelAfter(TimeSpan.FromSeconds(20));
-        try { return (await client.MonitorLogsSendAsync<JsonElement>(owner, HttpMethod.Get, requestPath, ct: timeout.Token, maxBytes: MaxBytes).ConfigureAwait(false)).Body; }
+        // Reads may refresh an expired access token once; writes below never do.
+        try { return await client.AdminAutoscanSettingsReadAsync(owner, requestPath, MaxBytes, timeout.Token).ConfigureAwait(false); }
         catch (ApiException error) { throw new ApiException("autoscan_read_failed", "Autoscan data could not be loaded.", error.StatusCode); }
     }
 
