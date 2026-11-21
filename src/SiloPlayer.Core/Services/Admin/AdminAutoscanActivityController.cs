@@ -72,8 +72,6 @@ public sealed class AdminAutoscanActivityController : IDisposable
     private CancellationTokenSource? _readLifetime;
     private Task _historyTask = Task.CompletedTask, _statusTask = Task.CompletedTask, _labelsTask = Task.CompletedTask;
     private IDisposable? _timer, _subscription;
-    private Action<string, JsonElement>? _snapshot;
-    private Action<string, string, JsonElement>? _event;
     private long _sequence, _statusSequence, _refreshEpoch, _reviewSequence;
     private bool _disposed;
     private bool _visible = true;
@@ -159,25 +157,43 @@ public sealed class AdminAutoscanActivityController : IDisposable
 
     public Task OpenAsync()
     {
+        Detached previous;
         lock (_gate)
         {
             if (_disposed || Current) return Task.CompletedTask;
-            RetireLocked();
-            try { _owner = _authority.Capture(); }
-            catch (MonitorAuthorityRetiredException) { return Task.CompletedTask; }
-            _state = new() { IsOpen = true, Revision = _state.Revision + 1 };
-            ResetViewsLocked();
-            var owner = _owner;
-            _readLifetime = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
-            if (_channel != null)
+            previous = RetireLocked();
+        }
+        // The transport can raise retirement while holding its own lock, and a capture can retire authority and run other
+        // pages' handlers. Never enter either (including event accessors and lease disposal) while holding _gate.
+        previous.Release();
+        MonitorAuthorityLease owner;
+        try { owner = _authority.Capture(); }
+        catch (MonitorAuthorityRetiredException) { return Task.CompletedTask; }
+        bool adopted;
+        lock (_gate)
+        {
+            // A lease retired since the capture already raised its retirement, so nothing would clear it later; another open may also have won.
+            adopted = !_disposed && _owner == null && owner.IsCurrent;
+            if (adopted)
             {
-                _snapshot = (name, data) => OnSnapshot(owner, name, data);
-                _event = (name, kind, data) => OnEvent(owner, name, data);
-                _channel.SnapshotReceived += _snapshot;
-                _channel.EventReceived += _event;
-                _subscription = _channel.Subscribe("scans");
-                if (_channel.TryGetLatestSnapshot("scans", out var data)) OnSnapshot(owner, "scans", data);
+                _owner = owner;
+                _state = new() { IsOpen = true, Revision = _state.Revision + 1 };
+                ResetViewsLocked();
+                _readLifetime = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
             }
+        }
+        if (!adopted) { owner.Dispose(); return Task.CompletedTask; }
+        if (_channel != null)
+        {
+            var subscription = new RealtimeSubscription(_channel, this, owner);
+            bool keep;
+            lock (_gate)
+            {
+                keep = Owns(owner);
+                if (keep) _subscription = subscription;
+            }
+            if (!keep) { subscription.Dispose(); return Task.CompletedTask; }
+            if (_channel.TryGetLatestSnapshot("scans", out var data)) OnSnapshot(owner, "scans", data);
         }
         return RefreshAsync();
     }
@@ -577,23 +593,69 @@ public sealed class AdminAutoscanActivityController : IDisposable
         return visible ? RefreshAsync() : Task.CompletedTask;
     }
 
-    private void RetireLocked()
+    /// <summary>Clears the page; caller holds the gate and releases what this returns only after leaving it.</summary>
+    private Detached RetireLocked()
     {
         _state = new() { Revision = _state.Revision + 1 };
         CancelHistoryLocked(); _timer?.Dispose(); _timer = null;
         _readLifetime?.Cancel(); _readLifetime?.Dispose(); _readLifetime = null;
-        if (_channel != null) { _channel.SnapshotReceived -= _snapshot; _channel.EventReceived -= _event; }
-        _subscription?.Dispose(); _subscription = null;
-        _owner?.Dispose(); _owner = null; _statusTask = _labelsTask = Task.CompletedTask;
+        var detached = new Detached(_subscription, _owner);
+        _subscription = null; _owner = null; _statusTask = _labelsTask = Task.CompletedTask;
         _scanCursors = new(""); _pollCursors = new("");
         _refreshEpoch++; _reviewSequence++; _visible = true;
+        return detached;
     }
 
     private void AuthorityChanged() { Suspend(); AuthorityRetired?.Invoke(); }
-    public void Suspend() { lock (_gate) RetireLocked(); Notify(); }
+    public void Suspend()
+    {
+        Detached detached;
+        lock (_gate) detached = RetireLocked();
+        detached.Release(); Notify();
+    }
     public void Dispose()
     {
-        lock (_gate) { if (_disposed) return; _disposed = true; RetireLocked(); }
+        Detached detached;
+        lock (_gate) { if (_disposed) return; _disposed = true; detached = RetireLocked(); }
+        detached.Release();
         _authority.AvailabilityChanged -= AuthorityChanged;
+    }
+
+    /// <summary>The channel handlers and leases a retirement took out of the page under _gate; they are released outside it.</summary>
+    private readonly record struct Detached(IDisposable? Subscription, MonitorAuthorityLease? Owner)
+    {
+        public void Release() { Subscription?.Dispose(); Owner?.Dispose(); }
+    }
+
+    /// <summary>One open owner's handlers and channel lease, acquired/released outside _gate.</summary>
+    private sealed class RealtimeSubscription : IDisposable
+    {
+        private readonly IAdminRealtimeChannel _channel;
+        private readonly Action<string, JsonElement> _snapshot;
+        private readonly Action<string, string, JsonElement> _event;
+        private IDisposable? _handle;
+        private int _disposed;
+
+        public RealtimeSubscription(IAdminRealtimeChannel channel, AdminAutoscanActivityController controller, MonitorAuthorityLease owner)
+        {
+            _channel = channel;
+            _snapshot = (name, data) => controller.OnSnapshot(owner, name, data);
+            _event = (name, kind, data) => controller.OnEvent(owner, name, data);
+            try
+            {
+                channel.SnapshotReceived += _snapshot;
+                channel.EventReceived += _event;
+                _handle = channel.Subscribe("scans");
+            }
+            catch { Dispose(); throw; }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            _channel.SnapshotReceived -= _snapshot;
+            _channel.EventReceived -= _event;
+            _handle?.Dispose();
+        }
     }
 }

@@ -80,6 +80,30 @@ public sealed partial class AdminAutoscanActivityTests
         private sealed class Release(Action release) : IDisposable { public void Dispose() => release(); }
     }
 
+    /// <summary>A channel that, like the event transport, guards its subscriptions with a lock it also holds while it raises retirement.</summary>
+    internal sealed class LockedChannel : IAdminRealtimeChannel
+    {
+        internal object Lock { get; } = new();
+        internal int Leases;
+        /// <summary>Runs just before a caller waits for the transport lock.</summary>
+        internal Action? Entering;
+        public WebSocketState CurrentState => WebSocketState.Open;
+        public event Action<string, JsonElement>? SnapshotReceived { add { } remove { } }
+        public event Action<string, string, JsonElement>? EventReceived { add { } remove { } }
+        public event Action<WebSocketState>? StateChanged { add { } remove { } }
+        public IDisposable Subscribe(params string[] channels) { Entering?.Invoke(); lock (Lock) Leases++; return new Release(this); }
+        public bool TryGetLatestSnapshot(string channel, out JsonElement data) { data = default; return false; }
+        private sealed class Release(LockedChannel channel) : IDisposable
+        {
+            private int _released;
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _released, 1) != 0) return;
+                channel.Entering?.Invoke(); lock (channel.Lock) channel.Leases--;
+            }
+        }
+    }
+
     internal sealed class Harness : IDisposable
     {
         internal Wire Wire { get; } = new();
@@ -250,6 +274,30 @@ public sealed partial class AdminAutoscanActivityTests
         response.SetResult(Json(Page(Scan))); await pending;
         Assert.False(controller.HasOwner); Assert.False(controller.State.IsOpen); Assert.Empty(controller.State.Scans.Items);
         Assert.Equal(0, channel.Leases);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetirementRaisedUnderTheTransportLockNeverDeadlocksOpenOrDispose(bool opened)
+    {
+        // Not in using blocks: if the lock order regressed, disposing here would wait behind the two stuck threads instead of failing.
+        var harness = new Harness(); var channel = new LockedChannel();
+        var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, channel, new Clock());
+        if (opened) { await controller.OpenAsync(); Assert.Equal(1, channel.Leases); }
+        var held = new ManualResetEventSlim(); var entering = new ManualResetEventSlim();
+        channel.Entering = entering.Set;
+        // The transport raises access_changed while holding its own lock; the retirement reaches the controller on that thread,
+        // while the page thread is on its way into the same lock to subscribe (open) or to release its lease (dispose).
+        var socket = Task.Run(() =>
+        {
+            lock (channel.Lock) { held.Set(); Assert.True(entering.Wait(TimeSpan.FromSeconds(30))); harness.Authority.Retire(); }
+        });
+        Assert.True(held.Wait(TimeSpan.FromSeconds(30)));
+        var page = opened ? Task.Run(() => controller.Dispose()) : Task.Run(() => controller.OpenAsync());
+        await Task.WhenAll(socket, page).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, channel.Leases); Assert.False(controller.HasOwner); Assert.False(controller.State.IsOpen);
+        controller.Dispose(); harness.Dispose();
     }
 
     [Fact]
