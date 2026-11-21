@@ -72,6 +72,11 @@ internal static partial class AdminUserResourcesNativeFixture
                 var ratio = Contrast(((SolidColorBrush)Application.Current.Resources[key]).Color, surface);
                 Check(ratio >= 4.5, key + " text on the page surface reads at " + ratio.ToString("0.00") + ":1");
             }
+            // A primary button on hover is the accent at 90% over the page; its label must stay readable (official #4750).
+            var accent = (Color)Application.Current.Resources["AccentColor"]; var page = (Color)Application.Current.Resources["AppBackgroundColor"]; var label = (Color)Application.Current.Resources["AccentForegroundColor"];
+            var hover = Color.FromArgb(255, (byte)Math.Round(accent.R * 0.9 + page.R * 0.1), (byte)Math.Round(accent.G * 0.9 + page.G * 0.1), (byte)Math.Round(accent.B * 0.9 + page.B * 0.1));
+            var hoverRatio = Contrast(hover, label);
+            Check(hoverRatio >= 4.5, "a primary button label on hover reads at " + hoverRatio.ToString("0.00") + ":1");
         });
 
         await ScenarioAsync(c, "devices: segmented controls show and announce the selected option", async () =>
@@ -259,6 +264,35 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(Texts(confirm).All(x => Plain(x.Text)) && HasText(confirm, "Home base"), "the default group the members move to is named as plain text too");
             CheckDestructive(confirm, "delete group");
             confirm.Hide(); await GoneAsync(c, "the delete confirmation cancelled"); Check(s.Count("DELETE", GroupsPath) == 0, "cancelling sent nothing");
+        });
+
+        await ScenarioAsync(c, "refresh: captures of each page at four widths", async () =>
+        {
+            s.Reset();
+            var states = new (string Name, AdminRouteRequest Route, Func<bool> Ready, Func<FrameworkElement> Page, Func<Task>? Setup)[]
+            {
+                ("groups-list", new AdminRouteRequest(AdminRoute.AccessGroups), () => Has(c.Groups, "GroupCard_3"), () => c.Groups, null),
+                ("groups-editor", AdminRouteRequest.AccessGroup("3"), () => Has(c.Groups, "GroupMember_9"), () => c.Groups, null),
+                ("devices-list", new AdminRouteRequest(AdminRoute.Devices), () => Has(c.Devices, "DeviceGroup_u:7"), () => c.Devices,
+                    async () => { Click(Find<Button>(c.Devices, "DeviceGroup_u:7")); await Until(() => Has(c.Devices, "Device_7_desktop"), "the capture group is open"); }),
+                ("devices-detail", devicePath, () => Has(c.Devices, "DeviceProfileTab_p7") && Has(c.Devices, "DeviceSetting_player.hdr_enabled"), () => c.Devices, null),
+                ("history-import", SourceRoute(), () => Has(c.History, "ImportRemove_9") && Has(c.History, "ImportExpand_run1"), () => c.History, null),
+            };
+            foreach (var (name, route, ready, page, setup) in states)
+            {
+                c.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(250);
+                await c.OpenAsync(route, "capture page " + name);
+                await Until(ready, "the " + name + " page is ready to capture");
+                if (setup != null) await setup();
+                foreach (var width in new[] { 1440, 1024, 800, 560 })
+                {
+                    c.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(400);
+                    // The window paints the page background; the page alone is transparent, which would leave its light text unreadable in the picture.
+                    if (page() is Page shown) shown.Background = (Brush)Application.Current.Resources["AppBackgroundBrush"];
+                    await CaptureAsync(page(), "refresh-" + name + "-" + width + ".png");
+                }
+            }
+            c.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(250);
         });
 
         await ScenarioAsync(c, "history import: plain names in confirmations, an address left to right, the danger fill", async () =>

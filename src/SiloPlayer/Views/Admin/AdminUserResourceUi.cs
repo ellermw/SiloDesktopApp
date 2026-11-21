@@ -167,22 +167,44 @@ internal static class AdminUserResourceUi
     {
         // The official control is a group with an accessible name whose buttons carry their pressed state (aria-pressed); a toggle button reports On or Off.
         var row = new SegmentedRow { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center }; AutomationProperties.SetName(row, label); var buttons = new List<(ToggleButton Button, string Value)>(); var updating = false;
+        var marks = new Dictionary<ToggleButton, (TextBlock Label, Microsoft.UI.Xaml.Shapes.Rectangle Bar)>();
+        // The chosen segment carries a foreground bar along its bottom edge, because a fill alone sits close to its neighbours (official #4864); in a contrast theme its label is underlined too.
+        void Mark() { var contrast = SystemContrast; foreach (var (segment, (text, bar)) in marks) { var on = segment.IsChecked == true; bar.Visibility = on ? Visibility.Visible : Visibility.Collapsed; text.TextDecorations = on && contrast ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None; } }
         foreach (var (optionValue, optionLabel) in options)
         {
-            var button = Id(new ToggleButton { Content = optionLabel, IsChecked = optionValue == value, MinHeight = 32, Padding = new(12, 4, 12, 4) }, idPrefix + "_" + optionValue);
+            var text = new TextBlock { Text = optionLabel, VerticalAlignment = VerticalAlignment.Center };
+            var bar = new Microsoft.UI.Xaml.Shapes.Rectangle { Height = 2, VerticalAlignment = VerticalAlignment.Bottom, Fill = Brush("PrimaryTextBrush"), Margin = new(-12, 0, -12, -4), Visibility = Visibility.Collapsed, IsHitTestVisible = false };
+            var content = new Grid(); content.Children.Add(text); content.Children.Add(bar);
+            var button = Id(new ToggleButton { Content = content, Tag = optionValue, IsChecked = optionValue == value, MinHeight = 32, Padding = new(12, 4, 12, 4) }, idPrefix + "_" + optionValue);
+            OfficialSelected(button); marks[button] = (text, bar);
             AutomationProperties.SetName(button, optionLabel); buttons.Add((button, optionValue));
             // Pressed state follows Checked/Unchecked (pointer, keyboard and assistive technology alike); exactly one option stays pressed.
             button.Checked += (_, _) =>
             {
                 if (updating) return; updating = true;
                 foreach (var (other, otherValue) in buttons) other.IsChecked = otherValue == optionValue;
-                updating = false; changed(optionValue);
+                updating = false; Mark(); changed(optionValue);
             };
-            button.Unchecked += (_, _) => { if (updating) return; updating = true; button.IsChecked = true; updating = false; };
+            button.Unchecked += (_, _) => { if (updating) return; updating = true; button.IsChecked = true; updating = false; Mark(); };
             row.Children.Add(button);
         }
+        Mark();
         return row;
     }
+    /// <summary>
+    /// The selected look of the official segmented controls, saved views and profile tabs: the hover fill under the foreground label, whatever the
+    /// system accent colour is, so the label stays readable. The label and counts inside inherit this colour.
+    /// </summary>
+    internal static void OfficialSelected(ToggleButton button)
+    {
+        var fill = Brush("SurfaceHoverBrush"); var text = Brush("PrimaryTextBrush"); var none = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        foreach (var key in new[] { "ToggleButtonBackgroundChecked", "ToggleButtonBackgroundCheckedPointerOver", "ToggleButtonBackgroundCheckedPressed" }) button.Resources[key] = fill;
+        foreach (var key in new[] { "ToggleButtonForegroundChecked", "ToggleButtonForegroundCheckedPointerOver", "ToggleButtonForegroundCheckedPressed" }) button.Resources[key] = text;
+        foreach (var key in new[] { "ToggleButtonBorderBrushChecked", "ToggleButtonBorderBrushCheckedPointerOver", "ToggleButtonBorderBrushCheckedPressed" }) button.Resources[key] = none;
+        button.BorderThickness = new(0);
+    }
+    /// <summary>A text block that takes the colour of the button it sits in, so it follows that button's selected and hover states.</summary>
+    internal static TextBlock Inherited(TextBlock block, double opacity = 1) { block.ClearValue(TextBlock.ForegroundProperty); block.Opacity = opacity; return block; }
 }
 
 /// <summary>The row of a segmented control: a named group for assistive technology, so the selected option is announced inside its group.</summary>

@@ -95,7 +95,12 @@ public sealed partial class AdminDevicesPage
         var totalSettings = AdminDevicePresentation.ForPlatform(_device.Text("device_platform"), overrides.Select(x => x.Text("key"))).Count;
         var scope = Segmented(D("settingsScope.allSettings"), [("all", D("settingsScope.allSettings") + "  " + totalSettings), ("overrides", D("settingsScope.overrides") + "  " + overrides.Count)], effectiveAll ? "all" : "overrides",
             value => { if (forceAll || tabs.Count == 0) { RenderDetailBody(); return; } _showAll = value == "all"; RenderDetailBody(); }, "DeviceSettingsScope");
-        foreach (var button in scope.Children.OfType<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>()) if (tabs.Count == 0 || forceAll && button.Content is string label && label.StartsWith(D("settingsScope.overrides"), StringComparison.Ordinal)) button.IsEnabled = false;
+        foreach (var button in scope.Children.OfType<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>())
+            if (tabs.Count == 0 || forceAll && (string?)button.Tag == "overrides")
+            {
+                // The official control says why a segment is off: no profile has used the device, or there is no override to show on its own.
+                button.IsEnabled = false; ToolTipService.SetToolTip(button, D(tabs.Count == 0 ? "settingsScope.noProfile" : "settingsScope.noOverrides"));
+            }
         actions.Children.Add(scope);
         var open = Button(D("detail.openUser"), "DeviceOpenUser", () => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId))); open.IsEnabled = AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(userId)); actions.Children.Add(open);
         Grid.SetColumn(actions, 1); header.Children.Add(actions); _detail.Children.Add(header);
@@ -144,10 +149,11 @@ public sealed partial class AdminDevicesPage
         {
             var initial = AdminNameText.Initial(tab.Name); if (initial.Length == 0) initial = "?";
             var tabName = Truncated(tab.Name.Length > 0 ? tab.Name : T("web.admin.common.deviceOverrides.tabs.unnamed"), 13, auto: true); tabName.MaxWidth = 120;
-            var content = Inline(8); content.Children.Add(Chip(initial)); content.Children.Add(tabName);
-            content.Children.Add(Chip(tab.Overrides.Count.ToString(CultureInfo.CurrentCulture)));
+            var content = Inline(8); content.Children.Add(TabChip(initial)); content.Children.Add(Inherited(tabName));
+            content.Children.Add(TabChip(tab.Overrides.Count.ToString(CultureInfo.CurrentCulture)));
             var button = Id(new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton { Content = content, IsChecked = tab.Id == active.Id, Padding = new(10, 6, 10, 6), MinHeight = 36 }, "DeviceProfileTab_" + tab.Id);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, AdminNameText.Label(tab.Name, 200) + ", " + tab.Overrides.Count);
+            OfficialSelected(button);
             button.Checked += (_, _) => { if (_profile == tab.Id) return; _profile = tab.Id; ReplaceProfileQuery(); RenderTabsAndRows(); };
             button.Unchecked += (_, _) => { if (_profile == tab.Id) button.IsChecked = true; };
             strip.Children.Add(button);
@@ -182,6 +188,8 @@ public sealed partial class AdminDevicesPage
         if (rows.Count == 0) _rowsHost.Children.Add(Padded(Text(D("detail.noProfilesBody"), 12, true)));
         foreach (var row in rows) { _rowsHost.Children.Add(row); _rowsHost.Children.Add(Divider()); }
     }
+    /// <summary>A small outlined label inside a profile tab; its text follows the tab's own colour, so it stays readable on the selected tab.</summary>
+    private static Border TabChip(string text) => new() { Child = Inherited(Text(text, 12)), Padding = new(8, 2, 8, 2), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") };
     private void ReplaceProfileQuery()
     {
         var request = _route.WithQuery("profile", _profile == UnknownProfile ? null : _profile);

@@ -199,11 +199,12 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
     private static FrameworkElement FacetRow(string label, int count, bool active, bool asButton, Action<bool> changed, string id)
     {
         var content = new Grid(); content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var name = Truncated(label, 13); var total = Text(count.ToString(CultureInfo.CurrentCulture), 11, true); Grid.SetColumn(total, 1); content.Children.Add(name); content.Children.Add(total);
+        var name = Truncated(label, 13); var total = Text(count.ToString(CultureInfo.CurrentCulture), 11, true);
+        if (asButton) { Inherited(name); Inherited(total, 0.75); } Grid.SetColumn(total, 1); content.Children.Add(name); content.Children.Add(total);
         if (asButton)
         {
             var button = Id(new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(8, 6, 8, 6), BorderThickness = new(0) }, id);
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label + ", " + count); button.Checked += (_, _) => changed(true); button.Unchecked += (_, _) => changed(false); return button;
+            OfficialSelected(button); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label + ", " + count); button.Checked += (_, _) => changed(true); button.Unchecked += (_, _) => changed(false); return button;
         }
         var box = Id(new CheckBox { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinHeight = 32 }, id);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(box, label + ", " + count);
