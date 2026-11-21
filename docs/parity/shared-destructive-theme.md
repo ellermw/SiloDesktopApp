@@ -1,8 +1,9 @@
 # Shared destructive (red) theme parity record
 
 Official reference: Silo Server `02a9d1d3e1b48d86437ad10c0b66ed0e3645d098` (read with `git show`/`git grep` on the blobless clone; nothing fetched or checked out).
-Native base: `origin/beta` at `e02c0e2a0` (1.2.1351-beta.1).
+Native base: `origin/beta` at `e02c0e2a0` (1.2.1351-beta.1); merged forward with beta `28f3e8bf4` (merge commit `b63eb369a`) for the review fixes.
 This record states what was read and observed. It does not claim visual or pixel parity.
+**Section 11 (independent review, November 21) supersedes sections 4 (contrast themes, server overrides), 5 (two figures) and 7 where they differ; the corrected statements are marked below.**
 
 ## 1. Official tokens
 
@@ -92,12 +93,12 @@ By kind of use (approximate, by reading each match):
 
 `ThemeService.ApplyTheme` still writes shared brushes and colors in place (no brush is replaced, no second mechanism). The new `ApplyDestructive` runs after the in-app high contrast block and before `RefreshDerivedControlResources` and `ApplySystemContrast`:
 
-- It calls `DestructiveTheme.Resolve` (new, `SiloPlayer.Core/Services/DestructiveTheme.cs`, pure and unit tested) with the theme's `Destructive` (= `--destructive-base`), `DestructiveFill` and `DestructiveForeground`, the in-app high contrast setting and the server appearance overrides.
-- A token the theme leaves empty (or that is not a hex color) inherits the midnight-cinema default. A server override keyed `destructive`, `destructive-fill` or `destructive-foreground` replaces the theme value. The server sends only the branding accent today (`SharedAppearanceState.AccentColors`: primary, ring, sidebar-primary and the foregrounds), so no live server theme moves a red; the override path exists for the three keys and is exercised by the unit and native tests only.
+- It calls `DestructiveTheme.Resolve` (new, `SiloPlayer.Core/Services/DestructiveTheme.cs`, pure and unit tested) with the theme's `Destructive` (= `--destructive-base`), `DestructiveFill` and `DestructiveForeground` and the in-app high contrast setting. *(Corrected, section 11: it first took the server appearance overrides as a fourth input; that input is removed.)*
+- A token the theme leaves empty (or that is not a hex color) inherits the midnight-cinema default. The server sends only the branding accent (`SharedAppearanceState.AccentColors`: primary, ring, sidebar-primary and the foregrounds), so no server value reaches a red and `Resolve` has no override input.
 - High contrast: text = `color-mix(boost 65%, base)`, label = that text; fill and foreground unchanged, as official.
 - It writes `ErrorBrush`/`ErrorColor`, `ErrorTintBrush`, `DestructiveFillBrush`/`Color`, `DestructiveForegroundBrush`/`Color`, `ErrorLabelBrush`/`Color`. `RefreshDerivedControlResources` copies `DestructiveFillBrush` into `WebUiDestructiveHoverBrush` and `WebUiDestructivePressedBrush` (it used to copy `ErrorBrush` into the hover brush).
 - The old direct `destructive` and `destructive-foreground` entries of the override map were removed because `ApplyDestructive` now owns them.
-- Windows contrast theme: unchanged. The system palette still repaints surfaces, text, accent and selection after the app palette; no red role is in the system token lists, so the reds are not repainted (as before). A private test seam (`_simulatedSystemPalette`, set only by the native host through reflection) stands in for the five system colors, because the native host has no real contrast theme.
+- Windows contrast theme: *(corrected, section 11)* the system palette repaints every red role. The first version left them out of the token lists, so every red stayed a fixed red in a contrast theme, which official does not do. The test seam is now the public method `ThemeService.ApplySystemPalette`, not a private field set by reflection.
 
 ## 5. Contrast (computed, WCAG 2.x relative luminance; `DestructiveTheme.Contrast`)
 
@@ -125,9 +126,9 @@ Destructive text `#EF4444` on each surface (this is the official value, kept eve
 | surface hover | 4.16 | below 4.5:1, official value kept |
 | raised | 3.89 | below 4.5:1, official value kept; official notes no red text sits on it |
 
-Red on its own 10% tint (page / card / popover / raised / surface hover): text 4.45 / 4.10 / 4.28 / 3.53 / 3.78 (below 4.5:1 for normal text: this is the official `text-destructive` on `bg-destructive/10` of the sign-in error panel, kept); label `#F37373` 5.99 / 5.51 / 5.76 / 4.75 / 5.09 (all at least 4.5:1, which is why official uses the label there). The old literal panel (`#EF6B73` text on `#2DEF6B73`) was 4.82 on the page; the new panel is the official 4.45 on the page. That is a small drop on one surface and is the official value.
+Red on its own 10% tint (page / card / popover / raised / surface hover): text 4.45 / 4.10 / 4.28 / 3.53 / 3.78 (below 4.5:1 for normal text: this is the official `text-destructive` on `bg-destructive/10` of the sign-in error panel, kept); label `#F37373` 5.99 / 5.51 / 5.76 / 4.75 / 5.09 (all at least 4.5:1, which is why official uses the label there). *(Corrected, section 11.)* The sign-in panel did not drop from 4.82 to 4.45. The old literal panel was painted with `#2DEF6B73` as the tint, but its text was the live `ErrorBrush` `#EF4444`, not the rose: at runtime it was 3.83 on the page and 3.49 on a card. The new panel is the official `text-destructive` on `bg-destructive/10`: 4.45 on the page and 4.10 on a card, an improvement of 0.62 and 0.61 (still below 4.5:1; the panel's text is the plain red as official, not the label). The rose text on the rose tint (4.82 / 4.40) only existed before ThemeService ran.
 
-High contrast (`#F9BEBE` text; surfaces lightened as `app.css:830-846`): page 11.50, card `#333336` 7.88, surface hover `#46464A` 5.88, raised `#535358` 4.78 (official comment 4.77); white on the unchanged fill 4.83. Label on tint equals text: 9.40 page, 6.23 card, 4.77 hover, 3.96 raised (below 4.5:1 on raised, as the official block states: no red tint sits on it).
+High contrast, **official** (`#F9BEBE` text; surfaces lightened as `app.css:830-846`; this is what `DestructiveThemeTests` computes): page 11.50, card `#333336` 7.88, surface hover `#46464A` 5.88, raised `#535358` 4.78 (official comment 4.77); white on the unchanged fill 4.83. **Native** high contrast does not lighten surfaces (ThemeService changes only text, border, input border and ring), so the native values read from the live brushes are different, and higher: text `#F9BEBE` on the page 11.50, on a card 10.63, on the raised surface 9.17; the label on its tint over the page 9.40, a card 8.54, the raised surface 7.26 (`shared-destructive-theme`, label "high contrast red text over the ..."). Official label on tint equals text: 9.40 page, 6.23 card, 4.77 hover, 3.96 raised (below 4.5:1 on raised, as the official block states: no red tint sits on it).
 
 The unit tests compute these numbers from `DestructiveTheme.Contrast` (they are not string assertions) and check that hover and pressed always exceed the rest contrast on every surface, and that the old fills never reached 4.5:1.
 
@@ -151,7 +152,7 @@ Left, with the open pull request that blocks each (found with `gh pr list --base
 | `Views/Admin/AdminDevicesPage*.cs`, `AdminUserResourceUi.cs` (outlined chips and dot with `ErrorBrush`) | outlined text/border/dot, not fills; label-on-tint equivalents would use `ErrorLabelBrush` | #240 |
 | `Views/Admin/AdminHistoryImportPage.Mappings.cs`, `AdminAccessGroupsPage.*` | `ErrorBrush` text/chips | #240 |
 | `Views/Admin/AdminDiagnosticsPage.cs`, `LogsNativeUi.cs` | `ErrorBrush` text and state color; official uses `text-destructive-label` on tint for some badges | #232 |
-| `Views/SettingsPage.xaml.cs` (3903, 4061, 4066) | literal `#F87171` and `#3A1313` for the failed history-import status | #230 |
+| ~~`Views/SettingsPage.xaml.cs` (3903, 4061, 4066)~~ | #230 has merged; the failed status badge is fixed (section 11); the run error box is left on purpose (section 11) | |
 | Other `ErrorBrush` text/icon uses in `AdminBackupsPage`, `AdminHomeSectionsPage.Dialogs`, `AdminLibrariesPage.*`, `AdminSettingsUi` | text/icon only, no change needed; the shared `DestructiveButtonStyle` they use is fixed | #236, #235, #229, #234 |
 
 Not changed on purpose: `Controls/WatchTonightDialog.xaml:226` (literal `#EF4444` icon and `#66EF4444` border; equal to the official text red, not a fill); the official `border-destructive/30` on the sign-in error panel (native panels have no border); the page-local `#dc2626` styles in open pull requests.
@@ -233,9 +234,124 @@ Two things that are not mine:
 
 ## 10. Not established
 
-- No real Windows contrast theme was switched on; only the simulated palette hook was exercised.
+- No real Windows contrast theme was switched on; `ThemeService.ApplySystemPalette` was called with a dark and a light simulated palette and the live brushes were read back. The code that reads the five colors from the system (`ApplySystemContrast`) was not executed with a real contrast theme.
 - No visual or pixel parity with the official WebUI is claimed. The numbers in section 5 are computed from the token values; rendering was checked only through the sampled button pixels and the captures above.
 - `LoginPage`, `SignupPage`, `WatchTogetherJoinPage` and `WatchTogetherRoomPage` load the new `ErrorTintBrush` key; the unit test shows the key is defined before use, but I did not confirm that a selector in these runs constructs those four pages. `HouseholdSetupPage`, `InviteClaimPage` and `ActivateDevicePage` are constructed by `shell-localization` (read from its source), which passed.
 - The live player's own error toasts and retry prompts were not captured; they use `ErrorBrush`/`DestructiveButtonStyle` (for example `PlayerService.NativeParty`), which are the keys changed.
 - Page-local `#dc2626` styles in open pull requests were not touched; whether they match the new shared fill is for those pull requests.
-- `origin/beta` moved to `20b58086a` (1.2.1360-beta.1, contains #229) while this ran; the branch is based on `e02c0e2a0` and was not merged forward.
+- Beta was merged forward on November 21 (`28f3e8bf4`, contains #229 and #230).
+
+## 11. Independent review (November 21) and fixes
+
+An independent review found no P1 (no page fails to load, nothing throws, no server value can break the UI) and four P2 and several smaller items. Source: `52129002c` (fixes) and `e6e8f6dd2` (existing tests follow the move); beta `28f3e8bf4` merged first (merge commit `b63eb369a`, one conflict in `docs/current-development.md`, both entries kept, this branch's on top).
+
+### Findings
+
+| # | Finding | Result | Where | Guard |
+|---|---|---|---|---|
+| 1 | In a Windows contrast theme every red stayed a fixed red (white contrast window: text red 3.76:1, sign-in panel text 3.29:1, new label on its tint 2.45:1) | Fixed. See the mapping below | `ThemeService.cs` token lists and `ApplySystemPalette` | unit `A_windows_contrast_theme_repaints_every_red_role_with_a_system_color` and `In_a_contrast_theme_every_red_pairing_is_the_system_pairing_at_4_5_or_more` (dark and light); native `shared-destructive-theme`, "dark/light contrast theme" checks read the live brushes, the live elements and sampled pixels. The old assertions ("`ApplySystemContrast` contains no Error or Destructive", "the red roles are unchanged in a contrast theme") are inverted; `AccessibilityMotionParityTests` (two existing tests) now expect 35 tokens and read `ApplySystemPalette` |
+| 2 | Error toast hard-coded `#EF6B73` | Fixed: the toast's icon and border are the live `ErrorLabelBrush` (5.24:1 on the raised surface; `ErrorBrush` is 3.89:1 there) | `Controls/ToastContainer.xaml.cs:123-134` | unit `The_remaining_literal_reds_use_the_shared_roles`; native checks "the error toast icon and border are the shared label brush" in the default, high contrast and both contrast states (reference equality with the resource) |
+| 3 | Downloads failed badge below 4.5:1 (plain red on a 15% copy: 4.21 page, 3.85 card, 3.35 raised) | Fixed: `ErrorLabelBrush` on `ErrorTintBrush` (5.99 / 5.51 / 4.75). The other statuses keep their colors | `Views/DownloadsPage.xaml.cs:122-146` | unit; native: the real `DownloadsPage.CreateDownloadRow` for a failed download, checks on the live brushes in every theme state |
+| 4 | `ProfileEditorDialog` validation text moved to `ErrorBrush` | Confirmed moot: `ErrorBrush` is now repainted with WindowText in a contrast theme (finding 1, dark and light palette, black 21.00:1 on white). The dialog itself was not constructed | `ProfileEditorDialog.cs:309` | unit scan of the line; the brush behaviour is the native contrast checks |
+| 5 | More reds | Fixed (below) or recorded as follow-ups | | unit; native where a selector builds the element |
+| 6 | Server override path | Fixed by removing it (smaller): `DestructiveTheme.Resolve` has no overrides parameter, `ThemeService` passes only the theme's tokens, the override map has no red key, the override unit tests are replaced by a test that the signature has no dictionary and that `ThemeService` passes theme tokens only. Native: a server colors map with `destructive`, `destructive-fill` and `destructive-foreground` moves no red role | `DestructiveTheme.cs:46-58`, `ThemeService.cs:292` | `A_theme_supplies_each_red_token_and_nothing_else_can`; native "a server destructive key moves no red role" |
+| 7 | Test seam field | Fixed: `_simulatedSystemPalette` is gone. `public void ApplySystemPalette(ResourceDictionary, SystemPalette)` applies the five colors; `ApplySystemContrast` reads the real system colors and calls it; the native fixture calls it with a dark and a light palette, then `ApplyTheme` again to leave. No new compiler warning in the changed files | `ThemeService.cs:343-392` | unit (no `_simulatedSystemPalette` anywhere); native |
+| 8 | Native checks that could not fail | Fixed: contrast, hover and pressed checks read the live brushes (fill, foreground, hover, pressed, error, label, tint, surfaces) and the sampled pixels; high contrast checks read the live brushes on the page, card and raised surface; a light contrast palette added | `SharedDestructiveThemeNativeFixture.cs` | the fixture (92 PASS lines in results.txt) |
+| 9 | Wrong figures | Corrected in sections 5 and 10 above | | |
+| 10 | Prepared files pill tint was a one-time copy | Fixed: `ErrorTintBrush`. No open PR touched the file | `Views/Admin/AdminPreparedFilesPage.cs:378` | unit scan; `admin-prepared-files` native group passes (2 checks, they do not read the pill) |
+
+### Contrast theme mapping (official `@media (forced-colors: active)` shows no red)
+
+| Role | Contrast theme | Dark palette (Window #000000, WindowText #FFFFFF, Highlight #1AEBFF, HighlightText #000000) | Light palette (#FFFFFF, #000000, #37006E, #FFFFFF) |
+|---|---|---|---|
+| `ErrorBrush`, `ErrorColor`, `ErrorLabelBrush`, `ErrorLabelColor` | WindowText | #FFFFFF, 21.00:1 on page, card, popover and raised | #000000, 21.00:1 |
+| `ErrorTintBrush` | Window (the brush keeps its 10% opacity, so the tint over a window is that window) | #000000 | #FFFFFF |
+| `DestructiveFillBrush`, `DestructiveFillColor` | Highlight | #1AEBFF | #37006E |
+| `DestructiveForegroundBrush`, `DestructiveForegroundColor` | HighlightText | #000000, 14.37:1 on the fill | #FFFFFF, 15.13:1 |
+| `WebUiDestructiveHoverBrush`, `WebUiDestructivePressedBrush` | copied from the fill again by `RefreshDerivedControlResources`, which `ApplySystemPalette` runs after the tokens; their 90% and 80% opacities stay | rendered hover #17D3E5; label on hover 11.49:1, pressed 9.10:1 | rendered hover #4B1A7D; label on hover 12.05:1, pressed 9.00:1 |
+
+All of it is written in place (no brush replaced). Every key is one `ApplyTheme`/`ApplyDestructive` writes, so leaving the contrast theme restores the roles; the native check compares every red role with its default after `ApplyTheme`. The two lists in `ThemeService` went from 30 to 35 tokens (the existing `AccessibilityMotionParityTests` token test now expects 35 and reads the red keys from `ApplyDestructive`; `ErrorTint` is a brush only).
+
+### Reds brought onto the roles in this pass
+
+| File | Was | Now |
+|---|---|---|
+| `Controls/ToastContainer.xaml.cs` | `#EF6B73` | `ErrorLabelBrush` (shared instance) |
+| `Views/DownloadsPage.xaml.cs` | `ErrorBrush` text on a 15% copy | `ErrorLabelBrush` on `ErrorTintBrush` |
+| `Controls/EpisodeCardCaption.cs` | `IndianRed` "Damaged file", 4.27:1 on a card | `ErrorBrush` (official `UnreadableFileBadge`: `text-destructive`; 4.89 on the page, 4.51 on a card) |
+| `Controls/SubtitleSearchDialog.xaml` | `#1AEF4444` panel | `ErrorTintBrush` (the pink text `#FFFCA5A5` inside it is unchanged) |
+| `Views/Admin/AdminRequestsPage.cs` | `IndianRed` invalid border | `ErrorBrush` |
+| `Controls/AdminAppearanceOverlayEditor.Images.cs` | literal `#EF4444` text | `ErrorBrush` |
+| `Views/Admin/AdminPreparedFilesPage.cs` | `Tint("ErrorBrush", 0.1)` copy | `ErrorTintBrush` |
+| `Views/SettingsPage.xaml.cs` history-import status badge | `#F87171` on `#3A1313`, border from the literal | failed entry: `ErrorLabelBrush` on `ErrorTintBrush`, border the red at 20% (a snapshot copy, as the table's other borders are literals; official `border-destructive/20`). The other statuses keep their literals: official draws every status from tokens (`text-info`, `text-warning`, `text-success`, `text-muted-foreground`), which this red change does not touch, so changing the whole table would be a separate, non-red change. The run's error box below the badge keeps its literals `#1A0E0E`, `#3A1313`, `#F87171`: official's own box uses Tailwind red literals (`border-red-500/30 bg-red-500/[0.06] text-red-100/90`, `text-red-400`), not tokens |
+
+No open pull request (checked with `gh pr list --base beta --state open --json number,files`, 13 open) touches any of these files; #242 touches only `tests/SiloPlayer.NativeRegressionTests/Program.cs`, which this pass does not edit.
+
+### Follow-ups (files in open pull requests, not edited)
+
+`AdminNodesPage.cs` (#238); `AdminGeneralSettingsPage.cs`, `AdminSearchSettingsPage.cs`, `AdminStorageSettingsPage.cs` (#234); Monitor, Logs, Diagnostics and Dashboard helpers (#232); Devices, Access groups and History import chips (#240). Not red-role work, left: the pink text `#FFFCA5A5` in the Subtitle search error panel stays a literal (it predates this change and in a contrast theme it is not repainted).
+
+### Runs (lane A, `accept-family-v2.ps1`, task id `admin-families-nov20`)
+
+| Label | What | Result |
+|---|---|---|
+| `redfix-focused-r1`, `-r2` | focused unit | 38/38; 55/55 (with the two accessibility tests) |
+| `redfix-iter-r1` | publish and native `shared-destructive-theme` | 92 PASS lines |
+| `redfix-final-r1` | final | full unit 11204/11206: `AccessibilityMotionParityTests` (two tests scanning the contrast code I moved and the 30-token count); the tests were updated, not weakened |
+| `redfix-final-r2` | final | stopped by me before it acquired the lease: the background wrapper had a 10-minute cap; no output |
+| `redfix-final-r3` | final | full unit 11205/11206: the known intermittent `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling`; no native run |
+| `redfix-final-r4` | final, source `e6e8f6dd2` | focused unit 73/73, full unit 11206/11206, 18 native groups, all passed (table below) |
+| `redfix-e1`…`e20`, `e21`…`e25` | each remaining group alone with `-Stage native` on the r4 build, and reruns | below |
+| `redfix-ctl1`…`ctl6`, `redfix-p1`…`p3` | controls (below) | below |
+
+Native groups on the final source (PASS and FAIL lines in each group's results.txt; "crash" = process exit -1073741189 / 0xC000027B after "native regression run completed" with every check passed, the lead's known teardown issue):
+
+| Group | Passed | Failed | Exit |
+|---|---|---|---|
+| shared-destructive-theme | 92 | 0 | 0 (r4) |
+| shared-controls | 3 | 0 | 0 |
+| shared-appearance | 2 | 0 | 0 |
+| shell-localization | 4 | 0 | 0 |
+| oct24-ui / oct24-shell | 2 / 2 | 0 | 0 |
+| retained-library | 70 | 0 | 0 |
+| poster-captions | 2 | 0 | 0 |
+| overlay-revisions | 91 | 0 | 0 |
+| household-contracts | 12 | 0 | 0 |
+| profiles-metadata | 11 | 0 | 0 |
+| admin-manage-foundation | 36 | 0 | 0 |
+| admin-monitor | 113 | 0 | 0 |
+| admin-configure-general | 188 | 0 | 0 |
+| admin-configure-email | 297 | 0 | 0 |
+| admin-configure-security | 374 | 0 | 0 |
+| admin-configure-notifications | 35 | 0 | 0 |
+| admin-configure-appearance | 113 | 0 | 0 |
+| admin-dashboard (e1, rerun e22) | 311 | 0 | crash, crash |
+| admin-configure-integrations (e2, e23) | 101 | 0 | crash, crash |
+| admin-configure-backups (e3, e24) | 37 | 0 | crash, crash |
+| admin-configure-providers (e4, e25, p1-p3) | 89 (e4, p1-p3), 86 (e25) | 0; e25: 2 | crash on e4, p1-p3; e25 crash |
+| admin-collections (e5) | 203 | 0 | 0 |
+| admin-home-sections (e6) | 139 | 0 | 0 |
+| admin-signin-security (e7) | 172 | 0 | 0 |
+| admin-requests-management (e8) | 37 | 0 | 0 |
+| admin-manage-library-settings (e9) | 84 | 0 | 0 |
+| admin-subtitles (e10) | 65 | 0 | 0 |
+| admin-libraries (e11) | 611 | 0 | 0 |
+| native-subtitle-dialogs (e12; builds the Subtitle search dialog) | 5 | 0 | 0 |
+| toast-diagnostics (e13) / playback-toasts (e14) / batch-downloads (e15; builds the toast container) | 2 / 2 / 11 | 0 | 0 |
+| admin-prepared-files (e17) | 2 | 0 | 0 |
+| admin-appearance-overlays (e18) | 75 | 0 | 0 |
+| history-import-auth (e19) | 25 | 0 | 0 |
+| save-picker (e20) | 2 | 0 | 0 |
+| episode-overview (e16, e21) | 13 | 1 | 1 (fails the same check twice; also on beta, below) |
+
+The four crash groups were rerun once as asked: the same crash after all checks passed. `admin-configure-providers` e25 once failed two checks ("error: the load failure is announced", "error: Reload is reachable") and then passed 89/89 on four further runs of this source (e4, p1, p2, p3) and three of beta (ctl4-ctl6); I treat e25 as a timing flake and have no cause.
+
+`episode-overview` fails "A button post 503 retains the description and offers a manual retry" after 13 passed checks. Controls: with only `ToastContainer` reverted to beta it fails the same way (`redfix-ctl1`); with `src` and `tests` exactly equal to beta `28f3e8bf4` (this branch's new files removed in a throw-away commit, later reverted) it fails the same way (`redfix-ctl3`). So it is a failure of beta, not caused by this change; I did not look for its cause. The throw-away commits and their reverts are in the history (net no change).
+
+Existing groups that build the changed elements and passed: `poster-captions`, `overlay-revisions` and `oct24-ui` (episode captions, not the damaged-file notice), `admin-prepared-files`, `admin-appearance-overlays`, `admin-requests-management`, `history-import-auth`, `native-subtitle-dialogs`. Not exercised by any group, only by this branch's fixture: the Downloads page (no existing selector builds it), the toast's error state. Not run: the full no-selector native suite, the groups in the brief's exclusion list, `subtitle-preferences`.
+
+### Not established
+
+- A real Windows contrast theme, an actual contrast theme switch (`ColorValuesChanged`), Narrator, any second locale, all-DPI, and visual or pixel parity.
+- That the damaged-file notice, the Requests invalid border, the overlay library error, the history-import badge and the Prepared files pill render as intended: they were changed to live brushes and covered by source checks and, where noted, by the groups that build their pages; I did not capture them.
+- Why `episode-overview` fails on beta, and why `admin-configure-providers` failed once.
