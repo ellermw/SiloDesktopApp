@@ -27,10 +27,10 @@ public static class DashboardFormat
     /// <summary>Sub-hour totals stay in minutes so a short session does not read "0.0h".</summary>
     public static string WatchTime(long? totalSeconds)
     {
-        if (totalSeconds is not { } seconds || seconds <= 0) return "0m";
-        if (seconds < 3600) return Math.Max(1, (long)Math.Round(seconds / 60.0, MidpointRounding.AwayFromZero)) + "m";
+        if (totalSeconds is not { } seconds || seconds <= 0) return DashboardText.T("web.admin.dashboard.format.duration.minutes", ("minutes", 0));
+        if (seconds < 3600) return DashboardText.T("web.admin.dashboard.format.duration.minutes", ("minutes", Math.Max(1, (long)Math.Round(seconds / 60.0, MidpointRounding.AwayFromZero))));
         var hours = seconds / 3600.0;
-        return Math.Round(hours, 1, MidpointRounding.AwayFromZero).ToString("#,0.#", Culture) + "h";
+        return DashboardText.T("web.admin.dashboard.format.watchTimeHours", ("hours", Math.Round(hours, 1, MidpointRounding.AwayFromZero).ToString("#,0.#", Culture)));
     }
 
     /// <summary>Small rates keep one decimal so a trickle does not read as idle.</summary>
@@ -42,9 +42,9 @@ public static class DashboardFormat
     }
 
     public static string Mbps(double mbps)
-        => double.IsNaN(mbps) || double.IsInfinity(mbps) ? Dash : MbpsValue(mbps) + " Mbps";
+        => double.IsNaN(mbps) || double.IsInfinity(mbps) ? Dash : DashboardText.T("web.common.format.bitrate.mbps", ("rate", MbpsValue(mbps)));
 
-    private static readonly string[] DataUnits = ["B", "KB", "MB", "GB", "TB", "PB"];
+    private static readonly string[] DataUnits = ["bytes", "kb", "mb", "gb", "tb", "pb"];
 
     /// <summary>Decimal units with one decimal below 100; unit chosen after rounding.</summary>
     public static string DataTotal(double? bytes)
@@ -63,7 +63,7 @@ public static class DashboardFormat
                 continue;
             }
             var shown = unit > 0 && rounded < 100 ? 1 : 0;
-            return rounded.ToString(shown == 1 ? "#,0.0" : "#,0", Culture) + " " + DataUnits[unit];
+            return DashboardText.T("web.common.format.size." + DataUnits[unit], ("size", rounded.ToString(shown == 1 ? "#,0.0" : "#,0", Culture)));
         }
     }
 
@@ -86,21 +86,21 @@ public static class DashboardFormat
     {
         var gigabytes = bytes / (1024d * 1024 * 1024);
         var terabytes = gigabytes / 1024;
-        return terabytes >= 1 ? Decimal(terabytes, 1) + " TB" : Decimal(gigabytes, 0) + " GB";
+        return terabytes >= 1 ? DashboardText.T("web.common.format.size.tb", ("size", Decimal(terabytes, 1))) : DashboardText.T("web.common.format.size.gb", ("size", Decimal(gigabytes, 0)));
     }
 
     public static string DurationSeconds(long totalSeconds)
     {
-        if (totalSeconds < 60) return totalSeconds + "s";
+        if (totalSeconds < 60) return DashboardText.T("web.admin.dashboard.format.duration.seconds", ("seconds", totalSeconds));
         if (totalSeconds < 3600)
         {
             var minutes = totalSeconds / 60;
             var seconds = totalSeconds % 60;
-            return seconds == 0 ? minutes + "m" : $"{minutes}m {seconds}s";
+            return DashboardText.T(seconds == 0 ? "web.admin.dashboard.format.duration.minutes" : "web.admin.dashboard.format.duration.minutesSeconds", ("minutes", minutes), ("seconds", seconds));
         }
         var hours = totalSeconds / 3600;
         var rest = totalSeconds % 3600 / 60;
-        return rest == 0 ? hours + "h" : $"{hours}h {rest}m";
+        return DashboardText.T(rest == 0 ? "web.admin.dashboard.format.duration.hours" : "web.admin.dashboard.format.duration.hoursMinutes", ("hours", hours), ("minutes", rest));
     }
 
     /// <summary>A finished scan's span, or how long a running one has gone.</summary>
@@ -119,14 +119,16 @@ public static class DashboardFormat
         if (seconds < 86_400) return DurationSeconds(seconds);
         var days = seconds / 86_400;
         var hours = seconds % 86_400 / 3600;
-        return hours == 0 ? days + "d" : $"{days}d {hours}h";
+        return DashboardText.T(hours == 0 ? "web.admin.dashboard.format.duration.days" : "web.admin.dashboard.format.duration.daysHours", ("days", days), ("hours", hours));
     }
 
     public static string Latency(double latencyMs)
     {
         if (double.IsNaN(latencyMs) || double.IsInfinity(latencyMs)) return Dash;
-        return Math.Round(latencyMs, latencyMs < 10 ? 2 : 0, MidpointRounding.AwayFromZero).ToString("#,0.##", Culture) + " ms";
+        return DashboardText.T("web.admin.dashboard.format.latencyMs", ("value", Math.Round(latencyMs, latencyMs < 10 ? 2 : 0, MidpointRounding.AwayFromZero).ToString("#,0.##", Culture)));
     }
+
+    public static string PercentLabel(string percent) => DashboardText.T("web.common.format.percent", ("percent", percent));
 
     /// <summary>"just now", "5m ago", "3h ago", "2d ago" with floor or round arithmetic.</summary>
     public static string? RelativeTime(DateTimeOffset? value, DateTimeOffset now, bool floor = false, string? justNowLabel = null)

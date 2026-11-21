@@ -28,6 +28,512 @@ serve it, so the native host ended with "No service for type RequestsApi" after 
 46 / 0; source and payload seals verified. The 140 checks after the old crash point had not run since #184 and pass unchanged. The full
 unit suite was not repeated for this commit; it changes one native fixture file.
 
+# November 20 — Native fixture repairs for six admin groups that failed on Beta
+
+Six admin native groups failed on Beta itself (`4a60a2c93`, still failing identically on `65e9ac880`). The review pipeline's fixer commits
+without building or running anything, so each cause below is a pipeline repair that changed a step or the product without a run. Every repair is
+test-only: no product source changed. The branch is `t3/admin-users-fixture-repair` (commits `35d81aba7` and `d254f4548`) merged with Beta `65e9ac880`.
+
+- **admin-users** (227 checks): pipeline attempt 4 on #194 (`93f2a5ad4`) added a step that pressed a retired, disabled button through UI Automation
+  (Invoke on a disabled button throws `COMException 0x80040200`). The group now asserts the button is disabled, force-enables it and proves the handler refuses too.
+- **admin-configure-maintenance** (`AdminMaintenanceNativeFixture.cs`, "default local path restored"): a race. Pipeline attempt 2 on #203 (`f4b7acaeb`) picked a
+  detected seed and immediately typed over File Path; the draft changes synchronously but the box is rewritten by a queued render, which overwrote the typed
+  text. The fixture now waits for the chosen seed to appear in the box.
+- **admin-configure-scheduled-tasks** (`AdminScheduledTasksNativeFixture.cs`, "detail cancellation held"): a race. Pipeline attempt 2 on #201 (`cc1b7712a`)
+  pressed the detail button as soon as the controller reported the task running, while the button still read "Run Now" (the render is queued), so a second
+  Run was posted and Cancel never was (the request log showed two `POST …/run`). The fixture waits for the button to read "Cancel".
+- **admin-configure-search** (`AdminSearchSettingsNativeFixture.cs`): three stale expectations, not a pipeline fault. Scheduled Tasks (#201) is now registered
+  in `AdminConfigureServices`, so `AdminSearchSettingsPage` enables both task links (official `SearchStatusPanel.tsx` shows them as links to
+  `/admin/tasks/rebuild_catalog_search_index` and `/admin/tasks/sync_catalog_search_index`, whether or not status resolved). The checks now assert both links are
+  enabled with no tooltip or help text, also after a failed status read, and a new step presses each link and checks the Scheduled Tasks detail route and
+  task key opens, that no task is run, and that Back returns to Search.
+- **admin-configure-storage** (`AdminStorageSettingsNativeFixture.cs`): three fixture faults. (a) Pipeline attempt 6 on #199 (`34b63b26c`) checked the restored
+  default one dispatcher fence after moving focus, but LostFocus is raised after `Focus()` returns; it now waits for the box to be unfocused and show its default.
+  (b) The retirement-draft step invoked Save before the queued render enabled it (the `COMException` `0x80040200`); it now waits for Save to be enabled.
+  (c) Pipeline attempt 5 (`e14e5b27a`) added an outer-frame departure that the Frame's Navigating handler cancels; afterwards the outer Frame reports it is still
+  navigating for the rest of the run and `BackStack.Clear()` throws `0x800710DD` at teardown. Teardown now retries for 1.5 s, logs a `NOTE:` line and drops the Frame with
+  the window content. **Not established:** whether that stuck Frame state is only a test artifact or also happens in `MainWindow.OnAdminNavigating`, which cancels and re-navigates the same way.
+- **admin-manage-download-settings** (`AdminDownloadSettingsNativeFixture.cs`, three steps): pipeline attempt 1 on #179 (`2d54f8239`) made the Unlimited check box restore the
+  last limit the box showed (including a discarded, never-saved draft), where the earlier steps (and attempt 2's zero-spelling loop, `1d1cb7bd7`) assumed unchecking leaves the box blank.
+  The steps now wait for "unchecked, editable and not Unlimited". **Product observation, not changed:** the official `LimitField.tsx` remembers a limit only at the moment Unlimited is
+  checked, so after typing 250, Discard and unchecking Unlimited the official page shows a blank box where the native page shows 250. Attempt 1 chose this on purpose
+  (the programmatic-Unlimited step); it needs an owner decision.
+
+Observed, under the build lease, in final run `betarepair2-final-r1` on commit `d254f4548`: 579 focused and 10,333 full unit cases passed with no failures; app build, publish and native host build passed;
+native groups passed: admin-configure-maintenance (50 checks), admin-configure-scheduled-tasks (55), admin-configure-search (55), admin-configure-storage (84),
+admin-manage-download-settings (424), admin-users (227), admin-manage-foundation (36), admin-configure-general (188), admin-monitor (113). Runs `betarepair2-native-r1` and `-r2` repeated the six repaired
+groups on the same build with no failures (Storage had 83 checks in r1 and 84 in r2: "forced closure retains review ownership and content until Closed" runs only when a Closing event fires).
+Earlier iteration runs (`betarepair2-pn-r1`, `-hn-r1` to `-hn-r5`) found the causes above. Not run: `admin-collections`, `admin-requests-corrections`, `admin-configure-providers`, `admin-signin-security`, `admin-libraries`, `admin-monitor-logs`.
+
+# November 21 — Household streams: the live-session fields under their current official names
+
+Official Silo Server `c7c155927` (#4561) renamed the playback session fields with no alias: `media_item_id` (was `content_id`),
+`series_title` (was `series_name`), and `media_title` now carries the episode title (`episode_name` is gone). The household streams list
+(`GET /api/v2/profiles/household/sessions`, Settings > Profiles) returns the same session shape (`internal/apiv2/profiles.go`, checked at
+official main `e130f262d412cc7ffc4f0e040bdaba02c132515e`). The native panel read only the old names, so on a current server an episode
+lost its "S1E3 · Show" line and its title was no longer a link. Branch `t3/household-streams-session-names` on Beta `65e9ac880`; versions
+are unchanged. This is viewer code (a household manager need not be an administrator).
+
+Change: `PlaybackSessionSummary` gains `SeriesTitle` and `MediaItemId`; `SessionDisplayText` takes the current names first and the older
+ones when they are absent (`GetSeries`, `GetItemId`, the episode title from `media_title` on a current server and from `episode_name` on an
+older one), and shows "Series" for media type `episode` without series details, as the official `getPlaybackSessionSubtitle` does. The
+title link in `SettingsPage` uses `GetItemId`. The unit fixture `list_household_sessions_ok.json` is again identical to the official
+contract fixture.
+
+Observed, under the SiloOct18Build lease, in run `householdfix-lead-final-r1` on commit `74a2cb5ab`: 55 focused and 10,342 full unit cases
+passed with no failures or skips; app build, self-contained publish and native host build passed; native selectors `household-contracts`
+(12 checks), `profiles-metadata` (11), `admin-manage-foundation` (36) and `admin-monitor` (113) passed; source seal verified.
+
+Not verified: no native group serves household session rows, so the panel itself is covered by unit tests of its text and item id only;
+a live Silo server; what an older server sent in `media_title` for an episode (the older path is kept as it was).
+
+# November 20 — Playback history: the end position under its current official name
+
+Official Silo Server `9df62cd42` (#4552) renamed a history entry's `watched_seconds` to `end_position_seconds` with no alias (the value is
+where the play ended, not how long it was watched). Checked against official main `e130f262d412cc7ffc4f0e040bdaba02c132515e`. Until this
+change the native Admin Playback History reader required the old name and refused every page from a current server with "Invalid playback
+history page", the item "View play history" dialog showed 0 seconds for plays without a measured watch time, and the two history lists on a
+user's page showed an empty value. Branch `t3/history-end-position-contract` on Beta `4a60a2c93`; versions are unchanged.
+
+Change: every reader takes `end_position_seconds` first and `watched_seconds` when the current name is absent, so a server from before the
+rename keeps working (`AdminPlaybackHistoryApi.Project`, `AdminPlaybackHistoryWireEntry.EndPositionSeconds`,
+`PlaybackHistoryPresentation.Format`, and a `current|older` column form in `AdminUsersPage.AddRows` used by the two history lists, whose
+label is now "End position seconds"). An entry with neither name is still refused. The account summary's `watched_seconds` total is a
+different, unrenamed field and is untouched. The live-session row rename of `c7c155927` (#4561) is not part of this change; it belongs to
+the Monitor refresh.
+
+Observed, under the SiloOct18Build lease, in run `historyfix-lead-final-r1` on commit `e645b0b84`: 212 focused and 10,269 full unit cases
+passed with no failures or skips; app build, self-contained publish and native host build passed; native selector `admin-playback-audit`
+passed. On the same build, run `historyfix-lead-native-r2`: `oct24-ui` (the play history dialog, now fed the current name),
+`admin-manage-foundation` (36 checks) and `admin-monitor` (113) passed.
+
+Found during this run and not caused by it: the native selector `admin-users` fails on Beta itself. Its 162 checks pass and the run then
+ends with `COMException 0x80040200` from `AdminUsersNativeFixture.InvokeAsync` in `PreviewInterruptionChecksAsync`
+(`AdminUsersNativeFixture.cs:397`). The same failure, with the same counts, was observed on unchanged Beta `4a60a2c93` in run
+`betacheck-users-r1`. It is not repaired here.
+
+Not verified: a live Silo server (the break and the fix are established from the official contract, the official client and synthetic
+fixtures); the two history lists on a user's page have no test for the renamed field.
+
+# November 21 — Manage › Libraries: review fixes
+
+An independent read-only review of the Libraries refresh found no behavior regression and eleven items, fixed on the same branch. Destructive badges and
+buttons now use the official fixed `--destructive-fill` #dc2626 (a Core constant, `AdminLibrariesPalette`) with the page's own button style, so rest,
+hover and pressed (90%) all keep at least 4.5:1 under white; the shared `DestructiveButtonStyle` is unchanged. The scan queue popover is 16 px. The touch
+Stop button draws its states on a 20 px square inside its 44 px hit area. The phone editor footer has no gap without an error. The table header is 44 px
+(official `h-10` is a minimum under `border-box`) and the editor close icon is centred 25 px from the dialog's top and right edges. `FlexWrapStretchPanel`
+caches natural widths and counts gaps for unbounded width; `CardActionRow` keeps every child. The native fake channel now sends the scans snapshot only
+when the channel's ref-count rises from 0 to 1, and a fresh page opened while the activity store holds `scans` shows its scan rows and queue from the
+store (no product defect found); the visual matrix restores the server list in a `finally`. Findings, outcomes and guards are in `docs/parity/admin-manage-libraries.md`.
+
+Observed, under the SiloOct18Build lease, in final run librariesfix-final-r4 on commit d7ecf34ac (source and payload seals verified by the script): 168
+focused (filter `FullyQualifiedName~AdminLibraries`) and 10,282 full unit cases passed with no failures or skips; app build, publish and native host build
+passed; native admin-libraries (611 PASS lines), admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and
+admin-monitor (113) passed with no FAIL lines. Earlier runs of this label were repeated for fixture defects only: final-r1 (the new fixture file lacked a using for
+`LayoutInformation`), final-r2 (the seed scenario re-opened the controller in place without re-opening the diagnostics as the page does, so the Unmatched
+section never loaded), final-r3 (one check asserted the stop button's own unused Background instead of its transparent hit-area grid); no product change
+was made between them. Captures opened: 1440 × 900 list, editor General and delete-confirm (the popup layer is not rasterized by this host, so the dialog itself
+is not in that capture); 800 × 600 list; 560 × 800 editor (Advanced). Not seen in any capture: the scan queue popover and card menu (popup layer) and the hover
+and pressed looks (verified through the resolved colours of the real visual states, not pictures). Not established: pixel or visual parity, a live server, real pointer input.
+
+Beta merge and final run: Beta `65e9ac880` (Autoscan Sources, #219) was merged with a normal merge (`1599224fd`); the only conflict was this
+file, where both sides' entries are kept. Final run `librariesref-lead-final-r2` on `1599224fd`, under the SiloOct18Build lease: 168 focused
+and 10,348 full unit cases passed with no failures or skips; app build, self-contained publish and native host build passed; native
+selectors `admin-libraries` (611 checks), `admin-manage-library-settings` (84), `admin-manage-foundation` (36), `admin-configure-general`
+(188) and `admin-monitor` (113) passed; source and payload seals verified. The run before it on the same commit,
+`librariesref-lead-final-r1`, stopped in the full unit suite on one case of another page,
+`AdminStorageSettingsControllerTests.AcknowledgedJobSurvivesAFailedFirstReadAndIsPolledThroughCompletion(previousTerminal: True)`
+("Timed out: open" after 2 ms); nothing was changed and the run was repeated.
+
+# November 20 — Manage › Libraries refreshed against official e130f262d
+
+The Libraries page (`/admin/libraries`: list, editor, scan queue, diagnostics, dialogs) on branch `t3/admin-libraries-parity-refresh`
+was compared with official Silo Server `e130f262d412cc7ffc4f0e040bdaba02c132515e` (the page was built against `17d5376cea9a`).
+Versions are unchanged. **No official server was running and there are no official screenshots**: the layout work is a source comparison
+plus captures that were opened and read (the parity document lists which); pixel parity is not claimed. Library settings and Autoscan are separate and were not touched.
+
+Upstream, only two changes reach this page: matcher queue paths always left to right (already true in the native `Mono`) and the solid
+`destructive-fill` under white text on red badges and buttons (done). The Libraries operations (72 paths, 157 schemas in their closure) and every
+catalog string the page prints are unchanged, so no request or response shape changed. The page's differences were all in layout: the
+WebUI theme radius is .75rem, so `rounded-md/lg/xl/2xl` are 10/12/16/20 px (the page used 6/8/12/16); table cell padding was 8 not 12 and the
+Actions header was right aligned; secondary badges had no visible fill; buttons were 13 px text with 14 px icons; the editor dialog, tabs,
+diagnostics panels, dashed empty boxes, phone footer, touch stop buttons and the flex-wrap header actions below 1024 px differed; and dates ignored the
+user's date and time format settings (now the shared `DateTimeDisplay`). The full difference table, upstream list, shared-control differences that were
+noted but not changed, and limits are in `docs/parity/admin-manage-libraries.md`.
+
+The native fixture had a defect on Beta: its fake channel never delivered the scans snapshot that the controller waits for, so scan rows never
+appeared and the fixture timed out at its scan-queue step. It now answers a scans subscription with the snapshot and waits for the rows. A new
+visual-matrix fixture captures the page at 1440, 1024, 800 and 560 device-independent pixels in each main state (populated list with scans
+running, diagnostics, scan queue and card menu, editor General/Folders/Metadata/Advanced, a destructive confirmation, empty list, failed read
+with a working Retry) and asserts the geometry it is read against. Popup content cannot be rasterized by this host (the presenter capture is
+empty and the content-only capture has no popup background), so the scan queue popover and card menu were checked through automation, not
+pictures. Some 1024 and 560 captures taken right after a resize are wider than the window with blank margin (a stale frame width at capture
+time); the page content in them is laid out at the window width.
+
+Observed, under the SiloOct18Build lease, in final run librariesref-final-r2 on commit 3e2dd11bc7558b33b9a5f7581246c33bbdd64754 (source and
+payload seals verified by the script): 156 focused (filter `FullyQualifiedName~AdminLibraries`) and 10,270 full unit cases passed with no failures
+or skips; the app build, self-contained publish and native host build passed; native selectors admin-libraries (500 checks),
+admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed with no failures.
+The earlier final run librariesref-final-r1 passed the unit suites and then failed in the Libraries remediation scenario because that fixture's
+service provider had no settings service for the shared date formatter; the fixture was corrected and the full run repeated. Not run: the
+admin-collections, admin-requests-corrections, admin-configure-providers and admin-signin-security groups (known failing on Beta for reasons
+repaired elsewhere). Not established: a live server, real pointer drag, the poster file picker, IME, Narrator, RTL or another locale, all-DPI, or
+visual parity with the official page.
+
+# November 20 — Admin Plugin Apps (navigation group and isolated plugin page)
+
+Branch `t3/admin-plugin-apps`, merged with Beta `32f95df8d` (version unchanged). Official pin
+`df37bfc6d57b1680c0f7a59e51e15c8d0cfa6065`. The Admin sidebar and search list "Plugin Apps" exactly as
+`buildAdminPluginNavItems`; an entry launches the plugin like `navigateToPluginRoute` (`POST
+/api/v2/auth/plugin-launch`) and opens the plugin page in an InPrivate WebView2 profile that holds only the
+issued `silo_plugin_access` cookie (HttpOnly, plugin-content parent path) and may load only that installation's
+pages and assets. No host objects, web messages, account headers, popups, downloads, permissions or external
+protocols; native states with Reload for not available, 401, 403, 5xx, load failure and timeout; teardown on
+leaving, removal and any authority change. The previous source-only draft (bearer proxy on a virtual origin)
+was replaced. Security fix in the viewer plugin page: account headers are now attached only inside
+`/api/v2/plugin-content/` instead of on every same-origin request. Details, decision table and limits:
+[parity/admin-plugin-apps.md](parity/admin-plugin-apps.md).
+
+Observed: `-Stage final` run `pluginapps-final-r1` on source `fa25ccc7c` passed: focused unit 91/91, full
+unit 10351/10351, native `admin-plugin-apps` (89 checks, including a request log proving the admin token
+reached only the launch request), `plugin-cutover`, `shell-localization`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor`. Not run: other native groups. Not verified: named third-party
+plugins, WebSocket/WebRTC from plugin script, printing and screen capture, a server behind a base path, visual
+parity of plugin content.
+
+Independent security review (read-only, commit `8bfe9f050`, official main `4762d23bc9ddd92c884777aee9f90122b4ac2da0`, no relevant
+change since `df37bfc6d`). It verified the official model with file and line and corrected one statement: the launch cookie is not
+the official page's only credential in effect, because the WebUI keeps its refresh token in browser storage on the same origin as
+plugin pages, so official plugin script can read it; the native pages are stricter. No defect was found in the admin page's
+credentials, navigation confinement, web view hardening, the Admin shell edit or the tests. Three defects were reported and fixed:
+the viewer's account headers could follow a same-origin redirect from a plugin-content URL to another server API (a request that
+leaves the plugin-content path now has every account header removed; `PluginContentPaths.AccountHeaderNames`, tied to
+`SiloApiClient.AddHeaders` by a test, and a new `plugin-cutover` step where the plugin answers with a redirect to an admin API); the
+viewer check refused plugin-content paths with an escaped percent sign, which the official cookie authenticates (now accepted for
+the viewer check; encoded separators and dots are still refused); and a failed web view process left the admin page blank with no
+Reload (it now drops the session and shows the load-failed state; no test). The redirect leak was inferred from documented web view
+behavior and was not observed happening before the fix.
+
+Final run: `pluginapps-lead-final-r2` on commit `66b3c04431eaa5082434ea0beaa4f0008921a595` (Beta `32f95df8d`): 116 focused and 10,356
+full unit cases passed with no failures or skips; app build, publish and native host build passed; native selectors
+`admin-plugin-apps` (89 checks), `plugin-cutover` (7), `shell-localization` (4), `admin-playback-administration` (99),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified.
+The run before it, `pluginapps-lead-final-r1`, stopped on one new unit case written with a wrong expectation (an escaped ".." that
+stays inside the plugin-content path after normalization is inside it); the case was corrected, no product code changed. Beta was
+stamped `1.2.1277-beta.1` (`d51eb2d85`) after this branch's last merge and is not merged again.
+
+Review fixes after that run, not yet run: Reload after the web view's browser process exits now replaces the web view (the old one
+could not load again), and GPU, utility and frame process failures no longer close a working page; a shown page keeps its own later
+navigations (fragment or history navigation, the plugin's own 4xx/5xx response) instead of being replaced by a failure state, except
+for a 401 or a navigation with no server response. Three native `admin-plugin-apps` steps were added (fragment navigation, plugin 404
+on a later navigation, killed browser process then Reload). A further review fix, also not yet run: when a plugin sets its fragment
+while its page is still opening and the opening navigation completes first, its result is kept and applied instead of leaving the
+page on Loading until the timeout; one more native step opens a page that sets its fragment in an inline script. A third review
+fix, also not yet run: a plugin that sets its fragment twice while its page is opening no longer ends in the load-failed state or
+the timeout. The opening navigation is kept through any number of same-document navigations and any completion order
+(`AdminPluginPageNavigations`, with unit cases for the orders), and the native step also opens the page setting its fragment twice.
+
+# November 17 — Admin Monitor corrections verified for Beta submission
+
+The Monitor worktree `t3-34a4a55a-46179de38e52767b` is based on exact Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`, unchanged version
+`1.2.1181-beta.1` / `1.2.1180.1`. Official WebUI pin
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` defines custom Admin branding,
+Activity reasons/bitrate/details and retained IP Lookup, Concurrent streams
+presentations, and the confirmed Dashboard/Logs catalog changes in this increment.
+Other Admin families and pipeline-owned Now Playing/Plugin Apps workflows remain
+separate; no version stamp or installed-player change is included.
+
+Observed final verification: r7 fresh nonincremental units **562 focused / 8,057
+full**, zero failures/skips; r8 **527** affected/source-reading cases, app build
+and publish passed with unchanged sealed unit inputs. All eight native groups
+completed in r11 against the exact rehashed r8 product: Activity corrections,
+shell branding, Concurrent streams, Monitor, Dashboard, Logs, Manage foundation
+and Configure General. Product/reference/host DLL/PDB/PRI equality, source/PDB
+proofs and the final **2,315-file** source seal passed. Wide/compact changed-state
+captures were inspected. Review corrections cover the observed Lookup COM crash,
+cached route variation, menu-only termination, and bounded shared image transfers;
+the final bounded independent recheck reported no findings.
+
+Final actual lease: ACQ `2026-11-17T12:49:55.3843759Z`, REL
+`2026-11-17T12:52:27.7185261Z`, PID 44140. No owned runtime or mutex waiter
+remains. Inclusive preflight **27.9610 GiB** stays below the 50 GiB cap and both
+drives exceed the free-space floor. Outputs/evidence reuse
+`D:/SiloPlayer-build/admin-completion-monitor`; earlier payloads and receipts
+remain preserved. See the [scoped verification record](parity/2026-11-17-admin-monitor-completion.md)
+for per-group counts, fixture-only continuations and exact provenance.
+
+This is a verified coordinator Beta-submission candidate, not a stable release.
+Live-server interoperability, all DPI/themes/locales, IME/Narrator and complete
+visual parity remain uncertified. Installed player PID 39668 and settings remain
+untouched. Source/evidence are retained for the Beta pipeline handoff.
+
+---
+
+# November 20 — Admin Plugins (Configure > Integrations > Plugins) built and verified
+
+`t3/admin-plugin-management` completes `/admin/plugins` and `/admin/plugins/:pluginId` against official
+`3516fb41efe04d8ccf7b6d3b9df085bcb3369c9e` (the first source was written against `217ff25abc`): the board with Installed
+and Catalog tabs, searches and filters, provisioning status, the update check, the community-catalog control, install from a
+file, repositories, an installed plugin's page (status banners, schema-driven settings forms with secrets and managed
+fields, sign-in and scheduled-task bindings, update, restart, uninstall) and the catalog preview. Every write is sent once,
+against the row that was confirmed, with an unknown outcome blocking that plugin until it is read back. Plugin notification
+destinations belong to Settings > Notifications (a person's own), not to these pages; Plugin Apps are another family and
+their entries stay disabled. Beta `536e4e2d7` (1.2.1257-beta.1) was merged; no version number changes. Scope, deviations
+and limits: [docs/parity/admin-plugins.md](parity/admin-plugins.md).
+
+Running the code found real defects, each now fixed with a test or a native step: a secret field filled from a server
+value, `Build` on a disposed draft, a type-name collision with Providers' `AdminPluginCapability`, the C# 14 `field`
+keyword in property getters, in-page writes held behind the discard dialog while a form was merely dirty, and a launcher
+set after the page was drawn being ignored.
+
+Independent review of November 20 (commit 2bba737ad, official df37bfc6d57b1680c0f7a59e51e15c8d0cfa6065, no P0) found six
+defects, all confirmed and fixed with tests: typed secrets stayed in a form after an accepted or unknown save when the
+re-read returned the same values (the form is now erased and drawn again; refusals and unsent saves keep what was typed;
+the repository form follows the same rule); a multi-select tick deleted stored values the options do not list (one-value
+add/remove, and every untouched field goes back exactly as stored); text from plugins, publishers and repositories could
+forge a line or reorder text in the install, update and uninstall confirmations (one text gate for every third-party text;
+the plugin ID and version stand on their own lines); a managed field failing its own rule blocked Save; a task-binding
+failure used the sign-in binding message; a 10-minute deadline over a whole upload (each request now has its own limit).
+Details: [docs/parity/admin-plugins.md](parity/admin-plugins.md).
+
+Acceptance after the review: label plugins2-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-b, task
+admin-families-nov20), stage final on source commit e7081f338 (docs only changed afterwards), build lease
+2026-11-21T02:21:59Z-02:28:25Z. Focused unit run 249/249 (filter AdminPlugin, AdminManageNavigation, AdminBackupsNavigation)
+and full unit suite 10,417/10,417 passed (0 failures, 0 skipped); app build, publish and native host built; native
+selectors admin-plugins (365 PASS, 0 FAIL), admin-playback-administration (99), admin-requests-management (37),
+admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed; source seal and payload
+unchanged. Earlier acceptance before the review: plugins-final-r2 below. Not observed: a live server, a slow real link,
+all-DPI/RTL rendering, the OS file picker, screen readers, Plugin Apps.
+
+Acceptance: label plugins-final-r2 (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20), stage
+final on the family's source (committed unchanged right after the run; only docs changed afterwards), build lease
+2026-11-21T01:29:12Z-01:35:01Z. Focused unit run 213/213 (filter AdminPlugin, AdminManageNavigation, AdminBackupsNavigation)
+and full unit suite 10,238/10,238 passed (0 failures, 0 skipped); app build, publish and native host built; native selectors
+admin-plugins (265 PASS, 0 FAIL), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113)
+passed; source seal and payload unchanged. Not observed: a live server, all-DPI/RTL rendering, the OS file picker, screen
+readers, Plugin Apps.
+
+# November 20 — Sign-in settings no longer rebuild themselves while the admin types
+
+The "admin-signin-security" native group failed on beta at "typed group list is kept as typed (16 characters)". Cause, from
+a diagnostic run that logged why each rebuild happened: the provider choice (a RadioButtons) reports its initial selection
+again after Build() has finished, and the page answered every report with `_built = false; Render()`. That built a new
+form with a new RadioButtons, which reported again, so the whole form was recreated about 20 times a second for as long as
+the page was open (the first rebuild was caused by the provider list, all the others by the selection report). Any box
+the admin was typing in was replaced: focus, caret and text that is not a value yet (a trailing line break or space in a
+list, "1." in a number) were lost. A new account list was not the trigger in that run: the page does rebuild for a new
+Accounts instance, but that can only land on Open and on "Load more accounts", while inputs are disabled.
+AdminSignInSettingsPage now rebuilds on a selection report only when the admin chose a different provider, and a new
+account list updates just the break-glass status line and the "Load more accounts" button in place (`SyncAccounts`); the
+form is rebuilt only for a new answer from the provider read: its list, the capabilities, its error, or whether the list
+is known. The last three are recorded because an unavailable or failed read leaves the list the same empty instance, and
+the account-driven rebuild used to be what drew their notice; all four land only on Open and after a write, while inputs
+are disabled. Nothing is staged or sent by either path and request bodies are unchanged.
+API Keys and Policy were checked for the same fault and have none: neither reads in the background, API Keys keeps its text
+boxes in dialogs that Render never touches (its table has no inputs), and Policy rebuilds only when tab, document or
+editor revision changes through an admin action, with its boxes disabled while a read runs.
+Fixture: the three API Keys steps that open a dialog right after closing another (ApiKeyTier_7 twice, ApiKeyRevoke_7) now
+click until a new dialog is open (`ClickForDialog`), because the page ignores a click that lands while the previous
+dialog is still closing. New step: with a list longer than the page cap, the same group box stays on the page through an
+idle wait and through "Load more accounts" (typed list unchanged), and the break-glass line and button update in place.
+Added after review, and after the runs below (so not in their counts and not yet observed): a capabilities read that
+fails, and one that reports external sign-in unavailable, each answered after the form is first shown, must show their
+notice and show or hide the email-match row.
+Observed, under the SiloOct18Build lease, lane D:/SiloPlayer-build/admin-completion-lane-b, source commit 32ea99e8f on
+origin/beta ce9ec928d: `-Stage final` run `signinfix-final-r1`: focused unit tests 183 passed, full unit suite 10,141
+passed, 0 failed; native admin-signin-security 165 passed, admin-playback-administration 99, admin-manage-foundation 36,
+admin-configure-general 188, admin-monitor 113, none failed. Then admin-signin-security alone twice more
+(`signinfix-native-r1`, `signinfix-native-r2`, same published payload): 165 passed each. Not verified: typing by a person
+with a real keyboard or IME, and the other native groups (collections, requests-corrections, configure-providers), which
+fail on beta for other reasons.
+
+# November 20 — Three merged Admin native groups brought back in line (test-only)
+
+On Beta `fb8cb17cf` four native regression groups of already merged Admin pages failed: `admin-collections`, `admin-configure-providers`,
+`admin-requests-corrections` and `admin-signin-security` (each run on its own on a pure Beta build, labels `beta-check-r1-*`). Each page had
+been changed after submission by review-repair commits that were not built or run. Branch `t3/beta-native-fixture-repairs` changes three
+fixtures and no product code:
+
+- `AdminCollectionsNativeFixture.cs`: the page drops a title the server rejects (400, 404 or 422) and names it in a "Not added:" notice,
+  the rule its last repair introduced; the step still asserted the earlier rule (the title stays staged and is sent again). It now checks
+  the notice and that the rejected title is not sent again.
+- `AdminProvidersNativeFixture.cs`: reading one subtitle provider's editor no longer clears an unknown outcome or a conflict; only a
+  page-level re-read of the provider list does. The step still expected the tile Reload alone to re-arm Save. For 503 and 412 it now
+  presses the page Reload, then the tile Reload. Recovery after an unknown outcome or conflict on a subtitle provider therefore takes two
+  Reload presses; that is the merged behavior and is not changed here.
+- `AdminRequestsCorrectionsNativeFixture.cs`: two timing faults. After a failed Load more the row actions sit inside a re-created
+  ScrollViewer and enter the visual tree one layout pass after the notice, so the step now waits for them. The "failed download poll"
+  case leaves the poll at 50 ms and sampled "notice collapsed, rows shown and timer running" at one instant while rows are redrawn and
+  the timer is stopped during each read; each fact is now waited for and reported on its own.
+
+Observed, under the SiloOct18Build lease, in final run `repair-lead-final-r1` on merge commit `ce2b1102a70c9852a8185a3e4bb26b73d5319d8b` (Beta
+`ce9ec928d` merged normally, no conflict): 139 focused and 10,141 full unit cases passed with no failures or skips; the app build, publish and
+native host build passed; native selectors `admin-collections` (203 checks), `admin-configure-providers` (89), `admin-requests-corrections`
+(135), `admin-requests-management` (37), `admin-playback-administration` (99), `admin-manage-library-settings` (84),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified. Before
+that, `admin-requests-corrections` passed three times in a row on the same fixture (`repair-check-r2-reqcorr-a/b/c`).
+
+Not covered here: `admin-signin-security` still fails on Beta at "typed group list is kept as typed". That one is a page defect (the Sign-in
+form is rebuilt when the account list is re-read, replacing the box being typed in) and is being fixed in its own change. The viewer group
+`advanced-overlays` was reported to end on a missing `RequestsApi` service in its fixture; that was not checked on pure Beta and is not
+addressed here.
+
+# November 20 — Admin Configure > Appearance (with card overlay editor) built and verified
+
+`t3/admin-server-appearance` completes Configure > Server > Appearance (`/admin/settings/appearance`): logos and
+icons (four branding slots), accent color, card overlay defaults with the live preview and per-badge images, the
+badge-image library and the title-art default, registered through the real Admin shell. Beta `fb8cb17cf` was merged
+normally at the start; this branch changes no version number. Official contracts: `66b836f82a32de2fb3e5dfae6c285c19eea1096d`
+(the earlier source cited `217ff25`; the page, overlay components and strings are unchanged between the two, and the
+form's new env-managed row state does not apply to any Appearance key).
+
+The combined source had never been compiled. It was reworked to the official model: admin overlay defaults are written
+as the whole canonical document at any manifest revision (the server stores `defaults.card_overlays` as any JSON), all
+registry overlays are offered except RT ratings whose source the server hides, the five official positions, the
+badge-image library as its own group with the inline choose/name/upload flow, Restore defaults staging the official
+built-in document, toggles reacting to Toggled/Checked, failed overlay/branding/capability reads shown with Reload, a
+separate unknown-image-outcome block, server refusal text for image writes, and type/size checks before a picked file is
+read. Shared changes (viewer registry defaults corrected to the official registry, additive `image_uploads_available`
+and show-status image lookup) and the one changed existing assertion are listed in
+[docs/parity/admin-appearance.md](parity/admin-appearance.md).
+
+Acceptance: label appearance-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20),
+stage final on commit 37b87e02f, build lease 2026-11-20T23:48:16Z–23:54:24Z: focused 297/297 and full 10,207/10,207
+unit cases (0 failures, 0 skipped); app build, publish and native host built; native selectors
+admin-configure-appearance (113 PASS lines, 0 FAIL), admin-appearance-overlays (75), overlay-revisions (91),
+overlay-pill (2), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed; source and
+payload seals verified.
+
+Not in the passing list: `advanced-overlays`. In a publish-native run on the same source (appearance-native-r13) it
+logged 369 PASS lines and then the host exited 0xC000027B on an unhandled `No service for type RequestsApi` from
+`WatchlistPage.ExternalRepeater_ElementPrepared` (WatchlistPage gained that dependency in Beta #184; the fixture's own
+service provider has no RequestsApi). Neither file is changed by this branch; the fixture was not modified.
+
+Not observed: a live server, a real OS file picker, decoding of real uploaded branding images, all-DPI/IME/Narrator,
+complete side-by-side visual parity (synthetic captures at 1440/800/480 and of the editor/library were inspected).
+No installer or installed-player action occurred.
+
+Independent review (read-only, commit `c7f1bb822`, official main `3516fb41efe04d8ccf7b6d3b9df085bcb3369c9e`; nothing this page uses
+changed since `66b836f82`, and no Appearance key can be environment-managed). The shared viewer changes were confirmed against the
+official registry one by one (`web/src/lib/overlays/registry/ratings.ts` and `ribbons.ts`): no existing viewer's cards move; the only
+visible difference is that Advisory Age now draws right after Age Rating, as on the web. It reported two P1 and two P2 defects, all
+fixed: a settings save after an unknown image outcome hid the explanation that offers Reload, leaving image writes blocked with no way
+out; every acknowledged save or image change reset loaded badge images to text without announcing the refresh, so library thumbnails
+and unchanged preview badges stayed blank; the editor document was written with the default .NET encoder, which escapes "+" and
+non-ASCII text, so undoing an edit left the form edited; and uploads shared the fixed 30-second admin deadline, so a large image on a
+slow uplink always ended as an unknown outcome (an upload now gets 30 seconds plus 10 seconds per MiB; the shared deadline helper
+gained an optional limit, default unchanged). The thumbnail correction has no test of its own.
+
+Final run: `appearance-lead-final-r2` on merge commit `f993888e3ef03ceacc19400eacf5eadbdabbd9f0` (Beta `536e4e2d7` merged normally,
+no conflict): 257 focused and 10,207 full unit cases passed with no failures or skips; app build, publish and native host build
+passed; native selectors `admin-configure-appearance` (113), `admin-appearance-overlays` (75), `overlay-revisions` (91), `overlay-pill`
+(2), `admin-playback-administration` (99), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+passed; source and payload seals verified. The run before it on the same source, `appearance-lead-final-r1`, stopped on one unrelated
+unit test, `LibraryBackgroundRefreshTests.ContentRefreshRejectsPreMutationViewportAndHeldWindowSnapshots` ("Collection was modified"),
+which has failed and passed unchanged on other branches; it was not modified. Beta moved to `ce9ec928d` (#216, a viewer-only change to
+the Playing Next screen) after that run and was not merged again.
+
+---
+
+# November 20 — Admin Manage Prepared Files completed against official 66b836f82
+
+Manage > Downloads > Prepared Files (`/admin/downloads`) is complete on branch `t3/admin-prepared-file-management`, merged with
+Beta `f36e3bd4a` (`1.2.1194`) and compared with official Silo Server/WebUI `66b836f82a32de2fb3e5dfae6c285c19eea1096d` (the first
+draft used `217ff25abc`). Five tabs (Storage, Preparation, Prepared files, Device copies, History), the server and node location
+editors, every official `web.admin.downloads.*` string, the `download_preparations` and `downloads` realtime channels with the
+official 60 s polls, single-send writes with refusal versus unknown-outcome handling, and a native fixture covering failed reads and
+refused, stale and unknown writes. Final run `prepfiles-final-r4` passed 150 focused and 9,899 full unit cases and the four native
+selectors `admin-prepared-files`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`.
+
+An independent review of that commit (`c9bc4d83c`, merged with Beta through `fb8cb17cf`) found ten defects (two P1, eight P2); all ten were
+confirmed and fixed with tests: tab switches no longer wait on a reload of the tab being left; the page updates rows and controls in
+place instead of rebuilding tables on every progress reading, poll or selection toggle (a click on Cancel, Pause or a check box lands and
+focus stays); device entry reads have one slot per device; a live refresh re-reads every loaded page; a partly failed delete shows as an
+error; values in confirmations are never parsed as markup; no server timestamp can throw from a timer calculation; dismissing the node
+editor mid-save is an unknown outcome, never a stuck page; every confirmation sends only under the authority it opened under; dropped
+requests under `/api/v2/admin/downloads/*` and `/api/v2/admin/nodes` log one fixed category. Final run `prepfiles2-final-r5` on source
+commit `82aca54fa` passed 83 focused and 10,207 full unit cases and the native selectors `admin-prepared-files`,
+`admin-playback-administration`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`. `admin-signin-security`
+failed in this environment ("typed group list is kept as typed") in two full runs and two isolated runs on files this branch does not
+change (the Sign-in page is exactly as merged from Beta `7b0b8012d`); `admin-playback-administration` failed once in two earlier runs at
+"key rotation confirmation opened" and passed on unchanged reruns. Not observed: a live server, real realtime delivery, light theme,
+every DPI/width, a native reproduction of the authority-retirement race, and pixel parity. Details, upstream differences and deliberate
+deviations: [scoped note](parity/admin-manage-prepared-files.md).
+
+Final run on current Beta: Beta `ce9ec928d` (the `1.2.1257-beta.1` stamp and #216) was merged normally (merge commit `68114501d`; only this
+file conflicted) and one mis-encoded dash in this entry's heading was corrected (`3ec17ad67`). `prepfiles-lead-final-r1` on `3ec17ad67`
+passed 83 focused and 10,224 full unit cases with no failures or skips, the app build, publish and native host build, and the native
+selectors `admin-prepared-files`, `admin-playback-administration` (99), `admin-requests-management` (37) and
+`admin-manage-library-settings` (84); the `admin-manage-foundation` group then logged its 36 checks and "run completed" and the host
+process ended with an access violation in a COM finalizer on exit (0xC0000005), which stopped the run before `admin-configure-general` and
+`admin-monitor`. The same crash on exit was seen once on another branch earlier today. `prepfiles-lead-native-r2` then ran
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) on the same build with the source and payload
+seals verified, and all three passed. Left out because they fail on Beta itself: `admin-collections`, `admin-signin-security`,
+`admin-requests-corrections` and `admin-configure-providers`.
+
+---
+
+# November 20 — Autoscan Activity aligned with the official inspector sheet
+
+`/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `44c8927a2`; version stamps unchanged by this branch) was
+completed and rebuilt against official Silo Server `88b825d57e4b2296050fda69eaf619eefbf208d1`. The earlier source targeted `217ff25abc`; upstream
+`e3887af09` (#4631) then replaced the page's inline poll details with a paginated inspector sheet, so the native page now has the poll table with
+Details buttons and badges, the inspector (Paths / Scans created tabs, search, outcome and status chips, pagination, scan-id jump, bounded scrolling error,
+focus return, keep-the-latest-snapshot) and `TablePagination`-style numbered paging (cursor walk, 100-page bound). Scope, deviations and limits:
+[Autoscan Activity](parity/admin-autoscan-activity.md).
+Final run `autoact2-final-r1` on the committed source: 59 focused and 9,896 full unit tests passed with no failures or skips, the app build, publish and
+native host build passed, and the `admin-autoscan-activity` (48 checks), `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` native
+selectors passed; captures at 1440/1024/800/560 DIPs and the inspector were inspected. Not observed: live-server/phone interoperability, all-DPI and
+screen-reader behaviour, and a fixture-driven row click (only the Details button path).
+That run predates an independent review (read-only, commit `0bc5eb4fc`, official `66b836f82a`), which found nine defects. All were confirmed and fixed: the pager gap was mis-encoded text; a page or
+filter change also re-read the status and the names; an older reconciliation read could overwrite a newer status; an unknown cancellation could stay blocked until the page was reopened (now
+lifted by the admin's own successful status read, with both outcomes shown and tested and the cancel still never replayed); finished scans re-ran the name lookups; a trailing space in the search
+rewrote the box and closed the inspector; keyboard focus was lost on inspector tabs, chips, the scan-id jump, both pagers and the 15-second refresh; inspector chip filters reset themselves; and every
+row of every walked history page was validated. Events with more than 5,000 runs now keep the page and say so. One extra defect was found natively and fixed (a delayed text-changed event after a
+programmatic search reset sent the inspector pager back to page one). One earlier assertion (blocking Cancel after a successful reconcile while the scan was still listed) was replaced because the rule changed.
+Final run `autoact3-final-r1` (stage final, committed source `24f5cc9df`, lane `D:/SiloPlayer-build/admin-completion-lane-b`): 73 focused and 10,023 full unit tests passed with no failures or skips, app build,
+publish and native host build passed, and the `admin-autoscan-activity` (62 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+native selectors passed; source and payload seals verified. Not observed: live-server/phone interoperability, all-DPI and screen-reader behaviour, a fixture-driven row click, and visual inspection of the
+new pager-gap and focus states beyond the fixture checks.
+
+Final run on current Beta: `autoact-lead-final-r5` on merge commit `f76e73d14b32279ee38a8cc34789f601166a1cad` (Beta `44c8927a2`, the `1.2.1257-beta.1` stamp on top of the
+merged Collections and Sign-in pages): 73 focused and 10,197 full unit tests passed with no failures or skips; app build, publish and native host build passed; native
+selectors `admin-autoscan-activity` (62 checks), `admin-playback-administration` (99), `admin-requests-management` (37), `admin-manage-library-settings` (84),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified. The merge of Beta `fb8cb17cf`
+(`8ba4b10f5`) was committed with conflict markers in five files by mistake and corrected in the next commit (`1548a3552`, both sides kept); every run named here is on
+source after that correction. Two earlier runs of this branch stopped on native groups of pages already merged into Beta (`admin-collections` in
+`autoact-lead-final-r1`, `admin-signin-security` in `autoact-lead-final-r3`) after this page's own group had passed; on pure Beta `fb8cb17cf` four such groups fail
+(`admin-collections`, `admin-signin-security`, `admin-requests-corrections`, `admin-configure-providers`), independently of this branch, so they were left out of the
+final run and are being repaired separately.
+
+# November 20 — Autoscan Settings completed for Beta review
+
+Branch `t3/admin-autoscan-settings` (merged with current `origin/beta` `67c94ba05`, `1.2.1194`). Page
+`/admin/settings/autoscan` is rebuilt against official `66b836f82a32de2fb3e5dfae6c285c19eea1096d`; the first source used `217ff25abc`, and the
+settings page, connections panel, hooks, handlers and autoscan strings are identical between the two pins (only `SettingField` env-managed rows,
+which this page does not use, changed). Fixed from the never-compiled source: connection bodies were reflected as dictionary properties
+instead of JSON; 4xx answers were treated as unknown outcomes and a typed key was cleared on a refused save; a stored kind/URL that failed a
+client check was blanked; server problem details were replaced by generic text. Added: subtitle, loading skeleton, recoverable read failures,
+group-heading action, icons and badges, server check reason, redaction before truncation, official strings. Parity, safeguards and limits:
+[docs/parity/admin-autoscan-settings.md](parity/admin-autoscan-settings.md).
+
+An independent read-only review of the built branch confirmed the API key handling (an untouched key is never sent, a key typed for one
+connection cannot be sent for another, the key survives a refusal and is cleared otherwise), every request body and both number ranges, Test
+connection, Delete and the unknown-outcome handling. It reported two P2 defects, both fixed with tests: a dropped Autoscan request wrote the
+failure text, including the host, to `api_diagnostics.txt` (requests under `/api/v2/admin/autoscan` now log the fixed category
+`autoscan_transport_failed`; the key itself was never logged), and a reschedule warning from a defaults save hid later connection
+created/updated/deleted notices (it now clears when another result arrives or an editor or delete confirmation opens).
+
+Final run `autoset-lead-final-r1` on merge commit `39c9cc9e57ebfa77171798a2d06ce57a4b716fc4` (source and payload sealed): 121 focused and
+10,071 full unit cases passed with no failures or skips; app build, publish, host build and native selectors `admin-autoscan-settings`
+(77 checks), `admin-playback-administration` (99), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+passed. Before the review and the merge of Beta `67c94ba05`, run `autoset-final-r2` passed 119 focused and 9,956 full unit cases with the
+selectors `admin-autoscan-settings`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`. An earlier identical run
+(`autoset-final-r1`) passed everything except an access violation in a COM finalizer after `admin-manage-foundation` had logged its own
+completion; the unchanged source passed on rerun. Wide, narrow and dialog captures of the Autoscan selector were produced and viewed.
+Not verified: a live Silo server, all DPIs, phone or keyboard-only walkthroughs, visual parity with the web page. The installed player was not touched.
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
@@ -2186,7 +2692,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2202,7 +2708,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2218,7 +2724,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2236,7 +2742,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2252,7 +2758,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2270,7 +2776,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -2470,7 +2976,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -2478,7 +2984,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -2486,7 +2992,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -2516,7 +3022,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

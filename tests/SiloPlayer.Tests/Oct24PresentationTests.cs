@@ -54,6 +54,18 @@ public sealed class Oct24PresentationTests
     }
 
     [Fact]
+    public void TheEndPositionIsReadUnderItsCurrentNameAndUnderTheOlderOne()
+    {
+        // Silo Server 9df62cd42 (#4552) renamed watched_seconds to end_position_seconds with no alias; an older server still sends the old name.
+        var current = Call("PlaybackHistoryPresentation", "Format", JsonSerializer.SerializeToElement(new { media_title = "Film", end_position_seconds = 300 }));
+        Assert.Equal(300, current.GetProperty("Seconds").GetDouble()); Assert.True(current.GetProperty("Estimated").GetBoolean());
+        var older = Call("PlaybackHistoryPresentation", "Format", JsonSerializer.SerializeToElement(new { media_title = "Film", watched_seconds = 200 }));
+        Assert.Equal(200, older.GetProperty("Seconds").GetDouble());
+        var both = Call("PlaybackHistoryPresentation", "Format", JsonSerializer.SerializeToElement(new { media_title = "Film", end_position_seconds = 300, watched_seconds = 200 }));
+        Assert.Equal(300, both.GetProperty("Seconds").GetDouble());
+    }
+
+    [Fact]
     public void EpisodeNamedForShowDoesNotDuplicateTitleAndOldRowsAreEstimated()
     {
         var row = JsonSerializer.SerializeToElement(new { media_title = "Show", series_title = "Show", season_number = 0, episode_number = 1, watched_seconds = 120 });
