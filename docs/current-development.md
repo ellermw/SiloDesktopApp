@@ -1,3 +1,56 @@
+# November 20 — Admin Plugin Apps (navigation group and isolated plugin page)
+
+Branch `t3/admin-plugin-apps`, merged with Beta `32f95df8d` (version unchanged). Official pin
+`df37bfc6d57b1680c0f7a59e51e15c8d0cfa6065`. The Admin sidebar and search list "Plugin Apps" exactly as
+`buildAdminPluginNavItems`; an entry launches the plugin like `navigateToPluginRoute` (`POST
+/api/v2/auth/plugin-launch`) and opens the plugin page in an InPrivate WebView2 profile that holds only the
+issued `silo_plugin_access` cookie (HttpOnly, plugin-content parent path) and may load only that installation's
+pages and assets. No host objects, web messages, account headers, popups, downloads, permissions or external
+protocols; native states with Reload for not available, 401, 403, 5xx, load failure and timeout; teardown on
+leaving, removal and any authority change. The previous source-only draft (bearer proxy on a virtual origin)
+was replaced. Security fix in the viewer plugin page: account headers are now attached only inside
+`/api/v2/plugin-content/` instead of on every same-origin request. Details, decision table and limits:
+[parity/admin-plugin-apps.md](parity/admin-plugin-apps.md).
+
+Observed: `-Stage final` run `pluginapps-final-r1` on source `fa25ccc7c` passed: focused unit 91/91, full
+unit 10351/10351, native `admin-plugin-apps` (89 checks, including a request log proving the admin token
+reached only the launch request), `plugin-cutover`, `shell-localization`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor`. Not run: other native groups. Not verified: named third-party
+plugins, WebSocket/WebRTC from plugin script, printing and screen capture, a server behind a base path, visual
+parity of plugin content.
+
+Independent security review (read-only, commit `8bfe9f050`, official main `4762d23bc9ddd92c884777aee9f90122b4ac2da0`, no relevant
+change since `df37bfc6d`). It verified the official model with file and line and corrected one statement: the launch cookie is not
+the official page's only credential in effect, because the WebUI keeps its refresh token in browser storage on the same origin as
+plugin pages, so official plugin script can read it; the native pages are stricter. No defect was found in the admin page's
+credentials, navigation confinement, web view hardening, the Admin shell edit or the tests. Three defects were reported and fixed:
+the viewer's account headers could follow a same-origin redirect from a plugin-content URL to another server API (a request that
+leaves the plugin-content path now has every account header removed; `PluginContentPaths.AccountHeaderNames`, tied to
+`SiloApiClient.AddHeaders` by a test, and a new `plugin-cutover` step where the plugin answers with a redirect to an admin API); the
+viewer check refused plugin-content paths with an escaped percent sign, which the official cookie authenticates (now accepted for
+the viewer check; encoded separators and dots are still refused); and a failed web view process left the admin page blank with no
+Reload (it now drops the session and shows the load-failed state; no test). The redirect leak was inferred from documented web view
+behavior and was not observed happening before the fix.
+
+Final run: `pluginapps-lead-final-r2` on commit `66b3c04431eaa5082434ea0beaa4f0008921a595` (Beta `32f95df8d`): 116 focused and 10,356
+full unit cases passed with no failures or skips; app build, publish and native host build passed; native selectors
+`admin-plugin-apps` (89 checks), `plugin-cutover` (7), `shell-localization` (4), `admin-playback-administration` (99),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified.
+The run before it, `pluginapps-lead-final-r1`, stopped on one new unit case written with a wrong expectation (an escaped ".." that
+stays inside the plugin-content path after normalization is inside it); the case was corrected, no product code changed. Beta was
+stamped `1.2.1277-beta.1` (`d51eb2d85`) after this branch's last merge and is not merged again.
+
+Review fixes after that run, not yet run: Reload after the web view's browser process exits now replaces the web view (the old one
+could not load again), and GPU, utility and frame process failures no longer close a working page; a shown page keeps its own later
+navigations (fragment or history navigation, the plugin's own 4xx/5xx response) instead of being replaced by a failure state, except
+for a 401 or a navigation with no server response. Three native `admin-plugin-apps` steps were added (fragment navigation, plugin 404
+on a later navigation, killed browser process then Reload). A further review fix, also not yet run: when a plugin sets its fragment
+while its page is still opening and the opening navigation completes first, its result is kept and applied instead of leaving the
+page on Loading until the timeout; one more native step opens a page that sets its fragment in an inline script. A third review
+fix, also not yet run: a plugin that sets its fragment twice while its page is opening no longer ends in the load-failed state or
+the timeout. The opening navigation is kept through any number of same-document navigations and any completion order
+(`AdminPluginPageNavigations`, with unit cases for the orders), and the native step also opens the page setting its fragment twice.
+
 # November 17 — Admin Monitor corrections verified for Beta submission
 
 The Monitor worktree `t3-34a4a55a-46179de38e52767b` is based on exact Beta
