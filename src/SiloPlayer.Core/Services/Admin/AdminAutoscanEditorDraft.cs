@@ -17,8 +17,9 @@ public sealed class AdminAutoscanEditorDraft : IDisposable
     public string DeliveryMode { get; set; }
     public List<AdminAutoscanPathRewrite> Mappings { get; set; } = [];
     public bool MappingsDirty { get; set; }
-    // Stored values of fields the descriptor never offers (the server drops secret and dynamic-option fields from source forms).
-    // A changed configuration sends them back as stored: unknown keys are never cleared by an edit the admin did not make.
+    // Stored values of keys the form does not offer: fields the descriptor does not declare (the server drops secret and dynamic-option
+    // fields from source forms) and declared ones removed here. A changed configuration sends them back as stored: unknown keys are
+    // never cleared by an edit the admin did not make.
     private readonly Dictionary<string, string> _unmanaged = [];
     private readonly bool _creating;
     private readonly bool _hadMappings;
@@ -38,16 +39,17 @@ public sealed class AdminAutoscanEditorDraft : IDisposable
         var unsupported = Form.Fields.Where(field => field.Secret || field.DynamicOptions || field.Control.Equals("PASSWORD", StringComparison.OrdinalIgnoreCase)).Select(field => field.Key).ToHashSet();
         Form.Fields.RemoveAll(field => unsupported.Contains(field.Key));
         var stored = new Dictionary<string, string>(source?.SourceConfig ?? []);
-        foreach (var key in unsupported) if (stored.TryGetValue(key, out var kept)) _unmanaged[key] = kept;
         if (source is { PluginId: "silo.autoscan.cephfs", CapabilityId: "cephfs" })
         {
             foreach (var (oldKey, key) in new[] { ("movie_nested_paths", "movie_flat_paths"), ("tv_nested_paths", "tv_flat_paths") })
                 if (stored.Remove(oldKey, out var old))
                 { stored[key] = string.Join("\n", (stored.GetValueOrDefault(key, "") + "\n" + old).Split('\n').Select(s => s.Trim()).Where(s => s.Length > 0).Distinct()); ConfigDirty = true; _migratedAliases = true; }
         }
-        // A source whose capability offers no form at all: the editor shows none of its keys, so a change to "Sent by" must not erase them
+        // Every stored key the form has no field for (none at all when the capability offers no form): the editor shows none of them, so an
+        // edit to the settings or to "Sent by" must not erase them. A declared field hidden by the admin's choices is still dropped
         // (read after the alias migration above, so a migrated legacy key is not carried back).
-        if (descriptor.ConfigForm == null) foreach (var (key, value) in stored) if (key != "webhook_provider") _unmanaged[key] = value;
+        var offered = Form.Fields.Select(field => field.Key).ToHashSet();
+        foreach (var (key, value) in stored) if (key != "webhook_provider" && !offered.Contains(key)) _unmanaged[key] = value;
         foreach (var field in Form.Fields)
         {
             if (field.Validation is { } validation) { if (!validation.HasMin) validation.Min = null; if (!validation.HasMax) validation.Max = null; }

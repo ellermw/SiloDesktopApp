@@ -155,6 +155,22 @@ public sealed class AdminAutoscanContractTests
     }
 
     [Fact]
+    public void StoredKeysTheDescriptorDoesNotDeclareReturnUnchangedWhenConfigChanges()
+    {
+        // The server strips secret and dynamic-option fields from the descriptor, and a plugin upgrade can rename a field: neither key is declared.
+        var source = new AdminAutoscanSource { DeliveryMode = "poll", SourceConfig = new() { ["secret"] = "synthetic-secret", ["renamed"] = "", ["switch"] = "false", ["hidden"] = "stale", ["text"] = "old" } };
+        var descriptor = new AdminAutoscanDescriptor { ConfigForm = new() { Fields = [
+            new() { Key = "switch", Control = "SWITCH" }, new() { Key = "hidden", ShowWhen = [new() { Field = "switch", Equals = ["true"] }] }, new() { Key = "text" }] } };
+        using var draft = new AdminAutoscanEditorDraft(source, descriptor);
+        Assert.DoesNotContain("secret", draft.Config.Keys); Assert.DoesNotContain("renamed", draft.Config.Keys);
+        draft.ConfigDirty = true; draft.Config["text"] = "new";
+        var body = draft.Build(source).SourceConfig;
+        Assert.Equal("synthetic-secret", body["secret"]); Assert.Equal("", body["renamed"]); Assert.Equal("new", body["text"]); Assert.Equal("false", body["switch"]);
+        // Only a declared field the admin's choices hide is removed.
+        Assert.False(body.ContainsKey("hidden")); Assert.Equal(4, body.Count);
+    }
+
+    [Fact]
     public void EmptyStoredValueStaysAndUntouchedDefaultlessFieldStaysAbsent()
     {
         var source = new AdminAutoscanSource { DeliveryMode = "poll", SourceConfig = new() { ["held"] = "" } };
