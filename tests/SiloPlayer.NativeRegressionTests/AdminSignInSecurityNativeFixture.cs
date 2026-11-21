@@ -213,7 +213,7 @@ internal static class AdminSignInSecurityNativeFixture
             Check(!Descendants(outer).OfType<TextBlock>().Any(t => t.Text.Contains(Secret)), "secret cleared when the dialog closes");
             await Until(() => HasText(keys, "Created from fixture"));
             Check(server.Gets.Count(g => g.StartsWith("GET /api/v2/admin/api-keys?limit=50")) >= 2, "list re-read from the canonical server page after create");
-            var edit = await ClickForDialog(keys, "ApiKeyTier_7", create);
+            await ClickWhenReady(keys, "ApiKeyTier_7"); var edit = await Dialog(keys);
             var tier = Descendants(edit).OfType<ComboBox>().Single(t => Id(t) == "ApiKeyTier");
             Check(tier.Items.OfType<ComboBoxItem>().Any(i => i.Content?.ToString()?.Contains("20 requests/s, 1200/min") == true), "rate hints from the limiter config");
             tier.SelectedItem = tier.Items.OfType<ComboBoxItem>().Single(i => i.Tag as string == "elevated");
@@ -221,12 +221,12 @@ internal static class AdminSignInSecurityNativeFixture
             Check(server.Count("PUT /api/v2/admin/api-keys/7/tier") == 1 && server.Guards["PUT /api/v2/admin/api-keys/7/tier"] == Etag, "tier saved once with the reviewed strong validator");
             // conflict: the guarded write is refused, the draft is kept and reload is offered; nothing is resent
             server.Status["PUT /api/v2/admin/api-keys/7/tier"] = 412;
-            var conflict = await ClickForDialog(keys, "ApiKeyTier_7", edit); Primary(conflict);
+            await ClickWhenReady(keys, "ApiKeyTier_7"); var conflict = await Dialog(keys); Primary(conflict);
             await Until(() => HasText(conflict, "This resource changed or its revision is unavailable. Reload and review before saving again.") || Descendants(conflict).OfType<Button>().Any(b => Id(b) == "ApiKeyReloadCurrent" && b.Visibility == Visibility.Visible));
             Check(server.Count("PUT /api/v2/admin/api-keys/7/tier") == 2, "refused tier write is not replayed");
             server.Status.Remove("PUT /api/v2/admin/api-keys/7/tier");
             conflict.Hide(); await Until(() => !conflict.IsLoaded);
-            var revoke = await ClickForDialog(keys, "ApiKeyRevoke_7", conflict); Primary(revoke);
+            await ClickWhenReady(keys, "ApiKeyRevoke_7"); var revoke = await Dialog(keys); Primary(revoke);
             await Until(() => !revoke.IsLoaded && server.Revoked);
             Check(server.Count("DELETE /api/v2/admin/api-keys/7") == 1 && server.Guards["DELETE /api/v2/admin/api-keys/7"] == Etag, "confirmed revoke sent once with the reviewed validator");
 
@@ -307,7 +307,6 @@ internal static class AdminSignInSecurityNativeFixture
             foreach (var typed in new[] { "fixture-readers\r", "fixture-readers\rSilo ", "fixture-readers\rSilo Admins" })
             {
                 groups.Text = typed; var held = groups.Text; await Task.Delay(150);
-                if (groups.Text != held) Program.Log("INFO: group list box was set to [" + Codes(typed) + "], read back [" + Codes(held) + "], holds [" + Codes(groups.Text) + "] after 150 ms; same box on the page: " + ReferenceEquals(groups, Input(signIn, "SignIn_3_ldap_allowed_groups")) + "; the page's box holds [" + Codes(Input(signIn, "SignIn_3_ldap_allowed_groups").Text) + "]; box loaded: " + groups.IsLoaded + "; controller busy: " + ((AdminSignInSettingsPage)signIn).Controller.Busy + ", review required: " + ((AdminSignInSettingsPage)signIn).Controller.ReviewRequired);
                 Check(groups.Text == held, "typed group list is kept as typed (" + typed.Length + " characters)");
             }
             Check(groups.Text.Replace("\r\n", "\n").Replace('\r', '\n') == "fixture-readers\nSilo Admins", "a second group with a space can be typed on its own line");
@@ -487,25 +486,6 @@ internal static class AdminSignInSecurityNativeFixture
     {
         var button = Buttons(root).Single(t => Id(t) == id);
         Check(button.IsEnabled, id + " enabled"); ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
-    }
-    private static string Codes(string text) => string.Join(",", text.Select(c => ((int)c).ToString()));
-    /// <summary>
-    /// Invokes the button until its dialog is open. The page drops a click that lands while it is still closing the previous dialog
-    /// (its own guard against a second dialog), so one click is not enough; a repeated click cannot open two.
-    /// </summary>
-    private static async Task<ContentDialog> ClickForDialog(FrameworkElement page, string id, ContentDialog? previous = null)
-    {
-        for (var attempt = 0; attempt < 20; attempt++)
-        {
-            await ClickWhenReady(page, id);
-            for (var i = 0; i < 20; i++)
-            {
-                var dialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(page.XamlRoot).SelectMany(p => Descendants(p.Child)).OfType<ContentDialog>().FirstOrDefault(d => !ReferenceEquals(d, previous));
-                if (dialog != null) return dialog;
-                await Task.Delay(25);
-            }
-        }
-        throw new TimeoutException("Sign-in & Security fixture: no dialog opened for " + id);
     }
     private static async Task ClickWhenReady(DependencyObject root, string id)
     {
