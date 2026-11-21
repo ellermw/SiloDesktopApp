@@ -178,7 +178,11 @@ public sealed partial class AdminShellPage : Page
     /// <summary>A settings acknowledgement invalidates the shell's short-lived restart snapshot.</summary>
     internal void RefreshSettingsStatus()
     {
-        if (_active && _lease?.IsCurrent == true) _ = LoadServerStatusAsync(_lease, force: true);
+        if (_active && _lease?.IsCurrent == true)
+        {
+            _ = LoadServerStatusAsync(_lease, force: true);
+            _ = LoadBrandingAsync(_lease);
+        }
     }
 
 
@@ -282,6 +286,7 @@ public sealed partial class AdminShellPage : Page
 
     private void Retire()
     {
+        RetireBranding();
         DetachLoggingHealth();
         _closeSearch?.Invoke();
         _restartDialog?.Hide();
@@ -324,6 +329,7 @@ public sealed partial class AdminShellPage : Page
         _narrowActivity.Eligible = true;
         if (_store != null) _sessionCount = _store.Current.Sessions.Count;
         _ = LoadBuildAsync(_lease);
+        _ = LoadBrandingAsync(_lease);
         _ = LoadServerStatusAsync(_lease, force: true);
     }
 
@@ -737,11 +743,7 @@ public sealed partial class AdminShellPage : Page
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // Logo → app home.
-        var logo = A.Plain(new Image
-        {
-            Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///Assets/silo-wordmark-sidebar.png")),
-            Width = 112, Height = 48, Stretch = Stretch.Uniform,
-        }, AdminText.T("web.admin.shell.sidebar.home"));
+        var logo = A.Plain(ServerWordmark(), AdminText.T("web.admin.shell.sidebar.home"));
         logo.HorizontalAlignment = HorizontalAlignment.Left;
         logo.Margin = new Thickness(20, 24, 20, 16);
         logo.Click += (_, _) => App.MainWindowInstance?.NavigateToHome();

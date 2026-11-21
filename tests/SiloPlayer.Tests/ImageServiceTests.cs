@@ -179,6 +179,54 @@ public sealed class ImageServiceTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SharedDownloadDeadline_CancelsStalledTransfersAndReleasesEverySlot(bool stallBody)
+    {
+        var cacheDir = CreateTempCacheDir();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string?>[] downloads = [];
+        try
+        {
+            var requests = 0;
+            using var service = new ImageService(cacheDir, downloadTimeout: TimeSpan.FromSeconds(1));
+            using var http = new HttpClient(new DelegateHandler(async (request, cancellation) =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/recovered.jpg") return ImageResponse();
+                if (Interlocked.Increment(ref requests) == 16) started.TrySetResult();
+                if (!stallBody) await release.Task.WaitAsync(cancellation);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new BlockingImageContent(new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), release)
+                };
+            })) { Timeout = Timeout.InfiniteTimeSpan };
+            downloads = Enumerable.Range(0, 16).Select(index => service.GetImageDiskPathAsync(
+                $"stalled-{index}", "poster", $"https://cdn.example.test/stalled-{index}.jpg", http)).ToArray();
+            try
+            {
+                await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var paths = await Task.WhenAll(downloads).WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.All(paths, path => Assert.Null(path));
+                Assert.Empty(Directory.GetFiles(cacheDir, "*.tmp"));
+                var recovered = await service.GetImageDiskPathAsync(
+                    "recovered", "poster", "https://cdn.example.test/recovered.jpg", http).WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(File.Exists(recovered));
+                Assert.Equal(16, requests);
+            }
+            finally
+            {
+                release.TrySetResult();
+                await Task.WhenAll(downloads).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
     [Fact]
     public async Task GetImageDiskPathAsync_CanceledWarmupDoesNotStartDownload()
     {

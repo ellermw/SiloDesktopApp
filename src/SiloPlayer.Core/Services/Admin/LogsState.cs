@@ -173,12 +173,12 @@ public static class DiagnosticsPresentation
     public static string Bytes(long? value)
     {
         if (value == null) return "—";
-        if (value < 1024) return value.Value.ToString(CultureInfo.CurrentCulture) + " B";
+        if (value < 1024) return LogsText.T("web.common.format.size.bytes", ("size", value.Value));
         var size = (double)value / 1024;
-        var units = new[] { "KiB", "MiB", "GiB", "TiB" };
+        var units = new[] { "kib", "mib", "gib", "tib" };
         var index = 0;
         while (size >= 1024 && index < units.Length - 1) { size /= 1024; index++; }
-        return size.ToString(size >= 10 ? "N0" : "N1", CultureInfo.CurrentCulture) + " " + units[index];
+        return LogsText.T("web.common.format.size." + units[index], ("size", size.ToString(size >= 10 ? "N0" : "N1", CultureInfo.CurrentCulture)));
     }
     public static string ManifestValue(JsonElement manifest, string section, string key)
     {
