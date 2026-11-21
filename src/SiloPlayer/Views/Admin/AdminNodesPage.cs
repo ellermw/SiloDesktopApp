@@ -34,6 +34,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
     private AdminPlaybackSettingsPanel? _routingPanel;
     private TextBlock? _routingHeading;
     private AdminPlaybackNodeWindow? _rendered;
+    private string? _renderError;
     private ContentDialog? _dialog;
     private AdminLeaveGuard? _leave;
     private Task? _pollReload;
@@ -56,7 +57,13 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         _body.Children.Add(_status); _body.Children.Add(_reload); _body.Children.Add(_groups); _body.Children.Add(_cards);
         _scroll.Content = _body; _root.Children.Add(_scroll); Content = _root;
         _scroll.SizeChanged += (_, _) => Fit();
-        _reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(); };
+        _reload.Click += async (_, _) =>
+        {
+            if (_controller == null) return;
+            await _controller.ReloadAsync();
+            // The reload may change nothing (a failed read keeps the window), so a window that could not be drawn is drawn again here.
+            if (_renderError != null) QueueRender();
+        };
         _poll.Tick += async (_, _) => { if (_active && _focused && _visible && App.Services.GetService<PlayerService>()?.IsLoading != true) await Refresh(); };
         Loaded += async (_, _) => { Fit(); await Activate(); }; Unloaded += (_, _) => SuspendAdminPage();
     }
@@ -97,30 +104,51 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_active || !ReferenceEquals(controller, _controller)) return;
-            // A card that cannot be drawn must not take the application down: the cause is logged and the page says so.
+            // Anything that still cannot be drawn must not take the application down: the cause is logged and the page says so.
             try { Render(); }
-            catch (Exception failure) when (failure is not OutOfMemoryException)
-            {
-                LocalLog.AppendException("admin-nodes-render.log", failure, "Render the Nodes page");
-                U.UpdateLiveText(_status, "Nodes could not be displayed (" + failure.GetType().Name + "). Reload the page.");
-            }
+            catch (Exception failure) when (failure is not OutOfMemoryException) { FailRender(failure); }
         });
+    }
+    /// <summary>
+    /// A card that cannot be drawn leaves nothing half built: no card (so no action that belongs to a stale window), the next render draws the same window again, and the reason
+    /// stays on the page, with Reload, until a draw succeeds. Another message never replaces it.
+    /// </summary>
+    private void FailRender(Exception failure)
+    {
+        LocalLog.AppendException("admin-nodes-render.log", failure, "Render the Nodes page");
+        _renderError = "Nodes could not be displayed (" + failure.GetType().Name + "). Reload the page.";
+        _cards.Children.Clear(); _groups.Children.Clear(); _groups.Visibility = Visibility.Collapsed; _rendered = null;
+        ShowStatus();
+    }
+    /// <summary>The status line: a render failure, then the controller's error and feedback (an error that is showing stays when a note is added), else the loading and re-probe lines.</summary>
+    private void ShowStatus()
+    {
+        if (_controller == null) return; var state = _controller.State; var current = state.Owner?.IsCurrent == true;
+        var lines = new[] { _renderError, state.Error, state.Feedback }.Where(line => !string.IsNullOrEmpty(line)).ToList();
+        if (lines.Count == 0 && state.Loading && !state.Loaded) lines.Add(T("web.admin.nodes.page.loading"));
+        else if (lines.Count == 0 && state.Reprobing.Count > 0) lines.Add("Re-probing hardware. This can take a couple of minutes.");
+        U.UpdateLiveText(_status, !current ? "" : string.Join("\n", lines));
+        _status.Visibility = _status.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _reload.Visibility = current && (state.Error != null || _renderError != null) ? Visibility.Visible : Visibility.Collapsed; _reload.IsEnabled = !state.Busy && !state.Loading;
     }
     private void Render()
     {
         if (_controller == null) return; var state = _controller.State; var current = state.Owner?.IsCurrent == true;
-        U.UpdateLiveText(_status, !current ? "" : state.Error ?? state.Feedback ?? (state.Loading && !state.Loaded ? T("web.admin.nodes.page.loading") : state.Reprobing.Count > 0 ? "Re-probing hardware. This can take a couple of minutes." : ""));
-        _status.Visibility = _status.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _reload.Visibility = current && state.Error != null ? Visibility.Visible : Visibility.Collapsed; _reload.IsEnabled = !state.Busy && !state.Loading;
-        if (!current) { _cards.Children.Clear(); _groups.Children.Clear(); _rendered = null; _dialog?.Hide(); return; }
+        if (!current) { _renderError = null; ShowStatus(); _cards.Children.Clear(); _groups.Children.Clear(); _rendered = null; _dialog?.Hide(); return; }
         _routingPanel?.SetNodeWindow(state.Loaded ? state.Window : null);
         if (!ReferenceEquals(state.Window, _rendered))
         {
             // Every refresh replaces the cards, so keyboard and Narrator focus is handed to the same control of the same node instead of dropping out of the list.
             var held = FocusedListControl(); var id = held == null ? "" : AutomationProperties.GetAutomationId(held); var focus = held?.FocusState ?? FocusState.Unfocused;
-            _rendered = state.Window; RenderGroups(state.Window.Items); _groups.Visibility = _groups.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed; RenderCards(state.Window.Items);
+            try
+            {
+                _rendered = state.Window; RenderGroups(state.Window.Items); _groups.Visibility = _groups.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed; RenderCards(state.Window.Items);
+                _renderError = null;
+            }
+            catch (Exception failure) when (failure is not OutOfMemoryException) { FailRender(failure); return; }
             if (id.Length > 0) Refocus(id, focus);
         }
+        ShowStatus();
         // Only a foreground load disables the cards. Disabling them for the 30 s background refresh would take focus away from the control in use.
         var loading = state.Loading && _pollReload == null;
         // A re-probe can take minutes, so it holds back only its own node's Re-probe button (the one whose Tag is the node id), never the page.
@@ -315,7 +343,13 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         var edit = IconAction(T("web.admin.nodes.unit.edit", new { name }), "NodeEdit_" + node.Id, "pencil"); edit.Tag = AdminValidators.IsStrong(node.ConfigETag); edit.Click += async (_, _) => { if (await Settled(node) is { } current) await EditNode(current.Type, current); }; actions.Children.Add(edit);
         // A node the deployment configuration owns cannot be deleted here. The button stays focusable (never disabled, so UI Automation can still invoke it) and a press shows the reason instead of a confirmation.
         var delete = IconAction(T("web.admin.nodes.unit.delete", new { name }), "NodeDelete_" + node.Id, "trash-2"); delete.Tag = AdminValidators.IsStrong(node.ConfigETag);
-        if (node.IsDeploymentManaged) { delete.Opacity = .5; ToolTipService.SetToolTip(delete, AdminPlaybackNodesController.DeploymentManagedNote); AutomationProperties.SetHelpText(delete, AdminPlaybackNodesController.DeploymentManagedNote); }
+        if (node.IsDeploymentManaged)
+        {
+            // Official: aria-disabled, aria-describedby the note, the note as title, 50% opacity. UI Automation has no disabled-but-focusable state, so the note is the item status
+            // (what a screen reader announces after the name) and the full description, besides the tooltip and help text.
+            var note = AdminPlaybackNodesController.DeploymentManagedNote; delete.Opacity = .5; ToolTipService.SetToolTip(delete, note);
+            AutomationProperties.SetHelpText(delete, note); AutomationProperties.SetItemStatus(delete, note); AutomationProperties.SetFullDescription(delete, note);
+        }
         delete.Click += async (_, _) =>
         {
             if (node.IsDeploymentManaged) { if (_controller is { } managed) await managed.DeleteAsync(node); return; }
@@ -454,7 +488,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
                 ToolTipService.SetToolTip(warning, string.Join("\n", gpu.Failures.Select(failure => T("web.admin.nodes.unit.probeFailure", new { backend = failure.Label, reason = failure.Reason}))));
                 AutomationProperties.SetName(warning, T("web.admin.nodes.unit.probeFailureCount", new { count = gpu.Failures.Count, name = P(node.Name) })); top.Children.Add(warning);
             }
-            if (gpu.Stale != null) { var stale = U.Text(T("web.admin.nodes.unit.stale"), 12, true); ToolTipService.SetToolTip(stale, AdminPlaybackNodePresentation.StaleTitle(gpu.Stale, node)); top.Children.Add(stale); }
+            if (gpu.Stale != null) { var stale = U.Text(T("web.admin.nodes.unit.stale"), 12, true); ToolTipService.SetToolTip(stale, AdminPlaybackNodePresentation.StaleTitle(gpu.Stale, node, at => SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(at))); top.Children.Add(stale); }
             body.Children.Add(top);
             if (gpu.DeviceSummary != null) { var summary = U.Text(gpu.DeviceSummary, 12, true); if (gpu.DeviceTitle != null) ToolTipService.SetToolTip(summary, gpu.DeviceTitle); body.Children.Add(summary); }
         }
@@ -488,7 +522,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         _authority.AvailabilityChanged -= AuthorityChanged;
         if (App.MainWindowInstance is { } window) { window.Activated -= Activated; window.VisibilityChanged -= VisibilityChanged; }
         _controller?.Dispose(); _controller = null; _routingPanel?.Dispose(); if (_routingPanel != null) { _root.Children.Remove(_routingPanel.SaveBar); _body.Children.Remove(_routingPanel); } if (_routingHeading != null) _body.Children.Remove(_routingHeading); _routingHeading = null; _routingPanel = null;
-        _routing?.Dispose(); _routing = null; _cards.Children.Clear(); _groups.Children.Clear(); _rendered = null; _status.Text = "";
+        _routing?.Dispose(); _routing = null; _cards.Children.Clear(); _groups.Children.Clear(); _rendered = null; _renderError = null; _status.Text = "";
     }
     protected override void OnNavigatedFrom(NavigationEventArgs args) { SuspendAdminPage(); base.OnNavigatedFrom(args); }
 }

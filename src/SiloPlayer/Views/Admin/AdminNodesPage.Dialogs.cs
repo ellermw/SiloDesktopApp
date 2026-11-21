@@ -161,7 +161,7 @@ public sealed partial class AdminNodesPage
                 {
                     var line = new Grid { ColumnSpacing = 12 }; line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
                     var text = new StackPanel(); var description = U.Text(row.Description, 14, !row.Reported); description.TextTrimming = TextTrimming.CharacterEllipsis; description.TextWrapping = TextWrapping.NoWrap; text.Children.Add(description);
-                    text.Children.Add(Mono(row.Path)); ToolTipService.SetToolTip(text, row.Title); line.Children.Add(text);
+                    text.Children.Add(Mono(P(row.Path, 1024))); ToolTipService.SetToolTip(text, row.Title); line.Children.Add(text);
                     var toggle = new ToggleSwitch { OffContent = "", OnContent = "", MinWidth = 0, IsOn = row.Selected, IsEnabled = !disabled }; Grid.SetColumn(toggle, 1);
                     AutomationProperties.SetName(toggle, T("web.admin.nodes.devicePicker.toggle", new { path = P(row.Path) }));
                     // The toggle reports its starting state once it is realized: only a change the admin made may stage a draft.
@@ -207,15 +207,27 @@ public sealed partial class AdminNodesPage
         };
         await ShowDialog(dialog, owner);
     }
+    /// <summary>Native-only English (the official page copies without any check, so it has no string for these): why a copy is refused, in one short line.</summary>
+    private static string CopyRefusalText(AdminPlaybackNodeText.CopyRefusal refusal) => refusal switch
+    {
+        AdminPlaybackNodeText.CopyRefusal.AddressMissing => T("web.admin.nodes.key.coreUrlMissing"),
+        AdminPlaybackNodeText.CopyRefusal.AddressInvisible => "The server address holds an invisible character, so it cannot be copied exactly. Type it again.",
+        AdminPlaybackNodeText.CopyRefusal.AddressNotPlain => "Enter a plain http or https address, without a user name, password, query or fragment, to copy the settings.",
+        AdminPlaybackNodeText.CopyRefusal.KeyInvisible => "This key holds an invisible character, so it cannot be copied exactly.",
+        AdminPlaybackNodeText.CopyRefusal.KeyMissing => "",
+        _ => T("web.admin.nodes.key.settingsHelp"),
+    };
+    private const string KeyNotSent = "This node changed or another action was running, so no key was requested. Read the nodes again, then try once more.";
     private async Task ShowKey(AdminPlaybackNode target)
     {
         var controller = _controller; var owner = controller?.State.Owner;
         if (_dialog != null || controller == null || owner?.IsCurrent != true || target.IsDeploymentManaged || controller.State.Capabilities is not { Available: true, NodeKeys: true }) return;
         // The key lives in this dialog only: it is never put in state, a property, a tooltip or a log, and is erased when the dialog closes.
         var rotate = target.KeyIssued == true; var name = P(target.Name);
-        var body = new StackPanel { Spacing = 12 }; var pending = false; string? issued = null;
+        var body = new StackPanel { Spacing = 12 }; var pending = false; var readAgain = false; string? issued = null;
         var description = U.Text(T(rotate ? "web.admin.nodes.key.rotateDescription" : "web.admin.nodes.key.offer", new { name })); body.Children.Add(description);
-        if (rotate) body.Children.Add(U.Text(T("web.admin.nodes.key.rotateDrainHint"), 14));
+        TextBlock? drainHint = null;
+        if (rotate) { drainHint = U.Text(T("web.admin.nodes.key.rotateDrainHint"), 14); body.Children.Add(drainHint); }
         var error = U.Text("", 13); error.Foreground = new SolidColorBrush(Danger); AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Polite); body.Children.Add(error);
         var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = T(rotate ? "web.admin.nodes.key.rotateTitle" : "web.admin.nodes.key.dialogTitle", new { name }), Content = body, PrimaryButtonText = T(rotate ? "web.admin.nodes.key.rotate" : "web.admin.nodes.key.issue"), CloseButtonText = T(rotate ? "common.cancel" : "web.admin.nodes.key.later"), DefaultButton = ContentDialogButton.Close };
         if (rotate) dialog.PrimaryButtonStyle = DestructiveStyle();
@@ -224,52 +236,81 @@ public sealed partial class AdminNodesPage
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true; if (pending || issued != null) return;
-            pending = true; dialog.IsPrimaryButtonEnabled = false; description.Text = T("web.admin.nodes.key.issuing");
-            // Sent once: nothing here retries, and an unknown outcome is never repeated until the page has read the nodes again.
-            var success = await controller.IssueKeyAsync(target, key => issued = key);
-            pending = false;
-            if (!owner.IsCurrent) { issued = null; dialog.Hide(); return; }
-            if (!success || issued == null)
+            if (readAgain)
             {
-                // A refusal says why (nothing was issued); a lost answer or a server fault may have rotated the key anyway.
-                var state = controller.State;
-                var reason = U.Text(state.ReviewRequired || state.Error == null ? T("web.admin.nodes.key.unconfirmed", new { name }) : state.Error, 14); reason.Foreground = new SolidColorBrush(Danger);
-                AutomationProperties.SetLiveSetting(reason, AutomationLiveSetting.Assertive); body.Children.Clear(); body.Children.Add(reason);
-                dialog.PrimaryButtonText = ""; dialog.CloseButtonText = T("web.admin.nodes.key.close"); return;
+                // Nothing was sent: read the nodes again and close, so the next press acts on the current row.
+                pending = true; dialog.IsPrimaryButtonEnabled = false;
+                try { await controller.ReloadAsync(); } finally { pending = false; }
+                dialog.Hide(); return;
             }
-            dialog.Title = T("web.admin.nodes.key.dialogTitle", new { name });
-            body.Children.Clear(); var warning = U.Text(T("web.admin.nodes.key.notShownAgain"), 14); warning.Foreground = new SolidColorBrush(Warning); warning.FontWeight = Microsoft.UI.Text.FontWeights.Medium; body.Children.Add(warning);
-            keyBox = U.Secret(T("web.admin.nodes.key.keyLabel"), "NodeIssuedKey"); keyBox.Password = issued; keyBox.Width = double.NaN; keyBox.FlowDirection = FlowDirection.LeftToRight; body.Children.Add(U.Text(T("web.admin.nodes.key.keyLabel"))); body.Children.Add(keyBox);
-            var copyKey = U.Action(T("web.admin.nodes.key.copyKey"), "NodeCopyKey"); copyKey.Click += (_, _) => Copy(issued); body.Children.Add(copyKey);
-            coreUrl = U.Input(T("web.admin.nodes.key.coreUrlLabel"), "NodeCoreUrl", "http://10.0.0.2:8080"); coreUrl.Width = double.NaN; coreUrl.HorizontalAlignment = HorizontalAlignment.Stretch; coreUrl.FlowDirection = FlowDirection.LeftToRight;
+            pending = true; dialog.IsPrimaryButtonEnabled = false; description.Text = T("web.admin.nodes.key.issuing"); if (drainHint != null) drainHint.Visibility = Visibility.Collapsed;
+            // Sent once: nothing here retries, and an unknown outcome is never repeated until the page has read the nodes again.
+            var outcome = await controller.IssueKeyOutcomeAsync(target, key => issued = key);
+            if (!owner.IsCurrent) { pending = false; issued = null; dialog.Hide(); return; }
+            if (outcome != AdminPlaybackNodeOutcome.Done || issued == null)
+            {
+                // Nothing sent: the row changed (or another action ran), so say that and offer to read it again. A refusal says why (nothing was issued).
+                // Only a request that was sent and not answered may have rotated the key anyway.
+                pending = false; var state = controller.State; var notSent = outcome == AdminPlaybackNodeOutcome.NotSent;
+                var text = notSent ? KeyNotSent : outcome == AdminPlaybackNodeOutcome.Refused && state.Error != null ? state.Error : T("web.admin.nodes.key.unconfirmed", new { name });
+                var reason = U.Text(text, 14); reason.Foreground = new SolidColorBrush(Danger);
+                AutomationProperties.SetLiveSetting(reason, AutomationLiveSetting.Assertive); body.Children.Clear(); body.Children.Add(reason);
+                dialog.Title = T("web.admin.nodes.key.dialogTitle", new { name });
+                readAgain = notSent; dialog.PrimaryButtonText = notSent ? T("common.retry") : ""; dialog.IsPrimaryButtonEnabled = notSent; dialog.ClearValue(ContentDialog.PrimaryButtonStyleProperty); dialog.CloseButtonText = T("web.admin.nodes.key.close"); return;
+            }
+            // The key is on screen from here. The dialog cannot be closed until it is fully built, and its close button already is the one that follows a shown key.
+            dialog.Title = T("web.admin.nodes.key.dialogTitle", new { name }); dialog.PrimaryButtonText = ""; dialog.CloseButtonText = T("web.admin.nodes.key.saved");
             try
             {
-                var publicUrl = (await App.Services.GetRequiredService<AdminServerSettingsStore>().GetEffectiveAsync(owner)).Values.GetValueOrDefault("server.public_url", "");
-                if (AdminPlaybackNodeEditor.ValidUrl(publicUrl) && !AdminPlaybackNodeText.HasInvisible(publicUrl)) coreUrl.Text = publicUrl;
+                body.Children.Clear(); var warning = U.Text(T("web.admin.nodes.key.notShownAgain"), 14); warning.Foreground = new SolidColorBrush(Warning); warning.FontWeight = Microsoft.UI.Text.FontWeights.Medium; body.Children.Add(warning);
+                keyBox = U.Secret(T("web.admin.nodes.key.keyLabel"), "NodeIssuedKey"); keyBox.Password = issued; keyBox.Width = double.NaN; keyBox.FlowDirection = FlowDirection.LeftToRight; body.Children.Add(U.Text(T("web.admin.nodes.key.keyLabel"))); body.Children.Add(keyBox);
+                // A copy is exactly what is shown: a key that holds an invisible character (a server-issued one never should) is refused, and the line says so.
+                var copyKey = U.Action(T("web.admin.nodes.key.copyKey"), "NodeCopyKey");
+                copyKey.Click += (_, _) =>
+                {
+                    var refusal = AdminPlaybackNodeText.CheckCopy("", issued ?? "", addressNeeded: false);
+                    if (refusal != AdminPlaybackNodeText.CopyRefusal.None) { error.Text = CopyRefusalText(refusal); return; }
+                    Copy(issued);
+                };
+                body.Children.Add(copyKey);
+                coreUrl = U.Input(T("web.admin.nodes.key.coreUrlLabel"), "NodeCoreUrl", "http://10.0.0.2:8080"); coreUrl.Width = double.NaN; coreUrl.HorizontalAlignment = HorizontalAlignment.Stretch; coreUrl.FlowDirection = FlowDirection.LeftToRight;
+                try
+                {
+                    var publicUrl = (await App.Services.GetRequiredService<AdminServerSettingsStore>().GetEffectiveAsync(owner)).Values.GetValueOrDefault("server.public_url", "");
+                    if (AdminPlaybackNodeEditor.ValidUrl(publicUrl) && !AdminPlaybackNodeText.HasInvisible(publicUrl)) coreUrl.Text = publicUrl;
+                }
+                catch { }
+                if (!owner.IsCurrent) { issued = null; dialog.Hide(); return; }
+                body.Children.Add(U.Text(T("web.admin.nodes.key.coreUrlLabel"))); body.Children.Add(coreUrl); body.Children.Add(U.Text(T("web.admin.nodes.key.coreUrlHelp"), 13, true));
+                settings = U.Input(T("web.admin.nodes.key.settingsLabel"), "NodeStartSettings"); settings.Width = double.NaN; settings.HorizontalAlignment = HorizontalAlignment.Stretch; settings.IsReadOnly = true; settings.AcceptsReturn = true; settings.Height = 90; settings.FlowDirection = FlowDirection.LeftToRight;
+                // The key is shown masked and joins the copied settings only on an explicit Copy settings action, never in page state.
+                var copySettings = U.Action(T("web.admin.nodes.key.copySettings"), "NodeCopySettings"); var settingsHelp = U.Text("", 13, true);
+                void UpdateSettings()
+                {
+                    if (issued == null) return; // The dialog is closing and is being erased: nothing is derived from it any more.
+                    settings.Text = "SILO_CORE_URL=" + coreUrl.Text.Trim().TrimEnd('/') + "\nSILO_NODE_KEY=••••••••";
+                    // The button stays off, and the line says why, whenever the copy would not be exactly what is shown.
+                    var refusal = AdminPlaybackNodeText.CheckCopy(coreUrl.Text, issued);
+                    copySettings.IsEnabled = refusal == AdminPlaybackNodeText.CopyRefusal.None; settingsHelp.Text = CopyRefusalText(refusal);
+                    settingsHelp.Foreground = refusal is AdminPlaybackNodeText.CopyRefusal.None or AdminPlaybackNodeText.CopyRefusal.AddressMissing ? U.Brush("SecondaryTextBrush") : new SolidColorBrush(Warning);
+                }
+                UpdateSettings(); coreUrl.TextChanged += (_, _) => UpdateSettings();
+                copySettings.Click += (_, _) => Copy(AdminPlaybackNodeText.KeySettings(coreUrl.Text, issued ?? ""));
+                body.Children.Add(U.Text(T("web.admin.nodes.key.settingsLabel"))); body.Children.Add(settings); body.Children.Add(settingsHelp); body.Children.Add(copySettings); body.Children.Add(error);
             }
-            catch { }
-            if (!owner.IsCurrent) { issued = null; dialog.Hide(); return; }
-            body.Children.Add(U.Text(T("web.admin.nodes.key.coreUrlLabel"))); body.Children.Add(coreUrl); body.Children.Add(U.Text(T("web.admin.nodes.key.coreUrlHelp"), 13, true));
-            settings = U.Input(T("web.admin.nodes.key.settingsLabel"), "NodeStartSettings"); settings.Width = double.NaN; settings.HorizontalAlignment = HorizontalAlignment.Stretch; settings.IsReadOnly = true; settings.AcceptsReturn = true; settings.Height = 90; settings.FlowDirection = FlowDirection.LeftToRight;
-            // The key is shown masked and joins the copied settings only on an explicit Copy settings action, never in page state.
-            var copySettings = U.Action(T("web.admin.nodes.key.copySettings"), "NodeCopySettings"); var settingsHelp = U.Text("", 13, true);
-            void UpdateSettings()
-            {
-                var empty = coreUrl.Text.Trim().TrimEnd('/').Length == 0;
-                settings.Text = "SILO_CORE_URL=" + coreUrl.Text.Trim().TrimEnd('/') + "\nSILO_NODE_KEY=••••••••";
-                copySettings.IsEnabled = AdminPlaybackNodeText.KeySettings(coreUrl.Text, "x") != null; settingsHelp.Text = T(empty ? "web.admin.nodes.key.coreUrlMissing" : "web.admin.nodes.key.settingsHelp");
-            }
-            UpdateSettings(); coreUrl.TextChanged += (_, _) => UpdateSettings();
-            copySettings.Click += (_, _) => Copy(AdminPlaybackNodeText.KeySettings(coreUrl.Text, issued ?? ""));
-            body.Children.Add(U.Text(T("web.admin.nodes.key.settingsLabel"))); body.Children.Add(settings); body.Children.Add(settingsHelp); body.Children.Add(copySettings); body.Children.Add(error);
-            dialog.PrimaryButtonText = ""; dialog.CloseButtonText = T("web.admin.nodes.key.saved");
+            finally { pending = false; }
         };
         try { await ShowDialog(dialog, owner); }
-        finally { issued = null; if (keyBox != null) keyBox.Password = ""; if (settings != null) settings.Text = ""; if (coreUrl != null) coreUrl.Text = ""; body.Children.Clear(); }
+        finally
+        {
+            // The address first: erasing it re-derives nothing (the key is already forgotten), so the settings box stays empty.
+            issued = null; if (coreUrl != null) coreUrl.Text = ""; if (keyBox != null) keyBox.Password = ""; if (settings != null) settings.Text = ""; body.Children.Clear();
+        }
         void Copy(string? value)
         {
             if (!owner.IsCurrent || string.IsNullOrEmpty(value)) return;
-            // The key authenticates a transcode node: a copy stays out of clipboard history and cloud sync, which would outlive this dialog and reach other devices. It is exactly the value, with no invisible characters.
+            // The key authenticates a transcode node: a copy stays out of clipboard history and cloud sync, which would outlive this dialog and reach other devices.
+            // Callers copy only a value that holds no invisible character, so a copy is exactly what is shown.
             try
             {
                 var data = new DataPackage(); data.SetText(value);

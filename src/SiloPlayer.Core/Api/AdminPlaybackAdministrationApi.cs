@@ -4,10 +4,10 @@ using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Core.Api;
 
-/// <summary>Only server administration; never touches the installed player's decoder or preferences.</summary>
 /// <summary>An action the page does not offer for this node (a deployment-managed node's key or deletion, an environment-managed field's change). Thrown before anything is sent.</summary>
 public sealed class AdminPlaybackNodeActionNotOfferedException(string reason) : InvalidOperationException(reason);
 
+/// <summary>Only server administration; never touches the installed player's decoder or preferences.</summary>
 public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
 {
     public const int MaxPages = 8;

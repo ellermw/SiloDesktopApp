@@ -259,7 +259,7 @@ public sealed class AdminNodesParityRefreshTests
         _ = AdminPlaybackNodePresentation.Gpu(node, now); _ = AdminPlaybackNodePresentation.Host(node, now); _ = AdminPlaybackNodePresentation.Jobs(node); _ = AdminPlaybackNodePresentation.Egress(node);
         Assert.NotNull(AdminPlaybackNodePresentation.SharedGpu(node, all)); Assert.NotNull(AdminPlaybackNodePresentation.Drift(node)); Assert.NotNull(AdminPlaybackNodePresentation.Override(node));
         Assert.NotNull(AdminPlaybackNodePresentation.EffectiveAcceleration(node)); Assert.Equal("contradicted", AdminPlaybackNodePresentation.Staleness(node, now));
-        _ = AdminPlaybackNodePresentation.StaleTitle("contradicted", node); _ = AdminPlaybackNodePresentation.StaleTitle("unconfirmed", node); _ = AdminPlaybackNodePresentation.StateLabel(node); _ = AdminPlaybackNodePresentation.DeviceRows(node, "/dev/dri/renderD128");
+        _ = AdminPlaybackNodePresentation.StaleTitle("contradicted", node, at => at.ToString("g")); _ = AdminPlaybackNodePresentation.StaleTitle("unconfirmed", node, at => at.ToString("g")); _ = AdminPlaybackNodePresentation.StateLabel(node); _ = AdminPlaybackNodePresentation.DeviceRows(node, "/dev/dri/renderD128");
         var live = Assert.Single(AdminPlaybackNodePresentation.Gpu(node, now).Live); Assert.Equal("33%", live.Busy); Assert.Equal("renderD128", live.Label);
     }
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-21T12:00:00Z");
@@ -319,5 +319,120 @@ public sealed class AdminNodesParityRefreshTests
         var live = AdminPlaybackNodePresentation.Host(node, Now); Assert.True(live.Reported); Assert.Contains(live.Rows, row => row.Label == "Net" && row.Value.Contains('\u2193'));
         node.LastHealthCheck = Now.AddMinutes(-5).ToString("O"); Assert.False(AdminPlaybackNodePresentation.Host(node, Now).Reported);
         node.LastHealthCheck = Now.AddSeconds(-5).ToString("O"); node.Healthy = false; Assert.False(AdminPlaybackNodePresentation.Host(node, Now).Reported);
+    }
+
+    // ---- review of 72e3d0c08: redaction order, outcomes, copy refusals, raw values -------------------------------------------
+
+    [Theory]
+    [InlineData("see https\u200E://user:hunter2pw@host.invalid/path now", "hunter2pw")]
+    [InlineData("Authorization: Bearer\u0001abcSECRETtoken123 failed", "abcSECRETtoken123")]
+    [InlineData("Authorization:\u200B Bearer abcSECRETtoken123 failed", "abcSECRETtoken123")]
+    [InlineData("pass\u200Bword=hunter2pw", "hunter2pw")]
+    [InlineData("password=\u202Ehunter2pw", "hunter2pw")]
+    public void ReasonCleansBeforeItRedactsSoAHiddenCharacterCannotKeepACredentialOnScreen(string detail, string secret)
+    {
+        var text = AdminPlaybackNodeText.Reason(new ApiException("x", "m", 409) { ProblemDetail = detail }, "fallback");
+        Assert.DoesNotContain(secret, text); Assert.DoesNotContain("hunter", text);
+        Assert.All(text, character => Assert.False(AdminPlaybackNodeText.IsDirectionCharacter(character) || char.IsControl(character)));
+    }
+    [Fact]
+    public void ACredentialThatStraddlesTheCutIsRedactedBeforeTheCut()
+    {
+        var detail = new string('a', 290) + "\u0001password=hunter2straddle and more";
+        var text = AdminPlaybackNodeText.Reason(new ApiException("x", "m", 409) { ProblemDetail = detail }, "fallback");
+        Assert.True(text.Length <= 301); Assert.DoesNotContain("hunter", text); Assert.DoesNotContain("straddle", text);
+        Assert.Equal("fallback", AdminPlaybackNodeText.Reason(new ApiException("x", "m", 409) { ProblemDetail = "\u202E\u200B \u0001" }, "fallback"));
+    }
+
+    [Fact]
+    public async Task PressingAManagedDeleteKeepsAnErrorThatIsAlreadyShowing()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var failList = false;
+        kit.Http.Respond = (request, _) => failList && !request.RequestUri!.AbsolutePath.EndsWith("capabilities") ? Task.FromResult(AdminMonitorKit.Json("{\"status\":500}", HttpStatusCode.InternalServerError)) : Reads(request, Row(",\"deployment_managed\":true"));
+        using var controller = new AdminPlaybackNodesController(new(kit.Client), authority); await controller.OpenAsync(); var node = Assert.Single(controller.State.Window.Items);
+        failList = true; await controller.ReloadAsync(); var error = controller.State.Error; Assert.Contains("could not be refreshed", error); var before = kit.Http.Requests.Count;
+        Assert.False(await controller.DeleteAsync(node));
+        Assert.Equal(error, controller.State.Error); Assert.Equal(AdminPlaybackNodesController.DeploymentManagedNote, controller.State.Feedback); Assert.False(controller.State.ReviewRequired); Assert.False(controller.State.Busy);
+        Assert.False(await controller.IssueKeyAsync(node, _ => throw new InvalidOperationException())); Assert.Equal(error, controller.State.Error); Assert.Equal(before, kit.Http.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AKeyOutcomeTellsNothingSentFromRefusedFromUnknown()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var keys = 0; var mode = "refuse"; var keyCapability = true;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/key"))
+            {
+                keys++; if (mode == "drop") throw new HttpRequestException("lost");
+                return Task.FromResult(mode == "refuse" ? AdminMonitorKit.Json("{\"status\":409,\"detail\":\"Only transcode nodes take a node key.\"}", HttpStatusCode.Conflict) : AdminMonitorKit.Json("{\"node_key\":\"synthetic-key\"}", HttpStatusCode.Created));
+            }
+            return request.RequestUri!.AbsolutePath.EndsWith("capabilities") ? Task.FromResult(AdminMonitorKit.Json("{\"allowed\":true,\"state\":\"available\",\"node_keys\":" + (keyCapability ? "true" : "false") + "}")) : Reads(request, Row());
+        };
+        using var controller = new AdminPlaybackNodesController(new(kit.Client), authority); await controller.OpenAsync(); var node = Assert.Single(controller.State.Window.Items);
+        // The row changed under the confirmation: nothing is sent, nothing needs review.
+        var stale = Node(); stale.ConfigETag = "\"older\"";
+        Assert.Equal(AdminPlaybackNodeOutcome.NotSent, await controller.IssueKeyOutcomeAsync(stale, _ => throw new InvalidOperationException()));
+        Assert.Equal(0, keys); Assert.False(controller.State.ReviewRequired); Assert.Null(controller.State.Error);
+        Assert.Equal(AdminPlaybackNodeOutcome.Refused, await controller.IssueKeyOutcomeAsync(node, _ => throw new InvalidOperationException()));
+        Assert.Equal(1, keys); Assert.False(controller.State.ReviewRequired); Assert.Equal("Only transcode nodes take a node key.", controller.State.Error);
+        mode = "drop"; Assert.Equal(AdminPlaybackNodeOutcome.Unknown, await controller.IssueKeyOutcomeAsync(node, _ => throw new InvalidOperationException()));
+        Assert.Equal(2, keys); Assert.True(controller.State.ReviewRequired);
+        // Blocked until the nodes are read again: that refusal to send is not an unknown outcome either.
+        Assert.Equal(AdminPlaybackNodeOutcome.NotSent, await controller.IssueKeyOutcomeAsync(node, _ => throw new InvalidOperationException())); Assert.Equal(2, keys);
+        await controller.ReloadAsync(); mode = "ok"; string? shown = null;
+        Assert.Equal(AdminPlaybackNodeOutcome.Done, await controller.IssueKeyOutcomeAsync(Assert.Single(controller.State.Window.Items), key => shown = key)); Assert.Equal("synthetic-key", shown); Assert.Equal(3, keys);
+        // A capability the server does not offer is a guard before any request: nothing sent, no review lock.
+        keyCapability = false; await controller.ReloadAsync();
+        Assert.Equal(AdminPlaybackNodeOutcome.NotSent, await controller.IssueKeyOutcomeAsync(Assert.Single(controller.State.Window.Items), _ => throw new InvalidOperationException()));
+        Assert.Equal(3, keys); Assert.False(controller.State.ReviewRequired);
+    }
+
+    [Theory]
+    [InlineData("https://core.invalid", "snk1_x", AdminPlaybackNodeText.CopyRefusal.None)]
+    [InlineData("  https://core.invalid:8080//  ", "snk1_x", AdminPlaybackNodeText.CopyRefusal.None)]
+    [InlineData("", "snk1_x", AdminPlaybackNodeText.CopyRefusal.AddressMissing)]
+    [InlineData("https://core.invalid\u200E", "snk1_x", AdminPlaybackNodeText.CopyRefusal.AddressInvisible)]
+    [InlineData("ftp://core.invalid", "snk1_x", AdminPlaybackNodeText.CopyRefusal.AddressNotPlain)]
+    [InlineData("https://user:pw@core.invalid", "snk1_x", AdminPlaybackNodeText.CopyRefusal.AddressNotPlain)]
+    [InlineData("https://core.invalid", "snk1_\u200Ex", AdminPlaybackNodeText.CopyRefusal.KeyInvisible)]
+    [InlineData("https://core.invalid", "", AdminPlaybackNodeText.CopyRefusal.KeyMissing)]
+    public void ACopyIsRefusedWithAReasonWhenItWouldNotBeExactlyWhatIsShown(string address, string key, AdminPlaybackNodeText.CopyRefusal expected)
+    {
+        Assert.Equal(expected, AdminPlaybackNodeText.CheckCopy(address, key));
+        Assert.Equal(expected == AdminPlaybackNodeText.CopyRefusal.None, AdminPlaybackNodeText.KeySettings(address, key) != null);
+    }
+    [Fact]
+    public void CopyingTheKeyAloneChecksTheKeyOnly()
+    {
+        Assert.Equal(AdminPlaybackNodeText.CopyRefusal.None, AdminPlaybackNodeText.CheckCopy("", "snk1_x", addressNeeded: false));
+        Assert.Equal(AdminPlaybackNodeText.CopyRefusal.KeyInvisible, AdminPlaybackNodeText.CheckCopy("", "snk1_\u200Bx", addressNeeded: false));
+        Assert.Equal(AdminPlaybackNodeText.CopyRefusal.KeyInvisible, AdminPlaybackNodeText.CheckCopy("", "snk1_\u0007x", addressNeeded: false));
+    }
+
+    [Fact]
+    public void ABackendNameTheNodeReportsIsBoundedAndPlainEverywhere()
+    {
+        var node = Node(); var hostile = "q\u202Es\nv" + new string('x', 200);
+        node.Capabilities = new() { Resolved = hostile, DetectedBackends = [new() { Backend = hostile, Verified = false, Reason = "bad" }, new() { Backend = "va\u202Eapi\n" + new string('y', 200), Verified = false, Reason = "bad" }] };
+        var gpu = AdminPlaybackNodePresentation.Gpu(node, Now);
+        Assert.True(gpu.Backend!.Label.Length <= 65); Assert.StartsWith("QS V", gpu.Backend.Label); Assert.DoesNotContain('\n', gpu.Backend.Label); Assert.DoesNotContain('\u202E', gpu.Backend.Title);
+        var failure = Assert.Single(gpu.Failures); Assert.True(failure.Label.Length <= 65); Assert.DoesNotContain('\n', failure.Label);
+        var effective = AdminPlaybackNodePresentation.EffectiveAcceleration(node)!; Assert.DoesNotContain('\u202E', effective); Assert.DoesNotContain('\n', effective);
+        var outcome = AdminPlaybackNodePresentation.ReprobeOutcome(node, new() { Status = "ok", Resolved = hostile, CapabilityHash = "a", CapabilitiesRefreshed = true }).Message;
+        Assert.DoesNotContain('\u202E', outcome); Assert.DoesNotContain('\n', outcome); Assert.DoesNotContain(new string('X', 100), outcome);
+    }
+
+    [Fact]
+    public void TheStaleInventoryTitleUsesTheSharedDateFormatterAndShowsUnreadableTextAsPlainText()
+    {
+        var node = Node(); node.CapabilitiesRefreshedAt = "2026-11-21T11:59:00Z"; node.LastHealthCheck = "2026-11-21T11:00:00Z";
+        var formatted = AdminPlaybackNodePresentation.StaleTitle("unconfirmed", node, at => "<" + at.UtcDateTime.ToString("HH:mm") + ">");
+        Assert.Contains("<11:59>", formatted); Assert.Contains("<11:00>", formatted); Assert.DoesNotContain("2026-11-21T", formatted);
+        Assert.Contains("<11:59>", AdminPlaybackNodePresentation.StaleTitle("contradicted", node, at => "<" + at.UtcDateTime.ToString("HH:mm") + ">"));
+        node.CapabilitiesRefreshedAt = "not\na time\u202E"; var unreadable = AdminPlaybackNodePresentation.StaleTitle("contradicted", node, _ => "formatted");
+        Assert.Contains("not a time", unreadable); Assert.DoesNotContain("formatted", unreadable); Assert.DoesNotContain('\u202E', unreadable);
     }
 }

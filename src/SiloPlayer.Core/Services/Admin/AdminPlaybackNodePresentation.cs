@@ -23,6 +23,8 @@ public static class AdminPlaybackNodePresentation
     private static double? Finite(double? value) => value is { } number && double.IsFinite(number) ? number : null;
     private static int Clamp(double value) => (int)Math.Min(100, Math.Max(0, Math.Round(value, MidpointRounding.AwayFromZero)));
     private static string P(string? value) => AdminPlaybackNodeText.Plain(value, 300);
+    /// <summary>A backend name the node reported (a badge label, a probe title, a re-probe message): upper case, one line of plain text, at most 64 characters.</summary>
+    private static string BackendLabel(string? name) => AdminPlaybackNodeText.Plain(name?.Trim().ToUpperInvariant(), 64);
     private static DateTimeOffset? Parse(string? value) => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ? parsed : null;
 
     // ---- Dashboard-shared readings --------------------------------------------------------------------------------------
@@ -83,7 +85,7 @@ public static class AdminPlaybackNodePresentation
             var software = T("web.admin.nodes.backend.softwareBadge"); var skipped = detected.Count(entry => entry.Skipped);
             return new(software, AdminPlaybackBackendState.None, T(skipped > 0 && skipped == detected.Length ? "web.admin.nodes.backend.devicesInaccessible" : "web.admin.nodes.backend.noneVerified"));
         }
-        var label = resolved.ToUpperInvariant(); var entry = Find(resolved, detected);
+        var label = BackendLabel(resolved); var entry = Find(resolved, detected);
         if (entry == null) return new(label, AdminPlaybackBackendState.Unverified, T("web.admin.nodes.backend.noProbe", new { backend = label }));
         if (!entry.Verified) return new(label, AdminPlaybackBackendState.Failed, T("web.admin.nodes.backend.probeFailed", new { backend = label, reason = Reason(entry) }));
         var device = P(entry.Device?.Trim());
@@ -99,7 +101,7 @@ public static class AdminPlaybackNodePresentation
         if (node.Capabilities == null) return null;
         var resolved = node.Capabilities.Resolved?.Trim().ToLowerInvariant() ?? "";
         if (resolved is "" or "none") return T("web.admin.nodes.effective.software");
-        var label = resolved.ToUpperInvariant(); var entry = Find(resolved, node.Capabilities.DetectedBackends ?? []);
+        var label = BackendLabel(resolved); var entry = Find(resolved, node.Capabilities.DetectedBackends ?? []);
         if (entry == null) return T("web.admin.nodes.effective.unverified", new { backend = label });
         if (!entry.Verified) return T("web.admin.nodes.effective.probeFailed", new { backend = label });
         var device = P(entry.Device?.Trim());
@@ -108,7 +110,7 @@ public static class AdminPlaybackNodePresentation
 
     private static IReadOnlyList<AdminPlaybackGpuFailure> OtherFailures(string resolved, AdminPlaybackBackend[] detected) => detected
         .Where(entry => !entry.Verified && !entry.Skipped && (entry.Backend?.Trim().ToLowerInvariant() ?? "") is { Length: > 0 } backend && backend != resolved)
-        .Select(entry => new AdminPlaybackGpuFailure(P(entry.Backend!.Trim().ToUpperInvariant()), Reason(entry))).ToArray();
+        .Select(entry => new AdminPlaybackGpuFailure(BackendLabel(entry.Backend), Reason(entry))).ToArray();
 
     /// <summary>contradicted / unreported / unconfirmed, or null when the stored report can be trusted as current.</summary>
     public static string? Staleness(AdminPlaybackNode node, DateTimeOffset now)
@@ -201,10 +203,14 @@ public static class AdminPlaybackNodePresentation
         return new(T("web.admin.nodes.override.label", new { policy = label }), title);
     }
 
-    public static string StaleTitle(string reason, AdminPlaybackNode node)
+    /// <summary>
+    /// Official staleInventoryTitle: the two times go through the preference-aware date formatter (<paramref name="formatDateTime"/>, the app's shared one), as the official page's formatDateTime does.
+    /// A time the server sent in a form that cannot be read is shown as the plain text it is.
+    /// </summary>
+    public static string StaleTitle(string reason, AdminPlaybackNode node, Func<DateTimeOffset, string> formatDateTime)
     {
-        var refreshed = node.CapabilitiesRefreshedAt ?? ""; var checkedAt = node.LastHealthCheck ?? "";
-        return T("web.admin.nodes.staleInventory." + reason, new { refreshed, @checked = checkedAt });
+        string Time(string? value) => Parse(value) is { } at ? formatDateTime(at) : P(value);
+        return T("web.admin.nodes.staleInventory." + reason, new { refreshed = Time(node.CapabilitiesRefreshedAt), @checked = Time(node.LastHealthCheck) });
     }
 
     // ---- Drain ----------------------------------------------------------------------------------------------------------
@@ -278,7 +284,7 @@ public static class AdminPlaybackNodePresentation
         var name = P(result.NodeName?.Trim() is { Length: > 0 } reported ? reported : node.Name);
         if (result.Status != "ok") return (false, T("web.admin.nodes.reprobe.failed", new { name, reason = P(result.Error?.Trim()) is { Length: > 0 } reason ? reason : T("web.admin.nodes.reprobe.noReason") }));
         var resolved = result.Resolved?.Trim().ToLowerInvariant() ?? "";
-        var backend = resolved == "" ? "" : resolved == "none" ? T("web.admin.nodes.backend.softwareName") : resolved.ToUpperInvariant();
+        var backend = resolved == "" ? "" : resolved == "none" ? T("web.admin.nodes.backend.softwareName") : BackendLabel(resolved);
         var hash = result.CapabilityHash?.Trim() ?? ""; var previous = node.CapabilitiesHash?.Trim() ?? "";
         var values = new { name, backend, pending = result.CapabilitiesRefreshed == true ? "no" : "yes" };
         var kind = hash != "" && previous != "" ? hash == previous ? "unchanged" : "changed" : "done";

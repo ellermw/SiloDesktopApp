@@ -22,6 +22,12 @@ public sealed record AdminPlaybackNodesState
     public override string ToString() => nameof(AdminPlaybackNodesState);
 }
 
+/// <summary>What became of an action: nothing was sent, the server refused it (so nothing changed), or it was sent and its outcome is not known.</summary>
+public enum AdminPlaybackNodeOutcome { Done, NotSent, Refused, Unknown }
+
+/// <summary>Thrown by an action's own guard before anything is sent (a capability the server does not offer).</summary>
+internal sealed class AdminPlaybackNodeNotSentException : InvalidOperationException;
+
 /// <summary>One page owner, serialized reads/writes; captured row targets never change under a confirmation.</summary>
 public sealed class AdminPlaybackNodesController : IDisposable
 {
@@ -82,7 +88,7 @@ public sealed class AdminPlaybackNodesController : IDisposable
     }
     public Task<bool> CreateAsync(IReadOnlyDictionary<string, object?> values) => Execute(null, async owner =>
     {
-        if (values.GetValueOrDefault("source_access") is "core" && !State.Capabilities.SourceAccess) throw new InvalidOperationException();
+        if (values.GetValueOrDefault("source_access") is "core" && !State.Capabilities.SourceAccess) throw new AdminPlaybackNodeNotSentException();
         var saved = await _api.CreateNodeAsync(owner, values, owner.Token).ConfigureAwait(false);
         Update(owner, () => _state = _state with { CreatedNode = saved });
         try { await _api.CommandAsync(owner, saved, "check", owner.Token).ConfigureAwait(false); } catch { /* Stored; health sweep still follows. */ }
@@ -90,27 +96,30 @@ public sealed class AdminPlaybackNodesController : IDisposable
     });
     /// <summary>The note the official page shows when a deployment-managed node's delete is pressed: the node is the deployment's, not this page's.</summary>
     public static string DeploymentManagedNote => AdminPlaybackAdministrationText.T("web.admin.nodes.unit.deleteDeploymentManaged");
-    /// <summary>An action the page does not offer is never sent. It is reported and changes nothing else: no busy state, no review lock.</summary>
-    private bool NotOffered(string note)
+    /// <summary>
+    /// An action the page does not offer is never sent. It is reported through the feedback line and changes nothing else: no busy state, no review lock, and an error
+    /// that is already showing (a refusal's reason, a failed refresh and its Retry) stays.
+    /// </summary>
+    private Task<AdminPlaybackNodeOutcome> NotOffered(string note)
     {
-        lock (_gate) { if (_disposed) return true; _state = _state with { Error = null, Feedback = note }; }
-        Changed?.Invoke(); return true;
+        lock (_gate) { if (_disposed) return Task.FromResult(AdminPlaybackNodeOutcome.NotSent); _state = _state with { Feedback = note }; }
+        Changed?.Invoke(); return Task.FromResult(AdminPlaybackNodeOutcome.NotSent);
     }
-    public Task<bool> UpdateAsync(AdminPlaybackNode node, IReadOnlyDictionary<string, object?> values)
-        => values.Keys.Any(node.IsEnvManaged) ? Task.FromResult(!NotOffered(AdminPlaybackAdministrationText.T("web.admin.nodes.form.envManaged"))) : Execute(node, async owner =>
+    public async Task<bool> UpdateAsync(AdminPlaybackNode node, IReadOnlyDictionary<string, object?> values)
+        => await (values.Keys.Any(node.IsEnvManaged) ? NotOffered(AdminPlaybackAdministrationText.T("web.admin.nodes.form.envManaged")) : Run(node, async owner =>
     {
-        if (values.ContainsKey("source_access") && !State.Capabilities.SourceAccess) throw new InvalidOperationException();
+        if (values.ContainsKey("source_access") && !State.Capabilities.SourceAccess) throw new AdminPlaybackNodeNotSentException();
         await _api.UpdateNodeAsync(owner, node, values, owner.Token).ConfigureAwait(false);
         return AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.saved");
-    });
-    public Task<bool> DeleteAsync(AdminPlaybackNode node) => node.IsDeploymentManaged ? Task.FromResult(!NotOffered(DeploymentManagedNote)) : Execute(node, async owner =>
+    })) == AdminPlaybackNodeOutcome.Done;
+    public async Task<bool> DeleteAsync(AdminPlaybackNode node) => await (node.IsDeploymentManaged ? NotOffered(DeploymentManagedNote) : Run(node, async owner =>
     {
         await _api.DeleteNodeAsync(owner, node, owner.Token).ConfigureAwait(false);
         return AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.deleted");
-    });
+    })) == AdminPlaybackNodeOutcome.Done;
     public Task<bool> CommandAsync(AdminPlaybackNode node, string command) => command == "reprobe" ? ReprobeAsync(node) : Execute(node, async owner =>
     {
-        if (command is "drain" or "resume" && !(State.Capabilities.Available && State.Capabilities.Drain)) throw new InvalidOperationException();
+        if (command is "drain" or "resume" && !(State.Capabilities.Available && State.Capabilities.Drain)) throw new AdminPlaybackNodeNotSentException();
         var result = await _api.CommandAsync(owner, node, command, owner.Token).ConfigureAwait(false);
         return command switch
         {
@@ -150,52 +159,65 @@ public sealed class AdminPlaybackNodesController : IDisposable
             return acknowledged && _lifetime.IsCurrent(owner);
         }
     }
-    public Task<bool> IssueKeyAsync(AdminPlaybackNode node, Action<string> reveal) => node.IsDeploymentManaged ? Task.FromResult(!NotOffered(AdminPlaybackAdministrationText.T("web.admin.nodes.key.deploymentManaged"))) : Execute(node, async owner =>
+    public async Task<bool> IssueKeyAsync(AdminPlaybackNode node, Action<string> reveal) => await IssueKeyOutcomeAsync(node, reveal) == AdminPlaybackNodeOutcome.Done;
+    /// <summary>Like <see cref="IssueKeyAsync"/>, and says whether a request was sent at all: a key dialog tells "nothing was sent" apart from "sent, outcome unknown".</summary>
+    public Task<AdminPlaybackNodeOutcome> IssueKeyOutcomeAsync(AdminPlaybackNode node, Action<string> reveal) => node.IsDeploymentManaged ? NotOffered(AdminPlaybackAdministrationText.T("web.admin.nodes.key.deploymentManaged")) : Run(node, async owner =>
     {
-        if (!(State.Capabilities.Available && State.Capabilities.NodeKeys)) throw new InvalidOperationException();
+        if (!(State.Capabilities.Available && State.Capabilities.NodeKeys)) throw new AdminPlaybackNodeNotSentException();
         await _api.IssueKeyAsync(owner, node, key => { if (_lifetime.IsCurrent(owner)) reveal(key); }, owner.Token).ConfigureAwait(false);
         return "";
     });
-    private async Task<bool> Execute(AdminPlaybackNode? target, Func<MonitorAuthorityLease, Task<string>> operation)
+    private async Task<bool> Execute(AdminPlaybackNode? target, Func<MonitorAuthorityLease, Task<string>> operation) => await Run(target, operation).ConfigureAwait(false) == AdminPlaybackNodeOutcome.Done;
+    private async Task<AdminPlaybackNodeOutcome> Run(AdminPlaybackNode? target, Func<MonitorAuthorityLease, Task<string>> operation)
     {
         MonitorAuthorityLease owner;
-        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
+        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return AdminPlaybackNodeOutcome.NotSent; }
         using (owner)
         {
+            // Nothing is sent when the page is busy, not loaded, awaiting a review, or when the row changed under the open confirmation.
             lock (_gate)
             {
-                if (_disposed || !_lifetime.IsCurrent(owner) || !_state.Loaded || _state.Loading || _state.Busy || _state.ReviewRequired) return false;
-                if (target != null && !_state.Window.Items.Any(row => row.Id == target.Id && row.ConfigETag == target.ConfigETag)) return false;
+                if (_disposed || !_lifetime.IsCurrent(owner) || !_state.Loaded || _state.Loading || _state.Busy || _state.ReviewRequired) return AdminPlaybackNodeOutcome.NotSent;
+                if (target != null && !_state.Window.Items.Any(row => row.Id == target.Id && row.ConfigETag == target.ConfigETag)) return AdminPlaybackNodeOutcome.NotSent;
                 _state = _state with { Busy = true, Error = null, Feedback = null };
             }
             Changed?.Invoke();
             try
             {
                 var feedback = await operation(owner).ConfigureAwait(false);
-                if (!_lifetime.IsCurrent(owner)) return false;
+                if (!_lifetime.IsCurrent(owner)) return AdminPlaybackNodeOutcome.Unknown;
                 Update(owner, () => _state = _state with { Busy = false, Feedback = feedback });
-                await ReloadAsync().ConfigureAwait(false); return _lifetime.IsCurrent(owner);
+                await ReloadAsync().ConfigureAwait(false); return _lifetime.IsCurrent(owner) ? AdminPlaybackNodeOutcome.Done : AdminPlaybackNodeOutcome.Unknown;
             }
-            catch (OperationCanceledException) when (!owner.IsCurrent) { return false; }
+            catch (OperationCanceledException) when (!owner.IsCurrent) { return AdminPlaybackNodeOutcome.Unknown; }
             catch (AdminSettingsConflictException)
             {
                 Update(owner, () => _state = _state with { Busy = false, ReviewRequired = true, Error = "This node changed on the server. Close the dialog, reload and reopen it to review the current configuration." });
+                return AdminPlaybackNodeOutcome.Refused;
+            }
+            catch (AdminPlaybackNodeNotSentException)
+            {
+                // The action's own guard refused before any request: nothing changed and nothing is left to review.
+                Update(owner, () => _state = _state with { Busy = false, Error = Refused });
+                return AdminPlaybackNodeOutcome.NotSent;
             }
             catch (AdminPlaybackNodeActionNotOfferedException)
             {
                 Update(owner, () => _state = _state with { Busy = false, Error = Refused });
+                return AdminPlaybackNodeOutcome.NotSent;
             }
             catch (ApiException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode != 408)
             {
                 // A definite refusal: nothing was changed, the admin's draft stays, and the server's reason is shown.
                 var reason = AdminPlaybackNodeText.Reason(error, Refused);
                 Update(owner, () => _state = _state with { Busy = false, Error = reason });
+                return AdminPlaybackNodeOutcome.Refused;
             }
             catch
             {
                 Update(owner, () => _state = _state with { Busy = false, ReviewRequired = true, Error = AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.changeUnconfirmed") });
+                return AdminPlaybackNodeOutcome.Unknown;
             }
-            return false;
         }
     }
     private void Update(MonitorAuthorityLease owner, Action update) { lock (_gate) { if (_disposed || !_lifetime.IsCurrent(owner)) return; update(); } Changed?.Invoke(); }

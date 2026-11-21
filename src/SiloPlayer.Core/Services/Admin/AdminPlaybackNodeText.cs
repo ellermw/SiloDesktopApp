@@ -47,23 +47,51 @@ public static class AdminPlaybackNodeText
         return false;
     }
 
+    /// <summary>Why the startup settings (or the key alone) cannot be copied; <see cref="None"/> when they can.</summary>
+    public enum CopyRefusal { None, AddressMissing, AddressInvisible, AddressNotPlain, KeyMissing, KeyInvisible }
+
     /// <summary>
-    /// The node's two startup settings exactly as the admin sees them (the core URL without trailing slashes, then the key).
-    /// Null when the core address is not a plain HTTP(S) address or either value carries an invisible character: nothing is copied then.
+    /// Whether the key and the core address may be copied as they are shown. A copy carries no invisible character and the address is a plain HTTP(S) address
+    /// (no user name, password, query or fragment). The key is checked first: a key that holds an invisible character cannot be copied by itself either.
     /// </summary>
-    public static string? KeySettings(string coreUrl, string key)
+    public static CopyRefusal CheckCopy(string coreUrl, string key, bool addressNeeded = true)
     {
+        if (string.IsNullOrEmpty(key)) return CopyRefusal.KeyMissing;
+        if (HasInvisible(key)) return CopyRefusal.KeyInvisible;
+        if (!addressNeeded) return CopyRefusal.None;
         var url = (coreUrl ?? "").Trim().TrimEnd('/');
-        if (url.Length == 0 || string.IsNullOrEmpty(key) || HasInvisible(url) || HasInvisible(key) || !AdminPlaybackNodeEditor.ValidUrl(url)) return null;
-        return "SILO_CORE_URL=" + url + "\nSILO_NODE_KEY=" + key;
+        if (url.Length == 0) return CopyRefusal.AddressMissing;
+        if (HasInvisible(url)) return CopyRefusal.AddressInvisible;
+        return AdminPlaybackNodeEditor.ValidUrl(url) ? CopyRefusal.None : CopyRefusal.AddressNotPlain;
     }
 
-    /// <summary>A refusal's reason: the server's own words (bounded, plain, credential-redacted), or <paramref name="fallback"/> when it sent none.</summary>
+    /// <summary>
+    /// The node's two startup settings exactly as the admin sees them (the core URL without trailing slashes, then the key).
+    /// Null when <see cref="CheckCopy"/> refuses either value: nothing is copied then.
+    /// </summary>
+    public static string? KeySettings(string coreUrl, string key)
+        => CheckCopy(coreUrl, key) != CopyRefusal.None ? null : "SILO_CORE_URL=" + (coreUrl ?? "").Trim().TrimEnd('/') + "\nSILO_NODE_KEY=" + key;
+
+    /// <summary>Removes format characters (zero-width and similar marks): invisible on screen, but they can split a URL or token so that a redaction pattern no longer matches it.</summary>
+    private static string WithoutFormatCharacters(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var rune in value.EnumerateRunes()) if (Rune.GetUnicodeCategory(rune) != UnicodeCategory.Format) builder.Append(rune.ToString());
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// A refusal's reason: the server's own words (plain, credential-redacted, at most 300 characters), or <paramref name="fallback"/> when it sent none.
+    /// The text is cleaned first and redacted second: a direction mark inside a URL or a control character inside a token would otherwise hide it from the redaction
+    /// and be removed afterwards, leaving the joined credential on screen. The cut to 300 comes last, so a credential that straddles it was already redacted.
+    /// </summary>
     public static string Reason(ApiException error, string fallback)
     {
         var detail = error.FieldErrors.Select(field => field.Detail).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)) ?? error.ProblemDetail ?? error.ProblemTitle;
         if (string.IsNullOrWhiteSpace(detail)) return fallback;
-        var plain = Plain(AdminBackupValidation.SafeServerText(detail), 300);
+        var clean = Plain(WithoutFormatCharacters(detail), 2000);
+        if (clean.Length == 0) return fallback;
+        var plain = Plain(AdminBackupValidation.SafeServerText(clean), 300);
         return plain.Length == 0 ? fallback : plain;
     }
 }
