@@ -317,6 +317,13 @@ internal static class AdminPluginAppsNativeFixture
             var secondWeb = (WebView2)second.FindName("PluginWebView");
             await UntilScript(secondWeb, "window.location.hash === '#opening' && document.body.dataset.ready === 'yes'");
             Check(State(second) == "Ready" && secondWeb.Visibility == Visibility.Visible, "a fragment the plugin sets while its page is opening does not keep the page from being shown");
+            // The same page setting its fragment twice while it is opening (a router that sets its route and then replaces it).
+            server.Mode = "twice";
+            await (Task)InvokePrivate(second, "LoadAdminContentAsync")!;
+            await UntilState(second, "Ready");
+            await UntilScript(secondWeb, "window.location.hash === '#second' && document.body.dataset.ready === 'yes'");
+            Check(State(second) == "Ready" && secondWeb.Visibility == Visibility.Visible, "two fragments the plugin sets while its page is opening do not keep the page from being shown");
+            server.Mode = "";
             outer.GoBack();
             await Until(() => outer.Content is AdminShellPage && Field<bool>(second, "_webViewClosed"));
             Check(Field<object?>(second, "_adminLease") == null, "leaving the plugin page closes its web view and releases its Admin lease");
@@ -544,9 +551,12 @@ internal static class AdminPluginAppsNativeFixture
                     else if (path is "/api/v2/plugin-content/plugins/7/custom" or "/api/v2/plugin-content/plugins/8/tools")
                     { status = 308; extra = "Location: " + path + "/\r\n"; }
                     else if (path is "/api/v2/plugin-content/plugins/7/custom/" or "/api/v2/plugin-content/plugins/8/tools/")
-                        // The second installation's page sets its fragment before it has loaded (a same-document navigation while opening).
+                        // The second installation's page sets its fragment before it has loaded (a same-document navigation while opening),
+                        // twice in the "twice" mode.
                         text = """<!doctype html><html><head>__OPENING__<script src="./page.js" defer></script></head><body><h1>Synthetic Admin Plugin</h1><img src="/api/v2/plugin-content/plugin-assets/7/pixel.svg"><form method="post" action="./submitted"><input name="value" value="synthetic"><button id="submit">Submit once</button></form></body></html>"""
-                            .Replace("__OPENING__", path.EndsWith("/tools/", StringComparison.Ordinal) ? "<script>window.location.hash = 'opening';</script>" : "");
+                            .Replace("__OPENING__", !path.EndsWith("/tools/", StringComparison.Ordinal) ? ""
+                                : mode == "twice" ? "<script>window.location.hash = 'first'; window.location.hash = 'second';</script>"
+                                : "<script>window.location.hash = 'opening';</script>");
                     else if (path.EndsWith("/page.js", StringComparison.Ordinal))
                     { type = "text/javascript"; text = "fetch('./probe').then(r => { if(r.ok) document.body.dataset.ready='yes'; });"; }
                     else if (path.EndsWith("/probe", StringComparison.Ordinal)) text = "ready";

@@ -46,7 +46,10 @@ navigations (fragment or history navigation, the plugin's own 4xx/5xx response) 
 for a 401 or a navigation with no server response. Three native `admin-plugin-apps` steps were added (fragment navigation, plugin 404
 on a later navigation, killed browser process then Reload). A further review fix, also not yet run: when a plugin sets its fragment
 while its page is still opening and the opening navigation completes first, its result is kept and applied instead of leaving the
-page on Loading until the timeout; one more native step opens a page that sets its fragment in an inline script.
+page on Loading until the timeout; one more native step opens a page that sets its fragment in an inline script. A third review
+fix, also not yet run: a plugin that sets its fragment twice while its page is opening no longer ends in the load-failed state or
+the timeout. The opening navigation is kept through any number of same-document navigations and any completion order
+(`AdminPluginPageNavigations`, with unit cases for the orders), and the native step also opens the page setting its fragment twice.
 
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
