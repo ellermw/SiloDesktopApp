@@ -1,3 +1,16 @@
+# November 17 — Admin Plugin Apps source candidate
+
+The dynamic Admin Plugin Apps group, desktop/drawer/search integration and an
+installation-scoped admin mode of the existing plugin host are authored on Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`, version `1.2.1181-beta.1` unchanged.
+Official pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. The candidate remains
+uncommitted in `t3/admin-plugin-apps`. Unit/native regressions and capture steps
+are authored but **unrun**; this source-only lane launched no runtime and holds
+no build mutex. No release, installed-player/settings or pipeline PR action.
+See [scope, host boundary, limits and acceptance commands](parity/admin-plugin-apps-2026-11-17.md).
+Plugins management and Providers are separate; named third-party plugin
+compatibility and visual parity are not certified.
+
 # November 16 - Admin Manage Libraries for separate Beta submission
 
 Manage › Libraries › Libraries (`/admin/libraries`) is implemented and registered through

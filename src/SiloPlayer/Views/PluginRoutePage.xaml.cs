@@ -10,16 +10,17 @@ namespace SiloPlayer.Views;
 
 public sealed partial class PluginRoutePage : Page
 {
-    public sealed record NavigationArgs(int InstallationId, string RoutePath, string Label);
+    public sealed record NavigationArgs(int InstallationId, string RoutePath, string Label, long? AdminEpoch = null);
     private bool _active = true;
     private readonly PluginPublicResources _publicResources = new();
     private readonly CancellationTokenSource _resourceStop = new();
+    private bool _webViewClosed;
 
     public PluginRoutePage()
     {
         InitializeComponent();
         Unloaded += (_, _) =>
-        { _active = false; _resourceStop.Cancel(); _publicResources.Dispose(); PluginWebView.Close(); };
+        { _active = false; RetireAdminContent(); _resourceStop.Cancel(); _publicResources.Dispose(); ClosePluginWebView(); };
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -28,6 +29,12 @@ public sealed partial class PluginRoutePage : Page
         if (e.Parameter is not NavigationArgs args) return;
         if (App.MainWindowInstance is MainWindow window)
             window.SetDynamicTitle(args.Label);
+
+        if (args.AdminEpoch != null)
+        {
+            await OpenAdminContentAsync(args);
+            return;
+        }
 
         try
         {
@@ -147,6 +154,26 @@ public sealed partial class PluginRoutePage : Page
                 ? "The active account or profile changed. Reopen this plugin page to continue."
                 : "The plugin page could not be opened. Check the server connection and reopen the plugin.");
         }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        // A Frame can retain a page in its Back stack without unloading it.
+        // Admin content cannot keep privileged work alive after departure.
+        if (_adminContent != null || _adminLease != null)
+        {
+            _active = false;
+            RetireAdminContent();
+            ClosePluginWebView();
+        }
+        base.OnNavigatedFrom(e);
+    }
+
+    private void ClosePluginWebView()
+    {
+        if (_webViewClosed) return;
+        _webViewClosed = true;
+        PluginWebView.Close();
     }
 
     private static bool SameOrigin(Uri origin, Uri target)

@@ -19,6 +19,9 @@ public static class AdminText
 {
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["web.admin.shell.nav.group.pluginApps"] = "Plugin Apps",
+        ["web.admin.shell.sidebar.pluginApps"] = "Plugin Apps",
+        ["web.admin.shell.nav.pluginApp.description"] = "{plugin} plugin app.",
         ["configure.native.settings.authenticationRequired"] = "Sign in again, then reload server settings.",
         ["configure.native.settings.forbidden"] = "Permission to manage server settings is required. Reload after access is restored.",
         ["configure.native.settings.profileVerification"] = "Verify the selected profile, then reload server settings.",

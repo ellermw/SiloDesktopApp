@@ -380,6 +380,7 @@ public partial class App : Application
 
         // The Admin Monitor placements share one authority owner and event-channel lease.
         services.AddSingleton<AdminMonitorApi>();
+        services.AddSingleton<AdminPluginAppsApi>();
         services.AddSingleton<AdminMonitorAuthority>();
         AdminConfigureServices.Add(services);
         services.AddAdminPlaybackAudit();
