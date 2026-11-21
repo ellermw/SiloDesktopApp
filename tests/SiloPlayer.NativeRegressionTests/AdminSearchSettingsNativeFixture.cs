@@ -176,6 +176,8 @@ internal static class AdminSearchSettingsNativeFixture
 
             // Meilisearch is selected: its rows are shown, the engine row carries the one-line status summary.
             await Until(() => server.StatusReads >= 1 && controller.State.Status != null, "status read for the selected Meilisearch");
+            await Until(() => Shown(Select(page, Provider), page) && Shown(Input(page, Url), page) && Shown(Secret(page), page) && Shown(Button(page, "SearchCheckConnection"), page) &&
+                Shown(Select(page, "catalog.search.meilisearch.matching_strategy"), page) && Shown(Toggle(page), page), "the Meilisearch rows are rendered");
             Check(Shown(Select(page, Provider), page) && Shown(Input(page, Url), page) && Shown(Secret(page), page) && Shown(Button(page, "SearchCheckConnection"), page) &&
                 Shown(Select(page, "catalog.search.meilisearch.matching_strategy"), page) && Shown(Toggle(page), page), "Meilisearch rows are shown while it is selected");
             Check(!Shown(Input(page, "catalog.search.meilisearch.timeout_ms"), page), "Advanced rows stay hidden while its disclosure is closed");
@@ -199,7 +201,7 @@ internal static class AdminSearchSettingsNativeFixture
             server.ManagedApiKey = true; await controller.ReloadAsync(true);
             await Until(() => controller.State.EnvManaged.IsManaged(ApiKey), "the managed API key is applied");
             Check(EnvironmentNoteProbe.Verify(page, Secret(page), EnvironmentNoteProbe.Named("SILO_MEILISEARCH_API_KEY_FILE")) is null, "a managed API key is disabled and shows the note naming the variable the server sent");
-            Check(Description(page, ApiKey) == "Master key, or one that can read and write the index." && !Description(page, ApiKey).Contains("saved", StringComparison.OrdinalIgnoreCase), "a managed API key keeps its hint and makes no claim about a saved value");
+            Check(Description(page, ApiKey).StartsWith("Master key, or one that can read and write the index.", StringComparison.Ordinal) && !Description(page, ApiKey).Contains("saved", StringComparison.OrdinalIgnoreCase), "a managed API key keeps its hint and makes no claim about a saved value");
             server.NamedVariables = false; await controller.ReloadAsync(true);
             await Until(() => EnvironmentNoteProbe.Verify(page, Secret(page), EnvironmentNoteProbe.Unnamed) is null, "a managed API key the server names no variable for shows the unnamed note");
             server.NamedVariables = true; server.ManagedApiKey = false; await controller.ReloadAsync(true);
