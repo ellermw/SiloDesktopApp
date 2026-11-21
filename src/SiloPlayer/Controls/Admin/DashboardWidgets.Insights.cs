@@ -16,7 +16,7 @@ internal abstract class TimeseriesWidget(DashboardWidgetContext c) : DashboardWi
     protected FrameworkElement ChartBody(DashboardQueryState state, IReadOnlyList<DashboardChartPoint> points, string seriesLabel, string ariaLabel,
         string errorMessage, string emptyMessage, Func<double, string>? formatValue = null, Func<double, string>? formatTick = null,
         double? minTickStep = null, IReadOnlyList<(string, IReadOnlyList<DashboardChartPoint>, int)>? overlays = null,
-        IReadOnlyList<DashboardChartBand>? bands = null)
+        IReadOnlyList<DashboardChartBand>? bands = null, bool neutralTotal = false)
     {
         if (state.IsLoading) return DashboardChartChrome.ChartSkeleton(Fixed ? 0 : DashboardGridPlacement.StackedChartMinHeight);
         if (state.Error != null) return SectionError(errorMessage);
@@ -36,6 +36,7 @@ internal abstract class TimeseriesWidget(DashboardWidgetContext c) : DashboardWi
             MinTickStep = minTickStep,
             Overlays = overlays ?? [],
             Bands = bands ?? [],
+            NeutralTotal = neutralTotal,
             MinPlotHeight = ChartMinHeight,
         };
         chart.Build();
@@ -48,13 +49,23 @@ internal sealed class ConcurrentStreamsWidget(DashboardWidgetContext c) : Timese
     protected override FrameworkElement Render()
     {
         var state = Store.Get(SeriesKey);
-        var points = DashboardChartMath.TimeseriesPoints(state.As<DashboardTimeseries>(), point => point.Streams);
+        var series = state.As<DashboardTimeseries>();
+        var canStack = series == null || DashboardChartMath.HasMethodSplit(series);
+        var view = View == "total" || View == "stacked" && canStack ? View : "lines";
+        var points = DashboardChartMath.TimeseriesPoints(series, point => point.Streams);
         var peak = points.Select(point => point.Value ?? 0).DefaultIfEmpty(0).Max();
-        var header = Header(DashboardRanges.Title(T("web.admin.dashboard.widgets.concurrentStreams.title"), Range),
-            Muted11(T("web.admin.dashboard.widgets.concurrentStreams.peak", ("value", N((long)peak)))), RangePicker());
-        var body = ChartBody(state, points, T("web.admin.dashboard.widgets.concurrentStreams.seriesLabel"),
-            T("web.admin.dashboard.widgets.concurrentStreams.chartLabel", ("range", DashboardRanges.Phrase(Range))),
-            T("web.admin.dashboard.widgets.concurrentStreams.loadFailed"), T("web.admin.dashboard.widgets.concurrentStreams.empty"), minTickStep: 1);
+        const string prefix = "web.admin.dashboard.widgets.concurrentStreams.";
+        var options = new List<(string Value, string Label, string AccessibleName)> { ("lines", T(prefix + "viewLines"), T(prefix + "viewLinesLabel")) };
+        if (canStack) options.Add(("stacked", T(prefix + "viewStacked"), T(prefix + "viewStackedLabel")));
+        options.Add(("total", T(prefix + "viewTotal"), T(prefix + "viewTotalLabel")));
+        var toggle = Segmented(options, view ?? "lines", C.SetView);
+        var header = Header(DashboardRanges.Title(T(prefix + "title"), Range),
+            Muted11(T(prefix + "peak", ("value", N((long)peak)))), toggle, RangePicker());
+        var body = ChartBody(state, points, view == "lines" ? T("web.admin.dashboard.chart.total") : T(prefix + "seriesLabel"),
+            T(prefix + "chartLabel", ("range", DashboardRanges.Phrase(Range))), T(prefix + "loadFailed"), T(prefix + "empty"), minTickStep: 1,
+            overlays: view == "lines" ? DashboardChartMath.ConcurrentMethodLines(series) : null,
+            bands: view == "stacked" && series != null ? DashboardChartMath.ConcurrentMethodBands(series) : null,
+            neutralTotal: view == "lines");
         return Card(header, body, scroll: false);
     }
 }
@@ -172,7 +183,7 @@ internal sealed class PlaybackReliabilityWidget(DashboardWidgetContext c) : Dash
         {
             var completion = reliability.FinalizedSessions <= 0 || !double.IsFinite(reliability.CompletionRate)
                 ? DashboardFormat.Dash
-                : (int)Math.Round(Math.Clamp(reliability.CompletionRate, 0, 1) * 100, MidpointRounding.AwayFromZero) + "%";
+                : DashboardFormat.PercentLabel(DashboardFormat.Decimal(Math.Clamp(reliability.CompletionRate, 0, 1) * 100, 0));
             body = Grid(columns,
                 MiniStat(T("web.admin.dashboard.widgets.playbackReliability.started"), N(reliability.SessionsStarted)),
                 MiniStat(T("web.admin.dashboard.widgets.playbackReliability.transcodeStarts"), N(reliability.TranscodeStarts)),
@@ -341,7 +352,7 @@ internal sealed class ApiClientsWidget(DashboardWidgetContext c) : DashboardWidg
     {
         if (total <= 0) return "";
         var share = requests / (double)total * 100;
-        return share >= 10 ? Math.Round(share, MidpointRounding.AwayFromZero) + "%" : DashboardFormat.Decimal(share, 1) + "%";
+        return DashboardFormat.PercentLabel(DashboardFormat.Decimal(share, share >= 10 ? 0 : 1));
     }
 
     private FrameworkElement ClientRow(DashboardApiClient client, int index, long max, long total)

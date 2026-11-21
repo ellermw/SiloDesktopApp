@@ -39,13 +39,16 @@ public sealed partial class AdminActivityPage
 
     // ── Table ────────────────────────────────────────────────
 
-    private static readonly (double Min, double Star)[] Columns = [(120, 1.1), (190, 1.7), (220, 1.9), (90, 0.8), (125, 0.9), (232, 1.4)];
-
-    private static Grid TableGrid()
+    private bool ShowRoute { get; set; }
+    private Grid TableGrid()
     {
-        var grid = new Grid { ColumnSpacing = 8 };
-        foreach (var (min, star) in Columns)
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(star, GridUnitType.Star), MinWidth = min });
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(28) });
+        foreach (var (min, star) in new[] { (208d, 1.5), (152d, 1.0), (224d, 1.6), (112d, 1.0) })
+            grid.ColumnDefinitions.Add(new() { Width = new GridLength(star, GridUnitType.Star), MinWidth = min });
+        if (ShowRoute) grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star), MinWidth = 112 });
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(72) });
+        grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         return grid;
     }
 
@@ -118,8 +121,8 @@ public sealed partial class AdminActivityPage
     {
         var active = _list.SortField == field;
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        content.Children.Add(A.Eyebrow(AdminText.T(key), active ? A.Foreground : A.Muted, 100));
-        if (active) content.Children.Add(A.Text(_list.SortAscending ? "▲" : "▼", 8, A.Foreground));
+        content.Children.Add(A.Text(AdminText.T(key), 12, active ? A.Foreground : A.Muted, FontWeights.Medium));
+        if (active) content.Children.Add(A.Text(_list.SortAscending ? "▲" : "▼", 9, A.Foreground));
         var button = A.Plain(content, AdminText.T(key));
         button.HorizontalAlignment = alignRight ? HorizontalAlignment.Right : HorizontalAlignment.Left;
         button.Click += (_, _) => { _list.ToggleSort(field); RenderTable(); };
@@ -129,47 +132,32 @@ public sealed partial class AdminActivityPage
     private UIElement HeaderRow()
     {
         var grid = TableGrid();
-        grid.Padding = new Thickness(12, 10, 12, 10);
-        grid.Background = A.Solid(A.Surface, 0.5);
-        grid.BorderBrush = A.Solid(A.Border);
-        grid.BorderThickness = new Thickness(0, 0, 0, 1);
-        var cells = new UIElement[]
-        {
-            SortHeader(ActivitySortField.Username, "web.admin.activity.column.user"),
+        grid.Padding = new Thickness(12, 8, 12, 8);
+        grid.Background = A.Solid(A.Surface, 0.5); grid.BorderBrush = A.Solid(A.Border); grid.BorderThickness = new Thickness(0, 0, 0, 1);
+        var cells = new List<UIElement> { new Border(),
             SortHeader(ActivitySortField.Media, "web.admin.activity.column.stream"),
+            SortHeader(ActivitySortField.Username, "web.admin.activity.column.user"),
             SortHeader(ActivitySortField.Method, "web.admin.activity.column.playback"),
-            SortHeader(ActivitySortField.Node, "web.admin.activity.column.route"),
-            SortHeader(ActivitySortField.Started, "web.admin.activity.column.time", alignRight: true),
-            new TextBlock
-            {
-                Text = AdminText.T("web.admin.activity.column.actions").ToUpper(System.Globalization.CultureInfo.CurrentCulture),
-                FontSize = 10, FontWeight = FontWeights.SemiBold, CharacterSpacing = 100, Foreground = A.Solid(A.Muted),
-                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
-            },
-        };
-        for (var i = 0; i < cells.Length; i++)
-        {
-            Grid.SetColumn((FrameworkElement)cells[i], i);
-            grid.Children.Add(cells[i]);
-        }
+            SortHeader(ActivitySortField.Bitrate, "web.admin.activity.column.bitrate") };
+        if (ShowRoute) cells.Add(SortHeader(ActivitySortField.Node, "web.admin.activity.column.route"));
+        cells.Add(SortHeader(ActivitySortField.Started, "web.admin.activity.column.time", alignRight: true));
+        cells.Add(new Border { Width = 84 });
+        for (var i = 0; i < cells.Count; i++) { Grid.SetColumn((FrameworkElement)cells[i], i); grid.Children.Add(cells[i]); }
         return grid;
     }
 
     private UIElement SortRow()
     {
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal, Spacing = 16, Padding = new Thickness(16, 10, 16, 10),
-            Background = A.Solid(A.Surface, 0.5), BorderBrush = A.Solid(A.Border), BorderThickness = new Thickness(0, 0, 0, 1),
-        };
+        var row = new LogsWrapPanel { Spacing = 16, RowSpacing = 6 };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(row, AdminText.T("web.admin.activity.sort.group"));
-        row.Children.Add(A.Eyebrow(AdminText.T("web.admin.activity.sort.heading"), A.WithAlpha(A.Muted, 0.7), 100));
+        row.Children.Add(A.Text(AdminText.T("web.admin.activity.sort.heading"), 12, A.Muted));
         row.Children.Add(SortHeader(ActivitySortField.Username, "web.admin.activity.column.user"));
         row.Children.Add(SortHeader(ActivitySortField.Media, "web.admin.activity.column.stream"));
         row.Children.Add(SortHeader(ActivitySortField.Method, "web.admin.activity.column.playback"));
-        row.Children.Add(SortHeader(ActivitySortField.Node, "web.admin.activity.column.route"));
+        row.Children.Add(SortHeader(ActivitySortField.Bitrate, "web.admin.activity.column.bitrate"));
+        if (ShowRoute) row.Children.Add(SortHeader(ActivitySortField.Node, "web.admin.activity.column.route"));
         row.Children.Add(SortHeader(ActivitySortField.Started, "web.admin.activity.column.time"));
-        return row;
+        return new Border { Child = row, Padding = new Thickness(16, 10, 16, 10), Background = A.Solid(A.Surface, 0.5), BorderBrush = A.Solid(A.Border), BorderThickness = new Thickness(0, 0, 0, 1) };
     }
 
     // ── Row ──────────────────────────────────────────────────
@@ -192,20 +180,10 @@ public sealed partial class AdminActivityPage
     private static string Username(AdminActivitySession s) =>
         string.IsNullOrEmpty(s.Username) ? AdminText.T("web.admin.activity.userFallback", new { id = s.UserId }) : s.Username;
 
-    private static Border Avatar(string username, double size, double fontSize) => new()
-    {
-        Width = size, Height = size, CornerRadius = new CornerRadius(size / 2), Background = A.Solid(A.Primary),
-        Child = new TextBlock
-        {
-            Text = username.Length > 0 ? username[..1].ToUpper(System.Globalization.CultureInfo.CurrentCulture) : "?",
-            FontSize = fontSize, FontWeight = FontWeights.Bold, Foreground = A.Brush("AccentForegroundBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-        },
-    };
 
     private static Border? ProfileChip(AdminActivitySession s)
     {
-        var profile = string.IsNullOrEmpty(s.ProfileName) ? s.ProfileId : s.ProfileName;
+        var profile = string.IsNullOrWhiteSpace(s.ProfileName) ? s.ProfileId?.Trim() : s.ProfileName.Trim();
         if (string.IsNullOrEmpty(profile)) return null;
         return A.Badge(profile, A.Primary, fontSize: 10, backgroundAlpha: 0.15, borderAlpha: 0.30);
     }
@@ -228,13 +206,11 @@ public sealed partial class AdminActivityPage
 
     private Button IpButton(string ip)
     {
-        var button = A.Plain(A.Text(ip, 10, A.Muted), ip);
+        var button = A.Plain(A.Text(ip, 11, A.Muted), ip);
         button.Click += (_, _) => RunIpLookup(ip);
         return button;
     }
 
-    private static string StreamMeta(AdminActivitySession s) =>
-        string.Join(" · ", new[] { s.SourceContainer?.Trim().ToUpperInvariant(), P.FormatSessionBitrate(s.StreamBitrateKbps) }.Where(v => !string.IsNullOrEmpty(v)));
 
     private UIElement StreamLink(AdminActivitySession s, UIElement content)
     {
@@ -249,232 +225,259 @@ public sealed partial class AdminActivityPage
         return link;
     }
 
+    private Button ExpandButton(AdminActivitySession s, RowState state)
+    {
+        var expanded = state.Details || state.Ffmpeg;
+        var button = A.Plain(A.Icon(expanded ? "chevron-down" : "chevron-right", 16, A.Muted), AdminText.T("web.admin.activity.row.details"));
+        button.Width = button.Height = 28;
+        var focusId = "AdminActivityExpand:" + s.SessionId;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(button, focusId);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, expanded ? "expanded" : "collapsed");
+        button.Click += (_, _) => { ToggleDetails(state); RestoreRowFocus(focusId); };
+        return button;
+    }
+
+    private void ToggleDetails(RowState state)
+    {
+        state.Details = !(state.Details || state.Ffmpeg);
+        if (!state.Details) state.Ffmpeg = false;
+        RenderTable();
+    }
+
+    private void RestoreRowFocus(string id)
+    {
+        var lease = _lease;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!_active || !ReferenceEquals(lease, _lease) || lease?.IsCurrent != true || _messageDialog != null || _ipDialog != null) return;
+            Button? Find(DependencyObject root)
+            {
+                if (root is Button button && Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(button) == id) return button;
+                for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+                    if (Find(VisualTreeHelper.GetChild(root, i)) is { } found) return found;
+                return null;
+            }
+            Find(_tableHost)?.Focus(FocusState.Keyboard);
+        });
+    }
+
+    private void RowShortcut(FrameworkElement row, RowState state)
+    {
+        row.Tapped += (_, e) =>
+        {
+            for (var target = e.OriginalSource as DependencyObject; target != null && !ReferenceEquals(target, row); target = VisualTreeHelper.GetParent(target))
+                if (target is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase or TextBox or MenuFlyoutPresenter
+                    || target is TextBlock { SelectedText.Length: > 0 }) return;
+            ToggleDetails(state);
+        };
+    }
+
+    private static FrameworkElement Poster(AdminActivitySession s, bool stacked)
+    {
+        var box = new Border { Width = stacked ? 40 : 32, Height = stacked ? 60 : 48, CornerRadius = new CornerRadius(2), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
+        var client = App.Services.GetService(typeof(SiloPlayer.Core.Api.SiloApiClient)) as SiloPlayer.Core.Api.SiloApiClient;
+        if (Uri.TryCreate(client?.ResolveServerUrl(s.PosterUrl), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+            box.Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(uri) { DecodePixelWidth = 80 }, Stretch = Stretch.UniformToFill };
+        return box;
+    }
+
+    private UIElement Title(AdminActivitySession s)
+    {
+        var text = A.Text(P.GetPlaybackSessionTitle(s), 13, A.Foreground, FontWeights.Medium);
+        ToolTipService.SetToolTip(text, text.Text);
+        var link = StreamLink(s, text);
+        if (link is Button button) { button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Stretch; }
+        return link;
+    }
+
+    private FrameworkElement ProgressLine(AdminActivitySession s, RowState state)
+    {
+        var row = new LogsWrapPanel { Spacing = 8, RowSpacing = 2 };
+        if (P.GetPlaybackProgress(s) is { } progress)
+            row.Children.Add(RateBar(progress, (state.OptimisticPaused ?? s.IsPaused) ? A.Warning : A.Primary, 56));
+        row.Children.Add(A.Text(P.FormatPlaybackPosition(s), 11, A.Muted));
+        var paused = state.OptimisticPaused ?? s.IsPaused;
+        var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        status.Children.Add(A.Icon(paused ? "pause" : "play", 12, paused ? A.Warning : A.Muted));
+        if (paused) status.Children.Add(A.Text(AdminText.T("web.admin.activity.row.paused"), 11, A.Warning, FontWeights.Medium));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(status, AdminText.T(paused ? "web.admin.activity.row.paused" : "web.admin.activity.row.playing"));
+        row.Children.Add(status);
+        return row;
+    }
+
+    private static FrameworkElement RateBar(double share, Color color, double width = 128)
+    {
+        var bar = new Grid { Height = 4, Width = width, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Background = A.Solid(A.Border), CornerRadius = new CornerRadius(2) };
+        bar.ColumnDefinitions.Add(new() { Width = new GridLength(Math.Clamp(share, 0, 1), GridUnitType.Star) });
+        bar.ColumnDefinitions.Add(new() { Width = new GridLength(1 - Math.Clamp(share, 0, 1), GridUnitType.Star) });
+        bar.Children.Add(new Border { Background = A.Solid(color), CornerRadius = new CornerRadius(2) });
+        return bar;
+    }
+
     private FrameworkElement WideRow(AdminActivitySession s, RowState state)
     {
         var grid = TableGrid();
-        grid.Padding = new Thickness(12, 10, 12, 10);
-
-        // User (the /admin/users destination is outside Monitor: plain text).
-        var username = Username(s);
-        var user = new Grid { ColumnSpacing = 8 };
-        user.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        user.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        user.Children.Add(Avatar(username, 24, 9));
-        var userText = new StackPanel { Spacing = 2 };
-        userText.Children.Add(A.Text(username, 13, A.Foreground, FontWeights.Medium));
-        if (ProfileChip(s) is { } chip) { chip.HorizontalAlignment = HorizontalAlignment.Left; userText.Children.Add(chip); }
-        var clientLabel = P.GetSessionClientLabel(s);
-        var ip = s.ClientIp?.Trim() ?? "";
-        if (clientLabel.Length > 0 || ip.Length > 0 || P.IsJellyfinSession(s))
-        {
-            var meta = new Grid { ColumnSpacing = 6, Margin = new Thickness(0, 2, 0, 0) };
-            void AddMetadata(FrameworkElement element, bool flexible = false)
-            {
-                Grid.SetColumn(element, meta.ColumnDefinitions.Count);
-                meta.ColumnDefinitions.Add(new ColumnDefinition { Width = flexible ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
-                meta.Children.Add(element);
-            }
-            if (JellyfinPill(s) is { } pill) AddMetadata(pill);
-            if (clientLabel.Length > 0)
-            {
-                var client = A.Text(clientLabel, 10, A.Muted);
-                ToolTipService.SetToolTip(client, ClientTitle(s));
-                AddMetadata(client, flexible: true);
-            }
-            if (clientLabel.Length > 0 && ip.Length > 0) AddMetadata(A.Text("·", 10, A.Muted));
-            if (ip.Length > 0) AddMetadata(IpButton(ip));
-            userText.Children.Add(meta);
-        }
-        Grid.SetColumn(userText, 1);
-        user.Children.Add(userText);
-        grid.Children.Add(user);
-
-        // Stream.
-        var stream = new StackPanel();
-        stream.Children.Add(A.Text(P.GetPlaybackSessionTitle(s), 13, A.Foreground, FontWeights.Medium));
-        if (P.GetPlaybackSessionSubtitle(s) is { } subtitle) stream.Children.Add(A.Text(subtitle, 10, A.Muted));
-        if (StreamMeta(s) is { Length: > 0 } streamMeta) stream.Children.Add(A.Text(streamMeta, 10, A.Muted));
-        var streamCell = (FrameworkElement)StreamLink(s, stream);
-        Grid.SetColumn(streamCell, 1);
-        grid.Children.Add(streamCell);
-
-        // Playback.
-        var playback = PlaybackCell(s, state);
-        Grid.SetColumn(playback, 2);
-        grid.Children.Add(playback);
-
-        // Route.
-        var route = RouteBadges(s);
-        Grid.SetColumn(route, 3);
-        grid.Children.Add(route);
-
-        // Time.
-        var time = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
-        var stateChip = PlayingChip(s, state);
-        stateChip.HorizontalAlignment = HorizontalAlignment.Right;
-        stateChip.MinWidth = 76;
-        time.Children.Add(stateChip);
-        var position = A.Text(P.FormatPlaybackPosition(s), 12, A.Foreground);
-        position.FontFamily = A.Mono;
-        position.HorizontalAlignment = HorizontalAlignment.Right;
-        position.Margin = new Thickness(0, 4, 0, 0);
-        time.Children.Add(position);
-        var elapsed = A.Text(AdminText.T("web.admin.activity.row.sessionActive", new { elapsed = P.GetElapsed(s.StartedAt, DateTimeOffset.UtcNow) }), 10, A.Muted);
-        elapsed.HorizontalAlignment = HorizontalAlignment.Right;
-        time.Children.Add(elapsed);
-        Grid.SetColumn(time, 4);
-        grid.Children.Add(time);
-
-        // Actions.
-        var actions = ActionsCell(s, state);
-        Grid.SetColumn(actions, 5);
-        grid.Children.Add(actions);
+        grid.Padding = new Thickness(12, 8, 12, 8);
+        void Cell(FrameworkElement child, int column) { Grid.SetColumn(child, column); grid.Children.Add(child); }
+        Cell(ExpandButton(s, state), 0);
+        var media = new Grid { ColumnSpacing = 10 };
+        media.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        media.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        media.Children.Add(Poster(s, false));
+        var info = new StackPanel { Spacing = 2 };
+        info.Children.Add(Title(s));
+        if (P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
+        info.Children.Add(ProgressLine(s, state));
+        Grid.SetColumn(info, 1); media.Children.Add(info); Cell(media, 1);
+        var viewer = new StackPanel { Spacing = 4 };
+        var name = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
+        name.Children.Add(A.Text(Username(s), 12, A.Foreground, FontWeights.Medium));
+        if (ProfileChip(s) is { } profile) name.Children.Add(profile);
+        if (JellyfinPill(s) is { } jellyfin) name.Children.Add(jellyfin);
+        viewer.Children.Add(name);
+        var client = A.Text(P.GetSessionClientLabel(s), 12, A.Muted);
+        ToolTipService.SetToolTip(client, ClientTitle(s)); viewer.Children.Add(client);
+        var location = new LogsWrapPanel { Spacing = 6 };
+        if (s.StreamLocation is { Length: > 0 }) location.Children.Add(A.Text(AdminText.T(s.StreamLocation == "remote" ? "web.player.routeBadge.remote" : "web.player.routeBadge.local"), 11, A.Muted));
+        if (s.ClientIp?.Trim() is { Length: > 0 } ip) location.Children.Add(IpButton(ip));
+        viewer.Children.Add(location); Cell(viewer, 2);
+        Cell(PlaybackCell(s, state), 3); Cell(BitrateCell(s), 4);
+        var column = 5;
+        if (ShowRoute) Cell(RouteBadges(s, showLocation: false), column++);
+        var elapsed = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+        elapsed.Children.Add(A.Icon("clock", 12, A.Muted));
+        var time = A.Text(P.GetElapsed(s.StartedAt, DateTimeOffset.UtcNow), 12, A.Foreground);
+        ToolTipService.SetToolTip(elapsed, AdminText.T("web.admin.activity.row.sessionActive", new { elapsed = time.Text }));
+        elapsed.Children.Add(time); Cell(elapsed, column++); Cell(ActionsCell(s, state), column);
+        RowShortcut(grid, state);
         return grid;
     }
 
     private FrameworkElement StackedRow(AdminActivitySession s, RowState state)
     {
-        var username = Username(s);
-        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(16, 12, 16, 12) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var avatar = Avatar(username, 28, 10);
-        avatar.VerticalAlignment = VerticalAlignment.Top;
-        grid.Children.Add(avatar);
+        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(12) };
+        grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        grid.Children.Add(Poster(s, true));
         var body = new StackPanel { Spacing = 4 };
-
-        var nameRow = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
-        nameRow.Children.Add(A.Text(username, 13, A.Foreground, FontWeights.SemiBold));
-        if (ProfileChip(s) is { } chip) nameRow.Children.Add(chip);
-        if (JellyfinPill(s) is { } pill) nameRow.Children.Add(pill);
-        body.Children.Add(nameRow);
-
-        var titleRow = new Grid { ColumnSpacing = 6 };
-        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var titleLink = (FrameworkElement)StreamLink(s, A.Text(P.GetPlaybackSessionTitle(s), 11, A.Muted));
-        titleLink.HorizontalAlignment = HorizontalAlignment.Stretch;
-        if (titleLink is Button titleButton) titleButton.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-        titleRow.Children.Add(titleLink);
-        var separator = A.Text("·", 11, A.Muted);
-        Grid.SetColumn(separator, 1);
-        titleRow.Children.Add(separator);
-        var elapsedText = A.Text(P.GetElapsed(s.StartedAt, DateTimeOffset.UtcNow), 11, A.Muted);
-        elapsedText.FontFamily = A.Mono;
-        Grid.SetColumn(elapsedText, 2);
-        titleRow.Children.Add(elapsedText);
-        body.Children.Add(titleRow);
-
-        var clientLabel = P.GetSessionClientLabel(s);
-        var ip = s.ClientIp?.Trim() ?? "";
-        var meta = StreamMeta(s);
-        if (clientLabel.Length > 0 || ip.Length > 0 || meta.Length > 0)
+        var top = new Grid { ColumnSpacing = 8 };
+        top.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var info = new StackPanel { Spacing = 2 };
+        info.Children.Add(Title(s));
+        if (!string.IsNullOrEmpty(s.SeriesName) && P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
+        var viewer = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
+        viewer.Children.Add(A.Text(Username(s), 12, A.Muted));
+        if (ProfileChip(s) is { } profile) viewer.Children.Add(profile);
+        if (JellyfinPill(s) is { } jellyfin) viewer.Children.Add(jellyfin);
+        if (P.GetSessionClientLabel(s) is { Length: > 0 } client)
         {
-            var line = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
-            if (clientLabel.Length > 0)
-            {
-                var client = A.Text(clientLabel, 10, A.Muted);
-                client.MaxWidth = 144;
-                ToolTipService.SetToolTip(client, ClientTitle(s));
-                line.Children.Add(client);
-            }
-            if (clientLabel.Length > 0 && (ip.Length > 0 || meta.Length > 0)) line.Children.Add(A.Text("·", 10, A.Muted));
-            if (ip.Length > 0) line.Children.Add(IpButton(ip));
-            if (ip.Length > 0 && meta.Length > 0) line.Children.Add(A.Text("·", 10, A.Muted));
-            if (meta.Length > 0) line.Children.Add(StreamLink(s, A.Text(meta, 10, A.Muted)));
-            body.Children.Add(line);
+            var label = A.Text(client, 12, A.Muted); label.MaxWidth = 144; ToolTipService.SetToolTip(label, ClientTitle(s)); viewer.Children.Add(label);
         }
-
-        var stateLine = new LogsWrapPanel { Spacing = 8, RowSpacing = 4 };
-        stateLine.Children.Add(PlayingChip(s, state));
-        var position = A.Text(P.FormatPlaybackPosition(s), 10, A.Muted);
-        position.FontFamily = A.Mono;
-        stateLine.Children.Add(position);
-        body.Children.Add(stateLine);
-        body.Children.Add(RouteBadges(s));
-        body.Children.Add(new Border
-        {
-            Margin = new Thickness(0, 4, 0, 0), Padding = new Thickness(8, 6, 8, 6), CornerRadius = new CornerRadius(6),
-            BorderThickness = new Thickness(1), BorderBrush = A.Solid(Microsoft.UI.Colors.White, 0.06), Background = A.Solid(Microsoft.UI.Colors.White, 0.03),
-            Child = PlaybackCell(s, state),
-        });
-        var actions = ActionsCell(s, state);
-        actions.HorizontalAlignment = HorizontalAlignment.Right;
-        actions.Margin = new Thickness(0, 4, 0, 0);
-        body.Children.Add(actions);
-        Grid.SetColumn(body, 1);
-        grid.Children.Add(body);
+        info.Children.Add(viewer); top.Children.Add(info);
+        var actions = ActionsCell(s, state, compact: true); Grid.SetColumn(actions, 1); top.Children.Add(actions); body.Children.Add(top);
+        var method = new Grid { ColumnSpacing = 4 };
+        method.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        method.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        method.Children.Add(MethodLine(s, state));
+        var expand = ExpandButton(s, state); Grid.SetColumn(expand, 1); method.Children.Add(expand); body.Children.Add(method);
+        if (BitrateLine(s) is { } bitrate) body.Children.Add(bitrate);
+        body.Children.Add(ProgressLine(s, state));
+        Grid.SetColumn(body, 1); grid.Children.Add(body);
+        RowShortcut(grid, state);
         return grid;
     }
 
-    private Border PlayingChip(AdminActivitySession s, RowState state)
+
+    private FrameworkElement MethodLine(AdminActivitySession s, RowState state)
     {
-        var paused = state.OptimisticPaused ?? s.IsPaused;
-        var tone = paused ? A.Amber400 : A.Emerald400;
-        var text = paused ? A.Amber300 : A.Emerald300;
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };
-        content.Children.Add(A.Icon(paused ? "pause" : "play", 10, text));
-        content.Children.Add(new TextBlock { Text = AdminText.T(paused ? "web.admin.activity.row.paused" : "web.admin.activity.row.playing"), FontSize = 9, FontWeight = FontWeights.SemiBold, Foreground = A.Solid(text) });
-        return new Border
+        var reasons = AdminActivityReasons.Get(s);
+        var top = new Grid { ColumnSpacing = 8 };
+        top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        top.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var meta = P.MethodMeta(P.ClassifyActivityMethod(s));
+        var badge = A.Badge(meta.Label, A.ToneColor(meta.Tone), fontSize: 10);
+        ToolTipService.SetToolTip(badge, meta.Description);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(badge, AdminText.T("web.admin.activity.row.methodBadge", new { method = meta.Label }));
+        top.Children.Add(badge);
+        if (reasons.Count > 0)
         {
-            CornerRadius = new CornerRadius(4), BorderThickness = new Thickness(1), BorderBrush = A.Solid(tone, 0.35), Background = A.Solid(tone, 0.10),
-            Padding = new Thickness(6, 2, 6, 2), Child = content, HorizontalAlignment = HorizontalAlignment.Left,
-        };
+            var reason = A.Text(reasons[0].Label, 12, A.Foreground);
+            ToolTipService.SetToolTip(reason, reasons[0].Description); Grid.SetColumn(reason, 1); top.Children.Add(reason);
+        }
+        if (reasons.Count > 1)
+        {
+            var values = AdminText.Count(reasons.Count - 1);
+            var more = A.Plain(A.Text(AdminText.T("web.admin.activity.row.moreReasons", values), 11, A.Muted),
+                AdminText.T("web.admin.activity.row.moreReasonsLabel", values), new Thickness(4, 0, 4, 0));
+            more.BorderThickness = new Thickness(1); more.BorderBrush = A.Solid(A.Border); more.CornerRadius = new CornerRadius(3);
+            var focusId = "AdminActivityReasons:" + s.SessionId;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(more, focusId);
+            ToolTipService.SetToolTip(more, string.Join(", ", reasons.Skip(1).Select(r => r.Label)));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(more, state.Details || state.Ffmpeg ? "expanded" : "collapsed");
+            more.Click += (_, _) => { state.Details = true; RenderTable(); RestoreRowFocus(focusId); };
+            Grid.SetColumn(more, 2); top.Children.Add(more);
+        }
+        return top;
     }
 
     private FrameworkElement PlaybackCell(AdminActivitySession s, RowState state)
     {
-        var cell = new StackPanel();
-        var top = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var meta = P.MethodMeta(P.ClassifyActivityMethod(s));
-        var badge = A.Badge(meta.Label, A.ToneColor(meta.Tone));
-        ToolTipService.SetToolTip(badge, meta.Description);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(badge, AdminText.T("web.admin.activity.row.methodBadge", new { method = meta.Label }));
-        top.Children.Add(badge);
-        var expanded = state.Details || state.Ffmpeg;
-        var detailsContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-        detailsContent.Children.Add(A.Text(AdminText.T("web.admin.activity.row.details"), 10, A.Muted, FontWeights.Medium));
-        detailsContent.Children.Add(A.Icon(expanded ? "chevron-up" : "chevron-down", 12, A.Muted));
-        var details = A.Plain(detailsContent, AdminText.T("web.admin.activity.row.details"));
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(details, expanded ? "expanded" : "collapsed");
-        details.Click += (_, _) =>
+        var cell = new StackPanel { Spacing = 2 };
+        cell.Children.Add(MethodLine(s, state));
+        foreach (var video in new[] { true, false })
         {
-            state.Details = !(state.Details || state.Ffmpeg);
-            if (!state.Details) state.Ffmpeg = false;
-            RenderTable();
-        };
-        top.Children.Add(details);
-        cell.Children.Add(top);
-        var lines = new StackPanel { Spacing = 4, Margin = new Thickness(0, 6, 0, 0) };
-        lines.Children.Add(SummaryLine("web.admin.activity.row.container", P.NormalizeContainerDecision(s.PlayMethod), P.FormatDeliveredContainerSummary(s)));
-        lines.Children.Add(SummaryLine("web.admin.activity.row.video", P.VideoDecision(s), P.FormatDeliveredVideoSummary(s)));
-        lines.Children.Add(SummaryLine("web.admin.activity.row.audio", P.AudioDecision(s), P.FormatDeliveredAudioSummary(s)));
-        cell.Children.Add(lines);
+            var conversion = video ? P.GetVideoConversion(s) : P.GetAudioConversion(s);
+            var line = new Grid { ColumnSpacing = 6 };
+            line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            line.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+            line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            var icon = A.Icon(video ? "film" : "audio-lines", 12, A.Muted);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(icon, AdminText.T(video ? "web.admin.activity.row.video" : "web.admin.activity.row.audio")); line.Children.Add(icon);
+            var text = A.Text(conversion.Delivered == null ? conversion.Source : AdminText.T("web.admin.activity.detail.conversion", new { source = conversion.Source, output = conversion.Delivered }), 12, conversion.Delivered == null ? A.Muted : A.Foreground);
+            ToolTipService.SetToolTip(text, text.Text); Grid.SetColumn(text, 1); line.Children.Add(text);
+            if (video && conversion.Delivered != null && P.FormatTranscodeModeSummary(s) is { } mode)
+            {
+                var tag = A.Badge(mode, A.Muted, fontSize: 10, backgroundAlpha: 0, borderAlpha: 1); Grid.SetColumn(tag, 2); line.Children.Add(tag);
+            }
+            cell.Children.Add(line);
+        }
         return cell;
     }
 
-    private static UIElement SummaryLine(string labelKey, string decision, string value)
+    private FrameworkElement BitrateCell(AdminActivitySession s)
     {
-        var grid = new Grid { ColumnSpacing = 6 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.Children.Add(A.Eyebrow(AdminText.T(labelKey), A.Muted, 40, 9));
-        var badge = A.Badge(P.FormatDecisionLabel(decision), A.ToneColor(P.DecisionTone(decision)), fontSize: 8);
-        Grid.SetColumn(badge, 1);
-        grid.Children.Add(badge);
-        var text = A.Text(value, 11, A.Foreground, FontWeights.Medium);
-        Grid.SetColumn(text, 2);
-        grid.Children.Add(text);
-        return grid;
+        var rate = P.GetSessionBitrate(s);
+        var body = new StackPanel { Spacing = 4 };
+        if (rate.Live != null) body.Children.Add(A.Text(rate.Live, 12, A.Foreground));
+        var reference = BitrateReference(rate);
+        if (reference.Length > 0) body.Children.Add(A.Text(reference, 11, A.Muted, trim: false));
+        if (rate.Share is { } share) body.Children.Add(RateBar(share, rate.Limit == null ? A.Emerald400 : A.Warning, 104));
+        return body;
     }
 
-    /// <summary>PlaybackRouteBadges: stream location, access network, then serving nodes.</summary>
-    private static FrameworkElement RouteBadges(AdminActivitySession s)
+    private static string BitrateReference(P.SessionBitrate rate) =>
+        rate.Limit != null && rate.Source != null
+            ? AdminText.T("web.admin.activity.bitrate.limitAndSource", new { limit = rate.Limit, source = rate.Source })
+            : rate.Limit != null ? AdminText.T("web.admin.activity.bitrate.limit", new { rate = rate.Limit })
+            : rate.Source != null ? AdminText.T("web.admin.activity.bitrate.source", new { rate = rate.Source }) : "";
+
+    /// <summary>Stacked cards have no Bitrate column; the measured rate and its limit/source stay readable while collapsed.</summary>
+    private static FrameworkElement? BitrateLine(AdminActivitySession s)
+    {
+        var rate = P.GetSessionBitrate(s);
+        var reference = BitrateReference(rate);
+        if (rate.Live == null && reference.Length == 0) return null;
+        var row = new LogsWrapPanel { Spacing = 8, RowSpacing = 2 };
+        if (rate.Live != null) row.Children.Add(A.Text(rate.Live, 12, A.Foreground));
+        if (reference.Length > 0) row.Children.Add(A.Text(reference, 11, A.Muted, trim: false));
+        return row;
+    }
+    private static FrameworkElement RouteBadges(AdminActivitySession s, bool showLocation = true)
     {
         var panel = new LogsWrapPanel { Spacing = 4, RowSpacing = 4 };
-        if (!string.IsNullOrEmpty(s.StreamLocation))
+        if (showLocation && !string.IsNullOrEmpty(s.StreamLocation))
         {
             var location = A.Badge(AdminText.T(s.StreamLocation == "local" ? "web.player.routeBadge.local" : "web.player.routeBadge.remote"), A.Primary, backgroundAlpha: 0.10, borderAlpha: 0.20);
             ToolTipService.SetToolTip(location, AdminText.T("web.player.routeBadge.locationTitle", new { location = s.StreamLocation }));
@@ -518,26 +521,12 @@ public sealed partial class AdminActivityPage
 
     // ── Actions ──────────────────────────────────────────────
 
-    private FrameworkElement ActionsCell(AdminActivitySession s, RowState state)
+    private FrameworkElement ActionsCell(AdminActivitySession s, RowState state, bool compact = false)
     {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-        var ffmpeg = A.Outline(AdminText.T(state.Ffmpeg ? "web.admin.activity.row.hideFfmpeg" : "web.admin.activity.row.ffmpeg"), "terminal", height: 28, fontSize: 11);
-        ffmpeg.Padding = new Thickness(8, 0, 8, 0);
-        ffmpeg.Click += (_, _) =>
-        {
-            state.Ffmpeg = !state.Ffmpeg;
-            if (state.Ffmpeg) { state.Details = true; _ = LoadFfmpegAsync(s.SessionId, state, force: false); }
-            RenderTable();
-        };
-        panel.Children.Add(ffmpeg);
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        if (!compact) panel.Children.Add(FfmpegButton(s, state, iconOnly: true));
 
         var busy = state.PendingAction != null;
-        var terminate = A.Outline(AdminText.T("web.admin.sessions.playback.action.terminate"), "octagon-alert", A.Destructive, height: 28, fontSize: 11);
-        terminate.Padding = new Thickness(8, 0, 8, 0);
-        terminate.IsEnabled = !busy;
-        terminate.Click += (_, _) => _ = RunActionAsync(s, state, "terminate");
-        panel.Children.Add(terminate);
-
         var more = A.Plain(A.Icon("more-horizontal", 16, A.Foreground), AdminText.T("web.admin.sessions.playback.menu.ariaLabel"));
         more.Width = 28;
         more.Height = 28;
@@ -589,6 +578,15 @@ public sealed partial class AdminActivityPage
             message.Click += (_, _) => _ = ShowMessageDialogAsync(s, state);
             menu.Items.Add(message);
         }
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var terminate = new MenuFlyoutItem
+        {
+            Text = AdminText.T("web.admin.sessions.playback.action.terminate"),
+            Icon = MenuIcon("octagon-alert"),
+            Foreground = A.Solid(A.Destructive),
+        };
+        terminate.Click += (_, _) => _ = RunActionAsync(s, state, "terminate");
+        menu.Items.Add(terminate);
         return menu;
     }
 
@@ -604,6 +602,7 @@ public sealed partial class AdminActivityPage
             "file-text" => "\uE8A5",
             "terminal" => "\uE756",
             "message-square" => "\uE8BD",
+            "octagon-alert" => "\uE7BA",
             _ => "\uE712",
         },
     };
@@ -790,114 +789,6 @@ public sealed partial class AdminActivityPage
     private static readonly Color TerminalMuted = Color.FromArgb(255, 0x59, 0xA1, 0x74);
     private static readonly Color TerminalBorder = Color.FromArgb(255, 0x17, 0x35, 0x23);
 
-    private FrameworkElement ExpandedPanel(AdminActivitySession s, RowState state)
-    {
-        var panel = new StackPanel { Padding = new Thickness(16, 12, 16, 12), BorderBrush = A.Solid(A.Border, 0.5), BorderThickness = new Thickness(0, 1, 0, 0), Background = A.Brush("CardBackgroundBrush") };
-        var header = new Grid { Margin = new Thickness(0, 0, 0, 8) };
-        var titles = new StackPanel();
-        var pillRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        pillRow.Children.Add(new Border
-        {
-            CornerRadius = new CornerRadius(999), BorderThickness = new Thickness(1), BorderBrush = A.Solid(TerminalBorder), Background = A.Solid(TerminalBg),
-            Padding = new Thickness(8, 2, 8, 2), Child = A.Eyebrow(AdminText.T("web.admin.activity.panel.heading"), TerminalFg, 200),
-        });
-        pillRow.Children.Add(A.Text(AdminText.T(state.Ffmpeg ? "web.admin.activity.panel.streamDetailsWithConsole" : "web.admin.activity.panel.streamDetails"), 11, A.WithAlpha(A.Foreground, 0.85), FontWeights.Medium));
-        titles.Children.Add(pillRow);
-        var id = A.Text(s.SessionId, 10, A.Muted);
-        id.FontFamily = A.Mono;
-        id.Margin = new Thickness(0, 4, 0, 0);
-        id.IsTextSelectionEnabled = true;
-        titles.Children.Add(id);
-        header.Children.Add(titles);
-        if (state.Ffmpeg && state.FfmpegFetching && !state.FfmpegLoading)
-        {
-            var refreshing = A.Text(AdminText.T("web.admin.activity.panel.refreshing"), 10, A.Muted);
-            refreshing.HorizontalAlignment = HorizontalAlignment.Right;
-            header.Children.Add(refreshing);
-        }
-        panel.Children.Add(header);
-
-        var container = P.NormalizeContainerDecision(s.PlayMethod);
-        var video = P.VideoDecision(s);
-        var audio = P.AudioDecision(s);
-        var mode = P.FormatTranscodeModeSummary(s);
-        var tone = P.FormatToneMapSummary(s)?.Detail;
-        var cards = new List<UIElement>
-        {
-            DetailCard("web.admin.activity.row.container", container, P.FormatSourceContainerSummary(s), P.FormatDeliveredContainerSummary(s), P.FormatContainerDetail(s), null, null),
-            DetailCard("web.admin.activity.row.video", video, P.FormatVideoSummary(s), P.FormatDeliveredVideoSummary(s), P.FormatVideoDetail(s),
-                video == "transcode" ? mode : null, video == "transcode" ? tone : null),
-            DetailCard("web.admin.activity.row.audio", audio, P.FormatAudioSummary(s), P.FormatDeliveredAudioSummary(s), P.FormatAudioDetail(s),
-                audio == "transcode" && video != "transcode" ? mode : null, null),
-            ClientCard(s),
-        };
-        // Tailwind sm/lg are viewport breakpoints, including the sidebar.
-        var width = ActivityViewportWidth > 0 ? ActivityViewportWidth : 1200;
-        var columns = width >= 1024 ? 3 : width >= 640 ? 2 : 1;
-        var grid = new Grid { ColumnSpacing = 8, RowSpacing = 8, Margin = new Thickness(0, 0, 0, 12) };
-        for (var c = 0; c < columns; c++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        for (var i = 0; i < cards.Count; i++)
-        {
-            if (i % columns == 0) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var element = (FrameworkElement)cards[i];
-            Grid.SetRow(element, i / columns);
-            Grid.SetColumn(element, i % columns);
-            grid.Children.Add(element);
-        }
-        panel.Children.Add(grid);
-
-        if (state.Ffmpeg) panel.Children.Add(Console(s, state));
-        return panel;
-    }
-
-    private static Border CardShell(string label, UIElement? badge, IEnumerable<UIElement> lines)
-    {
-        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 0, 0, 8) };
-        head.Children.Add(A.Eyebrow(label, TerminalMuted, 180));
-        if (badge != null) head.Children.Add(badge);
-        var body = new StackPanel { Spacing = 4 };
-        foreach (var line in lines) body.Children.Add(line);
-        return new Border
-        {
-            CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), BorderBrush = A.Solid(TerminalBorder, 0.6),
-            Background = A.Solid(TerminalBg, 0.6), Padding = new Thickness(12, 8, 12, 8),
-            Child = new StackPanel { Children = { head, body } },
-        };
-    }
-
-    private static UIElement DetailLine(string labelKey, string value, bool muted = false)
-    {
-        var grid = new Grid { ColumnSpacing = 8 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.Children.Add(A.Text(AdminText.T(labelKey), 10, TerminalMuted));
-        var text = A.Text(value, 11, muted ? TerminalMuted : TerminalFg, FontWeights.Medium, trim: false);
-        text.IsTextSelectionEnabled = true;
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-        return grid;
-    }
-
-    private static UIElement DetailCard(string labelKey, string decision, string source, string delivered, string detail, string? mode, string? toneMapping)
-    {
-        var lines = new List<UIElement>
-        {
-            DetailLine("web.admin.activity.detail.source", source),
-            DetailLine("web.admin.activity.detail.delivered", delivered),
-        };
-        if (mode != null) lines.Add(DetailLine("web.admin.activity.detail.mode", mode));
-        if (toneMapping != null) lines.Add(DetailLine("web.admin.activity.detail.toneMapping", toneMapping));
-        lines.Add(DetailLine("web.admin.activity.detail.detail", detail, muted: true));
-        return CardShell(AdminText.T(labelKey), A.Badge(P.FormatDecisionLabel(decision), A.ToneColor(P.DecisionTone(decision))), lines);
-    }
-
-    private static UIElement ClientCard(AdminActivitySession s)
-    {
-        var label = P.GetSessionClientLabelFull(s);
-        var lines = new List<UIElement> { DetailLine("web.admin.activity.client.app", string.IsNullOrEmpty(label) ? AdminText.T("web.admin.activity.client.unknown") : label) };
-        if (s.ClientUserAgent?.Trim() is { Length: > 0 } agent) lines.Add(DetailLine("web.admin.activity.client.agent", agent, muted: true));
-        return CardShell(AdminText.T("web.admin.activity.client.heading"), null, lines);
-    }
 
     private UIElement Console(AdminActivitySession s, RowState state)
     {
