@@ -110,7 +110,7 @@ Viewed: `admin-activity-1440x900`, `-800x900`, `-560x900` (header, sidebar, draw
 | Drag auto-scroll under a pinned header | Web drag implementation | not possible |
 | Header `Updated … ago` and chips | Present | no change |
 
-Viewed: `admin-dashboard-1440x900-step0`, `-800x900-step4`, `-560x900-step5`, `admin-dashboard-customize-1440x900`, the concurrent captures.
+Viewed: `admin-dashboard-1440x900-step0`, `-800x900-step4`, `admin-dashboard-customize-1440x900` (run `monitorref-vis-r4`), and `-560x900-step5` again in `monitorref-final-r2` after the stretched-actions fix. The Concurrent captures were written but not individually opened; the fixture assertions cover them.
 
 ### Activity
 
@@ -149,7 +149,11 @@ Viewed: `admin-logs-populated-1440x900`, `-560x900`, `admin-logs-detail-1440`, `
 
 No upstream change. Recompared `AdminDiagnostics.tsx`; one fix: the Delete button's red fill (`#dc2626`). The list-error row carries a Retry (official shows only the message; kept for recovery).
 
-Viewed: `admin-shell-ClientDiagnostics-1440x900`, `-560x900`, `-detail-1440x900`, `admin-diagnostics-error-800`, `-empty-1024`.
+Viewed: `admin-shell-ClientDiagnostics-1440x900`, `-560x900`, `-detail-1440x900` (re-opened in `monitorref-final-r2`, showing the `#dc2626` Delete), `admin-diagnostics-error-800`, `-empty-1024`.
+
+## Acceptance
+
+One `-Stage final` run on the final source: label `monitorref-final-r2` (lane `D:/SiloPlayer-build/admin-completion-lane-a`), commit `538187b80`: focused 450 and full 10,308 unit cases, zero failures. Native groups all passed: admin-dashboard 334, admin-monitor 1,013, admin-monitor-logs 268, admin-manage-foundation 36, admin-configure-general 188, admin-playback-administration 99, admin-requests-management 37 PASS lines (PASS lines count assertions and captures, not unit tests), zero FAIL lines. `monitorref-final-r1` failed only the source-guard unit test that lists approved Monitor surface files (`AdminShrinkPanel.cs` was not yet registered); it was registered in `admin-monitor-surfaces.json` and the whole run repeated.
 
 ## Limits
 

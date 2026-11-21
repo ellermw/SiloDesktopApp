@@ -1,3 +1,13 @@
+# November 20 — Admin Monitor parity refresh (official e130f262d) for Beta submission
+
+Branch `t3/admin-monitor-parity-refresh`: the unmerged #207 commit `4565dcce1` merged with Beta `d51eb2d85` (normal merge, two additive conflicts), then refreshed against official `e130f262d412cc7ffc4f0e040bdaba02c132515e`. Versions unchanged (`1.2.1277-beta.1`). Record: `docs/parity/admin-monitor-parity-refresh.md`.
+
+Source: live-row naming change (#4561) for Activity and Dashboard with older-server tolerance; Activity type filter; Concurrent streams Stacked gated on the advertised capability (the open #207 review finding, with tests); Activity realtime status, segmented filters, node menu, rows, hover, links, viewer and stacked lines, expanded panel; Server Activity count badge and live badge contrast; method-tag label colour and red fills; Dashboard widget links, header gap and phone actions; phone header typography. Shared: `AdminMonitorUi`, `ServerActivityButton` (also the main shell), `AdminShellPage`, `DashboardUi.TextLink`, `LogsPageHeader` (opt-in), new `AdminShrinkPanel`.
+
+Verification: `monitorref-final-r2` (`-Stage final`, commit `538187b80`): focused 450 and full 10,308 unit cases passed, zero failures; native admin-dashboard, admin-monitor, admin-monitor-logs, admin-manage-foundation, admin-configure-general, admin-playback-administration and admin-requests-management all passed with zero FAIL lines. The #207 Activity-corrections, branding and Concurrent streams fixtures now run inside `admin-monitor` and `admin-dashboard`. Not verified: live server, other themes/locales/DPI, right-to-left, pixel parity (no official server or screenshots were available). Not done: household streams (`PlaybackSessionSummary`) still reads the pre-#4561 names; it belongs to Settings.
+
+---
+
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
 Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import
