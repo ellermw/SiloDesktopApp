@@ -24,7 +24,10 @@ public class ThemeColors
     public string Surface { get; set; } = "";
     public string SurfaceHover { get; set; } = "";
     public string SurfaceRaised { get; set; } = "";
+    /// <summary>The WebUI's <c>--destructive-base</c>: red text, icons and borders. Empty inherits the default.</summary>
     public string Destructive { get; set; } = "";
+    /// <summary>The WebUI's <c>--destructive-fill</c>: the solid fill under <see cref="DestructiveForeground"/>. Empty inherits the default.</summary>
+    public string DestructiveFill { get; set; } = "";
     public string Accent { get; set; } = "";
 
     // ===== New semantic color tokens =====
@@ -93,7 +96,10 @@ public class ThemeService
             Surface = "#1C1C20",
             SurfaceHover = "#232328",
             SurfaceRaised = "#28282E",
+            // Official --destructive-base / --destructive-fill / --destructive-foreground (02a9d1d3
+            // app.css:670-672): white on #EF4444 is 3.76:1, so solid fills use #DC2626 (4.83:1).
             Destructive = "#EF4444",
+            DestructiveFill = "#DC2626",
             Accent = "#232328",
             // New tokens
             Popover = "#18181C",
@@ -168,9 +174,6 @@ public class ThemeService
         UpdateBrush(res, "AccentBrush", colors.Primary);
         UpdateBrush(res, "AccentForegroundBrush", colors.PrimaryForeground);
 
-        // Status
-        UpdateBrush(res, "ErrorBrush", colors.Destructive);
-
         // Badge text follows primary accent
         UpdateBrush(res, "BadgeTextBrush", colors.Primary);
 
@@ -193,7 +196,6 @@ public class ThemeService
         UpdateColor(res, "SecondaryForegroundColor", colors.SecondaryForeground);
         UpdateColor(res, "AccentColor", colors.Primary);
         UpdateColor(res, "AccentForegroundColor", colors.PrimaryForeground);
-        UpdateColor(res, "ErrorColor", colors.Destructive);
 
         // ===== New semantic token colors and brushes =====
 
@@ -210,10 +212,6 @@ public class ThemeService
         // Accent foreground (theme-level, not primary button)
         UpdateColor(res, "ThemeAccentForegroundColor", colors.AccentForeground);
         UpdateBrush(res, "ThemeAccentForegroundBrush", colors.AccentForeground);
-
-        // Destructive foreground
-        UpdateColor(res, "DestructiveForegroundColor", colors.DestructiveForeground);
-        UpdateBrush(res, "DestructiveForegroundBrush", colors.DestructiveForeground);
 
         // Muted
         UpdateColor(res, "MutedColor", colors.Muted);
@@ -260,7 +258,8 @@ public class ThemeService
         // Readability wins over server decoration, including refresh/reset.
         UpdateBrush(res, "TertiaryTextBrush", "#6E7681");
         UpdateColor(res, "TertiaryTextColor", "#6E7681");
-        if (_settingsService.Load().UiHighContrast)
+        var highContrast = _settingsService.Load().UiHighContrast;
+        if (highContrast)
         {
             UpdateBrush(res, "PrimaryTextBrush", "#FFFFFF");
             UpdateBrush(res, "SecondaryTextBrush", "#D1D5DB");
@@ -276,8 +275,31 @@ public class ThemeService
             UpdateColor(res, "BorderColor", "#8091A7");
             UpdateColor(res, "InputBorderColor", "#82828A");
         }
+        ApplyDestructive(res, colors, highContrast);
         RefreshDerivedControlResources(res);
         ApplySystemContrast(res);
+    }
+
+    // The destructive roles of the official WebUI (web app.css): ErrorBrush is red text, icons and
+    // borders (--destructive; high contrast lightens it), DestructiveFillBrush is the solid fill under
+    // DestructiveForegroundBrush (--destructive-fill), ErrorLabelBrush is a red label on its own
+    // tint (--destructive-label) and ErrorTintBrush is that tint (bg-destructive/10). The button hover
+    // and pressed fills follow DestructiveFillBrush in RefreshDerivedControlResources. Server
+    // overrides and the in-app high contrast setting go through the same resolution, so every theme
+    // change rewrites all of them in place. A Windows contrast theme does not repaint them (it never has).
+    private void ApplyDestructive(ResourceDictionary res, ThemeColors colors, bool highContrast)
+    {
+        var red = DestructiveTheme.Resolve(colors.Destructive, colors.DestructiveFill, colors.DestructiveForeground,
+            highContrast, _sharedAppearance.Colors);
+        UpdateBrush(res, "ErrorBrush", red.Text);
+        UpdateColor(res, "ErrorColor", red.Text);
+        UpdateBrush(res, "ErrorTintBrush", red.Text);
+        UpdateBrush(res, "DestructiveFillBrush", red.Fill);
+        UpdateColor(res, "DestructiveFillColor", red.Fill);
+        UpdateBrush(res, "DestructiveForegroundBrush", red.Foreground);
+        UpdateColor(res, "DestructiveForegroundColor", red.Foreground);
+        UpdateBrush(res, "ErrorLabelBrush", red.Label);
+        UpdateColor(res, "ErrorLabelColor", red.Label);
     }
 
     // ===== Windows contrast themes (the WebUI's forced-colors, official #4297/#4308) =====
@@ -294,6 +316,8 @@ public class ThemeService
     private Windows.UI.ViewManagement.UISettings? _systemColors;
     private bool _systemContrastApplied;
     private bool _systemContrastWatched;
+    // Set by the native regression host only: stands in for a Windows contrast theme's five colors.
+    private (Color Window, Color WindowText, Color Highlight, Color HighlightText, Color GrayText)? _simulatedSystemPalette;
 
     private static readonly string[] SystemWindowTokens =
     [
@@ -319,21 +343,28 @@ public class ThemeService
     {
         EnsureSystemContrastWatch();
         _systemContrastApplied = false;
-        var system = _systemColors;
-        if (system is null || !IsSystemHighContrast) return;
 
         Color window, windowText, highlight, highlightText, grayText;
-        try
+        if (_simulatedSystemPalette is { } simulated)
         {
-            window = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Window);
-            windowText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.WindowText);
-            highlight = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Highlight);
-            highlightText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.HighlightText);
-            grayText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.GrayText);
+            (window, windowText, highlight, highlightText, grayText) = simulated;
         }
-        catch
+        else
         {
-            return;
+            var system = _systemColors;
+            if (system is null || !IsSystemHighContrast) return;
+            try
+            {
+                window = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Window);
+                windowText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.WindowText);
+                highlight = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.Highlight);
+                highlightText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.HighlightText);
+                grayText = system.UIElementColor(Windows.UI.ViewManagement.UIElementType.GrayText);
+            }
+            catch
+            {
+                return;
+            }
         }
 
         _systemContrastApplied = true;
@@ -417,7 +448,6 @@ public class ThemeService
         ["sidebar"] = ("SidebarBackgroundBrush", "SidebarBackgroundColor"),
         ["sidebar-accent"] = ("SidebarAccentBrush", "SidebarAccentColor"),
         ["sidebar-border"] = ("SidebarBorderBrush", "SidebarBorderColor"),
-        ["destructive"] = ("ErrorBrush", "ErrorColor"),
         ["accent"] = ("AccentBackgroundBrush", "AccentBackgroundColor"),
         ["accent-foreground"] = ("ThemeAccentForegroundBrush", "ThemeAccentForegroundColor"),
         ["card-foreground"] = ("CardForegroundBrush", "CardForegroundColor"),
@@ -426,7 +456,6 @@ public class ThemeService
         ["chart-3"] = ("Chart3Brush", "Chart3Color"),
         ["chart-4"] = ("Chart4Brush", "Chart4Color"),
         ["chart-5"] = ("Chart5Brush", "Chart5Color"),
-        ["destructive-foreground"] = ("DestructiveForegroundBrush", "DestructiveForegroundColor"),
         ["muted"] = ("MutedBrush", "MutedColor"),
         ["popover"] = ("PopoverBrush", "PopoverColor"),
         ["popover-foreground"] = ("PopoverForegroundBrush", "PopoverForegroundColor"),
@@ -499,7 +528,7 @@ public class ThemeService
             "ToggleSwitchKnobFillOnPointerOver", "ToggleSwitchKnobFillOnPressed");
         CopyBrushColor(resources, "AccentBrush", "WebUiPrimaryHoverBrush");
         CopyBrushColor(resources, "SecondaryBackgroundBrush", "WebUiSecondaryHoverBrush");
-        CopyBrushColor(resources, "ErrorBrush", "WebUiDestructiveHoverBrush");
+        CopyBrushColor(resources, "DestructiveFillBrush", "WebUiDestructiveHoverBrush", "WebUiDestructivePressedBrush");
         CopyBrushColor(resources, "AccentBackgroundBrush",
             "ComboBoxItemBackgroundSelected", "SystemControlHighlightListAccentLowBrush",
             "SystemControlHighlightListAccentMediumBrush", "NavigationViewItemBackgroundSelected");
