@@ -25,12 +25,12 @@ public sealed partial class AdminNotificationSettingsPage
     private readonly Dictionary<string, TextBlock> _channelResults = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProgressRing> _channelBusy = new(StringComparer.Ordinal);
     private IReadOnlyList<AdminNotificationChannel>? _renderedChannels;
-    private readonly TextBlock _channelError = U.Text("", 12);
+    private readonly TextBlock _channelError = U.Text("", 12), _channelEmpty = U.Text(N("serverChannels.empty"), 13, true);
     private Button _channelRetry = null!, _channelMore = null!, _channelAdd = null!;
     private static readonly string[] EventLabels = ["newMovies", "newEpisodes", "newAudiobooks", "newEbooks", "requestSubmitted", "requestApproved", "requestDeclined", "requestFulfilled"];
     private void BuildServerChannels(StackPanel parent)
     {
-        parent.Children.Add(_channelError); parent.Children.Add(_channelList);
+        parent.Children.Add(_channelError); parent.Children.Add(_channelList); _channelEmpty.Visibility = Visibility.Collapsed; parent.Children.Add(_channelEmpty);
         var actions = Actions(parent);
         _channelRetry = U.Action(N("reload"), "NotificationsChannelRetry"); actions.Children.Add(_channelRetry);
         _channelRetry.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(true); };
@@ -55,8 +55,9 @@ public sealed partial class AdminNotificationSettingsPage
         {
             _renderedChannels = state.Channels; _channelList.Children.Clear(); _channelButtons.Clear(); _channelToggles.Clear(); _channelToggleValues.Clear(); _channelResults.Clear(); _channelBusy.Clear();
             foreach (var channel in state.Channels) _channelList.Children.Add(ChannelCard(channel));
-            if (state.ChannelsLoaded && state.Channels.Count == 0) _channelList.Children.Add(U.Text(N("serverChannels.empty"), 13, true));
         }
+        // Only a successful read that found nothing says so; a failed read keeps what it had and says it failed.
+        _channelEmpty.Visibility = state.ChannelsLoaded && state.Channels.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var button in _channelButtons) button.IsEnabled = enabled;
         _syncChannels = true;
         try
@@ -139,7 +140,11 @@ public sealed partial class AdminNotificationSettingsPage
             if (i is 0 or 4) content.Children.Add(U.Text(N("serverChannels.events." + (i == 0 ? "newContent" : "mediaRequests"))));
             var key = AdminNotificationSettingsApi.EventKeys[i]; var label = N("serverChannels.events." + EventLabels[i]);
             var toggle = new ToggleSwitch { IsOn = channel?.Events.GetValueOrDefault(key) ?? i < 4, OnContent = "", OffContent = "", MinWidth = 0 };
-            AutomationProperties.SetName(toggle, label); toggles[key] = toggle; content.Children.Add(new AdminSettingsRow(label, "", toggle));
+            // Official: the label and its switch share one row at every width (flex items-center justify-between gap-3).
+            AutomationProperties.SetName(toggle, label); toggles[key] = toggle;
+            var eventRow = new Grid { ColumnSpacing = 12 }; eventRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); eventRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            var eventLabel = U.Text(label); eventLabel.VerticalAlignment = VerticalAlignment.Center; eventRow.Children.Add(eventLabel);
+            Grid.SetColumn(toggle, 1); toggle.VerticalAlignment = VerticalAlignment.Center; eventRow.Children.Add(toggle); content.Children.Add(eventRow);
         }
         var error = U.Text("", 12); content.Children.Add(error);
         var editor = new ContentControl { Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch };
