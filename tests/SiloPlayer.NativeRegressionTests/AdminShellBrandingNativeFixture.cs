@@ -19,6 +19,7 @@ internal static partial class AdminMonitorShellNativeFixture
         await Task.Delay(80);
         await CaptureAsync(wordmark, "synthetic-wordmark.png");
         server.WordmarkBytes = await File.ReadAllBytesAsync(Path.Combine(Program.ResultDirectory, "synthetic-wordmark.png"));
+        var baseReads = server.BrandingReads; // the default run reads branding in earlier phases too
         var frame = new Frame();
         window.Content = frame;
         frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
@@ -30,7 +31,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (width == 800) typeof(AdminShellPage).GetMethod("OpenDrawer", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(shell, null);
             await Until(() => Descendants(shell).OfType<Image>().Any(image => AutomationProperties.GetAutomationId(image) == "AdminServerWordmark" && image.Source is BitmapImage { UriSource.IsFile: true }), 1500);
             var image = Descendants(shell).OfType<Image>().FirstOrDefault(image => AutomationProperties.GetAutomationId(image) == "AdminServerWordmark");
-            Check(server.BrandingReads == 1, $"{width}: Admin reads the current server branding once per authority");
+            Check(server.BrandingReads - baseReads == 1, $"{width}: Admin reads the current server branding once per authority");
             Check(image?.Source is BitmapImage { UriSource.IsFile: true }, $"{width}: server branding replaces bundled Silo wordmark in desktop and drawer");
             await CaptureAsync(frame, $"admin-server-branding-{width}.png");
         }

@@ -40,7 +40,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (page.IsWideTable)
                 Check(Descendants(table).OfType<TextBlock>().Any(t => t.Text == "BITRATE" || t.Text == "Bitrate"), $"{width}: current Activity has Bitrate column");
             Check(Descendants(table).OfType<TextBlock>().Any(t => t.Text == "Video codec not supported"), $"{width}: server adaptation reason is visible");
-            Check(!Descendants(table).OfType<TextBlock>().Any(t => t.Text == "Maximum bitrate setting"), $"{width}: later reasons stay in the collapsed details");
+            Check(!Descendants(table).OfType<TextBlock>().Any(t => t.Text.StartsWith("Maximum bitrate setting", StringComparison.Ordinal)), $"{width}: later reasons stay in the collapsed details");
             var more = Descendants(table).OfType<Button>().FirstOrDefault(b => AutomationProperties.GetName(b).Contains("more reason", StringComparison.OrdinalIgnoreCase));
             Check(more != null, $"{width}: additional reasons have a keyboard reachable details control");
             if (more != null)
@@ -51,7 +51,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 await Task.Delay(100);
                 Check(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(frame.XamlRoot) is Button focused && AutomationProperties.GetAutomationId(focused) == focusId,
                     $"{width}: expanding reasons preserves the keyboard target");
-                Check(Descendants(table).OfType<TextBlock>().Any(t => t.Text == "Maximum bitrate setting"), $"{width}: expanded panel shows all known reasons");
+                Check(Descendants(table).OfType<TextBlock>().Any(t => t.Text.StartsWith("Maximum bitrate setting", StringComparison.Ordinal)), $"{width}: expanded panel shows all known reasons");
                 Check(!Descendants(table).OfType<TextBlock>().Any(t => t.Text.Contains("future_reason")), $"{width}: unknown reason is omitted like WebUI");
                 foreach (var label in new[] { "Source", "Delivered", "Client", "Session" })
                     Check(Descendants(table).OfType<TextBlock>().Any(t => string.Equals(t.Text, label, StringComparison.OrdinalIgnoreCase)), $"{width}: expanded panel includes {label}");

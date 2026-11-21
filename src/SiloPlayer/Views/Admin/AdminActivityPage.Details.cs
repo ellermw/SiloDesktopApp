@@ -40,14 +40,15 @@ public sealed partial class AdminActivityPage
         var stream = new Grid { ColumnSpacing = 12, RowSpacing = 4 };
         // The official table: th/td cells with py-0.5 and pe-3, a header row of muted font-normal labels (pb-1), the decision chip beside the row label and the
         // tags as inline px-1 text-[10px] leading-4 bordered chips after the delivered text.
-        stream.ColumnDefinitions.Add(new() { Width = new GridLength(ActivityViewportWidth >= 640 ? 144 : 96) });
+        // The label column is the table's auto-sized first column (sm:w-36 as its minimum): it grows to its widest "Video [Direct]" label, as an HTML table's would.
+        stream.ColumnDefinitions.Add(new() { Width = GridLength.Auto, MinWidth = ActivityViewportWidth >= 640 ? 144 : 96 });
         stream.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         stream.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         void StreamRow(string? key, string? source, string? delivered, string? streamDecision = null, bool header = false, params string?[] tags)
         {
             var row = stream.RowDefinitions.Count; stream.RowDefinitions.Add(new() { Height = GridLength.Auto });
             void Cell(FrameworkElement element, int column) { Grid.SetColumn(element, column); Grid.SetRow(element, row); stream.Children.Add(element); }
-            var label = new LogsWrapPanel { Spacing = 6, RowSpacing = 2 };
+            var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Top };
             if (key != null) label.Children.Add(A.Text(AdminText.T(key), 12, A.Foreground, trim: false));
             if (!string.IsNullOrEmpty(streamDecision))
             {
@@ -57,7 +58,7 @@ public sealed partial class AdminActivityPage
             }
             Cell(label, 0);
             Cell(A.Text(source ?? "", 12, A.Muted, trim: false), 1);
-            var output = new LogsWrapPanel { Spacing = 6, RowSpacing = 2 };
+            var output = new LogsWrapPanel { Spacing = 6, RowSpacing = 2, VerticalAlignment = VerticalAlignment.Top };
             output.Children.Add(A.Text(delivered ?? "", 12, header ? A.Muted : A.Foreground, trim: false));
             foreach (var tag in tags.Where(t => !string.IsNullOrEmpty(t)))
                 output.Children.Add(new Border
