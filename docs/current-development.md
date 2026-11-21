@@ -1,3 +1,28 @@
+# November 21 — Unit tests: no more frozen runs or start-up timeouts on four cores (test-only)
+
+In the Beta pipeline's VM (four cores) about 17 unit tests failed on the first try in nearly every run and passed when run again alone
+(1,373 such failures in 82 runs since November 19), and 11 unit-test runs in a week froze with no CPU use. Both had one cause. xUnit runs
+one worker thread per core, and the continuations of every async test run on those same workers. Some tests hold a worker while they wait
+for work that needs one (`LibraryBackgroundRefreshTests.Scrolled` uses `GetAwaiter().GetResult()`; `PlaybackDiagnosticsTests` reads the
+synchronous `DirectHttpReader.Read`). On two cores, two of them at once froze the run; the stacks of that frozen process are how the cause
+was found. On four cores, one or two starve the rest, and the 404 `MpvOscRuntimeTests` cases, which each start a real libmpv core, held
+one worker for 24 seconds while about 13 tests a second finished instead of about 900.
+
+Three test-only changes, no product code: `tests/SiloPlayer.Tests/xunit.runner.json` sets `maxParallelThreads` to 16;
+`MpvOscRuntimeTests` runs in its own non-parallel collection, after the parallel classes; and in 15 tests that start in the first
+seconds of a run, the waits for something that should happen now have the suite's usual 30-second bound instead of 2 to 10 seconds (a
+passing run ends at once, and nothing that asserts a timeout was changed).
+
+Observed on this branch at `20b58086a` plus these changes, `SiloPlayer.Tests` in Release under the SiloOct18Build lease, the test
+process limited to a set of cores: before, four cores, 10 of 11,157 failed; after, four cores, three runs with 0, 0 and 1 failed (the one,
+`ItemDetailWatchedMutationTests.AcceptedWriteAfterNavigationClearsGlobalCacheAndAdvancesWatchRevision`, a count assertion that also fails
+now and then in the VM). Before, two cores,
+the run froze; after, two cores, three runs finished with 5, 2 and 1 failures, none of them a `TimeoutException` from the changed waits
+(`AdminStorageSettingsControllerTests.AcknowledgedJobSurvivesAFailedFirstReadAndIsPolledThroughCompletion` and
+`RealtimeReadOwnershipTests.FailedPostFinalSaveInitialReadKeepsTheSnapshotAndInlineRetryAlsoRecoversLeaves` twice each). Not run: the
+app build, native groups, and the other two unit projects; nothing they build changed. Two cores are harsher than the VM, so the VM may
+still see an occasional first-try failure; the tests that block a worker were left as they are.
+
 # November 21 — Manage › Libraries: review fixes
 
 An independent read-only review of the Libraries refresh found no behavior regression and eleven items, fixed on the same branch. Destructive badges and
