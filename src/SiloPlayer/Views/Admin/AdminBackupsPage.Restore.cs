@@ -145,6 +145,8 @@ public sealed partial class AdminBackupsPage
     private void RenderRestore(AdminBackupRestoreState state)
     {
         var focused = FocusedId();
+        // Whether keyboard focus is on the page: XAML moves focus to some other control when the one holding it leaves the tree.
+        var focusOnPage = XamlRoot != null && FocusManager.GetFocusedElement(XamlRoot) is DependencyObject onPage && IsWithin(onPage, _body);
         foreach (var box in _filters.Values) if (box.Parent is Panel parent) parent.Children.Remove(box);
         _body.Children.Clear();
         if (state.Owner?.IsCurrent != true) return;
@@ -161,22 +163,21 @@ public sealed partial class AdminBackupsPage
         {
             var first = _shownStep < 0;
             _shownStep = state.Step;
-            if (!first) OnStepChanged();
+            if (!first) OnStepChanged(focusOnPage);
         }
     }
 
     /// <summary>
-    /// A new step opens at the top of the page, with keyboard focus on the current step in the step list when focus dropped
-    /// (the control that held it was on the step just left) or sat in the step list. Focus anywhere else, such as the sidebar, stays put.
+    /// A new step opens at the top of the page, with keyboard focus on the current step in the step list when focus was on the page
+    /// (on the control of the step just left, or in the step list). Focus anywhere else, such as the sidebar, stays put.
     /// New elements enter the tree one layout pass later, so both happen then.
     /// </summary>
-    private void OnStepChanged() => DispatcherQueue.TryEnqueue(() =>
+    private void OnStepChanged(bool focusWasOnPage) => DispatcherQueue.TryEnqueue(() =>
     {
         if (!_active || _restoreSource == null) return;
         _scroller.ChangeView(null, 0, null, true);
         var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
-        var dropped = focused == null || focused is UIElement { XamlRoot: null };
-        if (_currentStepHolder is not { } holder || !(dropped || IsWithin(focused, holder.Parent))) return;
+        if (_currentStepHolder is not { } holder || !(focusWasOnPage || focused == null)) return;
         void FocusStep()
         {
             holder.IsTabStop = true;

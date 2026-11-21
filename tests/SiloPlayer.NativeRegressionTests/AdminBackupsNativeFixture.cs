@@ -538,8 +538,10 @@ internal static class AdminBackupsNativeFixture
             await Until(() => restore.Selection.Contains("libraries:lib-1") && restore.Selection.Any(key => key.StartsWith("users:u1/profile:p1", StringComparison.Ordinal)), "items chosen");
             await Until(() => Find<Button>(restorePage, "RestoreReview") is { IsEnabled: true, IsLoaded: true }, "review enabled for the rich preview");
             // A click gives the button focus; the step change then drops it with the button, and focus moves to the step list.
-            Find<Button>(restorePage, "RestoreReview")!.Focus(FocusState.Programmatic);
-            Invoke(Find<Button>(restorePage, "RestoreReview")!);
+            var reviewButton = Find<Button>(restorePage, "RestoreReview")!;
+            var reviewFocused = reviewButton.Focus(FocusState.Programmatic);
+            Program.Log("INFO: review button focus requested=" + reviewFocused + ", state=" + reviewButton.FocusState + ", focused=" + FocusManager.GetFocusedElement(restorePage.XamlRoot)?.GetType().Name);
+            Invoke(reviewButton);
             await Until(() => Find<Button>(restorePage, "RestoreStart") is { IsLoaded: true, IsEnabled: true } && Find<StackPanel>(restorePage, "RestoreCaveats") != null, "review with caveats");
             try { await Until(() => Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }, "focus on the current step", 3000); }
             catch (InvalidOperationException)
