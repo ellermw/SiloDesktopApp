@@ -241,13 +241,6 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
                 id == "relay" && (state.RelayUrlDirty || state.Values.GetValueOrDefault("notifications.push_relay_reregistration_required") == "true")) expander.IsExpanded = true;
         }
         RenderSetup(state); RenderChannels(state);
-        foreach (var chip in _chips.Values)
-        {
-            if (chip.Parent is not Border border) continue;
-            var shown = chip.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-            // The wrapping title row lays pills out from its own measure, so it is told when one appears or goes.
-            if (border.Visibility != shown) { border.Visibility = shown; (border.Parent as UIElement)?.InvalidateMeasure(); }
-        }
         foreach (var (button, enabled) in _actions) button.IsEnabled = editable && !state.ChannelsLoading && !state.Saving && !state.OperationPending && !state.Conflict && !state.OutcomeUnknown && !state.OperationUnknown && enabled(state);
         var pageDirty = state.DirtyKeys.Count(C.PageKeys.Contains);
         _saveBar.State(pageDirty, state.Saving && !state.SavingDiscord, editable && !state.Saving && !state.ChannelsLoading && !state.OperationPending && !state.Conflict && !state.OutcomeUnknown && !state.OperationUnknown);
@@ -304,7 +297,7 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         _relayBusy.IsActive = false;
         foreach (var ring in _channelBusy.Values) ring.IsActive = false;
         _relayStatus.Text = _emailStatus.Text = _discordStatus.Text = _discordTestResult.Text = "";
-        foreach (var chip in _chips.Values) chip.Text = "";
+        foreach (var key in _chips.Keys.ToArray()) SetChip(key, "", ChipTone.Neutral);
         foreach (var result in _channelResults.Values) result.Text = "";
         _sync = false;
     }

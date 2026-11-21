@@ -27,19 +27,19 @@ public sealed partial class AdminNotificationSettingsPage
     private void AddChip(string channel, string key)
     {
         var text = U.Text("", 12); text.FontWeight = Microsoft.UI.Text.FontWeights.Medium; text.TextWrapping = TextWrapping.NoWrap; _chips[key] = text;
-        var pill = new Border { Child = text, Padding = new(8, 2, 8, 2), CornerRadius = new(12), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
-        _titleFlow[channel].Children.Add(pill); SetChipTone(key, ChipTone.Neutral);
+        var pill = new Border { Child = text, Padding = new(8, 2, 8, 2), CornerRadius = new(12), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left };
+        _titleFlow[channel].Children.Add(pill); SetChip(key, "", ChipTone.Neutral);
     }
     private void SetChip(string key, string text, ChipTone tone)
     {
-        _chips[key].Text = text; SetChipTone(key, tone);
-        // A pill is drawn when it has text and gone when it has none, decided where its text is set. A pill that first appears inside
-        // a channel header is not given a size by the header's own invalidation, so every ancestor is told to measure again.
+        _chips[key].Text = text;
         if (_chips[key].Parent is not Border pill) return;
-        var shown = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (pill.Visibility == shown) return;
-        pill.Visibility = shown;
-        for (DependencyObject? node = pill; node != null; node = VisualTreeHelper.GetParent(node)) (node as UIElement)?.InvalidateMeasure();
+        // A pill with no text has no chrome and no size. It stays in the layout instead of being collapsed and shown again: a pill that
+        // first appears inside a channel header is not given a size by the header's own invalidation.
+        var empty = text.Length == 0;
+        pill.Padding = empty ? new(0) : new(8, 2, 8, 2); pill.BorderThickness = empty ? new(0) : new(1);
+        SetChipTone(key, tone);
+        if (empty) pill.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
     }
     private void SetChipTone(string key, ChipTone tone)
     {
