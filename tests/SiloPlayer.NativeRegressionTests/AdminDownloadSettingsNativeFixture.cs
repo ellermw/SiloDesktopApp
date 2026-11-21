@@ -313,7 +313,9 @@ internal static class AdminDownloadSettingsNativeFixture
                 if (unlimited.IsChecked == true)
                 {
                     Invoke(unlimited);
-                    await Until(() => controller.State.Values[key] == "", "uncheck " + key);
+                    // Unchecking restores the limit the control last showed (the official LimitField's remembered limit),
+                    // which is blank when none was set and the discarded draft when one was; either way it is no longer Unlimited.
+                    await Until(() => unlimited.IsChecked == false && limitBox.IsEnabled && controller.State.Values[key] != R.Unlimited, "uncheck " + key);
                     await Task.Delay(120);
                 }
                 foreach (var draft in new[] { "00", "+0", "-0" })
@@ -395,7 +397,8 @@ internal static class AdminDownloadSettingsNativeFixture
             await Until(() => !controller.State.Loading && controller.State.Values[R.PeriodDuration] == "0s", "saved zero period loaded");
             var quotaDependency = Box(page, R.MaxPerPeriod)!;
             Invoke(Unlimited(page, R.MaxPerPeriod)!);
-            await Until(() => controller.State.Values[R.MaxPerPeriod] == "", "saved unlimited quota unchecked");
+            // Unchecking restores whatever limit the control last remembered (blank when none), so wait for "no longer Unlimited".
+            await Until(() => Unlimited(page, R.MaxPerPeriod)!.IsChecked == false && quotaDependency.IsEnabled && controller.State.Values[R.MaxPerPeriod] != R.Unlimited, "saved unlimited quota unchecked");
             quotaDependency.Text = "5";
             await Until(() => controller.State.Errors.ContainsKey(R.PeriodDuration), "quota requires positive saved period");
             await Task.Delay(120);
@@ -411,7 +414,7 @@ internal static class AdminDownloadSettingsNativeFixture
             // Per-user period pair, duration grammar and the local-fallback toggle.
             var perPeriod = Box(page, R.MaxPerPeriod)!;
             var periodUnlimited = Unlimited(page, R.MaxPerPeriod)!;
-            Invoke(periodUnlimited); await Until(() => controller.State.Values[R.MaxPerPeriod] == "", "per-period unchecked");
+            Invoke(periodUnlimited); await Until(() => periodUnlimited.IsChecked == false && perPeriod.IsEnabled && controller.State.Values[R.MaxPerPeriod] != R.Unlimited, "per-period unchecked");
             perPeriod.Text = "5"; await Until(() => controller.State.Values[R.MaxPerPeriod] == "5", "per-period typed");
             var period = Box(page, R.PeriodDuration)!;
             period.Text = "0s"; await Until(() => controller.State.Errors.ContainsKey(R.PeriodDuration), "zero period flagged");
