@@ -138,8 +138,7 @@ internal static class AdminNotificationSettingsNativeFixture
                 {
                     string render;
                     try { typeof(AdminNotificationSettingsPage).GetMethod("Render", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [controller.State]); render = "a fresh render completes"; }
-                    catch (TargetInvocationException error) { render = "render throws " + error.InnerException?.GetType().Name + ": " + error.InnerException?.Message + " at " + error.InnerException?.StackTrace?.Split('
-').FirstOrDefault()?.Trim(); }
+                    catch (TargetInvocationException error) { render = "render throws " + error.InnerException?.GetType().Name + ": " + error.InnerException?.Message + " at " + error.InnerException?.StackTrace?.Split('\n').FirstOrDefault()?.Trim(); }
                     throw new InvalidOperationException("Timed out: status pill '" + pillText + "' is drawn at its first layout; " + DescribePill(page, pillText) + "; " + render);
                 }
             }
