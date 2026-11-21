@@ -101,12 +101,29 @@ internal static partial class PlaybackHudCompletionNativeFixture
         Check(compact.Y + compact.Height <= finishedTop - 8, "Compact finishing artwork covers the finished text and actions.");
         await Capture(root, "finished-early-ended-small.png", service);
 
+        // Owner report, November 20: on a 21:9 monitor the picture and its column sat against the left
+        // edge. At any aspect ratio the gap between them is on the window's centre line.
+        double ColumnLeft() => screen.Named("PlayingNextScroller").TransformToVisual(root).TransformPoint(new(0, 0)).X;
+        void ExpectCentred(Windows.Foundation.Rect slot, string size) =>
+            Check(Math.Abs((slot.X + slot.Width + ColumnLeft()) / 2 - root.ActualWidth / 2) <= 2,
+                $"The {size} finished screen is not centred in the window (picture ends {slot.X + slot.Width}, column starts {ColumnLeft()}, window {root.ActualWidth}).");
+
+        // As wide as this machine allows; the desktop may cap the window below the requested width.
+        window.AppWindow.ResizeClient(new(3440, 1000)); await Task.Delay(450);
+        var ultrawide = screen.SlotRect();
+        await screen.ExpectArt(Red, ultrawide, "The ultrawide ended screen lost the finishing artwork.");
+        Check(!IsWindowVisible(screen.Video), "A resize brought the ended native popup back over the ended screen.");
+        Check(ultrawide.X + ultrawide.Width <= ColumnLeft() - 24, "Ultrawide finishing artwork is not beside the finished column.");
+        ExpectCentred(ultrawide, "ultrawide");
+        Program.Log($"Ultrawide finished screen measured at {root.ActualWidth:0}x{root.ActualHeight:0}: picture {ultrawide.X:0}-{ultrawide.X + ultrawide.Width:0}, column from {ColumnLeft():0}.");
+        await Capture(root, "finished-early-ended-ultrawide.png", service);
+
         window.AppWindow.ResizeClient(new(1440, 900)); await Task.Delay(450);
         var wide = screen.SlotRect();
         await screen.ExpectArt(Red, wide, "Returning to the wide layout lost the finishing artwork.");
         Check(!IsWindowVisible(screen.Video), "A resize brought the ended native popup back over the ended screen.");
-        var columnLeft = screen.Named("PlayingNextScroller").TransformToVisual(root).TransformPoint(new(0, 0)).X;
-        Check(wide.X + wide.Width <= columnLeft - 24, "Wide finishing artwork is not beside the finished column.");
+        Check(wide.X + wide.Width <= ColumnLeft() - 24, "Wide finishing artwork is not beside the finished column.");
+        ExpectCentred(wide, "wide");
 
         await screen.Dismiss();
         Check(screen.Art!.Source == null && Field(window, "_finishingArt") == null, "Closing the ended screen kept its finishing artwork alive.");
