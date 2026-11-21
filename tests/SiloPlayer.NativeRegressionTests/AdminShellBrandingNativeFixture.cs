@@ -19,6 +19,8 @@ internal static partial class AdminMonitorShellNativeFixture
         await Task.Delay(80);
         await CaptureAsync(wordmark, "synthetic-wordmark.png");
         server.WordmarkBytes = await File.ReadAllBytesAsync(Path.Combine(Program.ResultDirectory, "synthetic-wordmark.png"));
+        // A URL no earlier phase of the default run asked for, so the shared image cache cannot hand back an earlier (bundled) answer.
+        server.BrandingWordmarkUrl = "/branding-fixture/wordmark.png";
         var baseReads = server.BrandingReads; // the default run reads branding in earlier phases too
         var frame = new Frame();
         window.Content = frame;
