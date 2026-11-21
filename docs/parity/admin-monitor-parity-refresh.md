@@ -43,13 +43,13 @@ older-replica path end to end.
 | #4561 Activity type filter: the Series chip selects `episode` and keeps show-level `series` rows; search matches `series_title` | Fixed (`AdminActivityListState`), tested. |
 | #4561 household sessions (`GET` household sessions) use the same shape | Not touched: `PlaybackSessionSummary` feeds Settings › Household streams, outside this section. It still reads the old names. Reported, not fixed. |
 | #4562 live rows carry a nullable `subtitle` object | Not read by the official WebUI at this commit; not shown. |
-| #4626 Activity row links and hover visible (`ROW_LINK_CLASS`, `ROW_HOVER_CLASS`, expand button `surface-raised`) | Fixed: links underline on hover/focus (`AdminMonitorUi.LinkButton`), row highlight and lit chevron held back over links and non-toggle buttons, expand button hover. |
+| #4626 Activity row links and hover visible (`ROW_LINK_CLASS`, `ROW_HOVER_CLASS`, expand button `surface-raised`) | Fixed: links underline on hover/focus (`AdminMonitorUi.LinkButton`), row highlight and lit chevron held back over links and non-toggle buttons, expand button hover. `LinkButton` later got its own template with no hover fill (review round). |
 | #4650/#4632 links whose only hover style was the primary colour get an underline | Fixed for Activity, Now Playing title, bar-list items, Server Activity task/preparation rows. |
 | #4703 server activity count readable; #4729 live badge contrast, no pulse | Fixed: count is `bg-foreground`/`text-background` with a 2px background ring and no pulse (`ServerActivityButton`; also seen by the main shell, which hosts the same control); live badge label `#fca5a5`. |
 | #4674, #4691, #4709 phone header | Title `leading-normal` without top margin, eyebrow ellipsis. The sticky behaviour (#4709) is inherent: the native header sits outside the scrolling frame. `scroll-mt-24` has no native equivalent (no anchor jumps). |
 | #4768, #4700 label and fill tokens | Method tags use the `-label` text colour (destructive mixes 25% toward white). Red fills under white text (Diagnostics Delete, the Users widget "Disabled" pill, the API client sign-out confirmation) use `#dc2626`. |
 | #4671 `dark:` follows the Silo theme | Web-only; the native theme service already follows the server theme. |
-| #4629 dashboard auto-refresh fixed 60 s cadence | Native already reads `LastUpdatedAt` on a one-second tick, so data arrivals cannot postpone it; a regression test pins that. |
+| #4629 dashboard auto-refresh fixed 60 s cadence | Native already reads `LastUpdatedAt` on a one-second tick, so data arrivals cannot postpone it. No code changed; the store test that was added for it tested behaviour this branch did not change (and ended in a real delay) and was removed in the review round. |
 | `RecentActivity` catalog description "Most recent plays across all accounts" | Fixed (`DashboardTextCatalog`). |
 | `dragAutoScroll` pinned-header inset, export-only edits | Web-only drag behaviour; native uses its own drag handler. |
 | #3909 and later right-to-left passes | The native shell cannot mirror: WinUI layouts here are not direction-aware. Not attempted. |
@@ -116,7 +116,7 @@ Viewed: `admin-dashboard-1440x900-step0`, `-800x900-step4`, `admin-dashboard-cus
 
 | Official element | Difference found | Result |
 | --- | --- | --- |
-| Realtime status | Two-line "REALTIME / Live" block | fixed (dot + one line, warning when not live, heading as tooltip) |
+| Realtime status | Two-line "REALTIME / Live" block | fixed (dot + one line, warning when not live, heading as tooltip; polite live region, see the review round) |
 | Header gap | 16 instead of `mb-8` | fixed (32) |
 | Filter chips | Loose pills | fixed (segmented groups: 1px gaps, h-[30px], active `bg-primary/10`) |
 | Node filter | Flat toggle list behind an icon button | fixed (labelled trigger with chevron, groups by kind, counts at the end) |
@@ -129,6 +129,8 @@ Viewed: `admin-dashboard-1440x900-step0`, `-800x900-step4`, `admin-dashboard-cus
 | Viewer cell | Wrapped; JF pill on the name line | fixed (three flex lines; only name and client truncate) |
 | Stacked card line | Wrapped chips | fixed (one flex line with middle dot) |
 | Profile pill | `bg-primary/15` | fixed (`/10`, max 7rem) |
+| Search box | Fixed 320 wide | fixed (review round): `w-full sm:w-80`, the whole filter row below 640, 320 from 640 up; also matches the profile name |
+| Poster | Radius 2 | fixed (review round): `rounded-sm` = `--radius` (0.75rem) - 4px = 8px, as a brush so the image follows the corners |
 | Method tags | Plain tone text | fixed (`-label` colour) |
 | Bitrate bar | Fixed 104px | fixed (fills to 128px) |
 | Expanded panel | Decision and reasons stacked; decision chip under the row label; tags as plain lines | fixed (inline, bordered tag chips, auto-sized label column) |
@@ -151,9 +153,39 @@ No upstream change. Recompared `AdminDiagnostics.tsx`; one fix: the Delete butto
 
 Viewed: `admin-shell-ClientDiagnostics-1440x900`, `-560x900`, `-detail-1440x900` (re-opened in `monitorref-final-r2`, showing the `#dc2626` Delete), `admin-diagnostics-error-800`, `-empty-1024`.
 
+## Review round (independent review of this branch: no P1, fourteen findings)
+
+Each finding was checked against the code and the official source (`e130f262d`) before it was changed. Request bodies and URLs are unchanged.
+
+| # | Finding | Result | Guard |
+| --- | --- | --- | --- |
+| 1 | `CanOpenHref` accepted the Dashboard catch-all, so a task key with "/", control characters or over 256 characters, or an unvalidated user id, rendered as a link that did nothing | fixed: `AdminRouteResolution.OpensRoute` (route, not catch-all, has a request) gates the link; an unopenable target is plain text. `.` and `..` are no longer valid segments (a browser normalises them away) | `AdminMonitorParityRefreshTests.AHrefOpensARouteOnlyWhenItNamesAPageOfItsOwn`, `AnOverlongSegmentIsNotALinkTarget` |
+| 1a | Can a task key `..` reach Scheduled Tasks and change the API path? | Before the fix `..` passed `IsValidSegment` and reached the page as a segment. The page never used it: `AdminTaskDetailController` checks `AdminTasksApi.IsTaskKey` (pattern, and no `..`) before any read, and `TaskPath` throws before a request, so no different API path was possible. The link now refuses it too. The Scheduled Tasks page is unchanged | `ADotSegmentTaskKeyNeverReachesTheTasksApiPath` |
+| 2 | `ImageService`: the 30 s deadline started before the 16-slot wait, so a queued poster returned null uncached | fixed: the deadline starts after the slot is held and bounds the transfer only. A caller's own cancellation already abandoned its wait in `GetImageDiskPathAsync` (`WaitAsync(ct)`); the shared download never took a caller token, and that is unchanged | `ImageServiceTests.SharedDownloadDeadline_DoesNotCountTimeSpentQueuedForASlot` |
+| 3 | Concurrent native fixture never asserted the stored view; "capability advertised, points without the split" never ran | fixed: asserts `EffectiveView` and the entry's view stay Stacked and the server-stored layout still says Stacked, for the older replica and for the advertised-capability case (`Server.AdvertiseMethodSplit`) | `admin-dashboard` native |
+| 4 | Hover fill behind every new link | fixed: `LinkButton` has its own template with no pointer states (system focus visual and automation name kept); the shared ghost style is untouched | `admin-monitor` native runs the links; the hover itself was not captured |
+| 5 | Recent activity link underlined on hover | fixed: `underlineOnHover: false` for the history link (`hover:text-primary` only) | none (visual) |
+| 6 | Search missed the profile name | fixed. Route labels: the native text catalog is English only, so matching the shown route text is matching official's shown plus English text | `AdminActivityListStateTests.SearchMatchesTheProfileNameAndTheRouteLabelText` |
+| 7 | Search box fixed at 320 | fixed (see Activity table) | `admin-monitor` native: 560 and 639 fill the row (528 of 528, 607 of 607), 640 and up are 320 |
+| 8 | Poster radius 2 | fixed, 8px | `admin-monitor` native checks the radius at every width |
+| 9 | Realtime status not announced | fixed: polite live region on the label; the change is raised on the new element once it is loaded, only when the status text differs from the last one shown. Re-using one status element across rebuilt headers (the first attempt) crashed the native host, so none is kept | `admin-monitor` native: live setting present; a re-render does not announce an unchanged status |
+| 10 | `MonitorSourceProof.Verify()` did nothing unless `SILO_MONITOR_SOURCE_ROOT` was set | fixed: falls back to `SILO_ACCEPTANCE_SOURCE_ROOT` (set by the acceptance script), and logs a SKIP line if neither is set. In `monitorfix-final-r3` it ran and passed: 1,841 documents for `SiloPlayer` and 287 for the host | `admin-monitor` native |
+| 11 | Dashboard store test for unchanged behaviour with a fixed `Task.Delay(50)` | removed | n/a |
+| 12 | `AdminShrinkPanel` overflow unclipped, `_shrinkers` never pruned | fixed: clips to its arranged size (set after layout, not inside it) and prunes removed children on measure | none (no unit seam; visual) |
+| 13 | Per-row `CreateRegistry()` in the Server Activity popover; `RowHover` walked the subtree on every pointer move | fixed: `AdminShellPage.CreateHrefProbe()` resolves the registry once per render; `RowHover` takes the row's expand button when the row is built | none (cost) |
+| 14 | Count badge fill snapshot after a theme switch | established: `ThemeService.ApplyTheme` changes the colours of the shared brushes in place and does not rebuild the main window; `MainServerActivityButton` is declared in `MainWindow.xaml` and lives for the session, so the snapshot fill (`A.Solid`) would not have followed while the text (`AppBackgroundBrush`) did. Fixed: the fill is the live `PrimaryTextBrush` | `admin-monitor` native (fill is the resource brush) |
+
+Not changed: the household streams panel (`SessionDisplayText.cs`, `PlaybackSessionSummary`).
+
 ## Acceptance
 
 One `-Stage final` run on the final source: label `monitorref-final-r2` (lane `D:/SiloPlayer-build/admin-completion-lane-a`), commit `538187b80`: focused 450 and full 10,308 unit cases, zero failures. Native groups all passed: admin-dashboard 334, admin-monitor 1,013, admin-monitor-logs 268, admin-manage-foundation 36, admin-configure-general 188, admin-playback-administration 99, admin-requests-management 37 PASS lines (PASS lines count assertions and captures, not unit tests), zero FAIL lines. `monitorref-final-r1` failed only the source-guard unit test that lists approved Monitor surface files (`AdminShrinkPanel.cs` was not yet registered); it was registered in `admin-monitor-surfaces.json` and the whole run repeated.
+
+### Review round acceptance
+
+Merged Beta `65e9ac880` (normal merge; the only conflict was `docs/current-development.md`, resolved by keeping this branch's entry on top of Beta's; `admin-monitor-surfaces.json` merged cleanly and parses). Final run `monitorfix-final-r3` (lane `D:/SiloPlayer-build/admin-completion-lane-a`, source `4e50b3a90`): focused 793 and full 10,387 unit cases, zero failures. Native, PASS lines with zero FAIL: admin-monitor 1,036, admin-dashboard 339, admin-monitor-logs 268, admin-manage-foundation 36, admin-configure-general 188, admin-playback-administration 99, admin-requests-management 37. The poster-loading viewer selector `artwork-first-mount` in the same run failed five overlay/badge assertions ("custom PosterCard applies loaded overlay preferences without rebind" and four like it); with all review fixes reverted on top of the merge (`monitorfix-exp-r6`) it fails the same way, so it is a baseline failure and is not attributed to the fixes. `retained-library` (70 PASS) and `poster-captions` (2 PASS) passed on the final source (`monitorfix-viewer-r1`). `monitorfix-final-r1` and `-r2` ended with a native host crash in `admin-monitor` (see finding 9); `monitorfix-exp-r1` to `r6` were bisection runs.
+
+Captures opened and looked at (`monitorfix-final-r3-admin-monitor`): `admin-activity-560x900` (the search box spans the row), `admin-activity-1440x900` (320 wide; Live status line), `admin-indicator-active` (count badges). Not seen: link hover (no capture of a hovered state), poster corners with an image (fixture posters do not load; only the empty placeholder, which keeps the radius, was drawn), the live region in a screen reader.
 
 ## Limits
 
