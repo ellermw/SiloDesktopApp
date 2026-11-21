@@ -180,11 +180,11 @@ public static class AdminBackupPresentation
 
     public static string? KnownSiloVersion(string? version)
     {
-        var trimmed = version?.Trim();
+        var trimmed = AdminBackupText.Plain(version, 64);
         return !string.IsNullOrEmpty(trimmed) && !trimmed.Equals("unavailable", StringComparison.OrdinalIgnoreCase) ? trimmed : null;
     }
 
-    public static string ShortServerId(string serverId) => serverId.Split('-')[0] is { Length: > 0 } head ? head : serverId;
+    public static string ShortServerId(string serverId) => AdminBackupText.Plain(serverId.Split('-')[0] is { Length: > 0 } head ? head : serverId, 64);
     public static string? SourceServerName(string? serverName) => AdminBackupText.Plain(serverName) is { Length: > 0 } name ? name : null;
 
     public static bool IsFinished(AdminBackup backup) => backup.Status is "complete" or "complete_with_warnings" ||
@@ -365,7 +365,9 @@ public static class AdminBackupPresentation
 
     public static string RestoreCommand(string? location)
     {
-        if (string.IsNullOrEmpty(location)) return "silo backup restore --from <" + T("web.admin.backups.restoreCommand.folderPlaceholder") + ">";
+        // A location holding control or direction characters cannot be shown or copied faithfully: the command would not read as it runs.
+        if (string.IsNullOrEmpty(location) || AdminBackupText.Plain(location, int.MaxValue) != location)
+            return "silo backup restore --from <" + T("web.admin.backups.restoreCommand.folderPlaceholder") + ">";
         var from = IsBucketLocation(location) ? location.TrimEnd('/') : location;
         return "silo backup restore --from " + ShellPath(from);
     }
@@ -402,8 +404,8 @@ public static class AdminBackupPresentation
     {
         if (reason == "too_large") return T("web.admin.backups.warnings.tooLarge", new { count });
         var reading = Reading.Match(cause);
-        return reading.Success && reading.Groups[1].Value.Trim().Length > 0
-            ? T("web.admin.backups.warnings.partUnreadable", new { count, part = reading.Groups[1].Value.Trim() })
+        return reading.Success && AdminBackupText.Plain(reading.Groups[1].Value).Length > 0
+            ? T("web.admin.backups.warnings.partUnreadable", new { count, part = AdminBackupText.Plain(reading.Groups[1].Value) })
             : T("web.admin.backups.warnings.dataUnreadable", new { count });
     }
 

@@ -109,11 +109,17 @@ public sealed class AdminBackupsRefreshTests
     }
 
     [Fact]
-    public void AMalformedChangeListIsRefusedWhileNewCodesAreNot()
+    public void AMalformedChangeListIsToleratedLikeTheOfficialClientAndNewCodesAreNotRefused()
     {
-        Assert.Throws<InvalidDataException>(() => Section("\"title\",null"));
-        Assert.Throws<InvalidDataException>(() => Template("null"));
-        Assert.Throws<InvalidDataException>(() => Section("\"title\"", ",\"missing_collection_items\":-1"));
+        // The server emits neither a null entry nor a negative count. The official client skips the entry and reads the count as 0 (changeLabel ?? 0),
+        // so the preview opens instead of failing as a whole.
+        var section = Section("\"title\",null,\"collection_items\"", ",\"missing_collection_items\":-3");
+        Assert.Equal(["title", "collection_items"], Model.Changes(section));
+        Assert.Equal(["Title", "0 collection items"], Model.Changes(section).Select(change => Model.ChangeLabel(section, change)));
+        var template = Template("null,\"title\",null");
+        Assert.Equal(["Title"], Model.Changes(template).Select(change => Model.ChangeLabel(template, change)));
+        Assert.Equal(["Title"], Model.Changes(Template("\"title\",null")).Select(change => Model.ChangeLabel(template, change)));
+        Assert.Empty(Model.Changes(Template("null")));
         Assert.Equal("future_code", Model.ChangeLabel(Section("\"future_code\""), "future_code"));
     }
 
@@ -213,6 +219,21 @@ public sealed class AdminBackupsRefreshTests
         Assert.Equal("a\uFFFDb", AdminBackupText.Plain("a\uD800b"));
     }
 
+    [Theory]
+    [InlineData("ab\tcd-secret")]        // a tab, which Plain turns into a space
+    [InlineData("ab\u200Ecd-secret")]    // a direction mark, which Plain drops
+    [InlineData("ab\ncd-secret")]        // a line break, which Plain turns into a space
+    public void ATypedSecretIsRedactedFromTheRawTextBeforeItIsCleaned(string secret)
+    {
+        // The server echoed the value as typed; the match has to happen before the text is made plain, or the cleaned copy no longer matches it.
+        var echoed = "the key " + secret + " was refused";
+        var safe = AdminBackupValidation.SafeServerText(echoed, secret);
+        Assert.DoesNotContain("cd-secret", safe, StringComparison.Ordinal);
+        Assert.Equal("the key <redacted> was refused", safe);
+        var keyed = AdminBackupValidation.SafeServerText("user " + secret + " denied", "unrelated", secret);
+        Assert.Equal("user <redacted> denied", keyed);
+    }
+
     [Fact]
     public void ServerMessagesAreNeutralizedBeforeTheyAreRedactedAndBounded()
     {
@@ -257,6 +278,88 @@ public sealed class AdminBackupsRefreshTests
         Assert.Contains("Home evil", label, StringComparison.Ordinal);
         Assert.DoesNotContain("\u202E", label, StringComparison.Ordinal);
         Assert.DoesNotContain("\n", label, StringComparison.Ordinal);
+    }
+
+    // ── Third-party text in the restore model ────────────────────────
+
+    private const string Hostile = "Movies\n\u202Egnp.exe\u2029 extra";
+    private const string Cleaned = "Movies gnp.exe extra";
+
+    private static void AssertPlain(string? text)
+    {
+        Assert.NotNull(text);
+        Assert.DoesNotContain("\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\u202E", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\u2029", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LibraryNamesAreNeutralizedWhereverTheyAreRead()
+    {
+        var set = Parse() with { LibraryMap = [new() { BackupId = "b1", Name = Hostile, LocalId = "7", Status = "matched", Selectable = true }] };
+        var names = Model.LibraryNames(set, [new("9", Hostile)]);
+        Assert.Equal(Cleaned, names.Backup["b1"]);
+        Assert.Equal(Cleaned, names.Local["7"]);
+        Assert.Equal(Cleaned, names.Local["9"]);
+    }
+
+    [Fact]
+    public void ALibraryGroupHeadingAndTheRowDetailsCarryOnlyPlainNames()
+    {
+        var set = Parse() with { LibraryMap = [new() { BackupId = "b1", Name = Hostile, Status = "matched", Selectable = true }] };
+        var names = Model.LibraryNames(set, [new("9", Hostile)]);
+        var collection = Parse(BackupJson.Section("collections", BackupJson.Item("c1", "collection", "differs",
+            extra: ",\"collection\":{\"library_ids\":[\"9\"],\"items\":1,\"missing_items\":0,\"unknown_items\":0}"))).Sections![0].Items![0];
+        var groups = Model.GroupByLibrary([collection], names);
+        Assert.Equal(Cleaned, Assert.Single(groups).Name);
+        Assert.Contains(Cleaned, Model.RowSecondary(collection, names, withLibrary: true), StringComparison.Ordinal);
+        AssertPlain(Model.RowSecondary(collection, names, withLibrary: true));
+        var byBackupId = Parse(BackupJson.Section("collections", BackupJson.Item("c2", "collection", "not_on_this_server", requires: "\"libraries:b1\"",
+            extra: ",\"collection\":{\"library_ids\":[],\"items\":1,\"missing_items\":0,\"unknown_items\":0}"))).Sections![0].Items![0];
+        Assert.Equal(Cleaned, Assert.Single(Model.GroupByLibrary([byBackupId], names)).Name);
+    }
+
+    [Fact]
+    public void ALibraryRowsFoldersAreNeutralizedAndNamesInTheSameFoldersSentenceToo()
+    {
+        var names = Model.LibraryNames(Parse(), [new("9", Hostile)]);
+        var library = Parse(BackupJson.Section("libraries", BackupJson.Item("4", "library", "differs",
+            extra: ",\"library\":{\"type\":\"movies\",\"paths\":[\"/media/a\\nb\",\"/x\\u202Ey\"]}"))).Sections![0].Items![0];
+        Assert.Equal("/media/a b, /xy", Model.RowSecondary(library, names));
+        var same = Parse(BackupJson.Section("libraries", BackupJson.Item("5", "library", "on_this_server", selectable: false,
+            extra: ",\"library\":{\"type\":\"movies\",\"paths\":[\"/m\"],\"local_id\":\"9\"}"))).Sections![0].Items![0] with { Label = Hostile };
+        var sentence = Model.RowSecondary(same, names);
+        Assert.Contains(Cleaned, sentence, StringComparison.Ordinal);
+        AssertPlain(sentence);
+        var unmapped = Model.RowSecondary(same with { Library = same.Library! with { LocalId = null } }, names);
+        AssertPlain(unmapped);
+        Assert.Contains(Cleaned, unmapped, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheNamesOfUnmatchedAndHiddenProfilesAreNeutralizedInTheirList()
+    {
+        var shown = Model.TitleList(["a\nb", "\u202Ec", "d"]);
+        AssertPlain(shown);
+        Assert.Contains("a b", shown, StringComparison.Ordinal);
+        Assert.Contains("c", shown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ServerValuesTheBackupPagesPrintAreNeutralized()
+    {
+        Assert.Equal("1.0", Present.KnownSiloVersion("1.0\n\u202E"));
+        Assert.Null(Present.KnownSiloVersion("\u202E \n"));
+        AssertPlain(Present.ShortServerId("ab\u202Ecd-ef"));
+        // A part name inside an omission message reaches the summary line.
+        var omitted = JsonSerializer.Deserialize<AdminBackupOmitted>("{\"section\":\"users\",\"id\":\"u1\",\"label\":\"x\",\"reason\":\"unreadable\",\"message\":\"reading pa\\u202Ert\\n1: boom\"}", Json)!;
+        var group = Assert.Single(Present.GroupOmissions([omitted]));
+        AssertPlain(group.Summary);
+        Assert.Contains("part 1", group.Summary, StringComparison.Ordinal);
+        // The restore command is shown and copied as one piece: a location that cannot be shown faithfully is not put into it.
+        Assert.Equal("silo backup restore --from /data/backups/one", Present.RestoreCommand("/data/backups/one"));
+        Assert.Equal(Present.RestoreCommand(null), Present.RestoreCommand("/data/\u202Egnp"));
+        Assert.Equal(Present.RestoreCommand(null), Present.RestoreCommand("/data/a\nb"));
     }
 
     // ── Paused schedule, destination, toggles ────────────────────────
@@ -325,14 +428,33 @@ public sealed class AdminBackupsRefreshTests
     [Fact]
     public void EveryBackupsStringThatChangedSinceThePinIsInTheCatalogVerbatim()
     {
-        Assert.Equal(51, AdminBackupsOfficialStrings.ChangedSincePin.Length);
-        foreach (var (key, pattern, _) in AdminBackupsOfficialStrings.ChangedSincePin)
+        // The expected English is the official file's own text for each key (AdminBackupsOfficialStrings, copied from en.json at
+        // 4a1ee058e), rendered to an ICU pattern here; it is not a second copy of the catalog.
+        var official = JsonDocument.Parse(AdminBackupsOfficialStrings.AstJson).RootElement;
+        var keys = official.EnumerateObject().Select(property => property.Name).ToArray();
+        Assert.Equal(51, keys.Length);
+        foreach (var property in official.EnumerateObject())
         {
-            Assert.True(AdminText.Has(key), key);
-            Assert.Equal(pattern, AdminText.Pattern(key));
+            Assert.True(AdminText.Has(property.Name), property.Name);
+            Assert.Equal(RenderOfficial(property.Value), AdminText.Pattern(property.Name));
         }
-        Assert.Equal(25, AdminBackupsOfficialStrings.ChangedSincePin.Count(entry => entry.Added));
     }
+
+    /// <summary>The official compiled message back to its pattern: literal 0, argument 1, select 5, plural 6.</summary>
+    private static string RenderOfficial(JsonElement nodes) => string.Concat(nodes.EnumerateArray().Select(node =>
+    {
+        var value = node.GetProperty("value");
+        switch (node.GetProperty("type").GetInt32())
+        {
+            case 0: return value.GetString()!;
+            case 1: return "{" + value.GetString() + "}";
+            case 5 or 6:
+                var kind = node.GetProperty("type").GetInt32() == 6 ? "plural" : "select";
+                return "{" + value.GetString() + ", " + kind + ", " + string.Join(" ", node.GetProperty("options").EnumerateObject()
+                    .Select(option => option.Name + " {" + RenderOfficial(option.Value.GetProperty("value")) + "}")) + "}";
+            default: throw new InvalidDataException("unexpected message node " + node.GetProperty("type"));
+        }
+    }));
 
     [Fact]
     public void EveryChangeCodeHasAnOfficialLabelInTheCatalog()

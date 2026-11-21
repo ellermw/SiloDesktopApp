@@ -501,12 +501,12 @@ public static class AdminBackupRestoreModel
     public static AdminRestoreLibraryNames LibraryNames(AdminBackupRestoreSet set, IReadOnlyList<AdminBackupLocalLibrary> local)
     {
         var localNames = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var library in local) localNames[library.Id] = library.Name;
+        foreach (var library in local) localNames[library.Id] = PlainName(library.Name);
         var backupNames = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var mapping in set.LibraryMap ?? [])
         {
-            backupNames[mapping.BackupId!] = mapping.Name!;
-            if (mapping.LocalId is { Length: > 0 } localId && !localNames.ContainsKey(localId)) localNames[localId] = mapping.Name!;
+            backupNames[mapping.BackupId!] = PlainName(mapping.Name);
+            if (mapping.LocalId is { Length: > 0 } localId && !localNames.ContainsKey(localId)) localNames[localId] = PlainName(mapping.Name);
         }
         return new(localNames, backupNames);
     }
@@ -517,11 +517,11 @@ public static class AdminBackupRestoreModel
         if (item.HomeSection?.Scope == "home") return ("home", T("web.admin.backups.restore.library.home"));
         var localId = item.HomeSection?.LibraryId ?? item.Collection?.LibraryIds?.FirstOrDefault();
         if (!string.IsNullOrEmpty(localId))
-            return ("local:" + localId, names.Local.TryGetValue(localId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = localId }));
+            return ("local:" + localId, names.Local.TryGetValue(localId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = PlainName(localId) }));
         if ((item.Requires ?? []).FirstOrDefault(key => key.StartsWith("libraries:", StringComparison.Ordinal)) is { } required)
         {
             var backupId = required["libraries:".Length..];
-            return ("backup:" + backupId, names.Backup.TryGetValue(backupId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = backupId }));
+            return ("backup:" + backupId, names.Backup.TryGetValue(backupId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = PlainName(backupId) }));
         }
         return ("none", T("web.admin.backups.restore.library.none"));
     }
@@ -581,12 +581,13 @@ public static class AdminBackupRestoreModel
     /// </summary>
     public static string ChangeLabel(AdminBackupRestoreItem item, string change)
     {
-        if (change == "collection_items") return Counted("web.admin.backups.restore.rows.change.collectionItems", item.HomeSection?.MissingCollectionItems ?? 0);
+        if (change == "collection_items") return Counted("web.admin.backups.restore.rows.change.collectionItems", Math.Max(0, item.HomeSection?.MissingCollectionItems ?? 0));
         return ChangeCodes.Contains(change) ? T("web.admin.backups.restore.rows.change." + Camel(change)) : AdminBackupText.Plain(change);
     }
 
-    /// <summary>A row's change codes: a home section's, else a template collection's.</summary>
-    public static IReadOnlyList<string> Changes(AdminBackupRestoreItem item) => item.HomeSection?.Changes ?? item.Collection?.Changes ?? [];
+    /// <summary>A row's change codes: a home section's, else a template collection's. A null entry has nothing to show and is skipped, as the official client does.</summary>
+    public static IReadOnlyList<string> Changes(AdminBackupRestoreItem item) =>
+        (item.HomeSection?.Changes ?? item.Collection?.Changes ?? []).Where(change => change != null).ToArray();
 
     /// <summary>
     /// The line under an account's name: what merging adds, then the username and email when the name is not already one of them
@@ -618,8 +619,8 @@ public static class AdminBackupRestoreModel
         {
             case "library":
                 var local = item.Library?.LocalId is { } localId && names.Local.TryGetValue(localId, out var named) ? named : null;
-                if (State(item) == AdminRestoreItemState.Same) return T("web.admin.backups.restore.row.sameFolders", new { name = local ?? item.Label });
-                return item.Library?.Paths is { } paths ? string.Join(", ", paths) : null;
+                if (State(item) == AdminRestoreItemState.Same) return T("web.admin.backups.restore.row.sameFolders", new { name = local ?? PlainName(item.Label) });
+                return item.Library?.Paths is { } paths ? string.Join(", ", paths.Select(path => AdminBackupText.Plain(path, 400))) : null;
             case "plugin":
                 return item.Plugin?.InstalledVersion is { Length: > 0 } version ? T("web.admin.backups.restore.row.pluginInstalled", new { version })
                     : T("web.admin.backups.restore.row.pluginNotInstalled");
@@ -688,7 +689,7 @@ public static class AdminBackupRestoreModel
 
     public static string TitleList(IReadOnlyList<string> titles)
     {
-        var shown = ListPhrase(titles.Take(10).ToArray());
+        var shown = ListPhrase(titles.Take(10).Select(title => PlainName(title)).ToArray());
         var rest = titles.Count - 10;
         return rest > 0 ? T("web.profiles.dataTypes.titleListMore", new { titles = shown, count = rest }) : shown;
     }
