@@ -27,7 +27,7 @@ public sealed class AdminPlaybackAuditTests
     private const string OfficialHistoryFixture = """
         {"items":[{"session_id":"sess-9007199254740993","user_id":"9007199254740993","username":"laura","profile_id":"p-owner","profile_name":"Laura",
         "media_item_id":"movie-1","media_file_id":"42","media_title":"Synthetic Movie","media_type":"movie","play_method":"direct_play",
-        "started_at":"2026-01-02T02:04:05.678Z","ended_at":"2026-01-02T03:04:05.678Z","watched_seconds":3600,"duration_seconds":5400.5,"completed":true,
+        "started_at":"2026-01-02T02:04:05.678Z","ended_at":"2026-01-02T03:04:05.678Z","end_position_seconds":3600,"duration_seconds":5400.5,"completed":true,
         "played_seconds":120,"series_title":"","season_number":null,"episode_number":null,"measured":true,"start_position_seconds":3480,"paused_seconds":15,
         "measured_since":"2026-01-02T03:01:05.678Z","measured_until":"2026-01-02T03:03:05.678Z","client_ip":"2001:db8::7","device_id":"iphone-1",
         "device_platform":"iOS","client_name":null,"client_version":null,"video_decision":"direct","audio_decision":null,"end_reason":"stopped","lifecycle_seq":null}],
@@ -245,6 +245,7 @@ public sealed class AdminPlaybackAuditTests
         Assert.Equal("9007199254740993", row.UserId); // opaque string; never narrowed to a double
         Assert.Equal("42", row.MediaFileId);
         Assert.True(row.Completed);
+        Assert.Equal(3600, row.WatchedSeconds); // sent as end_position_seconds
         Assert.Equal(120, row.PlayedSeconds);
         Assert.Equal(5400.5, row.DurationSeconds);
         Assert.True(row.Measured);
@@ -278,6 +279,19 @@ public sealed class AdminPlaybackAuditTests
         using var _ = AppStrings.UseForCurrentFlow(English);
         var error = Assert.Throws<InvalidDataException>(() => AdminPlaybackHistoryApi.ValidateWindow(page, 100));
         Assert.Equal("Invalid playback history page. Reload the page.", error.Message);
+    }
+
+    [Fact]
+    public void TheEndPositionIsAcceptedUnderItsCurrentNameAndUnderTheOlderOne()
+    {
+        // Silo Server 9df62cd42 (#4552) renamed watched_seconds to end_position_seconds with no alias. Entry() uses the older name.
+        AdminPlaybackHistoryRow Row(string entry) => Assert.Single(AdminPlaybackHistoryApi.ValidateWindow(
+            JsonSerializer.Deserialize<AdminPlaybackHistoryWirePage>("{\"items\":[" + entry + "],\"page\":{\"has_more\":false}}", SnakeCase), 100).Rows);
+        Assert.Equal(3000, Row(Entry(1)).WatchedSeconds);
+        Assert.Equal(1800, Row(Entry(1).Replace("\"watched_seconds\":3000", "\"end_position_seconds\":1800")).WatchedSeconds);
+        Assert.Equal(1800, Row(Entry(1).Replace("\"watched_seconds\":3000", "\"end_position_seconds\":1800,\"watched_seconds\":3000")).WatchedSeconds);
+        using var _ = AppStrings.UseForCurrentFlow(English);
+        Assert.Throws<InvalidDataException>(() => Row(Entry(1).Replace("\"watched_seconds\":3000,", "")));
     }
 
     [Fact]
