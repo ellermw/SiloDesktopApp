@@ -110,7 +110,13 @@ public sealed partial class PluginRoutePage : Page
                 // to the plugin-content parent path. Account credentials are therefore attached
                 // only there; plugin script calling any other server API gets no authority.
                 if (!PluginContentPaths.IsWithinContentParent(origin, target))
+                {
+                    // A request redirected here from a plugin-content URL still carries the headers its first leg was given:
+                    // request headers survive a same-origin redirect. Take them off before it reaches any other server API.
+                    foreach (var name in PluginContentPaths.AccountHeaderNames)
+                        if (eventArgs.Request.Headers.Contains(name)) eventArgs.Request.Headers.RemoveHeader(name);
                     return;
+                }
                 try
                 {
                     // Atomically validate the captured owner and snapshot its headers.

@@ -72,6 +72,19 @@ internal static class PluginCutoverNativeFixture
                 "A plugin fetch outside the plugin-content mount carried account credentials: " + string.Join(", ", adminProbe.SelectMany(r => r.CredentialHeaders)));
             Program.Log("PASS: plugin script fetching a server API outside the plugin-content mount carries no bearer, profile or device headers.");
 
+            // The plugin answers a request under its own path with a same-origin redirect to a server API. The first leg is
+            // authorized; the redirected leg must arrive without any account header.
+            await web.ExecuteScriptAsync("fetch('/api/v2/plugin-content/plugins/7/redirect-admin').then(r => document.body.dataset.redirectProbe = String(r.status), () => document.body.dataset.redirectProbe = 'failed')");
+            await UntilScript(web, "Boolean(document.body.dataset.redirectProbe)");
+            var firstLeg = server.Requests.Where(r => r.Path == "/api/v2/plugin-content/plugins/7/redirect-admin").ToArray();
+            var redirected = server.Requests.Where(r => r.Path == "/api/v2/admin/redirect-probe").ToArray();
+            Check(firstLeg.Length == 1 && firstLeg[0].OwnerMatches, "The redirect probe's first leg was not an authorized plugin-content request.");
+            Check(redirected.Length == 1 && !redirected[0].OwnerMatches && !redirected[0].CredentialHeaders.Any(name =>
+                name.Equals("Authorization", StringComparison.OrdinalIgnoreCase) || name.StartsWith("X-Profile-", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("X-Silo-Device-", StringComparison.OrdinalIgnoreCase)),
+                "A plugin-content request redirected to a server API kept account credentials (" + redirected.Length + " requests): " + string.Join(", ", redirected.SelectMany(r => r.CredentialHeaders)));
+            Program.Log("PASS: a plugin-content request redirected to a server API arrives without bearer, profile or device headers.");
+
             await web.ExecuteScriptAsync("fetch('/api/v1/plugins/7/stale').then(r => document.body.dataset.legacyStatus = String(r.status))");
             await UntilScript(web, "document.body.dataset.legacyStatus === '410'");
             Check(server.LegacyReads == 0, "A plugin-owned absolute v1 fetch reached the retired server route");
@@ -277,6 +290,8 @@ internal static class PluginCutoverNativeFixture
                     { Interlocked.Increment(ref StyleReads); type = "text/css"; text = "body { --cutover-ready: yes; }"; }
                     else if (path.EndsWith("/probe", StringComparison.Ordinal))
                     { Interlocked.Increment(ref ProbeReads); text = "ready"; }
+                    else if (path.EndsWith("/redirect-admin", StringComparison.Ordinal))
+                    { status = 302; extraHeaders = "Location: /api/v2/admin/redirect-probe\r\n"; }
                     else if (path.EndsWith("/redirect-external", StringComparison.Ordinal))
                     { status = 302; extraHeaders = "Location: " + RedirectOrigin + "/external-target\r\n"; }
                     else if (path.EndsWith("/redirect-return", StringComparison.Ordinal))

@@ -172,6 +172,8 @@ public sealed partial class PluginRoutePage
         core.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
         core.BasicAuthenticationRequested += (_, e) => e.Cancel = true;
         core.ClientCertificateRequested += (_, e) => { e.Cancel = true; e.Handled = true; };
+        // A crashed or unresponsive web view process shows nothing: drop the plugin session and offer Reload.
+        core.ProcessFailed += (_, _) => { if (_adminTornDown) return; BlankAdminContent(); ShowAdminState(AdminContentState.LoadFailed); };
         core.NavigationStarting += OnAdminNavigationStarting;
         core.FrameNavigationStarting += OnAdminFrameNavigationStarting;
         core.NavigationCompleted += OnAdminNavigationCompleted;

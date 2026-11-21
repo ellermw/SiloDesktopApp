@@ -338,8 +338,38 @@ public sealed class AdminPluginAppsTests
     [InlineData("https://silo.test/", "https://other.test/api/v2/plugin-content/plugins/7/", false)]
     [InlineData("https://silo.test/silo/", "https://silo.test/silo/api/v2/plugin-content/plugins/7/", true)]
     [InlineData("https://silo.test/silo/", "https://silo.test/api/v2/plugin-content/plugins/7/", false)]
+    [InlineData("https://silo.test/", "https://silo.test/api/v2/plugin-content/plugins/7/api/tags/50%25", true)]
+    [InlineData("https://silo.test/", "https://silo.test/api/v2/plugin-content/plugins/7/api/items/a%2Fb", false)]
+    [InlineData("https://silo.test/", "https://silo.test/api/v2/plugin-content/plugins/7/%2e%2e/admin", false)]
     public void ViewerCredentialsReachOnlyThePluginContentParent(string server, string target, bool covered) =>
         Assert.Equal(covered, PluginContentPaths.IsWithinContentParent(new Uri(server), new Uri(target)));
+
+    [Fact]
+    public void AnEscapedPercentSignIsAcceptedOnlyForTheViewerPathCheck()
+    {
+        Assert.True(PluginContentPaths.HasPlainSegments("/api/v2/plugin-content/plugins/7/a%25b", allowEscapedPercent: true));
+        Assert.False(PluginContentPaths.HasPlainSegments("/api/v2/plugin-content/plugins/7/a%25b"));
+        Assert.False(PluginContentPaths.HasPlainSegments("/api/v2/plugin-content/plugins/7/a%2fb", allowEscapedPercent: true));
+    }
+
+    [Fact]
+    public void ARequestThatLeavesThePluginContentParentLosesEveryAccountHeader()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "PluginRoutePage.xaml.cs").ReplaceLineEndings("\n");
+        var leave = page.IndexOf("if (!PluginContentPaths.IsWithinContentParent(origin, target))", StringComparison.Ordinal);
+        var strip = page.IndexOf("foreach (var name in PluginContentPaths.AccountHeaderNames)", leave, StringComparison.Ordinal);
+        var exit = page.IndexOf("return;", leave, StringComparison.Ordinal);
+        Assert.True(leave > 0 && strip > leave && strip < exit, "The out-of-content branch must remove the account headers before it returns.");
+        // The list names every header the client adds for the account, the profile and the device.
+        var client = ReadRepoFile("src", "SiloPlayer.Core", "Api", "SiloApiClient.cs").ReplaceLineEndings("\n");
+        var start = client.IndexOf("private void AddHeaders(HttpRequestMessage request)", StringComparison.Ordinal);
+        var end = client.IndexOf("private async Task<HttpResponseMessage> SendWithRetryAsync(", start, StringComparison.Ordinal);
+        Assert.True(start > 0 && end > start);
+        var added = System.Text.RegularExpressions.Regex.Matches(client[start..end], "\"(X-[A-Za-z-]+)\"").Select(match => match.Groups[1].Value).Distinct().ToArray();
+        Assert.NotEmpty(added);
+        Assert.Contains("Authorization", PluginContentPaths.AccountHeaderNames);
+        Assert.All(added, name => Assert.Contains(name, PluginContentPaths.AccountHeaderNames));
+    }
 
     [Fact]
     public void ViewerPageAttachesAccountHeadersOnlyInsideThePluginContentParent()
