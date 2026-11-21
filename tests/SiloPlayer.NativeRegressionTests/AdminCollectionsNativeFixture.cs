@@ -773,7 +773,8 @@ internal static class AdminCollectionsNativeFixture
                 await Click(Find<Button>(page, "CollectionEditorSave"));
                 await Until(() => server.Sent("PATCH", "/api/v2/admin/collections/" + id).Any(), "the next Save patches the created collection");
                 Check(JsonNode.Parse(server.Sent("PATCH", "/api/v2/admin/collections/" + id).Last().Body)!["description"]?.ToString() == "Edited after the rejected title", "the next Save sends the edit made after the rejected title");
-                await Until(() => Texts(page).Any(t => t.StartsWith("Collection saved")), "saved");
+                // The first Save's "Collection saved. Not added: …" notice is still shown. Only the exact text says this Save has finished, after any title it sent.
+                await Until(() => Texts(page).Any(t => t == "Collection saved"), "the next Save finishes with nothing left to report");
                 Check(server.Sent("PUT", "/api/v2/admin/collections/" + id + "/items/m1").Count() == staged, "the rejected title is not sent again with the next Save");
                 await BackToListAsync();
             });
