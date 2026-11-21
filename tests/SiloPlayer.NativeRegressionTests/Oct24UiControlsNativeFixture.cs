@@ -249,8 +249,8 @@ internal static class Oct24UiControlsNativeFixture
             if (path == "/api/v2/collections/server") { AggregateReads++; return Ok(new { libraries = new[] { new { library_id = 1, library_name = "One", total_count = 25 + ExtraCollections, collections = Entries("one-", 20) }, new { library_id = 2, library_name = "Two", total_count = 25 + ExtraCollections, collections = Entries("two-", 20) } } }); }
             if (path.StartsWith("/api/v2/library/")) return Ok(new { collections = Entries(path.Contains("/1/") ? "one-" : "two-", 25 + ExtraCollections) });
             if (path == "/api/v2/admin/playback-history") return Ok(new { items = new[] {
-                new { media_title = "Pilot", series_title = "Show", season_number = 2, episode_number = 4, played_seconds = (int?)0, watched_seconds = 2700, started_at = "2026-10-24T10:00:00Z", ended_at = "2026-10-24T10:01:00Z" },
-                new { media_title = "Pilot", series_title = "Show", season_number = 2, episode_number = 4, played_seconds = (int?)null, watched_seconds = 2700, started_at = "2026-10-24T10:00:00Z", ended_at = "2026-10-24T10:01:00Z" } }, page = new { has_more = false } });
+                new { media_title = "Pilot", series_title = "Show", season_number = 2, episode_number = 4, played_seconds = (int?)0, end_position_seconds = 2700, started_at = "2026-10-24T10:00:00Z", ended_at = "2026-10-24T10:01:00Z" },
+                new { media_title = "Pilot", series_title = "Show", season_number = 2, episode_number = 4, played_seconds = (int?)null, end_position_seconds = 2700, started_at = "2026-10-24T10:00:00Z", ended_at = "2026-10-24T10:01:00Z" } }, page = new { has_more = false } });
             return Ok(new { items = Array.Empty<object>(), groups = Array.Empty<object>(), categories = Array.Empty<object>(), settings = Array.Empty<object>(), import_sources = Array.Empty<object>(), page = new { has_more = false } });
         }
     }

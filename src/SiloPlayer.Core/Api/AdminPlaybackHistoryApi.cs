@@ -99,7 +99,7 @@ public sealed class AdminPlaybackHistoryApi(SiloApiClient client)
     private static AdminPlaybackHistoryRow Project(AdminPlaybackHistoryWireEntry entry)
     {
         if (string.IsNullOrEmpty(entry.SessionId) || !PositiveInteger.IsMatch(entry.UserId ?? "") || !PositiveInteger.IsMatch(entry.MediaFileId ?? "")
-            || entry.StartedAt == null || entry.EndedAt == null || entry.WatchedSeconds is not { } watched || entry.Completed is not { } completed)
+            || entry.StartedAt == null || entry.EndedAt == null || (entry.EndPositionSeconds ?? entry.WatchedSeconds) is not { } watched || entry.Completed is not { } completed)
             throw Invalid();
         return new AdminPlaybackHistoryRow(entry.SessionId, entry.UserId!, entry.Username ?? "", entry.ProfileId ?? "", entry.ProfileName ?? "",
             entry.MediaItemId ?? "", entry.MediaFileId!, entry.MediaTitle ?? "", entry.MediaType ?? "", entry.PlayMethod ?? "",

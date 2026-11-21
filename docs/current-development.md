@@ -31,6 +31,121 @@ end the same way after all their checks (no Beta control run for those three). N
 contrast theme (only a simulated palette), visual or pixel parity, the four sign-in style pages' construction in a
 selector, player toasts.
 
+# November 21 — Household streams: the live-session fields under their current official names
+
+Official Silo Server `c7c155927` (#4561) renamed the playback session fields with no alias: `media_item_id` (was `content_id`),
+`series_title` (was `series_name`), and `media_title` now carries the episode title (`episode_name` is gone). The household streams list
+(`GET /api/v2/profiles/household/sessions`, Settings > Profiles) returns the same session shape (`internal/apiv2/profiles.go`, checked at
+official main `e130f262d412cc7ffc4f0e040bdaba02c132515e`). The native panel read only the old names, so on a current server an episode
+lost its "S1E3 · Show" line and its title was no longer a link. Branch `t3/household-streams-session-names` on Beta `65e9ac880`; versions
+are unchanged. This is viewer code (a household manager need not be an administrator).
+
+Change: `PlaybackSessionSummary` gains `SeriesTitle` and `MediaItemId`; `SessionDisplayText` takes the current names first and the older
+ones when they are absent (`GetSeries`, `GetItemId`, the episode title from `media_title` on a current server and from `episode_name` on an
+older one), and shows "Series" for media type `episode` without series details, as the official `getPlaybackSessionSubtitle` does. The
+title link in `SettingsPage` uses `GetItemId`. The unit fixture `list_household_sessions_ok.json` is again identical to the official
+contract fixture.
+
+Observed, under the SiloOct18Build lease, in run `householdfix-lead-final-r1` on commit `74a2cb5ab`: 55 focused and 10,342 full unit cases
+passed with no failures or skips; app build, self-contained publish and native host build passed; native selectors `household-contracts`
+(12 checks), `profiles-metadata` (11), `admin-manage-foundation` (36) and `admin-monitor` (113) passed; source seal verified.
+
+Not verified: no native group serves household session rows, so the panel itself is covered by unit tests of its text and item id only;
+a live Silo server; what an older server sent in `media_title` for an episode (the older path is kept as it was).
+
+# November 20 — Playback history: the end position under its current official name
+
+Official Silo Server `9df62cd42` (#4552) renamed a history entry's `watched_seconds` to `end_position_seconds` with no alias (the value is
+where the play ended, not how long it was watched). Checked against official main `e130f262d412cc7ffc4f0e040bdaba02c132515e`. Until this
+change the native Admin Playback History reader required the old name and refused every page from a current server with "Invalid playback
+history page", the item "View play history" dialog showed 0 seconds for plays without a measured watch time, and the two history lists on a
+user's page showed an empty value. Branch `t3/history-end-position-contract` on Beta `4a60a2c93`; versions are unchanged.
+
+Change: every reader takes `end_position_seconds` first and `watched_seconds` when the current name is absent, so a server from before the
+rename keeps working (`AdminPlaybackHistoryApi.Project`, `AdminPlaybackHistoryWireEntry.EndPositionSeconds`,
+`PlaybackHistoryPresentation.Format`, and a `current|older` column form in `AdminUsersPage.AddRows` used by the two history lists, whose
+label is now "End position seconds"). An entry with neither name is still refused. The account summary's `watched_seconds` total is a
+different, unrenamed field and is untouched. The live-session row rename of `c7c155927` (#4561) is not part of this change; it belongs to
+the Monitor refresh.
+
+Observed, under the SiloOct18Build lease, in run `historyfix-lead-final-r1` on commit `e645b0b84`: 212 focused and 10,269 full unit cases
+passed with no failures or skips; app build, self-contained publish and native host build passed; native selector `admin-playback-audit`
+passed. On the same build, run `historyfix-lead-native-r2`: `oct24-ui` (the play history dialog, now fed the current name),
+`admin-manage-foundation` (36 checks) and `admin-monitor` (113) passed.
+
+Found during this run and not caused by it: the native selector `admin-users` fails on Beta itself. Its 162 checks pass and the run then
+ends with `COMException 0x80040200` from `AdminUsersNativeFixture.InvokeAsync` in `PreviewInterruptionChecksAsync`
+(`AdminUsersNativeFixture.cs:397`). The same failure, with the same counts, was observed on unchanged Beta `4a60a2c93` in run
+`betacheck-users-r1`. It is not repaired here.
+
+Not verified: a live Silo server (the break and the fix are established from the official contract, the official client and synthetic
+fixtures); the two history lists on a user's page have no test for the renamed field.
+
+# November 21 — Manage › Libraries: review fixes
+
+An independent read-only review of the Libraries refresh found no behavior regression and eleven items, fixed on the same branch. Destructive badges and
+buttons now use the official fixed `--destructive-fill` #dc2626 (a Core constant, `AdminLibrariesPalette`) with the page's own button style, so rest,
+hover and pressed (90%) all keep at least 4.5:1 under white; the shared `DestructiveButtonStyle` is unchanged. The scan queue popover is 16 px. The touch
+Stop button draws its states on a 20 px square inside its 44 px hit area. The phone editor footer has no gap without an error. The table header is 44 px
+(official `h-10` is a minimum under `border-box`) and the editor close icon is centred 25 px from the dialog's top and right edges. `FlexWrapStretchPanel`
+caches natural widths and counts gaps for unbounded width; `CardActionRow` keeps every child. The native fake channel now sends the scans snapshot only
+when the channel's ref-count rises from 0 to 1, and a fresh page opened while the activity store holds `scans` shows its scan rows and queue from the
+store (no product defect found); the visual matrix restores the server list in a `finally`. Findings, outcomes and guards are in `docs/parity/admin-manage-libraries.md`.
+
+Observed, under the SiloOct18Build lease, in final run librariesfix-final-r4 on commit d7ecf34ac (source and payload seals verified by the script): 168
+focused (filter `FullyQualifiedName~AdminLibraries`) and 10,282 full unit cases passed with no failures or skips; app build, publish and native host build
+passed; native admin-libraries (611 PASS lines), admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and
+admin-monitor (113) passed with no FAIL lines. Earlier runs of this label were repeated for fixture defects only: final-r1 (the new fixture file lacked a using for
+`LayoutInformation`), final-r2 (the seed scenario re-opened the controller in place without re-opening the diagnostics as the page does, so the Unmatched
+section never loaded), final-r3 (one check asserted the stop button's own unused Background instead of its transparent hit-area grid); no product change
+was made between them. Captures opened: 1440 × 900 list, editor General and delete-confirm (the popup layer is not rasterized by this host, so the dialog itself
+is not in that capture); 800 × 600 list; 560 × 800 editor (Advanced). Not seen in any capture: the scan queue popover and card menu (popup layer) and the hover
+and pressed looks (verified through the resolved colours of the real visual states, not pictures). Not established: pixel or visual parity, a live server, real pointer input.
+
+Beta merge and final run: Beta `65e9ac880` (Autoscan Sources, #219) was merged with a normal merge (`1599224fd`); the only conflict was this
+file, where both sides' entries are kept. Final run `librariesref-lead-final-r2` on `1599224fd`, under the SiloOct18Build lease: 168 focused
+and 10,348 full unit cases passed with no failures or skips; app build, self-contained publish and native host build passed; native
+selectors `admin-libraries` (611 checks), `admin-manage-library-settings` (84), `admin-manage-foundation` (36), `admin-configure-general`
+(188) and `admin-monitor` (113) passed; source and payload seals verified. The run before it on the same commit,
+`librariesref-lead-final-r1`, stopped in the full unit suite on one case of another page,
+`AdminStorageSettingsControllerTests.AcknowledgedJobSurvivesAFailedFirstReadAndIsPolledThroughCompletion(previousTerminal: True)`
+("Timed out: open" after 2 ms); nothing was changed and the run was repeated.
+
+# November 20 — Manage › Libraries refreshed against official e130f262d
+
+The Libraries page (`/admin/libraries`: list, editor, scan queue, diagnostics, dialogs) on branch `t3/admin-libraries-parity-refresh`
+was compared with official Silo Server `e130f262d412cc7ffc4f0e040bdaba02c132515e` (the page was built against `17d5376cea9a`).
+Versions are unchanged. **No official server was running and there are no official screenshots**: the layout work is a source comparison
+plus captures that were opened and read (the parity document lists which); pixel parity is not claimed. Library settings and Autoscan are separate and were not touched.
+
+Upstream, only two changes reach this page: matcher queue paths always left to right (already true in the native `Mono`) and the solid
+`destructive-fill` under white text on red badges and buttons (done). The Libraries operations (72 paths, 157 schemas in their closure) and every
+catalog string the page prints are unchanged, so no request or response shape changed. The page's differences were all in layout: the
+WebUI theme radius is .75rem, so `rounded-md/lg/xl/2xl` are 10/12/16/20 px (the page used 6/8/12/16); table cell padding was 8 not 12 and the
+Actions header was right aligned; secondary badges had no visible fill; buttons were 13 px text with 14 px icons; the editor dialog, tabs,
+diagnostics panels, dashed empty boxes, phone footer, touch stop buttons and the flex-wrap header actions below 1024 px differed; and dates ignored the
+user's date and time format settings (now the shared `DateTimeDisplay`). The full difference table, upstream list, shared-control differences that were
+noted but not changed, and limits are in `docs/parity/admin-manage-libraries.md`.
+
+The native fixture had a defect on Beta: its fake channel never delivered the scans snapshot that the controller waits for, so scan rows never
+appeared and the fixture timed out at its scan-queue step. It now answers a scans subscription with the snapshot and waits for the rows. A new
+visual-matrix fixture captures the page at 1440, 1024, 800 and 560 device-independent pixels in each main state (populated list with scans
+running, diagnostics, scan queue and card menu, editor General/Folders/Metadata/Advanced, a destructive confirmation, empty list, failed read
+with a working Retry) and asserts the geometry it is read against. Popup content cannot be rasterized by this host (the presenter capture is
+empty and the content-only capture has no popup background), so the scan queue popover and card menu were checked through automation, not
+pictures. Some 1024 and 560 captures taken right after a resize are wider than the window with blank margin (a stale frame width at capture
+time); the page content in them is laid out at the window width.
+
+Observed, under the SiloOct18Build lease, in final run librariesref-final-r2 on commit 3e2dd11bc7558b33b9a5f7581246c33bbdd64754 (source and
+payload seals verified by the script): 156 focused (filter `FullyQualifiedName~AdminLibraries`) and 10,270 full unit cases passed with no failures
+or skips; the app build, self-contained publish and native host build passed; native selectors admin-libraries (500 checks),
+admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed with no failures.
+The earlier final run librariesref-final-r1 passed the unit suites and then failed in the Libraries remediation scenario because that fixture's
+service provider had no settings service for the shared date formatter; the fixture was corrected and the full run repeated. Not run: the
+admin-collections, admin-requests-corrections, admin-configure-providers and admin-signin-security groups (known failing on Beta for reasons
+repaired elsewhere). Not established: a live server, real pointer drag, the poster file picker, IME, Narrator, RTL or another locale, all-DPI, or
+visual parity with the official page.
+
 # November 20 — Admin Plugin Apps (navigation group and isolated plugin page)
 
 Branch `t3/admin-plugin-apps`, merged with Beta `32f95df8d` (version unchanged). Official pin
@@ -2543,7 +2658,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2559,7 +2674,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2575,7 +2690,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2593,7 +2708,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2609,7 +2724,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2627,7 +2742,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -2827,7 +2942,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -2835,7 +2950,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -2843,7 +2958,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -2873,7 +2988,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
+Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
