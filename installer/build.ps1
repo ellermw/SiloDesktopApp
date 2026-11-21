@@ -357,6 +357,7 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminActivityPage.xbf',
     'Views/Admin/AdminSubtitlesPage.xbf',
     'Views/Admin/AdminLibrariesPage.xbf',
+    'Views/Admin/AdminCollectionsPage.xbf',
     'Views/Admin/AdminAccessGroupsPage.xbf',
     'Views/Admin/AdminDevicesPage.xbf',
     'Views/Admin/AdminHistoryImportPage.xbf',
@@ -368,6 +369,9 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminEmailSettingsPage.xbf',
     'Views/Admin/AdminNotificationSettingsPage.xbf',
     'Views/Admin/AdminSecuritySettingsPage.xbf',
+    'Views/Admin/AdminApiKeysPage.xbf',
+    'Views/Admin/AdminSignInSettingsPage.xbf',
+    'Views/Admin/AdminPolicyPage.xbf',
     'Views/Admin/AdminNetworkAccessSettingsPage.xbf',
     'Views/Admin/AdminSearchSettingsPage.xbf',
     'Views/Admin/AdminDownloadSettingsPage.xbf',
@@ -379,6 +383,8 @@ $ApprovedMonitorPublishedResources = @(
     'Views/Admin/AdminBackupsPage.xbf',
     'Views/Admin/AdminIntegrationsPage.xbf',
     'Views/Admin/AdminProvidersPage.xbf',
+    'Views/Admin/AdminNodesPage.xbf',
+    'Views/Admin/AdminPlaybackSettingsPage.xbf',
     'Controls/ServerActivityButton.xbf'
 )
 $ForbiddenPublishedResourcePatterns = @(

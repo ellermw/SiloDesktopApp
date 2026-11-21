@@ -1061,6 +1061,8 @@ public partial class SiloApiClient
                 else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal) ||
                     path.StartsWith("/api/v2/admin/notifications", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
+                else if (request.Options.TryGetValue(AdminAccessSensitiveOption, out var adminAccess) && adminAccess)
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_access_transport_failed");
                 else if (request.Options.TryGetValue(AdminResourceSensitiveOption, out var sensitiveAdminResource) && sensitiveAdminResource)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_resource_transport_failed");
                 else if (request.Options.TryGetValue(AdminRequestsSensitiveOption, out var requestsSensitive) && requestsSensitive)
