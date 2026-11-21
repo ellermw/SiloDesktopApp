@@ -30,6 +30,35 @@ public sealed partial class AdminShellPage
         return image;
     }
 
+    /// <summary>
+    /// The image cache names every body .img and a wordmark URL may have no
+    /// extension, so the cached content selects the decoder: BitmapImage cannot
+    /// decode SVG. A vector wordmark that fails to load keeps the bundled default.
+    /// </summary>
+    private static async Task<ImageSource?> WordmarkSourceAsync(string path, CancellationToken ct)
+    {
+        var svg = await Task.Run<byte[]?>(() =>
+        {
+            try
+            {
+                var head = new byte[4096];
+                int length;
+                using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    length = file.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+                return SvgArtwork.IsSvgContent(head.AsSpan(0, length)) ? File.ReadAllBytes(path) : null;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+        }, ct);
+        if (svg == null) return new BitmapImage(new Uri(path));
+        var source = new SvgImageSource();
+        try
+        {
+            using var stream = new MemoryStream(svg);
+            return await source.SetSourceAsync(stream.AsRandomAccessStream()) == SvgImageSourceLoadStatus.Success ? source : null;
+        }
+        catch (Exception error) when (error is not OperationCanceledException) { return null; }
+    }
+
     private void RetireBranding()
     {
         _brandingVersion++;
@@ -64,7 +93,9 @@ public sealed partial class AdminShellPage
             var path = Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
                 ? await images.GetImageDiskPathAsync(server, "admin-server-wordmark", url!, http, read.Token) : null;
             if (!lease.IsCurrent || !ReferenceEquals(lease, _lease) || version != _brandingVersion) return;
-            _serverWordmark = string.IsNullOrWhiteSpace(path) ? null : new BitmapImage(new Uri(path));
+            var wordmark = string.IsNullOrWhiteSpace(path) ? null : await WordmarkSourceAsync(path, read.Token);
+            if (!lease.IsCurrent || !ReferenceEquals(lease, _lease) || version != _brandingVersion) return;
+            _serverWordmark = wordmark;
             _serverBrandName = branding.ServerName;
             RebuildSidebars();
         }

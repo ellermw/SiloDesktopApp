@@ -114,6 +114,33 @@ public sealed class AdminMonitorCorrectionsTests
     }
 
     [Fact]
+    public void StackedActivityCardsKeepTheMeasuredBitrateReading()
+    {
+        // Below the table boundary there is no Bitrate column; each collapsed card carries its own rate.
+        var rows = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminActivityPage.Rows.cs"));
+        var start = rows.IndexOf("private FrameworkElement StackedRow(", StringComparison.Ordinal);
+        var end = rows.IndexOf("private FrameworkElement MethodLine(", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        Assert.Contains("BitrateLine(s)", rows[start..end]);
+    }
+
+    [Fact]
+    public void CachedBrandingBodiesSelectTheSvgDecoderByContent()
+    {
+        static bool Svg(string body) => SvgArtwork.IsSvgContent(System.Text.Encoding.UTF8.GetBytes(body));
+        Assert.True(Svg("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 224 96\"/>"));
+        Assert.True(Svg("﻿<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<!-- wordmark -->\n<svg viewBox=\"0 0 224 96\"/>"));
+        Assert.True(Svg("<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg/>"));
+        Assert.False(Svg("<?xml version=\"1.0\"?><plist/>"));
+        Assert.False(Svg(""));
+        Assert.False(SvgArtwork.IsSvgContent([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, (byte)'<', (byte)'s', (byte)'v', (byte)'g']));
+        // The cache's .img names and extensionless wordmark URLs cannot select the decoder.
+        var branding = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "Admin", "AdminShellPage.Branding.cs"));
+        Assert.Contains("SvgArtwork.IsSvgContent(", branding);
+        Assert.Contains("new SvgImageSource()", branding);
+    }
+
+    [Fact]
     public void RouteColumnOnlyAppearsForDistinctRoutesOrAnExplicitNetwork()
     {
         var a = new AdminActivitySession { RoutingExecution = "api", RoutingEgress = "api", ReportingNode = "local" };
