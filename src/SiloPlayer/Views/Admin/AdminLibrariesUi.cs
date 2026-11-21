@@ -38,23 +38,78 @@ internal static class AdminLibrariesUi
     internal const double RadiusSm = 8, RadiusMd = 10, RadiusLg = 12, RadiusXl = 16, Radius2Xl = 20;
 
     /// <summary>
-    /// The solid fill under white text on destructive badges and buttons (WebUI <c>--destructive-fill</c>, added in
-    /// #4700 so white text reads at 4.5:1). The theme's destructive colour is darkened until white text on it reaches 4.5:1.
+    /// The solid fill under white text on destructive badges and buttons: the official fixed <c>--destructive-fill</c> (#dc2626, 4.83:1 under
+    /// white; added in #4700), from <see cref="AdminLibrariesPalette"/>. A plain computed property: it reads no theme resource, so it cannot throw from a static initializer.
     /// </summary>
-    internal static Color DestructiveFill { get; } = ContrastFill(Destructive, Colors.White);
+    internal static Color DestructiveFill => ToColor(AdminLibrariesPalette.DestructiveFill);
 
-    private static Color ContrastFill(Color fill, Color text)
+    private static Color ToColor(AdminLibrariesPalette.Rgb color, byte alpha = 255) => Color.FromArgb(alpha, color.R, color.G, color.B);
+
+    private static Style? _destructiveStyle;
+    private static Style? _stopStyle;
+
+    /// <summary>
+    /// The style for a named theme button style. <c>DestructiveButtonStyle</c> is this page's own: rest is the official fill, and hover and pressed are the
+    /// fill at 90% (<c>hover:bg-destructive-fill/90</c>) instead of the shared template's lighter theme red, so white text keeps 4.5:1 in every state.
+    /// The shared <c>DestructiveButtonStyle</c> is untouched.
+    /// </summary>
+    internal static Style ButtonStyle(string name) => name == "DestructiveButtonStyle" ? DestructiveStyle() : (Style)Application.Current.Resources[name];
+
+    internal static Style DestructiveStyle()
     {
-        static double Channel(byte value) { var c = value / 255d; return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4); }
-        static double Luminance(Color c) => 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B);
-        static double Ratio(Color a, Color b) { var l1 = Luminance(a); var l2 = Luminance(b); return (Math.Max(l1, l2) + 0.05) / (Math.Min(l1, l2) + 0.05); }
-        var result = fill;
-        for (var step = 1; step <= 20 && Ratio(result, text) < 4.5; step++)
-        {
-            var keep = 1 - step * 0.03;
-            result = Color.FromArgb(255, (byte)(fill.R * keep), (byte)(fill.G * keep), (byte)(fill.B * keep));
-        }
-        return result;
+        if (_destructiveStyle != null) return _destructiveStyle;
+        var hover = ToColor(AdminLibrariesPalette.DestructiveFill, AdminLibrariesPalette.AlphaByte(AdminLibrariesPalette.DestructiveHoverOpacity));
+        var template = (ControlTemplate)XamlReader.Load(
+            "<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>" +
+            "<Border x:Name='WebUiRoot' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='{TemplateBinding BorderThickness}' " +
+            "CornerRadius='{TemplateBinding CornerRadius}' Padding='{TemplateBinding Padding}'>" +
+            "<ContentPresenter x:Name='WebUiContent' Content='{TemplateBinding Content}' ContentTemplate='{TemplateBinding ContentTemplate}' Foreground='{TemplateBinding Foreground}' " +
+            "FontFamily='{TemplateBinding FontFamily}' FontSize='{TemplateBinding FontSize}' FontWeight='{TemplateBinding FontWeight}' " +
+            "HorizontalAlignment='{TemplateBinding HorizontalContentAlignment}' VerticalAlignment='{TemplateBinding VerticalContentAlignment}'/>" +
+            "<VisualStateManager.VisualStateGroups><VisualStateGroup x:Name='CommonStates'>" +
+            "<VisualState x:Name='Normal'/>" +
+            $"<VisualState x:Name='PointerOver'><VisualState.Setters><Setter Target='WebUiRoot.Background' Value='{ArgbHex(hover)}'/></VisualState.Setters></VisualState>" +
+            $"<VisualState x:Name='Pressed'><VisualState.Setters><Setter Target='WebUiRoot.Background' Value='{ArgbHex(hover)}'/></VisualState.Setters></VisualState>" +
+            "<VisualState x:Name='Disabled'><VisualState.Setters><Setter Target='WebUiRoot.Opacity' Value='0.5'/></VisualState.Setters></VisualState>" +
+            "</VisualStateGroup></VisualStateManager.VisualStateGroups></Border></ControlTemplate>");
+        var style = new Style(typeof(Button)) { BasedOn = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, Solid(DestructiveFill)));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, Solid(ToColor(AdminLibrariesPalette.DestructiveForeground))));
+        return _destructiveStyle = style;
+    }
+
+    private static string ArgbHex(Color color) => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    /// <summary>
+    /// The stop-task button (<c>StopTaskButton</c>: <c>h-5 w-5 rounded</c>, <c>hover:bg-destructive/10</c>, a 2 px focus ring). The button keeps whatever size it is given
+    /// (44 px on touch, where only the hit area grows, <c>after:-inset-3</c>) but the hover, pressed and focus shape is always the 20 px square inside it.
+    /// </summary>
+    internal static Style StopStyle()
+    {
+        if (_stopStyle != null) return _stopStyle;
+        var hover = ToColor(new AdminLibrariesPalette.Rgb(Destructive.R, Destructive.G, Destructive.B), AdminLibrariesPalette.AlphaByte(AdminLibrariesPalette.StopHoverOpacity));
+        var ring = Brush("PrimaryTextBrush") is SolidColorBrush primary ? primary.Color : Colors.White;
+        var template = (ControlTemplate)XamlReader.Load(
+            "<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>" +
+            "<Grid x:Name='HitArea' Background='Transparent'>" +
+            "<Border x:Name='StopShape' Width='20' Height='20' CornerRadius='4' BorderThickness='2' BorderBrush='Transparent' Background='Transparent' HorizontalAlignment='Center' VerticalAlignment='Center'>" +
+            "<ContentPresenter x:Name='StopContent' Content='{TemplateBinding Content}' HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>" +
+            "<VisualStateManager.VisualStateGroups>" +
+            "<VisualStateGroup x:Name='CommonStates'>" +
+            "<VisualState x:Name='Normal'/>" +
+            $"<VisualState x:Name='PointerOver'><VisualState.Setters><Setter Target='StopShape.Background' Value='{ArgbHex(hover)}'/></VisualState.Setters></VisualState>" +
+            $"<VisualState x:Name='Pressed'><VisualState.Setters><Setter Target='StopShape.Background' Value='{ArgbHex(hover)}'/></VisualState.Setters></VisualState>" +
+            "<VisualState x:Name='Disabled'><VisualState.Setters><Setter Target='StopShape.Opacity' Value='0.5'/></VisualState.Setters></VisualState>" +
+            "</VisualStateGroup>" +
+            "<VisualStateGroup x:Name='FocusStates'>" +
+            "<VisualState x:Name='Unfocused'/><VisualState x:Name='PointerFocused'/>" +
+            $"<VisualState x:Name='Focused'><VisualState.Setters><Setter Target='StopShape.BorderBrush' Value='{ArgbHex(ring)}'/></VisualState.Setters></VisualState>" +
+            "</VisualStateGroup></VisualStateManager.VisualStateGroups></Grid></ControlTemplate>");
+        var style = new Style(typeof(Button));
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        style.Setters.Add(new Setter(Control.UseSystemFocusVisualsProperty, false));
+        return _stopStyle = style;
     }
 
     private static string? PathData(string name) => name switch
@@ -166,6 +221,12 @@ internal static class AdminLibrariesUi
         internal double RowSpacing { get; set; } = 8;
         internal HashSet<UIElement> FullRow { get; } = [];
 
+        // Each child's natural width, taken from the one unconstrained measure. The second measure pass narrows or widens the children,
+        // which overwrites DesiredSize, so both passes (and Arrange) read these instead.
+        private readonly Dictionary<UIElement, double> _natural = [];
+
+        private double Natural(UIElement child) => _natural.TryGetValue(child, out var width) ? width : child.DesiredSize.Width;
+
         private List<List<UIElement>> Lines(double available)
         {
             var lines = new List<List<UIElement>>();
@@ -174,7 +235,7 @@ internal static class AdminLibrariesUi
             foreach (var child in Children)
             {
                 if (child.Visibility == Visibility.Collapsed) continue;
-                var width = FullRow.Contains(child) ? available : child.DesiredSize.Width;
+                var width = FullRow.Contains(child) ? available : Natural(child);
                 if (line == null || FullRow.Contains(child) || line.Any(FullRow.Contains) || used + ColumnSpacing + width > available + 0.5)
                 {
                     line = []; lines.Add(line); used = width;
@@ -204,13 +265,23 @@ internal static class AdminLibrariesUi
 
         protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size availableSize)
         {
-            foreach (var child in Children) child.Measure(new(double.PositiveInfinity, availableSize.Height));
-            var available = double.IsInfinity(availableSize.Width) ? Children.Sum(child => child.DesiredSize.Width) : availableSize.Width;
-            var lines = Lines(available);
+            _natural.Clear();
+            foreach (var child in Children)
+            {
+                child.Measure(new(double.PositiveInfinity, availableSize.Height));
+                if (child.Visibility != Visibility.Collapsed) _natural[child] = child.DesiredSize.Width;
+            }
+            var shown = Children.Where(child => child.Visibility != Visibility.Collapsed).ToList();
+            if (shown.Count == 0) return new(0, 0);
+            // Unbounded width: everything fits on one line (items at their natural width plus the gaps between them), so basis-full items do not force breaks.
+            var unbounded = double.IsInfinity(availableSize.Width);
+            var available = unbounded ? shown.Sum(Natural) + ColumnSpacing * (shown.Count - 1) : availableSize.Width;
+            var lines = unbounded ? new List<List<UIElement>> { shown } : Lines(available);
+            Func<UIElement, double> floor = unbounded ? (child => Natural(child)) : (child => FullRow.Contains(child) ? 0 : Natural(child));
             var height = 0d;
             foreach (var line in lines)
             {
-                var widths = Widths(line, available, ColumnSpacing, child => FullRow.Contains(child) ? 0 : child.DesiredSize.Width);
+                var widths = Widths(line, available, ColumnSpacing, floor);
                 var lineHeight = 0d;
                 for (var index = 0; index < line.Count; index++) { line[index].Measure(new(widths[index], availableSize.Height)); lineHeight = Math.Max(lineHeight, line[index].DesiredSize.Height); }
                 height += lineHeight;
@@ -224,7 +295,7 @@ internal static class AdminLibrariesUi
             var y = 0d;
             foreach (var line in Lines(finalSize.Width))
             {
-                var widths = Widths(line, finalSize.Width, ColumnSpacing, child => FullRow.Contains(child) ? 0 : child.DesiredSize.Width);
+                var widths = Widths(line, finalSize.Width, ColumnSpacing, child => FullRow.Contains(child) ? 0 : Natural(child));
                 var x = 0d;
                 var lineHeight = line.Max(child => child.DesiredSize.Height);
                 for (var index = 0; index < line.Count; index++)
@@ -238,23 +309,23 @@ internal static class AdminLibrariesUi
         }
     }
 
-    /// <summary>WebUI <c>CardActions</c> with <c>h-11 min-w-0 flex-1</c> buttons: one row of equal-width buttons.</summary>
+    /// <summary>WebUI <c>CardActions</c> with <c>h-11 min-w-0 flex-1</c> buttons: one row of equal-width columns, one per child of <paramref name="source"/> (every child is kept, not only buttons).</summary>
     internal static Grid CardActionRow(StackPanel source)
     {
-        var buttons = source.Children.OfType<Button>().ToArray();
+        var children = source.Children.ToArray();
         source.Children.Clear();
         var row = new Grid { ColumnSpacing = 8 };
-        for (var index = 0; index < buttons.Length; index++)
+        for (var index = 0; index < children.Length; index++)
         {
             row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 0 });
-            buttons[index].HorizontalAlignment = HorizontalAlignment.Stretch;
-            Grid.SetColumn(buttons[index], index);
-            row.Children.Add(buttons[index]);
+            if (children[index] is FrameworkElement element) element.HorizontalAlignment = HorizontalAlignment.Stretch;
+            children[index].SetValue(Grid.ColumnProperty, index);
+            row.Children.Add(children[index]);
         }
         return row;
     }
 
-    /// <summary>A flyout presenter with the WebUI popover/menu radius (<c>rounded-md</c>, 10 px).</summary>
+    /// <summary>A flyout presenter with a WebUI popover or menu radius (the scan queue popover is <c>rounded-xl</c>, 16 px; the card menu is <c>rounded-md</c>, 10 px).</summary>
     internal static Style RoundedPresenterStyle(double radius)
     {
         var style = new Style(typeof(FlyoutPresenter));
@@ -347,8 +418,8 @@ internal static class AdminLibrariesUi
         double iconSize = 14, double gap = 6, double fontSize = 14)
     {
         var button = new Button { MinHeight = height, Height = height, Padding = new(icon == null ? 12 : 10, 0, icon == null ? 12 : 10, 0), CornerRadius = new(RadiusMd), FontSize = fontSize, FontWeight = FontWeights.Medium };
-        button.Style = (Style)Application.Current.Resources[style];
-        // variant="destructive": the solid destructive fill under white text (#4700), whatever the theme's own destructive button uses.
+        button.Style = ButtonStyle(style);
+        // variant="destructive": the solid destructive fill under white text (#4700); this page's style keeps hover and pressed on that fill too.
         var destructive = style == "DestructiveButtonStyle";
         if (destructive) { button.Background = Solid(DestructiveFill); button.Foreground = Solid(Colors.White); }
         if (icon == null) button.Content = label;

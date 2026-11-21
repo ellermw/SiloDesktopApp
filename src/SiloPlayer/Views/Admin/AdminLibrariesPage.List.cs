@@ -92,8 +92,9 @@ public sealed partial class AdminLibrariesPage
             T("web.admin.libraries.column.status"), T("web.admin.libraries.column.lastScanned"), T("web.admin.libraries.column.actions") };
         for (var column = 1; column < headers.Length; column++)
         {
-            var head = Text(headers[column], 14); head.FontWeight = FontWeights.Medium; head.TextWrapping = TextWrapping.NoWrap;
-            Place(grid, Cell(head, HorizontalAlignment.Left, 10), rowIndex, column);
+            // TableHead: h-10 px-2 py-3 with a 20 px line (text-sm). A table cell's height is a minimum, so the 24 px of padding plus the line makes the header 44 px, not 40.
+            var head = Text(headers[column], 14); head.FontWeight = FontWeights.Medium; head.TextWrapping = TextWrapping.NoWrap; head.LineHeight = 20;
+            Place(grid, Cell(head, HorizontalAlignment.Left, 12), rowIndex, column);
         }
         rowIndex++;
 
@@ -375,6 +376,8 @@ public sealed partial class AdminLibrariesPage
     {
         // h-5 w-5 rounded; on touch the hit area grows to 44 px without changing how it looks (after:-inset-3): a 44 px button with a -12 px margin.
         var button = IconButton("square", label, automationId, touch ? 44 : 20, 12, Solid(Destructive), fillIcon: true);
+        // The hover, pressed and focus shape is the 20 px square inside the button (hover:bg-destructive/10, a 2 px ring), whatever the hit area.
+        button.Style = StopStyle();
         button.CornerRadius = new(4);
         if (touch) button.Margin = new(-12);
         return button;

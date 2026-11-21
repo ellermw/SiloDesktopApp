@@ -47,6 +47,7 @@ internal static partial class AdminLibrariesNativeFixture
         {
             var tag = $"{width}x{height}";
             var wide = width >= 1024;
+            var kept = server.Libraries;
             try
             {
                 Resize(window, width, height);
@@ -78,6 +79,17 @@ internal static partial class AdminLibrariesNativeFixture
                 {
                     var actionsHeader = Descendants(shell).OfType<TextBlock>().FirstOrDefault(text => text.Text == AdminLibrariesText.T("web.admin.libraries.column.actions"));
                     Check(actionsHeader?.Parent is Border { HorizontalAlignment: HorizontalAlignment.Left }, $"[{tag}] the Actions column header is start-aligned (TableHead text-start)");
+                    // TableHead is h-10 px-2 py-3 with a 20 px line (text-sm): a table cell's height is a minimum, so 24 px of padding plus the line is 44 px, not 40.
+                    Check(actionsHeader?.Parent is Border { ActualHeight: >= 43.5 and <= 44.5 }, $"[{tag}] the table header cells are 44 px tall (h-10 is a minimum; py-3 + a 20 px line) (is {(actionsHeader?.Parent as Border)?.ActualHeight})");
+                }
+
+                // The stop button keeps its hit area (20 px, 44 px on touch) but draws its states on a 20 px square; the card's Stop-scan button is the page's destructive style.
+                await Until(() => Find<Button>(shell, "LibrariesStopScans_1") is { IsLoaded: true, ActualWidth: > 0 });
+                CheckStopButtonShape(Find<Button>(shell, "LibrariesStopScans_1"), $"[{tag}] the Stop scans button", wide ? 20 : 44);
+                if (!wide)
+                {
+                    await Until(() => Find<Button>(shell, "LibrariesCardScan_1") is { IsLoaded: true, ActualWidth: > 0 });
+                    CheckDestructiveStates(Find<Button>(shell, "LibrariesCardScan_1"), $"[{tag}] the card Stop button");
                 }
 
                 // The diagnostics sections under the list.
@@ -104,6 +116,7 @@ internal static partial class AdminLibrariesNativeFixture
                 await InvokeAsync(Find<Button>(shell, "LibrariesAdd"));
                 await Until(() => Find<FrameworkElement>(shell, "LibraryEditor") != null && Find<TextBox>(shell, "LibraryEditorName") is { IsLoaded: true });
                 await CaptureAsync(outer, $"libraries-matrix-{tag}-editor-general.png");
+                CheckEditorCloseButton(shell, tag, phone: width < 640);
                 foreach (var section in new[] { "Folders", "Metadata", "Advanced" })
                 {
                     await InvokeAsync(Find<Button>(shell, "LibraryEditorTab_" + section));
@@ -111,6 +124,7 @@ internal static partial class AdminLibrariesNativeFixture
                     await Task.Delay(400);
                     await CaptureAsync(outer, $"libraries-matrix-{tag}-editor-{section.ToLowerInvariant()}.png");
                 }
+                if (width < 640) await CheckPhoneFooterAsync(shell, tag);
                 await InvokeAsync(Find<Button>(shell, "LibraryEditorCancel"));
                 await Until(() => page.EditorSession == null && Find<FrameworkElement>(shell, "LibraryEditor") == null);
 
@@ -130,20 +144,23 @@ internal static partial class AdminLibrariesNativeFixture
                     await InvokeAsync(FindInPopups<Button>(window, "LibrariesMenuDelete_1"));
                 }
                 await Until(() => OpenDialog(window) != null);
+                CheckDestructiveStates(DialogControl<Button>(window, "LibrariesDeleteConfirm"), $"[{tag}] the delete confirmation's destructive button");
                 await CaptureAsync(outer, $"libraries-matrix-{tag}-delete-confirm.png");
                 await CapturePopupAsync(window, $"libraries-matrix-{tag}-delete-confirm-popup.png");
                 OpenDialog(window)?.Hide();
                 await Until(() => OpenDialog(window) == null);
 
                 // Empty list.
-                var kept = server.Libraries;
                 server.Libraries = [];
-                _ = controller.ReloadAsync();
-                await Until(() => controller.State.Libraries.Count == 0 && !controller.State.Fetching);
-                await Task.Delay(300);
-                scroll.ChangeView(null, 0, null, true);
-                await CaptureAsync(outer, $"libraries-matrix-{tag}-empty.png");
-                server.Libraries = kept;
+                try
+                {
+                    _ = controller.ReloadAsync();
+                    await Until(() => controller.State.Libraries.Count == 0 && !controller.State.Fetching);
+                    await Task.Delay(300);
+                    scroll.ChangeView(null, 0, null, true);
+                    await CaptureAsync(outer, $"libraries-matrix-{tag}-empty.png");
+                }
+                finally { server.Libraries = kept; } // a failure above must not leave the later viewports on an empty server list
 
                 // A failed read shows the error with a reachable Retry; Retry recovers once the server answers again.
                 server.LibrariesReadFails = true;
@@ -165,6 +182,18 @@ internal static partial class AdminLibrariesNativeFixture
                 ClosePopups(window);
                 OpenDialog(window)?.Hide();
                 if (page.EditorSession != null) await InvokeAsync(Find<Button>(shell, "LibraryEditorCancel"));
+            }
+            finally
+            {
+                // Whatever happened above, the next viewport starts from the full list on a working server.
+                server.Libraries = kept;
+                server.LibrariesReadFails = false;
+                if (controller.State.Libraries.Count != kept.Count || controller.State.Error != null)
+                {
+                    _ = controller.ReloadAsync();
+                    try { await Until(() => controller.State.Error == null && controller.State.Libraries.Count == kept.Count && !controller.State.Fetching); }
+                    catch (InvalidOperationException) { Check(false, $"[{tag}] the list recovers after a failed matrix step"); }
+                }
             }
         }
         Resize(window, 1440, 900);

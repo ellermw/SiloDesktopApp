@@ -87,6 +87,7 @@
     "src/SiloPlayer.Core/Services/Admin/AdminIntegrationsSettings.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminIntegrationPolicy.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminLibrariesController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminLibrariesPalette.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminLibrariesText.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminLibraryDiagnostics.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminLibraryEditorSession.cs",

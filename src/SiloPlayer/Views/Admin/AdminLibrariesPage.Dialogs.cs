@@ -36,7 +36,7 @@ public sealed partial class AdminLibrariesPage
     {
         var button = new Button
         {
-            Content = label, Style = (Style)Application.Current.Resources[style], MinWidth = 0, Height = 36, Padding = new(12, 0, 12, 0), CornerRadius = new(RadiusMd),
+            Content = label, Style = ButtonStyle(style), MinWidth = 0, Height = 36, Padding = new(12, 0, 12, 0), CornerRadius = new(RadiusMd),
             UseSystemFocusVisuals = true,
         };
         // ConfirmDialog variant="destructive": the solid destructive fill under white text (#4700).

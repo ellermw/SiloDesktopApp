@@ -42,7 +42,7 @@ internal sealed class AdminLibraryEditorView : Grid
     private readonly TextBlock _sectionTitle = Text("", 14);
     private readonly TextBlock _sectionDescription = Text("", 12, true);
     private readonly ContentControl _sectionContent = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch };
-    private readonly Grid _footer = new() { ColumnSpacing = 8, RowSpacing = 8 };
+    private readonly Grid _footer = new() { ColumnSpacing = 8 };
     private readonly TextBlock _footerError = Text("", 12);
     private readonly Button _cancel;
     private readonly Button _save;
@@ -192,7 +192,7 @@ internal sealed class AdminLibraryEditorView : Grid
         {
             _panel.Width = root.Width; _panel.Height = root.Height; _panel.CornerRadius = new(0); _panel.BorderThickness = new(0);
             // max-sm: header ps-4 pe-2 pt-3 pb-3 with its own 44 px close button; footer px-4 pt-3 pb-3 with 44 px buttons.
-            _header.Padding = new(16, 12, 8, 12); _close.Margin = new(0);
+            _header.Padding = new(16, 12, 8, 12); _close.Margin = new(0); _close.HorizontalAlignment = HorizontalAlignment.Right;
             _footer.Padding = new(16, 12, 16, 12);
             _cancel.Height = _cancel.MinHeight = _save.Height = _save.MinHeight = 44;
         }
@@ -223,19 +223,26 @@ internal sealed class AdminLibraryEditorView : Grid
             _tabScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; _tabScroll.VerticalScrollMode = ScrollMode.Enabled;
             _tabScroll.BorderBrush = Brush("BorderBrush"); _tabScroll.BorderThickness = new(0, 0, 1, 0);
             _sectionHost.Padding = new(24, 20, 24, 20);
-            // sm: the dialog's own 16 px close icon sits at end-4 top-4 (centre 24 px from the corner) and the header keeps pe-12.
-            _header.Padding = new(24, 16, 48, 16); _close.Margin = new(0, -4, -36, 0);
+            // sm: the dialog's own 16 px close icon sits at end-4 top-4 (centre 24 px from the corner); the 24 px button ends 12 px from the edge and the title column ends 48 px from it (pe-12), with no negative margin to place it.
+            _header.Padding = new(24, 16, 12, 16); _close.Margin = new(0, -4, 0, 0); _close.HorizontalAlignment = HorizontalAlignment.Right;
             _footer.Padding = new(24, 16, 24, 16);
             _cancel.Height = _cancel.MinHeight = _save.Height = _save.MinHeight = 36;
             _close.Width = _close.Height = 24;
         }
         LayoutFooter(phone);
         _phone = phone;
+        UpdateFooterGap();
         _renderedSectionKey = null;
         if (!_closed) Render();
     }
 
     private bool _phone;
+
+    /// <summary>
+    /// The footer's <c>gap-2</c> only separates items that wrap: below 640 px the error sits on its own row above the buttons, so the 8 px between the rows
+    /// exists only while an error is shown (an empty error row adds no dead space). One row from 640 px, where the gap between items is the column spacing.
+    /// </summary>
+    private void UpdateFooterGap() => _footer.RowSpacing = _phone && _footerError.Visibility == Visibility.Visible ? 8 : 0;
 
     /// <summary>
     /// WebUI footer: <c>flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap</c>. From 640 px the error sits at the start and Cancel/Save at the end;
@@ -316,6 +323,7 @@ internal sealed class AdminLibraryEditorView : Grid
         var errors = new[] { state.ShownNameError, state.ShownPathsError }.Where(error => error != null).ToArray();
         _footerError.Text = state.Failure ?? string.Join(" ", errors);
         _footerError.Visibility = _footerError.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateFooterGap();
         _save.Content = T(state.Saving
             ? state.IsEditing ? "web.admin.common.libraryEditor.dialog.saving" : "web.admin.common.libraryEditor.dialog.creating"
             : state.IsEditing ? "web.admin.common.libraryEditor.dialog.saveChanges" : "web.admin.common.libraryEditor.dialog.create");

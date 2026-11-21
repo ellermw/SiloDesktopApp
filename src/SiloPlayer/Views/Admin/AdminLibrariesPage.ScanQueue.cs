@@ -34,7 +34,7 @@ public sealed partial class AdminLibrariesPage
         var host = new StackPanel { Width = 400 };
         var flyout = new Flyout { Content = host, Placement = FlyoutPlacementMode.BottomEdgeAlignedRight, ShouldConstrainToRootBounds = true };
         button.Tag = flyout;
-        flyout.FlyoutPresenterStyle = RoundedPresenterStyle(RadiusMd);
+        flyout.FlyoutPresenterStyle = RoundedPresenterStyle(RadiusXl); // popover.tsx: rounded-xl (16), no override at AdminLibraries.tsx:672
         flyout.FlyoutPresenterStyle.Setters.Add(new Setter(FlyoutPresenter.PaddingProperty, new Thickness(0)));
         flyout.FlyoutPresenterStyle.Setters.Add(new Setter(FlyoutPresenter.MaxWidthProperty, 400d));
         flyout.Opened += (_, _) => { if (!owner.IsCurrent) { flyout.Hide(); return; } _scanQueueOwner = owner; _scanQueueFlyout = flyout; _scanQueueHost = host; FillScanQueue(host, owner.Controller.State); };

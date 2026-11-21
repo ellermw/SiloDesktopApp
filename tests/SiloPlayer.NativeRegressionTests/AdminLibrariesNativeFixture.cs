@@ -60,15 +60,35 @@ internal static partial class AdminLibrariesNativeFixture
         public event Action<string, string, JsonElement>? EventReceived;
         public event Action<WebSocketState>? StateChanged;
         public int Leases;
+        /// <summary>How many scans snapshots the fake has sent.</summary>
+        public int SnapshotsSent;
+        private readonly Dictionary<string, int> _refs = new(StringComparer.Ordinal);
         public IDisposable Subscribe(params string[] channels)
         {
-            if (channels.Contains("scans"))
+            var names = channels.Where(name => !string.IsNullOrWhiteSpace(name)).ToArray();
+            var first = false;
+            lock (_refs)
+                foreach (var name in names)
+                {
+                    _refs.TryGetValue(name, out var count);
+                    _refs[name] = count + 1;
+                    // Like EventChannelClient: a subscribe frame (and so a snapshot) goes out only when the channel's ref-count rises from 0 to 1.
+                    // A subscriber that joins a channel another subscriber already holds (the activity store holds scans) receives none.
+                    if (name == "scans" && count == 0) first = true;
+                }
+            if (names.Contains("scans")) Interlocked.Increment(ref Leases);
+            if (first)
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(50);
+                    Interlocked.Increment(ref SnapshotsSent);
+                    SnapshotReceived?.Invoke("scans", JsonDocument.Parse(Scans).RootElement.Clone());
+                });
+            return new Release(() =>
             {
-                Interlocked.Increment(ref Leases);
-                // Like the server: a subscription is answered with the scans snapshot (the page no longer reads the transport cache).
-                _ = Task.Run(async () => { await Task.Delay(50); SnapshotReceived?.Invoke("scans", JsonDocument.Parse(Scans).RootElement.Clone()); });
-            }
-            return new Release(() => { if (channels.Contains("scans")) Interlocked.Decrement(ref Leases); });
+                lock (_refs) foreach (var name in names) _refs[name] = Math.Max(0, _refs.GetValueOrDefault(name) - 1);
+                if (names.Contains("scans")) Interlocked.Decrement(ref Leases);
+            });
         }
         public bool TryGetLatestSnapshot(string channel, out JsonElement snapshot)
         {
@@ -364,6 +384,20 @@ internal static partial class AdminLibrariesNativeFixture
                 "cleanup is offered only for missing or empty roots");
             Check(Find<Button>(shell, "LibrariesEdit_1") is { } edit1 && AutomationProperties.GetName(edit1) == "Edit Movies", "row actions carry WebUI accessible names");
             Check(Find<HyperlinkButton>(shell, "LibrariesScanToggle_2") != null, "more than four scans collapse behind Show all");
+
+            // ── Seeding from the activity store, with no snapshot ─────────
+            // The store has held `scans` since the admin authority became available, so a page that opens now is a second holder of the channel and the real client
+            // (ref-counted: a subscribe frame and its snapshot only go out when a channel's count rises from 0 to 1) sends it nothing. The rows must come from the store.
+            Check(store.Current is { ScansLoaded: true } && store.Current.Scans.Count == 7, $"the activity store holds the 7 scans before the page reopens (holds {store.Current.Scans.Count})");
+            var snapshotsBefore = realtime.SnapshotsSent;
+            await controller.OpenAsync();
+            await Until(() => controller.State.Loaded);
+            Check(realtime.SnapshotsSent == snapshotsBefore, "reopening the page sends no scans snapshot (the store already holds the channel)");
+            Check(controller.State.Scans.Count == 7, $"the reopened page seeds all 7 scans from the activity store (shows {controller.State.Scans.Count})");
+            await Until(() => Find<HyperlinkButton>(shell, "LibrariesScanToggle_2") != null && Find<Button>(shell, "LibrariesScanQueue") is { IsLoaded: true } && Find<Button>(shell, "LibrariesScan_1") is { IsLoaded: true });
+            Check(Find<HyperlinkButton>(shell, "LibrariesScanToggle_2") != null && Find<Button>(shell, "LibrariesScanQueue") != null && Find<Button>(shell, "LibrariesStopScans_1") != null,
+                "the seeded scans show their rows, the Show all toggle and the scan queue trigger without any snapshot");
+            Check(realtime.SnapshotsSent == snapshotsBefore, "no scans snapshot arrived while the rows rendered");
             await CaptureAsync(outer, "libraries-table-1440x900.png");
 
             // ── Scan queue popover ───────────────────────────────────────
@@ -625,6 +659,7 @@ internal static partial class AdminLibrariesNativeFixture
             Check(page.EditorSession == null, "Cancel closes the editor");
             Resize(window, 1440, 900);
             await Until(() => Find<FrameworkElement>(shell, "LibrariesTable") != null);
+            RunLayoutPrimitiveChecks();
             await RunVisualMatrixAsync(window, outer, shell, page, server);
 
             // ── Legacy Autoscan link ─────────────────────────────────────
