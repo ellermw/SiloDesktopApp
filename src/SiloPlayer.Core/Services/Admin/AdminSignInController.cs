@@ -145,6 +145,24 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     }
     public Task SaveAsync(bool confirmed) => RunAsync(async owner =>
     {
+        try { await SaveCoreAsync(owner, confirmed).ConfigureAwait(false); }
+        // An unknown outcome (a timeout or transport failure after sending, or an answer that cannot be read) blocks further writes until the state is read again; nothing typed
+        // stays staged for it. A definite refusal keeps the draft so the admin can correct it.
+        catch (Exception error) when (error is not OperationCanceledException && error is not ArgumentException && error is not AdminAccessException { Uncertain: false })
+        { Publish(owner, EraseTypedSecrets); throw; }
+    }, write: true);
+    /// <summary>Drops every typed secret value from the staged drafts (a staged "clear" is not a typed value and stays). Called under the controller's publish.</summary>
+    private void EraseTypedSecrets()
+    {
+        foreach (var key in _drafts.Keys.ToArray())
+        {
+            var schema = Providers.FirstOrDefault(p => p.Id == key.Provider)?.GlobalConfigSchema.FirstOrDefault(s => s.Key == key.Schema); var draft = _drafts[key];
+            foreach (var field in schema?.AdminForm?.Fields.Where(f => f.IsSecret) ?? []) draft.Value.Remove(field.Key);
+            if (draft.Value.Count == 0 && draft.ClearSecrets.Count == 0) _drafts.Remove(key);
+        }
+    }
+    private async Task SaveCoreAsync(MonitorAuthorityLease owner, bool confirmed)
+    {
         if (!confirmed || _form == null || DirtyCount == 0) return;
         // Freeze the full intent before awaiting. Inputs are disabled until completion.
         var configs = _drafts.Select(pair => (pair.Key.Provider, Schema: pair.Key.Schema, Write: AdminSignInSchemaRules.Build(Providers.Single(p => p.Id == pair.Key.Provider), Providers.Single(p => p.Id == pair.Key.Provider).GlobalConfigSchema.Single(s => s.Key == pair.Key.Schema), Values(Providers.Single(p => p.Id == pair.Key.Provider), Providers.Single(p => p.Id == pair.Key.Provider).GlobalConfigSchema.Single(s => s.Key == pair.Key.Schema)), pair.Value.ClearSecrets))).ToArray();
@@ -196,7 +214,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         }
         // Everything is already persisted: a failed re-read must not turn it into a reported failure.
         await RefreshProvidersAsync(owner, "Sign-in settings saved.", configs.Length > 0 || autos.Length > 0).ConfigureAwait(false);
-    }, write: true);
+    }
     /// <summary>The deployment can claim a field while an edit to it is staged: that edit is dropped at once and releasing the field later does not bring it back (official dropManagedEdits). Called under the controller's publish.</summary>
     private void PruneManagedDrafts()
     {

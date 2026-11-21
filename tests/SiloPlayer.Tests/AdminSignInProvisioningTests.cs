@@ -349,6 +349,38 @@ public sealed class AdminSignInProvisioningTests
         Assert.False(h.Controller.TestFailures.ContainsKey(h.Provider.Id));
     }
 
+    [Fact]
+    public async Task ATypedSecretIsErasedWhenTheOutcomeOfTheSaveIsUnknown()
+    {
+        using var h = new Harness { RefusalStatus = 503 }; // answered after sending: the outcome is unknown
+        await h.Open();
+        h.Controller.SetField(h.Provider, h.Schema, h.Field("client_secret"), "synthetic-typed-secret"); h.Controller.SetField(h.Provider, h.Schema, h.Field("note"), "kept note");
+        await h.Controller.SaveAsync(true);
+        Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.True(h.Controller.ReviewRequired);
+        Assert.False(h.Controller.Values(h.Provider, h.Schema).ContainsKey("client_secret")); Assert.False(h.Controller.FieldDirty(h.Provider, "oidc", "client_secret"));
+        Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note")); // only the secret goes; the visible draft stays until the admin reloads or discards
+    }
+
+    [Fact]
+    public async Task ATypedSecretSurvivesADefiniteRefusal()
+    {
+        using var h = new Harness { RefusalStatus = 422, RefusalBody = """{"type":"https://siloserver.org/docs/api/v2/problems/validation_failed","status":422}""" };
+        await h.Open();
+        h.Controller.SetField(h.Provider, h.Schema, h.Field("client_secret"), "synthetic-typed-secret");
+        await h.Controller.SaveAsync(true);
+        Assert.True(h.Controller.Values(h.Provider, h.Schema).ContainsKey("client_secret")); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "client_secret"));
+    }
+
+    [Fact]
+    public async Task AStagedClearOfASavedSecretIsNotATypedValueAndSurvivesAnUnknownOutcome()
+    {
+        using var h = new Harness { RefusalStatus = 503 };
+        await h.Open();
+        h.Controller.ToggleClear(h.Provider, h.Schema, h.Field("client_secret"));
+        await h.Controller.SaveAsync(true);
+        Assert.True(h.Controller.Clearing(h.Provider, "oidc", "client_secret"));
+    }
+
     // ── Third-party text and direction ──
     // Invisible and direction characters are built from their code points so they stay visible in this source.
     private static string Chars(params int[] codes) => string.Concat(codes.Select(char.ConvertFromUtf32));

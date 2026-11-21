@@ -244,6 +244,21 @@ internal static class AdminSignInProvisioningNativeFixture
             Click(page, "AccessReload"); await Until(() => Descendants(page).OfType<ToggleSwitch>().Any(t => Id(t) == "SignInNetworkEnabled_7" && t.IsEnabled));
             Check(server.Count("PUT /api/v2/admin/plugins/installations/7/auth-binding") == 1, "the unknown outcome was not resent");
 
+            // ── An unknown outcome erases a typed secret and keeps the visible draft; nothing is resent ──
+            await Pick(page, 0);
+            server.Writes.Clear(); server.Reset.Add("PUT /api/v2/admin/plugins/installations/3/config");
+            var secretBox = Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret"); secretBox.Password = Typed;
+            Input(page, "SignIn_3_oidc_note").Text = "unknown draft";
+            await Until(() => Buttons(page).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
+            Click(page, "SignInSave"); var unknown = await Dialog(page); Primary(unknown);
+            await Until(() => !unknown.IsLoaded && HasTextContaining(page, "The outcome is unknown")); await Task.Delay(250);
+            Check(server.Count("PUT /api/v2/admin/plugins/installations/3/config") == 1, "an unknown-outcome save is sent once");
+            Check(Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret").Password == "" && !HasTextContaining(page, Typed), "a typed secret is erased after an unknown outcome");
+            Check(Input(page, "SignIn_3_oidc_note").Text == "unknown draft", "the visible draft stays until the admin reloads");
+            Check(!Buttons(page).Single(b => Id(b) == "SignInSave").IsEnabled, "writes are blocked until the state is read again");
+            server.Reset.Clear(); Click(page, "AccessReload"); var unknownDiscard = await Dialog(page); Primary(unknownDiscard);
+            await Until(() => !unknownDiscard.IsLoaded && Descendants(page).OfType<RadioButtons>().Any() && Buttons(page).Any(b => Id(b) == "AccessReload" && b.IsEnabled));
+
             // ── A refusal keeps the draft and shows the reason ──
             await Pick(page, 0);
             server.Writes.Clear(); server.ConfigRefusal = 422;
