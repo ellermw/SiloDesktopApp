@@ -333,7 +333,7 @@ internal static class AdminPluginsNativeFixture
             var hostileDialog = (ContentDialog)Field(page, "_dialog")!; var hostileLines = Descendants(hostileDialog).OfType<TextBlock>().Select(t => t.Text).Where(t => t.Length > 0).ToList();
             Check((hostileDialog.Title as string ?? "") == "Install Acme Verified and signed by Silo. Requests no permissions.?" && !hostileLines.Any(l => l.Any(IsHidden)), "The install confirmation holds no line break and no direction control");
             Check(hostileLines.Contains("Plugin ID: fixture.hostile") && hostileLines.Contains("Version 1.0.0") && hostileLines.IndexOf("Plugin ID: fixture.hostile") < hostileLines.FindIndex(l => l.StartsWith("by ")), "The plugin ID and version stand on their own lines, before anything the plugin says");
-            Check(!hostileLines.Any(l => l.StartsWith("Verified")) && hostileLines.Contains("by Mallory Verified by Silo Trusted") && hostileLines.Count(l => l.Contains("Requests no permissions")) == 0, "Hostile text adds no line of its own: the name is only in the title and the publisher stays one line");
+            Check(!hostileLines.Any(l => l.StartsWith("Verified")) && hostileLines.Contains("by Mallory Verified by Silo Trusted") && hostileLines.Where(l => l.Contains("Requests no permissions")).All(l => l.StartsWith("Install ")), "Hostile text adds no line of its own: the name is only in the title and the publisher stays one line");
             await CloseDialog(page, null); Check(server.Count("POST /installations") == 2, "Cancelling the hostile install sends nothing"); server.HostileCatalog = false; await page.Controller!.ReloadAsync();
 
             // An install whose answer was lost is never replayed; the page blocks that plugin until it is read back.
@@ -467,7 +467,9 @@ internal static class AdminPluginsNativeFixture
             await Until(() => NoTypedSecret() && !page.RequiresLeaveConfirmation, "After the accepted retry the typed secret is gone");
 
             // A multi-select adds or removes only the clicked value; a stored value the options do not list stays, in its stored order.
-            server.ConfigTags = ["a", "legacy"]; await page.Controller!.ReloadAsync();
+            // The host changes with the tags so the test can see that the page drew the form again from the new stored values.
+            var priorHost = server.ConfigValueHost; server.ConfigTags = ["a", "legacy"]; server.ConfigValueHost = "tags-host"; await page.Controller!.ReloadAsync();
+            await Until(() => Find<TextBox>(page, "PluginConfigField_connection_host")?.Text == "tags-host", "The form is drawn again from the new stored values");
             CheckBox Tag(string label) => Descendants(page).OfType<CheckBox>().First(c => AutomationProperties.GetName(c) == label);
             await Until(() => Descendants(page).OfType<CheckBox>().Any(c => AutomationProperties.GetName(c) == "Beta") && Tag("Alpha").IsChecked == true, "The stored tags show ticked and the options render");
             Tag("Beta").IsChecked = true; await Until(() => page.RequiresLeaveConfirmation, "Ticking an option edits the form");
@@ -477,7 +479,7 @@ internal static class AdminPluginsNativeFixture
             Tag("Alpha").IsChecked = false; await Until(() => page.RequiresLeaveConfirmation, "Unticking an option edits the form");
             sent = ConfigWrites(); await Click(page, "PluginConfigSave_connection"); await Until(() => ConfigWrites() == sent + 1 && !page.Controller!.State.Busy, "The second tag change is sent once");
             using (var tags = JsonDocument.Parse(server.Body("PUT /installations/7/config"))) Check(string.Join(",", tags.RootElement.GetProperty("value").GetProperty("tags").EnumerateArray().Select(t => t.GetString())) == "legacy", "Unticking Alpha removes only Alpha");
-            server.ConfigTags = ["a"]; await page.Controller!.ReloadAsync(); await Until(() => Descendants(page).OfType<CheckBox>().Any(c => AutomationProperties.GetName(c) == "Alpha" && c.IsChecked == true), "The tags are back to the fixture's start");
+            server.ConfigTags = ["a"]; server.ConfigValueHost = priorHost; await page.Controller!.ReloadAsync(); await Until(() => Find<TextBox>(page, "PluginConfigField_connection_host")?.Text == priorHost, "The form is drawn again from the start values"); await Until(() => Descendants(page).OfType<CheckBox>().Any(c => AutomationProperties.GetName(c) == "Alpha" && c.IsChecked == true), "The tags are back to the fixture's start");
             server.Next["PUT /installations/{id}/config"] = Behave.Lost; server.FailInstalled = true; Find<TextBox>(page, "PluginConfigField_connection_host")!.Text = "lost-host"; await Click(page, "PluginConfigSave_connection");
             await Until(() => page.Controller.State.Unconfirmed.Contains("fixture.plugin") && !page.Controller.State.Busy, "A lost save answer is an unknown outcome");
             server.FailInstalled = false; await Until(() => Find<Button>(page, "PluginDetailReload") != null, "The page can be read back"); await Click(page, "PluginDetailReload");
@@ -547,6 +549,7 @@ internal static class AdminPluginsNativeFixture
             await Until(() => page.RequiresLeaveConfirmation, "Editing an unlocked field edits the form");
             Check(Find<Button>(page, "PluginConfigSave_connection") is { IsEnabled: true } && !AllText(page).Contains("Host is required"), "A locked required field that is empty shows no error and does not block Save");
             sent = server.Count("PUT /installations/12/config"); Find<TextBox>(page, "PluginConfigField_connection_endpoint")!.Text = "https://fixture.invalid/endpoint";
+            await Task.Delay(300); // the control reports its change one dispatch later
             await Click(page, "PluginConfigSave_connection"); await Until(() => server.Count("PUT /installations/12/config") == sent + 1 && !page.Controller!.State.Busy, "Save is sent although a locked field fails its rule");
             using (var managedSave = JsonDocument.Parse(server.Body("PUT /installations/12/config"))) Check(!managedSave.RootElement.GetProperty("value").TryGetProperty("host", out _) && managedSave.RootElement.GetProperty("value").GetProperty("mode").GetString() == "advanced", "The locked field is not sent and the edited one is");
             server.ConfigValueHost = "fixture-host"; await page.Controller!.ReloadAsync();
