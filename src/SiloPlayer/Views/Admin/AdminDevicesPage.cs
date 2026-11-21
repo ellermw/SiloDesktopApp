@@ -29,7 +29,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
     private StackPanel _rail = Stack(14), _list = Stack(0), _detail = Stack(0);
     private Border _railPanel = null!, _listPanel = null!, _detailPanel = null!;
     private ScrollViewer _listScroll = null!;
-    private StackPanel? _pulse;
+    private WrapPanel? _pulse;
     private TextBox? _searchBox;
     private Grid? _panes;
     public AdminUserResourceController Session => _host.Session;
@@ -93,7 +93,8 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(search, D("search.placeholder"));
         _searchBox = search; search.TextChanged += (_, _) => { _search = search.Text; _visibleDevices = 100; RenderList(); RenderFilters(); };
         var elements = new List<UIElement> { LogsNativeUi.Header(D("title"), D("subtitle", ("shortcut", "Ctrl+K")), search) };
-        _pulse = Inline(16); _pulse.HorizontalAlignment = HorizontalAlignment.Left; elements.Add(_pulse);
+        // The official fleet pulse wraps: at a narrow width the Group by control moves to a second line instead of running out of the page.
+        _pulse = new WrapPanel { HorizontalSpacing = 16, VerticalSpacing = 8, HorizontalAlignment = HorizontalAlignment.Left }; elements.Add(_pulse);
         var scope = Stack(0); scope.HorizontalAlignment = HorizontalAlignment.Left; scope.Tag = "scope"; elements.Add(scope);
         BuildPanes(); _panes = new Grid { ColumnSpacing = 16, RowSpacing = 16 }; _panes.Children.Add(_railPanel); _panes.Children.Add(_listPanel); _panes.Children.Add(_detailPanel);
         elements.Add(_panes); SetContent([.. elements]);

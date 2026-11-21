@@ -289,6 +289,11 @@ internal static partial class AdminUserResourcesNativeFixture
                     c.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(400);
                     // The window paints the page background; the page alone is transparent, which would leave its light text unreadable in the picture.
                     if (page() is Page shown) shown.Background = (Brush)Application.Current.Resources["AppBackgroundBrush"];
+                    if (name == "devices-list")
+                    {
+                        var last = Find<ToggleButton>(c.Devices, "DeviceGroupBy_activity"); var right = last.TransformToVisual(c.Devices).TransformPoint(new Windows.Foundation.Point(last.ActualWidth, 0)).X;
+                        Check(right <= c.Devices.ActualWidth + 1, "the Group by control stays inside the page at " + width + " px");
+                    }
                     await CaptureAsync(page(), "refresh-" + name + "-" + width + ".png");
                 }
             }
