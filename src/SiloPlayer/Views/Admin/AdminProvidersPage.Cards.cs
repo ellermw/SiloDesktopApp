@@ -189,23 +189,32 @@ public sealed partial class AdminProvidersPage
             open.HorizontalAlignment = HorizontalAlignment.Left; open.IsEnabled = state.BusyProvider == null; open.Click += async (_, _) => await ExpandSubtitleAsync(state, provider);
             body.Children.Add(open); return Card(body, false);
         }
-        if (!_subtitleEditors.TryGetValue(id, out var editor) || !_subtitleDrafts.TryGetValue(id, out var draft))
+        // Reading this provider is not saving it: the official tile shows "Loading saved configuration..." while its editor is read.
+        var reading = state.ReadingProvider == id;
+        var loadFailed = state.SubtitleLoadFailed(id);
+        _subtitleEditors.TryGetValue(id, out var editor); _subtitleDrafts.TryGetValue(id, out var draft);
+        if (reading) body.Children.Add(SubtitleNotice(LoadingEditorText, "ProvidersSubtitleLoading_" + SafeId(id)));
+        if (draft == null)
         {
-            body.Children.Add(Quiet(state.BusyProvider == id ? "Loading provider configuration…" : "Provider configuration could not be loaded."));
-            var retry = U.Action("Reload", "ProvidersSubtitleReload_" + SafeId(id)); retry.IsEnabled = state.BusyProvider == null;
+            // Nothing was ever read for this tile: there is nothing to show or edit until one read succeeds.
+            if (!reading) body.Children.Add(SubtitleNotice(LoadFailedText, "ProvidersSubtitleLoadFailed_" + SafeId(id)));
+            var unloadedActions = Actions();
+            var retry = U.Action(ReloadSavedConfigurationText, "ProvidersSubtitleReload_" + SafeId(id)); retry.IsEnabled = state.BusyProvider == null;
             retry.Click += async (_, _) => await ExpandSubtitleAsync(state, provider, reload: true);
-            body.Children.Add(retry); return Card(body, true);
+            unloadedActions.Children.Add(retry);
+            unloadedActions.Children.Add(CloseButton("ProvidersSubtitleClose_" + SafeId(id), () => { _expandedTile = null; Render(state); }));
+            body.Children.Add(unloadedActions); return Card(body, true);
         }
-        // The official tile: after any failed save its fields, the Test action and Save stay off until Reload has read this provider again.
+        // The official tile: after any failed save, and while its editor is missing (a failed read drops it), its fields, the Test action and
+        // Save stay off until Reload has read this provider. A tile that was saved stays off the same way.
         var notConfirmed = state.SubtitleSaveNotConfirmed(id);
-        var canEdit = !draft.SaveAttempted && state.BusyProvider == null && !notConfirmed;
-        if (notConfirmed)
+        var canEdit = editor != null && !draft.SaveAttempted && state.BusyProvider == null && !notConfirmed && !loadFailed;
+        // One line at a time, as the official tile's single feedback string: a failed read replaces the rest.
+        if (!reading)
         {
-            var notice = U.Text(SaveNotConfirmedText, 13); notice.TextWrapping = TextWrapping.Wrap;
-            AutomationProperties.SetAutomationId(notice, "ProvidersSubtitleNotConfirmed_" + SafeId(id));
-            AutomationProperties.SetName(notice, SaveNotConfirmedText);
-            AutomationProperties.SetLiveSetting(notice, AutomationLiveSetting.Polite);
-            body.Children.Add(notice);
+            if (loadFailed) body.Children.Add(SubtitleNotice(LoadFailedText, "ProvidersSubtitleLoadFailed_" + SafeId(id)));
+            else if (notConfirmed) body.Children.Add(SubtitleNotice(SaveNotConfirmedText, "ProvidersSubtitleNotConfirmed_" + SafeId(id)));
+            else if (state.SubtitleSaveMessage(id) is { } savedLine) body.Children.Add(SubtitleNotice(savedLine, "ProvidersSubtitleSaved_" + SafeId(id)));
         }
         Border? subtitleResult = null;
         void ClearStaleSubtitleTest()
@@ -236,7 +245,7 @@ public sealed partial class AdminProvidersPage
             body.Children.Add(subtitleResult);
         }
         var actions = Actions();
-        var save = U.Action(state.BusyProvider == id ? "Saving…" : "Save", "ProvidersSubtitleSave_" + SafeId(id), primary: true);
+        var save = U.Action(state.BusyProvider == id && !reading ? "Saving…" : "Save", "ProvidersSubtitleSave_" + SafeId(id), primary: true);
         save.IsEnabled = canEdit;
         save.Click += async (_, _) => await SaveSubtitleAsync(editor, draft, clear: false);
         var test = U.Action("Test connection", "ProvidersSubtitleTest_" + SafeId(id), secondary: true);
@@ -255,13 +264,26 @@ public sealed partial class AdminProvidersPage
         }
         actions.Children.Add(CloseButton("ProvidersSubtitleClose_" + SafeId(id), () => { _expandedTile = null; Render(state); }));
         // The tile's own Reload re-reads only this provider and discards the drafts, as the official "Reload saved configuration (discard draft)".
-        var reload = U.Action("Reload saved configuration (discard draft)", "ProvidersSubtitleReload_" + SafeId(id)); reload.IsEnabled = state.BusyProvider == null;
+        var reload = U.Action(ReloadSavedConfigurationText, "ProvidersSubtitleReload_" + SafeId(id)); reload.IsEnabled = state.BusyProvider == null;
         reload.Click += async (_, _) => await ExpandSubtitleAsync(state, provider, reload: true); actions.Children.Add(reload);
         body.Children.Add(actions); body.Children.Add(Quiet("The test uses the staged values and does not save them."));
         return Card(body, true);
     }
 
+    private static TextBlock SubtitleNotice(string text, string automationId)
+    {
+        var notice = U.Text(text, 13); notice.TextWrapping = TextWrapping.Wrap;
+        AutomationProperties.SetAutomationId(notice, automationId);
+        AutomationProperties.SetName(notice, text);
+        AutomationProperties.SetLiveSetting(notice, AutomationLiveSetting.Polite);
+        return notice;
+    }
+
+    // Official en.json: web.admin.settings.providers.subtitles.{saveNotConfirmed, loadFailed, loadingEditor, reload} at a84b2551b.
     internal const string SaveNotConfirmedText = "Save not confirmed. Your draft is retained. Reload saved configuration to review it before making another change.";
+    internal const string LoadFailedText = "Unable to load saved configuration. Reload before editing.";
+    internal const string LoadingEditorText = "Loading saved configuration...";
+    internal const string ReloadSavedConfigurationText = "Reload saved configuration (discard draft)";
 
     private async Task ExpandSubtitleAsync(AdminProvidersState state, AdminSubtitleProvider provider, bool reload = false)
     {
@@ -270,12 +292,23 @@ public sealed partial class AdminProvidersPage
         await ReloadSubtitleEditorAsync(id);
     }
 
-    /// <summary>One read of one provider: its editor and ETag are replaced and its drafts (typed credentials included) are discarded.</summary>
+    /// <summary>
+    /// One read of one provider: its editor and ETag are replaced and its drafts (typed credentials included) are discarded.
+    /// A read that fails drops the editor, as the official <c>loadEditor()</c> does (<c>setEditor(null)</c>): the tile is off and says it
+    /// could not be loaded. The official tile keeps its typed values on a failed read (only a successful one resets them), and so does this one.
+    /// </summary>
     private async Task ReloadSubtitleEditorAsync(string id)
     {
         var controller = _controller; if (controller == null) return;
         var loaded = await controller.GetSubtitleEditorAsync(id);
-        if (loaded == null || !ReferenceEquals(controller, _controller)) return;
+        if (!ReferenceEquals(controller, _controller)) return;
+        if (loaded == null)
+        {
+            if (controller.State.SubtitleLoadFailed(id)) { _subtitleEditors.Remove(id); Render(controller.State); }
+            return;
+        }
+        // A result that arrives after the authority was replaced is never stored; the replacement authority reads again.
+        if (controller.State.Owner is not { IsCurrent: true }) return;
         _subtitleEditors[id] = loaded;
         if (_subtitleDrafts.TryGetValue(id, out var existing)) existing.ResetToSavedConfiguration(loaded);
         else _subtitleDrafts[id] = new(id, loaded.Enabled, loaded.HasApiKey, loaded.HasCredentials);
@@ -283,31 +316,50 @@ public sealed partial class AdminProvidersPage
     }
 
     /// <summary>
-    /// The page Reload re-reads the page's lists and then every subtitle tile that is not confirmed, so one press recovers the page.
-    /// A tile is settled only by its own provider read; a read that fails leaves it not confirmed.
+    /// The page Reload (a native addition; the official page has no page-level reload) re-reads the page's lists and then every opened
+    /// subtitle tile that waits for a read: not confirmed, could not be loaded, or saved. A tile is settled only by its own provider read.
+    /// The first failed read stays visible on the page even though the next tile's read starts by clearing the page line; each failure also
+    /// stays in its own tile.
     /// </summary>
     private async Task ReloadPageAsync()
     {
         var controller = _controller; if (controller == null) return;
         await controller.ReloadAsync(preserveDraft: true);
         if (!ReferenceEquals(controller, _controller)) return;
-        foreach (var id in controller.State.SubtitleSaveFailures.Keys.ToArray())
-            if (_subtitleEditors.ContainsKey(id)) await ReloadSubtitleEditorAsync(id);
+        var waiting = controller.State.SubtitleProviders.Select(provider => provider.ProviderName)
+            .Where(id => controller.State.SubtitleSaveNotConfirmed(id) || controller.State.SubtitleLoadFailed(id) || controller.State.SubtitleSaveMessage(id) != null)
+            .Where(id => _subtitleEditors.ContainsKey(id) || _subtitleDrafts.ContainsKey(id) || _expandedTile == "subtitle:" + id)
+            .ToArray();
+        string? firstFailure = null;
+        foreach (var id in waiting)
+        {
+            await ReloadSubtitleEditorAsync(id);
+            if (!ReferenceEquals(controller, _controller)) return;
+            if (firstFailure == null && controller.State.SubtitleLoadFailed(id)) firstFailure = controller.State.ProviderFeedback;
+        }
+        if (firstFailure != null && !string.Equals(controller.State.ProviderFeedback, firstFailure, StringComparison.Ordinal)) controller.NotifyProvider(firstFailure);
     }
 
-    private async Task SaveSubtitleAsync(AdminSubtitleProviderEditor editor, AdminSubtitleProviderDraft draft, bool clear)
+    private async Task SaveSubtitleAsync(AdminSubtitleProviderEditor? editor, AdminSubtitleProviderDraft draft, bool clear)
     {
         var controller = _controller;
         if (controller == null) return;
         var state = controller.State;
+        // Every early return below says why: a control that is drawn enabled must act or say why it did not.
         // The editor and draft must still be the ones this tile was showing; a replaced authority clears them.
-        if (!_subtitleEditors.TryGetValue(editor.Provider, out var liveEditor) || !ReferenceEquals(liveEditor, editor) ||
-            !_subtitleDrafts.TryGetValue(editor.Provider, out var liveDraft) || !ReferenceEquals(liveDraft, draft)) return;
-        if (draft.SaveAttempted || state.BusyProvider != null || state.SubtitleConflict || state.SubtitleOutcomeUnknown) return;
-        var saved = await controller.SaveSubtitleAsync(editor, draft.CaptureChange(clear));
+        if (editor == null || !_subtitleEditors.TryGetValue(editor.Provider, out var liveEditor) || !ReferenceEquals(liveEditor, editor) ||
+            !_subtitleDrafts.TryGetValue(editor.Provider, out var liveDraft) || !ReferenceEquals(liveDraft, draft))
+        { controller.NotifyProvider("The server or account changed. Reopen the provider and try again."); return; }
+        if (state.BusyProvider != null) { controller.NotifyProvider("Another provider action is still running. Try again when it finishes."); return; }
+        // This tile only: another provider's failed save or unknown outcome never blocks this one.
+        if (state.SubtitleSaveNotConfirmed(editor.Provider)) { controller.NotifyProvider(SaveNotConfirmedText); return; }
+        if (draft.SaveAttempted) { controller.NotifyProvider("Reload saved configuration before making another change."); return; }
+        var change = draft.CaptureChange(clear);
+        var saved = await controller.SaveSubtitleAsync(editor, change);
         // A page closed while the request was pending already discarded its controller and drafts.
-        if (!saved || !ReferenceEquals(controller, _controller)) return;
-        draft.ClearSecrets(); _subtitleDrafts.Remove(editor.Provider); _subtitleEditors.Remove(editor.Provider); _expandedTile = null;
+        if (!ReferenceEquals(controller, _controller)) return;
+        // The official tile resets its drafts and stays open on its success line, off until Reload; the editor's ETag was spent.
+        if (saved) draft.ResetAfterSave(change);
         Render(controller.State);
     }
 
@@ -399,7 +451,7 @@ public sealed partial class AdminProvidersPage
             // The outcome of the last marker write is unknown: only a canonical reload may say what the server holds.
             var reload = U.Action("Reload", "ProvidersMarkerReload_" + SafeId(provider.Provider), secondary: true);
             reload.IsEnabled = state.BusyProvider == null && !state.Loading;
-            reload.Click += async (_, _) => await ReloadPageAsync();
+            reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(preserveDraft: true); };
             actions.Children.Add(reload);
         }
         if (provider.IsSubmitter && ready == true)

@@ -22,6 +22,17 @@ public sealed record AdminProvidersState
     public bool SubtitleConflict => SubtitleSaveFailures.Values.Contains(AdminSubtitleSaveFailure.Conflict);
     public bool SubtitleOutcomeUnknown => SubtitleSaveFailures.Values.Contains(AdminSubtitleSaveFailure.OutcomeUnknown);
     public bool SubtitleSaveNotConfirmed(string provider) => SubtitleSaveFailures.ContainsKey(provider);
+    /// <summary>
+    /// Subtitle provider tiles whose last read failed, as the official tile's "Unable to load saved configuration. Reload before editing."
+    /// Only a successful read of that one provider clears its entry.
+    /// </summary>
+    public IReadOnlyCollection<string> SubtitleLoadFailures { get; init; } = [];
+    public bool SubtitleLoadFailed(string provider) => SubtitleLoadFailures.Contains(provider);
+    /// <summary>The official success line of a subtitle tile after its save, by provider; it stays until that provider is read again.</summary>
+    public IReadOnlyDictionary<string, string> SubtitleSaveMessages { get; init; } = new Dictionary<string, string>();
+    public string? SubtitleSaveMessage(string provider) => SubtitleSaveMessages.GetValueOrDefault(provider);
+    /// <summary>The provider whose editor is being read. Reading is not saving: the tile shows "Loading saved configuration...", never "Saving".</summary>
+    public string? ReadingProvider { get; init; }
     public bool MarkerOutcomeUnknown { get; init; }
     public bool SensitiveStatusError { get; init; }
     public string? BusyProvider { get; init; }
@@ -159,6 +170,8 @@ public sealed class AdminProvidersController : IDisposable
                     Loading = false, Loaded = true, SettingsConflict = false, SettingsOutcomeUnknown = false,
                     // A tile that is not confirmed stays so until its own provider is read again; the list only drops providers that no longer exist.
                     SubtitleSaveFailures = subtitlesFailed ? _state.SubtitleSaveFailures : KeepFailuresFor(_state.SubtitleSaveFailures, subtitles),
+                    SubtitleLoadFailures = subtitlesFailed ? _state.SubtitleLoadFailures : _state.SubtitleLoadFailures.Where(name => IsListed(subtitles, name)).ToArray(),
+                    SubtitleSaveMessages = subtitlesFailed ? _state.SubtitleSaveMessages : _state.SubtitleSaveMessages.Where(item => IsListed(subtitles, item.Key)).ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal),
                     MarkerOutcomeUnknown = markersFailed && _state.MarkerOutcomeUnknown,
                     Error = null, ErrorCode = null, Failure = null, ProviderFeedback = null,
                     SensitiveStatusError = sensitiveFailed,
@@ -311,32 +324,61 @@ public sealed class AdminProvidersController : IDisposable
         {
             // A read never runs beside another provider action: finishing it would release that action's busy state.
             lock (_gate) { if (_state.BusyProvider != null) return null; }
-            Update(action, () => _state = _state with { BusyProvider = provider, ProviderFeedback = null });
+            // The official loadEditor() starts by clearing the tile's feedback; the previous failure or success line of this provider ends here.
+            Update(action, () => _state = _state with
+            {
+                BusyProvider = provider, ReadingProvider = provider, ProviderFeedback = null,
+                SubtitleLoadFailures = WithoutName(_state.SubtitleLoadFailures, provider),
+                SubtitleSaveMessages = WithoutMessage(_state.SubtitleSaveMessages, provider),
+            });
             try
             {
                 var editor = await _providers.GetSubtitleProviderAsync(action, provider).ConfigureAwait(false);
                 // Reading this provider again is the official tile Reload: it ends this provider's "save not confirmed" state and no other.
-                Update(action, () => _state = _state with
+                // A read that finishes after the server or account changed applies nothing and hands back no editor: its ETag belongs to the old authority.
+                var applied = false;
+                Update(action, () =>
                 {
-                    SubtitleSaveFailures = WithoutFailure(_state.SubtitleSaveFailures, provider),
-                    SubtitleProviders = Array.AsReadOnly(_state.SubtitleProviders.Select(item =>
-                        item.ProviderName == provider
-                            ? new AdminSubtitleProvider
-                            {
-                                ProviderName = editor.Provider,
-                                Enabled = editor.Enabled,
-                                HasApiKey = editor.HasApiKey,
-                                HasCredentials = editor.HasCredentials,
-                                UpdatedAt = editor.UpdatedAt,
-                            }
-                            : item).ToArray()),
+                    applied = true;
+                    _state = _state with
+                    {
+                        SubtitleSaveFailures = WithoutFailure(_state.SubtitleSaveFailures, provider),
+                        SubtitleProviders = Array.AsReadOnly(_state.SubtitleProviders.Select(item =>
+                            item.ProviderName == provider
+                                ? new AdminSubtitleProvider
+                                {
+                                    ProviderName = editor.Provider,
+                                    Enabled = editor.Enabled,
+                                    HasApiKey = editor.HasApiKey,
+                                    HasCredentials = editor.HasCredentials,
+                                    UpdatedAt = editor.UpdatedAt,
+                                }
+                                : item).ToArray()),
+                    };
                 });
-                return editor;
+                return applied ? editor : null;
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { return null; }
-            catch (Exception error) { Update(action, () => _state = _state with { ProviderFeedback = "Could not load provider configuration: " + SafeError(error) }); return null; }
-            finally { Update(action, () => _state = _state with { BusyProvider = null }); }
+            // The official tile drops its editor when a read fails: the tile reads "Unable to load saved configuration. Reload before editing."
+            // and stays disabled until one read succeeds. The "not confirmed" state of this provider is left as it was.
+            catch (Exception error)
+            {
+                Update(action, () => _state = _state with
+                {
+                    SubtitleLoadFailures = WithName(_state.SubtitleLoadFailures, provider),
+                    ProviderFeedback = "Could not load provider configuration: " + SafeError(error),
+                });
+                return null;
+            }
+            finally { Update(action, () => _state = _state with { BusyProvider = null, ReadingProvider = null }); }
         }
+    }
+
+    /// <summary>A short page-level line from the page (for a refused click, or the first failed read of a page Reload); nothing is sent.</summary>
+    public void NotifyProvider(string message)
+    {
+        var owner = _lifetime.Owner; if (owner == null) return;
+        Update(owner, () => _state = _state with { ProviderFeedback = message });
     }
 
     public async Task<bool> SaveSubtitleAsync(AdminSubtitleProviderEditor editor, AdminSubtitleProviderChange change)
@@ -346,15 +388,19 @@ public sealed class AdminProvidersController : IDisposable
         using (action)
         {
             lock (_gate) { if (_state.BusyProvider != null || _state.SubtitleSaveFailures.ContainsKey(editor.Provider)) return false; }
-            Update(action, () => _state = _state with
-            {
-                BusyProvider = editor.Provider, ProviderFeedback = null,
-                SubtitleTestProvider = null, SubtitleTest = null,
-            });
+            // The official tile clears a connection-test result only when the save succeeded, so a failed attempt leaves it standing.
+            Update(action, () => _state = _state with { BusyProvider = editor.Provider, ProviderFeedback = null });
             try
             {
                 var saved = await _providers.SaveSubtitleProviderAsync(action, editor, change).ConfigureAwait(false);
-                Update(action, () => _state = _state with { ProviderFeedback = saved.LocalApply == AdminSubtitleLocalApply.Applied ? "Provider settings saved and applied." : "Provider settings saved; the local provider did not confirm applying them." });
+                // The official tile stays open on its success line and stays off until that provider is read again.
+                Update(action, () => _state = _state with
+                {
+                    ProviderFeedback = null,
+                    SubtitleSaveMessages = WithMessage(_state.SubtitleSaveMessages, editor.Provider, SubtitleSaveMessageFor(saved)),
+                    SubtitleTestProvider = _state.SubtitleTestProvider == editor.Provider ? null : _state.SubtitleTestProvider,
+                    SubtitleTest = _state.SubtitleTestProvider == editor.Provider ? null : _state.SubtitleTest,
+                });
                 try
                 {
                     var list = await _providers.ListSubtitleProvidersAsync(action).ConfigureAwait(false);
@@ -365,7 +411,8 @@ public sealed class AdminProvidersController : IDisposable
                 return true;
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { return false; }
-            catch (AdminProviderAuthorityChangedException) { Update(action, () => _state = _state with { ProviderFeedback = "The server or account changed. Reopen the provider and try again." }); return false; }
+            // An editor read under another server or account was refused before anything was sent: the tile still says so and Reload recovers it.
+            catch (AdminProviderAuthorityChangedException) { Update(action, () => _state = _state with { SubtitleSaveFailures = WithFailure(_state.SubtitleSaveFailures, editor.Provider, AdminSubtitleSaveFailure.Refused), ProviderFeedback = "The server or account changed. Reopen the provider and try again." }); return false; }
             // Every failed save, whatever the answer, leaves the tile in "save not confirmed" as the official page does: the tile shows
             // it and Save stays off until that provider has been read again. Nothing is sent again meanwhile.
             catch (AdminProviderConflictException) { Update(action, () => _state = _state with { SubtitleSaveFailures = WithFailure(_state.SubtitleSaveFailures, editor.Provider, AdminSubtitleSaveFailure.Conflict) }); return false; }
@@ -447,6 +494,32 @@ public sealed class AdminProvidersController : IDisposable
             catch (Exception error) { Update(action, () => _state = _state with { ProviderFeedback = SafeError(error) }); }
             finally { Update(action, () => _state = _state with { BusyProvider = null }); }
         }
+    }
+
+    /// <summary>The official <c>providerSaveMessage</c> (web.common.subtitles.providers.*): what this server did with the saved revision.</summary>
+    public static string SubtitleSaveMessageFor(AdminSubtitleProviderSaved saved) =>
+        saved.LocalApply == AdminSubtitleLocalApply.Applied
+            ? string.Equals(saved.LocalAppliedRevision, saved.SavedRevision, StringComparison.Ordinal)
+                ? "Settings saved and applied on this server. Other servers may still use older settings."
+                : "Settings saved. This server applied a different saved revision; reload to review the current configuration."
+            : "Settings saved, but not applied on this server. Other servers may still use older settings.";
+
+    private static bool IsListed(IReadOnlyList<AdminSubtitleProvider> listed, string provider) =>
+        listed.Any(item => string.Equals(item.ProviderName, provider, StringComparison.Ordinal));
+
+    private static IReadOnlyCollection<string> WithName(IReadOnlyCollection<string> current, string provider) =>
+        current.Contains(provider) ? current : [.. current, provider];
+
+    private static IReadOnlyCollection<string> WithoutName(IReadOnlyCollection<string> current, string provider) =>
+        current.Contains(provider) ? current.Where(name => !string.Equals(name, provider, StringComparison.Ordinal)).ToArray() : current;
+
+    private static IReadOnlyDictionary<string, string> WithMessage(IReadOnlyDictionary<string, string> current, string provider, string message) =>
+        new Dictionary<string, string>(current, StringComparer.Ordinal) { [provider] = message };
+
+    private static IReadOnlyDictionary<string, string> WithoutMessage(IReadOnlyDictionary<string, string> current, string provider)
+    {
+        if (!current.ContainsKey(provider)) return current;
+        var next = new Dictionary<string, string>(current, StringComparer.Ordinal); next.Remove(provider); return next;
     }
 
     private static IReadOnlyDictionary<string, AdminSubtitleSaveFailure> WithFailure(IReadOnlyDictionary<string, AdminSubtitleSaveFailure> current, string provider, AdminSubtitleSaveFailure kind) =>

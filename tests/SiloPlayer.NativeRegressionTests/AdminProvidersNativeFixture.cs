@@ -24,6 +24,12 @@ using SiloPlayer.Views.Admin;
 internal static class AdminProvidersNativeFixture
 {
     private const string Marker = "ProvidersMarker";
+    // Official en.json at a84b2551b: web.admin.settings.providers.subtitles.* and web.common.subtitles.providers.*.
+    private const string SavedApplied = "Settings saved and applied on this server. Other servers may still use older settings.";
+    private const string LoadFailedText = "Unable to load saved configuration. Reload before editing.";
+    private const string LoadingText = "Loading saved configuration...";
+    private const string ReloadLabel = "Reload saved configuration (discard draft)";
+    private const string NotConfirmedLine = "Save not confirmed. Your draft is retained. Reload saved configuration to review it before making another change.";
     private const string MarkerId = "plugin_6_introdb";
     private static readonly List<string> Failures = [];
     private static void Check(bool condition, string label) { Program.Log((condition ? "PASS: " : "FAIL: ") + label); if (!condition) Failures.Add(label); }
@@ -41,6 +47,11 @@ internal static class AdminProvidersNativeFixture
         private readonly List<string> _bodies = [];
         private readonly List<string> _reads = [];
         internal bool SubtitleLost;
+        /// <summary>Provider names whose editor read fails (a 503, or a lost answer when <see cref="SubtitleReadLost"/>).</summary>
+        internal volatile string[] FailingReads = [];
+        internal bool SubtitleReadLost;
+        /// <summary>While set, every provider editor read waits for it.</summary>
+        internal TaskCompletionSource? SubtitleReadGate;
         internal bool OddProvider;
         internal bool FailEffective, FailSensitiveStatus, FailSubtitles, FailMarkers, FailPlugins, EmptySubtitles, EmptyMarkers, EmptyPlugins, MdblistConfigured = true;
         internal int SettingsPut = 200, SubtitlePut = 200, MarkerPut = 200, MarkerValidateStatus = 200;
@@ -56,6 +67,8 @@ internal static class AdminProvidersNativeFixture
         internal const string OddName = "odd\u2028na\u202Eme";
         /// <summary>GET requests whose path is exactly <paramref name="path"/> (the request log the Reload checks read).</summary>
         internal int ReadCount(string path) { lock (_gate) return _reads.Count(read => read == path); }
+        /// <summary>Every request the server has seen, reads and writes.</summary>
+        internal int RequestCount { get { lock (_gate) return _reads.Count + _writes.Count; } }
         internal int Count(string prefix) { lock (_gate) return _writes.Count(write => write.StartsWith(prefix, StringComparison.Ordinal)); }
         internal int WriteCount { get { lock (_gate) return _writes.Count; } }
         internal string LastBody { get { lock (_gate) return _bodies.Count == 0 ? "" : _bodies[^1]; } }
@@ -97,6 +110,12 @@ internal static class AdminProvidersNativeFixture
                 if (path.StartsWith("/api/v2/admin/subtitle-providers/", StringComparison.Ordinal))
                 {
                     var name = Uri.UnescapeDataString(path[(path.LastIndexOf('/') + 1)..]);
+                    if (SubtitleReadGate != null) await SubtitleReadGate.Task;
+                    if (FailingReads.Contains(name))
+                    {
+                        if (SubtitleReadLost) throw new HttpRequestException("synthetic lost answer");
+                        return Status(503);
+                    }
                     return Json(Subtitle(name), "\"providers-native-subtitle-" + name.Length + "\"");
                 }
                 return Json(new { });
@@ -198,6 +217,11 @@ internal static class AdminProvidersNativeFixture
         await Scenario(window, "disconnect after authority replacement", new Server(), DisconnectRaceAsync);
         await Scenario(window, "subtitles", new Server(), SubtitlesAsync);
         await Scenario(window, "subtitle page reload", new Server(), SubtitlePageReloadAsync);
+        await Scenario(window, "subtitle second tile after a conflict", new Server(), env => SubtitleSecondTileAsync(env, 412, lost: false, "412 conflict"));
+        await Scenario(window, "subtitle second tile after a server error", new Server(), env => SubtitleSecondTileAsync(env, 503, lost: false, "503 unknown outcome"));
+        await Scenario(window, "subtitle second tile after a lost answer", new Server(), env => SubtitleSecondTileAsync(env, 0, lost: true, "lost answer"));
+        await Scenario(window, "subtitle reload failure", new Server(), SubtitleReloadFailureAsync);
+        await Scenario(window, "subtitle page reload failure", new Server(), SubtitlePageReloadFailureAsync);
         await Scenario(window, "subtitle dialog text", Server.Odd(), SubtitleDialogTextAsync);
         await Scenario(window, "markers", new Server(), MarkersAsync);
         if (Failures.Count > 0) throw new InvalidOperationException("Providers fixture failures: " + string.Join("; ", Failures));
@@ -411,8 +435,9 @@ internal static class AdminProvidersNativeFixture
         Confirm(Dialog(page)!);
         await Until(() => Dialog(page) == null, "stale confirmation closed");
         await Until(() => env.Controller.State.Loaded && !ReferenceEquals(env.Controller.State.Owner, firstOwner) && env.Controller.State.Owner != null, "page reopened for the replacement authority");
+        var writesBefore = server.WriteCount;
         await Task.Delay(300);
-        Check(server.WriteCount == 0, "a Disconnect confirmed for a replaced authority wrote nothing");
+        Check(writesBefore == 0 && server.WriteCount == 0, "a Disconnect confirmed for a replaced authority wrote nothing (" + writesBefore + " writes before and " + server.WriteCount + " after the wait)");
         Check(env.Controller.State.Configured.Contains("mdblist.api_key"), "the replacement authority still shows the key as configured");
     }
 
@@ -443,9 +468,20 @@ internal static class AdminProvidersNativeFixture
         foreach (var (status, lost, label) in new[] { (400, false, "rejected (400)"), (412, false, "conflict (412)"), (503, false, "server error (503)"), (0, true, "lost answer") })
         {
             server.SubtitlePut = status; server.SubtitleLost = lost; var before = server.Count("PUT");
+            // The server holds the provider on. The admin turns it off: a failed save must not leave that choice looking like the server's value.
+            Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn = false;
+            if (status == 400)
+            {
+                // A fresh test result is on screen when the save fails; the official tile clears it on success only.
+                await Click(page, "ProvidersSubtitleTest_opensubtitles");
+                await Until(() => HasText(page, "Connection successful."), "a connection-test result before the failed save");
+            }
             await Click(page, "ProvidersSubtitleSave_opensubtitles");
             await Until(() => Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles"), label + ": the tile shows save not confirmed");
             Check(server.Count("PUT") == before + 1, label + ": the save was sent exactly once");
+            Check(server.LastBody.Contains("\"enabled\":false", StringComparison.Ordinal), label + ": the save carried the admin's switch choice (off)");
+            Check(!Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn, label + ": the unsaved choice stays visible, disabled, until Reload");
+            if (status == 400) Check(HasText(page, "Connection successful."), label + ": a failed save leaves the connection-test result standing (the official tile clears it on success only)");
             Check(HasText(page, NotConfirmed), label + ": the official 'save not confirmed' text is shown");
             Check(!Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled && !Find<Button>(page, "ProvidersSubtitleTest_opensubtitles").IsEnabled &&
                 !Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").IsEnabled && !Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").IsEnabled &&
@@ -461,13 +497,15 @@ internal static class AdminProvidersNativeFixture
             Check(!Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles"), label + ": the not-confirmed state is gone");
             Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "" && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "",
                 label + ": the username and password boxes are empty after Reload");
-            Check(Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn, label + ": the enable switch shows the server's value");
+            Check(Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn, label + ": the enable switch is back on the server's value (on) after the admin had turned it off");
             Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").IsEnabled && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").IsEnabled && Find<Button>(page, "ProvidersSubtitleTest_opensubtitles").IsEnabled,
                 label + ": the fields and Test are enabled again");
             Check(server.ReadCount(Provider) == providerReads + 1 && server.ReadCount("/api/v2/admin/subtitle-providers") == listReads, label + ": Reload made one read of that provider and no list read");
             Check(server.WriteCount == writesBefore, label + ": Reload sent no write (no PUT or POST)");
             Check(env.Controller.State.ProviderFeedback is null or "", label + ": no stale page feedback remains");
+            var requestsBefore = server.RequestCount;
             await Task.Delay(300);
+            Check(server.RequestCount == requestsBefore, label + ": nothing was requested while the page settled (" + requestsBefore + " requests before and after)");
             Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "" && !Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles") && Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled,
                 label + ": clearing the boxes was not read back as an edit");
             // Type again for the next failure kind.
@@ -488,7 +526,20 @@ internal static class AdminProvidersNativeFixture
         Confirm(Dialog(page)!);
         await Until(() => server.Count("PUT") == writes + 1, "credentials cleared");
         Check(server.LastBody.Contains("\"clear_credentials\":true", StringComparison.Ordinal) && server.LastBody.Contains("\"enabled\":false", StringComparison.Ordinal), "disconnect saves the provider disabled with credentials cleared");
-        await Until(() => Has(page, "ProvidersSubtitleOpen_opensubtitles") && HasText(page, "Provider settings saved and applied."), "saved and collapsed");
+        // The official tile stays open on its success line and stays off until Reload re-reads the provider.
+        await Until(() => HasText(page, SavedApplied), "the tile shows the official success line");
+        Check(Has(page, "ProvidersSubtitleClose_opensubtitles") && !Has(page, "ProvidersSubtitleOpen_opensubtitles"), "a successful save leaves the tile open");
+        Check(!HasText(page, "Connection successful.") && !Shown(Find<TextBlock>(page, "ProvidersFeedback")), "the save success cleared the test result and shows no page line");
+        Check(!Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled && !Find<Button>(page, "ProvidersSubtitleTest_opensubtitles").IsEnabled &&
+            !Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").IsEnabled && !Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").IsEnabled &&
+            !Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsEnabled, "after a save the fields, Test and Save stay off until Reload");
+        Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "" && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "" &&
+            !Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn, "the typed credentials were cleared and the switch shows the value that was saved (off)");
+        var readsBeforeReload = server.ReadCount(Provider); var writesBeforeReload = server.WriteCount;
+        await Click(page, "ProvidersSubtitleReload_opensubtitles");
+        await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, "Reload re-arms the saved tile");
+        Check(!HasText(page, SavedApplied) && server.ReadCount(Provider) == readsBeforeReload + 1 && server.WriteCount == writesBeforeReload, "Reload ended the success line with one read of that provider and no write");
+        Check(!Has(page, "ProvidersSubtitleDisconnect_opensubtitles"), "after Reload the cleared provider is no longer offered for Disconnect");
 
         await Click(page, "ProvidersSubtitleOpen_subdl");
         await Until(() => Has(page, "ProvidersSubtitleApiKey_subdl"), "SubDL editor");
@@ -529,6 +580,205 @@ internal static class AdminProvidersNativeFixture
             Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "", "after the page Reload the tile has Save armed and empty drafts");
     }
 
+    /// <summary>
+    /// Provider A is "save not confirmed" (after a 412, a 503 or a lost answer). Provider B must still be saved, and provider C disconnected,
+    /// through their own controls: a control that is drawn enabled must act or say why, and each save is sent exactly once to its own provider.
+    /// </summary>
+    private static async Task SubtitleSecondTileAsync(Env env, int failure, bool lost, string kind)
+    {
+        var page = env.Page; var server = env.Server; var prefix = kind + ": ";
+        const string ProviderPath = "PUT /api/v2/admin/subtitle-providers/";
+        await Click(page, "ProvidersSubtitleOpen_opensubtitles");
+        await Until(() => Has(page, "ProvidersSubtitlePassword_opensubtitles"), prefix + "OpenSubtitles editor");
+        Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text = "synthetic-user";
+        await Secret(Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles"), "synthetic-pass");
+        server.SubtitlePut = failure; server.SubtitleLost = lost;
+        await Click(page, "ProvidersSubtitleSave_opensubtitles");
+        await Until(() => env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles"), prefix + "OpenSubtitles not confirmed");
+        server.SubtitlePut = 200; server.SubtitleLost = false;
+        var openSubtitlesPuts = server.Count(ProviderPath + "opensubtitles");
+        Check(openSubtitlesPuts == 1, prefix + "the failed save was sent once");
+
+        // B: SubDL, saved through its own controls while A is not confirmed.
+        await Click(page, "ProvidersSubtitleOpen_subdl");
+        await Until(() => Has(page, "ProvidersSubtitleApiKey_subdl"), prefix + "SubDL editor");
+        Check(Find<PasswordBox>(page, "ProvidersSubtitleApiKey_subdl").IsEnabled && Find<Button>(page, "ProvidersSubtitleSave_subdl").IsEnabled &&
+            Find<Button>(page, "ProvidersSubtitleTest_subdl").IsEnabled && Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_subdl").IsEnabled &&
+            !Has(page, "ProvidersSubtitleNotConfirmed_subdl"), prefix + "another provider's tile is drawn editable while OpenSubtitles is not confirmed");
+        await Secret(Find<PasswordBox>(page, "ProvidersSubtitleApiKey_subdl"), "synthetic-subdl-key");
+        await Click(page, "ProvidersSubtitleTest_subdl");
+        await Until(() => HasText(page, "Connection successful."), prefix + "SubDL test result");
+        var before = server.Count("PUT");
+        await ClickActs(env, "ProvidersSubtitleSave_subdl", prefix + "SubDL Save");
+        await Until(() => server.Count(ProviderPath + "subdl") == 1, prefix + "SubDL saved");
+        await Until(() => HasText(page, SavedApplied), prefix + "SubDL shows the official success line");
+        Check(server.Count("PUT") == before + 1 && server.Count(ProviderPath + "opensubtitles") == openSubtitlesPuts, prefix + "exactly one PUT was sent, to SubDL, and OpenSubtitles was not sent again");
+        Check(server.LastBody.Contains("\"api_key\":\"synthetic-subdl-key\"", StringComparison.Ordinal) && server.LastBody.Contains("\"enabled\":true", StringComparison.Ordinal), prefix + "the SubDL write carries its key and the provider on");
+        Check(!HasText(page, "Connection successful."), prefix + "the successful save cleared the SubDL test result");
+        Check(Has(page, "ProvidersSubtitleClose_subdl") && !Find<Button>(page, "ProvidersSubtitleSave_subdl").IsEnabled && !Find<PasswordBox>(page, "ProvidersSubtitleApiKey_subdl").IsEnabled,
+            prefix + "SubDL stays open and off until Reload");
+        Check(env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles") && !env.Controller.State.SubtitleSaveNotConfirmed("subdl"), prefix + "OpenSubtitles is still not confirmed and SubDL is not");
+
+        // C: SubSource is configured; its Disconnect works through its own control and confirmation.
+        await Click(page, "ProvidersSubtitleOpen_subsource");
+        await Until(() => Has(page, "ProvidersSubtitleDisconnect_subsource"), prefix + "SubSource editor");
+        Check(Find<Button>(page, "ProvidersSubtitleDisconnect_subsource").IsEnabled, prefix + "SubSource Disconnect is drawn enabled");
+        before = server.Count("PUT");
+        await ClickActs(env, "ProvidersSubtitleDisconnect_subsource", prefix + "SubSource Disconnect", confirm: true);
+        await Until(() => server.Count(ProviderPath + "subsource") == 1, prefix + "SubSource disconnected");
+        Check(server.Count("PUT") == before + 1 && server.LastBody.Contains("\"clear_credentials\":true", StringComparison.Ordinal) && server.LastBody.Contains("\"enabled\":false", StringComparison.Ordinal),
+            prefix + "exactly one PUT, to SubSource, disabling it and clearing its credentials");
+        await Until(() => HasText(page, SavedApplied), prefix + "SubSource shows the official success line");
+
+        // A is recovered by its own Reload, one press, with no other write.
+        await Click(page, "ProvidersSubtitleOpen_opensubtitles");
+        await Until(() => Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles"), prefix + "OpenSubtitles reopens as not confirmed");
+        var writes = server.WriteCount;
+        await Click(page, "ProvidersSubtitleReload_opensubtitles");
+        await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, prefix + "OpenSubtitles Reload re-arms Save");
+        Check(server.WriteCount == writes && !env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles"), prefix + "Reload wrote nothing and ended the not-confirmed state");
+    }
+
+    /// <summary>
+    /// A failed Reload of one tile, as the official tile: the editor is dropped, the whole tile is off, it says it could not be loaded, and
+    /// Reload stays reachable until one read succeeds. Also: the switch follows the server after Reload (both directions), and a Reload in
+    /// progress reads "Loading saved configuration...", never "Saving".
+    /// </summary>
+    private static async Task SubtitleReloadFailureAsync(Env env)
+    {
+        var page = env.Page; var server = env.Server;
+        const string Provider = "/api/v2/admin/subtitle-providers/opensubtitles";
+
+        // A provider that is off on the server: turning it on and failing the save, then Reload, shows it off again.
+        await Click(page, "ProvidersSubtitleOpen_subdl");
+        await Until(() => Has(page, "ProvidersSubtitleApiKey_subdl"), "SubDL editor");
+        Check(!Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_subdl").IsOn, "SubDL is off on the server and the switch shows it");
+        Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_subdl").IsOn = true;
+        server.SubtitlePut = 503;
+        await Click(page, "ProvidersSubtitleSave_subdl");
+        await Until(() => Has(page, "ProvidersSubtitleNotConfirmed_subdl"), "SubDL not confirmed");
+        Check(Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_subdl").IsOn && !Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_subdl").IsEnabled, "SubDL: the unsaved choice (on) stays visible, disabled");
+        server.SubtitlePut = 200;
+        await Click(page, "ProvidersSubtitleReload_subdl");
+        await Until(() => Find<Button>(page, "ProvidersSubtitleSave_subdl").IsEnabled, "SubDL Reload re-arms Save");
+        Check(!Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_subdl").IsOn, "SubDL: after Reload the switch is back on the server's value (off) after the admin had turned it on");
+
+        await Click(page, "ProvidersSubtitleOpen_opensubtitles");
+        await Until(() => Has(page, "ProvidersSubtitlePassword_opensubtitles"), "OpenSubtitles editor");
+
+        // Reading is not saving.
+        server.SubtitleReadGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await Click(page, "ProvidersSubtitleReload_opensubtitles");
+        await Until(() => HasText(page, LoadingText), "the tile says it is loading");
+        Check(Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").Content?.ToString() == "Save" && !HasText(page, "Saving"), "while a tile is read its Save reads 'Save', never 'Saving…'");
+        Check(!Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled && !Find<Button>(page, "ProvidersSubtitleReload_opensubtitles").IsEnabled, "Save and Reload are off while the read is pending");
+        server.SubtitleReadGate.SetResult(); server.SubtitleReadGate = null;
+        await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled && !HasText(page, LoadingText), "the read finished");
+
+        foreach (var (lost, kind) in new[] { (false, "503"), (true, "lost answer") })
+        {
+            // A tile that was only being edited, never saved.
+            Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text = "synthetic-user";
+            await Secret(Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles"), "synthetic-pass");
+            Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn = false;
+            server.FailingReads = ["opensubtitles"]; server.SubtitleReadLost = lost;
+            var reads = server.ReadCount(Provider); var writes = server.WriteCount;
+            await Click(page, "ProvidersSubtitleReload_opensubtitles");
+            await Until(() => Has(page, "ProvidersSubtitleLoadFailed_opensubtitles"), kind + ": the tile says it could not be loaded");
+            Check(HasText(page, LoadFailedText), kind + ": the official 'Unable to load saved configuration' text is shown in the tile");
+            Check(!Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled && !Find<Button>(page, "ProvidersSubtitleTest_opensubtitles").IsEnabled &&
+                !Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").IsEnabled && !Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").IsEnabled &&
+                !Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsEnabled, kind + ": the whole tile is off (fields, Test, Save, switch)");
+            Check(!Has(page, "ProvidersSubtitleDisconnect_opensubtitles") || !Find<Button>(page, "ProvidersSubtitleDisconnect_opensubtitles").IsEnabled, kind + ": Disconnect is off");
+            Check(Find<Button>(page, "ProvidersSubtitleReload_opensubtitles").IsEnabled && Find<Button>(page, "ProvidersSubtitleReload_opensubtitles").Content?.ToString() == ReloadLabel, kind + ": Reload is reachable and carries the official label");
+            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "synthetic-user" && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "synthetic-pass",
+                kind + ": the typed values stay visible and disabled, as the official tile keeps them on a failed read");
+            Check(server.ReadCount(Provider) == reads + 1 && server.WriteCount == writes, kind + ": the failed Reload made one read and sent no write");
+            Check(!HasText(page, "Saving"), kind + ": a failed read is not shown as saving");
+
+            // Reload again, still failing, then healthy.
+            await Click(page, "ProvidersSubtitleReload_opensubtitles");
+            await Until(() => server.ReadCount(Provider) == reads + 2 && !env.Controller.State.Loading && env.Controller.State.BusyProvider == null, kind + ": second failing Reload");
+            Check(Has(page, "ProvidersSubtitleLoadFailed_opensubtitles") && !Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, kind + ": still off after a second failed Reload");
+            server.FailingReads = []; server.SubtitleReadLost = false;
+            await Click(page, "ProvidersSubtitleReload_opensubtitles");
+            await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, kind + ": a successful Reload re-arms the tile");
+            Check(!Has(page, "ProvidersSubtitleLoadFailed_opensubtitles") && server.ReadCount(Provider) == reads + 3, kind + ": the notice is gone after one successful read");
+            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "" && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "" &&
+                Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn && Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").IsEnabled,
+                kind + ": the drafts were discarded, the switch follows the server and the fields are on");
+            Check(server.WriteCount == writes, kind + ": no request other than reads was sent");
+
+            // A failed save, then a failed Reload: the tile reads "could not be loaded" (one line, as the official tile), then recovers.
+            Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text = "synthetic-user";
+            await Secret(Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles"), "synthetic-pass");
+            server.SubtitlePut = 503; var puts = server.Count("PUT");
+            await Click(page, "ProvidersSubtitleSave_opensubtitles");
+            await Until(() => Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles"), kind + ": a failed save is not confirmed");
+            server.SubtitlePut = 200; server.FailingReads = ["opensubtitles"]; server.SubtitleReadLost = lost;
+            await Click(page, "ProvidersSubtitleReload_opensubtitles");
+            await Until(() => Has(page, "ProvidersSubtitleLoadFailed_opensubtitles"), kind + ": the failed Reload after a failed save");
+            Check(!HasText(page, NotConfirmedLine) && HasText(page, LoadFailedText) && !Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, kind + ": one line at a time, and the tile stays off");
+            Check(env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles"), kind + ": a failed read does not settle the not-confirmed state");
+            server.FailingReads = []; server.SubtitleReadLost = false;
+            await Click(page, "ProvidersSubtitleReload_opensubtitles");
+            await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, kind + ": the next Reload re-arms the tile");
+            Check(!env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles") && !Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles") && server.Count("PUT") == puts + 1,
+                kind + ": recovered, and the one failed save was never sent again");
+        }
+
+        // A tile whose very first read fails has nothing to edit; it says so, can be closed, and recovers on Reload.
+        server.FailingReads = ["subsource"];
+        await Click(page, "ProvidersSubtitleOpen_subsource");
+        await Until(() => Has(page, "ProvidersSubtitleLoadFailed_subsource"), "SubSource could not be loaded");
+        Check(HasText(page, LoadFailedText) && Find<Button>(page, "ProvidersSubtitleReload_subsource").Content?.ToString() == ReloadLabel && Has(page, "ProvidersSubtitleClose_subsource") && !Has(page, "ProvidersSubtitleSave_subsource"),
+            "a tile that never loaded shows the official text, the official Reload label and Close, and offers no Save");
+        server.FailingReads = [];
+        await Click(page, "ProvidersSubtitleReload_subsource");
+        await Until(() => Has(page, "ProvidersSubtitleApiKey_subsource") && Find<Button>(page, "ProvidersSubtitleSave_subsource").IsEnabled, "SubSource recovered on Reload");
+    }
+
+    /// <summary>
+    /// The page Reload re-reads the opened tiles that wait for a read. When the first tile's read fails and the next tile's read succeeds,
+    /// the failure is still on the page (the next read starts by clearing the page line) and in its own tile.
+    /// </summary>
+    private static async Task SubtitlePageReloadFailureAsync(Env env)
+    {
+        var page = env.Page; var server = env.Server;
+        await Click(page, "ProvidersSubtitleOpen_opensubtitles");
+        await Until(() => Has(page, "ProvidersSubtitlePassword_opensubtitles"), "OpenSubtitles editor");
+        Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text = "synthetic-user";
+        await Secret(Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles"), "synthetic-pass");
+        server.SubtitlePut = 503;
+        await Click(page, "ProvidersSubtitleSave_opensubtitles");
+        await Until(() => env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles"), "OpenSubtitles not confirmed");
+        await Click(page, "ProvidersSubtitleOpen_subdl");
+        await Until(() => Has(page, "ProvidersSubtitleApiKey_subdl"), "SubDL editor");
+        await Secret(Find<PasswordBox>(page, "ProvidersSubtitleApiKey_subdl"), "synthetic-subdl-key");
+        await Click(page, "ProvidersSubtitleSave_subdl");
+        await Until(() => env.Controller.State.SubtitleSaveNotConfirmed("subdl"), "SubDL not confirmed");
+
+        // OpenSubtitles (first in the list) cannot be read; SubDL (second) can.
+        server.SubtitlePut = 200; server.FailingReads = ["opensubtitles"];
+        var writes = server.WriteCount;
+        await Click(page, "ProvidersReload");
+        await Until(() => env.Controller.State.SubtitleLoadFailed("opensubtitles") && !env.Controller.State.SubtitleSaveNotConfirmed("subdl") &&
+            !env.Controller.State.Loading && env.Controller.State.BusyProvider == null, "the page Reload read both tiles");
+        await Until(() => Shown(Find<TextBlock>(page, "ProvidersFeedback")) && Find<TextBlock>(page, "ProvidersFeedback").Text.StartsWith("Could not load provider configuration", StringComparison.Ordinal),
+            "the first failed read stays on the page although the next tile's read succeeded");
+        Check(server.WriteCount == writes, "the page Reload wrote nothing");
+        await Click(page, "ProvidersSubtitleClose_subdl");
+        await Click(page, "ProvidersSubtitleOpen_opensubtitles");
+        await Until(() => Has(page, "ProvidersSubtitleLoadFailed_opensubtitles"), "the failed tile says so when it is opened");
+        Check(HasText(page, LoadFailedText) && !Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, "the first tile keeps its own failure and stays off after the next tile's read");
+
+        server.FailingReads = [];
+        await Click(page, "ProvidersReload");
+        await Until(() => !env.Controller.State.SubtitleLoadFailed("opensubtitles") && !env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles") &&
+            !env.Controller.State.Loading && env.Controller.State.BusyProvider == null, "the page Reload recovered the failed tile");
+        await Until(() => Has(page, "ProvidersSubtitlePassword_opensubtitles") && Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, "the recovered tile is armed");
+    }
+
     /// <summary>A third-party provider name never reaches a dialog title with control, line-separator or direction characters.</summary>
     private static async Task SubtitleDialogTextAsync(Env env)
     {
@@ -552,9 +802,21 @@ internal static class AdminProvidersNativeFixture
         var root = Descendants(primary).OfType<Border>().FirstOrDefault(border => border.Name == "ProvidersDestructiveRoot");
         Check(root != null, label + ": the page-local template is applied");
         if (root == null) return;
-        VisualStateManager.GoToState(primary, "PointerOver", false); await Task.Delay(60);
-        Check(root.Background is SolidColorBrush { Color: { R: 0xDC, G: 0x26, B: 0x26, A: >= 0xE5 and <= 0xE6 } }, label + ": hover draws the fill at 90%");
+        static bool Full(Border border) => border.Background is SolidColorBrush { Color: { A: 0xFF, R: 0xDC, G: 0x26, B: 0x26 } } && border.Opacity == 1;
+        static bool Ninety(Border border) => border.Background is SolidColorBrush { Color: { R: 0xDC, G: 0x26, B: 0x26, A: >= 0xE5 and <= 0xE6 } };
+        async Task<bool> Reaches(Func<bool> condition)
+        {
+            for (var i = 0; i < 80 && !condition(); i++) await Task.Delay(25);
+            return condition();
+        }
+        VisualStateManager.GoToState(primary, "PointerOver", false);
+        Check(await Reaches(() => Ninety(root)), label + ": hover draws the fill at 90%");
+        VisualStateManager.GoToState(primary, "Pressed", false);
+        Check(await Reaches(() => Ninety(root)), label + ": pressed draws the fill at 90%");
+        VisualStateManager.GoToState(primary, "Disabled", false);
+        Check(await Reaches(() => root.Opacity == 0.5) && root.Background is SolidColorBrush { Color: { A: 0xFF, R: 0xDC, G: 0x26, B: 0x26 } }, label + ": disabled keeps the destructive fill at half opacity");
         VisualStateManager.GoToState(primary, "Normal", false);
+        Check(await Reaches(() => Full(root)), label + ": normal restores the full fill and opacity");
     }
 
     // ---- marker providers --------------------------------------------------------------------------------------------
@@ -622,6 +884,26 @@ internal static class AdminProvidersNativeFixture
     }
 
     // ---- helpers -----------------------------------------------------------------------------------------------------
+
+    /// <summary>Requests seen plus every visible page text: a control that is drawn enabled must change this (send a request or say why not).</summary>
+    private static string Snapshot(Env env) => env.Server.RequestCount + "|" + string.Join("\u00A6", Descendants(env.Page).OfType<TextBlock>().Where(Shown).Select(text => text.Text));
+
+    /// <summary>
+    /// Clicks an enabled control, answers its confirmation when asked, and fails the check when nothing observable followed: no request and
+    /// no message. This is the page-wide rule that an enabled control must act or say why it did not.
+    /// </summary>
+    private static async Task ClickActs(Env env, string id, string label, bool confirm = false)
+    {
+        var before = Snapshot(env);
+        await Click(env.Page, id);
+        if (confirm)
+        {
+            await Until(() => Dialog(env.Page) is { IsLoaded: true }, label + ": confirmation");
+            Confirm(Dialog(env.Page)!);
+        }
+        for (var i = 0; i < 200 && Snapshot(env) == before; i++) await Task.Delay(25);
+        Check(Snapshot(env) != before, label + ": the enabled control acted or said why (a request or a message followed)");
+    }
 
     private static ContentDialog? Dialog(AdminProvidersPage page) => (ContentDialog?)typeof(AdminProvidersPage).GetField("_dialog", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page);
     private static void Confirm(ContentDialog dialog) =>

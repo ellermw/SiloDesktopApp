@@ -528,6 +528,282 @@ public sealed class AdminProvidersTests
         Assert.Equal(65, AdminProviderPresentation.DialogText(new string('y', 500)).Length);
     }
 
+    private const string SavedOk = """{"saved_revision":"7","local_apply":"applied","local_applied_revision":"7"}""";
+    private static Func<HttpRequestMessage, Task<HttpResponseMessage>> Ok(string json = SavedOk) => _ => Task.FromResult(AdminMonitorKit.Json(json));
+
+    /// <summary>Finding 1 (controller half): one provider's failed save never blocks another provider's Save or Disconnect.</summary>
+    [Theory]
+    [InlineData("412")]
+    [InlineData("503")]
+    [InlineData("lost")]
+    public async Task AnotherProvidersFailedSaveNeverBlocksThisProvidersSaveOrDisconnect(string answer)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var failing = await h.Controller.GetSubtitleEditorAsync("subsource");
+        h.Write = SubtitleFailure(answer);
+        Assert.False(await h.Controller.SaveSubtitleAsync(failing!, new AdminSubtitleProviderChange { Enabled = true }));
+        Assert.True(h.Controller.State.SubtitleSaveNotConfirmed("subsource"));
+
+        h.Write = Ok();
+        var save = await h.Controller.GetSubtitleEditorAsync("subdl");
+        Assert.True(await h.Controller.SaveSubtitleAsync(save!, new AdminSubtitleProviderChange { Enabled = true, ApiKey = "synthetic-key" }));
+        Assert.Equal(2, h.Writes.Length);
+        Assert.EndsWith("/subtitle-providers/subdl", h.Writes[1].Split(' ')[1], StringComparison.Ordinal);
+
+        var disconnect = await h.Controller.GetSubtitleEditorAsync("subdl");
+        Assert.True(await h.Controller.SaveSubtitleAsync(disconnect!, new AdminSubtitleProviderChange { Enabled = false, ClearCredentials = true }));
+        Assert.Equal(3, h.Writes.Length);
+        Assert.True(h.Controller.State.SubtitleSaveNotConfirmed("subsource"));
+        Assert.False(h.Controller.State.SubtitleSaveNotConfirmed("subdl"));
+    }
+
+    /// <summary>
+    /// Finding 1 (page half): the page reads only its own provider's state. The page-wide flags are derived from every provider, so a
+    /// Save or Disconnect click that tested them did nothing, and said nothing, on every other tile.
+    /// </summary>
+    [Fact]
+    public void ThePageNeverReadsThePageWideSubtitleFlagsAndEveryRefusedClickSaysWhy()
+    {
+        var views = Path.Combine(Root(), "src/SiloPlayer/Views/Admin");
+        foreach (var file in new[] { "AdminProvidersPage.Cards.cs", "AdminProvidersPage.cs" })
+        {
+            var text = File.ReadAllText(Path.Combine(views, file));
+            Assert.DoesNotContain("SubtitleConflict", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("SubtitleOutcomeUnknown", text, StringComparison.Ordinal);
+        }
+        // A control drawn enabled acts or says why: every early return in the subtitle Save handler carries a message.
+        var cards = File.ReadAllText(Path.Combine(views, "AdminProvidersPage.Cards.cs"));
+        var start = cards.IndexOf("private async Task SaveSubtitleAsync(", StringComparison.Ordinal);
+        var end = cards.IndexOf("var change = draft.CaptureChange", start, StringComparison.Ordinal);
+        Assert.True(start > 0 && end > start);
+        foreach (var line in cards[start..end].Split('\n').Where(line => line.Contains("return;", StringComparison.Ordinal)))
+            Assert.True(line.Contains("NotifyProvider(", StringComparison.Ordinal) || line.Contains("controller == null", StringComparison.Ordinal),
+                "A refused Save click must say why: " + line.Trim());
+    }
+
+    [Fact]
+    public void TheMarkerTileReloadReadsTheMarkerScopeOnlyAndNeverTheSubtitleTiles()
+    {
+        var cards = File.ReadAllText(Path.Combine(Root(), "src/SiloPlayer/Views/Admin/AdminProvidersPage.Cards.cs"));
+        var start = cards.IndexOf("\"ProvidersMarkerReload_\"", StringComparison.Ordinal);
+        var end = cards.IndexOf("actions.Children.Add(reload);", start, StringComparison.Ordinal);
+        Assert.True(start > 0 && end > start);
+        Assert.DoesNotContain("ReloadPageAsync", cards[start..end], StringComparison.Ordinal);
+        Assert.Contains("_controller.ReloadAsync(preserveDraft: true)", cards[start..end], StringComparison.Ordinal);
+    }
+
+    /// <summary>Finding 2: a read that fails leaves its tile "could not be loaded"; only a successful read of that provider ends it.</summary>
+    [Theory]
+    [InlineData("503")]
+    [InlineData("lost")]
+    public async Task AFailedSubtitleReadMarksOnlyThatTileNotLoadedAndALaterReadNeverClearsIt(string answer)
+    {
+        using var h = new Harness { ListSubsource = true };
+        await h.Controller.OpenAsync();
+        var failing = await h.Controller.GetSubtitleEditorAsync("subsource");
+        h.Write = SubtitleFailure("503");
+        Assert.False(await h.Controller.SaveSubtitleAsync(failing!, new AdminSubtitleProviderChange { Enabled = true }));
+
+        h.ProviderRead = request => request.RequestUri!.AbsolutePath.EndsWith("/subsource", StringComparison.Ordinal)
+            ? SubtitleFailure(answer)(request) : null;
+        var writes = h.Writes.Length;
+        Assert.Null(await h.Controller.GetSubtitleEditorAsync("subsource"));
+        var state = h.Controller.State;
+        Assert.True(state.SubtitleLoadFailed("subsource"));
+        Assert.True(state.SubtitleSaveNotConfirmed("subsource")); // a failed read does not settle a tile
+        Assert.Null(state.ReadingProvider); Assert.Null(state.BusyProvider);
+        Assert.StartsWith("Could not load provider configuration", state.ProviderFeedback, StringComparison.Ordinal);
+
+        // Another tile's read starts by clearing the page line; it never clears this tile's own failure.
+        Assert.NotNull(await h.Controller.GetSubtitleEditorAsync("subdl"));
+        Assert.True(h.Controller.State.SubtitleLoadFailed("subsource"));
+        Assert.False(h.Controller.State.SubtitleLoadFailed("subdl"));
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.True(h.Controller.State.SubtitleLoadFailed("subsource")); // nor does the page's list read
+
+        // Reload again fails again; then it succeeds and re-arms the tile.
+        Assert.Null(await h.Controller.GetSubtitleEditorAsync("subsource"));
+        Assert.True(h.Controller.State.SubtitleLoadFailed("subsource"));
+        h.ProviderRead = null;
+        var recovered = await h.Controller.GetSubtitleEditorAsync("subsource");
+        Assert.NotNull(recovered);
+        Assert.False(h.Controller.State.SubtitleLoadFailed("subsource"));
+        Assert.False(h.Controller.State.SubtitleSaveNotConfirmed("subsource"));
+        Assert.Equal(writes, h.Writes.Length); // reads wrote nothing
+        h.Write = Ok();
+        Assert.True(await h.Controller.SaveSubtitleAsync(recovered!, new AdminSubtitleProviderChange { Enabled = true }));
+    }
+
+    /// <summary>Finding 6: reading a provider is not saving it.</summary>
+    [Fact]
+    public async Task ReadingAProviderIsNeverReportedAsSavingIt()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var gate = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.ProviderRead = _ => gate.Task;
+        var read = h.Controller.GetSubtitleEditorAsync("subdl");
+        Assert.Equal("subdl", h.Controller.State.BusyProvider);
+        Assert.Equal("subdl", h.Controller.State.ReadingProvider);
+        h.ProviderRead = null;
+        gate.SetResult(Etag(AdminMonitorKit.Json("""{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false}""")));
+        var editor = await read;
+        Assert.NotNull(editor);
+        Assert.Null(h.Controller.State.BusyProvider); Assert.Null(h.Controller.State.ReadingProvider);
+
+        var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Write = _ => pending.Task;
+        var save = h.Controller.SaveSubtitleAsync(editor!, new AdminSubtitleProviderChange { Enabled = false });
+        Assert.Equal("subdl", h.Controller.State.BusyProvider);
+        Assert.Null(h.Controller.State.ReadingProvider); // a write in flight is saving
+        pending.SetResult(AdminMonitorKit.Json(SavedOk));
+        Assert.True(await save);
+    }
+
+    private static HttpResponseMessage Etag(HttpResponseMessage response) { response.Headers.ETag = new("\"one\""); return response; }
+
+    /// <summary>Finding 7: a test result is cleared by a successful save only; a failed attempt leaves it standing.</summary>
+    [Fact]
+    public async Task ASubtitleTestResultSurvivesAFailedSaveAndIsClearedOnlyByASuccessfulOne()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        h.Write = Ok("""{"success":true}""");
+        await h.Controller.TestSubtitleAsync("subdl", new AdminSubtitleProviderChange { Enabled = true });
+        Assert.NotNull(h.Controller.State.SubtitleTestFor("subdl"));
+
+        var editor = await h.Controller.GetSubtitleEditorAsync("subdl");
+        h.Write = SubtitleFailure("503");
+        Assert.False(await h.Controller.SaveSubtitleAsync(editor!, new AdminSubtitleProviderChange { Enabled = true }));
+        Assert.NotNull(h.Controller.State.SubtitleTestFor("subdl")); // official: cleared on success only
+
+        var again = await h.Controller.GetSubtitleEditorAsync("subdl");
+        Assert.NotNull(h.Controller.State.SubtitleTestFor("subdl")); // and a read does not touch it
+        h.Write = Ok();
+        Assert.True(await h.Controller.SaveSubtitleAsync(again!, new AdminSubtitleProviderChange { Enabled = true }));
+        Assert.Null(h.Controller.State.SubtitleTestFor("subdl"));
+    }
+
+    /// <summary>Finding 8: a successful save leaves the tile on the official success line until that provider is read again.</summary>
+    [Theory]
+    [InlineData("""{"saved_revision":"7","local_apply":"applied","local_applied_revision":"7"}""", "Settings saved and applied on this server. Other servers may still use older settings.")]
+    [InlineData("""{"saved_revision":"7","local_apply":"applied","local_applied_revision":"6"}""", "Settings saved. This server applied a different saved revision; reload to review the current configuration.")]
+    [InlineData("""{"saved_revision":"7","local_apply":"not_configured"}""", "Settings saved, but not applied on this server. Other servers may still use older settings.")]
+    [InlineData("""{"saved_revision":"7","local_apply":"failed"}""", "Settings saved, but not applied on this server. Other servers may still use older settings.")]
+    public async Task ASuccessfulSubtitleSaveKeepsTheOfficialMessageUntilTheProviderIsReadAgain(string acknowledgement, string message)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        h.Write = Ok(acknowledgement);
+        var editor = await h.Controller.GetSubtitleEditorAsync("subdl");
+        Assert.True(await h.Controller.SaveSubtitleAsync(editor!, new AdminSubtitleProviderChange { Enabled = true }));
+        Assert.Equal(message, h.Controller.State.SubtitleSaveMessage("subdl"));
+        Assert.Null(h.Controller.State.SubtitleSaveMessage("subsource"));
+        Assert.True(string.IsNullOrEmpty(h.Controller.State.ProviderFeedback));
+
+        // The page's list read leaves it; only reading that provider ends it.
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.Equal(message, h.Controller.State.SubtitleSaveMessage("subdl"));
+        Assert.NotNull(await h.Controller.GetSubtitleEditorAsync("subdl"));
+        Assert.Null(h.Controller.State.SubtitleSaveMessage("subdl"));
+    }
+
+    [Fact]
+    public async Task ASavedDraftIsClearedKeepsTheSavedSwitchAndStaysOffUntilReloaded()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var editor = (await h.Controller.GetSubtitleEditorAsync("subdl"))!;
+        var draft = new AdminSubtitleProviderDraft(editor.Provider, editor.Enabled, editor.HasApiKey, editor.HasCredentials);
+        draft.SetApiKey("synthetic-secret"); draft.SetEnabled(false);
+        var change = draft.CaptureChange();
+
+        draft.ResetAfterSave(change);
+
+        Assert.Equal("", draft.ApiKey);
+        Assert.False(draft.Dirty);
+        Assert.False(draft.Enabled);
+        Assert.True(draft.SaveAttempted); // the spent ETag: nothing more is sent until Reload
+        Assert.Throws<InvalidOperationException>(() => draft.CaptureChange());
+        draft.ResetToSavedConfiguration(editor);
+        Assert.False(draft.SaveAttempted);
+    }
+
+    /// <summary>Finding 9a: an authority change retires every per-provider state with the controller's own state.</summary>
+    [Fact]
+    public async Task AnAuthorityChangeRetiresEveryPerProviderState()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var failing = await h.Controller.GetSubtitleEditorAsync("subsource");
+        h.Write = SubtitleFailure("412");
+        Assert.False(await h.Controller.SaveSubtitleAsync(failing!, new AdminSubtitleProviderChange { Enabled = true }));
+        var saved = await h.Controller.GetSubtitleEditorAsync("subdl");
+        h.Write = Ok();
+        Assert.True(await h.Controller.SaveSubtitleAsync(saved!, new AdminSubtitleProviderChange { Enabled = true }));
+        h.ProviderRead = request => request.RequestUri!.AbsolutePath.EndsWith("/subsource", StringComparison.Ordinal) ? SubtitleFailure("503")(request) : null;
+        Assert.Null(await h.Controller.GetSubtitleEditorAsync("subsource"));
+        var before = h.Controller.State;
+        Assert.True(before.SubtitleSaveNotConfirmed("subsource") && before.SubtitleLoadFailed("subsource") && before.SubtitleSaveMessage("subdl") != null && before.ReloadRequired);
+
+        h.Authority.Retire();
+
+        var retired = h.Controller.State;
+        Assert.Null(retired.Owner);
+        Assert.Empty(retired.SubtitleSaveFailures); Assert.Empty(retired.SubtitleLoadFailures); Assert.Empty(retired.SubtitleSaveMessages);
+        Assert.False(retired.ReloadRequired);
+        h.ProviderRead = null;
+        await h.Controller.OpenAsync();
+        var reopened = h.Controller.State;
+        Assert.NotNull(reopened.Owner);
+        Assert.Empty(reopened.SubtitleSaveFailures); Assert.Empty(reopened.SubtitleLoadFailures); Assert.Empty(reopened.SubtitleSaveMessages);
+        Assert.False(reopened.SubtitleSaveNotConfirmed("subsource"));
+    }
+
+    /// <summary>Finding 9b: a read that finishes across an authority change hands back no editor.</summary>
+    [Fact]
+    public async Task AReadThatFinishesAfterTheAuthorityChangedReturnsNoEditorAndSetsNothing()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var gate = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.ProviderRead = _ => gate.Task;
+        var read = h.Controller.GetSubtitleEditorAsync("subdl");
+        Assert.Equal("subdl", h.Controller.State.ReadingProvider);
+
+        h.Authority.Retire();
+        gate.SetResult(Etag(AdminMonitorKit.Json("""{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false}""")));
+
+        Assert.Null(await read);
+        Assert.Null(h.Controller.State.Owner);
+        Assert.Null(h.Controller.State.ReadingProvider); Assert.Null(h.Controller.State.BusyProvider);
+        Assert.Empty(h.Controller.State.SubtitleSaveFailures); Assert.Empty(h.Controller.State.SubtitleLoadFailures);
+    }
+
+    /// <summary>Finding 9b (second line): should a stale editor reach Save anyway, nothing is sent and the tile says "not confirmed".</summary>
+    [Fact]
+    public async Task AnEditorFromAnOlderAuthorityLeavesTheTileNotConfirmedAndSendsNothing()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var stale = await h.Controller.GetSubtitleEditorAsync("subdl");
+        h.Authority.Retire();
+        await h.Controller.OpenAsync();
+        h.Write = Ok();
+
+        Assert.False(await h.Controller.SaveSubtitleAsync(stale!, new AdminSubtitleProviderChange { Enabled = true }));
+
+        Assert.Empty(h.Writes);
+        Assert.True(h.Controller.State.SubtitleSaveNotConfirmed("subdl"));
+        Assert.Null(h.Controller.State.BusyProvider);
+        // Reading that provider again under the current authority recovers it.
+        Assert.NotNull(await h.Controller.GetSubtitleEditorAsync("subdl"));
+        Assert.False(h.Controller.State.SubtitleSaveNotConfirmed("subdl"));
+    }
+
+    private static string Root([System.Runtime.CompilerServices.CallerFilePath] string file = "") => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(file)!, "..", ".."));
+
     private sealed class Harness : IDisposable
     {
         internal readonly AdminMonitorKit Kit = AdminMonitorKit.Create();
@@ -536,6 +812,10 @@ public sealed class AdminProvidersTests
         internal string MarkerProvidersJson = MarkerJson(priority: 10);
         internal string MarkerListStatus = "ok";
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
+        /// <summary>Answers a GET of one subtitle provider; null from it means the default answer.</summary>
+        internal Func<HttpRequestMessage, Task<HttpResponseMessage>?>? ProviderRead;
+        /// <summary>Lists "subsource" beside "subdl" in the page's provider list.</summary>
+        internal bool ListSubsource;
         internal Harness()
         {
             Authority = new AdminMonitorAuthority(Kit.Client, Kit.Auth);
@@ -546,8 +826,11 @@ public sealed class AdminProvidersTests
             {
                 if (request.Method != HttpMethod.Get) return Write?.Invoke(request) ?? Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.InternalServerError));
                 var path = request.RequestUri!.AbsolutePath;
+                if (path.Contains("/subtitle-providers/") && ProviderRead?.Invoke(request) is { } custom) return custom;
                 HttpResponseMessage response =
-                    path.EndsWith("/subtitle-providers") ? AdminMonitorKit.Json("""{"providers":[{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false}]}""")
+                    path.EndsWith("/subtitle-providers") ? AdminMonitorKit.Json(ListSubsource
+                        ? """{"providers":[{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false},{"provider_name":"subsource","enabled":true,"has_api_key":true,"has_credentials":false}]}"""
+                        : """{"providers":[{"provider_name":"subdl","enabled":true,"has_api_key":true,"has_credentials":false}]}""")
                     : path.Contains("/subtitle-providers/") ? AdminMonitorKit.Json(JsonSerializer.Serialize(new { provider_name = path[(path.LastIndexOf('/') + 1)..], enabled = true, has_api_key = true, has_credentials = false }))
                     : path.EndsWith("/markers/providers") ? (MarkerListStatus == "ok" ? AdminMonitorKit.Json(MarkerProvidersJson) : AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable))
                     : path.EndsWith("/plugins/installations") ? AdminMonitorKit.Json("""{"items":[],"page":{"has_more":false}}""")

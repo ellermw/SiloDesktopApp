@@ -149,6 +149,18 @@ public sealed class AdminSubtitleProviderDraft
         Enabled = editor.Enabled;
         SaveAttempted = false;
     }
+    /// <summary>
+    /// A successful save, as the official <c>resetDrafts()</c>: typed credentials are cleared and the enable switch no longer holds an
+    /// unsaved choice. The tile stays off (<see cref="SaveAttempted"/> is kept) until the provider is read again, because the strong ETag
+    /// it holds was spent by that one write. The switch shows the value that was saved.
+    /// </summary>
+    public void ResetAfterSave(AdminSubtitleProviderChange saved)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        ApiKey = Username = Password = "";
+        _enabledExplicit = false;
+        Enabled = saved.Enabled;
+    }
     public void ClearSecrets() { ApiKey = Username = Password = ""; }
     public override string ToString() => nameof(AdminSubtitleProviderDraft);
 }
