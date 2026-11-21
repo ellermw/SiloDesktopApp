@@ -143,7 +143,7 @@ public sealed partial class AdminIntegrationsPage
             RequestModelRefresh();
             _ = CommitFieldAsync(key);
         };
-        return Field(label, "Choose an existing provider or add one", combo);
+        return Field(key, label, "Choose an existing provider or add one", combo);
     }
     private FrameworkElement ModelField(string key, string label)
     {
@@ -164,7 +164,7 @@ public sealed partial class AdminIntegrationsPage
             if (key == "ai.chat_model") { _modelDebounce.Stop(); RequestModelRefresh(); }
             _ = CommitFieldAsync(key);
         };
-        return Field(label, "Choose a suggestion or enter a model name. ChatGPT requires an available account model.", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { input, combo } });
+        return Field(key, label, "Choose a suggestion or enter a model name. ChatGPT requires an available account model.", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { input, combo } });
     }
     private void UpdateChoices()
     {
@@ -207,19 +207,19 @@ public sealed partial class AdminIntegrationsPage
         // TextChanged also arrives later for programmatic updates, including a displayed fallback; ignore that echo.
         control.TextChanged += (_, _) => { if (!_syncing && ReferenceEquals(_fields.GetValueOrDefault(key), control) && control.Text != Value(key)) _controller?.Set(key, control.Text); };
         control.LostFocus += (_, _) => { _ = CommitFieldAsync(key); };
-        return Field(label, description, control);
+        return Field(key, label, description, control);
     }
     private FrameworkElement ReadOnly(string key, string label, string description)
     {
         var control = AdminSettingsUi.Text("", 13, true); control.MaxWidth = 280; control.IsTextSelectionEnabled = true; _fields[key] = control;
         AutomationProperties.SetAutomationId(control, "AdminIntegration-" + key); AutomationProperties.SetName(control, label);
-        return Field(label, description, control);
+        return Field(key, label, description, control);
     }
     private FrameworkElement Select(string key, string label, IEnumerable<(string Value, string Label)> choices)
     {
         var control = AdminSettingsUi.Select(label, "AdminIntegration-" + key, choices); _fields[key] = control;
         control.SelectionChanged += (_, _) => { if (!_syncing && control.SelectedItem is ComboBoxItem item) { _controller?.Set(key, item.Tag?.ToString() ?? ""); _ = CommitFieldAsync(key); } };
-        return Field(label, "", control);
+        return Field(key, label, "", control);
     }
     private FrameworkElement Toggle(string key, string label, string description)
     {
@@ -232,12 +232,17 @@ public sealed partial class AdminIntegrationsPage
             if (key == "jellyfin_compat.enabled" && !control.IsOn) _controller?.Set("jellyfin_compat.web_enabled", "false");
             _ = CommitFieldAsync(key);
         };
-        return Field(label, description, control);
+        return Field(key, label, description, control);
     }
-    private static FrameworkElement Field(string label, string description, FrameworkElement control)
+    private readonly Dictionary<string, TextBlock> _environmentNotes = new(StringComparer.Ordinal);
+    /// <summary>A row for something that is not a server setting (provider editor, account picker): no environment note.</summary>
+    private FrameworkElement Field(string label, string description, FrameworkElement control) => Field(null, label, description, control);
+    private FrameworkElement Field(string? key, string label, string description, FrameworkElement control)
     {
         var row = new Grid { Margin = new Thickness(0, 14, 0, 0), ColumnSpacing = 20 }; row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var copy = new StackPanel { Spacing = 2 }; copy.Children.Add(AdminSettingsUi.Text(label)); if (description != "") copy.Children.Add(AdminSettingsUi.Text(description, 12, true));
+        // The official note for a setting the server's environment sets; collapsed until the status names the key.
+        var note = AdminSettingsUi.Text("", 12, true); note.Visibility = Visibility.Collapsed; copy.Children.Add(note); if (key != null) _environmentNotes[key] = note;
         row.Children.Add(copy); Grid.SetColumn(control, 1); row.Children.Add(control); return row;
     }
     private static Border Group(string title, string description, params FrameworkElement[] children)

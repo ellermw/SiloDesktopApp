@@ -195,7 +195,9 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
             if (key == "playback.chapter_thumbnail_software_tone_map_enabled" && R.Get(state.Values, "playback.chapter_thumbnail_hdr_policy") == "disabled") enabled = false;
             editor.IsHitTestVisible = enabled; if (editor is Control control) control.IsEnabled = enabled;
             _rows[key].State(state.DirtyKeys.Contains(key), state.RestartKeys.Has(key));
-            _errors[key].Text = state.Errors.GetValueOrDefault(key, "") + (state.ManagedByEnv.Contains(key) ? " Set by the server environment." : "");
+            _errors[key].Text = state.Errors.GetValueOrDefault(key, "");
+            // A setting the server's environment sets carries the official note naming the variable, under its description.
+            _rows[key].SetEnvironmentNote(state.EnvManaged.Note(key));
             if (_resets.TryGetValue(key, out var reset)) { reset.Visibility = raw.Length > 0 && raw != PathDefault(key) ? Visibility.Visible : Visibility.Collapsed; reset.IsEnabled = enabled; }
         }
         if (_routing) RenderRouting(state); else RenderPlayback(state);

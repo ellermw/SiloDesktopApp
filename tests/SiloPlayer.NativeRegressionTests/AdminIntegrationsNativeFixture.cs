@@ -29,6 +29,8 @@ internal static class AdminIntegrationsNativeFixture
         internal readonly List<string> Writes = [];
         internal TaskCompletionSource? ReadGate, WriteGate;
         internal bool Conflict, FailRead, FailProviderAction, EnvironmentOwnedWeb, StaleWebRead, LostWebOperation, FailedWebInstallation;
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal bool ChatConnected = true, LoginPending, WebOperationRunning, CreatedProvider, UsagePaused;
         internal string ActiveAccount = "account-1", LoginResult = "idle";
         internal int InFlight, MaximumInFlight, Reads, Version = 1;
@@ -96,7 +98,9 @@ internal static class AdminIntegrationsNativeFixture
             object bodyValue = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
-                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = EnvironmentOwnedWeb ? new[] { "jellyfin_compat.web_enabled" } : Array.Empty<string>() },
+                "/api/v2/admin/settings/sensitive-status" => EnvironmentOwnedWeb && NamedVariables
+                    ? new { configured = Array.Empty<string>(), managed_by_env = new[] { "jellyfin_compat.web_enabled" }, managed_by_env_vars = new Dictionary<string, string> { ["jellyfin_compat.web_enabled"] = "SILO_JELLYFIN_WEB_ENABLED" } }
+                    : (object)new { configured = Array.Empty<string>(), managed_by_env = EnvironmentOwnedWeb ? new[] { "jellyfin_compat.web_enabled" } : Array.Empty<string>() },
                 "/api/v2/admin/settings/restart-keys" => new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() },
                 "/api/v2/admin/ai/capabilities" => new { reasoning_levels = new[] { "minimal", "high" }, openai_service_tiers = new[] { "default", "priority", "ultrafast" }, chatgpt_sign_in = true },
                 "/api/v2/admin/ai/chatgpt" => ChatStatus(),
@@ -334,6 +338,12 @@ internal static class AdminIntegrationsNativeFixture
             }
             handler.EnvironmentOwnedWeb = true; Invoke(Find<Button>(page, "AdminIntegrationsReloadDiscard")); await Idle(page);
             Check(!Enabled(page, "AdminJellyfinWebToggle"), "environment-owned web toggle is not actionable");
+            var webSetting = Find<ToggleSwitch>(page, "AdminIntegration-jellyfin_compat.web_enabled");
+            Check(EnvironmentNoteProbe.Verify(page, webSetting, EnvironmentNoteProbe.Named("SILO_JELLYFIN_WEB_ENABLED")) is null, "the environment-owned web setting is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Find<TextBox>(page, "AdminIntegration-jellyfin_compat.server_name")) is null, "an editable Integrations row carries no environment note");
+            handler.NamedVariables = false; Invoke(Find<Button>(page, "AdminIntegrationsReloadDiscard")); await Idle(page);
+            Check(EnvironmentNoteProbe.Verify(page, webSetting, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the setting and shows the official field message");
+            handler.NamedVariables = true; Invoke(Find<Button>(page, "AdminIntegrationsReloadDiscard")); await Idle(page);
             ReviewCheck(Enabled(page, "AdminJellyfinWebInstall"), "a settled page can start the install whose operation the server then never shows");
             if (Enabled(page, "AdminJellyfinWebInstall"))
             {

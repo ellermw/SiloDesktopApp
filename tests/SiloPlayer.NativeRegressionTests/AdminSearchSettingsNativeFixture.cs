@@ -52,6 +52,8 @@ internal static class AdminSearchSettingsNativeFixture
         };
         internal int Saves, StatusReads, Checks, Rebuilds, Version = 1;
         internal bool KeyConfigured = true, ManagedUrl = true, RebuildRequired, Degraded, StatusFailure;
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal string? LastIfMatch, LastPut, LastCheck;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -88,7 +90,9 @@ internal static class AdminSearchSettingsNativeFixture
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(StatusJson(), Encoding.UTF8, "application/json") };
             }
             else if (path.EndsWith("/sensitive-status", StringComparison.Ordinal))
-                body = new { configured = KeyConfigured ? new[] { ApiKey } : [], managed_by_env = ManagedUrl ? new[] { Url } : [] };
+                body = ManagedUrl && NamedVariables
+                    ? new { configured = KeyConfigured ? new[] { ApiKey } : [], managed_by_env = new[] { Url }, managed_by_env_vars = new Dictionary<string, string> { [Url] = "SILO_MEILISEARCH_URL" } }
+                    : (object)new { configured = KeyConfigured ? new[] { ApiKey } : [], managed_by_env = ManagedUrl ? new[] { Url } : [] };
             else body = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
@@ -179,7 +183,11 @@ internal static class AdminSearchSettingsNativeFixture
             var matching = Select(page, "catalog.search.meilisearch.matching_strategy");
             Check((matching.SelectedItem as ComboBoxItem)?.Content as string == "Drop trailing words until something matches" && controller.State.DirtyKeys.Count == 0,
                 "a blank saved matching strategy displays the official default without staging an edit");
-            Check(!Input(page, Url).IsEnabled && Description(page, Url) == "Managed by SILO_MEILISEARCH_URL.", "an environment-managed URL is disabled and names its variable");
+            Check(EnvironmentNoteProbe.Verify(page, Input(page, Url), EnvironmentNoteProbe.Named("SILO_MEILISEARCH_URL")) is null, "an environment-managed URL is disabled, shows the official note naming its variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Input(page, "catalog.search.meilisearch.index")) is null, "an editable Search row carries no environment note");
+            server.NamedVariables = false; await controller.ReloadAsync(true); await Task.Delay(150);
+            Check(EnvironmentNoteProbe.Verify(page, Input(page, Url), EnvironmentNoteProbe.Named("SILO_MEILISEARCH_URL")) is null, "an older server that names no variable keeps the variable this page has always shown for the URL");
+            server.NamedVariables = true; await controller.ReloadAsync(true); await Task.Delay(150);
             var secret = Secret(page);
             var keyAction = Button(page, "SearchApiKeyAction");
             Check(secret.PlaceholderText == "••••••••••••" && secret.Password == "" && keyAction.Visibility == Visibility.Visible &&

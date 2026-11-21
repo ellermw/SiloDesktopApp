@@ -25,6 +25,8 @@ public sealed record AdminSearchSettingsState
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public bool ApiKeyConfigured { get; init; }
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
     public AdminSettingsConnectionResult? ConnectionResult { get; init; }
     public AdminSearchStatus? Status { get; init; }
@@ -140,12 +142,15 @@ public sealed class AdminSearchSettingsController : IDisposable
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
                 // Without presence the page cannot tell keep from clear; never keep a credential draft across that gap.
                 if (sensitiveError) _form.Reset(ApiKey);
+                // A key the environment sets now loses its draft (a typed API key included), and is never sent.
+                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                _form.ApplyEnvironment(environment);
                 _revision++;
                 _state = _state with
                 {
                     Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, ErrorCode = null, Failure = null,
                     SensitiveStatusError = sensitiveError, ApiKeyConfigured = status?.Configured.Contains(ApiKey) == true, ConnectionResult = null,
-                    ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()), RestartKeys = restartKeys,
+                    ManagedByEnv = environment.Keys, EnvManaged = environment, RestartKeys = restartKeys,
                 };
             });
         }

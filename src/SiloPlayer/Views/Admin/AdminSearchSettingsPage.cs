@@ -336,7 +336,6 @@ public sealed partial class AdminSearchSettingsPage : Page, IAdminGutterScrollPa
 
         bool Dirty(string key) => state.DirtyKeys.Contains(key);
         bool Managed(string key) => state.ManagedByEnv.Contains(key);
-        string Env(string key) => R.EnvironmentVariable(key) ?? "";
         var meili = state.MeilisearchSelected;
         var showMeili = meili || R.AnyMeilisearchDirty(state.DirtyKeys);
         var editable = current && state.Loaded && !state.Loading && !accessBlocked;
@@ -380,15 +379,20 @@ public sealed partial class AdminSearchSettingsPage : Page, IAdminGutterScrollPa
         if (_secretAction.Content as string != actionLabel) { _secretAction.Content = actionLabel; AutomationProperties.SetName(_secretAction, actionLabel); }
         _apiKey.PlaceholderText = clearStaged ? T("web.settings.secretField.willClear") : state.ApiKeyConfigured ? "••••••••••••" : T("web.settings.secretField.notConfigured");
         Describe(R.MeilisearchApiKey, clearStaged ? T("web.settings.secretField.clearedDescription")
-            : Managed(R.MeilisearchApiKey) ? T("web.admin.settings.search.managedByEnv", new { env = Env(R.MeilisearchApiKey) }) : T("web.admin.settings.search.meili.apiKey.hint"));
-        Describe(R.Provider, Managed(R.Provider) ? T("web.admin.settings.search.managedByEnv", new { env = Env(R.Provider) }) : T("web.admin.settings.search.provider.description"));
-        Describe(R.MeilisearchUrl, Managed(R.MeilisearchUrl) ? T("web.admin.settings.search.managedByEnv", new { env = Env(R.MeilisearchUrl) }) : "");
+            : Managed(R.MeilisearchApiKey) ? "" : T("web.admin.settings.search.meili.apiKey.hint"));
+        Describe(R.Provider, T("web.admin.settings.search.provider.description"));
+        Describe(R.MeilisearchUrl, "");
         Describe(R.MatchingStrategy, "");
         Describe(R.SemanticEnabled, T("web.admin.settings.search.meili.semantic.description"));
         Describe(R.Index, T("web.admin.settings.search.meili.index.description"));
         Describe(R.TimeoutMs, T("web.admin.settings.search.meili.timeout.description"));
         Describe(R.SyncBatchSize, T("web.admin.settings.search.meili.batch.description"));
         Describe(R.SemanticRatio, T("web.admin.settings.search.meili.ratio.description"));
+        // Every row keeps its description; a setting the server's environment sets adds the official note naming the variable.
+        // The server's own name for the variable wins; a server that named none keeps the variable this page has always shown for its three known keys.
+        foreach (var key in R.Keys)
+            if (_rows.TryGetValue(key, out var envRow))
+                envRow.SetEnvironmentNote(Managed(key) ? AdminEnvManagedSettings.NoteFor(state.EnvManaged.VariableName(key) ?? R.EnvironmentVariable(key)) : null);
 
         // Rows that exist only for Meilisearch, kept reachable while any of its edits is staged.
         foreach (var key in R.ShownKeys) _rows[key].Visibility = showFields && showMeili ? Visibility.Visible : Visibility.Collapsed;
@@ -432,7 +436,8 @@ public sealed partial class AdminSearchSettingsPage : Page, IAdminGutterScrollPa
         var description = _rows[key].Description;
         if (description.Text != text) description.Text = text;
         description.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        AutomationProperties.SetHelpText(_controls[key], text);
+        _rows[key].HelpTarget = _controls[key];
+        _rows[key].RefreshHelp();
     }
 
     private static void SetSelected(ComboBox select, string value)

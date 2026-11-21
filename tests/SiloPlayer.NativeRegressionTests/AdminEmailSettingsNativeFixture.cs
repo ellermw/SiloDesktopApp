@@ -48,6 +48,8 @@ internal static class AdminEmailSettingsNativeFixture
         };
         internal int Saves, Tests, Version = 1;
         internal bool PasswordConfigured = true, SensitiveFailure, Managed, Conflict, ReadForbidden;
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal TaskCompletionSource? SaveGate, TestGate;
         internal string TestReply = """{"ok":true,"duration_ms":7}""";
         internal string? LastIfMatch, LastPut, LastTest;
@@ -81,7 +83,9 @@ internal static class AdminEmailSettingsNativeFixture
             else if (path.EndsWith("/sensitive-status", StringComparison.Ordinal))
             {
                 if (SensitiveFailure) return Json(new { title = "Status unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable);
-                body = new { configured = PasswordConfigured ? new[] { Password } : [], managed_by_env = Managed ? new[] { Password } : [] };
+                body = Managed && NamedVariables
+                    ? new { configured = PasswordConfigured ? new[] { Password } : [], managed_by_env = new[] { Password }, managed_by_env_vars = new Dictionary<string, string> { [Password] = "SILO_SMTP_PASSWORD" } }
+                    : (object)new { configured = PasswordConfigured ? new[] { Password } : [], managed_by_env = Managed ? new[] { Password } : [] };
             }
             else body = path switch
             {
@@ -406,9 +410,16 @@ internal static class AdminEmailSettingsNativeFixture
             stateScroller.ChangeView(null, 0, null, true);
 
             // Managed and protected-status states.
+            // A typed password is dropped when the environment takes the key over; the note names the variable and is in the help text.
+            secret.Password = "synthetic-typed-secret";
+            await Until(() => controller.State.DirtyKeys.Contains(Password), "typed password staged before the environment takes over");
             server.Managed = true; await controller.ReloadAsync(true); await Task.Delay(150);
-            Check(!secret.IsEnabled && Button(page, "EmailPasswordAction").Visibility == Visibility.Collapsed &&
-                Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Managed by a server environment variable."), "environment-managed password cannot be edited or cleared");
+            Check(!secret.IsEnabled && Button(page, "EmailPasswordAction").Visibility == Visibility.Collapsed, "environment-managed password cannot be edited or cleared");
+            Check(EnvironmentNoteProbe.Verify(page, secret, EnvironmentNoteProbe.Named("SILO_SMTP_PASSWORD")) is null, "the managed password row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(secret.Password == "" && !controller.State.DirtyKeys.Contains(Password) && controller.State.Values[Password] == "", "the typed password is neither shown nor kept nor staged once the environment sets it");
+            server.NamedVariables = false; await controller.ReloadAsync(true); await Task.Delay(150);
+            Check(EnvironmentNoteProbe.Verify(page, secret, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the password and shows the official field message");
+            server.NamedVariables = true;
             server.Managed = false; server.SensitiveFailure = true; await controller.ReloadAsync(true); await Task.Delay(150);
             var retry = Button(page, "EmailRetryPasswordStatus");
             Check(controller.State.SensitiveStatusError && !secret.IsEnabled && retry.Visibility == Visibility.Visible && retry.IsEnabled &&

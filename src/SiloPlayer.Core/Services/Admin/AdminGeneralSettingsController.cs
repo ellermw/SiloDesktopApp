@@ -24,6 +24,8 @@ public sealed record AdminGeneralSettingsState
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> Configured { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
     public AdminSettingsConnectionResult? ConnectionResult { get; init; }
     public override string ToString() => nameof(AdminGeneralSettingsState);
@@ -102,9 +104,12 @@ public sealed class AdminGeneralSettingsController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                // A key the environment sets now loses its draft, and is never sent.
+                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                _form.ApplyEnvironment(environment);
                 _revision++;
                 _state = _state with { Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, ErrorCode = null, Failure = null,
-                    SensitiveStatusError = sensitiveError, Configured = status?.Configured ?? [], ManagedByEnv = status?.ManagedByEnv ?? [], RestartKeys = restartKeys };
+                    SensitiveStatusError = sensitiveError, Configured = status?.Configured ?? [], ManagedByEnv = environment.Keys, EnvManaged = environment, RestartKeys = restartKeys };
             });
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
@@ -161,8 +166,10 @@ public sealed class AdminGeneralSettingsController : IDisposable
             lock (_gate)
             {
                 if (!_lifetime.IsCurrent(action) || _form == null || _state.Loading || _state.Saving || _state.Conflict || _state.OutcomeUnknown) return;
-                IEnumerable<string> excluded = _state.SensitiveStatusError ? SensitiveStatusKeys : Redis.Any(_state.ManagedByEnv.Contains) ? Redis : [];
-                intent = _form.CaptureSave(excluded.Concat(_state.ManagedByEnv));
+                // An emptied Redis database number is the one write the server still accepts under REDIS_URL (see AdminSettingsForm).
+                var managed = _state.ManagedByEnv.Where(key => !(key == "redis.db" && _form.Get(key).Trim().Length == 0)).ToArray();
+                IEnumerable<string> excluded = _state.SensitiveStatusError ? SensitiveStatusKeys : Redis.Any(managed.Contains) ? Redis.Where(key => !(key == "redis.db" && _state.ManagedByEnv.Contains(key) && _form.Get(key).Trim().Length == 0)) : [];
+                intent = _form.CaptureSave(excluded.Concat(managed));
                 if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
                 _revision++;
                 _state = _state with { Saving = true, Error = null, ErrorCode = null, Failure = null, ConnectionResult = null };

@@ -21,6 +21,8 @@ public sealed record AdminDownloadSettingsState
     public IReadOnlyDictionary<string, string> PersistedValues { get; init; } = new Dictionary<string, string>();
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
     /// <summary>The saved <c>playback.transcode_dir</c> the blank prepared-file directory derives from (read-only here).</summary>
     public string TranscodeDirectory { get; init; } = "";
@@ -106,10 +108,13 @@ public sealed class AdminDownloadSettingsController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                // A key the environment sets now loses its draft, and is never sent.
+                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                _form.ApplyEnvironment(environment);
                 _state = _state with
                 {
                     Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, ErrorCode = null, Failure = null,
-                    ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()), RestartKeys = restartKeys,
+                    ManagedByEnv = environment.Keys, EnvManaged = environment, RestartKeys = restartKeys,
                     TranscodeDirectory = snapshot.Values.GetValueOrDefault(AdminDownloadSettingsRules.TranscodeDir, ""),
                 };
             });

@@ -336,9 +336,11 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
         // The warning follows the draft, so it appears as soon as the switch is staged on.
         var warning = allowed && state.Loaded ? Visibility.Visible : Visibility.Collapsed;
         if (_warning.Visibility != warning) { _warning.Visibility = warning; _localGroup.RefreshRules(); }
-        var description = managed ? T("configure.native.settings.managedByEnvironment") : T("web.admin.settings.security.localNetwork.description");
+        // The description stays; a setting the server's environment sets adds the official note naming the variable.
+        var description = T("web.admin.settings.security.localNetwork.description");
         if (_localRow.Description.Text != description) _localRow.Description.Text = description;
-        AutomationProperties.SetHelpText(_local, description);
+        _localRow.HelpTarget = _local;
+        _localRow.SetEnvironmentNote(state.EnvManaged.Note(C.LocalNetwork));
         var restartAll = C.Keys.All(state.RestartKeys.Has);
         _localGroup.State(false, restartAll ? T("web.admin.settings.fields.restartAll") : "");
         _localRow.State(false, !restartAll && state.RestartKeys.Has(C.LocalNetwork));

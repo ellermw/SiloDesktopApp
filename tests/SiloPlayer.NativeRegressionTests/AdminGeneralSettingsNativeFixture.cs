@@ -45,6 +45,8 @@ internal static class AdminGeneralSettingsNativeFixture
         };
         internal int Saves, Checks, Version = 1;
         internal bool RedisConfigured, SensitiveFailure, Managed, Conflict, ReadForbidden;
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal TaskCompletionSource? SaveGate;
         internal string? LastIfMatch;
         internal string[] LastSavedKeys = [];
@@ -79,7 +81,10 @@ internal static class AdminGeneralSettingsNativeFixture
             else if (path.EndsWith("/sensitive-status", StringComparison.Ordinal))
             {
                 if (SensitiveFailure) return Json(new { title = "Status unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable);
-                body = new { configured = RedisConfigured ? new[] { "redis.url" } : [], managed_by_env = Managed ? new[] { "redis.url", "clientip.trusted_proxies" } : [] };
+                body = Managed && NamedVariables
+                    ? new { configured = RedisConfigured ? new[] { "redis.url" } : [], managed_by_env = new[] { "redis.url", "clientip.trusted_proxies" },
+                        managed_by_env_vars = new Dictionary<string, string> { ["redis.url"] = "REDIS_URL", ["redis.db"] = "REDIS_URL", ["clientip.trusted_proxies"] = "SILO_TRUSTED_PROXIES" } }
+                    : (object)new { configured = RedisConfigured ? new[] { "redis.url" } : [], managed_by_env = Managed ? new[] { "redis.url", "clientip.trusted_proxies" } : [] };
             }
             else body = path switch
             {
@@ -276,6 +281,14 @@ internal static class AdminGeneralSettingsNativeFixture
             server.Values["clientip.trusted_proxies"] = "10.0.0.0/8";
             server.Managed = true; server.RedisConfigured = true; await controller.ReloadAsync(false); await Task.Delay(100);
             Check(!toggle.IsEnabled && !Input(page, "clientip.trusted_proxies").IsEnabled, "environment-managed Redis and trusted proxies cannot be edited");
+            Check(EnvironmentNoteProbe.Verify(page, Input(page, "clientip.trusted_proxies"), EnvironmentNoteProbe.Named("SILO_TRUSTED_PROXIES")) is null,
+                "the managed trusted-proxies row shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.Verify(page, toggle, EnvironmentNoteProbe.Named("REDIS_URL")) is null, "the managed Redis switch shows the note naming REDIS_URL and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Input(page, "branding.server_name")) is null, "an editable General row carries no environment note");
+            server.NamedVariables = false; await controller.ReloadAsync(false); await Task.Delay(100);
+            Check(EnvironmentNoteProbe.Verify(page, Input(page, "clientip.trusted_proxies"), EnvironmentNoteProbe.Unnamed) is null,
+                "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; await controller.ReloadAsync(false); await Task.Delay(100);
             server.SensitiveFailure = true; await controller.ReloadAsync(false); await Task.Delay(100);
             Check(controller.State.SensitiveStatusError && !toggle.IsEnabled, "protected-status failure holds Redis behind its alert");
             var proxies = Input(page, "clientip.trusted_proxies");

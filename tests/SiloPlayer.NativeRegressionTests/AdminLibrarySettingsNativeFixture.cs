@@ -60,6 +60,8 @@ internal static class AdminLibrarySettingsNativeFixture
         internal int Saves, Version = 1;
         internal bool FailRatingSources, RejectPut, UnknownOutcome, Conflict, EffectiveFailure, RatingsUnsupported, OnlyAlwaysShownSources, NodeAvailable;
         internal string[] Managed = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal TaskCompletionSource? EffectiveGate;
         internal string? LastPut, LastIfMatch;
 
@@ -92,7 +94,9 @@ internal static class AdminLibrarySettingsNativeFixture
             else body = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
-                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = Managed },
+                "/api/v2/admin/settings/sensitive-status" => NamedVariables
+                    ? new { configured = Array.Empty<string>(), managed_by_env = Managed, managed_by_env_vars = Managed.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                    : (object)new { configured = Array.Empty<string>(), managed_by_env = Managed },
                 "/api/v2/admin/settings/restart-keys" => new { keys = new[] { R.UnratedContent }, prefixes = Array.Empty<string>() },
                 "/api/v2/admin/rating-sources/capabilities" => new { revision = "r1", state = "available", allowed = true, plugin_declared_sources = !RatingsUnsupported },
                 "/api/v2/admin/rating-sources" => new
@@ -307,13 +311,21 @@ internal static class AdminLibrarySettingsNativeFixture
             Check(!IsEffectivelyVisible(Button(page, "LibrarySettingsSave")) || !Button(page, "LibrarySettingsSave").IsEnabled, "Discard leaves nothing to save");
 
             // Environment-managed keys are read-only with the reason shown; the restore action stays available for the others.
+            // A draft for the key the environment takes over is dropped; the note names the variable.
+            Input(page, R.ScannerWorkers).Text = "6";
+            await Until(() => controller.State.DirtyKeys.Contains(R.ScannerWorkers), "scanner worker draft before the environment takes over");
             server.Managed = [R.ScannerWorkers]; await controller.ReloadAsync(true);
             await Until(() => controller.State.ManagedByEnv.Contains(R.ScannerWorkers) && !Input(page, R.ScannerWorkers).IsEnabled, "managed worker locked");
+            Check(!controller.State.DirtyKeys.Contains(R.ScannerWorkers) && Input(page, R.ScannerWorkers).Text == "8", "the draft of the key that became managed is dropped");
+            await Eventually(() => EnvironmentNoteProbe.Verify(page, Input(page, R.ScannerWorkers), EnvironmentNoteProbe.Named("SILO_" + R.ScannerWorkers.ToUpperInvariant().Replace('.', '_'))) is null,
+                "the managed worker row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Input(page, R.MatcherWorkers)) is null, "an editable row carries no environment note");
+            server.NamedVariables = false; await controller.ReloadAsync(true);
+            await Eventually(() => EnvironmentNoteProbe.Verify(page, Input(page, R.ScannerWorkers), EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; await controller.ReloadAsync(true);
             // The official button has no managed-key condition; the controller leaves managed keys untouched.
             Check(Input(page, R.MatcherWorkers).IsEnabled && Button(page, "LibrarySettingsRestoreDefaults").IsEnabled,
                 "a managed worker count is read-only, other fields stay editable and Restore defaults stays available for them");
-            Check(Descendants(page).OfType<TextBlock>().Any(block => block.Text.Contains("Managed by a server environment variable.", StringComparison.Ordinal) && IsEffectivelyVisible(block)),
-                "the managed row says why it is disabled");
             server.Managed = []; await controller.ReloadAsync(false);
             await Until(() => controller.State.ManagedByEnv.Count == 0 && Input(page, R.ScannerWorkers).IsEnabled, "managed lock released");
 

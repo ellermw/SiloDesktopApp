@@ -36,6 +36,9 @@ internal static class AdminPlaybackAdministrationNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         internal int Writes, TaskRuns; internal string? IfMatch, LastBody; internal bool Conflict;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal bool RejectNodePut, DropNodePutAck, FailNodesList, EmptyNodes, DropTaskRunAck, RefuseTaskRun, RunMarksRunning, HeldTasksStarted;
         internal TaskCompletionSource? HoldTasks, HoldReprobe;
         internal string? AddedNode;
@@ -100,7 +103,9 @@ internal static class AdminPlaybackAdministrationNativeFixture
                     : new { node_id = "fixture-node", drain_requested = path.EndsWith("/drain"), drain_state = "draining", active_jobs = 2 };
             }
             else if (path.EndsWith("/effective")) body = Values;
-            else if (path.EndsWith("/sensitive-status")) body = new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>() };
+            else if (path.EndsWith("/sensitive-status")) body = ManagedKeys.Length > 0 && NamedVariables
+                ? new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                : (object)new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys };
             else if (path.EndsWith("/restart-keys")) body = new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() };
             else if (path.EndsWith("/nodes/capabilities")) body = new { allowed = true, state = "available", revision = "1", drain = true, node_keys = true, source_access = true, summary = true };
             else if (path.EndsWith("/markers/capabilities")) body = new { allowed = true, state = "available", detection_kind_settings = true };
@@ -275,6 +280,19 @@ internal static class AdminPlaybackAdministrationNativeFixture
             throttle.IsOn = false;
             await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_transcode_throttle_seconds")) && Find<Button>(outer, "PlaybackSave").IsEnabled, "hiding the row drops its unseen error so the throttle change can be saved");
             Check(Find<ComboBox>(playback, "Playback_playback.hw_accel").Items.OfType<ComboBoxItem>().Any(item => (string)item.Tag == "videotoolbox"), "cluster-wide acceleration still offers VideoToolbox");
+            // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
+            var playbackController = (AdminPlaybackSettingsController)Field(playback, "_controller")!;
+            var transcodeDir = Find<TextBox>(playback, "Playback_playback.transcode_dir");
+            transcodeDir.Text = "/synthetic/draft"; await Until(() => playbackController.State.DirtyKeys.Contains("playback.transcode_dir"), "transcode directory draft before the environment takes over");
+            server.ManagedKeys = ["playback.transcode_dir"]; await playbackController.ReloadAsync(preserveDraft: true);
+            await Until(() => playbackController.State.ManagedByEnv.Contains("playback.transcode_dir") && !transcodeDir.IsEnabled, "managed transcode directory locked");
+            Check(!playbackController.State.DirtyKeys.Contains("playback.transcode_dir") && transcodeDir.Text == playbackController.State.PersistedValues.GetValueOrDefault("playback.transcode_dir", ""), "the draft of the key that became managed is dropped");
+            Check(EnvironmentNoteProbe.Verify(playback, transcodeDir, EnvironmentNoteProbe.Named("SILO_PLAYBACK_TRANSCODE_DIR")) is null, "the managed Playback row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Find<TextBox>(playback, "Playback_playback.watched_threshold")) is null, "an editable Playback row carries no environment note");
+            server.NamedVariables = false; await playbackController.ReloadAsync(preserveDraft: true);
+            await Until(() => EnvironmentNoteProbe.Verify(playback, transcodeDir, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Count == 0 && transcodeDir.IsEnabled, "managed lock released");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await Until(() => All(playback).OfType<TextBox>().All(c => c.Text.Length == 0), "authority retirement clears settings inputs");
         }

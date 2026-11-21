@@ -57,6 +57,9 @@ internal static class AdminStorageSettingsNativeFixture
         internal string? JobState;
         internal TaskCompletionSource? QueueGate, StatusGate;
         internal int Version = 1;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal int Count(string prefix) => Requests.Count(r => r.StartsWith(prefix, StringComparison.Ordinal));
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -69,7 +72,10 @@ internal static class AdminStorageSettingsNativeFixture
             switch (request.Method.Method + " " + path)
             {
                 case "GET /api/v2/admin/settings/effective": return Tagged(Json(Values));
-                case "GET /api/v2/admin/settings/sensitive-status": return Json(new { configured = new[] { "s3.public_access_key" }, managed_by_env = Array.Empty<string>() });
+                case "GET /api/v2/admin/settings/sensitive-status":
+                    return Json(ManagedKeys.Length > 0 && NamedVariables
+                        ? new { configured = new[] { "s3.public_access_key" }, managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                        : (object)new { configured = new[] { "s3.public_access_key" }, managed_by_env = ManagedKeys });
                 case "GET /api/v2/admin/settings/restart-keys": return Json(new { keys = new[] { "artwork.storage_backend", "artwork.local_path" }, prefixes = new[] { "s3." } });
                 case "PUT /api/v2/admin/settings":
                 {
@@ -219,6 +225,19 @@ internal static class AdminStorageSettingsNativeFixture
             Check(saveBar.Visibility == Visibility.Visible && Button(page, "StorageSave").Content?.ToString() == "Save", "a plain edit shows the Save pill");
             Invoke(Button(page, "StorageDiscard"));
             await Until(() => controller.State.DirtyKeys.Count == 0, "discard");
+
+            // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
+            cache.IsOn = false;
+            await Until(() => controller.State.DirtyKeys.Count == 1, "cache draft before the environment takes over");
+            server.ManagedKeys = [AdminStorageRules.CacheImages]; await controller.ReloadAsync(preserveDraft: true);
+            await Until(() => controller.State.ManagedByEnv.Contains(AdminStorageRules.CacheImages) && !cache.IsEnabled && !controller.State.StatusLoading, "managed cache toggle locked");
+            await RenderQueuedAsync(page);
+            Check(controller.State.DirtyKeys.Count == 0 && cache.IsOn == (controller.State.Get(AdminStorageRules.CacheImages) == "true"), "the draft of the key that became managed is dropped");
+            Check(EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Named("SILO_METADATA_CACHE_IMAGES")) is null, "the managed Storage row is disabled, shows the official note naming the variable and carries it in its help text");
+            server.NamedVariables = false; await controller.ReloadAsync(preserveDraft: true); await Task.Delay(150); await RenderQueuedAsync(page);
+            Check(EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await controller.ReloadAsync(preserveDraft: false);
+            await Until(() => controller.State.ManagedByEnv.Count == 0 && cache.IsEnabled && !controller.State.StatusLoading, "managed lock released");
 
             // Clearing saved token fields must survive the queued render before replacement typing.
             server.Backend = "s3";

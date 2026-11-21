@@ -29,6 +29,8 @@ public sealed record AdminStorageSettingsState : IAdminStorageDraft
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> Configured { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
 
     public AdminArtworkStorageStatus? ArtworkStorage { get; init; }
@@ -224,8 +226,9 @@ public sealed class AdminStorageSettingsController : IDisposable
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
                 // Without presence the page cannot tell keep from clear: never keep a credential draft across that gap.
                 if (sensitiveError) foreach (var key in Secrets) _form.Reset(key);
-                // A formerly editable draft must not survive becoming environment-owned.
-                foreach (var key in (status?.ManagedByEnv ?? []).Where(Keys.Contains)) _form.Reset(key);
+                // A formerly editable draft must not survive becoming environment-owned, and such a key is never sent.
+                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                _form.ApplyEnvironment(environment);
                 _revision++;
                 InvalidateProbeLocked();
                 _state = _state with
@@ -233,7 +236,7 @@ public sealed class AdminStorageSettingsController : IDisposable
                     Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, ErrorCode = null, Failure = null,
                     SensitiveStatusError = sensitiveError,
                     Configured = Array.AsReadOnly((status?.Configured ?? []).Where(Secrets.Contains).ToArray()),
-                    ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()),
+                    ManagedByEnv = environment.Keys, EnvManaged = environment,
                     RestartKeys = restartKeys, PublicCheck = null, PrivateCheck = null,
                 };
             });

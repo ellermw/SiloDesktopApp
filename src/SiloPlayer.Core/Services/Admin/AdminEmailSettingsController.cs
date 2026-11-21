@@ -67,6 +67,8 @@ public sealed record AdminEmailSettingsState
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public bool PasswordConfigured { get; init; }
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
     public bool TestPending { get; init; }
     public AdminEmailTestFeedback? TestResult { get; init; }
@@ -146,11 +148,14 @@ public sealed class AdminEmailSettingsController : IDisposable
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
                 // Without presence the page cannot tell keep from clear; never keep a credential draft across that gap.
                 if (sensitiveError) _form.Reset(Password);
+                // A key the environment sets now loses its draft (a typed password included), and is never sent.
+                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                _form.ApplyEnvironment(environment);
                 _state = _state with
                 {
                     Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, ErrorCode = null, Failure = null,
                     SensitiveStatusError = sensitiveError, PasswordConfigured = status?.Configured.Contains(Password) == true,
-                    ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()), RestartKeys = restartKeys,
+                    ManagedByEnv = environment.Keys, EnvManaged = environment, RestartKeys = restartKeys,
                 };
             });
         }

@@ -19,6 +19,8 @@ public sealed record AdminIntegrationSettingsState
     public IReadOnlyDictionary<string, string> PersistedValues { get; init; } = new Dictionary<string, string>();
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnvironment { get; init; } = [];
+    /// <summary>The keys the server's environment sets, with the variable that sets each; drives the field notes. Empty when the status could not be read (the fields then stay locked through <see cref="ManagedByEnvironment"/> without a note).</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
 }
 
@@ -74,16 +76,19 @@ public sealed class AdminIntegrationSettingsController : IDisposable
         try
         {
             var snapshot = await effective.ConfigureAwait(false);
-            AdminSettingsSensitiveStatus status;
-            try { status = await sensitive.ConfigureAwait(false); } catch { status = new([], _keys.ToArray()); }
+            AdminSettingsSensitiveStatus status; var statusKnown = true;
+            try { status = await sensitive.ConfigureAwait(false); } catch { status = new([], _keys.ToArray()); statusKnown = false; }
             LoggingRestartKeys restartKeys;
             try { restartKeys = await restart.ConfigureAwait(false); } catch { restartKeys = new(); }
             Update(owner, () =>
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(_keys, [], snapshot.Values, snapshot.ETag);
+                // A key the environment sets now loses its draft, and is never sent.
+                var environment = statusKnown ? status.Environment : AdminEnvManagedSettings.None;
+                _form.ApplyEnvironment(environment);
                 _state = _state with { Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, Failure = null,
-                    ManagedByEnvironment = status.ManagedByEnv.Where(_keys.Contains).ToArray(), RestartKeys = restartKeys };
+                    ManagedByEnvironment = status.ManagedByEnv.Where(_keys.Contains).ToArray(), EnvManaged = environment, RestartKeys = restartKeys };
             });
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }

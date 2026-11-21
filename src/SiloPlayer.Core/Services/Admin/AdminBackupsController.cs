@@ -28,6 +28,8 @@ public sealed record AdminBackupsState
     public IReadOnlyDictionary<string, string> Errors { get; init; } = new Dictionary<string, string>();
     public bool SecretConfigured { get; init; }
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public bool Saving { get; init; }
     public bool Conflict { get; init; }
     public bool SettingsOutcomeUnknown { get; init; }
@@ -385,11 +387,14 @@ public sealed class AdminBackupsController : IDisposable
                 loaded = true;
                 if (preserveDraft && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft: true);
                 else _form = new(Present.SettingKeys, [], snapshot.Values, snapshot.ETag);
+                // A key the environment sets now loses its draft, and is never sent.
+                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                _form.ApplyEnvironment(environment);
                 _state = _state with
                 {
                     SettingsLoaded = true, SettingsLoading = false, SettingsLoadFailed = false, Conflict = false, SettingsOutcomeUnknown = false, SettingsError = null,
                     SecretConfigured = status?.Configured.Contains(Present.S3SecretKey) == true,
-                    ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()),
+                    ManagedByEnv = Array.AsReadOnly(environment.Keys.Where(Keys.Contains).ToArray()), EnvManaged = environment.Restrict(Keys),
                 };
             });
         }
