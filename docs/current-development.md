@@ -6,8 +6,21 @@ draft used `217ff25abc`). Five tabs (Storage, Preparation, Prepared files, Devic
 editors, every official `web.admin.downloads.*` string, the `download_preparations` and `downloads` realtime channels with the
 official 60 s polls, single-send writes with refusal versus unknown-outcome handling, and a native fixture covering failed reads and
 refused, stale and unknown writes. Final run `prepfiles-final-r4` passed 150 focused and 9,899 full unit cases and the four native
-selectors `admin-prepared-files`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`. Not observed: a live
-server, real realtime delivery, light theme, every DPI/width and pixel parity. Details, upstream differences and deliberate
+selectors `admin-prepared-files`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`.
+
+An independent review of that commit (`c9bc4d83c`, merged with Beta through `fb8cb17cf`) found ten defects (two P1, eight P2); all ten were
+confirmed and fixed with tests: tab switches no longer wait on a reload of the tab being left; the page updates rows and controls in
+place instead of rebuilding tables on every progress reading, poll or selection toggle (a click on Cancel, Pause or a check box lands and
+focus stays); device entry reads have one slot per device; a live refresh re-reads every loaded page; a partly failed delete shows as an
+error; values in confirmations are never parsed as markup; no server timestamp can throw from a timer calculation; dismissing the node
+editor mid-save is an unknown outcome, never a stuck page; every confirmation sends only under the authority it opened under; dropped
+requests under `/api/v2/admin/downloads/*` and `/api/v2/admin/nodes` log one fixed category. Final run `prepfiles2-final-r5` on source
+commit `82aca54fa` passed 83 focused and 10,207 full unit cases and the native selectors `admin-prepared-files`,
+`admin-playback-administration`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`. `admin-signin-security`
+failed in this environment ("typed group list is kept as typed") in two full runs and two isolated runs on files this branch does not
+change (the Sign-in page is exactly as merged from Beta `7b0b8012d`); `admin-playback-administration` failed once in two earlier runs at
+"key rotation confirmation opened" and passed on unchanged reruns. Not observed: a live server, real realtime delivery, light theme,
+every DPI/width, a native reproduction of the authority-retirement race, and pixel parity. Details, upstream differences and deliberate
 deviations: [scoped note](parity/admin-manage-prepared-files.md).
 
 ---
