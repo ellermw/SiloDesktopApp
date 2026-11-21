@@ -25,7 +25,8 @@ public static class PlaybackHistoryPresentation
         }
         if (row.TryGetProperty("played_seconds", out var measured) && measured.ValueKind == JsonValueKind.Number && measured.TryGetDouble(out var played) && double.IsFinite(played))
             return new(title, detail, Math.Max(0, played), false);
-        var seconds = row.TryGetProperty("watched_seconds", out var position) && position.ValueKind == JsonValueKind.Number && position.TryGetDouble(out var watched) && double.IsFinite(watched) ? watched : 0;
+        // The end position is end_position_seconds since Silo Server 9df62cd42 (#4552); older servers send watched_seconds.
+        var seconds = (row.TryGetProperty("end_position_seconds", out var position) || row.TryGetProperty("watched_seconds", out position)) && position.ValueKind == JsonValueKind.Number && position.TryGetDouble(out var watched) && double.IsFinite(watched) ? watched : 0;
         if (DateTimeOffset.TryParse(Text("started_at"), CultureInfo.InvariantCulture, DateTimeStyles.None, out var start) &&
             DateTimeOffset.TryParse(Text("ended_at"), CultureInfo.InvariantCulture, DateTimeStyles.None, out var end))
             seconds = Math.Min(seconds, Math.Max(0, (end - start).TotalSeconds));

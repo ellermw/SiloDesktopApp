@@ -18,8 +18,15 @@ public sealed class AdminActivitySession
     public string RequestedMediaFileId { get; set; } = "";
     public string MediaTitle { get; set; } = "";
     public string MediaType { get; set; } = "";
+    /// <summary>The playing item's content id; for an episode the episode's own (as history's <c>media_item_id</c>). e130f262d: replaces <c>content_id</c>.</summary>
+    public string? MediaItemId { get; set; }
+    /// <summary>The show of an episode (<c>series_title</c>); an episode's own title is <see cref="MediaTitle"/>. e130f262d: replaces <c>series_name</c>/<c>episode_name</c>.</summary>
+    public string? SeriesTitle { get; set; }
+    /// <summary>Pre-e130f262d servers only; folded into the current fields by <see cref="NormalizeLegacyNaming"/>.</summary>
     public string? ContentId { get; set; }
+    /// <summary>Pre-e130f262d servers only; see <see cref="NormalizeLegacyNaming"/>.</summary>
     public string? SeriesName { get; set; }
+    /// <summary>Pre-e130f262d servers only; see <see cref="NormalizeLegacyNaming"/>.</summary>
     public string? EpisodeName { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
@@ -28,6 +35,7 @@ public sealed class AdminActivitySession
     public string? EffectivePlayMethod { get; set; }
     public string? VideoDecision { get; set; }
     public string? AudioDecision { get; set; }
+    public List<string>? AdaptationReasons { get; set; }
     public string ReportingNode { get; set; } = "";
     public string? NodeDisplayName { get; set; }
     public long? FileDuration { get; set; }
@@ -82,6 +90,28 @@ public sealed class AdminActivitySession
     public string? RoutingEgressNodeName { get; set; }
     /// <summary>Empty means the default network; null means the server did not report it.</summary>
     public string? RoutingNetworkProvider { get; set; }
+
+    /// <summary>
+    /// Official e130f262d (#4561) names an episode on a live row as history does:
+    /// <c>media_type</c> "episode", <c>media_title</c> the episode, <c>series_title</c> the show,
+    /// <c>media_item_id</c> the episode's content id; <c>series_name</c>, <c>episode_name</c> and
+    /// <c>content_id</c> are gone. An older server still sends the old shape (the show as
+    /// <c>media_title</c>, the episode in <c>episode_name</c>), which the official client no longer
+    /// reads. This native client is not served by the same build as its server, so a row that carries
+    /// <c>series_name</c> and no <c>series_title</c> is read into the current shape and everything
+    /// downstream sees one shape. A current server never sends the old fields, so it is unaffected.
+    /// </summary>
+    public void NormalizeLegacyNaming()
+    {
+        if (string.IsNullOrEmpty(MediaItemId) && !string.IsNullOrEmpty(ContentId)) MediaItemId = ContentId;
+        if (!string.IsNullOrEmpty(SeriesTitle) || string.IsNullOrEmpty(SeriesName)) return;
+        SeriesTitle = SeriesName;
+        if (SeasonNumber != null && EpisodeNumber != null)
+        {
+            MediaTitle = EpisodeName ?? "";
+            MediaType = "episode";
+        }
+    }
 }
 
 /// <summary>One account seen from an IP (<c>AdminIPUser</c>).</summary>
