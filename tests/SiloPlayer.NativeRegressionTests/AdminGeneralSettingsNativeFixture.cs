@@ -278,6 +278,20 @@ internal static class AdminGeneralSettingsNativeFixture
                 Check(action.FocusState == FocusState.Keyboard && action.UseSystemFocusVisuals, "connection button exposes keyboard focus");
                 await CaptureAsync(outer, "general-control-keyboard-focus.png");
             }
+            // The switch was staged Off together with another edit; the environment then takes the Redis connection over. The locked switch must
+            // follow the environment (On, URL and database rows shown), not the stale choice (official RedisGroup clears the override).
+            server.Managed = false; server.RedisConfigured = true; await controller.ReloadAsync(false);
+            await Until(() => toggle.IsOn && toggle.IsEnabled && controller.State.DirtyKeys.Count == 0, "Redis saved On and editable");
+            toggle.IsOn = false;
+            await Until(() => !toggle.IsOn && controller.State.DirtyKeys.Contains("redis.url"), "Redis switch-off staged");
+            name.Text = "Edited alongside Redis off";
+            await Until(() => controller.State.DirtyKeys.Contains("branding.server_name"), "second draft staged next to the Redis switch-off");
+            server.Managed = true; await controller.ReloadAsync(true);
+            var redisUrlBox = Descendants(page).OfType<PasswordBox>().Single();
+            var redisDbBox = Input(page, "redis.db");
+            await Until(() => !toggle.IsEnabled && toggle.IsOn && EnvironmentNoteProbe.EffectivelyShown(redisUrlBox, page) && EnvironmentNoteProbe.EffectivelyShown(redisDbBox, page),
+                "the managed Redis switch reads On and the URL and database rows are shown");
+            Check(controller.State.DirtyKeys.SequenceEqual(["branding.server_name"]), "only the unrelated draft survives the environment taking Redis over");
             server.Values["clientip.trusted_proxies"] = "10.0.0.0/8";
             server.Managed = true; server.RedisConfigured = true; await controller.ReloadAsync(false); await Task.Delay(100);
             Check(!toggle.IsEnabled && !Input(page, "clientip.trusted_proxies").IsEnabled, "environment-managed Redis and trusted proxies cannot be edited");
@@ -285,16 +299,19 @@ internal static class AdminGeneralSettingsNativeFixture
                 "the managed trusted-proxies row shows the official note naming the variable and carries it in its help text");
             Check(EnvironmentNoteProbe.Verify(page, toggle, EnvironmentNoteProbe.Named("REDIS_URL")) is null, "the managed Redis switch shows the note naming REDIS_URL and carries it in its help text");
             Check(EnvironmentNoteProbe.VerifyEditable(Input(page, "branding.server_name")) is null, "an editable General row carries no environment note");
-            server.NamedVariables = false; await controller.ReloadAsync(false); await Task.Delay(100);
+            server.NamedVariables = false; await controller.ReloadAsync(false);
+            await Until(() => EnvironmentNoteProbe.Verify(page, Input(page, "clientip.trusted_proxies"), EnvironmentNoteProbe.Unnamed) is null, "the unnamed note is rendered for the older server");
             Check(EnvironmentNoteProbe.Verify(page, Input(page, "clientip.trusted_proxies"), EnvironmentNoteProbe.Unnamed) is null,
                 "an older server that names no variable still locks the row and shows the official field message");
-            server.NamedVariables = true; await controller.ReloadAsync(false); await Task.Delay(100);
+            server.NamedVariables = true; await controller.ReloadAsync(false);
+            await Until(() => EnvironmentNoteProbe.Verify(page, Input(page, "clientip.trusted_proxies"), EnvironmentNoteProbe.Named("SILO_TRUSTED_PROXIES")) is null, "the named note is rendered again");
             server.SensitiveFailure = true; await controller.ReloadAsync(false); await Task.Delay(100);
             Check(controller.State.SensitiveStatusError && !toggle.IsEnabled, "protected-status failure holds Redis behind its alert");
             var proxies = Input(page, "clientip.trusted_proxies");
             Check(!proxies.IsEnabled && proxies.Text == "10.0.0.0/8" &&
-                AutomationProperties.GetHelpText(proxies) == AdminText.T("configure.native.settings.managedStatusUnavailable"),
-                "failed protected status keeps environment-supplied trusted proxies read-only with an unavailable notice");
+                AutomationProperties.GetHelpText(proxies).StartsWith(AdminText.T("configure.native.settings.managedStatusUnavailable"), StringComparison.Ordinal) &&
+                AutomationProperties.GetHelpText(proxies).Contains(EnvironmentNoteProbe.Named("SILO_TRUSTED_PROXIES"), StringComparison.Ordinal),
+                "failed protected status keeps environment-supplied trusted proxies read-only with an unavailable notice and the last known note");
             controller.Set("clientip.trusted_proxies", "127.0.0.1");
             Check(!controller.State.DirtyKeys.Contains("clientip.trusted_proxies"), "unknown trusted-proxy management rejects retained edit actions");
             name.Text = "Non Redis change"; saves = server.Saves;

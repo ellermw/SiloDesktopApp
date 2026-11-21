@@ -22,12 +22,43 @@ internal static class EnvironmentNoteProbe
             foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child;
     }
 
+    /// <summary>The settings row that holds the control: the shared <c>AdminSettingsRow</c>, or the Integrations page's two-column field grid.</summary>
+    internal static DependencyObject? RowOf(DependencyObject control)
+    {
+        for (var node = VisualTreeHelper.GetParent(control); node != null; node = VisualTreeHelper.GetParent(node))
+            if (node.GetType().Name == "AdminSettingsRow" || node is Grid { ColumnSpacing: 20 } grid && grid.ColumnDefinitions.Count == 2) return node;
+        return null;
+    }
+
+    /// <summary>Visible itself and through every ancestor up to <paramref name="page"/>, and laid out with a non-zero size.</summary>
+    internal static bool EffectivelyShown(FrameworkElement element, DependencyObject page)
+    {
+        if (element.ActualWidth <= 0 || element.ActualHeight <= 0) return false;
+        for (DependencyObject? node = element; node != null; node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is UIElement { Visibility: not Visibility.Visible }) return false;
+            if (ReferenceEquals(node, page)) return true;
+        }
+        return false;
+    }
+
     /// <summary>Null when the managed row is correct, else what is wrong.</summary>
     internal static string? Verify(DependencyObject page, Control control, string note)
     {
+        var problem = VerifyCore(page, control, note);
+        if (problem != null) Program.Log("NOTE PROBE: " + problem);
+        return problem;
+    }
+
+    private static string? VerifyCore(DependencyObject page, Control control, string note)
+    {
+        (page as UIElement)?.UpdateLayout();
         if (control.IsEnabled) return "the control is still enabled";
-        if (!Descendants(page).OfType<TextBlock>().Any(text => text.Text == note && text.Visibility == Visibility.Visible))
-            return "no visible TextBlock reads \"" + note + "\"";
+        // The note must be in this control's own row and really shown: it and every ancestor up to the page visible, and laid out with a size.
+        var row = RowOf(control);
+        if (row == null) return "the control is not inside a settings row";
+        if (!Descendants(row).OfType<TextBlock>().Any(text => text.Text == note && EffectivelyShown(text, page)))
+            return "no shown TextBlock in the control's row reads \"" + note + "\"";
         var help = AutomationProperties.GetHelpText(control);
         return help.Contains(note, StringComparison.Ordinal) ? null : "the control's help text lacks the note (it is \"" + help + "\")";
     }

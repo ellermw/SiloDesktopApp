@@ -581,9 +581,11 @@ internal static class AdminDownloadSettingsNativeFixture
             var savesBeforeManaged = server.Saves;
             await Click(page, "DownloadsSave"); await Until(() => server.Saves == savesBeforeManaged + 1 && !controller.State.Saving, "save with a managed key present");
             Check(server.LastPut is { } managedBody && !managedBody.Contains(R.ArtifactDir, StringComparison.Ordinal) && managedBody.Contains(R.CacheHours, StringComparison.Ordinal), "the save body omits the environment-managed key");
-            server.NamedVariables = false; await controller.ReloadAsync(true); await Task.Delay(150);
+            server.NamedVariables = false; await controller.ReloadAsync(true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Unnamed) is null, "the unnamed note is rendered for the older server");
             Check(EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
-            server.NamedVariables = true; await controller.ReloadAsync(true); await Task.Delay(100);
+            server.NamedVariables = true; await controller.ReloadAsync(true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Named("SILO_DOWNLOAD_ARTIFACT_DIR")) is null, "the named note is rendered again");
             await CaptureAsync(outer, "downloads-environment-managed.png");
             server.Managed = []; server.SensitiveFailure = true; await controller.ReloadAsync(true); await Task.Delay(150);
             Check(directory.IsEnabled && controller.State.Loaded, "an unreadable environment status does not block editing, as in the official page");

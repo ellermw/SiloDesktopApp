@@ -220,7 +220,7 @@ internal static class AdminSecuritySettingsNativeFixture
             await Until(() => controller.State.DirtyKeys.Contains(AdminSecuritySettingsController.LocalNetwork), "local-network draft before the environment takes over");
             server.ManagedKeys = [AdminSecuritySettingsController.LocalNetwork]; await controller.ReloadAsync(preserveDraft: true);
             await Until(() => controller.State.ManagedByEnv.Contains(AdminSecuritySettingsController.LocalNetwork) && !localSwitch.IsEnabled, "managed local-network switch locked");
-            await Task.Delay(100);
+            await Until(() => !controller.State.DirtyKeys.Contains(AdminSecuritySettingsController.LocalNetwork) && localSwitch.IsOn == localSaved, "the dropped draft is rendered back to the saved value");
             Check(!controller.State.DirtyKeys.Contains(AdminSecuritySettingsController.LocalNetwork) && localSwitch.IsOn == localSaved, "the draft of the key that became managed is dropped");
             Check(EnvironmentNoteProbe.Verify(page, localSwitch, EnvironmentNoteProbe.Named("SILO_MEDIA_SERVERS_ALLOW_PRIVATE_DESTINATIONS")) is null, "the managed Security row is disabled, shows the official note naming the variable and carries it in its help text");
             server.NamedVariables = false; await controller.ReloadAsync(preserveDraft: true);

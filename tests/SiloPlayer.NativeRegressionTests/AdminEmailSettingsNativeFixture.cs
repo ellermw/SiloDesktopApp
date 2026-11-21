@@ -417,7 +417,8 @@ internal static class AdminEmailSettingsNativeFixture
             Check(!secret.IsEnabled && Button(page, "EmailPasswordAction").Visibility == Visibility.Collapsed, "environment-managed password cannot be edited or cleared");
             Check(EnvironmentNoteProbe.Verify(page, secret, EnvironmentNoteProbe.Named("SILO_SMTP_PASSWORD")) is null, "the managed password row is disabled, shows the official note naming the variable and carries it in its help text");
             Check(secret.Password == "" && !controller.State.DirtyKeys.Contains(Password) && controller.State.Values[Password] == "", "the typed password is neither shown nor kept nor staged once the environment sets it");
-            server.NamedVariables = false; await controller.ReloadAsync(true); await Task.Delay(150);
+            server.NamedVariables = false; await controller.ReloadAsync(true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, secret, EnvironmentNoteProbe.Unnamed) is null, "the unnamed note is rendered for the older server");
             Check(EnvironmentNoteProbe.Verify(page, secret, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the password and shows the official field message");
             server.NamedVariables = true;
             server.Managed = false; server.SensitiveFailure = true; await controller.ReloadAsync(true); await Task.Delay(150);

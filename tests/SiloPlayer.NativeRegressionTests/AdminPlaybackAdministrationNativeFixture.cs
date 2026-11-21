@@ -293,6 +293,17 @@ internal static class AdminPlaybackAdministrationNativeFixture
             await Until(() => EnvironmentNoteProbe.Verify(playback, transcodeDir, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
             server.NamedVariables = true; server.ManagedKeys = []; await playbackController.ReloadAsync(preserveDraft: false);
             await Until(() => playbackController.State.ManagedByEnv.Count == 0 && transcodeDir.IsEnabled, "managed lock released");
+            // The device list is a composite row (a panel of switches): the environment holding SILO_HW_DEVICE locks each switch and puts the note in the
+            // help text of each, because a panel takes no focus and a screen reader reads the focused switch.
+            await Until(() => All(playback).OfType<ToggleSwitch>().Any(t => AutomationProperties.GetAutomationId(t) == "PlaybackDevice_/dev/dri/renderD128"), "the device list is shown");
+            var deviceSwitch = Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128");
+            Check(deviceSwitch.IsEnabled && !AutomationProperties.GetHelpText(deviceSwitch).Contains("in the server’s environment.", StringComparison.Ordinal), "an editable device switch is enabled and carries no environment note");
+            server.ManagedKeys = ["playback.hw_device"]; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Contains("playback.hw_device") && !Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsEnabled, "managed device switches locked");
+            deviceSwitch = Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128");
+            Check(EnvironmentNoteProbe.Verify(playback, deviceSwitch, EnvironmentNoteProbe.Named("SILO_PLAYBACK_HW_DEVICE")) is null, "the managed device switch is disabled, its row shows the note and the switch carries it in its help text");
+            server.ManagedKeys = []; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Count == 0 && Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsEnabled, "managed device lock released");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await Until(() => All(playback).OfType<TextBox>().All(c => c.Text.Length == 0), "authority retirement clears settings inputs");
         }

@@ -227,7 +227,8 @@ internal static class AdminStorageSettingsNativeFixture
             await Until(() => controller.State.DirtyKeys.Count == 0, "discard");
 
             // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
-            await RenderQueuedAsync(page); await Task.Delay(100);
+            await RenderQueuedAsync(page);
+            await Until(() => cache.IsEnabled, "the cache switch is editable before the environment takes over");
             cache.IsOn = !cache.IsOn;
             await Until(() => controller.State.DirtyKeys.Count == 1, "cache draft before the environment takes over");
             server.ManagedKeys = [AdminStorageRules.CacheImages]; await controller.ReloadAsync(preserveDraft: true);
@@ -235,7 +236,8 @@ internal static class AdminStorageSettingsNativeFixture
             await RenderQueuedAsync(page);
             Check(controller.State.DirtyKeys.Count == 0 && cache.IsOn == (controller.State.Get(AdminStorageRules.CacheImages) == "true"), "the draft of the key that became managed is dropped");
             Check(EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Named("SILO_METADATA_CACHE_IMAGES")) is null, "the managed Storage row is disabled, shows the official note naming the variable and carries it in its help text");
-            server.NamedVariables = false; await controller.ReloadAsync(preserveDraft: true); await Task.Delay(150); await RenderQueuedAsync(page);
+            server.NamedVariables = false; await controller.ReloadAsync(preserveDraft: true); await RenderQueuedAsync(page);
+            await Until(() => EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Unnamed) is null, "the unnamed note is rendered for the older server");
             Check(EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
             server.NamedVariables = true; server.ManagedKeys = []; await controller.ReloadAsync(preserveDraft: false);
             await Until(() => controller.State.ManagedByEnv.Count == 0 && cache.IsEnabled && !controller.State.StatusLoading, "managed lock released");
