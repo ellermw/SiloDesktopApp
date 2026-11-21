@@ -101,7 +101,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         {
             if (Current(owner) && initialization == _initialization)
             {
-                _surface.Children.Clear(); Notice("Couldn’t load collections. " + AdminCollectionsController.Message(error));
+                _surface.Children.Clear(); Notice("Couldn't load collections. " + AdminCollectionsController.Message(error));
                 if (Controller.Libraries.Count > 0) _surface.Children.Add(Select("CollectionsLibraryRecovery", Controller.Libraries.Select(l => (l.Id, l.Name)), _library ?? "", async value => { _library = value; ReplaceQuery(); await InitializeAsync(); }));
                 _surface.Children.Add(ActionButton("Retry", "CollectionsRetry", InitializeAsync));
             }
@@ -210,7 +210,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
             return;
         }
         _page = Math.Clamp(_page, 0, (all.Count - 1) / 50);
-        _rows.Children.Add(Text($"{all.Count} collections", 12, true));
+        _rows.Children.Add(Text(all.Count == 1 ? "1 collection" : $"{all.Count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)} collections", 12, true));
         foreach (var collection in all.Skip(_page * 50).Take(50)) _rows.Children.Add(CollectionRow(collection));
         var paging = Wrap();
         paging.Children.Add(ActionButton("Previous", "CollectionsPrevious", () => { _page--; RenderRows(); return Task.CompletedTask; }, _page > 0));
@@ -227,7 +227,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
             var pick = new CheckBox { IsChecked = _selected.Contains(c.Id) }; Identify(pick, "CollectionSelect_" + c.Id, "Select " + c.Title);
             Toggled(pick, on => { if (on && _selected.Count < 100) _selected.Add(c.Id); else _selected.Remove(c.Id); RenderRows(); return Task.CompletedTask; }); row.Children.Add(pick);
         }
-        row.Children.Add(ActionButton(c.Title, "CollectionEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }));
+        row.Children.Add(NameButton(c.Title, "CollectionEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }));
         row.Children.Add(Text($"{(c.Kind == "synced" ? "Synced list" : c.Kind == "smart" ? "Smart" : "Manual")} · {LibraryNames(c)} · {Titles(c.ItemCount)}", 13, true));
         var visible = new ToggleSwitch { Header = "On tabs", IsOn = c.Visibility != "hidden" }; Identify(visible, "CollectionVisible_" + c.Id, "Show " + c.Title + " on Collections tabs");
         var changingVisibility = false;
@@ -237,13 +237,13 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
             try
             {
                 var target = visible.IsOn;
-                if (!target && c.RowCount > 0 && await ConfirmAsync("Hide from Collections tabs?", "Rows still show this collection. Their See all link will be unavailable.", "Hide", owner!) != true) return;
+                if (!target && c.RowCount > 0 && await ConfirmAsync(AdminCollectionCopy.HideTitle(c.Title), AdminCollectionCopy.HideDescription(LibraryNameList(c), c.RowCount), AdminCollectionCopy.HideLabel, owner!) != true) return;
                 if (Current(owner)) await PatchAsync(c.Id, new() { ["visibility"] = target ? "visible" : "hidden" });
             }
             catch (Exception error) { if (Current(owner)) Notice(AdminCollectionsController.Message(error)); }
             finally { visible.IsOn = c.Visibility != "hidden"; changingVisibility = false; }
         }; row.Children.Add(visible);
-        if (c.LastSyncStatus is "failed" or "error") row.Children.Add(Text("Sync failed", 13));
+        if (c.LastSyncStatus is "failed" or "error") row.Children.Add(StatusText("Sync failed", true));
         else if (c.LastSyncStatus == "running") row.Children.Add(Text("Syncing now…", 13));
         if (c.HomeRowCount > 0) row.Children.Add(Text("On Home", 12));
         if (c.Featured) row.Children.Add(Text("Pinned", 12));
@@ -251,7 +251,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         row.Children.Add(ActionButton("Delete…", "CollectionDelete_" + c.Id, () => DeleteDialogAsync(c.Id)));
         return Card(row);
     }
-    private static string Titles(int count) => count == 1 ? "1 title" : $"{count} titles";
+    private static string Titles(int count) => count == 1 ? "1 title" : $"{count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)} titles";
     private string LibraryNames(AdminCollectionEntry c) => string.Join(", ", Controller.Libraries.Where(l => c.InLibrary(l.Id)).Select(l => l.Name));
     private Task PatchAsync(string id, JsonObject patch) => RunAsync(async lease => { var observed = await _api.GetAsync(lease, id); await _api.SaveAsync(lease, observed, patch); });
 }

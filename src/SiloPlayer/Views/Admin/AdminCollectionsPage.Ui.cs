@@ -106,10 +106,20 @@ public sealed partial class AdminCollectionsPage
             MinHeight = multiline ? 90 : 36, HorizontalAlignment = HorizontalAlignment.Stretch };
         Identify(input, id, label); input.TextChanged += (_, _) => changed(input.Text); target.Children.Add(input); return input;
     }
-    private async Task<bool?> ConfirmAsync(string title, string message, string primary, SiloPlayer.Core.Services.MonitorAuthorityLease owner)
+    /// <summary>
+    /// A confirmation. Names in <paramref name="title"/> and the text are already plain one-line strings. A <paramref name="destructive"/>
+    /// confirm is drawn in the official destructive red; <paramref name="blocked"/> says why it cannot run now and keeps it off.
+    /// </summary>
+    private async Task<bool?> ConfirmAsync(string title, string message, string primary, SiloPlayer.Core.Services.MonitorAuthorityLease owner,
+        bool destructive = false, IReadOnlyList<string>? bullets = null, string? footer = null, string? blocked = null)
     {
         if (_dialog != null || !Current(owner) || XamlRoot == null) return null;
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = Text(message), PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        var body = Stack(10); body.Children.Add(Text(message));
+        foreach (var bullet in bullets ?? []) body.Children.Add(Text("• " + bullet, 14));
+        if (blocked != null) { var alert = StatusText(blocked, true, 14); Identify(alert, "CollectionsConfirmBlocked", blocked); body.Children.Add(alert); }
+        if (footer != null) body.Children.Add(Text(footer, 13, true));
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = body, PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, IsPrimaryButtonEnabled = blocked == null };
+        if (destructive) AdminCollectionsDestructiveStyle.Apply(dialog, AdminCollectionsDestructiveStyle.HighContrast);
         Identify(dialog, "CollectionsConfirm", title); _dialog = dialog;
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && Current(owner); }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }

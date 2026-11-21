@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services.Admin;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 
@@ -17,7 +18,7 @@ public sealed partial class AdminCollectionsPage
         var board = Controller.Board;
         if (Controller.Capabilities?.Groups != true) { _rows.Children.Add(Text("Shelves are not available on this server.")); return; }
         if (board == null) { _rows.Children.Add(Text("Add a library before arranging collections.")); return; }
-        _rows.Children.Add(Text($"Shelves on {Controller.Libraries.FirstOrDefault(l => l.Id == board.LibraryId)?.Name} › Collections", 22));
+        _rows.Children.Add(Text($"Shelves on {AdminCollectionNames.Plain(Controller.Libraries.FirstOrDefault(l => l.Id == board.LibraryId)?.Name)} › Collections", 22));
         _rows.Children.Add(Text("Shelves are set separately for each library. Top to bottom, the way viewers see them.", 14, true));
         _rows.Children.Add(Text("Drag shelves and collections, or focus a handle and press Space, then the arrow keys. ⋯ has Move to shelf. Changes save right away.", 13, true));
         var tools = Wrap(); tools.Children.Add(ActionButton("Add shelf", "CollectionsAddShelf", () => ShelfDialogAsync(null)));
@@ -31,7 +32,7 @@ public sealed partial class AdminCollectionsPage
             var editable = groupId == "ungrouped" || group?.Kind == "regular";
             var panel = Stack(12); var header = Wrap();
             var title = groupId == "ungrouped" ? "No heading" : group?.Name ?? "";
-            header.Children.Add(Text(title, 19));
+            header.Children.Add(NameBlock(title, 19, 560, strong: true));
             if (!_viewerPreview)
             {
                 var handle = ActionButton("↕", "CollectionShelfHandle_" + groupId, () => { _grabbed = _grabbed == "shelf:" + groupId ? null : "shelf:" + groupId; return Task.CompletedTask; });
@@ -81,7 +82,7 @@ public sealed partial class AdminCollectionsPage
                 {
                     var tile = Stack(8); tile.Width = 220;
                     tile.Children.Add(Poster(c.PosterUrl, 188, c.Title));
-                    tile.Children.Add(ActionButton((_viewerPreview && c.Featured && (group?.DefaultSortMode is null or "manual") ? "📌 " : "") + c.Title, "CollectionBoardEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }));
+                    tile.Children.Add(NameButton((_viewerPreview && c.Featured && (group?.DefaultSortMode is null or "manual") ? "📌 " : "") + c.Title, "CollectionBoardEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }, 220));
                     tile.Children.Add(Text(Titles(c.ItemCount) + (c.Visibility == "hidden" ? " · Hidden" : ""), 12, true));
                     if (!_viewerPreview)
                     {
