@@ -82,7 +82,7 @@ public sealed class AdminPreparedFilesController : IDisposable
     public static readonly TimeSpan EventCoalescing = TimeSpan.FromSeconds(2);
     public static readonly string[] Channels = ["download_preparations", "downloads"];
 
-    private sealed class Coalescer { public DateTimeOffset? Last; public IDisposable? Timer; }
+    private sealed class Coalescer { public DateTimeOffset? Last; public IDisposable? Timer; public object? Running; public bool Pending; }
 
     private sealed class ReadSlot
     {
@@ -815,6 +815,8 @@ public sealed class AdminPreparedFilesController : IDisposable
             _storageTimer = _maintenanceTimer = _failureTimer = null;
             _storageRefresh.Timer = _preparationRefresh.Timer = null;
             _storageRefresh.Last = _preparationRefresh.Last = null;
+            _storageRefresh.Running = _preparationRefresh.Running = null;
+            _storageRefresh.Pending = _preparationRefresh.Pending = false;
             lease = _channelLease; _channelLease = null;
         }
         foreach (var timer in timers) timer?.Dispose();
@@ -889,10 +891,15 @@ public sealed class AdminPreparedFilesController : IDisposable
         FailedAt = job.FailedAt, NextRetryAt = job.NextRetryAt, PausedAt = job.PausedAt, Progress = progress, ProgressUnavailable = false, Requesters = job.Requesters,
     };
 
-    /// <summary>Leading-plus-trailing coalescing, so a burst of events costs at most two reads.</summary>
+    /// <summary>
+    /// Leading-plus-trailing coalescing, so a burst of events costs at most two reads. An event never supersedes the coalesced read
+    /// still in flight (events arriving faster than a multi-page walk completes would otherwise cancel every walk before it
+    /// publishes): one more read follows it instead.
+    /// </summary>
     private void Coalesce(Coalescer coalescer, Func<MonitorAuthorityLease, Task> read)
     {
         MonitorAuthorityLease? owner;
+        object? ticket;
         lock (_gate)
         {
             owner = _state.Owner;
@@ -904,25 +911,46 @@ public sealed class AdminPreparedFilesController : IDisposable
                 var captured = owner;
                 coalescer.Timer = _scheduler.Schedule(previous + EventCoalescing - now, () =>
                 {
+                    object? trailing;
                     lock (_gate)
                     {
                         coalescer.Timer = null;
                         if (_disposed || !ReferenceEquals(_state.Owner, captured) || !_lifetime.IsCurrent(captured)) return;
-                        coalescer.Last = _scheduler.UtcNow;
+                        trailing = ClaimRead(coalescer);
                     }
-                    _ = ReadQuietlyAsync(read, captured);
+                    if (trailing != null) _ = ReadQuietlyAsync(coalescer, read, captured, trailing);
                 });
                 return;
             }
-            coalescer.Last = now;
+            ticket = ClaimRead(coalescer);
         }
-        _ = ReadQuietlyAsync(read, owner);
+        if (ticket != null) _ = ReadQuietlyAsync(coalescer, read, owner, ticket);
     }
 
-    private static async Task ReadQuietlyAsync(Func<MonitorAuthorityLease, Task> read, MonitorAuthorityLease owner)
+    /// <summary>Takes the coalescer for one read (the gate is held); null while its previous read is in flight, which is then followed by one more.</summary>
+    private object? ClaimRead(Coalescer coalescer)
+    {
+        if (coalescer.Running != null) { coalescer.Pending = true; return null; }
+        coalescer.Last = _scheduler.UtcNow;
+        return coalescer.Running = new object();
+    }
+
+    private async Task ReadQuietlyAsync(Coalescer coalescer, Func<MonitorAuthorityLease, Task> read, MonitorAuthorityLease owner, object ticket)
     {
         try { await read(owner).ConfigureAwait(false); }
         catch (Exception) { /* a failed refresh keeps the data on screen and the cadence running */ }
+        object? next;
+        lock (_gate)
+        {
+            // A visit that ended or was opened again meanwhile has reset the coalescer: this read no longer owns it.
+            if (!ReferenceEquals(coalescer.Running, ticket)) return;
+            coalescer.Running = null;
+            if (!coalescer.Pending) return;
+            coalescer.Pending = false;
+            if (_disposed || !ReferenceEquals(_state.Owner, owner) || !_lifetime.IsCurrent(owner)) return;
+            next = ClaimRead(coalescer);
+        }
+        if (next != null) _ = ReadQuietlyAsync(coalescer, read, owner, next);
     }
 
     private void RefreshStorageViews() => Coalesce(_storageRefresh, owner =>
@@ -1039,7 +1067,7 @@ public sealed class AdminPreparedFilesController : IDisposable
 
     private void Raise() => Changed?.Invoke();
     private static string NormalizeTab(string? tab) => tab is "preparation" or "files" or "devices" or "history" ? tab : "storage";
-    public static string DeviceKey(AdminDownloadDevice device) => device.UserId + "/" + device.ProfileId + "/" + device.DeviceId;
+    public static string DeviceKey(AdminDownloadDevice device) => AdminPreparedFilesContract.DeviceKey(device);
 
     private static IReadOnlyList<T> Merge<T>(IReadOnlyList<T> current, IReadOnlyList<T> incoming, Func<T, string> key)
     {

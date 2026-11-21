@@ -786,4 +786,78 @@ public sealed class AdminPreparedFilesControllerTests
         await controller.DeleteFilesAsync([row], includeInUse: false, current);
         Assert.Equal(1, writes);
     }
+
+    // ---- Review findings of November 21 ------------------------------------------------------------
+
+    [Fact]
+    public async Task EventsArrivingFasterThanAMultiPageWalkNeverSupersedeItAndOneMoreWalkFollows()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var slowSecondPage = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hold = false;
+        kit.Http.Respond = (request, token) =>
+        {
+            if (!Pathname(request).EndsWith("/storage/files", StringComparison.Ordinal)) return Server(_ => throw new InvalidOperationException())(request, token);
+            if (!request.RequestUri!.Query.Contains("cursor=c1", StringComparison.Ordinal)) return Task.FromResult(AdminMonitorKit.Json(Page(File("a"), "c1")));
+            return hold ? slowSecondPage.Task : Task.FromResult(AdminMonitorKit.Json(Page(File("b"))));
+        };
+        var channel = new Channel();
+        var scheduler = new BackupScheduler();
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority, channel, scheduler);
+        await controller.OpenAsync("files", null);
+        await controller.LoadMoreFilesAsync();
+        Assert.Equal(["a", "b"], controller.State.Files.Items.Select(x => x.Id));
+        int Walks() => kit.Http.Requests.Count(r => r.Contains("/storage/files?", StringComparison.Ordinal) && !r.Contains("cursor=", StringComparison.Ordinal));
+        int SecondPages() => kit.Http.Requests.Count(r => r.Contains("/storage/files?", StringComparison.Ordinal) && r.Contains("cursor=c1", StringComparison.Ordinal));
+        var walks = Walks();
+        var secondPages = SecondPages();
+        var published = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        controller.Changed += () => published.Enqueue(string.Join(',', controller.State.Files.Items.Select(x => x.Id)));
+
+        hold = true;
+        channel.Raise("downloads", "download.changed");
+        await Eventually.True(() => SecondPages() == secondPages + 1, "the refresh is reading its second page");
+
+        // Events keep arriving, each one past the coalescing window, while that walk is still in flight.
+        for (var i = 0; i < 3; i++)
+        {
+            scheduler.Advance(AdminPreparedFilesController.EventCoalescing + TimeSpan.FromSeconds(1));
+            channel.Raise("downloads", "download.changed");
+        }
+        await Task.Delay(50);
+        Assert.Equal(walks + 1, Walks());
+        Assert.True(controller.State.Files.Loading);
+
+        hold = false;
+        slowSecondPage.SetResult(AdminMonitorKit.Json(Page(File("b2"))));
+        await Eventually.True(() => Walks() == walks + 2 && SecondPages() == secondPages + 2 && !controller.State.Files.Loading, "the walk in flight published and one more walk followed it");
+
+        Assert.Contains("a,b2", published);
+        Assert.Equal(["a", "b"], controller.State.Files.Items.Select(x => x.Id));
+        Assert.Null(controller.State.Files.Error);
+        await Task.Delay(50);
+        Assert.Equal(walks + 2, Walks());
+    }
+
+    [Fact]
+    public async Task DevicesWhoseIdentifiersContainTheKeySeparatorAreKeptApartAcrossPages()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        static string Device(string profileId, string deviceId) => DeviceJson(deviceId).Replace("\"profile_id\":\"p1\"", "\"profile_id\":\"" + profileId + "\"");
+        kit.Http.Respond = (request, token) =>
+        {
+            if (!Pathname(request).EndsWith("/devices", StringComparison.Ordinal)) return Server(_ => throw new InvalidOperationException())(request, token);
+            return Task.FromResult(AdminMonitorKit.Json(request.RequestUri!.Query.Contains("cursor=d1", StringComparison.Ordinal) ? Page(Device("x/y", "z")) : Page(Device("x", "y/z"), "d1")));
+        };
+        using var controller = new AdminPreparedFilesController(new AdminPreparedFilesApi(kit.Client), authority);
+        await controller.OpenAsync("devices", null);
+        await controller.LoadMoreDevicesAsync();
+
+        var devices = controller.State.Devices.Items;
+        Assert.Null(controller.State.Devices.Error);
+        Assert.Equal(["y/z", "z"], devices.Select(x => x.DeviceId));
+        Assert.NotEqual(AdminPreparedFilesController.DeviceKey(devices[0]), AdminPreparedFilesController.DeviceKey(devices[1]));
+    }
 }

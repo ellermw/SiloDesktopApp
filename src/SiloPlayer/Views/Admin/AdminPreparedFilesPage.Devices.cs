@@ -115,7 +115,7 @@ public sealed partial class AdminPreparedFilesPage
                 foreach (var device in rows)
                 {
                     var key = AdminPreparedFilesController.DeviceKey(device);
-                    if (!_rows.TryGetValue(key, out var row)) _rows[key] = row = new DeviceRow(this, key);
+                    if (!_rows.TryGetValue(key, out var row)) _rows[key] = row = new DeviceRow(this, key, DeviceAutomationKey(device));
                     row.Apply(device, _expanded == key, state);
                     wanted.Add(row.Root);
                     if (_expanded == key)
@@ -132,6 +132,11 @@ public sealed partial class AdminPreparedFilesPage
             if (devices.Truncated) SetText(_truncated, T("configure.native.preparedFiles.listTruncated", new { count = rows.Count }));
         }
 
+        /// <summary>The device's identity as an automation id suffix. Each part is escaped, underscores included, so the '_' joins cannot make two devices share an id.</summary>
+        private static string DeviceAutomationKey(AdminDownloadDevice device) =>
+            device.UserId + "_" + DeviceAutomationPart(device.ProfileId) + "_" + DeviceAutomationPart(device.DeviceId);
+        private static string DeviceAutomationPart(string value) => Uri.EscapeDataString(value).Replace("_", "%5F");
+
         private sealed record DeviceCells(string Name, string Platform, string Person, string Username, string Seen, bool Stale, long Copies, string Summary, string Revoked, string Monitors, string OnDevice);
 
         /// <summary>One device row. The expand button and Revoke-all button are built once; the text cells are rebuilt only when their values change.</summary>
@@ -145,11 +150,11 @@ public sealed partial class AdminPreparedFilesPage
             private bool? _open;
             private string _names = "";
 
-            public DeviceRow(DevicesView view, string key)
+            public DeviceRow(DevicesView view, string key, string automationKey)
             {
                 _view = view; _key = key;
                 _expander = new Button { Content = _glyph, Style = (Style)Application.Current.Resources["GhostButtonStyle"], Width = 30, Height = 30, MinHeight = 0, Padding = new Thickness(0) };
-                AutomationProperties.SetAutomationId(_expander, "PreparedFilesDeviceExpand_" + key.Replace('/', '_'));
+                AutomationProperties.SetAutomationId(_expander, "PreparedFilesDeviceExpand_" + automationKey);
                 _expander.Click += (_, _) =>
                 {
                     var open = view._expanded == key;
@@ -159,7 +164,7 @@ public sealed partial class AdminPreparedFilesPage
                     view.Refresh();
                 };
                 _cells.Hold(0, _expander);
-                _revokeAll = Button(T(DevKey + ".revokeAll"), "PreparedFilesRevokeAll_" + key.Replace('/', '_'));
+                _revokeAll = Button(T(DevKey + ".revokeAll"), "PreparedFilesRevokeAll_" + automationKey);
                 _revokeAll.Click += (_, _) => view.P.ConfirmRevoke(Device, null, () => { });
                 _cells.Hold(6, _revokeAll);
             }

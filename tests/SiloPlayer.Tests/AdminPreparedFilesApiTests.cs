@@ -109,6 +109,22 @@ public sealed class AdminPreparedFilesApiTests
     }
 
     [Fact]
+    public async Task DevicesWhoseIdentifiersContainTheKeySeparatorAreDistinctRowsOfOnePage()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        // Profile "x" with device "y/z" and profile "x/y" with device "z" belong to one user and are two devices.
+        var first = Device.Replace("\"profile_id\":\"p1\"", "\"profile_id\":\"x\"").Replace("\"device_id\":\"phone\"", "\"device_id\":\"y/z\"");
+        var second = Device.Replace("\"profile_id\":\"p1\"", "\"profile_id\":\"x/y\"").Replace("\"device_id\":\"phone\"", "\"device_id\":\"z\"");
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("{\"items\":[" + first + "," + second + "],\"page\":{\"has_more\":false}}"));
+        using var lease = authority.Capture();
+
+        var page = await new AdminPreparedFilesApi(kit.Client).ListDevicesAsync(lease, new(), null);
+
+        Assert.Equal(["y/z", "z"], page.Items.Select(x => x.DeviceId));
+    }
+
+    [Fact]
     public async Task ActionsUseExactOfficialEndpointsBodiesAndNeverBatchOverFiveHundred()
     {
         using var kit = AdminMonitorKit.Create();

@@ -274,7 +274,7 @@ public sealed class AdminPreparedFilesApi(SiloApiClient client)
                     || usage.OtherBytes < 0 || usage.FSUsedBytes < 0 || usage.FSTotalBytes < 0 || usage.MeasuredAt == default))
                 throw new InvalidDataException("Invalid download storage location.");
     }
-    private static string DeviceKey(AdminDownloadDevice device) => device.UserId + "/" + device.ProfileId + "/" + device.DeviceId;
+    private static string DeviceKey(AdminDownloadDevice device) => AdminPreparedFilesContract.DeviceKey(device);
     private static void ValidateCursor(string? cursor) { if (cursor != null && !AdminPaging.IsValidCursor(cursor)) throw new ArgumentException("Invalid cursor.", nameof(cursor)); }
     private static void RequireLocation(string location) { if (!AdminPreparedFilesContract.IsLocation(location)) throw new ArgumentException("Invalid storage location.", nameof(location)); }
     private static string[] RequireIds(IReadOnlyList<string> ids)

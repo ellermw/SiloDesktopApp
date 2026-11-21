@@ -117,6 +117,20 @@ defects (two P1, eight P2). Each was confirmed in the code and against official 
     server directory in its body; Playback Nodes and the dashboard share that prefix and now also log only the category. Unit
     `TransportFailureAfterSendLogsOnlyAFixedCategoryAndNeverEchoesTitlesPathsOrNames`.
 
+## Review of November 21 (two findings) and their fixes
+
+Both fixes postdate the verification runs recorded below and are not covered by them.
+
+1. **Events arriving faster than a multi-page walk completed cancelled every walk** (P2). A coalesced event read no longer supersedes
+   the coalesced read still in flight: it is followed by one more read when it completes, so each walk publishes, `Loading` clears and
+   a destructive block waiting on the list can lift. Explicit reloads still supersede as before. Unit:
+   `EventsArrivingFasterThanAMultiPageWalkNeverSupersedeItAndOneMoreWalkFollows`.
+2. **The device key was ambiguous** (P2). Profile and device ids may contain `/`, so user 1's profile `x` with device `y/z` and profile
+   `x/y` with device `z` shared the key `1/x/y/z`: the page failed as a duplicate identity, or one device was dropped across pages.
+   `AdminPreparedFilesContract.DeviceKey` now carries the profile part's length (used by the API, the controller and the page), and the
+   device automation ids escape each part (plain ids keep their form, for example `PreparedFilesDeviceExpand_7_p1_phone`). Unit:
+   `DevicesWhoseIdentifiersContainTheKeySeparatorAreDistinctRowsOfOnePage`, `DevicesWhoseIdentifiersContainTheKeySeparatorAreKeptApartAcrossPages`.
+
 ## Integration
 
 `App.xaml.cs` (`AddAdminPreparedFiles`), `installer/build.ps1` (`Views/Admin/AdminPreparedFilesPage.xbf`),

@@ -334,6 +334,12 @@ public static partial class AdminPreparedFilesContract
     public static bool IsLocation(string? value) => value != null && LocationPattern().IsMatch(value);
     public static bool IsId(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 1024 && !value.Any(char.IsControl);
     public static bool IsArtifactId(string? value) => value != null && ArtifactIdPattern().IsMatch(value);
+    /// <summary>
+    /// One device's identity within a list. Profile and device ids may hold any printable character, the separator included, so the
+    /// profile part carries its length (the user id is digits only): two different devices can never share a key.
+    /// </summary>
+    public static string DeviceKey(AdminDownloadDevice device) =>
+        device.UserId + "/" + (device.ProfileId?.Length ?? 0) + ":" + device.ProfileId + "/" + device.DeviceId;
     [GeneratedRegex("^(server|node:[1-9][0-9]*)$", RegexOptions.CultureInvariant)] private static partial Regex LocationPattern();
     [GeneratedRegex("^[A-Za-z0-9_-]{1,128}$", RegexOptions.CultureInvariant)] private static partial Regex ArtifactIdPattern();
 }
