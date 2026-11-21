@@ -72,7 +72,8 @@ internal static partial class AdminLibrariesNativeFixture
         VisualStateManager.GoToState(button, "Normal", false);
         VisualStateManager.GoToState(button, "Focused", false);
         Check(shape.BorderBrush is SolidColorBrush { Color.A: > 0 }, $"{label} focus draws its ring on the 20 px shape");
-        Check(button.Background == null || button.Background is SolidColorBrush { Color.A: 0 }, $"{label} has no 44 px background of its own");
+        var hit = Descendants(button).OfType<Grid>().FirstOrDefault(grid => grid.Name == "HitArea");
+        Check(hit is { Background: SolidColorBrush { Color.A: 0 } } && hit.ActualWidth >= hitArea - 0.5, $"{label} paints nothing across its {hitArea} px hit area (transparent, but hit-testable)");
         VisualStateManager.GoToState(button, "Unfocused", false);
         VisualStateManager.GoToState(button, "Normal", false);
     }
