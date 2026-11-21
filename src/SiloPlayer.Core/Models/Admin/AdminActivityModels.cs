@@ -28,6 +28,7 @@ public sealed class AdminActivitySession
     public string? EffectivePlayMethod { get; set; }
     public string? VideoDecision { get; set; }
     public string? AudioDecision { get; set; }
+    public List<string>? AdaptationReasons { get; set; }
     public string ReportingNode { get; set; } = "";
     public string? NodeDisplayName { get; set; }
     public long? FileDuration { get; set; }

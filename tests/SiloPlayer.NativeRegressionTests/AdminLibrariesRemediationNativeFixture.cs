@@ -31,7 +31,7 @@ internal static partial class AdminLibrariesNativeFixture
         var navigationRequests = new List<object?>();
         var navigation = new NavigationService { Frame = new Frame(), NavigationRequestHandler = (_, parameter) => { navigationRequests.Add(parameter); return true; } };
         await using var provider = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(navigation)
-            .AddSingleton(new MediaMaintenanceApi(client)).BuildServiceProvider();
+            .AddSingleton(new MediaMaintenanceApi(client)).AddSingleton(new SettingsService(Program.ResultDirectory)).BuildServiceProvider(); // dates go through the shared preference formatter (DateTimeDisplay), which reads the settings service
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previousServices = servicesField.GetValue(null);
         servicesField.SetValue(null, provider);

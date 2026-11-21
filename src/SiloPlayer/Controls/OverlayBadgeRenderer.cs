@@ -134,7 +134,7 @@ internal static class OverlayBadgeRenderer
             if (images is null || !images.SupportsImages || configOwner is not { } bound || !images.IsCurrentImageOwner(bound)) return;
             var owner = ++epoch;
             var context = images.CaptureImageOwner();
-            var valueRef = valueKey is not null && config.ValueImages?.TryGetValue(valueKey, out var matched) == true ? matched : null;
+            var valueRef = OverlayRegistry.ResolveValueImage(config, id, valueKey);
             var bitmap = await DecodeAsync(valueRef, owner, context);
             if (owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return;
             if (bitmap is not null)

@@ -3,7 +3,7 @@ using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-public enum ActivitySortField { Username, Media, Method, Node, Started }
+public enum ActivitySortField { Username, Media, Method, Bitrate, Node, Started }
 
 public sealed record ActivityMethodCount(ActivityMethodMeta Meta, int Count);
 
@@ -28,12 +28,12 @@ public sealed class AdminActivityListState
     public int ActiveFilterCount => new[] { MethodFilter, NodeFilter, TypeFilter }.Count(value => value != null);
     public bool ShowsFilterStatus => Search.Length > 0 || ActiveFilterCount > 0;
 
-    /// <summary>Same field flips direction; a new field starts ascending except Time, which starts descending.</summary>
+    /// <summary>Same field flips direction; new fields start ascending except Time and Bitrate.</summary>
     public void ToggleSort(ActivitySortField field)
     {
         if (SortField == field) { SortAscending = !SortAscending; return; }
         SortField = field;
-        SortAscending = field != ActivitySortField.Started;
+        SortAscending = field is not (ActivitySortField.Started or ActivitySortField.Bitrate);
     }
 
     public void ToggleMethod(string method) => MethodFilter = MethodFilter == method ? null : method;
@@ -111,6 +111,7 @@ public sealed class AdminActivityListState
             AdminActivityPresentation.GetPlaybackSessionTitle(b), StringComparison.CurrentCulture),
         ActivitySortField.Method => AdminActivityPresentation.CompareActivityMethods(
             AdminActivityPresentation.ClassifyActivityMethod(a), AdminActivityPresentation.ClassifyActivityMethod(b)),
+        ActivitySortField.Bitrate => (a.StreamBitrateKbps ?? 0).CompareTo(b.StreamBitrateKbps ?? 0),
         ActivitySortField.Node => string.Compare(RouteSortValue(a), RouteSortValue(b), StringComparison.CurrentCulture),
         _ => StartedMs(a).CompareTo(StartedMs(b)),
     };

@@ -73,7 +73,7 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         _serverDisclosure = Disclosure("server", 1); server.Children.Add(_serverDisclosure);
         _serverAdvanced.Children.Add(Field("server.log_quiet", L("server.quiet.label"), L("server.quiet.description"), hint: "metadata, scanner")); server.Children.Add(AdvancedRail(_serverAdvanced));
         _fields.Children.Add(Group(L("server.group"), null, ["server.log_level", "server.log_quiet"], server));
-        var retention = Stack(); retention.Children.Add(Field("opslog.retention_days", L("retention.days.label"), numeric: true, unit: L("retention.unitDays"))); retention.Children.Add(Field("opslog.max_size_mb", L("retention.maxSize.label"), numeric: true, unit: "MB"));
+        var retention = Stack(); retention.Children.Add(Field("opslog.retention_days", L("retention.days.label"), numeric: true, unit: L("retention.unitDays"))); retention.Children.Add(Field("opslog.max_size_mb", L("retention.maxSize.label"), numeric: true, unit: T("web.admin.common.units.megabytes")));
         _retentionDisclosure = Disclosure("retention", 3); retention.Children.Add(_retentionDisclosure);
         _retentionAdvanced.Children.Add(Field("opslog.max_rows", L("retention.maxRows.label"), numeric: true)); var subheading = Text(L("retention.permissions.heading"), 11, true); subheading.CharacterSpacing = 80; subheading.Margin = new(0, 20, 0, 6); _retentionAdvanced.Children.Add(subheading);
         _retentionAdvanced.Children.Add(Field("policy.decision_log_retention_days", L("retention.permissions.days.label"), numeric: true, unit: L("retention.unitDays")));

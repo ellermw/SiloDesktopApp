@@ -138,7 +138,7 @@ public sealed partial class AdminUsersPage
         PolicyCard("Access summary", ["library_ids", "max_profiles", "max_streams", "max_transcodes", "max_playback_quality", "download_allowed", "requests_allowed"]);
         AddRows("profiles", "Profiles", ["name", "is_primary", "is_child", "has_pin", "last_seen_at"]);
         AddRows("watching", "Currently watching", ["profile_id", "profile_name", "media_title", "media_type", "play_method", "started_at"]);
-        AddRows("history", "Recently watched", ["profile_id", "profile_name", "media_title", "series_title", "started_at", "ended_at", "watched_seconds", "completed"]);
+        AddRows("history", "Recently watched", ["profile_id", "profile_name", "media_title", "series_title", "started_at", "ended_at", "end_position_seconds|watched_seconds", "completed"]);
     }
     private void RenderProfiles()
     {
@@ -214,7 +214,7 @@ public sealed partial class AdminUsersPage
         _body.Children.Add(filters);
         AddRows("devices", "Devices and profile references", ["device_id", "device_name", "device_platform", "last_seen_at", "last_updated", "override_count", "profiles"], DeviceLink);
         AddRows("ips", "IP addresses", ["client_ip", "first_seen", "last_seen", "request_count", "location"]);
-        AddRows("history", "Watch history", ["profile_id", "profile_name", "media_item_id", "media_title", "series_title", "season_number", "episode_number", "play_method", "started_at", "ended_at", "watched_seconds", "duration_seconds", "completed"]);
+        AddRows("history", "Watch history", ["profile_id", "profile_name", "media_item_id", "media_title", "series_title", "season_number", "episode_number", "play_method", "started_at", "ended_at", "end_position_seconds|watched_seconds", "duration_seconds", "completed"]);
     }
     private void DeviceLink(StackPanel panel, JsonObject row)
     {
