@@ -3,6 +3,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Dispatching;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
@@ -22,9 +23,51 @@ public static class AdminCollectionsDestructiveStyle
     /// <summary>The fill at 90% (official <c>hover:bg-destructive-fill/90</c>): alpha 230 of 255.</summary>
     public static readonly Color HoverFill = Color.FromArgb(230, 0xDC, 0x26, 0x26);
 
-    public static bool HighContrast
+    /// <summary>Whether Windows is in a contrast theme right now. It can change while a dialog is open: <see cref="Track"/> follows it.</summary>
+    public static bool HighContrast => Source.IsHighContrast;
+
+    /// <summary>Where the contrast theme comes from. The system's by default; a test replaces it to change the theme under an open dialog.</summary>
+    public static IHighContrastSource Source { get; set; } = new SystemHighContrastSource();
+
+    /// <summary>The contrast theme and its changes. <see cref="Changed"/> may be raised on any thread.</summary>
+    public interface IHighContrastSource
     {
-        get { try { return new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast; } catch (Exception) { return false; } }
+        bool IsHighContrast { get; }
+        event Action? Changed;
+    }
+
+    private sealed class SystemHighContrastSource : IHighContrastSource
+    {
+        private readonly object _gate = new();
+        private Windows.UI.ViewManagement.AccessibilitySettings? _settings;
+        private Action? _changed;
+        public bool IsHighContrast
+        {
+            get { try { return new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast; } catch (Exception) { return false; } }
+        }
+        public event Action? Changed
+        {
+            add
+            {
+                lock (_gate)
+                {
+                    _changed += value;
+                    if (_settings != null) return;
+                    try { _settings = new Windows.UI.ViewManagement.AccessibilitySettings(); _settings.HighContrastChanged += Raise; } catch (Exception) { _settings = null; }
+                }
+            }
+            remove
+            {
+                lock (_gate)
+                {
+                    _changed -= value;
+                    if (_changed != null || _settings == null) return;
+                    try { _settings.HighContrastChanged -= Raise; } catch (Exception) { }
+                    _settings = null;
+                }
+            }
+        }
+        private void Raise(Windows.UI.ViewManagement.AccessibilitySettings sender, object args) { Action? handlers; lock (_gate) handlers = _changed; handlers?.Invoke(); }
     }
 
     // The app's own button templates take their hover brush from the theme, so a dialog resource cannot change it: this page carries its own.
@@ -64,6 +107,26 @@ public static class AdminCollectionsDestructiveStyle
         dialog.PrimaryButtonStyle = PrimaryStyle;
         return true;
     }
+
+    /// <summary>
+    /// Draws the primary button as the official destructive button and keeps following the contrast theme while the dialog is open: a
+    /// switch to a contrast theme returns it to system colors, a switch back restores the red. The change arrives on any thread and is
+    /// applied on the dialog's own. Dispose when the dialog closes: nothing stays subscribed.
+    /// </summary>
+    public static IDisposable Track(ContentDialog dialog)
+    {
+        var source = Source; var queue = dialog.DispatcherQueue ?? DispatcherQueue.GetForCurrentThread(); var finished = false;
+        void Refresh() { if (source.IsHighContrast) dialog.ClearValue(ContentDialog.PrimaryButtonStyleProperty); else dialog.PrimaryButtonStyle = PrimaryStyle; }
+        void OnChanged() => queue.TryEnqueue(() => { if (!finished) Refresh(); });
+        Refresh(); source.Changed += OnChanged;
+        return new Subscription(() => { finished = true; source.Changed -= OnChanged; });
+    }
+
+    private sealed class Subscription(Action release) : IDisposable
+    {
+        private Action? _release = release;
+        public void Dispose() { _release?.Invoke(); _release = null; }
+    }
 }
 
 public sealed partial class AdminCollectionsPage
@@ -72,11 +135,14 @@ public sealed partial class AdminCollectionsPage
     /// A collection, shelf or title name on one line. It is cut at the end by the control (trimming), so a long name keeps its start;
     /// the string is never sliced. Content that reads right to left is laid out by its own content, and the full name is the tooltip.
     /// </summary>
-    private static TextBlock NameBlock(string name, double size = 14, double maxWidth = 420, bool muted = false, bool strong = false)
+    private static TextBlock NameBlock(string? name, double size = 14, double maxWidth = 420, bool muted = false, bool strong = false, string placeholder = AdminCollectionNames.UntitledCollection)
     {
+        // An explicit line break or separator in the name would draw it on several lines even with NoWrap: show the plain text.
+        // The generous bound only keeps a pathological string out of text shaping; trimming does the visible cutting.
+        var line = AdminCollectionNames.PlainOr(name, placeholder, FullNameLimit);
         var block = new TextBlock
         {
-            Text = name, FontSize = size, MaxWidth = maxWidth, TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis,
+            Text = line, FontSize = size, MaxWidth = maxWidth, TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis,
             TextReadingOrder = TextReadingOrder.DetectFromContent, VerticalAlignment = VerticalAlignment.Center,
             FontWeight = strong || size >= 20 ? FontWeights.SemiBold : FontWeights.Normal,
             Foreground = AdminMonitorUi.Solid(muted ? AdminMonitorUi.Muted : AdminMonitorUi.Foreground)
@@ -85,11 +151,17 @@ public sealed partial class AdminCollectionsPage
         return block;
     }
 
+    /// <summary>The longest name the page puts into a control, in user-perceived characters. Far beyond any real name; the control cuts what does not fit.</summary>
+    private const int FullNameLimit = 2000;
+
+    /// <summary>What a screen reader is told for a collection: its plain, bounded name, or the placeholder.</summary>
+    private static string Spoken(string? name, string placeholder = AdminCollectionNames.UntitledCollection) => AdminCollectionNames.PlainOr(name, placeholder);
+
     /// <summary>A button that is a name: the same command as <see cref="ActionButton"/>, its label cut by trimming.</summary>
-    private Button NameButton(string name, string id, Func<Task> action, double maxWidth = 420)
+    private Button NameButton(string? name, string id, Func<Task> action, double maxWidth = 420, string placeholder = AdminCollectionNames.UntitledCollection)
     {
-        var button = ActionButton(name, id, action);
-        var block = NameBlock(name, 14, maxWidth - 24, strong: false);
+        var button = ActionButton(Spoken(name, placeholder), id, action);
+        var block = NameBlock(name, 14, maxWidth - 24, strong: false, placeholder: placeholder);
         block.ClearValue(TextBlock.ForegroundProperty); ToolTipService.SetToolTip(block, null); // the label takes the button's own text color in every state
         button.Content = block; button.MaxWidth = maxWidth;
         if (AdminCollectionNames.Plain(name, 200) is { Length: > 0 } full) ToolTipService.SetToolTip(button, full);

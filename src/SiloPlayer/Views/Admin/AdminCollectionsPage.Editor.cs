@@ -124,7 +124,7 @@ public sealed partial class AdminCollectionsPage
         var match = (Controller.List?.Items ?? []).FirstOrDefault(c => string.Equals(c.Title, title, StringComparison.CurrentCultureIgnoreCase));
         RenderEditor();
         Notice(match == null ? "No collection with that name exists yet. You can create it now."
-            : $"A collection named {match.Title} already exists in the list. Open it from Collections instead of creating it again.");
+            : $"A collection named {AdminCollectionNames.PlainOr(match.Title, AdminCollectionNames.UntitledCollection)} already exists in the list. Open it from Collections instead of creating it again.");
     }
     private void ClearStaged() { _artwork.Clear(); _pendingTitles.Clear(); _memberCursor = null; _memberHistory.Clear(); _rules = null; _invalidRules = false; _invalidFields.Clear(); }
     private async Task SaveEditorAsync()

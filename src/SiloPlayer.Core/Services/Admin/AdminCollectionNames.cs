@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 
@@ -16,21 +17,40 @@ public static class AdminCollectionNames
     private const int UnitsPerCharacter = 16; // room for a long emoji sequence; a character with thousands of marks does not fit
     private const string Ellipsis = "\u2026";
 
+    /// <summary>What a name that shows nothing is called in a sentence, so a count and the names beside it always agree. Native wording: the official catalog has no untitled collection.</summary>
+    public const string UntitledCollection = "Untitled collection";
+    public const string UntitledLibrary = "Untitled library";
+    /// <summary>"Delete the Untitled shelf?" reads right; "Untitled shelf shelf" does not.</summary>
+    public const string UntitledShelf = "Untitled";
+    /// <summary>The official wording (<c>web.home.addRow.preview.untitled</c>).</summary>
+    public const string UntitledRow = "Untitled row";
+    /// <summary>The most tag characters of one emoji tag sequence (a subdivision flag such as England is five).</summary>
+    private const int MaxTags = 6;
+
     private enum Kind { Letter, Space, Joiner }
 
     /// <summary>
     /// The name as one line: control characters, line and paragraph separators and every space become one space; direction
     /// characters, invisible fillers and other format characters are removed; a zero width joiner or non-joiner stays only
     /// between two visible characters, where it joins them. The result is trimmed and cut at <paramref name="limit"/>
-    /// user-perceived characters (never inside one) with an ellipsis. An empty or invisible name gives "".
+    /// user-perceived characters (never inside one) with an ellipsis. An empty or invisible name, or one made only of
+    /// combining marks, gives "". A valid emoji tag sequence (a subdivision flag) stays whole; any other tag character is removed.
     /// </summary>
     public static string Plain(string? name, int limit = DefaultLimit)
     {
         if (string.IsNullOrEmpty(name) || limit < 1) return "";
         var runes = new List<(Rune Rune, Kind Kind)>(name.Length);
-        foreach (var rune in name.EnumerateRunes())
+        for (var index = 0; index < name.Length;)
         {
-            if (rune == Rune.ReplacementChar && !name.Contains('\uFFFD')) continue; // a lone surrogate, not a real replacement character
+            var status = Rune.DecodeFromUtf16(name.AsSpan(index), out var rune, out var consumed);
+            index += Math.Max(consumed, 1);
+            if (status != OperationStatus.Done) continue; // a lone surrogate. A real U+FFFD decodes as itself and stays.
+            if (rune.Value == 0x1F3F4 && TagSequence(name, index) is { Count: > 0 } tags)
+            {
+                runes.Add((rune, Kind.Letter));
+                foreach (var tag in tags) { runes.Add((tag, Kind.Letter)); index += tag.Utf16SequenceLength; }
+                continue;
+            }
             var kind = Classify(rune);
             if (kind is null) continue;
             if (kind == Kind.Space && runes.Count > 0 && runes[^1].Kind == Kind.Space) continue;
@@ -51,7 +71,36 @@ public static class AdminCollectionNames
             }
             text.Append(rune.ToString());
         }
+        // Combining marks with nothing to combine with show nothing a reader can use.
+        if (!runes.Any(r => r.Kind == Kind.Letter && !IsMark(r.Rune))) return "";
         return Bound(text.ToString().Trim(), limit);
+    }
+
+    private static bool IsMark(Rune rune) => Rune.GetUnicodeCategory(rune) is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark;
+
+    /// <summary>
+    /// The tag characters and the cancel tag after a waving black flag at <paramref name="index"/>, when they form a valid emoji tag
+    /// sequence (one to <see cref="MaxTags"/> letters or digits, then U+E007F); an empty list otherwise.
+    /// </summary>
+    private static List<Rune> TagSequence(string name, int index)
+    {
+        var found = new List<Rune>();
+        for (var i = index; i < name.Length;)
+        {
+            if (Rune.DecodeFromUtf16(name.AsSpan(i), out var next, out var consumed) != OperationStatus.Done) return [];
+            i += consumed; found.Add(next);
+            if (next.Value == 0xE007F) return found.Count >= 2 ? found : [];
+            var tag = next.Value is >= 0xE0030 and <= 0xE0039 or >= 0xE0061 and <= 0xE007A;
+            if (!tag || found.Count > MaxTags) return [];
+        }
+        return [];
+    }
+
+    /// <summary>The plain name, or <paramref name="placeholder"/> when it shows nothing. A count and the names written beside it always agree.</summary>
+    public static string PlainOr(string? name, string placeholder, int limit = DefaultLimit)
+    {
+        var plain = Plain(name, limit);
+        return plain.Length == 0 ? placeholder : plain;
     }
 
     /// <summary>"Delete {name}?" with the name as one plain line, or the fallback when the name shows nothing.</summary>
@@ -62,9 +111,12 @@ public static class AdminCollectionNames
     }
 
     /// <summary>"A", "A and B", "A, B and C": names written into a sentence, each as one plain line.</summary>
-    public static string JoinNames(IEnumerable<string?> names)
+    public static string JoinNames(IEnumerable<string?> names, string placeholder = UntitledCollection) => JoinPlain(names.Select(n => PlainOr(n, placeholder)));
+
+    /// <summary>The same list for entries that are already plain: nothing is cut or dropped again.</summary>
+    public static string JoinPlain(IEnumerable<string> plain)
     {
-        var list = names.Select(n => Plain(n)).Where(n => n.Length > 0).ToArray();
+        var list = plain.ToArray();
         return list.Length switch
         {
             0 => "",

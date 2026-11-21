@@ -22,6 +22,11 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
     private readonly StackPanel _rows = Stack(8);
     private readonly TextBlock _notice = Text("");
     private readonly ScrollViewer _scroll;
+    /// <summary>
+    /// The select-mode bar. Official <c>SelectModeBar</c> is fixed to the bottom of the viewport; here it is a row of the page below the
+    /// scrolling list, so it stays in view while the list scrolls and the last collection is never under it. No animation.
+    /// </summary>
+    private readonly Border _selectBar = new() { Visibility = Visibility.Collapsed, Padding = new(16, 8, 16, 8), BorderThickness = new(0, 1, 0, 0) };
     private readonly AdminLeaveGuard _leave;
     private AdminRouteRequest _route = new(AdminRoute.Collections);
     private ContentDialog? _dialog;
@@ -46,7 +51,11 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         _notice.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Warning);
         _body.Children.Add(_notice); _body.Children.Add(_surface);
         _scroll = new() { Content = _body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Content = _scroll;
+        _selectBar.BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border); _selectBar.Background = AdminMonitorUi.Solid(AdminMonitorUi.Surface);
+        AutomationProperties.SetAutomationId(_selectBar, "CollectionsSelectBar"); AutomationProperties.SetName(_selectBar, "Selected collections");
+        var shell = new Grid(); shell.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); shell.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        Grid.SetRow(_scroll, 0); Grid.SetRow(_selectBar, 1); shell.Children.Add(_scroll); shell.Children.Add(_selectBar);
+        Content = shell;
         _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); _page = 0; _selected.Clear(); ReplaceQuery(); RenderRows(); };
         _jobTimer.Tick += async (_, _) => { _jobTimer.Stop(); await PollJobAsync(); };
         _previewTimer.Tick += async (_, _) => { _previewTimer.Stop(); try { await RefreshPreviewAsync(); } catch (Exception) { } };
@@ -69,12 +78,12 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
     public void SuspendAdminPage()
     {
         _active = false; ++_operation; _searchTimer.Stop(); _jobTimer.Stop(); _previewTimer.Stop(); _previewReads?.Cancel(); ++_previewSerial;
-        _dialog?.Hide(); Controller.Suspend(); ClearStaged(); _grabbed = null; _shelfWindows.Clear(); ++_memberRead; _selected.Clear(); _surface.Children.Clear(); _rows.Children.Clear(); _notice.Text = "";
+        _dialog?.Hide(); Controller.Suspend(); ClearStaged(); _grabbed = null; _shelfWindows.Clear(); ++_memberRead; _selected.Clear(); _surface.Children.Clear(); _rows.Children.Clear(); HideSelectBar(); _notice.Text = "";
     }
     private void Retired() => DispatcherQueue.TryEnqueue(() =>
     {
         if (!_active) return;
-        ++_operation; ++_memberRead; _searchTimer.Stop(); _jobTimer.Stop(); _previewTimer.Stop(); _previewReads?.Cancel(); ++_previewSerial; _dialog?.Hide(); ClearStaged(); _grabbed = null; _shelfWindows.Clear(); _selected.Clear(); _surface.Children.Clear(); _rows.Children.Clear();
+        ++_operation; ++_memberRead; _searchTimer.Stop(); _jobTimer.Stop(); _previewTimer.Stop(); _previewReads?.Cancel(); ++_previewSerial; _dialog?.Hide(); ClearStaged(); _grabbed = null; _shelfWindows.Clear(); _selected.Clear(); _surface.Children.Clear(); _rows.Children.Clear(); HideSelectBar();
         // The starter-pack job belonged to the retired authority: never poll or act on it under the next one.
         Controller.EndStarterJob();
         Notice("Administrator access changed. Reload to continue.");
@@ -108,21 +117,28 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         }
     }
     private void Notice(string message) { _notice.Text = message; _notice.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible; }
-    private async Task RunAsync(Func<MonitorAuthorityLease, Task> operation, bool reload = true)
+    /// <summary>
+    /// Runs one gated change. Returns whether <paramref name="operation"/> started: false when another change is running, the page is not
+    /// active, or the gate refused it (an earlier change whose outcome is unknown). A refusal's reason is already in the notice; a caller
+    /// that reports a result of its own must not write it over that reason when nothing ran.
+    /// </summary>
+    private async Task<bool> RunAsync(Func<MonitorAuthorityLease, Task> operation, bool reload = true)
     {
-        if (Controller.Busy || !_active) return;
-        var owner = Controller.Owner; var serial = ++_operation;
+        if (Controller.Busy || !_active) return false;
+        var owner = Controller.Owner; var serial = ++_operation; var started = false;
         try
         {
             IsHitTestVisible = false;
-            await Controller.CommandAsync(async lease => { await operation(lease); return true; });
-            if (!Current(owner) || serial != _operation) return;
+            await Controller.CommandAsync(async lease => { started = true; await operation(lease); return true; });
+            if (!Current(owner) || serial != _operation) return started;
             Notice("");
             if (reload) { await Controller.LoadAsync(_library, _arrange); if (Current(owner)) RenderList(); }
         }
         catch (Exception error) { if (Current(owner)) Notice(AdminCollectionsController.Message(error)); }
         finally { IsHitTestVisible = true; }
+        return started;
     }
+    private void HideSelectBar() { _selectBar.Child = null; _selectBar.Visibility = Visibility.Collapsed; }
     /// <summary>A title change in the editor of a saved collection. The same gated run adopts the collection's moved revision, so the next Save is not a conflict with this page's own change.</summary>
     private Task RunTitlesAsync(Func<MonitorAuthorityLease, Task> change) => _editorBusy ? Task.CompletedTask : RunAsync(async lease =>
     {
@@ -183,24 +199,26 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         (string.IsNullOrWhiteSpace(_search) || c.Title.Contains(_search, StringComparison.CurrentCultureIgnoreCase))).ToList();
     private void RenderRows()
     {
-        _rows.Children.Clear();
+        _rows.Children.Clear(); HideSelectBar();
         if (Controller.List == null) return;
         if (_arrange) { RenderBoard(); return; }
         var all = Filtered();
         if (_selecting)
         {
-            var bar = Wrap();
+            // Like the official bar, the actions are off while nothing is selected (and Sync while no synced list is).
+            var bar = Wrap(); bar.HorizontalAlignment = HorizontalAlignment.Center;
+            var picked = _selected.Count > 0; var lists = all.Any(c => c.Kind == "synced" && _selected.Contains(c.Id));
             bar.Children.Add(Text($"{_selected.Count} selected"));
             bar.Children.Add(ActionButton("Select all", "CollectionsSelectAll", () => { foreach (var c in all.Take(100)) _selected.Add(c.Id); RenderRows(); return Task.CompletedTask; }));
-            bar.Children.Add(ActionButton("Show on tabs", "CollectionsBulkShow", () => BatchAsync("show")));
-            bar.Children.Add(ActionButton("Hide from tabs", "CollectionsBulkHide", () => BatchAsync("hide")));
-            if (Controller.Capabilities?.Imports == true) bar.Children.Add(ActionButton("Sync lists", "CollectionsBulkSync", () => BatchAsync("sync")));
-            bar.Children.Add(ActionButton("Delete…", "CollectionsBulkDelete", () => BatchAsync("delete")));
-            _rows.Children.Add(bar);
+            bar.Children.Add(ActionButton("Show on tabs", "CollectionsBulkShow", () => BatchAsync("show"), picked));
+            bar.Children.Add(ActionButton("Hide from tabs", "CollectionsBulkHide", () => BatchAsync("hide"), picked));
+            if (Controller.Capabilities?.Imports == true) bar.Children.Add(ActionButton("Sync lists", "CollectionsBulkSync", () => BatchAsync("sync"), lists));
+            bar.Children.Add(ActionButton("Delete…", "CollectionsBulkDelete", () => BatchAsync("delete"), picked));
+            _selectBar.Child = bar; _selectBar.Visibility = Visibility.Visible;
         }
         if (all.Count == 0)
         {
-            var inLibrary = Controller.Libraries.FirstOrDefault(l => l.Id == _library)?.Name;
+            var inLibrary = Controller.Libraries.FirstOrDefault(l => l.Id == _library) is { } library ? AdminCollectionNames.PlainOr(library.Name, AdminCollectionNames.UntitledLibrary) : null;
             _rows.Children.Add(Text(Controller.List.Items.Count == 0 ? inLibrary == null ? "No collections yet" : $"No collections in {inLibrary} yet" : "No collections match.", 20));
             if (Controller.List.Items.Count == 0)
             {
@@ -221,15 +239,15 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
     private FrameworkElement CollectionRow(AdminCollectionEntry c)
     {
         var row = Wrap();
-        row.Children.Add(Poster(c.PosterUrl, 44, c.Title));
+        row.Children.Add(Poster(c.PosterUrl, 44, Spoken(c.Title)));
         if (_selecting)
         {
-            var pick = new CheckBox { IsChecked = _selected.Contains(c.Id) }; Identify(pick, "CollectionSelect_" + c.Id, "Select " + c.Title);
+            var pick = new CheckBox { IsChecked = _selected.Contains(c.Id) }; Identify(pick, "CollectionSelect_" + c.Id, "Select " + Spoken(c.Title));
             Toggled(pick, on => { if (on && _selected.Count < 100) _selected.Add(c.Id); else _selected.Remove(c.Id); RenderRows(); return Task.CompletedTask; }); row.Children.Add(pick);
         }
         row.Children.Add(NameButton(c.Title, "CollectionEdit_" + c.Id, () => { OpenEditor(c.Id); return Task.CompletedTask; }));
         row.Children.Add(Text($"{(c.Kind == "synced" ? "Synced list" : c.Kind == "smart" ? "Smart" : "Manual")} · {LibraryNames(c)} · {Titles(c.ItemCount)}", 13, true));
-        var visible = new ToggleSwitch { Header = "On tabs", IsOn = c.Visibility != "hidden" }; Identify(visible, "CollectionVisible_" + c.Id, "Show " + c.Title + " on Collections tabs");
+        var visible = new ToggleSwitch { Header = "On tabs", IsOn = c.Visibility != "hidden" }; Identify(visible, "CollectionVisible_" + c.Id, "Show " + Spoken(c.Title) + " on Collections tabs");
         var changingVisibility = false;
         visible.Toggled += async (_, _) =>
         {
@@ -252,6 +270,6 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         return Card(row);
     }
     private static string Titles(int count) => count == 1 ? "1 title" : $"{count.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)} titles";
-    private string LibraryNames(AdminCollectionEntry c) => string.Join(", ", Controller.Libraries.Where(l => c.InLibrary(l.Id)).Select(l => l.Name));
+    private string LibraryNames(AdminCollectionEntry c) => string.Join(", ", Controller.Libraries.Where(l => c.InLibrary(l.Id)).Select(l => AdminCollectionNames.PlainOr(l.Name, AdminCollectionNames.UntitledLibrary)));
     private Task PatchAsync(string id, JsonObject patch) => RunAsync(async lease => { var observed = await _api.GetAsync(lease, id); await _api.SaveAsync(lease, observed, patch); });
 }

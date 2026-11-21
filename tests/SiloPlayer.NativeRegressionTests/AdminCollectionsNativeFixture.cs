@@ -12,6 +12,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
@@ -84,6 +85,11 @@ internal static class AdminCollectionsNativeFixture
         public readonly HashSet<string> NoRows = [];
         /// <summary>Stands in for per-collection validators: while set, deleting one collection does not move the others' validator.</summary>
         public bool FrozenRevision;
+        /// <summary>Per-collection validators, as the real server keeps them: a change to one collection moves only its own validator.</summary>
+        public bool PerCollection;
+        public readonly Dictionary<string, int> Revisions = [];
+        public void Bump(string id) => Revisions[id] = Revisions.GetValueOrDefault(id, 1) + 1;
+        public string LibraryName = "Fixture movies", RowTitle = "Shared fixture row";
         public int JobPolls;
         private int _revision = 1, _created;
         public static Dictionary<string, JsonObject> Fresh() => new()
@@ -103,8 +109,14 @@ internal static class AdminCollectionsNativeFixture
             var body = text.Length == 0 || !text.TrimStart().StartsWith('{') ? new JsonObject() : JsonNode.Parse(text)!.AsObject();
             var mutating = request.Method != HttpMethod.Get;
             var guarded = request.Method == HttpMethod.Patch || request.Method == HttpMethod.Delete && !path.Contains("/items/") || path.EndsWith("/order") && mutating;
-            if (guarded && request.Headers.IfMatch.SingleOrDefault()?.ToString() != $"\"r{_revision}\"") return Reply(new() { ["type"] = "conflict", ["status"] = 412 }, HttpStatusCode.PreconditionFailed);
-            if (path == "/api/v2/libraries") return Reply(JsonNode.Parse("""{"items":[{"id":"1","name":"Fixture movies","type":"movies","paths":["/synthetic"],"enabled":true}],"page":{"has_more":false}}""")!.AsObject());
+            string? own = null;
+            if (PerCollection && path.StartsWith("/api/v2/admin/collections/", StringComparison.Ordinal) && path.Split('/') is { Length: 6 } own6 && Collections.ContainsKey(own6[5])) own = $"\"p{own6[5]}-{Revisions.GetValueOrDefault(own6[5], 1)}\"";
+            if (guarded && request.Headers.IfMatch.SingleOrDefault()?.ToString() != (own ?? $"\"r{_revision}\"")) return Reply(new() { ["type"] = "conflict", ["status"] = 412 }, HttpStatusCode.PreconditionFailed);
+            if (path == "/api/v2/libraries")
+            {
+                var libraries = JsonNode.Parse("""{"items":[{"id":"1","name":"x","type":"movies","paths":["/synthetic"],"enabled":true}],"page":{"has_more":false}}""")!.AsObject();
+                libraries["items"]![0]!["name"] = LibraryName; return Reply(libraries);
+            }
             if (path == "/api/v2/admin/collections/capabilities")
             {
                 if (Hold != null) { var hold = Hold; Hold = null; await hold.Task; }
@@ -193,7 +205,11 @@ internal static class AdminCollectionsNativeFixture
             if (path == "/api/v2/admin/collections/preview") return Reply(JsonNode.Parse("""{"items":[{"content_id":"m1","title":"Preview fixture","type":"movie"}],"page":{"has_more":false},"total":1}""")!.AsObject());
             if (path == "/api/v2/catalog") return Reply(JsonNode.Parse("""{"items":[{"content_id":"m1","title":"Fixture title","type":"movie"}],"page":{"has_more":false}}""")!.AsObject());
             if (path.EndsWith("/sections") && path.StartsWith("/api/v2/admin/collections/"))
-                return Reply(NoRows.Contains(path.Split('/')[5]) ? new JsonObject { ["items"] = new JsonArray() } : JsonNode.Parse("""{"items":[{"id":"s1","title":"Shared fixture row","scope":"home","enabled":true,"collection_count":2}]}""")!.AsObject());
+            {
+                var rows = JsonNode.Parse("""{"items":[{"id":"s1","title":"x","scope":"home","enabled":true,"collection_count":2}]}""")!.AsObject();
+                rows["items"]![0]!["title"] = RowTitle;
+                return Reply(NoRows.Contains(path.Split('/')[5]) ? new JsonObject { ["items"] = new JsonArray() } : rows);
+            }
             if (path == "/api/v2/admin/sections/s1")
             {
                 if (mutating && request.Method == HttpMethod.Patch)
@@ -215,11 +231,11 @@ internal static class AdminCollectionsNativeFixture
                     if (path.EndsWith("/sync")) return Reply(new() { ["status"] = "success" });
                     return new(HttpStatusCode.NoContent);
                 }
-                if (request.Method == HttpMethod.Delete) { Collections.Remove(id); if (!FrozenRevision) _revision++; return new(HttpStatusCode.NoContent); }
+                if (request.Method == HttpMethod.Delete) { Collections.Remove(id); if (!FrozenRevision && !PerCollection) _revision++; return new(HttpStatusCode.NoContent); }
                 if (Collections.TryGetValue(id, out var item))
                 {
-                    if (request.Method == HttpMethod.Patch) { foreach (var pair in body) item[pair.Key] = pair.Value?.DeepClone(); _revision++; }
-                    return Reply(item);
+                    if (request.Method == HttpMethod.Patch) { foreach (var pair in body) item[pair.Key] = pair.Value?.DeepClone(); if (PerCollection) Bump(id); else _revision++; }
+                    return Reply(item, tag: own is null ? null : $"\"p{id}-{Revisions.GetValueOrDefault(id, 1)}\"");
                 }
                 return Reply(new() { ["status"] = 404 }, HttpStatusCode.NotFound);
             }
@@ -230,10 +246,10 @@ internal static class AdminCollectionsNativeFixture
                 _ => new() { ["items"] = new JsonArray(), ["page"] = new JsonObject { ["has_more"] = false } }
             });
         }
-        public HttpResponseMessage Reply(JsonObject body, HttpStatusCode status = HttpStatusCode.OK)
+        public HttpResponseMessage Reply(JsonObject body, HttpStatusCode status = HttpStatusCode.OK, string? tag = null)
         {
             var response = new HttpResponseMessage(status) { Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json") };
-            response.Headers.TryAddWithoutValidation("ETag", $"\"r{_revision}\""); return response;
+            response.Headers.TryAddWithoutValidation("ETag", tag ?? $"\"r{_revision}\""); return response;
         }
         public static HttpResponseMessage Plain(JsonObject body, HttpStatusCode status) => new(status) { Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json") };
     }
@@ -484,7 +500,7 @@ internal static class AdminCollectionsNativeFixture
                 Check(block != null && block.Text == longName, "the whole name is kept in the control; the string is never sliced");
                 Check(block!.TextTrimming == TextTrimming.CharacterEllipsis && block.TextWrapping == TextWrapping.NoWrap && block.TextReadingOrder == TextReadingOrder.DetectFromContent, "the name is cut by trimming at its end, so its start stays");
                 Check(block.ReadLocalValue(TextBlock.ForegroundProperty) == DependencyProperty.UnsetValue, "a name in a button takes the button's text color in every state, so it is never drawn blank");
-                Check(button.MaxWidth <= 420 && AutomationProperties.GetName(button) == longName, "a long name cannot stretch its row and is still announced in full");
+                Check(button.MaxWidth <= 420 && AutomationProperties.GetName(button) == AdminCollectionNames.Plain(longName) && AutomationProperties.GetName(button).Length <= 81 && ToolTipService.GetToolTip(button) is string tip && tip.Length > 81, "a long name cannot stretch its row; it is announced as its plain, bounded name and the whole name is the tooltip");
                 var inRow = Find<Button>(page, "CollectionEdit_c2")!.Content as TextBlock;
                 Check(inRow?.Text == "Fixture smart" && inRow.TextTrimming == TextTrimming.CharacterEllipsis, "a short name is shown whole");
                 Check(Tree(page).OfType<TextBlock>().Any(t => t.Text == "Sync failed" && t.Foreground is SolidColorBrush { Color: { } red } && red.R >= 0xDC && red.G < 0x80 && t.FontWeight.Weight >= 500), "a failed sync reads in the destructive text color at medium weight");
@@ -548,7 +564,7 @@ internal static class AdminCollectionsNativeFixture
                 Check(server.Collections.ContainsKey("c6"), "the collection a row shows is kept");
                 Check(server.Sent("DELETE", "/api/v2/admin/collections/c4").Count() == 1 && server.Sent("DELETE", "/api/v2/admin/collections/c5").Count() == 1 && !server.Sent("DELETE", "/api/v2/admin/collections/c6").Any(), "each confirmed collection is deleted once and the kept one is never sent");
                 await Until(() => Texts(Current()).Any(t => t.StartsWith("Deleted 2 collections.")), "bulk delete result");
-                Check(Texts(Current()).Any(t => t.Contains("Kept 1 collection in use by home or library sections")), "the result names what was kept");
+                Check(!Texts(Current()).Any(t => t.Contains("Kept 1 collection in use")), "the collection left out before the confirmation is named there, as official, and is not counted again in the result");
                 // Only collections that rows show: nothing is deleted and no dialog opens.
                 await Until(() => Texts(page).Contains("1 selected") && Find<CheckBox>(page, "CollectionSelect_c6") is { IsChecked: true }, "the deleted collections left the selection; only the kept one stays selected");
                 var before = server.Log.Count(l => l.Method == "DELETE");
@@ -559,6 +575,288 @@ internal static class AdminCollectionsNativeFixture
                 server.FrozenRevision = false; server.Collections.Remove("c6");
                 await Click(Find<Button>(page, "CollectionsRefresh"));
             });
+            // ── Review fixes (November 21): a confirmed bulk action that never runs, what show and hide count, official bulk delete results ──
+            void Add(string id, string title, string visibility = "visible", int rows = 0)
+            {
+                var item = JsonNode.Parse("""{"id":"x","title":"x","collection_type":"manual","library_id":"1","library_ids":["1"],"visibility":"visible","item_count":1,"group_id":null,"sort_order":20,"featured":false,"description":"","query_definition":{},"sort_config":{},"source_config":{}}""")!.AsObject();
+                item["id"] = id; item["title"] = title; item["visibility"] = visibility;
+                if (rows > 0) { item["row_count"] = rows; item["home_row_count"] = rows; } else server.NoRows.Add(id);
+                server.Collections[id] = item;
+            }
+            async Task RefreshAsync(string ready) { await Click(Find<Button>(page, "CollectionsRefresh")); await Until(() => Find<Button>(page, ready) != null, "the list shows " + ready); }
+            async Task EnterSelectAsync() { await Click(Find<Button>(page, "CollectionsSelect")); await Until(() => Find<Button>(page, "CollectionsBulkDelete") != null, "select mode"); }
+            async Task PickAsync(params string[] ids) { foreach (var id in ids) { Toggle(Find<CheckBox>(page, "CollectionSelect_" + id)!); await Task.Delay(60); } }
+            async Task PressAsync(string label) => await Click(Tree(Dialog(page)!).OfType<Button>().First(b => b.Content?.ToString() == label));
+            void ClearNotice() => typeof(AdminCollectionsPage).GetMethod("Notice", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, [""]);
+            int CountOf(string method) => server.Log.Count(l => l.Method == method);
+            int CountOfPath(string method, string path) => server.Log.Count(l => l.Method == method && l.Path == path);
+
+            await Step("an unknown outcome stops bulk delete, hide and show, and the notice says why nothing happened", async () =>
+            {
+                foreach (var id in new[] { "u1", "u2", "u3" }) Add(id, "Unknown " + id);
+                Add("u4", "Unknown u4", "hidden");
+                await RefreshAsync("CollectionEdit_u4");
+                // A single delete whose reply is lost: an unknown outcome. The admin cancels.
+                server.Intercept = (method, target) => method == "DELETE" && target.EndsWith("/u1", StringComparison.Ordinal) ? throw new HttpRequestException("Synthetic lost reply") : Task.FromResult<HttpResponseMessage?>(null);
+                await Click(Find<Button>(page, "CollectionDelete_u1")); await Until(() => Dialog(page) != null, "single delete dialog");
+                await PressAsync("Delete");
+                await Until(() => page.Controller.OutcomeUnknown, "the lost reply is an unknown outcome");
+                server.Intercept = null;
+                Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "the admin cancels");
+                var unknown = "The outcome is unknown. Reload and review before making another change.";
+                await EnterSelectAsync(); await PickAsync("u2", "u3"); await Until(() => Texts(page).Contains("2 selected"), "two selected");
+                var deletes = CountOf("DELETE"); var patches = CountOf("PATCH");
+                // Delete 2: confirmed, never sent; the reason is shown, not a result.
+                ClearNotice();
+                await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "bulk delete confirm");
+                Check(Equals(Dialog(page)!.Title, "Delete 2 manual collections?"), "the confirmation names the two collections it would delete");
+                await PressAsync("Delete 2");
+                await Until(() => Dialog(page) == null && Texts(Current()).Contains(unknown), "delete: the notice says why nothing happened");
+                Check(CountOf("DELETE") == deletes && server.Collections.ContainsKey("u2") && server.Collections.ContainsKey("u3"), "delete: no request was sent");
+                Check(!Texts(Current()).Any(t => t.StartsWith("Deleted ") || t.StartsWith("Kept ") || t.StartsWith("Failed")), "delete: no result sentence is written over the reason");
+                // Hide 2.
+                ClearNotice();
+                await Click(Find<Button>(page, "CollectionsBulkHide")); await Until(() => Dialog(page) != null, "hide confirm");
+                await PressAsync("Hide from tabs");
+                await Until(() => Dialog(page) == null && Texts(Current()).Contains(unknown), "hide: the notice says why nothing happened");
+                Check(CountOf("PATCH") == patches && server.Collections["u2"]["visibility"]!.ToString() == "visible" && server.Collections["u3"]["visibility"]!.ToString() == "visible", "hide: no request was sent");
+                Check(!Texts(Current()).Any(t => t.StartsWith("Hid ") || t.StartsWith("Couldn't")), "hide: no result sentence is written over the reason");
+                // Show: u4 is the only hidden collection.
+                await PickAsync("u2", "u3", "u4"); await Until(() => Texts(page).Contains("1 selected"), "only u4 is selected");
+                ClearNotice();
+                await Click(Find<Button>(page, "CollectionsBulkShow")); await Until(() => Dialog(page) != null, "show confirm");
+                await PressAsync("Show on tabs");
+                await Until(() => Dialog(page) == null && Texts(Current()).Contains(unknown), "show: the notice says why nothing happened");
+                Check(CountOf("PATCH") == patches && server.Collections["u4"]["visibility"]!.ToString() == "hidden", "show: no request was sent");
+                Check(!Texts(Current()).Any(t => t.StartsWith("Showed ") || t.StartsWith("Couldn't")), "show: no result sentence is written over the reason");
+                await Click(Find<Button>(page, "CollectionsSelect"));
+                await RefreshAsync("CollectionEdit_u4");
+                Check(!page.Controller.OutcomeUnknown, "reading the list again clears the barrier");
+                foreach (var id in new[] { "u1", "u2", "u3", "u4" }) server.Collections.Remove(id);
+                await RefreshAsync("CollectionEdit_c2");
+            });
+            await Step("bulk hide and show count, confirm and send only the collections that change", async () =>
+            {
+                Add("h1", "Hide one"); Add("h2", "Hide two"); Add("h3", "Hide three", "hidden"); Add("h4", "Show four");
+                await RefreshAsync("CollectionEdit_h4");
+                await EnterSelectAsync(); await PickAsync("h1", "h2", "h3"); await Until(() => Texts(page).Contains("3 selected"), "three selected");
+                ClearNotice();
+                await Click(Find<Button>(page, "CollectionsBulkHide")); await Until(() => Dialog(page) != null, "hide confirm");
+                var confirm = Dialog(page)!;
+                Check(Equals(confirm.Title, "Hide 2 collections from Collections tabs?"), "the title counts the two that change, not the three selected");
+                Check(Texts(confirm).Contains("2 of 3 selected will change; 1 already hidden."), "the confirmation says one is already hidden");
+                await PressAsync("Hide from tabs");
+                await Until(() => Dialog(page) == null && server.Collections["h1"]["visibility"]!.ToString() == "hidden" && server.Collections["h2"]["visibility"]!.ToString() == "hidden", "the two that differ are hidden");
+                await Until(() => Texts(Current()).Contains("Hid 2 collections from Collections tabs."), "the result counts what changed");
+                Check(CountOfPath("PATCH", "/api/v2/admin/collections/h1") == 1 && CountOfPath("PATCH", "/api/v2/admin/collections/h2") == 1 && CountOfPath("PATCH", "/api/v2/admin/collections/h3") == 0, "two requests were sent, none for the collection that was already hidden");
+                // Nothing differs: the official text, no dialog, no request.
+                await Until(() => Texts(page).Contains("3 selected"), "the selection is kept");
+                var requests = server.Log.Count; ClearNotice();
+                await Click(Find<Button>(page, "CollectionsBulkHide"));
+                await Until(() => Texts(Current()).Contains("The selected collections are already hidden."), "already hidden");
+                Check(Dialog(page) == null && server.Log.Count == requests, "hide with none to change opens no dialog and sends no request");
+                await PickAsync("h1", "h2", "h3", "h4"); await Until(() => Texts(page).Contains("1 selected"), "only h4 is selected");
+                requests = server.Log.Count; ClearNotice();
+                await Click(Find<Button>(page, "CollectionsBulkShow"));
+                await Until(() => Texts(Current()).Contains("The selected collections are already on Collections tabs."), "already on tabs");
+                Check(Dialog(page) == null && server.Log.Count == requests, "show with none to change opens no dialog and sends no request");
+                // Mixed show: one hidden, one shown.
+                await PickAsync("h3"); await Until(() => Texts(page).Contains("2 selected"), "h3 and h4 selected");
+                ClearNotice();
+                await Click(Find<Button>(page, "CollectionsBulkShow")); await Until(() => Dialog(page) != null, "show confirm");
+                Check(Equals(Dialog(page)!.Title, "Show 1 collection on Collections tabs?") && Texts(Dialog(page)!).Contains("1 of 2 selected will change; 1 already shows."), "the show confirmation counts the one that changes");
+                await PressAsync("Show on tabs");
+                await Until(() => Dialog(page) == null && server.Collections["h3"]["visibility"]!.ToString() == "visible", "h3 is shown");
+                await Until(() => Texts(Current()).Contains("Showed 1 collection on Collections tabs."), "the show result counts what changed");
+                Check(CountOfPath("PATCH", "/api/v2/admin/collections/h4") == 0, "the collection that already shows is not sent");
+                await Click(Find<Button>(page, "CollectionsSelect"));
+                foreach (var id in new[] { "h1", "h2", "h3", "h4" }) server.Collections.Remove(id);
+                await RefreshAsync("CollectionEdit_c2");
+            });
+            await Step("bulk delete counts kept, already gone and refused like the official client; a lost reply and a refused single delete", async () =>
+            {
+                server.FrozenRevision = true;
+                Add("k1", "Refused by a row"); Add("k2", "Already gone"); Add("k3", "Changed one"); Add("k4", "Plain delete"); Add("kr", "Kept row", rows: 1);
+                await RefreshAsync("CollectionEdit_kr");
+                await EnterSelectAsync(); await PickAsync("k1", "k2", "k3", "k4", "kr"); await Until(() => Texts(page).Contains("5 selected"), "five selected");
+                server.Intercept = (method, target) =>
+                {
+                    if (method != "DELETE") return Task.FromResult<HttpResponseMessage?>(null);
+                    if (target.EndsWith("/k1", StringComparison.Ordinal)) return Task.FromResult<HttpResponseMessage?>(Server.Plain(new() { ["type"] = "conflict", ["status"] = 409 }, HttpStatusCode.Conflict));
+                    if (target.EndsWith("/k2", StringComparison.Ordinal)) { server.Collections.Remove("k2"); return Task.FromResult<HttpResponseMessage?>(Server.Plain(new() { ["status"] = 404 }, HttpStatusCode.NotFound)); }
+                    if (target.EndsWith("/k3", StringComparison.Ordinal)) return Task.FromResult<HttpResponseMessage?>(Server.Plain(new() { ["type"] = "conflict", ["status"] = 412 }, HttpStatusCode.PreconditionFailed));
+                    return Task.FromResult<HttpResponseMessage?>(null);
+                };
+                await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "bulk delete confirm");
+                Check(Equals(Dialog(page)!.Title, "Delete 4 manual collections?") && Texts(Dialog(page)!).Contains("• 1 is kept because rows use it: Kept row."), "the confirmation counts the four it deletes and names the one a row uses");
+                ClearNotice();
+                await PressAsync("Delete 4");
+                var expected = "Deleted 2 of 4 collections. Kept 1 collection in use by home or library sections. Changed one: It changed since you opened this. Reload and review before trying again.";
+                await Until(() => Dialog(page) == null && Texts(Current()).Any(t => t.StartsWith("Deleted ")), "bulk delete result");
+                Check(Texts(Current()).Contains(expected), "a 404 counts as deleted, a 409 as kept for rows, a 412 as failed, in the official sentence: " + string.Join(" | ", Texts(Current()).Where(t => t.StartsWith("Deleted "))));
+                Check(!server.Collections.ContainsKey("k4") && !server.Collections.ContainsKey("k2") && server.Collections.ContainsKey("k1") && server.Collections.ContainsKey("k3") && server.Collections.ContainsKey("kr"), "only the deleted and the already-gone collections are gone");
+                Check(new[] { "k1", "k2", "k3", "k4" }.All(id => CountOfPath("DELETE", "/api/v2/admin/collections/" + id) == 1) && CountOfPath("DELETE", "/api/v2/admin/collections/kr") == 0, "each named collection is sent once and the one a row uses never");
+                Check(!Texts(Current()).Any(t => t.Contains("Failed to delete")), "a 409 and a 404 are not reported as failed");
+                server.Intercept = null;
+                // A lost reply on one of two: that one fails and says the outcome is unknown; the other is deleted.
+                await Click(Find<Button>(page, "CollectionsSelect"));
+                foreach (var id in new[] { "k1", "k3", "kr" }) server.Collections.Remove(id);
+                Add("l1", "Lost one"); Add("l2", "Lost two");
+                await RefreshAsync("CollectionEdit_l1");
+                await EnterSelectAsync(); await PickAsync("l1", "l2"); await Until(() => Texts(page).Contains("2 selected"), "l1 and l2 selected");
+                server.Intercept = (method, target) => method == "DELETE" && target.EndsWith("/l1", StringComparison.Ordinal) ? throw new HttpRequestException("Synthetic lost reply") : Task.FromResult<HttpResponseMessage?>(null);
+                await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "lost reply confirm");
+                await PressAsync("Delete 2");
+                await Until(() => Dialog(page) == null && Texts(Current()).Any(t => t.StartsWith("Deleted 1 of 2 collections. Lost one: The outcome is unknown.")), "lost reply result");
+                Check(CountOfPath("DELETE", "/api/v2/admin/collections/l1") == 1 && !server.Collections.ContainsKey("l2"), "the lost reply is not replayed and the other collection is deleted");
+                server.Intercept = null; server.FrozenRevision = false;
+                await Click(Find<Button>(page, "CollectionsSelect"));
+                server.Collections.Remove("l1");
+                // A single delete the server refuses (409, then 412): the reason is shown, the dialog stays, nothing is replayed, and it is not an unknown outcome.
+                Add("e1", "Refused single");
+                await RefreshAsync("CollectionEdit_e1");
+                foreach (var (status, text) in new[] { (HttpStatusCode.Conflict, "The collection changed or is used by a section."), (HttpStatusCode.PreconditionFailed, "It changed since you opened this.") })
+                {
+                    var before = CountOfPath("DELETE", "/api/v2/admin/collections/e1");
+                    server.Intercept = (method, target) => Task.FromResult<HttpResponseMessage?>(method == "DELETE" && target.EndsWith("/e1", StringComparison.Ordinal) ? Server.Plain(new() { ["type"] = "conflict", ["status"] = (int)status }, status) : null);
+                    await Click(Find<Button>(page, "CollectionDelete_e1")); await Until(() => Dialog(page) != null, "single delete dialog");
+                    await PressAsync("Delete");
+                    await Until(() => Dialog(page) != null && Texts(Dialog(page)!).Any(t => t.Contains(text)), "the refusal's reason is shown (" + (int)status + ")");
+                    Check(!page.Controller.OutcomeUnknown && CountOfPath("DELETE", "/api/v2/admin/collections/e1") == before + 1 && server.Collections.ContainsKey("e1"), "a refused single delete (" + (int)status + ") is sent once, keeps the collection and is not an unknown outcome");
+                    Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "dialog closed");
+                }
+                server.Intercept = null; server.Collections.Remove("e1");
+                await RefreshAsync("CollectionEdit_c2");
+            });
+            await Step("a validator that changed after the confirmation refuses that collection only", async () =>
+            {
+                server.PerCollection = true;
+                Add("v1", "Validator one"); Add("v2", "Validator two"); Add("v3", "Validator three");
+                await RefreshAsync("CollectionEdit_v3");
+                await EnterSelectAsync(); await PickAsync("v1", "v2", "v3"); await Until(() => Texts(page).Contains("3 selected"), "three selected");
+                await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "bulk delete confirm");
+                server.Bump("v2"); // another administrator changed it after the confirmation was drawn
+                ClearNotice();
+                await PressAsync("Delete 3");
+                await Until(() => Dialog(page) == null && Texts(Current()).Any(t => t.StartsWith("Deleted ")), "bulk delete result");
+                Check(Texts(Current()).Contains("Deleted 2 of 3 collections. Validator two: It changed since you opened this. Reload and review before trying again."), "the changed collection is refused and named, the others are deleted: " + string.Join(" | ", Texts(Current()).Where(t => t.StartsWith("Deleted "))));
+                Check(server.Collections.ContainsKey("v2") && !server.Collections.ContainsKey("v1") && !server.Collections.ContainsKey("v3") && CountOfPath("DELETE", "/api/v2/admin/collections/v2") == 0, "the refused collection stays and is never sent");
+                server.PerCollection = false;
+                await Click(Find<Button>(page, "CollectionsSelect"));
+                server.Collections.Remove("v2");
+                await RefreshAsync("CollectionEdit_c2");
+            });
+            await Step("a starter pack blocks a delete while one runs; the contrast theme is followed while a confirm is open", async () =>
+            {
+                Add("b1", "Block one"); Add("b2", "Block two");
+                await RefreshAsync("CollectionEdit_b2");
+                await EnterSelectAsync(); await PickAsync("b1", "b2"); await Until(() => Texts(page).Contains("2 selected"), "two selected");
+                var reason = AdminCollectionCopy.StarterPackBlocksDelete;
+                TextBlock? Alert(ContentDialog d) => Find<TextBlock>(d, "CollectionsConfirmBlocked");
+                // Bulk confirm: open and off while a pack is being added, on again when it finishes, and asked again at the press.
+                await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "bulk delete confirm");
+                var dialog = Dialog(page)!;
+                Check(dialog.IsPrimaryButtonEnabled && Alert(dialog)?.Visibility == Visibility.Collapsed, "the confirm is on while no starter pack is being added");
+                page.Controller.BeginStarterJob("job-x");
+                await Until(() => !dialog.IsPrimaryButtonEnabled, "the confirm goes off while a starter pack is being added");
+                Check(Alert(dialog) is { Visibility: Visibility.Visible } alert && alert.Text == reason, "it says the official reason");
+                page.Controller.EndStarterJob();
+                await Until(() => dialog.IsPrimaryButtonEnabled && Alert(dialog)?.Visibility == Visibility.Collapsed, "the confirm is on again when the pack is done");
+                var deletes = CountOf("DELETE");
+                page.Controller.BeginStarterJob("job-x");
+                await PressAsync("Delete 2"); // before the dialog has looked again: the press asks
+                Check(Dialog(page) == dialog && CountOf("DELETE") == deletes && Alert(dialog)?.Text == reason, "a press while a pack is being added keeps the dialog open, sends nothing and says why");
+                page.Controller.EndStarterJob();
+                dialog.Hide(); await Until(() => Dialog(page) == null, "bulk confirm closed");
+                // Single delete: the same.
+                await Click(Find<Button>(page, "CollectionDelete_b1")); await Until(() => Dialog(page) != null, "single delete dialog");
+                dialog = Dialog(page)!;
+                page.Controller.BeginStarterJob("job-x");
+                await Until(() => !dialog.IsPrimaryButtonEnabled && Texts(dialog).Contains(reason), "single delete: off with the official reason while a pack is being added");
+                page.Controller.EndStarterJob();
+                await Until(() => dialog.IsPrimaryButtonEnabled && !Texts(dialog).Contains(reason), "single delete: on again when the pack is done");
+                page.Controller.BeginStarterJob("job-x");
+                await PressAsync("Delete");
+                Check(Dialog(page) == dialog && CountOf("DELETE") == deletes && Texts(dialog).Contains(reason), "single delete: a press while a pack is being added sends nothing and says why");
+                page.Controller.EndStarterJob();
+                dialog.Hide(); await Until(() => Dialog(page) == null, "single delete closed");
+                // The contrast theme is followed while the confirm is open, on any thread, and nothing stays subscribed.
+                var original = AdminCollectionsDestructiveStyle.Source; var fake = new FakeContrast();
+                AdminCollectionsDestructiveStyle.Source = fake;
+                try
+                {
+                    await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "bulk delete confirm for contrast");
+                    dialog = Dialog(page)!;
+                    Check(ReferenceEquals(dialog.PrimaryButtonStyle, AdminCollectionsDestructiveStyle.PrimaryStyle) && fake.Subscribers == 1, "without a contrast theme the confirm is destructive red and follows the theme");
+                    fake.IsHighContrast = true; await Task.Run(fake.Raise);
+                    await Until(() => dialog.PrimaryButtonStyle == null, "a switch to a contrast theme returns the open dialog to system colors");
+                    fake.IsHighContrast = false; await Task.Run(fake.Raise);
+                    await Until(() => ReferenceEquals(dialog.PrimaryButtonStyle, AdminCollectionsDestructiveStyle.PrimaryStyle), "a switch back restores the red");
+                    dialog.Hide(); await Until(() => Dialog(page) == null && fake.Subscribers == 0, "closing the dialog leaves nothing subscribed");
+                    fake.IsHighContrast = true;
+                    await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "bulk delete confirm in contrast");
+                    dialog = Dialog(page)!;
+                    Check(dialog.PrimaryButtonStyle == null, "a dialog opened in a contrast theme keeps system colors");
+                    dialog.Hide(); await Until(() => Dialog(page) == null && fake.Subscribers == 0, "contrast dialog closed");
+                }
+                finally { AdminCollectionsDestructiveStyle.Source = original; }
+                await Click(Find<Button>(page, "CollectionsSelect"));
+                server.Collections.Remove("b1"); server.Collections.Remove("b2");
+                await RefreshAsync("CollectionEdit_c2");
+            });
+            await Step("names draw on one line, show a placeholder when empty, and the select bar stays in view", async () =>
+            {
+                server.LibraryName = "Fixture\nmovies​";
+                var longRaw = "Long\nname " + new string('y', 300);
+                Add("n1", "One\nline name"); Add("n2", "​"); Add("n3", "​", rows: 1); Add("n4", longRaw);
+                await RefreshAsync("CollectionEdit_n1");
+                var one = (Find<Button>(page, "CollectionEdit_n1")!.Content as TextBlock)!;
+                Check(one.Text == "One line name", "a name with line breaks is shown as its plain text: " + one.Text.Replace("\n", "\\n"));
+                var reference = (Find<Button>(page, "CollectionEdit_c2")!.Content as TextBlock)!;
+                one.Measure(new Windows.Foundation.Size(10000, 10000)); reference.Measure(new Windows.Foundation.Size(10000, 10000));
+                Check(Math.Abs(one.DesiredSize.Height - reference.DesiredSize.Height) < 0.5, "the name's block is one line high, as a single-line name's: " + one.DesiredSize.Height + " vs " + reference.DesiredSize.Height);
+                TextBlock Copy(string text) => new() { Text = text, FontSize = one.FontSize, FontFamily = one.FontFamily, FontWeight = one.FontWeight, TextWrapping = TextWrapping.NoWrap };
+                var rawBlock = Copy("One\nline name"); var plainBlock = Copy("One line name");
+                rawBlock.Measure(new Windows.Foundation.Size(10000, 10000)); plainBlock.Measure(new Windows.Foundation.Size(10000, 10000));
+                Check(rawBlock.DesiredSize.Height > plainBlock.DesiredSize.Height * 1.5, "the raw name would have drawn on several lines, so the check can fail");
+                Check(Texts(page).Contains("Manual · Fixture movies · 1 title") && !Texts(page).Any(t => t.Contains('\n') || t.Contains(' ')), "the library line names the library as one plain line");
+                var empty = Find<Button>(page, "CollectionEdit_n2")!;
+                Check((empty.Content as TextBlock)?.Text == "Untitled collection" && AutomationProperties.GetName(empty) == "Untitled collection", "a name that shows nothing reads as Untitled collection, drawn and announced");
+                var longButton = Find<Button>(page, "CollectionEdit_n4")!;
+                Check((longButton.Content as TextBlock)?.Text == AdminCollectionNames.Plain(longRaw, 2000) && AutomationProperties.GetName(longButton) == AdminCollectionNames.Plain(longRaw) && AutomationProperties.GetName(longButton).Length <= 81, "a long name with a line break is one line in the block and a bounded plain announcement");
+                await Click(Find<Button>(page, "CollectionDelete_n2")); await Until(() => Dialog(page) != null, "delete dialog for an empty name");
+                Check(Equals(Dialog(page)!.Title, "Delete collection?"), "the delete title for an empty name is the official fallback");
+                Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "closed");
+                Find<ToggleSwitch>(page, "CollectionVisible_n3")!.IsOn = false;
+                await Until(() => Dialog(page) != null, "hide confirmation for an empty name");
+                Check(Equals(Dialog(page)!.Title, "Hide Untitled collection from Collections tabs?"), "the hide title for an empty name is the official sentence with the placeholder");
+                Dialog(page)!.Hide(); await Until(() => Dialog(page) == null && Find<ToggleSwitch>(page, "CollectionVisible_n3")!.IsOn, "hide canceled");
+                // Select mode: names announced as plain bounded text; the bar is not part of the scrolling list.
+                await EnterSelectAsync();
+                Check(AutomationProperties.GetName(Find<CheckBox>(page, "CollectionSelect_n2")!) == "Select Untitled collection" && AutomationProperties.GetName(Find<CheckBox>(page, "CollectionSelect_n4")!) == "Select " + AdminCollectionNames.Plain(longRaw), "a selection box is announced with the plain bounded name");
+                Check(AutomationProperties.GetName(Find<ToggleSwitch>(page, "CollectionVisible_n2")!) == "Show Untitled collection on Collections tabs", "a tab switch is announced with the plain name");
+                var bar = Find<Border>(page, "CollectionsSelectBar")!; var scroll = (ScrollViewer)Field(page, "_scroll")!;
+                Check(bar.Visibility == Visibility.Visible && !Tree(scroll).Contains(bar), "the select bar is outside the scrolling list, so it stays in view while the list scrolls");
+                Check(!Find<Button>(page, "CollectionsBulkDelete")!.IsEnabled && !Find<Button>(page, "CollectionsBulkShow")!.IsEnabled && !Find<Button>(page, "CollectionsBulkHide")!.IsEnabled, "with nothing selected the bar's actions are off, as official");
+                double Bottom() { bar.UpdateLayout(); return bar.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, bar.ActualHeight)).Y; }
+                Check(Math.Abs(Bottom() - page!.ActualHeight) < 1.5, "the bar sits at the foot of the page: " + Bottom() + " of " + page.ActualHeight);
+                scroll.ChangeView(null, 100000, null, true); await Task.Delay(250);
+                Check(Math.Abs(Bottom() - page.ActualHeight) < 1.5, "after the list scrolls the bar is still at the foot of the page");
+                await Click(Find<Button>(page, "CollectionsSelect"));
+                Check(Find<Border>(page, "CollectionsSelectBar")!.Visibility == Visibility.Collapsed && Find<Button>(page, "CollectionsBulkDelete") == null, "leaving select mode removes the bar");
+                // The empty state names the library as a plain line.
+                var combo = Find<ComboBox>(page, "CollectionsLibrary")!; combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().First(i => (string)i.Tag == "1");
+                await Until(() => Find<Button>(page, "CollectionEdit_n1") != null && Find<ComboBox>(page, "CollectionsLibrary")?.SelectedItem is ComboBoxItem { Tag: "1" }, "library view");
+                server.EmptyList = true; await Click(Find<Button>(page, "CollectionsRefresh"));
+                await Until(() => Texts(page).Contains("No collections in Fixture movies yet"), "the empty state names the library");
+                server.EmptyList = false; await Click(Find<Button>(page, "CollectionsRefresh")); await Until(() => Find<Button>(page, "CollectionEdit_n1") != null, "list returns");
+                combo = Find<ComboBox>(page, "CollectionsLibrary")!; combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().First(i => (string)i.Tag == "");
+                await Until(() => Find<ComboBox>(page, "CollectionsLibrary")?.SelectedItem is ComboBoxItem { Tag: "" } && Find<Button>(page, "CollectionEdit_n1") != null, "all libraries again");
+                server.LibraryName = "Fixture movies";
+                foreach (var id in new[] { "n1", "n2", "n3", "n4" }) server.Collections.Remove(id);
+                await RefreshAsync("CollectionEdit_c2");
+            });
+
             // ── Smart editor: rule libraries, stored sort, preview, conflict ────
             await Step("smart editor rules, stored sort, preview and save", async () =>
             {
@@ -702,14 +1000,18 @@ internal static class AdminCollectionsNativeFixture
             // ── Rows dialogs and responsive capture ─────────────────────────────
             await Step("rows that show it and add as a row", async () =>
             {
+                server.RowTitle = "Shared fixture\nrow​"; server.LibraryName = "Fixture\nmovies​";
                 Check(AdminShellPage.Open(AdminRouteRequest.CollectionEditor("c3").WithQuery("libraryId", "1")), "synced editor opens");
                 await Until(() => inner.Content is AdminCollectionsPage p && p != page && Find<Button>(p, "CollectionRows") != null, "editor with rows button");
                 page = Current();
                 await Click(Find<Button>(page, "CollectionRows")); await Until(() => Dialog(page) != null, "rows dialog");
                 Check(Texts(Dialog(page)!).Any(t => t.Contains("Shared fixture row")), "rows dialog lists the row that shows the collection");
+                Check(Texts(Dialog(page)!).Contains("Shared fixture row · On") && !Texts(Dialog(page)!).Any(t => t.Contains('\n') || t.Contains(' ')), "the rows dialog names each row as one plain line");
                 Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "rows dialog closed");
                 await Click(Find<Button>(page, "CollectionAddAsRow")); await Until(() => Dialog(page) != null, "add as row dialog");
                 Check(Find<Button>(Dialog(page)!, "CollectionAddRow_home") != null, "Add as a row offers Home and each library page");
+                Check(Find<Button>(Dialog(page)!, "CollectionAddRow_1")?.Content?.ToString() == "Fixture movies page", "a library page button is labelled with the plain library name");
+                server.RowTitle = "Shared fixture row"; server.LibraryName = "Fixture movies";
                 Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "add as row closed");
                 await Click(Find<Button>(page, "CollectionEditorBack"));
                 await Until(() => inner.Content is AdminCollectionsPage p && p != page && Find<Button>(p, "CollectionsNew") != null, "back to list");
@@ -926,6 +1228,9 @@ internal static class AdminCollectionsNativeFixture
     /// <summary>The confirm button of a delete is the official destructive fill (#dc2626, white label, the fill at 90% on hover and press), and focus starts on Cancel. A Windows contrast theme keeps system colors.</summary>
     private static async Task AssertDestructiveAsync(ContentDialog dialog, string what)
     {
+        // Where focus actually is once the dialog has opened, in a contrast theme as well.
+        await Until(() => FocusManager.GetFocusedElement(dialog.XamlRoot) is Button { Name: "CloseButton" }, what + ": focus starts on Cancel");
+        Check(true, what + ": focus starts on Cancel (the focused element is the dialog's Cancel button)");
         var probe = new ContentDialog(); var untouched = probe.PrimaryButtonStyle;
         Check(!AdminCollectionsDestructiveStyle.Apply(probe, true) && ReferenceEquals(probe.PrimaryButtonStyle, untouched), what + ": a contrast theme keeps the system colors");
         if (AdminCollectionsDestructiveStyle.HighContrast) { Check(dialog.PrimaryButtonStyle != AdminCollectionsDestructiveStyle.PrimaryStyle, what + ": the host is in a contrast theme, so the dialog keeps system colors"); return; }
@@ -940,7 +1245,15 @@ internal static class AdminCollectionsNativeFixture
             VisualStateManager.GoToState(primary, "Normal", false);
         }
         Check(root?.Background is SolidColorBrush { Color: { A: 255, R: 0xDC, G: 0x26, B: 0x26 } }, what + ": it returns to the full fill");
-        Check(dialog.DefaultButton == ContentDialogButton.Close, what + ": focus starts on Cancel");
+    }
+    /// <summary>A contrast theme the test can change under an open dialog, counting who listens.</summary>
+    private sealed class FakeContrast : AdminCollectionsDestructiveStyle.IHighContrastSource
+    {
+        private Action? _changed;
+        public bool IsHighContrast { get; set; }
+        public int Subscribers;
+        public event Action? Changed { add { _changed += value; Interlocked.Increment(ref Subscribers); } remove { _changed -= value; Interlocked.Decrement(ref Subscribers); } }
+        public void Raise() => _changed?.Invoke();
     }
     private static object? Field(object target, string name) => target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(target);
     private static ContentDialog? Dialog(AdminCollectionsPage page) => Field(page, "_dialog") as ContentDialog;

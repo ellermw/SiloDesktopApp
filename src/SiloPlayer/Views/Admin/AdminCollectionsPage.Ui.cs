@@ -108,21 +108,35 @@ public sealed partial class AdminCollectionsPage
     }
     /// <summary>
     /// A confirmation. Names in <paramref name="title"/> and the text are already plain one-line strings. A <paramref name="destructive"/>
-    /// confirm is drawn in the official destructive red; <paramref name="blocked"/> says why it cannot run now and keeps it off.
+    /// confirm is drawn in the official destructive red and follows the contrast theme while it is open. <paramref name="blockedNow"/>
+    /// says why it cannot run right now (official <c>DeleteCollectionsDialog</c> <c>blocked</c>): while it answers, the confirm stays open and
+    /// off with that reason beside it; it is asked again as long as the dialog is open and once more when the confirm is pressed.
     /// </summary>
     private async Task<bool?> ConfirmAsync(string title, string message, string primary, SiloPlayer.Core.Services.MonitorAuthorityLease owner,
-        bool destructive = false, IReadOnlyList<string>? bullets = null, string? footer = null, string? blocked = null)
+        bool destructive = false, IReadOnlyList<string>? bullets = null, string? footer = null, Func<string?>? blockedNow = null)
     {
         if (_dialog != null || !Current(owner) || XamlRoot == null) return null;
         var body = Stack(10); body.Children.Add(Text(message));
         foreach (var bullet in bullets ?? []) body.Children.Add(Text("• " + bullet, 14));
-        if (blocked != null) { var alert = StatusText(blocked, true, 14); Identify(alert, "CollectionsConfirmBlocked", blocked); body.Children.Add(alert); }
+        var alert = StatusText("", true, 14); alert.Visibility = Visibility.Collapsed; Identify(alert, "CollectionsConfirmBlocked", ""); body.Children.Add(alert);
         if (footer != null) body.Children.Add(Text(footer, 13, true));
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = body, PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, IsPrimaryButtonEnabled = blocked == null };
-        if (destructive) AdminCollectionsDestructiveStyle.Apply(dialog, AdminCollectionsDestructiveStyle.HighContrast);
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = body, PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        string? Refresh()
+        {
+            var reason = blockedNow?.Invoke();
+            alert.Text = reason ?? ""; alert.Visibility = reason == null ? Visibility.Collapsed : Visibility.Visible;
+            AutomationProperties.SetName(alert, reason ?? ""); dialog.IsPrimaryButtonEnabled = reason == null;
+            return reason;
+        }
+        Refresh();
+        // A press is checked again: the state may have changed since the last look.
+        dialog.PrimaryButtonClick += (_, args) => { if (Refresh() != null) args.Cancel = true; };
+        DispatcherTimer? watch = null;
+        if (blockedNow != null) { watch = new() { Interval = TimeSpan.FromMilliseconds(300) }; watch.Tick += (_, _) => Refresh(); watch.Start(); }
+        using var contrast = destructive ? AdminCollectionsDestructiveStyle.Track(dialog) : null;
         Identify(dialog, "CollectionsConfirm", title); _dialog = dialog;
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && Current(owner); }
-        finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+        finally { watch?.Stop(); if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
     private async Task<ContentDialogResult> ShowAsync(ContentDialog dialog)
     {

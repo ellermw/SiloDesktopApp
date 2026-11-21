@@ -1,5 +1,8 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json.Nodes;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
@@ -63,6 +66,56 @@ public sealed class AdminCollectionNamesTests
         Assert.Equal("a\uFFFDb", AdminCollectionNames.Plain("a\uFFFDb"));
     }
 
+    // A Fact, not a Theory: an attribute argument cannot carry a lone surrogate (it is stored as UTF-8 and comes back as U+FFFD).
+    [Fact]
+    public void ARealReplacementCharacterNeverSavesALoneSurrogate()
+    {
+        Assert.Equal("a\uFFFDbc", AdminCollectionNames.Plain("a\uFFFDb\uD800c"));   // a real U+FFFD does not keep a lone high surrogate
+        Assert.Equal("ab\uFFFDc", AdminCollectionNames.Plain("a\uD800b\uFFFDc"));
+        Assert.Equal("a\uFFFD", AdminCollectionNames.Plain("\uDC00a\uFFFD\uD800"));  // a lone low surrogate and a trailing high one
+        Assert.Equal("\uFFFD\U00010000x", AdminCollectionNames.Plain("\uFFFD\uD800\uDC00x")); // a valid pair is one character, never two lone halves
+    }
+
+    [Theory]
+    [InlineData("\u0301")]                 // one combining mark
+    [InlineData("\u0301\u0302\u20DD")]    // marks and an enclosing mark
+    [InlineData("\uFE0F")]                 // a variation selector alone
+    [InlineData(" \u0301 \u200B")]
+    public void ANameMadeOnlyOfCombiningMarksShowsNothing(string name) => Assert.Equal("", AdminCollectionNames.Plain(name));
+
+    [Theory]
+    [InlineData("e\u0301", "e\u0301")]           // a mark on a letter stays
+    [InlineData("\u0301abc", "\u0301abc")]       // a leading mark with text after it is still a name
+    [InlineData("\u2764\uFE0F", "\u2764\uFE0F")] // an emoji with its selector
+    public void MarksThatBelongToACharacterStay(string name, string expected) => Assert.Equal(expected, AdminCollectionNames.Plain(name));
+
+    private const string England = "\U0001F3F4\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F";
+
+    [Fact]
+    public void AValidEmojiTagSequenceStaysWholeAndCountsAsOneCharacter()
+    {
+        Assert.Equal(England, AdminCollectionNames.Plain(England));
+        Assert.Equal("Home " + England + " team", AdminCollectionNames.Plain("Home " + England + " team"));
+        // One character: three of them fit a limit of three, a fourth is cut after the third, never inside a sequence.
+        Assert.Equal(England + England + England + "\u2026", AdminCollectionNames.Plain(England + England + England + England, 3));
+        Assert.Equal("x" + England, AdminCollectionNames.Plain("x" + England, 2));
+    }
+
+    [Theory]
+    [InlineData("\U0001F3F4\U000E0067\U000E0062", "\U0001F3F4")]                       // no cancel tag: not a sequence, the tags go
+    [InlineData("\U0001F3F4\U000E007F", "\U0001F3F4")]                               // a cancel tag with nothing to cancel
+    [InlineData("\U0001F3F4\U000E0041\U000E007F", "\U0001F3F4")]                    // a tag that is not a letter or digit of a subdivision
+    [InlineData("a\U000E0067\U000E0062\U000E007Fb", "ab")]                          // tags after anything but the waving black flag
+    [InlineData("\U0001F3F4\U000E0061\U000E0062\U000E0063\U000E0064\U000E0065\U000E0066\U000E0067\U000E007F", "\U0001F3F4")] // seven tags carry too much hidden text
+    public void TagCharactersThatAreNotAValidSequenceAreRemoved(string name, string expected) => Assert.Equal(expected, AdminCollectionNames.Plain(name));
+
+    [Fact]
+    public void ATagSequenceCannotMakeTheTitleLong()
+    {
+        var plain = AdminCollectionNames.Plain(string.Concat(Enumerable.Repeat(England, 100)), 20);
+        Assert.True(plain.Length <= 20 * 16 + 1, "sequences are bounded: " + plain.Length);
+    }
+
     [Fact]
     public void LongNamesAreCutAtTheLimitWithAnEllipsisAndNeverInsideACharacter()
     {
@@ -97,13 +150,30 @@ public sealed class AdminCollectionNamesTests
     }
 
     [Fact]
+    public void AnEmptyNameIsAPlaceholderInTheOfficialSentenceNotASentenceTheCatalogLacks()
+    {
+        Assert.Equal("Hide Untitled collection from Collections tabs?", AdminCollectionCopy.HideTitle("\u200B"));
+        Assert.Equal("Hide Untitled collection from Collections tabs?", AdminCollectionCopy.HideTitle(null));
+        Assert.Equal("Delete the Untitled shelf?", AdminCollectionCopy.DeleteShelfTitle("\u3164"));
+        Assert.Equal("Delete the Untitled shelf?", AdminCollectionCopy.DeleteShelfTitle(""));
+        Assert.Equal("Removes it from the row \u201CUntitled row\u201D. The row keeps its other collections.", AdminCollectionCopy.RowRemovesOnly("\u200B"));
+        Assert.Equal("It leaves Untitled library \u203A Collections and Kids \u203A Collections. 1 row still shows it, but its See all won't open while it's hidden.", AdminCollectionCopy.HideDescription(["\u200B", "Kids"], 1));
+        Assert.Equal("It's removed from Untitled library and Kids for everyone. This can't be undone.", AdminCollectionCopy.DeleteDescription(["\u2800", "Kids"]));
+        Assert.StartsWith("Its 2 collections move to No heading on Untitled library \u203A Collections.", AdminCollectionCopy.DeleteShelfDescription(2, "\u200B"));
+        Assert.Equal("Delete 2 collections in Untitled library?", AdminCollectionCopy.BulkDeleteTitle(2, null, "\u200B"));
+        Assert.Equal("Delete 2 collections?", AdminCollectionCopy.BulkDeleteTitle(2, null, null));
+    }
+
+    [Fact]
     public void NamesAreJoinedLikeTheOfficialList()
     {
         Assert.Equal("", AdminCollectionNames.JoinNames([]));
         Assert.Equal("Movies", AdminCollectionNames.JoinNames(["Movies"]));
         Assert.Equal("Movies and Kids", AdminCollectionNames.JoinNames(["Movies", "Kids"]));
         Assert.Equal("Movies, Kids and 4K", AdminCollectionNames.JoinNames(["Movies", "Kids", "4K"]));
-        Assert.Equal("Movies and 4K", AdminCollectionNames.JoinNames(["Movies", "\u200B", "4K\n"]));
+        // A name that shows nothing is its placeholder, so a count written beside the names always agrees with them.
+        Assert.Equal("Movies, Untitled collection and 4K", AdminCollectionNames.JoinNames(["Movies", "\u200B", "4K\n"]));
+        Assert.Equal("Untitled library and Kids", AdminCollectionNames.JoinNames(["", "Kids"], AdminCollectionNames.UntitledLibrary));
     }
 }
 
@@ -172,6 +242,70 @@ public sealed class AdminCollectionCopyTests
     }
 
     [Fact]
+    public void ALongTitleKeepsTheLibrariesItIsAlsoIn()
+    {
+        var title = "Long " + new string('x', 295);
+        var sentence = AdminCollectionCopy.AlsoDeletedElsewhere([(title, ["Kids"])], "manual");
+        Assert.EndsWith("\u2026 (Kids).", sentence);                  // the title is cut on its own, the library names are not
+        Assert.StartsWith("A manual collection that's also in another library goes there too: Long xxx", sentence);
+        Assert.True(sentence.Length < 200, "the title part is bounded: " + sentence.Length);
+        // Several libraries after a long title stay whole too, and a long library name is bounded by itself.
+        Assert.EndsWith("\u2026 (Kids and 4K).", AdminCollectionCopy.AlsoDeletedElsewhere([(title, ["Kids", "4K"])], "manual"));
+        Assert.Contains("(" + new string('l', 80) + "\u2026)", AdminCollectionCopy.AlsoDeletedElsewhere([("A", [new string('l', 300)])], null));
+        // Entries that are already plain are not cut again, not even past the limit of one name.
+        Assert.Equal(new string('p', 90) + " (Kids)", AdminCollectionCopy.SomeNames([new string('p', 90) + " (Kids)"]));
+    }
+
+    [Fact]
+    public void CountsAndNamesAgreeForNamesThatShowNothing()
+    {
+        Assert.Equal("2 are kept because rows use them: Untitled collection and B.", AdminCollectionCopy.KeptForRows(["\u200B", "B"]));
+        Assert.Equal("1 is kept because rows use it: Untitled collection.", AdminCollectionCopy.KeptForRows(["\u3164"]));
+        // Seven names, one of them blank: the first four, then "3 more": the count is the entries given, and each shows.
+        var titles = new[] { "A", "\u200B", "C", "D", "E", "F", "G" };
+        Assert.Equal("7 are kept because rows use them: A, Untitled collection, C, D and 3 more.", AdminCollectionCopy.KeptForRows(titles));
+        Assert.Equal("A collection that's also in another library goes there too: Untitled collection (Kids).", AdminCollectionCopy.AlsoDeletedElsewhere([("\u200B", ["Kids"])], null));
+        Assert.Equal("Untitled collection: nothing", AdminCollectionCopy.FailureLine("\u200B", "nothing"));
+    }
+
+    [Fact]
+    public void AFailureLineNamesTheCollectionAsOnePlainBoundedLine()
+    {
+        var line = AdminCollectionCopy.FailureLine("Bad\nname\u202E" + new string('x', 400), "It changed since you opened this.");
+        Assert.StartsWith("Bad name", line);
+        Assert.EndsWith("\u2026: It changed since you opened this.", line);
+        Assert.DoesNotContain('\n', line);
+        Assert.True(line.Length < 140, line.Length.ToString());
+    }
+
+    [Fact]
+    public void ShowAndHideActOnlyOnTheCollectionsThatDiffer()
+    {
+        AdminCollectionEntry E(string id, string visibility) => new() { Id = id, Title = id, Visibility = visibility };
+        var selected = new[] { E("a", "visible"), E("b", "hidden"), E("c", "visible") };
+        Assert.Equal(["a", "c"], AdminCollectionBulk.ChangingVisibility(selected, false).Select(c => c.Id));
+        Assert.Equal(["b"], AdminCollectionBulk.ChangingVisibility(selected, true).Select(c => c.Id));
+        Assert.Empty(AdminCollectionBulk.ChangingVisibility([E("b", "hidden")], false));
+        Assert.Empty(AdminCollectionBulk.ChangingVisibility([E("a", "visible")], true));
+        Assert.Equal(["a"], AdminCollectionBulk.ChangingVisibility([E("a", "")], false).Select(c => c.Id)); // a missing value is visible, as the official isVisible reads it
+    }
+
+    [Fact]
+    public void ShowAndHideSentencesCountWhatChanges()
+    {
+        Assert.Equal("The selected collections are already hidden.", AdminCollectionCopy.AlreadyHidden);
+        Assert.Equal("The selected collections are already on Collections tabs.", AdminCollectionCopy.AlreadyShown);
+        Assert.Equal("Show 1 collection on Collections tabs?", AdminCollectionCopy.ShowManyTitle(1));
+        Assert.Equal("Show 2 collections on Collections tabs?", AdminCollectionCopy.ShowManyTitle(2));
+        Assert.Equal("Hide 2 collections from Collections tabs?", AdminCollectionCopy.HideManyTitle(2));
+        Assert.Equal("3 selected.", AdminCollectionCopy.SelectedNote(3, 3, false));
+        Assert.Equal("2 of 3 selected will change; 1 already hidden.", AdminCollectionCopy.SelectedNote(2, 3, false));
+        Assert.Equal("1 of 3 selected will change; 2 already show.", AdminCollectionCopy.SelectedNote(1, 3, true));
+        Assert.Equal("1 of 2 selected will change; 1 already shows.", AdminCollectionCopy.SelectedNote(1, 2, true));
+        Assert.Equal("Hid 2 collections from Collections tabs.", AdminCollectionCopy.BatchResult("hide", 2, 2)); // the result counts what changed, not the selection
+    }
+
+    [Fact]
     public void ShelfDeleteSaysWhereItsCollectionsGo()
     {
         Assert.StartsWith("It has no collections. Only Movies changes;", AdminCollectionCopy.DeleteShelfDescription(0, "Movies"));
@@ -195,10 +329,54 @@ public sealed class AdminCollectionCopyTests
     public void BulkDeleteResultReportsDeletedKeptAndFailed()
     {
         Assert.Equal("Deleted 2 collections.", AdminCollectionCopy.BulkDeleteResult(2, 2, 0, []));
-        Assert.Equal("Deleted 1 collection. Kept 1 collection in use by home or library sections.", AdminCollectionCopy.BulkDeleteResult(1, 1, 1, []));
+        Assert.Equal("Deleted 1 collection. Kept 1 collection in use by home or library sections.", AdminCollectionCopy.BulkDeleteResult(2, 1, 1, []));
         Assert.Equal("Deleted 1 of 3 collections. A: failed", AdminCollectionCopy.BulkDeleteResult(3, 1, 0, ["A: failed"]));
         Assert.Equal("Failed to delete 2 collections. A: x B: y", AdminCollectionCopy.BulkDeleteResult(2, 0, 0, ["A: x", "B: y"]));
-        Assert.Equal("", AdminCollectionCopy.BulkDeleteResult(2, 0, 0, []));
+        // Official runBulkDelete: kept collections are in the same sentence as what was deleted and what failed.
+        Assert.Equal("Deleted 1 of 3 collections. Kept 1 collection in use by home or library sections. A: x", AdminCollectionCopy.BulkDeleteResult(3, 1, 1, ["A: x"]));
+        Assert.Equal("Deleted 0 of 2 collections. Kept 1 collection in use by home or library sections. A: x", AdminCollectionCopy.BulkDeleteResult(2, 0, 1, ["A: x"]));
+        Assert.Equal("Deleted 0 collections. Kept 2 collections in use by home or library sections.", AdminCollectionCopy.BulkDeleteResult(2, 0, 2, []));
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0, 0)]
+    [InlineData(2, 0, 0, 0)]
+    [InlineData(2, 2, 0, 0)]
+    [InlineData(2, 0, 2, 0)]
+    [InlineData(2, 1, 1, 0)]
+    [InlineData(3, 1, 1, 1)]
+    [InlineData(2, 0, 0, 2)]
+    public void ABulkDeleteResultIsNeverEmptyWhileSomethingWasConfirmed(int total, int done, int kept, int failed)
+    {
+        var failures = Enumerable.Range(0, failed).Select(i => $"C{i}: no").ToArray();
+        var result = AdminCollectionCopy.BulkDeleteResult(total, done, kept, failures);
+        Assert.NotEmpty(result);
+        // A "Kept ..." sentence never stands alone as if it were the whole result.
+        Assert.False(result.StartsWith("Kept ", StringComparison.Ordinal), result);
+    }
+
+    [Fact]
+    public void ABulkDeleteThatNeverStartedHasItsOwnSentenceNotAResult()
+    {
+        Assert.Equal("A collection change is already in progress. Nothing was changed.", AdminCollectionCopy.NotStarted);
+        Assert.NotEmpty(AdminCollectionCopy.NotStarted);
+    }
+
+    [Theory]
+    [InlineData(404, AdminBulkDeleteOutcome.Deleted)]   // already gone: official counts it as deleted
+    [InlineData(409, AdminBulkDeleteOutcome.Kept)]      // a row still shows it
+    [InlineData(412, AdminBulkDeleteOutcome.Failed)]
+    [InlineData(422, AdminBulkDeleteOutcome.Failed)]
+    [InlineData(500, AdminBulkDeleteOutcome.Failed)]
+    public void ABulkDeleteClassifiesARefusalLikeTheOfficialClient(int status, AdminBulkDeleteOutcome expected) =>
+        Assert.Equal(expected, AdminCollectionBulk.ClassifyDeleteFailure(new ApiException("x", "y", status)));
+
+    [Fact]
+    public void ATransportFailureAndAChangedValidatorAreFailuresNotKeptOrDeleted()
+    {
+        Assert.Equal(AdminBulkDeleteOutcome.Failed, AdminCollectionBulk.ClassifyDeleteFailure(new HttpRequestException("lost reply")));
+        Assert.Equal(AdminBulkDeleteOutcome.Failed, AdminCollectionBulk.ClassifyDeleteFailure(new AdminCollectionChangedException()));
+        Assert.Equal(AdminBulkDeleteOutcome.Failed, AdminCollectionBulk.ClassifyDeleteFailure(new TaskCanceledException()));
     }
 
     [Fact]
