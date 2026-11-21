@@ -17,10 +17,10 @@
       <Setter Property="VerticalContentAlignment" Value="Stretch"/>
     </Style>
     <DataTemplate x:Key="HomeSectionRowTemplate">
-      <Grid Padding="{Binding RowPadding}" Margin="{Binding RowMargin}" ColumnSpacing="14">
+      <Grid x:Name="RowRoot" Padding="{Binding RowPadding}" Margin="{Binding RowMargin}" ColumnSpacing="14">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="28"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/><ColumnDefinition Width="{Binding MenuWidth}"/>
+          <ColumnDefinition Width="Auto"/><ColumnDefinition Width="36"/>
         </Grid.ColumnDefinitions>
         <!-- The dashed outline of an off row (a border-dashed line) and the hairline between two shown rows. -->
         <Rectangle Grid.ColumnSpan="5" Margin="-8,-5,-12,-5" RadiusX="18" RadiusY="18" StrokeThickness="1" StrokeDashArray="3,3" IsHitTestVisible="False"

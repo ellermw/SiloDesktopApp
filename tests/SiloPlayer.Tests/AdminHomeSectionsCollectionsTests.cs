@@ -72,6 +72,23 @@ public sealed class AdminHomeSectionsCollectionsTests
     }
 
     [Fact]
+    public void NativeOnlyTextIsEnglishInEveryLanguageAndFillsItsPlaceholders()
+    {
+        Assert.NotEmpty(AdminHomeSectionsText.NativeOnly);
+        foreach (var language in new[] { English, French })
+        {
+            using var _ = AppStrings.UseForCurrentFlow(language);
+            foreach (var (key, english) in AdminHomeSectionsText.NativeOnly)
+            {
+                Assert.StartsWith("native.homeSections.", key);
+                Assert.True(AdminHomeSectionsText.Has(key), key);
+                if (!english.Contains('{')) Assert.Equal(english, AdminHomeSectionsText.T(key));
+            }
+            Assert.Equal("Showing the first 100. Search to narrow the list.", AdminHomeSectionsText.T("native.homeSections.pickerCapped", new { count = 100L }));
+        }
+    }
+
+    [Fact]
     public void RuleRowsAreSmartRowsInEnglishAndKeepTheCatalogTranslationElsewhere()
     {
         using (AppStrings.UseForCurrentFlow(English))

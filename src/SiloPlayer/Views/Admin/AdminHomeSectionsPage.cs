@@ -38,7 +38,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
     private readonly TextBlock _reorderHint = U.Text("", 13, true);
     private readonly TextBlock _empty = U.Text("", 14, true);
     private readonly StackPanel _libraryNoteRow = new() { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new(0, -12, 0, 0), Visibility = Visibility.Collapsed };
-    private readonly StackPanel _reorderRow = new() { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new(18, 12, 18, 14), Visibility = Visibility.Collapsed };
+    private readonly Grid _reorderRow = new() { ColumnSpacing = 8, Padding = new(18, 12, 18, 14), Visibility = Visibility.Collapsed };
     private readonly StackPanel _panelBody = new();
     private readonly Border _panel;
     private readonly StackPanel _headerActions = new() { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
@@ -112,8 +112,9 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         _list.SizeChanged += (_, _) => { if (_active && Math.Abs(_list.ActualWidth - _lastListWidth) > 8) { _lastListWidth = _list.ActualWidth; Render(); } };
         // The list's panel: surface-panel, rounded-[26px], p-1.5. Select all sits at its top in select mode; the reorder hint at its foot.
         _selectionHeader.BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .75);
+        _reorderRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); _reorderRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         _reorderRow.Children.Add(new ContentControl { Content = AdminHomeSectionsUi.Icon("grip-vertical", 15, U.Brush("SecondaryTextBrush")), VerticalAlignment = VerticalAlignment.Top, Margin = new(0, 4, 0, 0) });
-        _reorderRow.Children.Add(_reorderHint);
+        Grid.SetColumn(_reorderHint, 1); _reorderRow.Children.Add(_reorderHint);
         _panelBody.Children.Add(_selectionHeader); _panelBody.Children.Add(_empty); _panelBody.Children.Add(_list); _panelBody.Children.Add(_reorderRow);
         _panel = AdminMonitorUi.Panel(_panelBody, new(6), 26); _panel.Visibility = Visibility.Collapsed;
         _body.Children.Add(_panel); _body.Children.Add(_defaults);
@@ -160,7 +161,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         _list.MaxHeight = Math.Max(240, ActualHeight - 280);
         var available = _scroll.ActualWidth - _body.Margin.Left - _body.Margin.Right;
         if (available > 0) _body.Width = Math.Min(_body.MaxWidth, available);
-        if (_editor != null) { _editor.MaxHeight = Math.Max(200, ActualHeight - 32); _editor.Width = Math.Min(800, Math.Max(280, ActualWidth - 32)); }
+        FitEditor();
     }
     private void Activate()
     {
@@ -327,14 +328,16 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
 
     private async void ShownToggled(object sender, RoutedEventArgs args)
     {
-        // The switch starts from the saved value; only a user change differs from it.
-        if (sender is not ToggleSwitch { DataContext: RowView row } toggle || _controller == null || toggle.IsOn == row.Row.Enabled) return;
+        // The switch starts from the saved value; only a user change differs from it. A recycled switch reports its old state once its row changes, before the row's own values
+        // reach it: it is the row's switch (Tag) only after RowView has put the saved value in, so nothing the admin did not do ever becomes a write.
+        // The page itself puts a row's saved value into a recycled switch before its binding has moved to that row: that report is never the admin's.
+        if (RowView.Programmatic || sender is not ToggleSwitch { DataContext: RowView row } toggle || _controller == null || !ReferenceEquals(toggle.Tag, row) || toggle.IsOn == row.Row.Enabled) return;
         await _controller.QuickAsync(row.Row, shown: toggle.IsOn);
     }
 
     private void RowSelectionChanged(object sender, RoutedEventArgs args)
     {
-        if (sender is not CheckBox { DataContext: RowView row } box) return;
+        if (RowView.Programmatic || sender is not CheckBox { DataContext: RowView row } box || !ReferenceEquals(box.Tag, row)) return;
         if (box.IsChecked == true) { if (!_selection.Contains(row.Row.Id) && _selection.Count < MaxSelected) _selection.Add(row.Row.Id); else if (!_selection.Contains(row.Row.Id)) box.IsChecked = false; }
         else _selection.Remove(row.Row.Id);
         RenderSelection();
@@ -521,6 +524,8 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
     {
         private FrameworkElement? _root;
         private string _artKey = "", _tagKey = "";
+        /// <summary>True while the page, not the admin, sets a switch or checkbox of a row (Toggled and Checked then report nothing). The UI thread only.</summary>
+        internal static bool Programmatic;
         public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
         public AdminHomeSection Row { get; private set; } = new();
         public bool SelectMode { get; private set; }
@@ -543,6 +548,8 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         private void Sync()
         {
             if (_root == null) return;
+            if ((_root as Grid ?? _root.FindName("RowRoot") as Grid) is { } grid && grid.ColumnDefinitions.Count == 5 && Math.Abs(grid.ColumnDefinitions[4].Width.Value - MenuWidth) > .1)
+                grid.ColumnDefinitions[4].Width = new GridLength(MenuWidth);
             if (_root.FindName("MetaText") is TextBlock meta) FillMeta(meta);
             if (_root.FindName("CollapsedText") is TextBlock collapsed) FillCollapsed(collapsed);
             if (_root.FindName("ArtHost") is Border art)
@@ -555,8 +562,14 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
                 var show = Row.Featured && Row.Enabled && !Layout.Phone; var key = show ? HeroText : "";
                 if (key != _tagKey) { _tagKey = key; tags.Children.Clear(); if (show) tags.Children.Add(AdminHomeSectionsUi.Tag(HeroText, AdminMonitorUi.Warning, "star")); }
             }
-            if (_root.FindName("ShownSwitch") is ToggleSwitch toggle && toggle.IsOn != Row.Enabled) toggle.IsOn = Row.Enabled;
-            if (_root.FindName("SelectBox") is CheckBox box && box.IsChecked != Selected) box.IsChecked = Selected;
+            // The controls belong to this row only once they show its saved values (see ShownToggled).
+            var before = Programmatic; Programmatic = true;
+            try
+            {
+                if (_root.FindName("ShownSwitch") is ToggleSwitch toggle) { if (toggle.IsOn != Row.Enabled) toggle.IsOn = Row.Enabled; toggle.Tag = this; }
+                if (_root.FindName("SelectBox") is CheckBox box) { if (box.IsChecked != Selected) box.IsChecked = Selected; box.Tag = this; }
+            }
+            finally { Programmatic = before; }
         }
         public string Title => RowTitle(Row);
         public bool Shown => Row.Enabled;

@@ -13,6 +13,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
@@ -81,7 +82,7 @@ internal static class AdminHomeSectionsNativeFixture
                 {"categories":[{"category":"library_staples","recipes":[ {"type":"recently_added","category":"library_staples","presets":[{"key":"recent","display_name":"Recently added","description_short":"The latest titles.","default_params":{}}]}, {"type":"trending_on_server","category":"popular","presets":[{"key":"tr_24h","display_name":"Trending on this server","description_short":"x","default_params":{"window":"24h"}},{"key":"tr_7d","display_name":"Trending this week","description_short":"x","default_params":{"window":"7d"}}]}, {"type":"collection","category":"custom","presets":[{"key":"collection","display_name":"A collection","description_short":"A collection","default_params":{}}]}, {"type":"next_up","category":"x","presets":[{"key":"n","display_name":"Next up","description_short":"x","default_params":{}}]}]}]}
                 """);
             if (path == "/api/v2/admin/sections/preview") return Json("""{"items":[{"content_id":"movie:synthetic","title":"Synthetic preview title"}],"total_count":1}""");
-            if (path == "/api/v2/admin/collections") return Json("""{"items":[{"id":"c1","title":"Synthetic collection","collection_type":"manual","visibility":"visible"}]}""");
+            if (path == "/api/v2/admin/collections") return Json("""{"items":[{"id":"c1","title":"Synthetic collection","collection_type":"manual","visibility":"visible","library_id":"1","library_ids":["1"],"item_count":3},{"id":"c2","title":"Synthetic smart picks","collection_type":"smart","visibility":"visible","library_id":"2","library_ids":["2"],"item_count":5},{"id":"c3","title":"Synthetic shared list","collection_type":"tmdb_list","visibility":"visible","library_id":"1","library_ids":["1","2"],"item_count":1},{"id":"c4","title":"Synthetic hidden","collection_type":"manual","visibility":"hidden","library_id":"1","library_ids":["1"]}]}""");
             if (path == "/api/v2/admin/collections/c1") return Json("""{"id":"c1","title":"Synthetic collection","visibility":"visible"}""");
             if (path.StartsWith("/api/v2/admin/collections/", StringComparison.Ordinal)) return Problem(404, "Not found.");
             if (path == "/api/v2/libraries") return FailLibraries ? Problem(503, "Synthetic libraries failure.") : Json("""{"items":[{"id":"1","name":"Synthetic Movies","type":"movie"},{"id":"2","name":"Synthetic second movies","type":"movie"},{"id":"3","name":"Synthetic Shows","type":"series"}]}""");
@@ -180,7 +181,8 @@ internal static class AdminHomeSectionsNativeFixture
 
     internal static async Task RunAsync(Window window)
     {
-        using var server = new Server(); using var http = new HttpClient(server); var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
+        _window = window;
+        using var server = new Server(); _recent = () => string.Join(" ; ", server.Requests.TakeLast(14).Select(item => item.Method + " " + item.Path + (item.Tag == null ? "" : " " + item.Tag))); using var http = new HttpClient(server); var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
         auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Synthetic primary", IsPrimary = true });
@@ -213,6 +215,8 @@ internal static class AdminHomeSectionsNativeFixture
             await Until(() => Find<Button>(page, "HomeSectionsReload") != null);
             Check(Texts(page).Any(text => text.Contains("Synthetic list failure")), "a failed read shows the server's own problem text");
             Check(page.Controller!.State.Snapshot == null && !page.Controller.CanWrite, "a failed read offers no writes");
+            Check(Tree(page).OfType<Border>().All(border => border.Visibility != Visibility.Visible || AutomationProperties.GetAutomationId(border) != "HomeSectionsSelectBar"), "a failed read shows no select bar");
+            await CaptureAll(window, "home-sections-failed-read");
             server.FailList = false; await Click(page, "HomeSectionsReload"); await Until(() => page.Controller!.CanWrite);
             Check(Find<Button>(page, "HomeSectionsReload") == null, "Reload clears the failed-read alert");
 
@@ -222,9 +226,20 @@ internal static class AdminHomeSectionsNativeFixture
             Check(Texts(page).Any(text => text.StartsWith("Newest movies and episodes from all libraries · 20 titles", StringComparison.Ordinal)), "a row reads as the official one-line description");
             Check(Texts(page).Any(text => text.Contains("is off. Nobody sees this row.")), "an off row collapses to the official off text");
             await Until(() => Texts(page).Any(text => text.StartsWith("The Synthetic collection collection", StringComparison.Ordinal)), "the collection row names its collection");
-            Check(Find<ComboBox>(page, "HomeSectionsPageSelector")!.Items.Count == 4, "the page switcher lists Home and each library");
+            var pills = Tree(page).OfType<ToggleButton>().Where(button => AutomationProperties.GetAutomationId(button).StartsWith("HomeSectionsPage_", StringComparison.Ordinal)).ToList();
+            Check(pills.Count == 4 && pills[0].IsChecked == true && pills.Count(button => button.IsChecked == true) == 1, "the page switcher lists Home and each library as pills, Home pressed");
+            Check(Find<Border>(page, "HomeSectionsSelectBar") is { Visibility: Visibility.Collapsed }, "the select bar is not shown outside select mode");
             Check(Find<Button>(page, "HomeSectionsAdd")!.IsEnabled, "Add row is enabled once the page can change");
-            foreach (var width in new[] { 1440, 1024, 800 }) { await Resize(window, width); await Capture(window, "home-sections-list-" + width + ".png"); }
+            long Writes() => server.Requests.Count(item => item.Method != "GET");
+            var writesBefore = Writes();
+            foreach (var width in new[] { 1440, 1024, 800, 560 })
+            {
+                await Resize(window, width); await Task.Delay(300); await Capture(window, "home-sections-list-" + width + ".png");
+                var narrow = width < 1024; var add = Find<Button>(page, "HomeSectionsAdd")!; var dock = Find<Grid>(page, "HomeSectionsDock")!;
+                Check((dock.Visibility == Visibility.Visible) == narrow && ReferenceEquals(add.Parent, dock) == narrow, "at " + width + "px the buttons are " + (narrow ? "docked at the bottom" : "in the page header"));
+                Check(narrow ? Math.Abs(add.Height - 48) < .5 : Math.Abs(add.Height - 32) < .5, "at " + width + "px Add row has its " + (narrow ? "48px dock" : "32px header") + " size");
+            }
+            Check(Writes() == writesBefore, "changing the width re-renders every row switch without sending a write");
             await Resize(window, 1280);
             int LayoutReads() => server.Requests.Count(item => item.Path == "/api/v2/home/layout");
             await home.LoadCommand.ExecuteAsync(null); await home.LoadCommand.ExecuteAsync(null);
@@ -257,13 +272,16 @@ internal static class AdminHomeSectionsNativeFixture
             var reorder = server.Requests.Last(item => item.Method == "PUT" && item.Path.StartsWith("/api/v2/admin/sections/order"));
             Check(reorder.Tag != null && JsonNode.Parse(reorder.Body)!["ordered_ids"]!.AsArray().Select(node => node!.GetValue<string>()).SequenceEqual(new[] { "c", "a", "b" }), "move to top submits the complete order over the reviewed version");
             await Menu(page, "Changed on server", "Use as hero banner"); await Until(() => server.Requests.Last().Method == "GET" && server.Requests.Any(item => item.Body == "{\"featured\":true}") && page.Controller!.CanWrite);
-            Check(Texts(page).Contains("Hero banner"), "the hero row shows its tag");
+            await Until(() => Texts(page).Contains("Hero banner"), "hero tag"); Check(true, "the hero row shows its tag");
 
             // ── Select mode and a batch with one refused row ──
             await PageMenu(page, "Select rows"); await Until(() => Find<CheckBox>(page, "HomeSectionsSelectAll") != null);
             Check(Tree(page).OfType<CheckBox>().Count(box => AutomationProperties.GetName(box).StartsWith("Select ", StringComparison.Ordinal)) >= 3, "select mode shows a labelled checkbox on each row");
             foreach (var title in new[] { "Changed on server", "Synthetic disabled" }) Toggle(Tree(page).OfType<CheckBox>().First(box => AutomationProperties.GetName(box) == "Select " + title));
             await Until(() => Texts(page).Contains("2 selected"));
+            Check(Find<Border>(page, "HomeSectionsSelectBar") is { Visibility: Visibility.Visible }, "select mode floats its bar over the page");
+            Check(Find<Button>(page, "HomeSectionsSelectDelete") is { IsEnabled: true }, "the bar offers Delete once rows are picked");
+            await CaptureAll(window, "home-sections-select-mode");
             server.RefusePatchDetail = null; var before = server.Requests.Count;
             await Click(page, "HomeSectionsSelectTurnOff"); await Until(() => page.Controller!.CanWrite && server.Requests.Skip(before).Count(item => item.Method == "PATCH") == 2);
             Check(server.Requests.Skip(before).Where(item => item.Method == "PATCH").All(item => item.Body == "{\"enabled\":false}"), "turning rows off sends only enabled for each row");
@@ -292,6 +310,7 @@ internal static class AdminHomeSectionsNativeFixture
             // ── Add row: pick, preview, refused, unknown ──
             await Click(page, "HomeSectionsAdd"); await Until(() => Find<Button>(page, "HomeSectionKind_recently_added") != null);
             Check(Find<Button>(page, "HomeSectionKind_next_up") == null, "kinds no longer offered for new rows are not in the picker");
+            await CaptureAll(window, "home-sections-add-picker");
             Check(Find<Button>(page, "HomeSectionKind_trending_on_server") != null && Find<Button>(page, "HomeSectionKind_collection") != null, "the picker lists the catalog's kinds");
             // More options stays open while its switches rebuild the form, and a second pick in Add row starts from that kind's own settings.
             await Click(page, "HomeSectionKind_recently_added"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null);
@@ -306,7 +325,7 @@ internal static class AdminHomeSectionsNativeFixture
             await Click(page, "HomeSectionBack"); await Until(() => Find<Button>(page, "HomeSectionKind_recently_added") != null);
             await Click(page, "HomeSectionKind_recently_added"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null);
             await Until(() => Texts(page).Contains("Synthetic preview title") || Tree(page).OfType<TextBlock>().Any(text => TextOf(text).Contains("titles match") || TextOf(text).Contains("title matches")));
-            await SetTitle(page, "Synthetic new row"); await Capture(window, "home-sections-add-editor-800.png");
+            await SetTitle(page, "Synthetic new row"); await CaptureAll(window, "home-sections-add-form");
             server.RefuseNextCreate = true; await Click(page, "HomeSectionSave");
             await Until(() => Texts(page).Any(text => text.Contains("That row name is not allowed.")));
             Check(page.Controller!.CanWrite && Find<Button>(page, "HomeSectionSave")!.IsEnabled, "a refused create shows the server's detail and lets the admin correct and retry");
@@ -324,13 +343,34 @@ internal static class AdminHomeSectionsNativeFixture
             await Click(page, "HomeSectionReviewUnknown"); await Dialog(window, "Discard"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null && page.Controller!.CanWrite);
             Check(Texts(page).Contains("Unknown applied row"), "reloading after an unknown create shows the row the server kept");
 
-            // ── Edit row: stale save, then merge ──
+            // ── Collection pickers: library filter ──
+            await Click(page, "HomeSectionsAdd"); await Until(() => Find<Button>(page, "HomeSectionKind_collection") != null);
+            await Click(page, "HomeSectionKind_collection"); await Until(() => Find<ComboBox>(page, "HomeSectionCollectionLibrary") is { Visibility: Visibility.Visible }, "library filter");
+            await Until(() => Find<Button>(page, "HomeSectionChoice_collections_c3") != null, "collection list");
+            Check(Find<Button>(page, "HomeSectionChoice_collections_c4") == null, "a hidden collection is not offered");
+            var libraryFilter = Find<ComboBox>(page, "HomeSectionCollectionLibrary")!;
+            Check(libraryFilter.Items.OfType<ComboBoxItem>().Select(item => item.Content?.ToString()).SequenceEqual(new[] { "All libraries", "Synthetic Movies", "Synthetic second movies" }), "the library filter lists the libraries that show a collection, by name");
+            Check(Texts(page).Contains("Synthetic Movies, Synthetic second movies · Synced list · 1 title"), "a collection reads with its libraries, type and title count");
+            libraryFilter.SelectedItem = libraryFilter.Items.OfType<ComboBoxItem>().First(item => (string)item.Tag == "2");
+            await Until(() => Find<Button>(page, "HomeSectionChoice_collections_c1") == null && Find<Button>(page, "HomeSectionChoice_collections_c2") != null, "library 2 only");
+            Check(Find<Button>(page, "HomeSectionChoice_collections_c3") != null, "a collection shown in two libraries stays in either filter");
+            await Pill(page, "HomeSectionCollectionKind_smart"); await Until(() => Find<Button>(page, "HomeSectionChoice_collections_c3") == null);
+            Check(Find<Button>(page, "HomeSectionChoice_collections_c2") != null, "the type filter narrows within the library");
+            await Pill(page, "HomeSectionCollectionKind_manual"); await Until(() => Texts(page).Contains("No collections of this type in this library."), "empty library text");
+            Check(true, "an empty library filter says so");
+            await Click(page, "HomeSectionCancel"); await Dialog(window, "Discard"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null && page.Controller!.CanWrite);
+
+            // ── Edit row: an untouched editor, a stale save, then merge ──
+            await Menu(page, "Changed on server", "Edit row…"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null); await Task.Delay(500);
+            var writesAtOpen = Writes();
+            await Click(page, "HomeSectionCancel"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null, "untouched editor closed without a prompt");
+            Check(Writes() == writesAtOpen, "an untouched editor closes without asking and sends nothing");
             await Menu(page, "Changed on server", "Edit row…"); await Until(() => Find<TextBox>(page, "HomeSectionTitle") != null);
             Check(Texts(page).Any(text => text.StartsWith("Changes apply to everyone on Home.", StringComparison.Ordinal)), "Edit row says who the change reaches");
             await SetTitle(page, "Edited first"); server.ConflictNextPatch = true;
             await Click(page, "HomeSectionSave"); await Until(() => Find<Button>(page, "HomeSectionReloadRow") != null);
             Check(Texts(page).Contains("This row changed since you opened it. Your changes are kept. Reload the row to see what changed, then save again."), "a stale save keeps the draft and explains it");
-            await Capture(window, "home-sections-edit-conflict.png");
+            await CaptureAll(window, "home-sections-edit-conflict");
             await Click(page, "HomeSectionReloadRow"); await Until(() => Texts(page).Any(text => text.StartsWith("Changed elsewhere:", StringComparison.Ordinal)) && page.Controller!.CanWrite);
             Check(Find<TextBox>(page, "HomeSectionTitle")!.Text == "Edited first", "reloading keeps the fields the admin changed");
             await Click(page, "HomeSectionSave"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null && page.Controller!.CanWrite);
@@ -345,13 +385,15 @@ internal static class AdminHomeSectionsNativeFixture
             Check(server.Requests.Last(item => item.Method == "PUT" && item.Path == "/api/v2/admin/settings").Body.Contains("\"defaults.ui.next_up_new_releases_first\":\"true\""), "a default saves as soon as it changes, over the settings version");
 
             // ── A library page: empty state, add-to-pages, copies ──
-            var pages = Find<ComboBox>(page, "HomeSectionsPageSelector")!;
-            pages.SelectedItem = pages.Items.OfType<ComboBoxItem>().First(item => item.Tag is AdminHomeSectionScope { LibraryId: "2" });
+            var writesBeforePages = Writes(); await ChoosePage(page, "2");
             await Until(() => page.Controller!.CanWrite && page.Controller.State.Snapshot?.Scope.LibraryId == "2");
             await Until(() => Texts(page).Contains("No rows on Synthetic second movies yet.") && Texts(page).Contains("These rows show above the full Synthetic second movies grid."), "empty library page");
-            Check(Texts(page).Contains("No rows on Synthetic second movies yet."), "an empty page says it has no rows"); Check(Texts(page).Contains("These rows show above the full Synthetic second movies grid."), "a library page notes where its rows show");
-            pages.SelectedItem = pages.Items.OfType<ComboBoxItem>().First(item => item.Tag is AdminHomeSectionScope { LibraryId: "1" });
+            await CaptureAll(window, "home-sections-empty");
+            Check(Texts(page).Contains("No rows on Synthetic second movies yet."), "an empty page says it has no rows");
+            Check(Tree(page).OfType<ToggleButton>().Single(button => AutomationProperties.GetAutomationId(button) == "HomeSectionsPage_2").IsChecked == true, "the chosen library page is the pressed pill"); Check(Texts(page).Contains("These rows show above the full Synthetic second movies grid."), "a library page notes where its rows show");
+            await ChoosePage(page, "1");
             await Until(() => page.Controller!.CanWrite && page.Controller.State.Snapshot?.Scope.LibraryId == "1" && Texts(page).Contains("Synthetic library row"));
+            Check(Writes() == writesBeforePages && !page.Controller.State.ReviewRequired, "switching pages sends no write: a recycled switch reports its old state and nothing acts on it");
             Check(server.Requests.Any(item => item.Path == "/api/v2/admin/sections?scope=library&library_id=1"), "the library page reads its exact scope");
             await Menu(page, "Synthetic library row", "Add to other libraries…"); await DialogTexts(window, "Add Synthetic library row to other libraries");
             ToggleByName(window, "Synthetic second movies"); Check(Tree(PopupRoot(window)).OfType<CheckBox>().Any(box => box.Content?.ToString() == "Synthetic Movies · already here" && !box.IsEnabled), "the page the row is on shows as already here");
@@ -371,7 +413,7 @@ internal static class AdminHomeSectionsNativeFixture
             await Until(() => inner.Content is AdminHomeSectionsPage next && !ReferenceEquals(next, page) && Find<TextBox>(next, "HomeSectionTitle") != null);
             page = (AdminHomeSectionsPage)inner.Content; Check(page.Controller!.State.Snapshot?.Scope.LibraryId == "1", "?page= opens the library page");
             Check(Find<TextBox>(page, "HomeSectionTitle")!.Text == "Synthetic collection", "Add as a row opens Add row on the collection, named after it");
-            Check(Find<Button>(page, "HomeSectionBack")!.Content?.ToString() != "Back to Synthetic collection", "the return link is honoured only where the collection page can open");
+            Check(AutomationProperties.GetName(Find<Button>(page, "HomeSectionBack")!) != "Back to Synthetic collection", "the return link is honoured only where the collection page can open");
             await Click(page, "HomeSectionSave"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null && page.Controller!.CanWrite);
             var linked = JsonNode.Parse(server.Requests.Last(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections").Body)!;
             Check(linked["scope"]!.GetValue<string>() == "library" && linked["library_id"]!.GetValue<string>() == "1" && linked["section_type"]!.GetValue<string>() == "collection" && linked["config"]!["library_collection_id"]!.GetValue<string>() == "c1", "the linked collection is added to the linked page as a collection row");
@@ -404,7 +446,7 @@ internal static class AdminHomeSectionsNativeFixture
             shell = (AdminShellPage)outer.Content; inner = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!;
             await Until(() => inner.Content is AdminHomeSectionsPage next && Find<TextBox>(next, "HomeSectionTitle") != null, "linked add with a return path");
             page = (AdminHomeSectionsPage)inner.Content;
-            Check(Find<Button>(page, "HomeSectionBack")!.Content?.ToString() == AdminHomeSectionsText.T("web.home.rows.links.back", new { collection = "Synthetic collection" }), "Back to the collection is offered where the Collections route can open");
+            Check(AutomationProperties.GetName(Find<Button>(page, "HomeSectionBack")!) == AdminHomeSectionsText.T("web.home.rows.links.back", new { collection = "Synthetic collection" }), "Back to the collection is offered where the Collections route can open");
             linkPosts = server.Requests.Count(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections");
             await Click(page, "HomeSectionSave"); await Until(() => shell.CurrentRoute == AdminRoute.Collections, "return to the collection after Add row");
             Check(shell.CurrentRequest.Equals(AdminRouteRequest.CollectionEditor("c1")) && inner.Content is not AdminHomeSectionsPage, "a linked Add row goes back to the collection it came from");
@@ -431,8 +473,17 @@ internal static class AdminHomeSectionsNativeFixture
     }
 
     private static void Check(bool condition, string message) { Program.Log((condition ? "PASS: " : "FAIL: ") + message); if (!condition) throw new InvalidOperationException(message); }
+    private static Window? _window;
+    private static Func<string>? _recent;
     private static async Task Until(Func<bool> condition, string? what = null)
-    { for (var i = 0; i < 400 && !condition(); i++) await Task.Delay(25); if (!condition()) throw new TimeoutException("Home sections fixture state did not settle" + (what == null ? "." : ": " + what)); }
+    {
+        for (var i = 0; i < 400 && !condition(); i++) await Task.Delay(25);
+        if (condition()) return;
+        // A state that never settles names what the window showed, and is captured, so the failure can be read without a rerun.
+        var shown = _window?.Content is DependencyObject root ? string.Join(" | ", Texts(root).Where(text => text.Length > 0).Take(60)) : "";
+        try { if (_window != null) await Capture(_window, "home-sections-unsettled.png"); } catch (Exception) { }
+        throw new TimeoutException("Home sections fixture state did not settle" + (what == null ? "." : ": " + what) + (shown.Length > 0 ? " Showing: " + shown : "") + (_recent != null ? " Recent requests: " + _recent() : ""));
+    }
     private static IEnumerable<DependencyObject> Tree(DependencyObject root)
     { yield return root; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) foreach (var child in Tree(VisualTreeHelper.GetChild(root, i))) yield return child; }
     private static T? Find<T>(DependencyObject root, string id) where T : FrameworkElement => Tree(root).OfType<T>().FirstOrDefault(element => AutomationProperties.GetAutomationId(element) == id);
@@ -494,6 +545,20 @@ internal static class AdminHomeSectionsNativeFixture
         MenuFlyoutItem? item = null;
         await Until(() => (item = VisualTreeHelper.GetOpenPopupsForXamlRoot(page.XamlRoot).SelectMany(popup => Tree(popup.Child)).OfType<MenuFlyoutItem>().FirstOrDefault(entry => entry.Text == command && entry.IsEnabled)) != null, "menu item " + command);
         ((IInvokeProvider)new MenuFlyoutItemAutomationPeer(item!).GetPattern(PatternInterface.Invoke)!).Invoke();
+    }
+    /// <summary>Chooses a library page by pressing its pill, as UI Automation's toggle does.</summary>
+    private static async Task ChoosePage(AdminHomeSectionsPage page, string id) => await Pill(page, "HomeSectionsPage_" + id);
+    private static async Task Pill(DependencyObject root, string id)
+    {
+        ToggleButton? pill = null;
+        await Until(() => (pill = Tree(root).OfType<ToggleButton>().FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == id && button.IsLoaded && button.IsEnabled)) != null, "pill " + id);
+        ((IToggleProvider)new ToggleButtonAutomationPeer(pill!).GetPattern(PatternInterface.Toggle)!).Toggle();
+    }
+    /// <summary>One capture of the current state at each width the page is checked at (1440, 1024, 800 and 560), then back to 1280.</summary>
+    private static async Task CaptureAll(Window window, string name)
+    {
+        foreach (var width in new[] { 1440, 1024, 800, 560 }) { await Resize(window, width); await Task.Delay(300); await Capture(window, name + "-" + width + ".png"); }
+        await Resize(window, 1280); await Task.Delay(300);
     }
     private static async Task Resize(Window window, int width)
     {

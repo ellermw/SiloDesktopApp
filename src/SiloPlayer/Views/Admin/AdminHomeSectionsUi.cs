@@ -32,10 +32,10 @@ internal static class AdminHomeSectionsUi
         ["calendar-plus"] = "M16 19h6|M16 2v4|M19 16v6|M21 12.598V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8.5|M3 10h18|M8 2v4",
         ["check"] = "M20 6 9 17l-5-5",
         ["chevron-down"] = "m6 9 6 6 6-6",
-        ["chevron-up"] = "m18 15-6-6-6 6",
         ["chevron-left"] = "m15 18-6-6 6-6",
         ["chevron-right"] = "m9 18 6-6-6-6",
-        ["circle-alert"] = "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0|Mundefined undefinedLundefined undefined|Mundefined undefinedLundefined undefined",
+        ["chevron-up"] = "m18 15-6-6-6 6",
+        ["circle-alert"] = "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0|M12 8L12 12|M12 16L12.01 16",
         ["clapperboard"] = "m12.296 3.464 3.02 3.956|M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z|M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z|m6.18 5.276 3.1 3.899",
         ["copy"] = "M10 8H20A2 2 0 0 1 22 10V20A2 2 0 0 1 20 22H10A2 2 0 0 1 8 20V10A2 2 0 0 1 10 8Z|M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
         ["dices"] = "M4 10H12A2 2 0 0 1 14 12V20A2 2 0 0 1 12 22H4A2 2 0 0 1 2 20V12A2 2 0 0 1 4 10Z|m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6|M6 18h.01|M10 14h.01|M15 6h.01|M18 9h.01",
@@ -63,13 +63,13 @@ internal static class AdminHomeSectionsUi
         ["search"] = "m21 21-4.34-4.34|M3 11a8 8 0 1 0 16 0a8 8 0 1 0 -16 0",
         ["shuffle"] = "m18 14 4 4-4 4|m18 2 4 4-4 4|M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22|M2 6h1.972a4 4 0 0 1 3.6 2.2|M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45",
         ["skip-forward"] = "M21 4v16|M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z",
-        ["smile"] = "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0|M8 14s1.5 2 4 2 4-2 4-2|Mundefined undefinedLundefined undefined|Mundefined undefinedLundefined undefined",
+        ["smile"] = "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0|M8 14s1.5 2 4 2 4-2 4-2|M9 9L9.01 9|M15 9L15.01 9",
         ["sparkles"] = "M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z|M20 2v4|M22 4h-4|M2 20a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
         ["square-check-big"] = "M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344|m9 11 3 3L22 4",
         ["star-off"] = "m10.344 4.688 1.181-2.393a.53.53 0 0 1 .95 0l2.31 4.679a2.12 2.12 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.237 3.152|m17.945 17.945.43 2.505a.53.53 0 0 1-.771.56l-4.618-2.428a2.12 2.12 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.12 2.12 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a8 8 0 0 0 .4-.099|m2 2 20 20",
         ["star"] = "M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z",
         ["target"] = "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0|M6 12a6 6 0 1 0 12 0a6 6 0 1 0 -12 0|M10 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
-        ["timer"] = "Mundefined undefinedLundefined undefined|Mundefined undefinedLundefined undefined|M4 14a8 8 0 1 0 16 0a8 8 0 1 0 -16 0",
+        ["timer"] = "M10 2L14 2|M12 14L15 11|M4 14a8 8 0 1 0 16 0a8 8 0 1 0 -16 0",
         ["trash-2"] = "M10 11v6|M14 11v6|M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6|M3 6h18|M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
         ["trending-up"] = "M16 7h6v6|m22 7-8.5 8.5-5-5L2 17",
         ["tv"] = "m17 2-5 5-5-5|M4 7H20A2 2 0 0 1 22 9V20A2 2 0 0 1 20 22H4A2 2 0 0 1 2 20V9A2 2 0 0 1 4 7Z",
@@ -109,6 +109,7 @@ internal static class AdminHomeSectionsUi
     internal static bool HasIcon(string name) => Paths.ContainsKey(name);
     internal static string KindIconName(string sectionType) => KindIcons.TryGetValue(sectionType, out var name) ? name : GroupIcons[AdminHomeSectionsGroup(sectionType)];
     private static string AdminHomeSectionsGroup(string sectionType) => SiloPlayer.Core.Services.Admin.AdminHomeSectionsKinds.Group(sectionType);
+    internal static string GroupIconName(string group) => GroupIcons.TryGetValue(group, out var name) ? name : "layers";
     internal static Color GroupTint(string group) => GroupTints.TryGetValue(group, out var tint) ? tint : GroupTints["collections"];
 
     /// <summary>A lucide icon drawn as stroked paths in a square of <paramref name="size"/>.</summary>
@@ -269,7 +270,9 @@ internal sealed class AdminHomeSectionsPills : Grid
                 first = false;
                 var pill = Pill(label, home); AutomationProperties.SetAutomationId(pill, id); AutomationProperties.SetName(pill, label);
                 var captured = key;
-                pill.Click += (_, _) => Click(captured);
+                // Checked and Unchecked rather than Click, so a touch, a mouse and UI Automation's toggle all choose the same way. The strip's own changes are guarded.
+                pill.Checked += (_, _) => { if (!_updating) Click(captured); };
+                pill.Unchecked += (_, _) => { if (!_updating && _selected != null) Select(_selected); };
                 pill.IsEnabled = _enabled; _row.Children.Add(pill); _pills.Add((key, pill));
             }
             Select(selected);
@@ -327,6 +330,11 @@ internal sealed class AdminHomeSectionsPills : Grid
         pill.BorderBrush = pressed ? new SolidColorBrush(Colors.Transparent) : AdminHomeSectionsUi.Themed("BorderBrush");
         var foreground = pressed ? new SolidColorBrush(Color.FromArgb(255, 21, 21, 26)) : AdminHomeSectionsUi.Themed("PrimaryTextBrush");
         pill.Foreground = foreground;
-        if (pill.Content is StackPanel panel) foreach (var child in panel.Children) if (child is TextBlock text) text.Foreground = foreground;
+        if (pill.Content is StackPanel panel)
+            foreach (var child in panel.Children)
+            {
+                if (child is TextBlock text) text.Foreground = foreground;
+                else if (child is ContentControl { Tag: "icon" } holder) holder.Content = AdminHomeSectionsUi.Icon("house", 15, foreground);
+            }
     }
 }

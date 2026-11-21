@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
@@ -12,7 +13,7 @@ using U = SiloPlayer.Controls.AdminSettingsUi;
 
 namespace SiloPlayer.Views.Admin;
 
-/// <summary>Add row (step 1: pick a kind; step 2: preview, variant, name, More options) and Edit row in one in-place modal panel (official AddRowDialog).</summary>
+/// <summary>Add row (step 1: pick a kind; step 2: preview, variant, name, More options) and Edit row in one in-place modal panel shaped like the official StepDialog (AddRowDialog).</summary>
 public sealed partial class AdminHomeSectionsPage
 {
     private Grid? _editorOverlay;
@@ -20,8 +21,11 @@ public sealed partial class AdminHomeSectionsPage
     private StackPanel _editorFields = new() { Spacing = 16 };
     private ScrollViewer _editorScroll = new();
     // Created fresh for every editor, so no control is ever added to a second parent.
-    private TextBlock _editorTitle = U.Text("", 24), _editorNotice = U.Text("", 13), _editorFooter = U.Text("", 12, true);
-    private Button _editorSave = Action("Save", "HomeSectionSave"), _editorBack = Action("All rows", "HomeSectionBack"), _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
+    private TextBlock _editorTitle = U.Text("", 20), _editorNotice = U.Text("", 14, true), _editorFooter = U.Text("", 13, true);
+    private Button _editorSave = Action(T("web.home.addRow.save"), "HomeSectionSave"), _editorBack = Action(T("web.home.addRow.allRows"), "HomeSectionBack"), _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
+    private StackPanel _editorHeaderExtra = new(), _editorFooterStart = new() { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+    /// <summary>1 while the kind picker shows, 2 on the form.</summary>
+    private int _editorStep = 1;
     private AdminHomeSectionDraft? _draft, _original;
     private AdminHomeSectionSession? _session;
     private MonitorAuthorityLease? _editorOwner;
@@ -70,32 +74,84 @@ public sealed partial class AdminHomeSectionsPage
         // One overlay at a time: an editor still open is taken off the page, so none is left covering it.
         if (_editorOverlay != null) { _root.Children.Remove(_editorOverlay); _editorReads?.Cancel(); _editorReads?.Dispose(); _editorReads = null; }
         _dialogRevision++; _editorOwner = _controller!.State.Owner;
-        _editorTitle = U.Text("", 24); _editorNotice = U.Text("", 13); _editorFooter = U.Text("", 12, true);
-        _editorSave = Action("Save", "HomeSectionSave"); _editorBack = Action("All rows", "HomeSectionBack"); _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
+        _editorTitle = U.Text("", 20); _editorTitle.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; _editorTitle.CharacterSpacing = -20; _editorTitle.TextWrapping = TextWrapping.Wrap;
+        AutomationProperties.SetHeadingLevel(_editorTitle, Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level2);
+        _editorNotice = U.Text("", 14, true); _editorFooter = U.Text("", 13, true); _editorFooter.TextTrimming = TextTrimming.CharacterEllipsis; _editorFooter.TextWrapping = TextWrapping.NoWrap;
+        _editorSave = U.Action(T("web.home.addRow.save"), "HomeSectionSave", primary: true); _editorBack = Action(T("web.home.addRow.allRows"), "HomeSectionBack"); _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
+        _editorBack.BorderThickness = new(0); _editorBack.Height = 28; _editorBack.HorizontalAlignment = HorizontalAlignment.Left; _editorBack.Padding = new(8, 0, 8, 0); _editorBack.Margin = new(-10, 0, 0, 0);
+        _editorDelete.BorderThickness = new(0); _editorDelete.Content = AdminHomeSectionsUi.ActionContent(T("web.home.addRow.deleteRow"), "trash-2", 14, AdminHomeSectionsUi.Solid(AdminMonitorUi.Destructive)); _editorDelete.Margin = new(-12, 0, 0, 0);
+        _editorHeaderExtra = new StackPanel(); _editorFooterStart = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         _editorReads = CancellationTokenSource.CreateLinkedTokenSource(_editorOwner!.Token);
-        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear(); _collectionOptions = null; _collectionOptionsFailed = false;
+        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear(); _collectionOptions = null; _collectionOptionsFailed = false; _editorStep = 1;
         foreach (var pair in _collectionNames) if (pair.Value.Title != null) _choiceLabels[pair.Key] = pair.Value.Title;
         _editorOverlay = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(185, 0, 0, 0)), TabFocusNavigation = KeyboardNavigationMode.Cycle };
         _editorOverlay.KeyDown += async (_, args) =>
         {
             if (!args.Handled && args.Key == Windows.System.VirtualKey.Escape) { args.Handled = true; if (await CanLeaveAsync()) CloseEditor(); }
         };
-        _editor = new Border { Background = U.Brush("AppBackgroundBrush"), CornerRadius = new(20), Padding = new(24), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        // StepDialog: rounded-[20px], a header (back link, title, description, search), the body, and a footer on a tinted band.
+        _editor = new Border { Background = U.Brush("AppBackgroundBrush"), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .9), BorderThickness = new(1), CornerRadius = new(20), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetAutomationId(_editor, "HomeSectionEditor"); AutomationProperties.SetName(_editor, T(_session == null ? "web.home.addRow.addRow" : "web.home.addRow.editRow"));
-        var layout = new Grid { RowSpacing = 16, TabFocusNavigation = KeyboardNavigationMode.Cycle };
+        var layout = new Grid { TabFocusNavigation = KeyboardNavigationMode.Cycle };
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var header = new StackPanel { Spacing = 8 }; header.Children.Add(_editorTitle); header.Children.Add(_editorNotice); layout.Children.Add(header);
-        _editorFields = new() { Spacing = 16 };
-        var scroller = _editorScroll = new ScrollViewer { Content = _editorFields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var header = new StackPanel { Spacing = 6, Padding = new(28, 24, 56, 16) };
+        header.Children.Add(_editorBack); header.Children.Add(_editorTitle); header.Children.Add(_editorNotice); header.Children.Add(_editorHeaderExtra); layout.Children.Add(header);
+        _editorFields = new() { Spacing = 16, Padding = new(28, 0, 28, 24) };
+        var scroller = _editorScroll = new ScrollViewer { Content = _editorFields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         Grid.SetRow(scroller, 1); layout.Children.Add(scroller);
-        var footer = new StackPanel { Spacing = 8 };
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         var cancel = Action(AdminHomeSectionsText.T("common.cancel"), "HomeSectionCancel"); cancel.Click += async (_, _) => { if (await CanLeaveAsync()) CloseEditor(); };
         _editorSave.Click += EditorSaveClick; _editorBack.Click += EditorBackClick; _editorDelete.Click += EditorDeleteClick;
-        buttons.Children.Add(_editorBack); buttons.Children.Add(_editorDelete); buttons.Children.Add(cancel); buttons.Children.Add(_editorSave);
-        footer.Children.Add(_editorFooter); footer.Children.Add(buttons);
-        Grid.SetRow(footer, 2); layout.Children.Add(footer); _editor.Child = layout; _editorOverlay.Children.Add(_editor); _root.Children.Add(_editorOverlay);
+        buttons.Children.Add(cancel); buttons.Children.Add(_editorSave);
+        var footerLine = new Grid { ColumnSpacing = 12 }; footerLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); footerLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        footerLine.Children.Add(_editorFooterStart); Grid.SetColumn(buttons, 1); footerLine.Children.Add(buttons);
+        var footer = new Border { Child = footerLine, Padding = new(28, 16, 28, 16), BorderThickness = new(0, 1, 0, 0), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .9), Background = AdminMonitorUi.Solid(AdminMonitorUi.Surface, .55), CornerRadius = new(0, 0, 19, 19) };
+        Grid.SetRow(footer, 2); layout.Children.Add(footer);
+        var close = AdminHomeSectionsUi.GhostIcon("x", T("web.ui.close"), "HomeSectionClose", 34); close.HorizontalAlignment = HorizontalAlignment.Right; close.VerticalAlignment = VerticalAlignment.Top; close.Margin = new(0, 18, 18, 0);
+        close.Click += async (_, _) => { if (await CanLeaveAsync()) CloseEditor(); };
+        var frame = new Grid(); frame.Children.Add(layout); frame.Children.Add(close);
+        _editor.Child = frame; _editorOverlay.Children.Add(_editor); _root.Children.Add(_editorOverlay);
         _scroll.IsEnabled = false; Fit(); Render();
+    }
+
+    /// <summary>The dialog's shape: centered at 1000 (picker) or 880 (form) px from 1024px up; below that a bottom sheet, and the form takes the whole window.</summary>
+    private void FitEditor()
+    {
+        if (_editor == null) return;
+        var width = ActualWidth; var height = ActualHeight; var picker = _editorStep == 1;
+        _paneHeight = Math.Max(200, Math.Min(picker ? 860 : height, height - (_narrow ? 40 : 64)) - 210);
+        if (_narrow)
+        {
+            _editor.HorizontalAlignment = HorizontalAlignment.Stretch; _editor.Width = double.NaN;
+            if (picker) { _editor.VerticalAlignment = VerticalAlignment.Bottom; _editor.MaxHeight = Math.Max(240, height - 40); _editor.Height = Math.Max(240, height - 40); _editor.CornerRadius = new(20, 20, 0, 0); }
+            else { _editor.VerticalAlignment = VerticalAlignment.Stretch; _editor.MaxHeight = double.PositiveInfinity; _editor.Height = double.NaN; _editor.CornerRadius = new(0); }
+        }
+        else
+        {
+            _editor.HorizontalAlignment = HorizontalAlignment.Center; _editor.VerticalAlignment = VerticalAlignment.Center; _editor.CornerRadius = new(20);
+            _editor.Width = Math.Max(280, Math.Min(picker ? 1000 : 880, width - 48)); _editor.MaxHeight = Math.Max(240, height - 64);
+            _editor.Height = picker ? Math.Max(240, Math.Min(860, height - 64)) : double.NaN;
+        }
+        if (_kindPane != null) _kindPane.Height = _paneHeight;
+    }
+    private double _paneHeight = 480;
+    private ScrollViewer? _kindPane;
+
+    private void SetBack(string label) { _editorBack.Content = AdminHomeSectionsUi.ActionContent(label, "chevron-left", 13, U.Brush("SecondaryTextBrush")); AutomationProperties.SetName(_editorBack, label); }
+    private void SetSave(string label, bool plus)
+    {
+        if (AutomationProperties.GetName(_editorSave) == label) return;
+        _editorSave.Content = AdminHomeSectionsUi.ActionContent(label, plus ? "plus" : null, 14, AdminHomeSectionsUi.PrimaryInk); AutomationProperties.SetName(_editorSave, label);
+    }
+    /// <summary>The footer's left side (StepCount): two bars and "Step N of 2 · note" while adding; Delete row… while editing the form.</summary>
+    private void SetFooterStart(int step, bool editing)
+    {
+        _editorFooterStart.Children.Clear();
+        if (editing) { if (step == 2) _editorFooterStart.Children.Add(_editorDelete); return; }
+        Border Bar(bool on) => new() { Width = 18, Height = 4, CornerRadius = new(2), Background = on ? U.Brush("PrimaryTextBrush") : AdminMonitorUi.Solid(AdminMonitorUi.Border), VerticalAlignment = VerticalAlignment.Center };
+        _editorFooterStart.Children.Add(Bar(true)); _editorFooterStart.Children.Add(Bar(step == 2));
+        var count = U.Text(T("web.ui.stepDialog.stepCount", new { step = (long)step, total = 2L }), 13, true); count.TextWrapping = TextWrapping.NoWrap; _editorFooterStart.Children.Add(count);
+        if (!_phone && _editorFooter.Text.Length > 0) { _editorFooterStart.Children.Add(U.Text("·", 13, true)); _editorFooterStart.Children.Add(_editorFooter); }
     }
 
     private async void EditorBackClick(object sender, RoutedEventArgs args)
@@ -192,14 +248,15 @@ public sealed partial class AdminHomeSectionsPage
     private void RenderPicker()
     {
         if (_editor == null) return;
-        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _fieldErrors.Clear(); _editorNotice.Text = "";
+        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _editorHeaderExtra.Children.Clear(); _fieldErrors.Clear(); _editorNotice.Text = ""; _editorStep = 1; _kindPane = null;
         var changing = _session != null;
         _editorTitle.Text = changing ? T("web.home.addRow.changeTitle") : T("web.home.addRow.addTitle", new { page = PageLabel });
         _editorNotice.Text = T(changing ? "web.home.addRow.changeDescription" : "web.home.addRow.pickDescription");
         _editorFooter.Text = changing ? "" : T("web.home.addRow.footerPickStep", new { page = PageLabel });
         _editorSave.Visibility = Visibility.Collapsed; _editorDelete.Visibility = Visibility.Collapsed;
         _pickerOnly = _draft != null; _editorBack.Visibility = _draft == null ? Visibility.Collapsed : Visibility.Visible;
-        _editorBack.Content = changing ? T("web.home.addRow.editRow") : T("web.home.addRow.allRows");
+        SetBack(changing ? T("web.home.addRow.editRow") : T("web.home.addRow.allRows"));
+        SetFooterStart(1, changing); FitEditor();
         var catalog = Catalog;
         if (catalog == null)
         {
@@ -211,50 +268,130 @@ public sealed partial class AdminHomeSectionsPage
         }
         var rows = _controller?.State.Snapshot?.Rows ?? [];
         var typesOnPage = rows.Select(row => row.SectionType).ToHashSet(StringComparer.Ordinal);
-        var search = Input(T("web.home.addRow.picker.kinds"), "HomeSectionKindSearch", "", _ => { });
-        search.PlaceholderText = T("web.home.addRow.picker.kinds");
-        var cards = new StackPanel { Spacing = 10 }; string? chosen = null;
+        var search = Input(T("web.home.addRow.searchRows"), "HomeSectionKindSearch", "", _ => { });
+        search.PlaceholderText = T(_phone ? "web.home.addRow.searchRows" : "web.home.addRow.searchRowsPlaceholder"); search.Width = double.NaN; search.HorizontalAlignment = HorizontalAlignment.Stretch; search.Height = 44; search.MinHeight = 44; search.Margin = new(0, 6, 0, 0);
+        _editorHeaderExtra.Children.Add(search);
+        // The body: a rail of the groups beside the cards (chips above them on a narrow window), each side scrolling on its own.
+        var rail = new StackPanel { Spacing = 2, Padding = new(12, 16, 12, 16) }; var railChips = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new(0, 0, 0, 4) };
+        var cards = new StackPanel { Spacing = 24, Padding = _narrow ? new(0, 12, 0, 24) : new(24, 18, 24, 24) };
+        var pane = _kindPane = new ScrollViewer { Content = cards, Height = _paneHeight, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        AutomationProperties.SetAutomationId(pane, "HomeSectionKindPane");
+        var sections = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal); string? active = null;
+        FrameworkElement Card(AdminHomeRecipe recipe)
+        {
+            var type = recipe.Type; var group = AdminHomeSectionsKinds.Group(type); var label = KindLabel(type); var sentence = AdminHomeSectionsKinds.Sentence(type);
+            var host = new Grid(); host.RowDefinitions.Add(new() { Height = GridLength.Auto }); host.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            var button = U.Action(label, "HomeSectionKind_" + type); button.Height = double.NaN; button.MinHeight = 0; button.HorizontalAlignment = HorizontalAlignment.Stretch; button.VerticalAlignment = VerticalAlignment.Stretch;
+            button.CornerRadius = new(14); button.BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .9); button.Background = AdminMonitorUi.Solid(AdminMonitorUi.Surface, .6); button.Content = null;
+            AutomationProperties.SetName(button, label + ". " + sentence); Grid.SetRowSpan(button, 2);
+            button.Click += (_, _) => PickRecipe(recipe, recipe.Presets.FirstOrDefault()); host.Children.Add(button);
+            var onPage = typesOnPage.Contains(type);
+            var content = new Grid { ColumnSpacing = 14, Padding = new(14, 14, 16, 14), IsHitTestVisible = false }; content.ColumnDefinitions.Add(new() { Width = new(40) }); content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+            content.Children.Add(AdminHomeSectionsUi.KindTile(type, group));
+            var texts = new StackPanel { Spacing = 2, Margin = new(0, 0, onPage ? 96 : 0, 0) };
+            var title = U.Text(label, 14.5); title.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis; texts.Children.Add(title);
+            texts.Children.Add(U.Text(sentence, 13, true)); Grid.SetColumn(texts, 1); content.Children.Add(texts);
+            if (onPage)
+            {
+                var tag = AdminHomeSectionsUi.Tag(T("web.home.addRow.onPage", new { page = PageLabel }), AdminMonitorUi.Muted, "check"); tag.HorizontalAlignment = HorizontalAlignment.Right; tag.VerticalAlignment = VerticalAlignment.Top; tag.Margin = new(0, -2, -4, 0);
+                Grid.SetColumn(tag, 1); content.Children.Add(tag);
+            }
+            host.Children.Add(content);
+            var options = AdminHomeSectionsKinds.Family(type)?.Options ?? [];
+            if (options.Count >= 2 && !_narrow)
+            {
+                // The card's variants as chips; each opens step 2 with that variant picked.
+                var chips = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new(68, -4, 16, 14) }; Grid.SetRow(chips, 1);
+                foreach (var option in options.Take(3))
+                {
+                    var chip = U.Action(T(option.ChipKey), "HomeSectionKindVariant_" + type + "_" + option.PresetKey); chip.Height = 26; chip.MinHeight = 0; chip.CornerRadius = new(13); chip.FontSize = 13; chip.Padding = new(10, 0, 10, 0);
+                    AutomationProperties.SetName(chip, T("web.home.addRow.chips.label", new { kind = label, variant = T(option.ChipKey) }));
+                    var chosen = option; chip.Click += (_, _) => PickRecipe(recipe, recipe.Presets.FirstOrDefault(preset => preset.Key == chosen.PresetKey) ?? recipe.Presets.FirstOrDefault()); chips.Children.Add(chip);
+                }
+                if (options.Count > 3) chips.Children.Add(U.Text(T("web.home.addRow.chips.more", new { count = (long)(options.Count - 3) }), 13, true));
+                host.Children.Add(chips);
+            }
+            return host;
+        }
         void Refresh()
         {
-            cards.Children.Clear(); var query = search.Text.Trim();
-            var groups = AdminHomeSectionsKinds.PickerGroups(catalog);
+            cards.Children.Clear(); rail.Children.Clear(); railChips.Children.Clear(); sections.Clear(); var query = search.Text.Trim();
+            var groups = AdminHomeSectionsKinds.PickerGroups(catalog); var shown = new List<string>();
             foreach (var (group, entries) in groups)
             {
-                if (chosen != null && group != chosen) continue;
                 var matches = entries.Where(recipe => query == "" || KindLabel(recipe.Type).Contains(query, StringComparison.CurrentCultureIgnoreCase)
                     || AdminHomeSectionsKinds.Sentence(recipe.Type).Contains(query, StringComparison.CurrentCultureIgnoreCase)
                     || recipe.Presets.Any(preset => preset.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase))).ToArray();
                 if (matches.Length == 0) continue;
-                cards.Children.Add(U.Text(AdminHomeSectionsKinds.GroupLabel(group) + " · " + AdminHomeSectionsKinds.GroupBlurb(group), 14));
-                foreach (var recipe in matches)
+                shown.Add(group);
+                var section = new StackPanel { Spacing = 12 }; sections[group] = section;
+                var heading = new TextBlock { FontSize = 13 };
+                heading.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = AdminHomeSectionsKinds.GroupLabel(group), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = U.Brush("PrimaryTextBrush") });
+                heading.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "  " + AdminHomeSectionsKinds.GroupBlurb(group), Foreground = U.Brush("SecondaryTextBrush") });
+                AutomationProperties.SetHeadingLevel(heading, Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level3); section.Children.Add(heading);
+                var grid = new Grid { ColumnSpacing = 10, RowSpacing = 10 }; var columns = _narrow ? 1 : 2;
+                for (var c = 0; c < columns; c++) grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+                for (var i = 0; i < matches.Length; i++)
                 {
-                    var onPage = typesOnPage.Contains(recipe.Type);
-                    var card = Action(KindLabel(recipe.Type) + (onPage ? " · " + T("web.home.addRow.onPage", new { page = PageLabel }) : ""), "HomeSectionKind_" + recipe.Type);
-                    AutomationProperties.SetName(card, KindLabel(recipe.Type) + ". " + AdminHomeSectionsKinds.Sentence(recipe.Type));
-                    card.HorizontalAlignment = HorizontalAlignment.Stretch; card.HorizontalContentAlignment = HorizontalAlignment.Left;
-                    card.Click += (_, _) => PickRecipe(recipe, recipe.Presets.FirstOrDefault()); cards.Children.Add(card);
-                    cards.Children.Add(U.Text(AdminHomeSectionsKinds.Sentence(recipe.Type), 12, true));
+                    if (i % columns == 0) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+                    var card = Card(matches[i]); Grid.SetRow(card, i / columns); Grid.SetColumn(card, i % columns); grid.Children.Add(card);
+                }
+                section.Children.Add(grid); cards.Children.Add(section);
+            }
+            if (shown.Count == 0)
+            {
+                var none = new StackPanel { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Center, Padding = new(0, 48, 0, 48) };
+                none.Children.Add(U.Text(T("web.home.addRow.picker.noMatch", new { query }), 14, true));
+                var clear = Action(T("web.home.addRow.picker.clearSearch"), "HomeSectionKindClear"); clear.HorizontalAlignment = HorizontalAlignment.Center; clear.Click += (_, _) => { search.Text = ""; search.Focus(FocusState.Programmatic); };
+                none.Children.Add(clear); cards.Children.Add(none);
+            }
+            if (active == null || !shown.Contains(active)) active = shown.FirstOrDefault();
+            foreach (var group in shown)
+            {
+                var chosenGroup = group; var isActive = group == active; var tint = AdminHomeSectionsUi.GroupTint(group);
+                var count = groups.First(entry => entry.Group == group).Cards.Count;
+                var entry = U.Action(AdminHomeSectionsKinds.GroupLabel(group), "HomeSectionCategory_" + group); entry.BorderThickness = new(isActive && !_narrow ? 1 : _narrow ? 1 : 0);
+                void Go() { active = chosenGroup; Refresh(); if (sections.TryGetValue(chosenGroup, out var target)) target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 }); }
+                entry.Click += (_, _) => Go();
+                if (_narrow)
+                {
+                    entry.Height = 40; entry.CornerRadius = new(20); entry.Padding = new(16, 0, 16, 0); entry.Background = isActive ? U.Brush("PrimaryTextBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                    entry.Content = new TextBlock { Text = AdminHomeSectionsKinds.GroupLabel(group), FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = isActive ? U.Brush("AppBackgroundBrush") : U.Brush("PrimaryTextBrush") };
+                    railChips.Children.Add(entry);
+                }
+                else
+                {
+                    var line = new Grid { ColumnSpacing = 10 }; line.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                    var tile = new Border { Width = 22, Height = 22, CornerRadius = new(7), BorderThickness = new(1), BorderBrush = AdminHomeSectionsUi.Solid(tint, .25), Background = AdminHomeSectionsUi.Solid(tint, .15) };
+                    var glyph = AdminHomeSectionsUi.Icon(AdminHomeSectionsUi.GroupIconName(group), 13, AdminHomeSectionsUi.Solid(tint)); glyph.HorizontalAlignment = HorizontalAlignment.Center; glyph.VerticalAlignment = VerticalAlignment.Center; tile.Child = glyph;
+                    line.Children.Add(tile);
+                    var name = U.Text(AdminHomeSectionsKinds.GroupLabel(group), 14, !isActive); Grid.SetColumn(name, 1); line.Children.Add(name);
+                    var number = U.Text(count.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture), 12, true); Grid.SetColumn(number, 2); line.Children.Add(number);
+                    entry.Height = 40; entry.CornerRadius = new(10); entry.Padding = new(12, 0, 12, 0); entry.HorizontalAlignment = HorizontalAlignment.Stretch; entry.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    entry.Background = isActive ? U.Brush("AccentBackgroundBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent); entry.BorderBrush = U.Brush("BorderBrush"); entry.Content = line;
+                    AutomationProperties.SetName(entry, AdminHomeSectionsKinds.GroupLabel(group)); rail.Children.Add(entry);
                 }
             }
-            if (cards.Children.Count == 0)
-            {
-                cards.Children.Add(U.Text(T("web.home.addRow.picker.noMatch", new { query }), 13, true));
-                var clear = Action(T("web.home.addRow.picker.clearSearch"), "HomeSectionKindClear"); clear.Click += (_, _) => { search.Text = ""; };
-                cards.Children.Add(clear);
-            }
-        }
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var all = Action(T("web.home.addRow.collection.filterAll"), "HomeSectionCategoryAll"); all.Click += (_, _) => { chosen = null; Refresh(); }; tabs.Children.Add(all);
-        foreach (var group in AdminHomeSectionsKinds.GroupOrder)
-        {
-            var tab = Action(AdminHomeSectionsKinds.GroupLabel(group), "HomeSectionCategory_" + group);
-            tab.Click += (_, _) => { chosen = group; Refresh(); }; tabs.Children.Add(tab);
         }
         search.TextChanged += (_, _) => Refresh();
-        _editorFields.Children.Add(search); _editorFields.Children.Add(new ScrollViewer { Content = tabs, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        _editorFields.Children.Add(cards);
-        if (rows.Count > 0) _editorFields.Children.Add(U.Text(T("web.home.addRow.picker.onPageNote", new { page = PageLabel }), 12, true));
-        Refresh(); search.Focus(FocusState.Programmatic);
+        Refresh();
+        if (_narrow)
+        {
+            _editorFields.Padding = new(28, 0, 28, 0);
+            _editorFields.Children.Add(new ScrollViewer { Content = railChips, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollMode = ScrollMode.Disabled });
+            _editorFields.Children.Add(pane);
+            if (rows.Count > 0) _editorFields.Children.Add(U.Text(T("web.home.addRow.picker.onPageNote", new { page = PageLabel }), 12, true));
+        }
+        else
+        {
+            _editorFields.Padding = new(0);
+            var split = new Grid { BorderThickness = new(0, 1, 0, 0), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .9) }; split.ColumnDefinitions.Add(new() { Width = new(232) }); split.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+            var left = new StackPanel { BorderThickness = new(0, 0, 1, 0), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .9), Height = _paneHeight }; var leftScroll = new ScrollViewer { Content = rail, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            left.Children.Add(leftScroll);
+            if (rows.Count > 0) { var note = U.Text(T("web.home.addRow.picker.onPageNote", new { page = PageLabel }), 13, true); note.Margin = new(20, 4, 12, 12); rail.Children.Add(note); }
+            split.Children.Add(left); Grid.SetColumn(pane, 1); split.Children.Add(pane); _editorFields.Children.Add(split);
+        }
+        search.Focus(FocusState.Programmatic);
     }
 
     private void PickRecipe(AdminHomeRecipe recipe, AdminHomePreset? preset)
@@ -274,17 +411,19 @@ public sealed partial class AdminHomeSectionsPage
             : draft.SectionType == "custom_filter" ? T("web.home.addRow.customFilterDescription") : AdminHomeSectionsKinds.Sentence(draft.SectionType);
         var copies = !editing && onLibraryPage && !draft.Featured && draft.CanCopy && CopyTargets(draft).Count > 0;
         _editorFooter.Text = editing ? "" : T(copies ? "web.home.addRow.footerFormStepCopies" : "web.home.addRow.footerFormStep", new { page = PageLabel });
-        _editorSave.Visibility = Visibility.Visible; _editorSave.Content = T(editing ? "web.home.addRow.save" : "web.home.addRow.addRow");
+        _editorSave.Visibility = Visibility.Visible; _editorStep = 2; _editorHeaderExtra.Children.Clear(); _editorFields.Padding = new(28, 0, 28, 24);
         _editorSave.IsEnabled = _controller?.CanWrite == true; _editorDelete.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
+        SetFooterStart(2, editing); FitEditor();
         var kindLocked = AdminHomeSectionsKinds.VariantLocked(draft.SectionType, draft.Config);
-        _editorBack.Visibility = editing && kindLocked ? Visibility.Collapsed : Visibility.Visible;
-        _editorBack.Content = editing ? T("web.home.addRow.changeTitle") : T("web.home.addRow.allRows");
-        if (CanReturn) { _editorBack.Content = T("web.home.rows.links.back", new { collection = _choiceLabels.GetValueOrDefault(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config), KindLabel("collection")) }); _editorBack.Visibility = Visibility.Visible; }
+        // Editing has no back link: what the row shows is changed from its Shows line.
+        _editorBack.Visibility = editing ? Visibility.Collapsed : Visibility.Visible;
+        SetBack(editing ? T("web.home.addRow.changeTitle") : T("web.home.addRow.allRows"));
+        if (CanReturn) { SetBack(T("web.home.rows.links.back", new { collection = _choiceLabels.GetValueOrDefault(AdminHomeSectionsDraftFactory.CollectionIdOf(draft.Config), KindLabel("collection")) })); _editorBack.Visibility = Visibility.Visible; }
         var rules = draft.SectionType is "custom_filter" or "genre";
         var control = draft.SectionType is "collection" or "collection_posters" or "admin_curated_list" || rules;
         // Collection, rule and Editor's picks rows put their control above the preview; the others show the preview first.
         var previewHost = new StackPanel { Spacing = 10 };
-        if (editing) Field(_editorFields, T("web.home.rows.draft.whatItShows"), U.Text(AdminHomeSectionsKinds.ShowsLabel(draft.SectionType, draft.Config), 14));
+        if (editing) ShowsSummary(draft, kindLocked);
         if (control) BuildKindControl(draft, rules);
         _editorFields.Children.Add(previewHost);
         BuildVariant(draft, kindLocked);
@@ -299,6 +438,25 @@ public sealed partial class AdminHomeSectionsPage
     /// <summary>Gives focus to <paramref name="control"/> once it is on screen, when it is the one this build of the form asked for.</summary>
     private void Refocus(Control control, string id)
     { if (_refocus != id) return; _refocus = null; control.Loaded += (_, _) => control.Focus(FocusState.Programmatic); }
+
+    /// <summary>Edit row's Shows line: the kind's tile, its name and sentence, and Change when the kind may change.</summary>
+    private void ShowsSummary(AdminHomeSectionDraft draft, bool kindLocked)
+    {
+        var box = new StackPanel { Spacing = 8 };
+        var label = U.Text(T("web.home.addRow.shows.label"), 14); label.FontWeight = Microsoft.UI.Text.FontWeights.Medium; box.Children.Add(label);
+        var line = new Grid { ColumnSpacing = 12 }; line.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var tile = AdminHomeSectionsUi.KindTile(draft.SectionType, AdminHomeSectionsKinds.Group(draft.SectionType)); tile.Width = tile.Height = 36; tile.VerticalAlignment = VerticalAlignment.Center; line.Children.Add(tile);
+        var texts = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        var name = U.Text(AdminHomeSectionsKinds.ShowsLabel(draft.SectionType, draft.Config), 14); name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; texts.Children.Add(name);
+        texts.Children.Add(U.Text(AdminHomeSectionsKinds.Sentence(draft.SectionType).TrimEnd('.'), 13, true)); Grid.SetColumn(texts, 1); line.Children.Add(texts);
+        if (!kindLocked)
+        {
+            var change = Action(T("web.home.addRow.shows.change"), "HomeSectionChange"); AutomationProperties.SetName(change, T("web.home.addRow.shows.changeLabel", new { kind = AdminHomeSectionsKinds.Label(draft.SectionType) }));
+            change.Click += (_, _) => RenderPicker(); change.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(change, 2); line.Children.Add(change);
+        }
+        box.Children.Add(new Border { Child = line, BorderThickness = new(1), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .9), CornerRadius = new(16), Padding = new(10, 10, 12, 10) });
+        _editorFields.Children.Add(box);
+    }
 
     private void BuildVariant(AdminHomeSectionDraft draft, bool kindLocked)
     {
@@ -462,7 +620,13 @@ public sealed partial class AdminHomeSectionsPage
         }
         catch (ArgumentException) { return false; }
     }
-    private void RefreshSave() => _editorSave.IsEnabled = _controller?.CanWrite == true && _fieldErrors.Count == 0 && DraftCanSave();
+    private void RefreshSave()
+    {
+        _editorSave.IsEnabled = _controller?.CanWrite == true && _fieldErrors.Count == 0 && DraftCanSave();
+        // Add row names the pages it will reach once more than this one is picked; Save keeps its own name.
+        if (_editorStep == 2 && _draft != null)
+            SetSave(_session != null ? T("web.home.addRow.save") : _extraCopies.Count > 0 ? T("web.home.addRow.addToPages", AdminHomeSectionsText.Count(_extraCopies.Count + 1)) : T("web.home.addRow.addRow"), _session == null);
+    }
     private long _draftVersion;
     private void Dirty() { _editorDirty = true; _draftVersion++; RefreshSave(); }
     /// <summary>Sets or clears the error of one on-screen field; the message shows beside it and Save waits until every shown field is valid.</summary>
@@ -499,15 +663,18 @@ public sealed partial class AdminHomeSectionsPage
     }
     private static ToggleSwitch Toggle(string id, bool value, Action<bool> changed)
     {
-        var toggle = new ToggleSwitch { IsOn = value, OffContent = "", OnContent = "" }; AutomationProperties.SetAutomationId(toggle, id);
-        toggle.Toggled += (_, _) => changed(toggle.IsOn); return toggle;
+        // A switch re-reports its starting state once it is realized; only a different state is the admin's change.
+        var toggle = new ToggleSwitch { IsOn = value, OffContent = "", OnContent = "" }; AutomationProperties.SetAutomationId(toggle, id); var last = value;
+        toggle.Toggled += (_, _) => { if (toggle.IsOn == last) return; last = toggle.IsOn; changed(last); }; return toggle;
     }
     private static ComboBox Select(string id, IEnumerable<(string Value, string Label)> options, string selected, Action<string> changed)
     {
         var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetAutomationId(combo, id);
         foreach (var (value, label) in options) { var item = new ComboBoxItem { Tag = value, Content = label }; combo.Items.Add(item); if (value == selected) combo.SelectedItem = item; }
-        combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is ComboBoxItem { Tag: string value }) changed(value); }; return combo;
+        // The initial selection is reported once more after realization; only a different value is the admin's change.
+        var last = selected;
+        combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is ComboBoxItem { Tag: string value } && value != last) { last = value; changed(value); } }; return combo;
     }
     private static void Field(StackPanel panel, string label, FrameworkElement input)
     { var stack = new StackPanel { Spacing = 6 }; stack.Children.Add(U.Text(label, 13)); AutomationProperties.SetName(input, label); stack.Children.Add(input); panel.Children.Add(stack); }
