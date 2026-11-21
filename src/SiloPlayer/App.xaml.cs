@@ -390,6 +390,7 @@ public partial class App : Application
         services.AddAdminAutoscanSources();
         services.AddAdminAutoscanSettings();
         services.AddAdminCollections();
+        services.AddAdminHomeSections();
         services.AddAdminUserResources();
         services.AddAdminRequests();
 

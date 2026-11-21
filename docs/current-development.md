@@ -25,6 +25,39 @@ selectors `admin-autoscan-settings`, `admin-manage-foundation`, `admin-configure
 completion; the unchanged source passed on rerun. Wide, narrow and dialog captures of the Autoscan selector were produced and viewed.
 Not verified: a live Silo server, all DPIs, phone or keyboard-only walkthroughs, visual parity with the web page. The installed player was not touched.
 
+# November 20 — Manage Libraries > Home sections Beta candidate
+
+Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
+or library page, shown switches, hero banner, drag and keyboard reorder, select mode (turn on/off, delete), Restore defaults, Add to other
+libraries, Add row / Edit row (kind picker, variants, collection, rule, seasonal and per-kind fields, More options, live preview), the Next Up
+defaults card, and the Collections link contract (?page=, ?add=collection:library:<id>, ?edit=<rowId>, ?return=<path>). Branch
+t3/admin-home-sections, merged with origin/beta f36e3bd4a on 2026-11-20; the version is not changed by this branch. Official contracts, strings
+and logic were read at 217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb; scope, write contract and native adaptations: docs/parity/2026-11-17-admin-home-sections.md.
+
+Observed, under the SiloOct18Build lease, in final run sections-lead-final-r2 on commit 9a2a7f444dd52fdfb7593a5d767b5cd42d81677c: 121 focused and
+9,958 full unit cases passed with no failures or skips; the app build, self-contained publish and native host build passed; native selectors
+admin-home-sections (131 checks), admin-requests-management (37), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113)
+passed with no failures. Before the review corrections and the merge of Beta f36e3bd4a the branch passed as sections-final-r2 on b7cacefa2
+(113 focused, 9,869 full, 118 native checks). The run before the final one, sections-lead-final-r1, failed on one new fixture check that counted
+the editor's preview read as a write; only that check was corrected. Running the
+page exposed and fixed: a ListView that kept stale switch and name values after a refused or applied change (rows are now stable views that resync
+their controls), editor controls reused across editors (now created fresh per editor, which threw on the third open), a Back-to-collection link that
+resolved an unsupported /admin/collections/<id> to the Dashboard, and a NullReference in a fixture gate.
+
+An independent read-only review of the built branch confirmed the request bodies, If-Match use, no replay, unknown-outcome locking, retryable
+refusals and id escaping, and reported two P1 and three P2 defects, all fixed with tests: a ?page=<library>&add= link opened Add row against Home
+when the library list failed to load (a library link now waits for the list, and Reload follows it); in Add row a second kind pick kept the first
+pick's name, item limit and hero choice (only Edit row's Change keeps them); the Hero, Show in apps, variant and auto-rotate controls rebuilt the
+form with More options collapsed and focus on the name; value suggestions sent library_ids comma-joined instead of one key per id; and rows a
+stopped Turn on/off batch never reached were reported as failed (they are now counted apart as not attempted). The new tests were not run against
+reverted code.
+
+Not observed: live-server behavior, real device drag, Narrator/IME, all DPI, and complete visual parity (only the list capture at 1440 was inspected).
+Known differences: ComboBox page and variant choices, Move up/down and a row preview dialog in place of hover peeks and handle-arrow drag, the preview refreshes
+on request, the settings API hides server detail on a refused Next Up default ("Settings request failed."), a failed library-list read shows Home with a
+Reload banner rather than a full-page error, and Back to the collection and the addedRow
+navigation state wait for the Collections page to reach Beta.
+
 # November 20 — Manage Autoscan Sources candidate
 
 Manage > Autoscan > Sources (`/admin/autoscan`) is implemented on `t3/admin-autoscan-sources`, merged with fresh
