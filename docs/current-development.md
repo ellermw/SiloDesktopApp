@@ -1,15 +1,27 @@
-# November 17 — Admin Plugins source-only candidate
+# November 20 — Admin Plugins (Configure > Integrations > Plugins) built and verified
 
-Plugin management source is prepared on Beta `248aafd62ed65b868c0e7356926e4d83204649cd`
-in branch `t3/admin-plugin-management`, with version `1.2.1181-beta.1` unchanged.
-The registered `/admin/plugins` board and detail descendants, management API/controller,
-configuration forms, repository/upload/lifecycle workflows, source/XBF inventory and
-unit/native fixtures are authored against official `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`.
-Providers settings and Plugin Apps shell/host/navigation remain owned by other workers.
-No build, tests, native/browser/app, mutex, generated output or external mutation ran.
-The candidate is uncommitted and runtime/visual acceptance belongs to the coordinator.
-Scope, contracts, bounds, adaptations, authored tests and acceptance commands:
-[Admin Plugins handoff](parity/admin-plugins.md). No new release or installer exists.
+`t3/admin-plugin-management` completes `/admin/plugins` and `/admin/plugins/:pluginId` against official
+`3516fb41efe04d8ccf7b6d3b9df085bcb3369c9e` (the first source was written against `217ff25abc`): the board with Installed
+and Catalog tabs, searches and filters, provisioning status, the update check, the community-catalog control, install from a
+file, repositories, an installed plugin's page (status banners, schema-driven settings forms with secrets and managed
+fields, sign-in and scheduled-task bindings, update, restart, uninstall) and the catalog preview. Every write is sent once,
+against the row that was confirmed, with an unknown outcome blocking that plugin until it is read back. Plugin notification
+destinations belong to Settings > Notifications (a person's own), not to these pages; Plugin Apps are another family and
+their entries stay disabled. Beta `536e4e2d7` (1.2.1257-beta.1) was merged; no version number changes. Scope, deviations
+and limits: [docs/parity/admin-plugins.md](parity/admin-plugins.md).
+
+Running the code found real defects, each now fixed with a test or a native step: a secret field filled from a server
+value, `Build` on a disposed draft, a type-name collision with Providers' `AdminPluginCapability`, the C# 14 `field`
+keyword in property getters, in-page writes held behind the discard dialog while a form was merely dirty, and a launcher
+set after the page was drawn being ignored.
+
+Acceptance: label plugins-final-r2 (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20), stage
+final on the family's source (committed unchanged right after the run; only docs changed afterwards), build lease
+2026-11-21T01:29:12Z-01:35:01Z. Focused unit run 213/213 (filter AdminPlugin, AdminManageNavigation, AdminBackupsNavigation)
+and full unit suite 10,238/10,238 passed (0 failures, 0 skipped); app build, publish and native host built; native selectors
+admin-plugins (265 PASS, 0 FAIL), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113)
+passed; source seal and payload unchanged. Not observed: a live server, all-DPI/RTL rendering, the OS file picker, screen
+readers, Plugin Apps.
 
 # November 20 — Collections (Manage > Libraries > Collections) built and verified
 
