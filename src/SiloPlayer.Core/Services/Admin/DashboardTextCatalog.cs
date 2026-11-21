@@ -138,7 +138,7 @@ internal static class DashboardTextCatalog
         ["web.admin.dashboard.widgetCatalog.playback24h.title"] = "Playback activity",
         ["web.admin.dashboard.widgetCatalog.playbackReliability.description"] = "Sessions started, transcode starts, completion rate, profiles",
         ["web.admin.dashboard.widgetCatalog.playbackReliability.title"] = "Playback reliability",
-        ["web.admin.dashboard.widgetCatalog.recentActivity.description"] = "Feed of recently started playback sessions",
+        ["web.admin.dashboard.widgetCatalog.recentActivity.description"] = "Most recent plays across all accounts",
         ["web.admin.dashboard.widgetCatalog.recentActivity.title"] = "Recent activity",
         ["web.admin.dashboard.widgetCatalog.recentErrors.description"] = "Latest error and warning lines from the operational log",
         ["web.admin.dashboard.widgetCatalog.recentErrors.title"] = "Recent errors",

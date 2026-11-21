@@ -331,6 +331,8 @@ public sealed partial class AdminDashboardPage : Page
         var changedScanColumns = (width >= 768) != (_viewportWidth >= 768);
         _viewportWidth = width;
         _content.Spacing = width >= DashboardGridPlacement.LargeBreakpoint ? 32 : 24;
+        // e130f262d: the PageHeader's own mb-8 (32) wins over space-y-6/lg:space-y-8, so the gap under the header is 32 at both widths.
+        if (_header.Content is FrameworkElement headerView) headerView.Margin = new Thickness(0, 0, 0, 32 - _content.Spacing);
         // AdminShellPage supplies the gutters, top/bottom padding, 240px sidebar offset and 1560px frame.
         var mode = DashboardGridPlacement.ModeFor(width);
         _grid.SetMode(mode);
@@ -447,6 +449,7 @@ public sealed partial class AdminDashboardPage : Page
         _headerGroup.Children.Add(customize);
         _headerActions = Row(8, _headerGroup, scanAll);
         var header = new LogsPageHeader(DashboardText.T("web.admin.dashboard.page.title"), DashboardText.T("web.admin.dashboard.page.subtitle"), _headerActions);
+        header.Margin = new Thickness(0, 0, 0, Math.Max(0, 32 - _content.Spacing));
         _header.Content = header;
     }
 
@@ -583,6 +586,8 @@ public sealed partial class AdminDashboardPage : Page
                     Mode = () => _grid.Mode,
                     ViewportWidth = () => _viewportWidth,
                     Navigate = NavigateFor,
+                    OpenHref = OpenHrefFor,
+                    OpenItem = OpenItemFor,
                     SessionActions = SessionActionsFactory ?? BuildSessionActions,
                     ResolveImage = url => string.IsNullOrWhiteSpace(url) ? null : _client?.ResolveServerUrl(url),
                     Root = () => XamlRoot,
@@ -611,6 +616,16 @@ public sealed partial class AdminDashboardPage : Page
         AdminShellPage.Open(new AdminRouteRequest(destination == DashboardDestination.Logs ? AdminRoute.ServerLog : AdminRoute.Activity));
     };
 
+
+    /// <summary>Other admin pages open through the shell, only under the current lease and only when the page is registered natively.</summary>
+    private Action? OpenHrefFor(string href) => AdminShellPage.CanOpenHref(href)
+        ? () => { if (_lease is { IsCurrent: true }) AdminShellPage.TryOpenHref(href); }
+        : null;
+
+    /// <summary>A catalog item opens in the app's detail page, as Activity's title link does.</summary>
+    private Action? OpenItemFor(string id) => App.Services.GetService(typeof(NavigationService)) is NavigationService nav
+        ? () => { if (_lease is { IsCurrent: true }) nav.Navigate<ItemDetailPage>(id); }
+        : null;
 
     private FrameworkElement? BuildSessionActions(DashboardSession session)
     {

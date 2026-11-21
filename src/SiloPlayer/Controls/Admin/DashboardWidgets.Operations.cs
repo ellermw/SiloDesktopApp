@@ -389,8 +389,17 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         info.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        // The title links to the catalog item in the WebUI; that is outside Monitor, so it is text.
-        info.Children.Add(Text(title, 14, Bold, trim: true));
+        // The title links to the catalog item (/item/{media_item_id}, hover:text-primary hover:underline, e130f262d #4561/#4626) when the row names one.
+        var titleText = Text(title, 14, Bold, trim: true);
+        FrameworkElement titleView = titleText;
+        if (!string.IsNullOrEmpty(session.MediaItemId) && C.OpenItem?.Invoke(session.MediaItemId) is { } openItem)
+        {
+            var titleLink = SiloPlayer.Controls.AdminMonitorUi.LinkButton(titleText, title, Foreground);
+            titleLink.HorizontalAlignment = HorizontalAlignment.Left;
+            titleLink.Click += (_, _) => openItem();
+            titleView = titleLink;
+        }
+        info.Children.Add(titleView);
         // Same subtitle rule as Activity, including no line for unknown media types.
         var subtitle = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
         if (subtitle != null)
@@ -471,7 +480,7 @@ internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : Dashboard
         header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.Children.Add(title);
-        var manage = Link(T("web.admin.dashboard.widgets.transcodeNodes.manage"), null);
+        var manage = Link(T("web.admin.dashboard.widgets.transcodeNodes.manage"), "/admin/nodes");
         manage.HorizontalAlignment = HorizontalAlignment.Right;
         Grid.SetColumn(manage, 1);
         header.Children.Add(manage);
@@ -728,8 +737,7 @@ internal sealed class ScannerWidget(DashboardWidgetContext c) : DashboardWidgetV
         var status = statusState.As<DashboardAutoscanStatus>();
         var names = (Store.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>() ?? []).ToDictionary(l => l.Id, l => l.Name);
         var groups = DashboardPresentation.GroupActiveScans(Store.ActiveScans);
-        // Autoscan history opens a page outside the Monitor scope: plain text.
-        var header = Header(T("web.admin.dashboard.widgets.scanner.title"), Link(T("web.admin.dashboard.widgets.scanner.activity"), null));
+        var header = Header(T("web.admin.dashboard.widgets.scanner.title"), Link(T("web.admin.dashboard.widgets.scanner.activity"), "/admin/autoscan"));
         FrameworkElement body;
         if (statusState.IsLoading && groups.Count == 0) body = Skeleton(92, 10);
         else if (statusState.Error != null && groups.Count == 0) body = SectionError(T("web.admin.dashboard.widgets.scanner.loadFailed"));
@@ -795,8 +803,7 @@ internal sealed class LibrariesWidget(DashboardWidgetContext c) : DashboardWidge
     {
         var state = Store.Get(DashboardDataStore.Libraries);
         var libraries = state.As<IReadOnlyList<DashboardLibrary>>() ?? [];
-        // Library management is outside the Monitor scope: "Manage ›" is plain text.
-        var header = Header(T("web.admin.dashboard.widgets.libraries.title"), Link(T("web.admin.dashboard.widgets.libraries.manage"), null));
+        var header = Header(T("web.admin.dashboard.widgets.libraries.title"), Link(T("web.admin.dashboard.widgets.libraries.manage"), "/admin/libraries"));
         FrameworkElement body;
         if (state.IsLoading) body = Column(8, Skeleton(60, 10), Skeleton(60, 10), Skeleton(60, 10));
         else if (state.Error != null) body = SectionError(T("web.admin.dashboard.widgets.libraries.loadFailed"));
@@ -948,7 +955,7 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
     protected override FrameworkElement Render()
     {
         var state = Store.Get(DashboardDataStore.Users);
-        var header = Header(T("web.admin.dashboard.widgets.users.title"), Link(T("web.admin.dashboard.widgets.users.manage"), null));
+        var header = Header(T("web.admin.dashboard.widgets.users.title"), Link(T("web.admin.dashboard.widgets.users.manage"), "/admin/users"));
         FrameworkElement body;
         var users = DashboardPresentation.SortUsersByLastActive(state.As<IReadOnlyList<DashboardUser>>() ?? []);
         if (state.IsLoading) body = UserSkeletons();
@@ -1003,7 +1010,7 @@ internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTa
         var state = Store.Get(DashboardDataStore.ScanHistory);
         var names = (Store.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>() ?? []).ToDictionary(l => l.Id, l => l.Name);
         var scans = state.As<DashboardScanHistoryPage>()?.Items ?? [];
-        var header = Header(T("web.admin.dashboard.widgets.scanActivity.title"), Link(T("web.admin.dashboard.widgets.scanActivity.allScans"), null));
+        var header = Header(T("web.admin.dashboard.widgets.scanActivity.title"), Link(T("web.admin.dashboard.widgets.scanActivity.allScans"), "/admin/autoscan"));
         FrameworkElement body;
         if (state.IsLoading) body = UserSkeletons();
         else if (state.Error != null) body = SectionError(T("web.admin.dashboard.widgets.scanActivity.loadFailed"));
@@ -1147,6 +1154,15 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
             FrameworkElement part = run.Tag == "pill"
                 ? DashboardSessionBadges.ProfilePill(runText)
                 : Text(runText, 12, run.Tag is "user" or "link" ? Semibold : null, run.Tag is "user" or "link" ? Foreground : MutedForeground, lineHeight: 19.5);
+            // The "link" chunk (the title) opens that account's history (e130f262d: /admin/history?user_id=…&profile_id=…) whenever History is registered here.
+            if (run.Tag == "link" && part is TextBlock linkText
+                && C.OpenHref?.Invoke("/admin/history?user_id=" + Uri.EscapeDataString(session.UserId)
+                    + (string.IsNullOrEmpty(session.ProfileId) ? "" : "&profile_id=" + Uri.EscapeDataString(session.ProfileId))) is { } openHistory)
+            {
+                var historyLink = SiloPlayer.Controls.AdminMonitorUi.LinkButton(linkText, runText, Foreground);
+                historyLink.Click += (_, _) => openHistory();
+                part = historyLink;
+            }
             // Inline whitespace is measured explicitly: TextBlock discards trailing spaces.
             if (sentence.Children.Count > 0 && (pendingSpace || char.IsWhiteSpace(run.Text[0])))
                 part.Margin = new Thickness(3, 0, 0, 0);

@@ -168,8 +168,8 @@ internal static partial class AdminMonitorShellNativeFixture
             if (mode is "" or "activity") await ActivityAsync(window, server, store);
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
             if (mode is "" or "activity-scroll") await ActivityScrollAsync(window, server, store);
-            if (mode == "activity-correction") await ActivityCorrectionAsync(window, server, store);
-            if (mode == "shell-branding") await ShellBrandingAsync(window, server);
+            if (mode is "" or "activity-correction") await ActivityCorrectionAsync(window, server, store);
+            if (mode is "" or "shell-branding") await ShellBrandingAsync(window, server);
         }
         finally
         {
@@ -264,15 +264,18 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(Shows(AdminText.T("web.admin.activity.page.stale")) && page.RenderedSessionIds.Count == 3,
             "failed refresh labels retained Activity rows as stale");
         Check(Shows(store.Current.SessionsError!), "Activity displays the session read error");
+        await CaptureFourWidthsAsync(window, frame, "admin-activity-stale");
         server.SessionsFail = false;
         server.SessionCount = 0;
         await store.RefreshSessionsAsync();
         await Until(() => Shows(AdminText.T("web.admin.activity.page.noStreams")));
+        await CaptureFourWidthsAsync(window, frame, "admin-activity-empty");
         server.SessionsFail = true;
         await store.RefreshSessionsAsync();
         await Until(() => Shows(AdminText.T("web.admin.activity.page.loadFailed")));
         Check(Shows(AdminText.T("web.admin.activity.page.loadFailed")) && !Shows(AdminText.T("web.admin.activity.page.noStreams")),
             "failed Activity read without rows shows an error instead of No active streams");
+        await CaptureFourWidthsAsync(window, frame, "admin-activity-error");
         server.SessionsFail = false;
         server.SessionCount = 3;
         var retry = Descendants(table).OfType<Button>().Single(button => AutomationProperties.GetName(button) == AdminText.T("common.retry"));
@@ -281,7 +284,7 @@ internal static partial class AdminMonitorShellNativeFixture
         await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.loadFailed")));
         Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
 
-        foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900) })
+        foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) })
 
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
@@ -306,7 +309,7 @@ internal static partial class AdminMonitorShellNativeFixture
         var rowState = rowStates[firstSession.SessionId]!;
         rowState.GetType().GetField("Details")!.SetValue(rowState, true);
         typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
-        foreach (var width in new[] { 1440, 1280, 1024, 1023, 800 })
+        foreach (var width in new[] { 1440, 1280, 1024, 1023, 800, 560 })
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
             await Task.Delay(150);
@@ -652,6 +655,19 @@ internal static partial class AdminMonitorShellNativeFixture
 
     private static void Invoke(Button button) => ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(button).GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
 
+
+    /// <summary>The four widths the parity record compares (1440, 1024, 800, 560 device-independent pixels), then back to 1440.</summary>
+    private static async Task CaptureFourWidthsAsync(Window window, FrameworkElement element, string name)
+    {
+        foreach (var width in new[] { 1440, 1024, 800, 560 })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
+            await Task.Delay(300);
+            await CaptureAsync(element, $"{name}-{width}.png");
+        }
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+        await Task.Delay(300);
+    }
 
     private static async Task CaptureAsync(FrameworkElement element, string name)
     {

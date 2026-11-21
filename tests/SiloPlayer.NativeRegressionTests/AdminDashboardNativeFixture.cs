@@ -175,7 +175,7 @@ internal static partial class AdminDashboardNativeFixture
                 $$$$"""{"t":"{{{{Iso(now.AddMinutes(i - count + 1))}}}}","streams":{{{{i % 5}}}},"direct":1,"remux":0,"transcode":{{{{i % 3}}}},"egress_kbps":{{{{12_000 + i * 300}}}},"download_egress_kbps":{{{{i % 4 * 500}}}},"egress_by_source":{"api":4000,"node:2":{{{{6000 + i * 200}}}}}}"""));
             return path switch
             {
-                "/api/v2/admin/dashboard/capabilities" => """{"allowed":true,"state":"available","timeseries":true,"playback_activity":true,"top_activity":true,"health":true,"watch_providers":true,"downloads_stats":true,"egress_totals":true,"egress_by_source":true,"api_clients":true,"log_level_list":true}""",
+                "/api/v2/admin/dashboard/capabilities" => """{"allowed":true,"state":"available","timeseries":true,"playback_activity":true,"top_activity":true,"health":true,"watch_providers":true,"downloads_stats":true,"egress_totals":true,"egress_by_source":true,"api_clients":true,"log_level_list":true,"streams_by_method":""" + (IncludeMethodSplit ? "true" : "false") + "}",
                 "/api/v2/admin/dashboard/layout" => PersistLayout && StoredLayout != null
                     ? "{\"layout\":" + StoredLayout + ",\"updated_at\":\"2026-11-14T11:00:00Z\"}"
                     : """{"layout":null,"updated_at":null}""",
@@ -246,6 +246,7 @@ internal static partial class AdminDashboardNativeFixture
             {
                 await DashboardAsync(window, server, auth, realtime);
                 await CurrentUiAsync(window, server, cache);
+                await ConcurrentCorrectionAsync(window, server);
             }
             if (Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_STATES") == "1")
                 await CaptureQueryStatesAsync(window, server, auth);
@@ -326,7 +327,7 @@ internal static partial class AdminDashboardNativeFixture
         apiView.GetType().GetMethod("SetRange")!.Invoke(apiView, [DashboardWidgetRange.Day]);
         await Task.Delay(150);
         var resizeStep = 0;
-        foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (899, 900), (900, 900), (899, 900), (1023, 768), (800, 900), (1024, 768), (1440, 900) })
+        foreach (var (width, height) in new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (560, 900), (899, 900), (900, 900), (899, 900), (1023, 768), (800, 900), (1024, 768), (1440, 900) })
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
             page.ViewportWidthOverride = width;

@@ -612,8 +612,15 @@ public sealed partial class AdminShellPage : Page
         _narrowTitle.FontWeight = FontWeights.ExtraBold;
         _narrowTitle.Foreground = A.Solid(A.Foreground);
         _narrowTitle.TextTrimming = TextTrimming.CharacterEllipsis;
-        _narrowTitle.Margin = new Thickness(0, 4, 0, 0);
-        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { A.Eyebrow(AdminText.T("web.admin.shell.mobileHeader.eyebrow"), A.Muted, 160), _narrowTitle } };
+        // e130f262d (#4674, #4691): the title is leading-normal with no top margin ("truncate clips to the line box: a tighter leading cuts off descenders and
+        // accents"), and the 10px leading-none eyebrow ends in an ellipsis instead of being cut when a long word overflows the column.
+        _narrowTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        _narrowTitle.LineHeight = 22.5;
+        var eyebrow = A.Eyebrow(AdminText.T("web.admin.shell.mobileHeader.eyebrow"), A.Muted, 160);
+        eyebrow.TextTrimming = TextTrimming.CharacterEllipsis;
+        eyebrow.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        eyebrow.LineHeight = 10;
+        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { eyebrow, _narrowTitle } };
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { menu, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { tile, titles } } } };
         var search = SquareButton("search", AdminText.T("web.admin.shell.search.label"), bordered: true);
         search.Click += (_, _) => _ = ShowSearchAsync();

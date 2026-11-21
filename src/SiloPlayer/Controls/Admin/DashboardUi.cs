@@ -342,7 +342,8 @@ internal static class DashboardUi
     }
 
     /// <summary>A chrome-less text button (the WebUI's muted "Manage ›" links); hover tints toward primary.</summary>
-    public static Button TextLink(string text, double size, RoutedEventHandler onClick, Color? color = null)
+    /// <param name="underlineOnHover">The official <c>hover:underline</c> a list's item links add to <c>hover:text-primary</c> (e130f262d #4650), shown on pointer hover and keyboard focus.</param>
+    public static Button TextLink(string text, double size, RoutedEventHandler onClick, Color? color = null, bool underlineOnHover = false)
     {
         var button = new Button
         {
@@ -356,6 +357,14 @@ internal static class DashboardUi
         Paint(button, Colors.Transparent, Colors.Transparent, Colors.Transparent, color ?? MutedForeground, Primary, Colors.Transparent, Colors.Transparent);
         button.Click += onClick;
         AutomationProperties.SetName(button, text);
+        if (underlineOnHover && button.Content is TextBlock label)
+        {
+            void Underline(bool on) => label.TextDecorations = on ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None;
+            button.PointerEntered += (_, _) => Underline(true);
+            button.PointerExited += (_, _) => Underline(button.FocusState == FocusState.Keyboard);
+            button.GotFocus += (_, _) => { if (button.FocusState == FocusState.Keyboard) Underline(true); };
+            button.LostFocus += (_, _) => Underline(false);
+        }
         return button;
     }
 
