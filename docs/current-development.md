@@ -26,6 +26,8 @@ envfix-final-r2 failed the Playback group (the device list sits in a closed Adva
 "Meilisearch rows are shown while it is selected" (a timing race in the fixture, now a wait; a rerun, envfix-known-search-r2, failed only the three link checks); Storage failed the two token-default blur checks, its teardown barrier and the flow
 failure that accompanies it (also seen on Beta, betarepair2-hn-r1); Downloads stopped at "uncheck download.server_bandwidth_mbps". The new Downloads environment checks still did not run. Not run: a real server, a screen reader, an installer.
 
+Combined check by the lead (the native groups of Downloads, Search and Storage fail on Beta until #231 merges, so they cannot pass on this branch alone): on a local-only merge of this branch with the #231 branch (`tmp/envmanaged-with-231`, not pushed), run `envcombined3` (`-Stage host-native` on the app published from that merge): `admin-manage-download-settings` 430 PASS / 0 FAIL, `admin-configure-search` 59 / 0, `admin-configure-storage` 86 / 0; source and payload seals verified. The first combined run (`envcombined-r1`) reached, for the first time, a Downloads step from #179 that expected a failed status re-read to unlock a managed row; it was corrected to assert the kept lock (`9b6ac7ca3`, fixture only).
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
