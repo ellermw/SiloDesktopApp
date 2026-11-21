@@ -7,7 +7,7 @@ Official pin: `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`. The candidate remains
 uncommitted in `t3/admin-plugin-apps`. Unit/native regressions and capture steps
 are authored but **unrun**; this source-only lane launched no runtime and holds
 no build mutex. No release, installed-player/settings or pipeline PR action.
-See [scope, host boundary, limits and acceptance commands](parity/admin-plugin-apps-2026-11-17.md).
+See [scope, host boundary, limits and acceptance commands](parity/admin-plugin-apps.md).
 Plugins management and Providers are separate; named third-party plugin
 compatibility and visual parity are not certified.
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)

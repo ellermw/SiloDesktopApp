@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), the Library settings page (Manage > Libraries > Library settings), the complete Requests Queue/Discover/Settings page, and the Configure catalog with the General, Email, Notifications, Providers, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, the Sign-in, API Keys and Policy pages, and Admin Manage Users account, profile, invitation and invite-code workflows, and the Manage > Users resource pages Access Groups, Devices and History Import",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), the Library settings page (Manage > Libraries > Library settings), the complete Requests Queue/Discover/Settings page, and the Configure catalog with the General, Email, Notifications, Providers, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, the Sign-in, API Keys and Policy pages, and Admin Manage Users account, profile, invitation and invite-code workflows, and the Manage > Users resource pages Access Groups, Devices and History Import, and the Admin Plugin Apps navigation group with its isolated plugin page host",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminCollectionsApi.cs",
     "src/SiloPlayer.Core/Api/AdminCollectionsApi.Delete.cs",
@@ -56,6 +56,7 @@
     "src/SiloPlayer.Core/Api/AdminMonitorApi.cs",
     "src/SiloPlayer.Core/Api/AdminPlaybackHistoryApi.cs",
     "src/SiloPlayer.Core/Api/AdminPluginAppsApi.cs",
+    "src/SiloPlayer.Core/Api/SiloApiClient.AdminPluginApps.cs",
     "src/SiloPlayer.Core/Api/AdminProvidersApi.cs",
     "src/SiloPlayer.Core/Api/AdminServerSettingsApi.cs",
     "src/SiloPlayer.Core/Api/AdminLibrarySettingsApi.cs",
@@ -128,7 +129,8 @@
     "src/SiloPlayer.Core/Services/Admin/ServerActivityPresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/ServerActivityStore.cs",
     "src/SiloPlayer.Core/Services/AdminMonitorAuthority.cs",
-    "src/SiloPlayer.Core/Services/AdminPluginContentSession.cs",
+    "src/SiloPlayer.Core/Services/AdminPluginContentScope.cs",
+    "src/SiloPlayer.Core/Services/PluginContentPaths.cs",
     "src/SiloPlayer/Controls/Admin/DashboardCharts.cs",
     "src/SiloPlayer/Controls/Admin/DashboardGrid.cs",
     "src/SiloPlayer/Controls/Admin/DashboardFlowLayout.cs",
