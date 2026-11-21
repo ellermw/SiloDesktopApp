@@ -29,7 +29,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public string Value(string key) { lock (Gate) return _form?.Get(key) ?? ""; }
     public string SavedValue(string key) { lock (Gate) return _form?.GetPersisted(key) ?? ""; }
     public bool Dirty(string key) { lock (Gate) return _form?.DirtyKeys.Contains(key) == true; }
-    public bool AutoProvision(AdminSignInProvider provider) { lock (Gate) return _auto.GetValueOrDefault(provider.Id, provider.Binding?.AutoProvision ?? true); }
+    public bool AutoProvision(AdminSignInProvider provider) { lock (Gate) return provider.BindingFieldManaged("auto_provision") ? provider.Binding?.AutoProvision ?? true : _auto.GetValueOrDefault(provider.Id, provider.Binding?.AutoProvision ?? true); }
     public bool ProviderDirty(AdminSignInProvider provider) { lock (Gate) return _auto.ContainsKey(provider.Id) || _drafts.Keys.Any(k => k.Provider == provider.Id); }
     public bool FieldDirty(AdminSignInProvider provider, string schema, string field) { lock (Gate) return _drafts.TryGetValue((provider.Id, schema), out var draft) && (draft.Value.ContainsKey(field) || draft.ClearSecrets.Contains(field)); }
     public JsonObject Values(AdminSignInProvider provider, AdminSignInSchema schema)
@@ -97,7 +97,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     {
         lock (Gate)
         {
-            if (!Current || Busy || ReviewRequired || !Providers.Contains(p) || schema.AdminForm?.Fields.Contains(field) != true) return;
+            if (!Current || Busy || ReviewRequired || !Providers.Contains(p) || schema.AdminForm?.Fields.Contains(field) != true || p.ConfigFieldManaged(schema.Key, field.Key)) return;
             try
             {
                 var value = AdminSignInSchemaRules.Convert(schema, field, text); var key = (p.Id, schema.Key);
@@ -116,7 +116,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     {
         lock (Gate)
         {
-            if (!Current || Busy || ReviewRequired || !field.IsSecret || !Providers.Contains(p)) return;
+            if (!Current || Busy || ReviewRequired || !field.IsSecret || !Providers.Contains(p) || p.ConfigFieldManaged(schema.Key, field.Key)) return;
             var key = (p.Id, schema.Key); if (!_drafts.TryGetValue(key, out var draft)) _drafts[key] = draft = new() { Key = schema.Key };
             draft.Value.Remove(field.Key);
             if (!draft.ClearSecrets.Remove(field.Key)) draft.ClearSecrets.Add(field.Key);
@@ -126,7 +126,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     }
     public void SetAutoProvision(AdminSignInProvider p, bool value)
     {
-        lock (Gate) { if (!Current || Busy || ReviewRequired || !Providers.Contains(p)) return; if (value == (p.Binding?.AutoProvision ?? true)) _auto.Remove(p.Id); else _auto[p.Id] = value; } Notify();
+        lock (Gate) { if (!Current || Busy || ReviewRequired || !Providers.Contains(p) || p.BindingFieldManaged("auto_provision")) return; if (value == (p.Binding?.AutoProvision ?? true)) _auto.Remove(p.Id); else _auto[p.Id] = value; } Notify();
     }
     public void Discard()
     {
@@ -142,7 +142,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         if (!confirmed || _form == null || DirtyCount == 0) return;
         // Freeze the full intent before awaiting. Inputs are disabled until completion.
         var configs = _drafts.Select(pair => (pair.Key.Provider, Schema: pair.Key.Schema, Write: AdminSignInSchemaRules.Build(Providers.Single(p => p.Id == pair.Key.Provider), Providers.Single(p => p.Id == pair.Key.Provider).GlobalConfigSchema.Single(s => s.Key == pair.Key.Schema), Values(Providers.Single(p => p.Id == pair.Key.Provider), Providers.Single(p => p.Id == pair.Key.Provider).GlobalConfigSchema.Single(s => s.Key == pair.Key.Schema)), pair.Value.ClearSecrets))).ToArray();
-        var autos = _auto.ToArray();
+        var autos = _auto.Where(pair => Providers.FirstOrDefault(p => p.Id == pair.Key)?.BindingFieldManaged("auto_provision") != true).ToArray();
         try
         {
             if (_form.DirtyKeys.Contains(Local) && _form.Get(Local) == "false")
@@ -191,6 +191,20 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         // Everything is already persisted: a failed re-read must not turn it into a reported failure.
         await RefreshProvidersAsync(owner, "Sign-in settings saved.", configs.Length > 0 || autos.Length > 0).ConfigureAwait(false);
     }, write: true);
+    /// <summary>The deployment can claim a field while an edit to it is staged: that edit is dropped at once and releasing the field later does not bring it back (official dropManagedEdits). Called under the controller's publish.</summary>
+    private void PruneManagedDrafts()
+    {
+        foreach (var provider in Providers)
+        {
+            if (provider.BindingFieldManaged("auto_provision")) _auto.Remove(provider.Id);
+            foreach (var key in _drafts.Keys.Where(k => k.Provider == provider.Id).ToArray())
+            {
+                var managed = provider.ManagedConfigFields(key.Schema); var draft = _drafts[key];
+                foreach (var field in managed) { draft.Value.Remove(field); draft.ClearSecrets.Remove(field); }
+                if (draft.Value.Count == 0 && draft.ClearSecrets.Count == 0) _drafts.Remove(key);
+            }
+        }
+    }
     /// <summary>
     /// Re-reads the providers after a write that already succeeded. A failed read keeps the success message and never reports the write as failed.
     /// When that write changed provider state the list is then unknown, as after an open that could not load it: no pre-write value is shown or
@@ -203,7 +217,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             var refreshed = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
             Publish(owner, () =>
             {
-                Providers = refreshed; Message = done;
+                Providers = refreshed; Message = done; PruneManagedDrafts();
                 if (Capabilities is { Available: true }) { ProvidersKnown = true; ProviderError = null; }
             });
         }
@@ -226,6 +240,10 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         if (!confirmed || Capabilities is not { Available: true, LiveProviderChanges: true } || !Providers.Contains(captured)) return;
         var providers = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
         var provider = providers.SingleOrDefault(p => p.Id == captured.Id && p.Auth?.Id == captured.Auth?.Id) ?? throw new AdminAccessException("not_found", 404);
+        // The deployment owns this field: nothing is sent (the server would refuse a changed value with 422 managed_by_environment). Judged on the fresh read, not the page's older copy.
+        var changesAuto = autoProvision is { } wanted && wanted != (provider.Binding?.AutoProvision ?? true);
+        if (changesAuto && provider.BindingFieldManaged("auto_provision") || !changesAuto && enabled != (provider.Binding?.Enabled == true) && provider.BindingFieldManaged("enabled"))
+            throw new AdminAccessException("managed_by_environment", 422);
         if (enabled && (!provider.Enabled || ProviderDirty(captured) || !provider.Network && (AdminSignInSchemaRules.Missing(provider).Count > 0 || providers.Any(p => !p.Network && p.Id != provider.Id && p.Enabled && p.Binding?.Enabled == true)))) throw new ArgumentException("Save setup and turn off the other provider first.");
         await api.SaveBindingAsync(owner, provider.Id, Binding(provider, enabled, autoProvision)).ConfigureAwait(false);
         await RefreshProvidersAsync(owner, enabled ? "Sign-in provider turned on." : "Sign-in provider turned off.", providersChanged: true).ConfigureAwait(false);
@@ -235,7 +253,8 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         if (!Providers.Contains(captured) || !captured.Enabled || Capabilities?.ConnectionTest != true || captured.Auth?.Metadata["connection_test"]?.ToString() != "true") return;
         var staged = _drafts.Where(d => d.Key.Provider == captured.Id).Select(d => AdminSignInSchemaRules.Build(captured, captured.GlobalConfigSchema.Single(s => s.Key == d.Key.Schema), Values(captured, captured.GlobalConfigSchema.Single(s => s.Key == d.Key.Schema)), d.Value.ClearSecrets)).ToList();
         var testRef = captured.Auth.Metadata["connection_test_username_field"]?.ToString()?.Split('.', 2);
-        if (testRef is { Length: 2 } && username != null)
+        // A test-only look-up user the deployment owns is the saved one: the page shows it read-only and sends nothing for it.
+        if (testRef is { Length: 2 } && username != null && !captured.ConfigFieldManaged(testRef[0], testRef[1]))
         {
             var schema = captured.GlobalConfigSchema.Single(s => s.Key == testRef[0]);
             var entry = staged.FirstOrDefault(s => s.Key == schema.Key);
@@ -252,6 +271,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     private static AdminSignInBinding Binding(AdminSignInProvider p, bool? enabled = null, bool? auto = null) => new()
     {
         CapabilityId = p.Auth!.Id, Enabled = enabled ?? p.Binding?.Enabled ?? false, AutoProvision = auto ?? p.Binding?.AutoProvision ?? true,
-        DefaultLogin = !p.Network && (p.Binding?.DefaultLogin ?? false), DisplayOrder = p.Binding?.DisplayOrder ?? 1,
+        // The saved row is written back as it is (official signInBindingWrite): a field the deployment owns is never given a value of the admin's.
+        DefaultLogin = p.Binding?.DefaultLogin ?? false, DisplayOrder = p.Binding?.DisplayOrder ?? 1,
     };
 }

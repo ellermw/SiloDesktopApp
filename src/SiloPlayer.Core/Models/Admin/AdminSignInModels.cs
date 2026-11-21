@@ -20,15 +20,36 @@ public sealed class AdminSignInProvider
     public List<AdminSignInBinding> AuthBindings { get; set; } = [];
     public List<AdminSignInSchema> GlobalConfigSchema { get; set; } = [];
     public List<AdminSignInConfig> GlobalConfigs { get; set; } = [];
+    /// <summary>Present only when the deployment provisions this installation (official <c>env_managed</c>); an older server never sends it, which means nothing is managed.</summary>
+    public AdminSignInOwnership? EnvManaged { get; set; }
+    /// <summary>Official <c>presentation</c>: only its display name is read.</summary>
+    public AdminSignInPresentation? Presentation { get; set; }
     [JsonIgnore] public AdminSignInCapability? Auth => Capabilities.FirstOrDefault(c => c.Type == "auth_provider.v1");
     [JsonIgnore] public AdminSignInBinding? Binding => AuthBindings.FirstOrDefault(b => b.CapabilityId == Auth?.Id);
     [JsonIgnore] public bool Network => Auth?.SignInMode == "network";
-    /// <summary>The label people know the provider by: the saved display_name when it is a non-blank string (any other saved shape is ignored, as on the official page), else the capability's name, else the plugin id.</summary>
-    [JsonIgnore] public string Name => SavedDisplayName() ?? (string.IsNullOrWhiteSpace(Auth?.DisplayName) ? PluginId : Auth!.DisplayName);
+    /// <summary>Whether the deployment owns this binding field (official <c>authBindingFieldIsManaged</c>: it reads the capability's list, which can name a field before any binding row exists).</summary>
+    public bool BindingFieldManaged(string field) => Auth?.EnvManaged.Contains(field) == true;
+    /// <summary>The top-level fields of one global configuration entry the deployment owns (official <c>env_managed.config_fields[key]</c>).</summary>
+    public IReadOnlyList<string> ManagedConfigFields(string schemaKey) => EnvManaged?.ConfigFields.TryGetValue(schemaKey, out var fields) == true ? fields : [];
+    public bool ConfigFieldManaged(string schemaKey, string field) => ManagedConfigFields(schemaKey).Contains(field);
+    /// <summary>The name an admin knows the plugin by (official <c>authProviderName</c>): presentation name, else the capability's name, else the plugin id.</summary>
+    [JsonIgnore] public string PluginName => FirstText(Presentation?.DisplayName, Auth?.DisplayName) ?? PluginId;
+    /// <summary>The label people know the provider by (official <c>authProviderLabel</c>): the saved display_name when it is a non-blank string (any other saved shape is ignored), else the capability's declared metadata display_name, else the capability's name, else <see cref="PluginName"/>.</summary>
+    [JsonIgnore] public string Name => SavedDisplayName() ?? FirstText(Auth?.Metadata["display_name"] is JsonValue declared && declared.TryGetValue<string>(out var label) ? label : null, Auth?.DisplayName) ?? PluginName;
+    private static string? FirstText(params string?[] candidates) => candidates.Select(c => c?.Trim()).FirstOrDefault(c => !string.IsNullOrEmpty(c));
     private string? SavedDisplayName() =>
         GlobalConfigs.FirstOrDefault(c => c.Key == "display_name")?.Value["value"] is JsonValue saved && saved.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text) ? text.Trim() : null;
     public override string ToString() => nameof(AdminSignInProvider);
 }
+/// <summary>Official <c>AdminPluginProvisionOwnership</c>. Dictionaries and lists a server sends as null read as empty.</summary>
+public sealed class AdminSignInOwnership
+{
+    private Dictionary<string, List<string>> _config = [], _binding = [];
+    public Dictionary<string, List<string>> ConfigFields { get => _config; set => _config = value ?? []; }
+    public Dictionary<string, List<string>> BindingFields { get => _binding; set => _binding = value ?? []; }
+    public string? VersionPin { get; set; }
+}
+public sealed class AdminSignInPresentation { public string? DisplayName { get; set; } }
 public sealed class AdminSignInCapability
 {
     public string Type { get; set; } = "";
@@ -37,6 +58,9 @@ public sealed class AdminSignInCapability
     public string SignInMode { get; set; } = "";
     public string? CallbackUrl { get; set; }
     public string? PostLogoutRedirectUrl { get; set; }
+    private List<string> _managed = [];
+    /// <summary>The binding fields the deployment owns, which can be named before a binding exists. Absent or null means none (an older server).</summary>
+    public List<string> EnvManaged { get => _managed; set => _managed = value ?? []; }
     private JsonObject _metadata = new();
     /// <summary>A server that sends null still yields an empty object: every metadata read is null-safe.</summary>
     public JsonObject Metadata { get => _metadata; set => _metadata = value ?? new(); }
@@ -50,6 +74,12 @@ public sealed class AdminSignInBinding
     public bool DefaultLogin { get; set; }
     public string CallbackUrl { get; set; } = "";
     public string PostLogoutRedirectUrl { get; set; } = "";
+    /// <summary>OAuth only: "installation" or "stable". Never sent back by this page (an omitted mode keeps the stored one).</summary>
+    public string? CallbackMode { get; set; }
+    /// <summary>An enabled OAuth binding is waiting for the public URL.</summary>
+    public bool CallbackPending { get; set; }
+    private List<string> _managed = [];
+    public List<string> EnvManaged { get => _managed; set => _managed = value ?? []; }
 }
 public sealed class AdminSignInSchema
 {
