@@ -132,7 +132,7 @@ Lane `D:/SiloPlayer-build/admin-completion-lane-b`; every run through the build-
 - The #225 checks ("an idle page does not rebuild its form", "a typed list stays in the same box", "an account re-read updates the status line and the button in place",
   the typed-group-list steps) are unchanged and passed in every run. Nothing existing was weakened.
 - Unit tests added (`AdminSignInProvisioningTests`): every ownership shape present and absent, the older-server and malformed-ownership answers, label order, a
-  managed field never staged or sent (config save, connection test, binding enabled, auto-provision), the binding body (saved row, no `callback_mode`, a network binding keeps its `default_login`),
+  managed field never staged or sent (config save, connection test; a managed binding field is never CHANGED, see the correction below), the binding body (saved row, no `callback_mode`, a network binding keeps its `default_login`),
   the refusal sentence and one-shot send, a deployment claim dropping a staged edit, a secret that is also multiline is masked, secrets (untouched not sent; erased after an accepted save and after an unknown
   outcome; kept after a definite refusal; a staged clear is kept), a doubled binding change sent once, a failed test shows no server or typed text, the layout split, third-party text neutralization and bounding, direction rules.
 - Native block `AdminSignInProvisioningNativeFixture` (about 90 checks, run after the existing block under the same selector): loading, the break-glass sentence as one text element, each provider state on its card, a provisioned binding
@@ -154,3 +154,73 @@ Lane `D:/SiloPlayer-build/admin-completion-lane-b`; every run through the build-
 - Environment-managed sign-in **settings** (#4498 and its follow-ups): **after #234**.
 - The groups named in the brief as failing on beta (`admin-libraries`, `admin-users`, `admin-configure-maintenance`, `admin-configure-scheduled-tasks`, `admin-configure-search`, `admin-configure-storage`,
   `admin-manage-download-settings`, `admin-monitor-logs`, `artwork-first-mount`, `advanced-overlays`) were not run.
+
+## Review follow-up (November 21): corrections and what changed
+
+An independent review of `4e83e4440` found no P1 and three P2. Fixed in `9a65f391e`, `dbc531d10` and `7a0904e8a`.
+
+**Corrections to this record.** (1) "A managed field is never staged or sent … in a binding write" was inaccurate: all five binding fields (`capability_id, enabled, display_order, auto_provision, default_login`)
+are always sent, and an owned field restates its saved value, which the server accepts (it refuses only a changed value). A write now restates every field the admin did not touch from the **fresh** read of the
+binding, not from the page's older copy (before: `SetBindingAsync` re-read the providers but used the `enabled` the page passed in). (2) The "Native before / now" table row for the binding body stands, with that
+change: the touched field is the admin's, the other four come from the fresh read; if another session changed one of those since the page drew the provider, nothing is written, the admin is told it changed elsewhere
+and the page shows the fresh state (unit tests both directions, `default_login` and `display_order`; native step on a second network provider).
+
+**Deliberate difference from official: the look-up user.** When the connection test's look-up user is owned by the deployment, native sends no entry for that configuration schema when nothing else is staged for it;
+official still sends one (the saved values minus the owned fields). Reason: native builds a test entry only for a staged edit or for the look-up user it may type; with the field owned there is nothing of the admin's to
+send, and an entry made of saved values only restates what the server already has.
+
+**Shared with official (limitation, not fixed).** A connection test for a provisioned provider with a staged edit omits the owned non-secret fields (official `stagedEntry` does the same), so the server may fail
+validation of a required owned field that the test body lacks. Native could only avoid this by sending the owned fields, which the server refuses for a changed value and the page must never send; it does not. The
+owned values are the deployment's, so a failed test there says the test body was incomplete, not that the provider is broken. Not observed against a real provisioned server.
+
+### A failed write: stay editable, or read again? (finding 1)
+
+Only the Sign-in controller decides this (`AdminSignInController.RequiresReview` / `ReviewMessage`, hooks added to `AdminAccessController` whose defaults are the previous rule verbatim, so API Keys and Policy are unchanged:
+their controllers do not override them and `AdminAccessSecurityTests` runs unchanged except one Sign-in assertion named below). Official keeps the drafts after any failed write (React state), re-reads the installations after
+every write, and drops edits to a field the deployment now owns; native cannot re-read automatically without losing the draft, so it separates the answers.
+
+| Answer | What official does | What native does now |
+|---|---|---|
+| 422 `validation_failed` (config, binding, or settings write), nothing applied earlier | draft kept, error text, editable | editable, draft and typed secret kept, "The server rejected these values…"; a corrected save is sent and then erases the secret |
+| 409 `provider_already_enabled` | error text, editable | editable, staged edits kept, official sentence |
+| 409 `break_glass_required` from the settings write, nothing applied earlier | break-glass text, editable | editable, draft kept, pinned break-glass sentence |
+| Local `break_glass_required` / `provider_required` (nothing sent; a fresh read showed the page's list is out of date) | no local check against a fresh read | editable, draft and secret kept, message adds "…out of date: reload the page to see the current one"; every save reads again |
+| 429 | error text, editable | editable, secret kept |
+| 422 `managed_by_environment` (config write), or the local one on a binding write | edit dropped when ownership arrives, installations re-read | **reload needed**; typed secret erased; message: "…the environment now manages something this page showed as editable. Reload the page to read the current state." |
+| A read the write relied on failed (pre-check or fresh binding read) | n/a | reload needed; secret erased; "The current state could not be read before writing." |
+| 409 `conflict`, settings conflict | re-read | reload needed; secret erased; says the resource changed |
+| Any answer after an earlier write of the same save already landed | partial result reported | reload needed (the page shows the older values); "Part of this change was already saved…" |
+| Timeout, transport failure, unreadable answer, 5xx | – | reload needed (unchanged); secret erased |
+| Anything else (401, 403, 404, 412, other 4xx) | error text | reload needed (unchanged), secret erased |
+
+A typed secret is erased exactly when the page locks (the same function decides both). The visible draft stays on screen until the admin reloads or discards. An existing assertion was changed deliberately:
+`AdminAccessSecurityTests.RemovingBreakGlassAfterConfirmationPreventsSettingsWrite` pinned a lock after the local break-glass refusal; it now pins "editable, still dirty, says the list is out of date" (its sibling
+`RefusedLocalPasswordDisableWritesNoProviderConfigurationFirst` already pinned that both staged changes stay). The wrong comment in `SaveAsync` ("nothing typed stays staged") and the test
+`ATypedSecretSurvivesADefiniteRefusal` (now asserts the page is editable and the secret is sent by the next save) were corrected.
+
+### Other findings
+
+- **Plugin forms (2).** `AdminSignInLayout.Of` keeps the first field of a repeated key (one row per key), tolerates an empty key, `null` form lists (`AdminSignInForm`, `AdminSignInSection` now read `null` as empty) and a null
+  schema key. Every `Single`/`SingleOrDefault`/`First` over plugin- or server-supplied lists in the controller (config entries, providers, the look-up entry) is now tolerant; a draft for an entry a refreshed list no longer has is dropped.
+- **Preview (4).** A `display_name.value` field that is secret (flag or PASSWORD control) is an ordinary masked step, never the login-button field; the preview cannot read it.
+- **Text (7).** The no-plugin sentence is one text block with bold runs for the two plugin names (plain text) and the catalog link.
+- **Tests (6).** The connection-test unit test now stages an edit so its assertion runs over a real body; `default_login` cases added (absent from the answer sends false, saved false on a network binding, turn-off with saved true,
+  owned on a network binding restated and nothing refused). Native: the refusal path reads the PasswordBox; Retry (asks, declining keeps the edit and reads nothing, accepting discards); the live preview follows the login-name
+  box and never shows another field; typing goes through a FOCUSED box at the caret, one character at a time, and the same box, text, caret and focus are checked after each (the page exposes `FormBuildCount` for the
+  rebuild checks); the fixed delays were replaced by waits on conditions and an idle page is watched for a bounded 500 ms against the build counter.
+- **Not possible in the native host.** Real keystrokes were not injected (global input would reach the owner's desktop): text boxes are typed with `SelectedText` at the caret in a focused box. A focused PasswordBox ignores a
+  programmatically assigned Password in the test host, so the masked box is extended while unfocused (same box, value, no rebuild), then focused and checked for value and focus while idle; its caret is not observable.
+
+### Verification of this follow-up
+
+Lane `D:/SiloPlayer-build/admin-completion-lane-b`. (The labels `signinfix-final-r1`, `signinfix-native-r1/-r2` had been used by an earlier fix on this page, so `-final-r2/-r3` and `-native-r3/-r4` are used here.)
+
+- **Mutation** `signinfix-mutation-r1` (focused unit run, source `7a0904e8a` with `AdminSignInController.cs`, `AdminSignInLayout.cs` and `AdminSignInModels.cs` restored to `4e83e4440`): 24 of 250 failed (the new checks for
+  findings 1, 2 and 3, and the one changed existing assertion); restored, `git diff` empty.
+- `signinfix-final-r2` (source `7a0904e8a`): focused 250/250; the full suite failed only `AdminStorageSettingsControllerTests.DismissHidesOnlyTheCurrentFailedJob` ("Timed out: open", known intermittent); 11,050 passed. Rerun unchanged as
+  **`signinfix-final-r3`** (same source): focused 250/250, full 11,051/11,051 (0 failed, 0 skipped); native `admin-signin-security` 322, `admin-configure-security` 374, `admin-configure-general` 188,
+  `admin-manage-foundation` 36, `admin-monitor` 113, all 0 failed; payload and source seals verified.
+- **Stability**: `signinfix-native-r3` (322) and `signinfix-native-r4` (323) of `admin-signin-security` on the same build, 0 failed (the one-check difference is the shared `ClickForDialog` retry log line).
+- Not run, as the brief says: the native groups that fail on beta (`admin-libraries`, `admin-users`, `admin-configure-maintenance`, `-scheduled-tasks`, `-search`, `-storage`, `admin-manage-download-settings`,
+  `artwork-first-mount`, `advanced-overlays`); the two intermittent groups were not part of this run.
+- Not established: a real provisioned server, real keyboard input, the caret of the masked box, visual or pixel parity.

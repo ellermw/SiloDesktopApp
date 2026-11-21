@@ -1,3 +1,14 @@
+# November 21 — Admin Sign-in settings: review follow-up (failed writes, plugin forms, binding writes)
+
+`t3/admin-signin-parity-refresh`, commits `9a65f391e`, `dbc531d10`, `7a0904e8a` (source), after the independent review of `4e83e4440` (no P1, three P2). A failed write now stays editable with the draft and the
+typed secret after a definite refusal that applied nothing (422 validation, 409 provider already enabled, 409 break glass, 429, the page's own break-glass/provider check), and asks for a reload (erasing a typed secret and saying why)
+when the page's picture is stale (managed by environment, a failed read, a conflict, an earlier write of the same save already landed, an unknown outcome); only the Sign-in controller decides this, API Keys and Policy keep the shared
+rule. A binding write changes only the field the admin touched and restates the rest from the fresh read; if another session changed one of them, nothing is written and the page shows the fresh state. A plugin form with a repeated
+or empty key or null lists no longer crashes the page; a secret field is never the login-button field; the no-plugin sentence has bold plugin names. Final run `signinfix-final-r3` (source `7a0904e8a`): focused 250, full 11,051,
+native `admin-signin-security` 322, `admin-configure-security` 374, `admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all passing (`final-r2` failed only the known intermittent
+`AdminStorageSettingsControllerTests`); mutation run `signinfix-mutation-r1` 24 failures on the old code; stability `signinfix-native-r3`/`-r4` 322/323 passing. One existing assertion changed on purpose
+(`RemovingBreakGlassAfterConfirmationPreventsSettingsWrite`). Corrections, per-answer table and limits: [docs/parity/admin-signin-parity-refresh.md](parity/admin-signin-parity-refresh.md).
+
 # November 21 — Admin Sign-in settings refreshed to official `02a9d1d3e1` (provisioned providers and the rest of the page)
 
 `t3/admin-signin-parity-refresh` (from beta `d1144b96f`) brings Configure > Sign-in settings (`/admin/settings/sign-in`) from official `217ff25abc` to
