@@ -1,3 +1,24 @@
+# November 21 — Providers: the subtitle tile's failed-save recovery follows the official WebUI
+
+The owner asked how the WebUI behaves after a failed subtitle-provider save and decided "that's how our app should work in that situation."
+Branch `t3/admin-providers-webui-recovery` (from Beta `ae8c5950a`) makes the native tile match the official `ProvidersSettings.tsx` at
+Silo Server `a84b2551b23646380e1eecef45fdbfdbeecdfed3`: after any failed save (400, 409, 412, 5xx, lost answer, timeout) the tile is
+"save not confirmed" with its fields, Test and Save off, and the tile's own Reload, pressed once, re-reads only that provider, discards
+the drafts (typed credentials cleared) and re-arms Save. State is per provider, so one tile's failure no longer blocks the others; the
+page Reload also re-reads tiles that are not confirmed. This supersedes the two-step recovery and the retained username recorded in the
+#224 fixture-repair entry below. MDBList and marker tiles differ officially (Save is available again after a failure) and are unchanged.
+Both disconnect confirmations use a page-local destructive fill (#dc2626, 90% on hover; `DarkTheme.xaml` untouched) and neutralized
+provider names (#4704). Environment-managed provider rows (#4665) are left for after #234; avatar initials (#4998) do not apply. Request
+bodies are unchanged. Record: [Providers failed-save recovery](parity/admin-providers-webui-recovery.md).
+
+Observed under the SiloOct18Build lease: baseline `providersref-baseline-r1` on unchanged Beta (89 checks pass); final run
+`providersref-final-r1` on `ab69ec1909c9fdf72710dd234fd1afd017512fb4`: 62 focused and 10,851 full unit tests passed with no failures;
+native `admin-configure-providers` (149 checks), `admin-configure-integrations` (101), `admin-configure-general` (188),
+`admin-manage-foundation` (36) and `admin-monitor` (113) passed; `admin-configure-providers` passed twice more on the same build
+(`providersref-native-r1`, `-r2`, 149 checks each). Not verified: a live server, real accounts, rendered capture, Narrator, contrast theme.
+
+---
+
 # November 20 — Three merged Admin native groups brought back in line (test-only)
 
 On Beta `fb8cb17cf` four native regression groups of already merged Admin pages failed: `admin-collections`, `admin-configure-providers`,
