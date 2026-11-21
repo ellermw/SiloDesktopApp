@@ -227,7 +227,8 @@ internal static class AdminStorageSettingsNativeFixture
             await Until(() => controller.State.DirtyKeys.Count == 0, "discard");
 
             // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
-            cache.IsOn = false;
+            await RenderQueuedAsync(page); await Task.Delay(100);
+            cache.IsOn = !cache.IsOn;
             await Until(() => controller.State.DirtyKeys.Count == 1, "cache draft before the environment takes over");
             server.ManagedKeys = [AdminStorageRules.CacheImages]; await controller.ReloadAsync(preserveDraft: true);
             await Until(() => controller.State.ManagedByEnv.Contains(AdminStorageRules.CacheImages) && !cache.IsEnabled && !controller.State.StatusLoading, "managed cache toggle locked");

@@ -86,7 +86,11 @@ public sealed class AdminIntegrationSettingsController : IDisposable
                 else _form = new(_keys, [], snapshot.Values, snapshot.ETag);
                 // A key the environment sets now loses its draft, and is never sent.
                 var environment = statusKnown ? status.Environment : AdminEnvManagedSettings.None;
-                _form.ApplyEnvironment(environment);
+                var dropped = _form.ApplyEnvironment(environment);
+                // Switching the Jellyfin API off also stages the web player off (the official page does the same). When the environment
+                // takes the API switch over, that dependent draft goes with it (CompatibilityProxiesSettings.tsx "webOffAlone").
+                if (dropped.Contains("jellyfin_compat.enabled", StringComparer.Ordinal) && _form.DirtyKeys.Contains("jellyfin_compat.web_enabled") && _form.Get("jellyfin_compat.web_enabled") == "false")
+                    _form.Reset("jellyfin_compat.web_enabled");
                 _state = _state with { Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, Failure = null,
                     ManagedByEnvironment = status.ManagedByEnv.Where(_keys.Contains).ToArray(), EnvManaged = environment, RestartKeys = restartKeys };
             });

@@ -304,4 +304,33 @@ public sealed class AdminEnvManagedSettingsTests
         Assert.Null(controller.State.EnvManaged.VariableName("server.public_url"));
         Assert.Equal("Set by the environment. Change it there and restart the affected service.", controller.State.EnvManaged.Note("server.public_url"));
     }
+
+    [Fact]
+    public async Task TheEnvironmentTakingTheJellyfinApiSwitchOverAlsoTakesBackTheStagedWebPlayerSwitchOff()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminServerSettingsApi(kit.Client);
+        using var store = new AdminServerSettingsStore(api, authority, AdminIntegrationsSettings.AllKeys, AdminIntegrationsSettings.Secrets);
+        using var controller = new AdminIntegrationSettingsController(AdminIntegrationsSettings.CompatibilityKeys, api, store, authority, new AdminIntegrationsApi(kit.Client));
+        var status = Editable;
+        kit.Http.Respond = (request, _) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            var response = path.EndsWith("effective") ? AdminMonitorKit.Json("""{"jellyfin_compat.enabled":"true","jellyfin_compat.web_enabled":"true","jellyfin_compat.server_name":"Silo"}""")
+                : path.EndsWith("sensitive-status") ? AdminMonitorKit.Json(status) : AdminMonitorKit.Json("""{"keys":[],"prefixes":[]}""");
+            response.Headers.ETag = new("\"one\""); return Task.FromResult(response);
+        };
+        await controller.OpenAsync();
+        controller.Set("jellyfin_compat.enabled", "false");
+        controller.Set("jellyfin_compat.web_enabled", "false");
+        controller.Set("jellyfin_compat.server_name", "Renamed");
+        Assert.Equal(3, controller.State.DirtyKeys.Count);
+
+        status = """{"configured":[],"managed_by_env":["jellyfin_compat.enabled"],"managed_by_env_vars":{"jellyfin_compat.enabled":"SILO_JELLYFIN_ENABLED"}}""";
+        await controller.ReloadAsync(preserveDraft: true);
+        Assert.Equal(["jellyfin_compat.server_name"], controller.State.DirtyKeys);
+        Assert.Equal("true", controller.State.Values["jellyfin_compat.web_enabled"]);
+        Assert.Equal("Set by SILO_JELLYFIN_ENABLED in the server’s environment.", controller.State.EnvManaged.Note("jellyfin_compat.enabled"));
+    }
 }
